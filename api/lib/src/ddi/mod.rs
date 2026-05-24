@@ -67,6 +67,9 @@ impl From<DdiError> for HsmError {
                 HsmError::MaskedKeyDecodeFailed
             }
             DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
+            DdiError::DdiStatus(DdiStatus::Bk3AlreadyInitialized) => {
+                HsmError::Bk3AlreadyInitialized
+            }
             DdiError::DdiStatus(DdiStatus::SessionNeedsRenegotiation) => {
                 HsmError::SessionNeedsRenegotiation
             }

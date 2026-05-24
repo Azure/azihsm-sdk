@@ -25,9 +25,6 @@
 //!
 //! This tool requires OpenSSL and **only builds on Linux**.
 
-#[cfg(not(target_os = "linux"))]
-compile_error!("azihsm_fw_hsm_std_x509_gen requires OpenSSL and only builds on Linux");
-
 #[cfg(target_os = "linux")]
 mod cert;
 #[cfg(target_os = "linux")]
@@ -36,6 +33,12 @@ mod code_gen;
 mod csr;
 #[cfg(target_os = "linux")]
 mod tbs;
+
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("azihsm_fw_hsm_std_x509_gen requires OpenSSL and only runs on Linux.");
+    std::process::exit(1);
+}
 
 #[cfg(target_os = "linux")]
 fn main() {

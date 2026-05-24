@@ -51,6 +51,7 @@ typedef struct
 #define AZIHSM_DEFAULT_BMK_PATH "./bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "./muk.bin"
 #define AZIHSM_DEFAULT_OBK_PATH "./obk.bin"
+#define AZIHSM_DEFAULT_MOBK_PATH "./mobk.bin"
 #define AZIHSM_DEFAULT_CREDENTIALS_ID_PATH "./credentials_id.bin"
 #define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "./credentials_pin.bin"
 #define AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH "./pota_private_key.der"
@@ -66,6 +67,7 @@ typedef struct
 #define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
 #define AZIHSM_CFG_MUK_PATH "azihsm-muk-path"
 #define AZIHSM_CFG_OBK_PATH "azihsm-obk-path"
+#define AZIHSM_CFG_MOBK_PATH "azihsm-mobk-path"
 #define AZIHSM_CFG_OBK_SOURCE "azihsm-obk-source"
 #define AZIHSM_CFG_POTA_SOURCE "azihsm-pota-source"
 #define AZIHSM_CFG_POTA_PRIVATE_KEY_PATH "azihsm-pota-private-key-path"
@@ -94,6 +96,7 @@ typedef struct
     char bmk_path[AZIHSM_MAX_FILE_PATH];
     char muk_path[AZIHSM_MAX_FILE_PATH];
     char obk_path[AZIHSM_MAX_FILE_PATH];
+    char mobk_path[AZIHSM_MAX_FILE_PATH];
     char pota_private_key_path[AZIHSM_MAX_FILE_PATH];
     char pota_public_key_path[AZIHSM_MAX_FILE_PATH];
     uint8_t credentials_id[AZIHSM_CREDENTIALS_SIZE];

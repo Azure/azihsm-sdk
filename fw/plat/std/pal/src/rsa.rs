@@ -58,8 +58,8 @@ impl HsmRsa for StdHsmPal {
         y: &DmaBuf,
         x: &mut DmaBuf,
     ) -> Result<(), HsmError> {
-        let priv_key = RsaPrivateKey::from_bytes(&key[..]).map_err(|_| HsmError::InvalidArg)?;
-        self.rsa.mod_exp_priv(&priv_key, &y[..], &mut x[..]).await
+        let priv_key = RsaPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        self.rsa.mod_exp_priv(&priv_key, y, x).await
     }
 
     async fn mod_exp_pub(
@@ -70,8 +70,8 @@ impl HsmRsa for StdHsmPal {
         x: &DmaBuf,
         y: &mut DmaBuf,
     ) -> Result<(), HsmError> {
-        let pub_key = RsaPublicKey::from_bytes(&key[..]).map_err(|_| HsmError::InvalidArg)?;
-        self.rsa.mod_exp_pub(&pub_key, &x[..], &mut y[..]).await
+        let pub_key = RsaPublicKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        self.rsa.mod_exp_pub(&pub_key, x, y).await
     }
 
     async fn rsa_pkcs1_encrypt<'a>(

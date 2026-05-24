@@ -218,7 +218,7 @@ fn gen_validation(schema: &Schema) -> TokenStream {
     let layout = TocLayout::compute(&schema.fields);
     let total_toc_count = layout.total_toc_count;
 
-    let (parse_call, header_len_val, opcode_check) = match schema.kind {
+    let (parse_call, _header_len_val, opcode_check) = match schema.kind {
         MessageKind::Request { opcode } => (
             quote! { azihsm_fw_ddi_tbor::RequestView::parse(buf)? },
             quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },

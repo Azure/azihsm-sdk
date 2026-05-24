@@ -59,7 +59,7 @@ impl MborDecode<'_> for u8 {
 
 impl MborDecode<'_> for u16 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes: &[u8] = &decoder.bytes(3)?;
+        let bytes: &[u8] = decoder.bytes(3)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u16::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU16))?,
@@ -69,7 +69,7 @@ impl MborDecode<'_> for u16 {
 
 impl MborDecode<'_> for u32 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes: &[u8] = &decoder.bytes(5)?;
+        let bytes: &[u8] = decoder.bytes(5)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u32::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU32))?,
@@ -79,7 +79,7 @@ impl MborDecode<'_> for u32 {
 
 impl MborDecode<'_> for u64 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes: &[u8] = &decoder.bytes(9)?;
+        let bytes: &[u8] = decoder.bytes(9)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u64::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU64))?,
@@ -110,14 +110,14 @@ impl<const N: usize> MborDecode<'_> for [u8; N] {
             return Err(MborDecodeError::InvalidPadding);
         }
 
-        let len_bytes: &[u8] = &decoder.bytes(core::mem::size_of::<u16>())?;
+        let len_bytes: &[u8] = decoder.bytes(core::mem::size_of::<u16>())?;
         let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         if len != N as u16 {
             return Err(MborDecodeError::InvalidLen);
         }
 
-        let data: &[u8] = &decoder.bytes(len as usize)?;
+        let data: &[u8] = decoder.bytes(len as usize)?;
 
         data.try_into().or(Err(MborDecodeError::DecodeU8N))
     }
@@ -181,7 +181,7 @@ impl<'a> MborDecoder<'a> {
 
         let pad = marker & BYTES_PAD_MASK;
 
-        let len_bytes: &[u8] = &self.bytes(core::mem::size_of::<u16>())?;
+        let len_bytes: &[u8] = self.bytes(core::mem::size_of::<u16>())?;
         let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         // Skip padding bytes
@@ -211,7 +211,7 @@ impl<'a> MborDecoder<'a> {
             return Err(MborDecodeError::InvalidPadding);
         }
 
-        let len_bytes: &[u8] = &self.bytes(core::mem::size_of::<u16>())?;
+        let len_bytes: &[u8] = self.bytes(core::mem::size_of::<u16>())?;
         let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         if len as usize != expected_len {
@@ -259,6 +259,9 @@ mod tests {
     /// In tests, local arrays aren't DMA memory, but we need `&DmaBuf`
     /// to construct a decoder. This is safe in tests — no real DMA hw.
     fn dma(buf: &[u8]) -> &DmaBuf {
+        // SAFETY: In tests, no real DMA hardware is involved. The
+        // `DmaBuf::from_raw` transmute is safe because the data is only
+        // read by the decoder, not submitted to a DMA engine.
         unsafe { DmaBuf::from_raw(buf) }
     }
 

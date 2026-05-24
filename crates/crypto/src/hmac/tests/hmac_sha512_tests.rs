@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
-use crate::hmac::tests::testvectors::HMAC_SHA512_NIST_TEST_VECTORS;
+use crate::testvectors::hmac::HMAC_SHA512_NIST_TEST_VECTORS;
 
 #[test]
 fn test_hmac_sha512_one_shot() {

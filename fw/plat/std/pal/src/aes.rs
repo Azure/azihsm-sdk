@@ -50,13 +50,7 @@ impl HsmAes for StdHsmPal {
     ) -> HsmResult<()> {
         let mut iv = iv_in.to_vec();
         self.aes
-            .cbc_enc_dec(
-                &key[..],
-                aes_op_is_encrypt(op),
-                &mut iv,
-                &input[..],
-                &mut output[..],
-            )
+            .cbc_enc_dec(key, aes_op_is_encrypt(op), &mut iv, input, output)
             .await?;
         if let Some(iv_out) = iv_out {
             iv_out[..iv.len()].copy_from_slice(&iv);
@@ -76,13 +70,7 @@ impl HsmAes for StdHsmPal {
         let mut iv = iv_in.to_vec();
         let input = data.to_vec();
         self.aes
-            .cbc_enc_dec(
-                &key[..],
-                aes_op_is_encrypt(op),
-                &mut iv,
-                &input,
-                &mut data[..],
-            )
+            .cbc_enc_dec(key, aes_op_is_encrypt(op), &mut iv, &input, data)
             .await?;
         if let Some(iv_out) = iv_out {
             iv_out[..iv.len()].copy_from_slice(&iv);
@@ -99,7 +87,7 @@ impl HsmAes for StdHsmPal {
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.aes
-            .ecb_enc_dec(&key[..], aes_op_is_encrypt(op), &input[..], &mut output[..])
+            .ecb_enc_dec(key, aes_op_is_encrypt(op), input, output)
             .await
     }
 
@@ -112,7 +100,7 @@ impl HsmAes for StdHsmPal {
     ) -> HsmResult<()> {
         let input = data.to_vec();
         self.aes
-            .ecb_enc_dec(&key[..], aes_op_is_encrypt(op), &input, &mut data[..])
+            .ecb_enc_dec(key, aes_op_is_encrypt(op), &input, data)
             .await
     }
 

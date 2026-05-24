@@ -11,6 +11,9 @@
 #include <string>
 #include <vector>
 
+#include "handle/test_creds.hpp"
+#include "part_init_config.hpp"
+
 #ifdef _WIN32
 #define NOMINMAX
 // clang-format off
@@ -226,51 +229,77 @@ static azihsm_status lock_release(void *ctx)
     return AZIHSM_STATUS_SUCCESS;
 }
 
-// Dummy POTA endorsement callback
-static constexpr uint32_t DUMMY_SIG_SIZE = 96;
-static constexpr uint32_t DUMMY_PUB_SIZE = 120;
+// POTA endorsement callback — real signing
+//
+// Signs the SDK-provided PID public key with the hardcoded POTA private
+// key, exactly as generate_pota_endorsement() does for the initial init.
+// This is required for restore_partition() to succeed: the device
+// verifies the POTA endorsement with ECC, so a zeroed signature fails.
 
 static azihsm_status pota_endorse(
     void * /*ctx*/,
     const azihsm_buffer * /*pota_pub_key_der*/,
-    const azihsm_buffer * /*pid_pub_key_der*/,
+    const azihsm_buffer *pid_pub_key_der,
     const azihsm_buffer * /*pid_cert_chain_pem*/,
     azihsm_buffer *signature,
     azihsm_buffer *endorsement_pub_key
 )
 {
-    // First call: report required sizes.
-    if (signature->ptr == nullptr || signature->len < DUMMY_SIG_SIZE ||
-        endorsement_pub_key->ptr == nullptr || endorsement_pub_key->len < DUMMY_PUB_SIZE)
+    try
     {
-        signature->len = DUMMY_SIG_SIZE;
-        endorsement_pub_key->len = DUMMY_PUB_SIZE;
-        return AZIHSM_STATUS_BUFFER_TOO_SMALL;
-    }
+        auto endorsement = sign_pota_endorsement(
+            static_cast<const uint8_t *>(pid_pub_key_der->ptr),
+            pid_pub_key_der->len
+        );
 
-    // Second call: fill buffers.
-    std::memset(signature->ptr, 0, DUMMY_SIG_SIZE);
-    std::memset(endorsement_pub_key->ptr, 0, DUMMY_PUB_SIZE);
-    signature->len = DUMMY_SIG_SIZE;
-    endorsement_pub_key->len = DUMMY_PUB_SIZE;
-    return AZIHSM_STATUS_SUCCESS;
+        // First call: report required sizes.
+        if (signature->ptr == nullptr ||
+            signature->len < static_cast<uint32_t>(endorsement.signature.size()) ||
+            endorsement_pub_key->ptr == nullptr ||
+            endorsement_pub_key->len < static_cast<uint32_t>(endorsement.public_key_der.size()))
+        {
+            signature->len = static_cast<uint32_t>(endorsement.signature.size());
+            endorsement_pub_key->len = static_cast<uint32_t>(endorsement.public_key_der.size());
+            return AZIHSM_STATUS_BUFFER_TOO_SMALL;
+        }
+
+        // Second call: fill buffers.
+        std::memcpy(signature->ptr, endorsement.signature.data(), endorsement.signature.size());
+        signature->len = static_cast<uint32_t>(endorsement.signature.size());
+
+        std::memcpy(
+            endorsement_pub_key->ptr,
+            endorsement.public_key_der.data(),
+            endorsement.public_key_der.size()
+        );
+        endorsement_pub_key->len = static_cast<uint32_t>(endorsement.public_key_der.size());
+
+        return AZIHSM_STATUS_SUCCESS;
+    }
+    catch (...)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
 }
 
 // Dummy OBK provider callback
-static constexpr uint32_t DUMMY_OBK_SIZE = 48;
+static constexpr uint32_t TEST_OBK_SIZE = 48;
 
-static azihsm_status obk_get_obk(void * /*ctx*/, azihsm_buffer *obk)
+static azihsm_status mobk_get_mobk(void * /*ctx*/, azihsm_buffer *obk)
 {
     // First call: report required size.
-    if (obk->ptr == nullptr || obk->len < DUMMY_OBK_SIZE)
+    if (obk->ptr == nullptr || obk->len < TEST_OBK_SIZE)
     {
-        obk->len = DUMMY_OBK_SIZE;
+        obk->len = TEST_OBK_SIZE;
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    // Second call: fill buffer with dummy OBK.
-    std::memset(obk->ptr, 0x03, DUMMY_OBK_SIZE);
-    obk->len = DUMMY_OBK_SIZE;
+    // Second call: return the same OBK used for initial partition provisioning.
+    // This must match TEST_OBK from test_creds.hpp — if the values differ,
+    // restore_partition() will fail because the OBK won't match what the
+    // device was provisioned with.
+    std::memcpy(obk->ptr, TEST_OBK, TEST_OBK_SIZE);
+    obk->len = TEST_OBK_SIZE;
     return AZIHSM_STATUS_SUCCESS;
 }
 
@@ -306,7 +335,7 @@ void make_resiliency_config_in(ResiliencyTestCtx &ctx, azihsm_resiliency_config 
     bool is_tpm = (std::getenv("AZIHSM_USE_TPM") != nullptr);
 #endif
     config_out.pota_callback_ops = is_tpm ? nullptr : get_pota_callback_ops();
-    config_out.obk_callback_ops = is_tpm ? nullptr : get_obk_callback_ops();
+    config_out.mobk_callback_ops = is_tpm ? nullptr : get_mobk_callback_ops();
 }
 
 /// Returns a pointer to the shared POTA callback ops vtable backed by
@@ -317,12 +346,12 @@ const azihsm_pota_callback_ops *get_pota_callback_ops()
     return &pota_ops;
 }
 
-/// Returns a pointer to the shared OBK callback ops vtable backed by
-/// `obk_get_obk`. The returned pointer has static lifetime.
-const azihsm_obk_callback_ops *get_obk_callback_ops()
+/// Returns a pointer to the shared MOBK callback ops vtable backed by
+/// `mobk_get_mobk`. The returned pointer has static lifetime.
+const azihsm_mobk_callback_ops *get_mobk_callback_ops()
 {
-    static azihsm_obk_callback_ops obk_ops = { obk_get_obk };
-    return &obk_ops;
+    static azihsm_mobk_callback_ops mobk_ops = { mobk_get_mobk };
+    return &mobk_ops;
 }
 
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_config &config_out)

@@ -76,6 +76,7 @@ fn mark_for(pool: &BufferPool, slot: u16, heap: Heap) -> &Cell<usize> {
 /// Bump-allocate `size` bytes with the given alignment from `(slot,
 /// heap)`. Returns the new `&mut [u8]` view over the freshly
 /// allocated region (disjoint from any prior allocation).
+#[allow(clippy::needless_lifetimes, clippy::mut_from_ref)]
 fn bump<'a>(
     pool: &'a BufferPool,
     slot: u16,

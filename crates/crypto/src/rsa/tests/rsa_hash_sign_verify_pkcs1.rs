@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 //! Tests for validating RSA signing and verification with PKCS#1 v1.5 padding.
 use super::*;
+use crate::testvectors::rsa::RSA_PKCS1_TEST_VECTORS;
 
 fn sign_pkcs1_v15(hash_algo: &HashAlgo, private_key: &RsaPrivateKey, message: &[u8]) -> Vec<u8> {
     let mut algo = RsaHashSignAlgo::with_pkcs1_padding(hash_algo.clone());
@@ -231,8 +232,6 @@ fn test_rsa_sign_verify_pkcs1_nist_vectors() {
 /// Validates RSA PKCS#1 v1.5 streaming verification against NIST test vectors.
 #[test]
 fn test_rsa_sign_verify_pkcs1_nist_vectors_streaming() {
-    use crate::rsa::tests::testvectors::RSA_PKCS1_TEST_VECTORS;
-
     for (idx, vector) in RSA_PKCS1_TEST_VECTORS.iter().enumerate() {
         if idx == 29 {
             // Skip vector 29 due to known OpenSSL strictness issues

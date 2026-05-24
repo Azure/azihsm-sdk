@@ -95,8 +95,8 @@ impl HsmEcc for StdHsmPal {
         hash: &DmaBuf,
         signature: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let key = EccPrivateKey::from_bytes(&priv_key[..]).map_err(|_| HsmError::InvalidArg)?;
-        let sig = self.ecc.ecc_sign(&key, &hash[..]).await?;
+        let key = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
+        let sig = self.ecc.ecc_sign(&key, hash).await?;
         if signature.len() < sig.len() {
             return Err(HsmError::EccSignFailed);
         }
@@ -113,8 +113,8 @@ impl HsmEcc for StdHsmPal {
         hash: &DmaBuf,
         signature: &DmaBuf,
     ) -> HsmResult<bool> {
-        let key = EccPublicKey::from_bytes(&pub_key[..]).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecc_verify(&key, &hash[..], &signature[..]).await
+        let key = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
+        self.ecc.ecc_verify(&key, hash, signature).await
     }
 
     /// ECDH key agreement — derives a shared secret.
@@ -126,8 +126,8 @@ impl HsmEcc for StdHsmPal {
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let pk = EccPrivateKey::from_bytes(&priv_key[..]).map_err(|_| HsmError::InvalidArg)?;
-        let pubk = EccPublicKey::from_bytes(&pub_key[..]).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecdh_derive(&pk, &pubk, &mut secret[..]).await
+        let pk = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
+        let pubk = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
+        self.ecc.ecdh_derive(&pk, &pubk, secret).await
     }
 }

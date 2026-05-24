@@ -51,8 +51,7 @@ where
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev();
         let (obk_info, pota_endorsement) = make_init_params(&part);
-        part.init(creds, None, None, obk_info, pota_endorsement, None)
-            .expect("Partition init failed");
+        init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
         let mut session = part
             .open_session(rev, &creds, None)
             .expect("Failed to open session");

@@ -17,8 +17,20 @@ pub struct AzihsmOwnerBackupKeyConfig {
     /// Source of the owner backup key
     pub source: AzihsmOwnerBackupKeySource,
 
-    /// Pointer to the owner backup key buffer (if source is Caller)
+    /// Pointer to the plaintext owner backup key buffer (OBK).
+    /// Required when `source` is `Caller` and `masked_owner_backup_key`
+    /// is NULL. The device's `init_bk3` operation is one-shot per
+    /// power cycle, so callers should provide OBK only on the first
+    /// init and cache the resulting MOBK (read via the
+    /// `MaskedOwnerBackupKey` property) for subsequent inits.
     pub owner_backup_key: *const AzihsmBuffer,
+
+    /// Pointer to the masked owner backup key buffer (MOBK).
+    /// When non-NULL on a `Caller` source, the SDK skips the OBK→MOBK
+    /// derivation and uses this MOBK directly. Exactly one of
+    /// `owner_backup_key` or `masked_owner_backup_key` must be non-NULL
+    /// for the `Caller` source.
+    pub masked_owner_backup_key: *const AzihsmBuffer,
 }
 
 /// Convert AzihsmOwnerBackupKeyConfig to HsmOwnerBackupKeyConfig
@@ -30,18 +42,25 @@ impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfi
 
         match source {
             api::HsmOwnerBackupKeySource::Caller => {
-                let slice = buffer_to_optional_slice(config.owner_backup_key)?;
-                let obk = slice.ok_or(AzihsmStatus::InvalidArgument)?;
-                if obk.is_empty() {
-                    Err(AzihsmStatus::InvalidArgument)?;
-                }
-                Ok(api::HsmOwnerBackupKeyConfig::new(source, Some(obk)))
+                let obk = buffer_to_optional_slice(config.owner_backup_key)?;
+                let mobk = buffer_to_optional_slice(config.masked_owner_backup_key)?;
+                let key = match (obk, mobk) {
+                    (Some(obk), None) if !obk.is_empty() => api::HsmOwnerBackupKey::from_obk(obk),
+                    (None, Some(mobk)) if !mobk.is_empty() => {
+                        api::HsmOwnerBackupKey::from_masked_key(mobk)
+                    }
+                    _ => return Err(AzihsmStatus::InvalidArgument),
+                };
+                Ok(api::HsmOwnerBackupKeyConfig::new(source, key))
             }
             api::HsmOwnerBackupKeySource::Tpm => {
-                if !config.owner_backup_key.is_null() {
+                if !config.owner_backup_key.is_null() || !config.masked_owner_backup_key.is_null() {
                     Err(AzihsmStatus::InvalidArgument)?;
                 }
-                Ok(api::HsmOwnerBackupKeyConfig::new(source, None))
+                Ok(api::HsmOwnerBackupKeyConfig::new(
+                    source,
+                    api::HsmOwnerBackupKey::default(),
+                ))
             }
             _ => Err(AzihsmStatus::InvalidArgument),
         }
