@@ -77,10 +77,10 @@ impl Xtask for Build {
         let _exclude_x509_gen;
         #[cfg(not(target_os = "linux"))]
         if self.package.is_none() {
-            args.push("--workspace");
+            command_args.push("--workspace");
             _exclude_x509_gen = "azihsm_fw_hsm_std_x509_gen".to_string();
-            args.push("--exclude");
-            args.push(&_exclude_x509_gen);
+            command_args.push("--exclude");
+            command_args.push(&_exclude_x509_gen);
         }
 
         // Always pass target-dir
