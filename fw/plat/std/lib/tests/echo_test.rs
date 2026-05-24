@@ -94,7 +94,7 @@ async fn single_io() {
 
 #[tokio::test]
 async fn single_io_with_dma() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -168,7 +168,7 @@ async fn fifty_concurrent_ios() {
 
 #[tokio::test]
 async fn ddi_get_api_rev() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -245,7 +245,7 @@ async fn cqe_status_on_invalid_psdt() {
 
 #[tokio::test]
 async fn cqe_status_success_on_ddi() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -273,7 +273,7 @@ async fn cqe_status_success_on_ddi() {
 
 #[tokio::test]
 async fn ddi_error_response_on_unsupported_rev() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -325,7 +325,7 @@ async fn ddi_error_response_on_unsupported_rev() {
 
 #[tokio::test]
 async fn cqe_session_fields_on_get_api_rev() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -362,7 +362,7 @@ async fn cqe_session_fields_on_get_api_rev() {
 
 #[tokio::test]
 async fn session_hijack_mismatched_ctrl() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -513,7 +513,7 @@ async fn part_resource_accounting_after_free() {
 
 #[tokio::test]
 async fn ddi_get_device_info() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -564,7 +564,7 @@ async fn ddi_get_device_info() {
 
 #[tokio::test]
 async fn get_cert_chain_info_slot0() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -613,7 +613,7 @@ async fn get_cert_chain_info_slot0() {
 
 #[tokio::test]
 async fn get_cert_chain_info_invalid_slot() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -652,7 +652,7 @@ async fn get_cert_chain_info_invalid_slot() {
 
 /// Helper to retrieve a single certificate by index.
 async fn get_cert_der(idx: u8) -> Vec<u8> {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     let mut src = AlignedBuf::new(4096);
     let mut dst = AlignedBuf::new(4096);
@@ -711,7 +711,7 @@ async fn get_certificate_all_indices() {
 
 #[tokio::test]
 async fn get_certificate_invalid_index() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -780,7 +780,7 @@ async fn get_certificate_chain_validation() {
 
 #[tokio::test]
 async fn get_cert_thumbprint_consistency() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -866,8 +866,8 @@ async fn dump_cert_chain_openssl() {
 
 #[tokio::test]
 async fn ddi_sha1_digest() {
-    use azihsm_ddi_mbor::MborByteArray;
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_codec::MborByteArray;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -910,8 +910,8 @@ async fn ddi_sha1_digest() {
 
 #[tokio::test]
 async fn ddi_sha256_digest() {
-    use azihsm_ddi_mbor::MborByteArray;
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_codec::MborByteArray;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -955,8 +955,8 @@ async fn ddi_sha256_digest() {
 
 #[tokio::test]
 async fn ddi_sha384_digest() {
-    use azihsm_ddi_mbor::MborByteArray;
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_codec::MborByteArray;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -1003,8 +1003,8 @@ async fn ddi_sha384_digest() {
 
 #[tokio::test]
 async fn ddi_sha512_digest() {
-    use azihsm_ddi_mbor::MborByteArray;
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_codec::MborByteArray;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
     let mut src = AlignedBuf::new(4096);
@@ -1060,7 +1060,7 @@ async fn submit_get_establish_cred_enc_key(
     cmd_id: u16,
     sess_id: Option<u16>,
 ) -> ([u32; 4], Vec<u8>) {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     let mut src = AlignedBuf::new(4096);
     let mut dst = AlignedBuf::new(4096);
@@ -1095,7 +1095,7 @@ async fn submit_get_establish_cred_enc_key(
 
 #[tokio::test]
 async fn get_establish_cred_encryption_key_basic() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -1129,7 +1129,7 @@ async fn get_establish_cred_encryption_key_basic() {
 
 #[tokio::test]
 async fn get_establish_cred_encryption_key_idempotent() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -1157,7 +1157,7 @@ async fn get_establish_cred_encryption_key_idempotent() {
 
 #[tokio::test]
 async fn get_establish_cred_encryption_key_session_rejected() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     ensure_io_part().await;
 
@@ -1201,7 +1201,7 @@ async fn get_establish_cred_encryption_key_session_rejected() {
 #[tokio::test]
 async fn get_establish_cred_encryption_key_verify_signature() {
     use azihsm_crypto::*;
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
     use x509::X509Certificate;
     use x509::X509CertificateOp;
 
@@ -1249,7 +1249,7 @@ async fn get_establish_cred_encryption_key_verify_signature() {
 
 #[tokio::test]
 async fn get_establish_cred_encryption_key_changes_after_reenable() {
-    use azihsm_ddi_types::*;
+    use azihsm_ddi_mbor_types::*;
 
     // Use a dedicated partition for this test to avoid interfering with others
     let pid: u8 = 15;

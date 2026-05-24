@@ -15,17 +15,17 @@ use std::ptr;
 use std::sync::Arc;
 
 use azihsm_ddi_interface::*;
-use azihsm_ddi_mbor::MborDecode;
-use azihsm_ddi_mbor::MborDecoder;
-use azihsm_ddi_mbor::MborEncoder;
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDecoder;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOpReq;
-use azihsm_ddi_types::DdiRespHdr;
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
-use azihsm_ddi_types::SessionControlKind;
+use azihsm_ddi_mbor_codec::MborDecode;
+use azihsm_ddi_mbor_codec::MborDecoder;
+use azihsm_ddi_mbor_codec::MborEncoder;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDecoder;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiRespHdr;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
+use azihsm_ddi_mbor_types::SessionControlKind;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use winapi::ctypes::c_void;
@@ -697,7 +697,7 @@ impl DdiDev for DdiWinDev {
     ///
     /// # Error
     /// * `DdiError` - Error encountered while executing the command
-    fn exec_op<T: DdiOpReq>(
+    fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
         _cookie: &mut Option<DdiCookie>,

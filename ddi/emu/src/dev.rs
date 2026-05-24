@@ -20,19 +20,19 @@ use azihsm_ddi_interface::DdiCookie;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DdiResult;
-use azihsm_ddi_mbor::MborDecode;
-use azihsm_ddi_mbor::MborDecoder;
-use azihsm_ddi_mbor::MborEncoder;
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDecoder;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOp;
-use azihsm_ddi_types::DdiOpReq;
-use azihsm_ddi_types::DdiOpenSessionCmdResp;
-use azihsm_ddi_types::DdiRespHdr;
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
-use azihsm_ddi_types::SessionControlKind;
+use azihsm_ddi_mbor_codec::MborDecode;
+use azihsm_ddi_mbor_codec::MborDecoder;
+use azihsm_ddi_mbor_codec::MborEncoder;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDecoder;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiOpenSessionCmdResp;
+use azihsm_ddi_mbor_types::DdiRespHdr;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
+use azihsm_ddi_mbor_types::SessionControlKind;
 use azihsm_fw_hsm_std::StdHsm;
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
@@ -141,7 +141,7 @@ impl DdiDev for DdiEmuDev {
         self.device_kind
     }
 
-    fn exec_op<T: DdiOpReq>(
+    fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
         _cookie: &mut Option<DdiCookie>,
@@ -413,11 +413,11 @@ impl Drop for AlignedBuf {
 mod tests {
     use azihsm_ddi_interface::Ddi;
     use azihsm_ddi_interface::DdiDev;
-    use azihsm_ddi_types::DdiApiRev;
-    use azihsm_ddi_types::DdiGetApiRevCmdReq;
-    use azihsm_ddi_types::DdiGetApiRevReq;
-    use azihsm_ddi_types::DdiOp;
-    use azihsm_ddi_types::DdiReqHdr;
+    use azihsm_ddi_mbor_types::DdiApiRev;
+    use azihsm_ddi_mbor_types::DdiGetApiRevCmdReq;
+    use azihsm_ddi_mbor_types::DdiGetApiRevReq;
+    use azihsm_ddi_mbor_types::DdiOp;
+    use azihsm_ddi_mbor_types::DdiReqHdr;
 
     use crate::DdiEmu;
     use crate::EMU_DEVICE_PATH;
@@ -439,7 +439,7 @@ mod tests {
 
         let mut cookie = None;
         let resp = dev
-            .exec_op(&req, &mut cookie)
+            .exec_op_mbor(&req, &mut cookie)
             .expect("GetApiRev should succeed against the emulator");
 
         assert_eq!(resp.hdr.op, DdiOp::GetApiRev);

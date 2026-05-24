@@ -25,8 +25,8 @@ use std::collections::HashMap;
 
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DriverError;
-use azihsm_ddi_types::DdiOp;
-use azihsm_ddi_types::DdiStatus;
+use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiStatus;
 use parking_lot::Mutex;
 
 /// Per-op call counters — keyed by the `DdiOp` inner `u32` value.

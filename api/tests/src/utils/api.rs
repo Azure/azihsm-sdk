@@ -25,7 +25,7 @@ use tracing_tree::*;
 /// The subscriber is configured with:
 /// - Debug level logging by default
 /// - Info level for `azihsm_ddi_mock`
-/// - Disabled logging for `azihsm_ddi_sim` and `azihsm_ddi_mock`
+/// - Disabled logging for `azihsm_ddi_mbor_sim` and `azihsm_ddi_mock`
 /// - Thread names and IDs in output
 /// - Indented hierarchical output format
 /// - Target information in log messages

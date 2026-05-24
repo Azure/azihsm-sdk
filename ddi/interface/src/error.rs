@@ -5,8 +5,8 @@
 
 use std::convert::Infallible;
 
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
 use thiserror::Error;
 
 use crate::*;
@@ -95,4 +95,12 @@ pub enum DdiError {
     /// Reset Device error
     #[error("Reset Device operation error")]
     ResetDeviceError(u32),
+
+    /// Host-side backend does not support the requested wire encoding
+    /// (e.g., a TBOR request was issued against a backend that has not
+    /// been wired for TBOR yet). Distinct from a device-side
+    /// `DdiStatus::UnsupportedCmd`, which indicates the firmware
+    /// rejected an otherwise well-formed request.
+    #[error("host backend does not support the requested wire encoding")]
+    UnsupportedEncoding,
 }

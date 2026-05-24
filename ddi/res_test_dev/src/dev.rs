@@ -4,8 +4,8 @@
 //! Resiliency device — wraps any [`DdiDev`] implementation with fault injection.
 
 use azihsm_ddi_interface::*;
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiOpReq;
 
 use crate::fault;
 
@@ -27,11 +27,11 @@ impl<D: DdiDev> DdiResTestDev<D> {
 }
 
 impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
-    fn device_kind(&self) -> azihsm_ddi_types::DdiDeviceKind {
+    fn device_kind(&self) -> azihsm_ddi_mbor_types::DdiDeviceKind {
         self.inner.device_kind()
     }
 
-    fn exec_op<T: DdiOpReq>(
+    fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
         cookie: &mut Option<DdiCookie>,
@@ -49,7 +49,7 @@ impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
             }
             None => {}
         }
-        self.inner.exec_op(req, cookie)
+        self.inner.exec_op_mbor(req, cookie)
     }
 
     fn exec_op_fp_gcm_slice(

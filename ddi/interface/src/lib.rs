@@ -9,9 +9,10 @@ mod error;
 
 use std::cmp::Ordering;
 
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_tbor_types::TborOpReq;
 pub use error::DdiError;
 
 /// DDI Result
@@ -177,20 +178,6 @@ pub trait DdiDev {
     /// matching wire-format mode.
     fn device_kind(&self) -> DdiDeviceKind;
 
-    /// Execute Operation
-    ///
-    /// # Arguments
-    /// * `req`         - Operation Request
-    /// * `cookie`      - Cookie
-    ///
-    /// # Returns
-    /// * `OpReq::Resp` - Operation response
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered while executing the command
-    fn exec_op<T: DdiOpReq>(&self, req: &T, cookie: &mut Option<DdiCookie>)
-        -> DdiResult<T::OpResp>;
-
     /// Execute GCM operation (encryption / decryption) with slice buffers
     ///
     /// # Arguments
@@ -290,4 +277,35 @@ pub trait DdiDev {
     /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
     fn erase(&self) -> Result<(), DdiError>;
+
+    /// Execute a DDI command whose body is MBOR-encoded.
+    ///
+    /// # Arguments
+    /// * `req`    - MBOR-encodable request
+    /// * `cookie` - Optional cookie threaded through to the backend
+    ///
+    /// # Returns
+    /// * `T::OpResp` - Decoded response
+    ///
+    /// # Errors
+    /// Returns a [`DdiError`] on encoding, IO, or device-side failure.
+    fn exec_op_mbor<T: DdiOpReq>(
+        &self,
+        req: &T,
+        cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp>;
+
+    /// Execute a DDI command whose body is TBOR-encoded.
+    ///
+    /// # Default
+    ///
+    /// Returns [`DdiError::UnsupportedEncoding`]. Override on backends
+    /// that have been wired to emit `OP_TBOR` SQEs.
+    fn exec_op_tbor<T: TborOpReq>(
+        &self,
+        _req: &T,
+        _cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        Err(DdiError::UnsupportedEncoding)
+    }
 }

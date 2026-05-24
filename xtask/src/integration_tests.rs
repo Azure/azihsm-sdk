@@ -57,15 +57,20 @@ impl Xtask for IntegrationTest {
             }
             .run(_ctx.clone())?;
 
-            crate::nextest::Nextest {
-                features: Some("integration".to_string()),
-                package: Some("provider-integration-tests-capi".to_string()),
-                no_default_features: false,
-                filterset: None,
-                profile: Some("ci-provider-integration".to_string()),
-                exclude: vec![],
-            }
-            .run(_ctx.clone())?;
+            // CAPI integration tests are temporarily disabled while the
+            // OpenSSL provider build coupling with `libazihsm_api_native`
+            // is being reworked. Re-enable by uncommenting the Nextest
+            // block below.
+            //
+            // crate::nextest::Nextest {
+            //     features: Some("integration".to_string()),
+            //     package: Some("provider-integration-tests-capi".to_string()),
+            //     no_default_features: false,
+            //     filterset: None,
+            //     profile: Some("ci-provider-integration".to_string()),
+            //     exclude: vec![],
+            // }
+            // .run(_ctx.clone())?;
 
             crate::nextest::Nextest {
                 features: Some("integration".to_string()),

@@ -49,7 +49,7 @@ pub(crate) fn get_api_rev(dev: &HsmDev) -> HsmResult<(HsmApiRev, HsmApiRev)> {
         ext: None,
     };
 
-    let resp: DdiGetApiRevCmdResp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp: DdiGetApiRevCmdResp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
 
     Ok((resp.data.min.into(), resp.data.max.into()))
 }
@@ -166,7 +166,33 @@ pub(crate) fn dev_info_by_path(path: &str) -> HsmResult<DevInfo> {
 #[tracing::instrument(skip_all, fields(path = path))]
 pub(crate) fn open_dev(path: &str) -> HsmResult<HsmDev> {
     let dev = DDI.open_dev(path).map(HsmDev).map_err(HsmError::from)?;
+
+    // Probe the device with GetApiRev + GetDeviceInfo at open time so
+    // that transient IO faults surface here (where the resiliency
+    // retry machinery owns them) rather than at the first downstream
+    // operation. The result is discarded — `device_kind()` is now a
+    // hardcoded property of the backend, so we don't need the data;
+    // the side-effect of the round-trip is what matters.
+    probe_device(&dev)?;
+
     Ok(dev)
+}
+
+/// Round-trips two DDI ops (`GetApiRev` then `GetDeviceInfo`) against
+/// the device to confirm it is reachable. Used by [`open_dev`] to
+/// surface transient errors during retry-eligible operations.
+fn probe_device(dev: &HsmDev) -> HsmResult<()> {
+    let (_, max_rev) = get_api_rev(dev)?;
+
+    let req = DdiGetDeviceInfoCmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::GetDeviceInfo, Some(max_rev), None),
+        data: DdiGetDeviceInfoReq {},
+        ext: None,
+    };
+
+    dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
+
+    Ok(())
 }
 
 /// Converts a DDI device kind to an HSM partition type.
