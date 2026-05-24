@@ -17,28 +17,18 @@ use crate::fault;
 #[derive(Debug, Clone)]
 pub struct DdiResTestDev<D: DdiDev> {
     inner: D,
-    device_kind: Option<azihsm_ddi_types::DdiDeviceKind>,
 }
 
 impl<D: DdiDev> DdiResTestDev<D> {
     /// Wraps an existing [`DdiDev`] implementation.
     pub(crate) fn new(inner: D) -> Self {
-        Self {
-            inner,
-            device_kind: None,
-        }
-    }
-
-    /// Returns the device kind, as set by [`DdiDev::set_device_kind`].
-    pub fn device_kind(&self) -> Option<azihsm_ddi_types::DdiDeviceKind> {
-        self.device_kind
+        Self { inner }
     }
 }
 
 impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
-    fn set_device_kind(&mut self, kind: azihsm_ddi_types::DdiDeviceKind) {
-        self.device_kind = Some(kind);
-        self.inner.set_device_kind(kind);
+    fn device_kind(&self) -> azihsm_ddi_types::DdiDeviceKind {
+        self.inner.device_kind()
     }
 
     fn exec_op<T: DdiOpReq>(
@@ -52,7 +42,7 @@ impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
             Some(fault::FaultAction::TriggerReset) => {
                 // Trigger device reset — wipes credentials, then let the op proceed
                 // so it fails naturally with CredentialsNotEstablished.
-                self.inner.simulate_nssr_after_lm()?;
+                self.inner.erase()?;
                 // Allow time for the HSM to finish processing the
                 // NSSR internally after the IOCTL returns.
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -106,7 +96,7 @@ impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
             .exec_op_fp_xts_slice(mode, xts_params, src_buf, dst_buf, fips_approved)
     }
 
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
-        self.inner.simulate_nssr_after_lm()
+    fn erase(&self) -> Result<(), DdiError> {
+        self.inner.erase()
     }
 }

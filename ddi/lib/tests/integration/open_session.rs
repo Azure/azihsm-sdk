@@ -1236,8 +1236,7 @@ fn test_thread_fn_open_session_single_winner(
     pub_key: DdiDerPublicKey,
 ) -> DdiResult<()> {
     let ddi = DdiTest::default();
-    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
+    let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
     helper_open_session(
         &dev,

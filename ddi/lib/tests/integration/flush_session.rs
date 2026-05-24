@@ -15,8 +15,7 @@ fn test_flush_app_session() {
         common_setup,
         common_cleanup,
         |_dev, ddi, path, _session_id| {
-            let mut new_dev = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut new_dev);
+            let new_dev = ddi.open_dev(path).unwrap();
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &new_dev,
                 TEST_CRED_ID,
@@ -46,8 +45,7 @@ fn test_flush_app_session_after_crash() {
         common_setup,
         common_cleanup,
         |_dev, ddi, path, _session_id| {
-            let mut new_dev = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut new_dev);
+            let new_dev = ddi.open_dev(path).unwrap();
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &new_dev,
                 TEST_CRED_ID,

@@ -141,7 +141,6 @@ fn test_get_establish_cred_encryption_key_thread_fn(
 ) -> (Vec<u8>, [u8; 32]) {
     let ddi = DdiTest::default();
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
 
     let resp = helper_get_establish_cred_encryption_key_with_sig_verify(
         &mut dev,

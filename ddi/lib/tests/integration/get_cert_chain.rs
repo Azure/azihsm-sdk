@@ -160,7 +160,6 @@ fn test_get_cert_chain_multithread() {
                 let thread = thread::spawn(move || {
                     let ddi = DdiTest::default();
                     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-                    set_device_kind(&mut dev);
 
                     thread::sleep(std::time::Duration::from_secs(2));
 
@@ -226,8 +225,7 @@ fn test_get_cert_chain_info_multithread() {
                     thread::sleep(std::time::Duration::from_secs(2));
 
                     let ddi = DdiTest::default();
-                    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-                    set_device_kind(&mut dev);
+                    let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
                     let result = helper_get_cert_chain_info(&dev);
                     assert!(result.is_ok(), "result {:?}", result);

@@ -630,8 +630,9 @@ const MCR_FP_IOCTL_OP_TYPE_DECRYPT: u8 = 1;
 pub struct DdiNixDev {
     // File handle
     file: Arc<RwLock<File>>,
-    // Device kind
-    device_kind: Option<DdiDeviceKind>,
+    // Device kind — fixed to `Physical` since this backend wraps the
+    // real Linux device driver.
+    device_kind: DdiDeviceKind,
 }
 
 impl DdiNixDev {
@@ -646,17 +647,8 @@ impl DdiNixDev {
 
         Ok(Self {
             file: Arc::new(RwLock::new(file)),
-            device_kind: None,
+            device_kind: DdiDeviceKind::Physical,
         })
-    }
-
-    /// Returns the device kind (Virtual or Physical).
-    ///
-    /// # Returns
-    ///
-    /// The device kind that was determined when the device was opened.
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        self.device_kind
     }
 
     fn map_ioctl_status(&self, ioctl_status: u32) -> Result<u32, DdiError> {
@@ -743,15 +735,12 @@ pub fn align_aad_in_place(buf: &mut Vec<u8>) {
 }
 
 impl DdiDev for DdiNixDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
-        self.device_kind = Some(kind);
+    /// `DdiNixDev` always reports [`DdiDeviceKind::Physical`] since it
+    /// wraps the real Linux device driver.
+    fn device_kind(&self) -> DdiDeviceKind {
+        self.device_kind
     }
 
     /// Execute Operation
@@ -773,7 +762,7 @@ impl DdiDev for DdiNixDev {
         const REQ_BUF_LEN: usize = 8192;
 
         let (pre_encode, post_decode) = match self.device_kind {
-            Some(DdiDeviceKind::Physical) => (true, true),
+            DdiDeviceKind::Physical => (true, true),
             _ => (false, false),
         };
 
@@ -1236,12 +1225,16 @@ impl DdiDev for DdiNixDev {
         })
     }
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
+    /// Erase the device.
+    ///
+    /// Issues an NVMe Subsystem Reset (NSSR) to the underlying device,
+    /// which discards all keys, sessions, and other cryptographic state
+    /// and returns the device to a clean, freshly-initialized state.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+    fn erase(&self) -> Result<(), DdiError> {
         let mut cmd = ResetDeviceData::default();
 
         cmd.hdr.ioctl_data_size = mem::size_of::<ResetDeviceData>() as u32;

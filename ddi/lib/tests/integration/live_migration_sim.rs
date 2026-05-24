@@ -39,8 +39,7 @@ impl ThreadSessionInfo {
         credential_lock: &Arc<RwLock<()>>,
         thread_id: usize,
     ) -> Result<Self, DdiError> {
-        let mut dev = ddi.open_dev(dev_path).unwrap();
-        set_device_kind(&mut dev);
+        let dev = ddi.open_dev(dev_path).unwrap();
 
         let _lock = credential_lock.write();
         info!(
@@ -180,10 +179,9 @@ fn test_live_migration_sim_minimum() {
     }
 
     for dev_info in dev_infos.iter() {
-        let mut dev = ddi.open_dev(&dev_info.path).unwrap();
-        set_device_kind(&mut dev);
+        let dev = ddi.open_dev(&dev_info.path).unwrap();
 
-        dev.simulate_nssr_after_lm().unwrap()
+        dev.erase().unwrap()
     }
 }
 
@@ -211,7 +209,7 @@ fn test_live_migration_sim_basic() {
             assert!(resp.is_ok(), "Failed to generate AES key: {:?}", resp);
 
             // Simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -300,7 +298,7 @@ fn test_live_migration_sealed_bk3() {
             let sealed_bk3 = helper_get_or_init_bk3(dev);
             info!("Retrieved sealed BK3 data: {} bytes", sealed_bk3.len());
 
-            let migration_result = dev.simulate_nssr_after_lm();
+            let migration_result = dev.erase();
             assert!(
                 migration_result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -355,8 +353,7 @@ fn test_live_migration_two_sessions() {
             let session_seed1 = setup_res.random_seed;
 
             // Create a new device handle for session 2
-            let mut dev2 = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut dev2);
+            let dev2 = ddi.open_dev(path).unwrap();
 
             let (encrypted_credential2, pub_key2) = encrypt_userid_pin_for_open_session(
                 &dev2,
@@ -379,7 +376,7 @@ fn test_live_migration_two_sessions() {
             let session_seed2 = TEST_SESSION_SEED;
 
             // Simulate live migration with original device handle
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -470,13 +467,12 @@ fn test_live_migration_zero_sessions() {
 
     for dev_info in dev_infos.iter() {
         let mut dev = ddi.open_dev(&dev_info.path).unwrap();
-        set_device_kind(&mut dev);
 
         // Don't open any sessions, just establish credentials
         let _ = helper_common_establish_credential_no_unwrap(&mut dev, TEST_CRED_ID, TEST_CRED_PIN);
 
         // Simulate live migration
-        let result = dev.simulate_nssr_after_lm();
+        let result = dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",
@@ -562,7 +558,7 @@ fn test_close_session_after_live_migration_sim() {
             let setup_res = common_setup_for_lm(dev, ddi, path);
             let session_id = setup_res.session_id;
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -642,7 +638,7 @@ fn test_live_migration_reopen_new_device_handle() {
         common_cleanup,
         |dev, ddi, path, session_id| {
             // Simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -651,7 +647,6 @@ fn test_live_migration_reopen_new_device_handle() {
 
             // Create a new device handle
             let mut new_dev = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut new_dev);
 
             let _ = helper_common_establish_credential_no_unwrap(
                 &mut new_dev,
@@ -703,7 +698,7 @@ fn test_live_migration_repeated_cycles() {
                 info!("Starting live migration cycle {}", i);
 
                 // Simulate live migration
-                let result = dev.simulate_nssr_after_lm();
+                let result = dev.erase();
                 assert!(
                     result.is_ok(),
                     "Migration simulation should succeed on cycle {}: {:?}",
@@ -791,7 +786,6 @@ fn test_live_migration_concurrent_shared_session() {
 
     // Setup: Create device and establish initial session
     let mut dev = ddi.open_dev(&dev_info.path).unwrap();
-    set_device_kind(&mut dev);
 
     // Initialize and open session
     let setup_res = common_setup_for_lm(&mut dev, &ddi, &dev_info.path);
@@ -818,7 +812,7 @@ fn test_live_migration_concurrent_shared_session() {
             // Simulate live migration
             {
                 let dev_guard = dev_clone.write();
-                let result = dev_guard.simulate_nssr_after_lm();
+                let result = dev_guard.erase();
                 if result.is_err() {
                     return Err(format!("Migration failed on cycle {}: {:?}", i, result));
                 }
@@ -994,7 +988,6 @@ fn test_live_migration_concurrent_separate_sessions() {
 
     // Create a main device handle for credential establishment
     let mut main_dev = ddi.open_dev(&dev_info.path).unwrap();
-    set_device_kind(&mut main_dev);
 
     // Setup for live migration
     let setup_res = common_setup_for_lm(&mut main_dev, &ddi, &dev_info.path);
@@ -1123,7 +1116,6 @@ fn test_live_migration_concurrent_separate_sessions() {
 
     // Create a single migration device for triggering migrations
     let mut migration_dev = ddi.open_dev(&dev_info.path).unwrap();
-    set_device_kind(&mut migration_dev);
 
     let barrier = Arc::new(Barrier::new(1 + NUM_SESSION_THREADS)); // 1 migration thread + session threads
 
@@ -1142,7 +1134,7 @@ fn test_live_migration_concurrent_separate_sessions() {
             {
                 let _write_lock = credential_lock_clone.write();
 
-                let result = migration_dev.simulate_nssr_after_lm();
+                let result = migration_dev.erase();
                 if result.is_err() {
                     eprintln!(
                         "Migration Thread: Migration simulation failed on cycle {}: {:?}",
@@ -1244,7 +1236,7 @@ fn test_get_cert_chain_info_during_live_migration() {
             let (_cert_count, hash1) = helper_get_cert_chain_info_data(dev);
 
             // Simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1282,7 +1274,7 @@ fn test_get_cert_hash_during_live_migration() {
             );
 
             // Simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",

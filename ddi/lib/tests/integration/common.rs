@@ -103,7 +103,6 @@ pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) 
     let mut setup_dev = ddi.open_dev(path).unwrap();
 
     // Set Device Kind
-    set_device_kind(&mut setup_dev);
 
     let _ =
         helper_common_establish_credential_no_unwrap(&mut setup_dev, TEST_CRED_ID, TEST_CRED_PIN);
@@ -148,7 +147,7 @@ pub fn common_cleanup(
     }
 
     let cleanup_dev = ddi.open_dev(path).unwrap();
-    let resp = cleanup_dev.simulate_nssr_after_lm();
+    let resp = cleanup_dev.erase();
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 }
@@ -487,7 +486,6 @@ pub fn common_setup_for_lm(
     let mut setup_dev = ddi.open_dev(path).unwrap();
 
     // Set Device Kind
-    set_device_kind(&mut setup_dev);
 
     let masked_bk3 = helper_get_or_init_bk3(&setup_dev);
 
@@ -597,13 +595,6 @@ pub fn get_device_kind(dev: &mut <DdiTest as Ddi>::Dev) -> DdiDeviceKind {
     let resp = helper_get_device_info(dev, None, Some(DdiApiRev { major: 1, minor: 0 })).unwrap();
 
     resp.data.kind
-}
-
-#[allow(unused)]
-pub fn set_device_kind(dev: &mut <DdiTest as Ddi>::Dev) {
-    let result = get_device_kind(dev);
-
-    dev.set_device_kind(result);
 }
 
 #[allow(unused)]
@@ -1318,8 +1309,6 @@ pub fn reopen_session_with_short_app_id(
     session_id: u16,
 ) -> (u16, u8) {
     close_app_session(dev, session_id);
-
-    set_device_kind(dev);
 
     let (encrypted_credential, pub_key) =
         encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
@@ -2257,7 +2246,6 @@ pub fn ddi_dev_test(
 
     for dev_info in dev_infos.iter() {
         let mut dev = ddi.open_dev(&dev_info.path).unwrap();
-        set_device_kind(&mut dev);
 
         let setup_session_id = setup(&mut dev, &ddi, &dev_info.path);
         test(&mut dev, &ddi, &dev_info.path, setup_session_id);
@@ -2267,10 +2255,7 @@ pub fn ddi_dev_test(
 
 #[allow(dead_code)]
 pub fn open_dev_and_set_device_kind(ddi: &DdiTest, path: &str) -> <DdiTest as Ddi>::Dev {
-    let mut dev = ddi.open_dev(path).unwrap();
-    set_device_kind(&mut dev);
-
-    dev
+    ddi.open_dev(path).unwrap()
 }
 
 #[cfg(test)]

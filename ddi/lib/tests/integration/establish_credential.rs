@@ -840,8 +840,7 @@ fn test_thread_fn(
     pota_pub_key: Vec<u8>,
 ) -> DdiResult<()> {
     let ddi = DdiTest::default();
-    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
+    let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
     helper_establish_credential(
         &dev,
@@ -1132,7 +1131,7 @@ fn test_establish_credential_after_reset() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",

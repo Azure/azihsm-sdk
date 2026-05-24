@@ -77,15 +77,6 @@ impl DdiMockDev {
             dispatcher: G_DISPATCHER.clone(),
         })
     }
-
-    /// Returns the device kind (Virtual or Physical).
-    ///
-    /// # Returns
-    ///
-    /// The device kind that was determined when the device was opened.
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        Some(DdiDeviceKind::Virtual)
-    }
 }
 
 impl Drop for DdiMockDev {
@@ -161,15 +152,11 @@ fn validate_request(
 }
 
 impl DdiDev for DdiMockDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
-        assert_eq!(kind, DdiDeviceKind::Virtual);
+    /// `DdiMockDev` always reports [`DdiDeviceKind::Virtual`].
+    fn device_kind(&self) -> DdiDeviceKind {
+        DdiDeviceKind::Virtual
     }
 
     /// Execute Operation
@@ -646,13 +633,16 @@ impl DdiDev for DdiMockDev {
         Ok(mcr_ddi_aes_xts_result)
     }
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
-    /// For mock device, we call a migration_sim function on the dispatcher
+    /// Erase the device.
+    ///
+    /// For the mock backend, delegates to the dispatcher's migration
+    /// simulator which discards all keys, sessions, and other
+    /// cryptographic state, returning the device to a clean state.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+    fn erase(&self) -> Result<(), DdiError> {
         self.dispatcher
             .write()
             .dispatch_migration_sim()

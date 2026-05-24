@@ -169,14 +169,13 @@ pub enum DriverError {
 
 /// Device Trait
 pub trait DdiDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind);
+    /// The kind is fixed at construction time per backend
+    /// (`DdiDeviceKind::Virtual` for mock; `DdiDeviceKind::Physical`
+    /// for nix/win/emu). Used by the host-side codec to select the
+    /// matching wire-format mode.
+    fn device_kind(&self) -> DdiDeviceKind;
 
     /// Execute Operation
     ///
@@ -280,10 +279,15 @@ pub trait DdiDev {
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError>;
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
+    /// Erase the device.
+    ///
+    /// Erases all keys and other cryptographic state on the device,
+    /// returning it to a clean, freshly-initialized state. Sessions,
+    /// vault entries, sealed BK3, and any other state established
+    /// since the last erase are discarded.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError>;
+    fn erase(&self) -> Result<(), DdiError>;
 }

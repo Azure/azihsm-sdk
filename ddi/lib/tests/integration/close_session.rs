@@ -261,7 +261,7 @@ fn test_close_session_after_lm() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",

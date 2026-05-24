@@ -31,10 +31,9 @@ fn test_change_pin() {
 
             // Try to login with original credential should fail
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -56,10 +55,9 @@ fn test_change_pin() {
 
             // Try to login with new ALT credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -117,10 +115,9 @@ fn test_change_pin_tampered_pin() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -164,10 +161,9 @@ fn test_change_pin_tampered_iv() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -211,10 +207,9 @@ fn test_change_pin_tampered_nonce() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -259,10 +254,9 @@ fn test_change_pin_tampered_tag() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -307,10 +301,9 @@ fn test_change_pin_tampered_pub_key() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -353,10 +346,9 @@ fn test_change_pin_null_pin() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -475,10 +467,9 @@ fn test_change_pin_same_pin() {
 
             // Try to login with original credential should succeed
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -499,10 +490,9 @@ fn test_change_pin_same_pin() {
 
             // Try to login with new ALT credential should fail
             {
-                let mut new_dev = ddi.open_dev(path).unwrap();
+                let new_dev = ddi.open_dev(path).unwrap();
 
                 // Set Device Kind
-                set_device_kind(&mut new_dev);
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
@@ -589,8 +579,7 @@ fn test_change_pin_multi_threaded_single_winner() {
             let mut dev_list = Vec::new();
             for _ in 0..thread_count {
                 let ddi = DdiTest::default();
-                let mut dev_item = ddi.open_dev(path).unwrap();
-                set_device_kind(&mut dev_item);
+                let dev_item = ddi.open_dev(path).unwrap();
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &dev_item,
                     TEST_CRED_ID,

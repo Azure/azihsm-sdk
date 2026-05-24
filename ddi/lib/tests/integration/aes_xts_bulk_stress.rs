@@ -63,8 +63,7 @@ fn test_aes_xts_encrypt_decrypt_thread_fn(
     max_attempts: usize,
 ) {
     let ddi = DdiTest::default();
-    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
+    let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
     let mut app_sess_id = None;
     let mut short_app_id = None;

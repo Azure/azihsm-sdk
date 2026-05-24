@@ -93,7 +93,7 @@ pub struct DdiEmuDev {
     hsm: Arc<StdHsm>,
     handle: Handle,
     session: Arc<Mutex<SessionState>>,
-    device_kind: Option<DdiDeviceKind>,
+    device_kind: DdiDeviceKind,
 }
 
 impl DdiEmuDev {
@@ -125,29 +125,20 @@ impl DdiEmuDev {
             hsm,
             handle,
             session: Arc::new(Mutex::new(SessionState::default())),
-            device_kind: None,
+            device_kind: DdiDeviceKind::Physical,
         })
-    }
-
-    /// Returns the device kind previously set via [`set_device_kind`].
-    ///
-    /// This is used by the host-side MBOR encoder / decoder to select the
-    /// wire-format mode that matches the firmware's expectations.
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        self.device_kind
     }
 }
 
 impl DdiDev for DdiEmuDev {
-    /// Stores the device kind so that the [`MborEncoder`] /
-    /// [`MborDecoder`] can be opened in the matching wire-format mode in
-    /// [`exec_op`](Self::exec_op). Mirrors `DdiNixDev` / `DdiWinDev`,
-    /// which also accept any kind without validation — the firmware
-    /// running under [`StdHsm`] reports [`DdiDeviceKind::Physical`], and
-    /// it is up to the request and response types to honour the matching
-    /// `pre_encode` / `post_decode` hooks.
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
-        self.device_kind = Some(kind);
+    /// Returns the device kind.
+    ///
+    /// `DdiEmuDev` always reports [`DdiDeviceKind::Physical`] since the
+    /// firmware running under [`StdHsm`] reports
+    /// [`DdiDeviceKind::Physical`] and the host-side MBOR codec is
+    /// configured to match.
+    fn device_kind(&self) -> DdiDeviceKind {
+        self.device_kind
     }
 
     fn exec_op<T: DdiOpReq>(
@@ -162,7 +153,7 @@ impl DdiDev for DdiEmuDev {
         // with the corresponding flag set. See `ddi/nix/src/dev.rs` for
         // the canonical mapping.
         let (pre_encode, post_decode) = match self.device_kind {
-            Some(DdiDeviceKind::Physical) => (true, true),
+            DdiDeviceKind::Physical => (true, true),
             _ => (false, false),
         };
 
@@ -301,9 +292,13 @@ impl DdiDev for DdiEmuDev {
         Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))
     }
 
-    /// `simulate_nssr_after_lm` simulates an NVMe Subsystem Reset that
-    /// follows a live migration.
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+    /// Erase the device.
+    ///
+    /// For the emulator backend, this disables and re-enables the
+    /// emulator partition (matching what real hardware does on NSSR)
+    /// and clears the session state, returning the device to a clean
+    /// state.
+    fn erase(&self) -> Result<(), DdiError> {
         // Reset partition state: disable then re-enable. This
         // matches what real hardware does on NSSR.
         self.handle
@@ -419,7 +414,6 @@ mod tests {
     use azihsm_ddi_interface::Ddi;
     use azihsm_ddi_interface::DdiDev;
     use azihsm_ddi_types::DdiApiRev;
-    use azihsm_ddi_types::DdiDeviceKind;
     use azihsm_ddi_types::DdiGetApiRevCmdReq;
     use azihsm_ddi_types::DdiGetApiRevReq;
     use azihsm_ddi_types::DdiOp;
@@ -431,8 +425,7 @@ mod tests {
     #[test]
     fn get_api_rev_round_trips_through_emulator() {
         let ddi = DdiEmu::default();
-        let mut dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open emu device");
-        dev.set_device_kind(DdiDeviceKind::Virtual);
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open emu device");
 
         let req = DdiGetApiRevCmdReq {
             hdr: DdiReqHdr {

@@ -140,8 +140,7 @@ fn test_ecc_generate_session_only_key_with_key_tag() {
         common_setup,
         common_cleanup,
         |_dev, ddi, path, _session_id| {
-            let mut session_only_key_dev = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut session_only_key_dev);
+            let session_only_key_dev = ddi.open_dev(path).unwrap();
 
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &session_only_key_dev,
@@ -190,8 +189,7 @@ fn test_ecc_generate_session_only_key() {
         common_setup,
         common_cleanup,
         |_dev, ddi, path, _session_id| {
-            let mut session_only_key_dev = ddi.open_dev(path).unwrap();
-            set_device_kind(&mut session_only_key_dev);
+            let session_only_key_dev = ddi.open_dev(path).unwrap();
 
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &session_only_key_dev,

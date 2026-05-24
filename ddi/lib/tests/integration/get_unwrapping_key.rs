@@ -105,7 +105,6 @@ fn test_get_unwrapping_key_thread_fn(
 ) -> Vec<u8> {
     let ddi = DdiTest::default();
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
 
     let mut app_sess_id = None;
 

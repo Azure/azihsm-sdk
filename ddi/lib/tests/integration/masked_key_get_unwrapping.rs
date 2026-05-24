@@ -62,7 +62,7 @@ fn test_masked_key_get_unwrapping_with_lm() {
                 MaskedKeyAttributes::UNWRAP | MaskedKeyAttributes::LOCAL
             ));
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",

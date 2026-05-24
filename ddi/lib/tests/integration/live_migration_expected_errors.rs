@@ -24,7 +24,7 @@ fn test_get_establish_cred_encryption_key_after_lm() {
         let (_signature, _pota_pub_key) = helper_get_pota_endorsement(dev);
 
         // Execute NSSR to simulate live migration
-        let result = dev.simulate_nssr_after_lm();
+        let result = dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",
@@ -51,7 +51,7 @@ fn test_establish_credential_after_lm() {
             encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
         // Execute NSSR to simulate live migration
-        let result = dev.simulate_nssr_after_lm();
+        let result = dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",
@@ -99,7 +99,7 @@ fn test_get_session_encryption_key_after_lm() {
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
             // Execute NSSR to simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -148,7 +148,7 @@ fn test_open_session_after_lm() {
             );
 
             // Execute NSSR to simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -192,7 +192,7 @@ fn test_reopen_session_after_lm() {
             );
 
             // Execute NSSR to simulate live migration
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -226,7 +226,7 @@ fn test_reopen_session_after_lm() {
 fn test_get_cert_info_after_lm() {
     ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
         // Execute NSSR to simulate live migration
-        let result = dev.simulate_nssr_after_lm();
+        let result = dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",
@@ -245,7 +245,7 @@ fn test_get_cert_after_lm() {
         let cert_info = helper_get_cert_chain_info(dev).unwrap();
 
         // Execute NSSR to simulate live migration
-        let result = dev.simulate_nssr_after_lm();
+        let result = dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",
@@ -264,7 +264,6 @@ fn test_establish_credential_before_after_lm() {
         let mut test_dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
-        set_device_kind(&mut test_dev);
 
         let result = helper_common_establish_credential_no_unwrap(
             &mut test_dev,
@@ -279,7 +278,7 @@ fn test_establish_credential_before_after_lm() {
         );
 
         // Execute NSSR to simulate live migration
-        let result = test_dev.simulate_nssr_after_lm();
+        let result = test_dev.erase();
         assert!(
             result.is_ok(),
             "Migration simulation should succeed: {:?}",

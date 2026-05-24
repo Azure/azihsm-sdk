@@ -160,8 +160,7 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
     parent_session: u16,
 ) {
     let ddi = DdiTest::default();
-    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
+    let dev = ddi.open_dev(device_path.as_str()).unwrap();
     let mut app_sess_id = None;
     let mut short_app_id = None;
 

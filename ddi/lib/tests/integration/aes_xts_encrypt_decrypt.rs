@@ -23,7 +23,6 @@ fn test_aes_xts_encrypt_decrypt() {
             );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            set_device_kind(dev);
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 dev,
                 TEST_CRED_ID,
@@ -125,7 +124,6 @@ fn test_aes_xts_encrypt_with_identical_key_content() {
             );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            set_device_kind(dev);
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 dev,
                 TEST_CRED_ID,
@@ -233,7 +231,6 @@ fn test_aes_xts_encrypt_with_gcm_key_in_the_mix() {
             );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            set_device_kind(dev);
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 dev,
                 TEST_CRED_ID,

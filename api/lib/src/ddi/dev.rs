@@ -117,11 +117,7 @@ pub(crate) fn dev_paths() -> Vec<String> {
 
 impl HsmDev {
     /// Returns the device kind (Virtual or Physical).
-    ///
-    /// # Returns
-    ///
-    /// The device kind that was queried when the device was opened.
-    pub(crate) fn device_kind(&self) -> Option<DdiDeviceKind> {
+    pub(crate) fn device_kind(&self) -> DdiDeviceKind {
         self.0.device_kind()
     }
 }
@@ -169,47 +165,8 @@ pub(crate) fn dev_info_by_path(path: &str) -> HsmResult<DevInfo> {
 /// - The underlying DDI operation fails
 #[tracing::instrument(skip_all, fields(path = path))]
 pub(crate) fn open_dev(path: &str) -> HsmResult<HsmDev> {
-    let mut dev = DDI.open_dev(path).map(HsmDev).map_err(HsmError::from)?;
-
-    // Retrieve and set the device kind for the opened device.
-    let dev_kind = get_device_kind(&dev)?;
-    dev.set_device_kind(dev_kind);
-
+    let dev = DDI.open_dev(path).map(HsmDev).map_err(HsmError::from)?;
     Ok(dev)
-}
-
-/// Retrieves the device kind/type from the HSM device.
-///
-/// Queries the device for its kind identifier, which indicates the specific
-/// type or model of the HSM device.
-///
-/// # Arguments
-///
-/// * `dev` - The HSM device handle
-///
-/// # Returns
-///
-/// Returns the device kind identifier.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - API revision retrieval fails
-/// - Device communication fails
-/// - The DDI operation returns an error
-/// - The device is not responding
-fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
-    let (_, max_rev) = get_api_rev(dev)?;
-
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::GetDeviceInfo, Some(max_rev), None),
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
-
-    Ok(resp.data.kind)
 }
 
 /// Converts a DDI device kind to an HSM partition type.

@@ -13,7 +13,7 @@ pub fn setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 
     let session_id = common_setup(dev, ddi, path);
 
     // Execute NSSR to remove establish credential status.
-    let result = dev.simulate_nssr_after_lm();
+    let result = dev.erase();
     assert!(
         result.is_ok(),
         "Migration simulation should succeed: {:?}",
@@ -34,7 +34,6 @@ fn test_part_prov_test_provisioning() {
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
-        set_device_kind(&mut dev);
 
         let mut bk3 = vec![0u8; 48];
         Rng::rand_bytes(&mut bk3).unwrap();
@@ -86,7 +85,7 @@ fn test_part_prov_test_lm() {
             );
 
             // simulate LM
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -95,7 +94,6 @@ fn test_part_prov_test_lm() {
 
             let mut setup_dev = ddi.open_dev(path).unwrap();
             // Set Device Kind
-            set_device_kind(&mut setup_dev);
 
             let _ = helper_common_establish_credential_with_bmk(
                 &mut setup_dev,
@@ -147,7 +145,7 @@ fn test_part_prov_fail_then_succeed() {
             );
 
             // simulate LM
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -156,7 +154,6 @@ fn test_part_prov_fail_then_succeed() {
 
             let mut setup_dev = ddi.open_dev(path).unwrap();
             // Set Device Kind
-            set_device_kind(&mut setup_dev);
 
             // Try establish credential with invalid partition_bmk
             let mut random_bmk = [0u8; 48];

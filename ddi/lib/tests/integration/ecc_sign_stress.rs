@@ -53,8 +53,7 @@ fn test_ecc_sign_multi_threaded_stress() {
 
 fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
     let ddi = DdiTest::default();
-    let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
-    set_device_kind(&mut dev);
+    let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
     let mut app_sess_id = None;
 

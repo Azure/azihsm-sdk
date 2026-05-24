@@ -77,9 +77,7 @@ fn test_masked_key_ecc_521() {
 }
 
 fn test_ecc_session_only_key_gen(ddi: &DdiTest, path: &str, curve: DdiEccCurve) {
-    let mut session_only_key_dev = ddi.open_dev(path).unwrap();
-
-    set_device_kind(&mut session_only_key_dev);
+    let session_only_key_dev = ddi.open_dev(path).unwrap();
 
     let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
         &session_only_key_dev,

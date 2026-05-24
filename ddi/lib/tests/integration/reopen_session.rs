@@ -26,7 +26,7 @@ fn test_reopen_session_with_session() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -73,7 +73,7 @@ fn test_reopen_session_without_revision() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -124,7 +124,7 @@ fn test_reopen_session() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -177,7 +177,7 @@ fn test_reopen_session_mismatch_sessions() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -240,7 +240,7 @@ fn test_reopen_session_invalid_public_key_p384_y_as_prime() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -298,7 +298,7 @@ fn test_reopen_session_invalid_public_key_p384_x_as_prime() {
 
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -351,7 +351,7 @@ fn test_reopen_session_invalid_public_key_p384_not_on_curve() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -409,7 +409,7 @@ fn test_reopen_session_invalid_public_key_p384_point_at_infinity() {
 
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -462,7 +462,7 @@ fn test_reopen_session_without_get_key() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -537,7 +537,7 @@ fn test_reopen_session_multiple() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -605,7 +605,7 @@ fn test_reopen_session_tamper_id() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -658,7 +658,7 @@ fn test_reopen_session_tamper_pin() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -711,7 +711,7 @@ fn test_reopen_session_tamper_iv() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -759,7 +759,7 @@ fn test_reopen_session_tamper_nonce() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -807,7 +807,7 @@ fn test_reopen_session_tamper_tag() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -855,7 +855,7 @@ fn test_reopen_session_tamper_pub_key() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -903,7 +903,7 @@ fn test_reopen_session_null_id() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -949,7 +949,7 @@ fn test_reopen_session_null_pin() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -995,7 +995,7 @@ fn test_reopen_session_verify_nonce_change() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1060,7 +1060,7 @@ fn test_reopen_session_verify_public_key_not_change() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1125,7 +1125,7 @@ fn test_reopen_session_null_id_then_proper_id() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1208,7 +1208,7 @@ fn test_reopen_session_incorrect_id() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1254,7 +1254,7 @@ fn test_reopen_session_incorrect_pin() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1304,7 +1304,7 @@ fn test_reopen_session_dest_smaller_svn() {
             }
 
             let setup_res = common_setup_for_lm(dev, ddi, path);
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
@@ -1416,7 +1416,7 @@ fn test_reopen_session_multi_threaded_single_winner() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let result = dev.simulate_nssr_after_lm();
+            let result = dev.erase();
             assert!(
                 result.is_ok(),
                 "Migration simulation should succeed: {:?}",
