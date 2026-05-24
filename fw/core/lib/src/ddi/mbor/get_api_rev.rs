@@ -43,7 +43,7 @@ pub(crate) fn get_api_rev<'p, P: HsmPal>(
     };
 
     let resp = pal.dma_alloc_var(io, |buf| {
-        ddi::encode_resp(&ddi::success_hdr(hdr, DdiOp::GetApiRev), &resp_data, buf)
+        super::encode_resp(&super::success_hdr(hdr, DdiOp::GetApiRev), &resp_data, buf)
     })?;
 
     Ok(resp)

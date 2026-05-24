@@ -74,9 +74,6 @@ pub struct Precheck {
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
-    /// Skip OpenSSL installation during setup
-    #[clap(long)]
-    pub skip_openssl: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -124,7 +121,6 @@ impl Xtask for Precheck {
                 config: self.config,
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
-                skip_openssl: self.skip_openssl,
             }
             .run(ctx.clone())?;
         }
@@ -213,7 +209,22 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi_mbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or(Some("ci-mock-table-64".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
+
+                    // SDK Run azihsm_ddi_tbor_types tests through the emu
+                    // backend (in-process firmware).
+                    Nextest {
+                        features: Some("emu".to_string()),
+                        package: Some("azihsm_ddi_tbor_types".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self.profile.or(Some("ci-tbor-emu".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;

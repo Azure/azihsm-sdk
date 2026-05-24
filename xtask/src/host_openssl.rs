@@ -41,8 +41,64 @@ fn has_openssl_headers(prefix: &Path) -> bool {
     prefix.join("include/openssl/opensslv.h").is_file()
 }
 
+/// Parse `OPENSSL_VERSION_MAJOR` from `<prefix>/include/openssl/opensslv.h`,
+/// if the file is present and the macro can be read.
+#[cfg(target_os = "linux")]
+fn openssl_version_major(prefix: &Path) -> Option<u32> {
+    let header = prefix.join("include/openssl/opensslv.h");
+    let contents = std::fs::read_to_string(&header).ok()?;
+    for line in contents.lines() {
+        // Looking for: `# define OPENSSL_VERSION_MAJOR  3`
+        let line = line.trim_start();
+        let Some(rest) = line.strip_prefix('#') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix("define") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix("OPENSSL_VERSION_MAJOR") else {
+            continue;
+        };
+        // Must be followed by whitespace (so we don't match
+        // OPENSSL_VERSION_MAJORXYZ) and then the integer literal.
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        return rest.split_whitespace().next()?.parse::<u32>().ok();
+    }
+    None
+}
+
+/// Validate that the prefix points at an OpenSSL 3.x install: headers must
+/// be present, and `OPENSSL_VERSION_MAJOR` must be at least 3. Returns an
+/// error with concrete remediation guidance otherwise.
+#[cfg(target_os = "linux")]
+fn validate_prefix(prefix: &Path) -> anyhow::Result<()> {
+    if !has_openssl_headers(prefix) {
+        anyhow::bail!(
+            "{:?} does not contain include/openssl/opensslv.h",
+            prefix.display()
+        );
+    }
+    match openssl_version_major(prefix) {
+        Some(major) if major >= 3 => Ok(()),
+        Some(major) => anyhow::bail!(
+            "OpenSSL at {} is version {major}.x; the azihsm OpenSSL provider \
+             requires OpenSSL 3.x. Install a 3.x development package or \
+             point OPENSSL_DIR at a 3.x prefix.",
+            prefix.display(),
+        ),
+        None => anyhow::bail!(
+            "could not parse OPENSSL_VERSION_MAJOR from {}/include/openssl/opensslv.h",
+            prefix.display(),
+        ),
+    }
+}
+
 /// Returns the OpenSSL prefix exposed by `pkg-config --variable=prefix openssl`,
-/// if `pkg-config` is available and the openssl package is registered.
+/// if `pkg-config` is available and the resolved prefix is OpenSSL 3.x.
 #[cfg(target_os = "linux")]
 fn pkg_config_prefix() -> Option<PathBuf> {
     let output = Command::new("pkg-config")
@@ -57,14 +113,16 @@ fn pkg_config_prefix() -> Option<PathBuf> {
         return None;
     }
     let path = PathBuf::from(prefix);
-    has_openssl_headers(&path).then_some(path)
+    validate_prefix(&path).ok().map(|_| path)
 }
 
 /// Discovers the host's OpenSSL 3.x installation prefix.
 ///
 /// Honours `OPENSSL_DIR` if set; otherwise falls back to `pkg-config` and
-/// a handful of well-known distro prefixes. Returns an error with concrete
-/// remediation guidance if nothing is found.
+/// a handful of well-known distro prefixes. Each candidate is validated
+/// to contain OpenSSL ≥ 3.0 headers; 1.x installs (or any non-3.x
+/// `opensslv.h`) are rejected with a clear error message. Returns an
+/// error with concrete remediation guidance if nothing is found.
 #[cfg(target_os = "linux")]
 pub fn check_openssl() -> anyhow::Result<PathBuf> {
     if let Ok(val) = std::env::var("OPENSSL_DIR") {
@@ -79,12 +137,7 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
         if !path.is_dir() {
             anyhow::bail!("OPENSSL_DIR={trimmed:?} does not point to an existing directory.");
         }
-        if !has_openssl_headers(&path) {
-            anyhow::bail!(
-                "OPENSSL_DIR={trimmed:?} does not contain include/openssl/opensslv.h. \
-                 Point it at an OpenSSL 3.x install prefix (e.g. /usr or /usr/local)."
-            );
-        }
+        validate_prefix(&path)?;
         log::info!("using OPENSSL_DIR={trimmed}");
         return Ok(path);
     }
@@ -96,7 +149,7 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
 
     for candidate in WELL_KNOWN_PREFIXES {
         let path = PathBuf::from(candidate);
-        if has_openssl_headers(&path) {
+        if validate_prefix(&path).is_ok() {
             log::info!("using OpenSSL from {candidate}");
             return Ok(path);
         }
@@ -104,9 +157,10 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
 
     anyhow::bail!(
         "No OpenSSL 3.x installation found. Either:\n  \
-           - set OPENSSL_DIR to a prefix containing include/openssl/opensslv.h, or\n  \
-           - install your distro's OpenSSL development package (e.g. `apt install libssl-dev` \
-             or `dnf install openssl-devel`).\n\
+           - set OPENSSL_DIR to a prefix containing include/openssl/opensslv.h \
+             with OPENSSL_VERSION_MAJOR >= 3, or\n  \
+           - install your distro's OpenSSL 3.x development package (e.g. \
+             `apt install libssl-dev` or `dnf install openssl-devel`).\n\
          The azihsm OpenSSL provider supports any OpenSSL 3.x version."
     );
 }

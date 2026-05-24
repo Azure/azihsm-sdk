@@ -38,8 +38,8 @@ pub(crate) async fn get_establish_cred_encryption_key<'p, P: HsmPal>(
     let id_priv_key = pal.vault_key(io, pal.part_id_key_id(io)?)?;
 
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
-        let mut encoder = ddi::encode_resp_hdr(
-            &ddi::success_hdr(hdr, DdiOp::GetEstablishCredEncryptionKey),
+        let mut encoder = super::encode_resp_hdr(
+            &super::success_hdr(hdr, DdiOp::GetEstablishCredEncryptionKey),
             buf,
         )?;
         let layout = DdiGetEstablishCredEncryptionKeyResp::reserve(

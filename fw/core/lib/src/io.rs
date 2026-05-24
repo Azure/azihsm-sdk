@@ -6,7 +6,7 @@
 //! # Pipeline
 //!
 //! ```text
-//!  poll_io ──► handle_io ──► handle_{generic,flush}_op
+//!  poll_io ──► handle_io ──► handle_{mbor,tbor,flush}_op
 //!                  │              │                    │
 //!                  │         validate SQE         validate op
 //!                  │         dispatch opcode      in-DMA
@@ -30,13 +30,18 @@
 //!
 //! # Session control
 //!
-//! Each DDI op maps to a [`SessionCtrl`] kind (NoSession, Open,
+//! Each MBOR DDI op maps to a [`SessionCtrl`] kind (NoSession, Open,
 //! InSession, Close). Session hijack protection validates the SQE
 //! session flags against the decoded DDI header before dispatch.
 //! Session state flows back via [`HsmOpStatus`] → CQE DW0/DW1.
+//!
+//! TBOR commands currently use [`SessionCtrl::NoSession`] only (the
+//! first migration target is `GetApiRev`); per-opcode session mapping
+//! will be added when sessioned TBOR commands land.
 
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_types::DdiReqHdr;
+use azihsm_fw_ddi_tbor::RequestView as TborRequestView;
 
 use super::*;
 
@@ -62,7 +67,8 @@ impl<P: HsmPal> Hsm<P> {
         let op_result = match validated {
             Err(e) => Err(e),
             Ok(()) => match op {
-                OP_GENERIC => self.handle_generic_op(&mut io).await,
+                OP_MBOR => self.handle_mbor_op(&mut io).await,
+                OP_TBOR => self.handle_tbor_op(&mut io).await,
                 OP_FLUSH => self.handle_flush_op(&mut io).await,
                 _ => Err(OpError::new(
                     HsmError::UnsupportedCmd,
@@ -122,15 +128,15 @@ impl<P: HsmPal> Hsm<P> {
         }
     }
 
-    /// Handles an [`OP_GENERIC`] IO command.
+    /// Handles an [`OP_MBOR`] IO command.
     ///
     /// **Phase 1 (pre-decode)** — SQE validation, inbound DMA, header
     /// decode. Errors → [`OpError`] → CQE host status, no DDI body.
     ///
     /// **Phase 2 (post-decode)** — Session validation, DDI dispatch.
     /// Errors → DDI error response DMA'd to host, CQE Success.
-    async fn handle_generic_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
-        let params = Self::decode_generic_sqe(io)?;
+    async fn handle_mbor_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+        let params = Self::decode_io_sqe(io)?;
         let split = params.src_len.next_multiple_of(4);
         let req_buf = self
             .pal()
@@ -165,13 +171,13 @@ impl<P: HsmPal> Hsm<P> {
                 params.session_flags,
                 params.sqe_session_id,
             ) {
-                Ok(()) => ddi::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
                 Err(e) => Err(e),
             };
 
             let resp: &DmaBuf = dispatch_result.or_else(|status| {
                 self.pal()
-                    .dma_alloc_var(io, |buf| ddi::encode_ddi_err(hdr.op, status, buf))
+                    .dma_alloc_var(io, |buf| ddi::mbor::encode_ddi_err(hdr.op, status, buf))
                     .op_status(HostStatus::INTERNAL_ERROR)
                     .map(|b| &*b)
             })?;
@@ -194,13 +200,92 @@ impl<P: HsmPal> Hsm<P> {
         Ok(HsmOpStatus::new(resp_len, session_ctrl, None, None, false))
     }
 
-    /// Validates the SQE for an [`OP_GENERIC`] IO command and extracts
-    /// the fields used by [`Self::handle_generic_op`].
+    /// Handles an [`OP_TBOR`] IO command.
+    ///
+    /// Mirrors [`Self::handle_mbor_op`] but parses the request body via
+    /// the TBOR codec and dispatches by raw `u8` opcode. TBOR commands
+    /// are currently sessionless; SQE session flags must indicate
+    /// [`SessionCtrl::NoSession`].
+    ///
+    /// **Phase 1 (pre-decode)** — SQE validation, inbound DMA, TBOR
+    /// `RequestView::parse`. Errors → [`OpError`] → CQE host status.
+    ///
+    /// **Phase 2 (post-decode)** — Dispatch by opcode. Errors are
+    /// returned as a TBOR response carrying a non-zero `status` field
+    /// (built by the per-opcode handlers via the encoder API). For now,
+    /// dispatch errors that cannot construct a typed error response
+    /// surface as CQE-level host status codes.
+    async fn handle_tbor_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+        let params = Self::decode_io_sqe(io)?;
+        let split = params.src_len.next_multiple_of(4);
+        let req_buf = self
+            .pal()
+            .dma_alloc(io, split)
+            .op_status(HostStatus::ALLOC_ERR)?;
+
+        // ── Phase 1: inbound DMA (yield 1) ─────────────────────────
+        self.pal()
+            .copy_mem_from_host(io, params.src_addr, &mut req_buf[..params.src_len], true)
+            .await
+            .op_err(
+                "core",
+                HsmError::FailedToStartDmaTransaction,
+                HostStatus::DMA_TXN_ERROR,
+            )?;
+
+        // ── Phase 2: parse TBOR header, validate session, dispatch ─
+        let (resp, session_ctrl) = {
+            let req_bytes = &req_buf[..params.src_len];
+            let req_view = TborRequestView::parse(req_bytes).op_err(
+                "core",
+                HsmError::DdiDecodeFailed,
+                HostStatus::REQ_HDR_DECODE_ERR,
+            )?;
+
+            // TBOR currently has no sessioned commands; require NoSession.
+            let session_ctrl = SessionCtrl::NoSession;
+            if let Err(_e) =
+                Self::validate_session_no_session(params.session_flags, params.sqe_session_id)
+            {
+                let resp: &DmaBuf = self
+                    .pal()
+                    .dma_alloc_var(io, |buf| {
+                        ddi::tbor::encode_tbor_err(req_view.opcode(), HsmError::InvalidArg, buf)
+                    })
+                    .op_status(HostStatus::INTERNAL_ERROR)?;
+                (resp, session_ctrl)
+            } else {
+                let opcode = req_view.opcode();
+                let resp: &DmaBuf = self
+                    .pal()
+                    .dma_alloc_var(io, |buf| ddi::tbor::dispatch(opcode, &req_view, buf))
+                    .op_status(HostStatus::INTERNAL_ERROR)?;
+                (resp, session_ctrl)
+            }
+        };
+
+        let resp_len = resp.len();
+
+        // ── Outbound DMA (yield 2) ─────────────────────────────────
+        self.pal()
+            .copy_mem_to_host(io, resp, params.dst_addr, true)
+            .await
+            .op_err(
+                "core",
+                HsmError::FailedToStartDmaTransaction,
+                HostStatus::DMA_TXN_ERROR,
+            )?;
+
+        Ok(HsmOpStatus::new(resp_len, session_ctrl, None, None, false))
+    }
+
+    /// Validates the SQE for an MBOR / TBOR IO command and extracts the
+    /// fields used by [`Self::handle_mbor_op`] / [`Self::handle_tbor_op`].
     #[inline]
-    fn decode_generic_sqe(io: &P::Io) -> Result<GenericSqeParams, OpError> {
+    fn decode_io_sqe(io: &P::Io) -> Result<IoSqeParams, OpError> {
         let sqe = Sqe::from(io.sqe());
-        sqe.validate_generic_op()?;
-        Ok(GenericSqeParams {
+        sqe.validate_io_op()?;
+        Ok(IoSqeParams {
             src_len: sqe.src_len() as usize,
             src_addr: sqe.src_prp1(),
             dst_addr: sqe.dst_prp1(),
@@ -244,6 +329,16 @@ impl<P: HsmPal> Hsm<P> {
         Ok(())
     }
 
+    /// Lightweight TBOR-side analogue of [`Self::validate_session`] for
+    /// the (currently universal) NoSession case.
+    #[inline(always)]
+    fn validate_session_no_session(flags: SessionFlags, _sqe_session_id: u16) -> HsmResult<()> {
+        if flags.ctrl() != SessionCtrl::NoSession as u8 || flags.id_valid() {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(())
+    }
+
     /// Handles an [`OP_FLUSH`] IO command.
     ///
     /// Returns [`HsmError::IoChannelUnknownOp`] — flush is not yet supported.
@@ -255,8 +350,8 @@ impl<P: HsmPal> Hsm<P> {
     }
 }
 
-/// Fields extracted from a validated [`OP_GENERIC`] SQE.
-struct GenericSqeParams {
+/// Fields extracted from a validated MBOR / TBOR IO SQE.
+struct IoSqeParams {
     src_len: usize,
     src_addr: HsmDmaAddr,
     dst_addr: HsmDmaAddr,

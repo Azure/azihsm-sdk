@@ -175,6 +175,23 @@ fn gen_new_fn(
     header_len_tokens: &TokenStream,
     toc_count_expr: &TokenStream,
 ) -> TokenStream {
+    // For empty schemas the codec still requires `toc_count >= 1`; the
+    // initial state writes a synthetic `None` placeholder at TOC[0] so
+    // that `finish()` can produce a valid frame without exposing any
+    // field methods.
+    let write_empty_placeholder = if schema.fields.is_empty() {
+        quote! {
+            azihsm_fw_ddi_tbor::toc::write_toc_word(
+                buf,
+                HEADER_LEN,
+                0,
+                azihsm_fw_ddi_tbor::toc::build_toc_none(),
+            );
+        }
+    } else {
+        quote! {}
+    };
+
     match schema.kind {
         MessageKind::Request { .. } => quote! {
             /// Create a new encoder, validating that `buf` is large enough.
@@ -188,6 +205,7 @@ fn gen_new_fn(
                         available: buf.len(),
                     });
                 }
+                #write_empty_placeholder
                 Ok(#enc_name { buf, data_offset: 0, _state: core::marker::PhantomData })
             }
         },
@@ -204,6 +222,7 @@ fn gen_new_fn(
                     });
                 }
                 let flags = if fips_approved { 0x01u8 } else { 0x00u8 };
+                #write_empty_placeholder
                 Ok(#enc_name { buf, data_offset: 0, status, flags, _state: core::marker::PhantomData })
             }
         },
@@ -844,7 +863,7 @@ fn gen_frame_accessor(field: &SchemaField, toc_index: usize, schema: &Schema) ->
     };
 
     if field.optional {
-        let none_type_id = 8u8;
+        let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
         quote! {
             #[inline]
             pub fn #name(&self) -> Option<#ret_type> {

@@ -32,8 +32,8 @@ pub(crate) fn get_device_info<'p, P: HsmPal>(
     };
 
     let resp = pal.dma_alloc_var(io, |buf| {
-        ddi::encode_resp(
-            &ddi::success_hdr(hdr, DdiOp::GetDeviceInfo),
+        super::encode_resp(
+            &super::success_hdr(hdr, DdiOp::GetDeviceInfo),
             &resp_data,
             buf,
         )

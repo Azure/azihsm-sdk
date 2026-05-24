@@ -31,10 +31,10 @@ pub(crate) fn set_sealed_bk3<'p, P: HsmPal>(
     let body: DdiSetSealedBk3Req<'_> = decoder.decode_data()?;
     pal.part_set_sealed_bk3(io, body.sealed_bk3)?;
 
-    let resp_hdr = ddi::success_hdr(hdr, DdiOp::SetSealedBk3);
+    let resp_hdr = super::success_hdr(hdr, DdiOp::SetSealedBk3);
     let resp_data = DdiSetSealedBk3Resp {};
 
-    let resp = pal.dma_alloc_var(io, |buf| ddi::encode_resp(&resp_hdr, &resp_data, buf))?;
+    let resp = pal.dma_alloc_var(io, |buf| super::encode_resp(&resp_hdr, &resp_data, buf))?;
 
     Ok(resp)
 }

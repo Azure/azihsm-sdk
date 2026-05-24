@@ -109,7 +109,22 @@ pub struct TocLayout {
 impl TocLayout {
     /// Compute the TOC layout for a list of schema fields.
     /// Fields with `align > 0` get a padding TOC entry before them.
+    ///
+    /// For an empty schema (`fields.is_empty()`), the layout reserves
+    /// a single synthetic `None` TOC entry. This satisfies the codec's
+    /// `toc_count >= 1` requirement so empty-body messages can still be
+    /// expressed via the derive. The encoder writes the placeholder in
+    /// `new()`, and the decoder validates it in the generated
+    /// validation block.
     pub fn compute(fields: &[SchemaField]) -> Self {
+        if fields.is_empty() {
+            return TocLayout {
+                field_toc_indices: Vec::new(),
+                padding_positions: Vec::new(),
+                total_toc_count: 1,
+            };
+        }
+
         let mut field_toc_indices = Vec::with_capacity(fields.len());
         let mut padding_positions = Vec::new();
         let mut toc_index = 0;
@@ -212,19 +227,20 @@ pub fn parse_struct_schema(
             }
             fields.push(parsed);
         }
-    } else {
+    } else if !matches!(input.fields, syn::Fields::Unit) {
         return Err(syn::Error::new(
             input.fields.span(),
-            "#[tbor] structs must have named fields",
+            "#[tbor] structs must have named fields or be a unit struct",
         ));
     }
 
-    if fields.is_empty() {
-        return Err(syn::Error::new(
-            input.ident.span(),
-            "#[tbor] structs must have at least one field",
-        ));
-    }
+    // Empty schemas (no fields, including unit structs) are permitted for
+    // commands whose body is intentionally empty (e.g. bootstrap
+    // `GetApiRev`). The codec requires `toc_count >= 1`, so the
+    // generated encoder/decoder synthesise a single `None` TOC entry
+    // as a placeholder; see [`TocLayout::compute`] and the codegen
+    // empty-schema branches in `codegen_enc::gen_new_fn` and
+    // `codegen_view::gen_validation`.
 
     // Validate total TOC count doesn't exceed protocol limit.
     let layout = TocLayout::compute(&fields);

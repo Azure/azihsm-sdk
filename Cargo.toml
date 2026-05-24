@@ -30,6 +30,7 @@ members = [
   "ddi/res_test_dev",
   "ddi/tbor/codec",
   "ddi/tbor/derive",
+  "ddi/tbor/test_helpers",
   "ddi/tbor/types",
   "ddi/win",
   "fw/core/crypto/aes-cbc-pad",
@@ -83,6 +84,7 @@ azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
+azihsm_ddi_tbor_test_helpers = { path = "ddi/tbor/test_helpers" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }

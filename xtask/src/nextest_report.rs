@@ -31,6 +31,10 @@ fn profile_to_command(profile_name: &str) -> String {
             "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi_mbor_types --profile ci-mock-table-64"
                 .to_string()
         }
+        "ci-tbor-emu" => {
+            "cargo nextest run --no-fail-fast --features emu --package azihsm_ddi_tbor_types --profile ci-tbor-emu"
+                .to_string()
+        }
         // For unknown profiles, construct a generic command showing the profile
         _ => format!("cargo nextest run --profile {}", profile_name),
     }

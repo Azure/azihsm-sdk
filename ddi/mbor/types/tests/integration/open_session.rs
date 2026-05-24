@@ -832,8 +832,7 @@ fn test_open_session_multi_threaded_all_should_open() {
             let mut thread_list = Vec::new();
             for i in 0..thread_count {
                 let thread_id = i as u8;
-                let thread_file_handle =
-                    Arc::new(RwLock::new(open_dev_and_set_device_kind(ddi, path)));
+                let thread_file_handle = Arc::new(RwLock::new(ddi.open_dev(path).unwrap()));
                 file_handles.push(thread_file_handle.clone());
 
                 let thread = thread::spawn(move || {
@@ -1120,7 +1119,7 @@ fn test_open_session_max_sessions() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             for element in file_handles.iter_mut() {
-                *element = Some(open_dev_and_set_device_kind(ddi, path));
+                *element = Some(ddi.open_dev(path).unwrap());
 
                 if let Some(file_handle) = element {
                     let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
@@ -1151,7 +1150,7 @@ fn test_open_session_max_sessions() {
             }
 
             // Now we should not be able to open any more sessions
-            let file_handle = open_dev_and_set_device_kind(ddi, path);
+            let file_handle = ddi.open_dev(path).unwrap();
 
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &file_handle,

@@ -198,7 +198,7 @@ fn test_close_session_middle_session() {
             let mut opened_sessions = Vec::<u16>::new();
 
             for element in file_handles.iter_mut() {
-                *element = Some(open_dev_and_set_device_kind(ddi, path));
+                *element = Some(ddi.open_dev(path).unwrap());
 
                 if let Some(file_handle) = element {
                     let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(

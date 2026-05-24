@@ -580,7 +580,7 @@ pub fn helper_common_establish_credential(
 
 #[allow(unused)]
 pub fn get_device_info(ddi: &DdiTest, path: &str) -> DdiGetDeviceInfoResp {
-    let dev = open_dev_and_set_device_kind(ddi, path);
+    let dev = ddi.open_dev(path).unwrap();
     let resp = helper_get_device_info(&dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -2251,11 +2251,6 @@ pub fn ddi_dev_test(
         test(&mut dev, &ddi, &dev_info.path, setup_session_id);
         cleanup(&mut dev, &ddi, &dev_info.path, Some(setup_session_id));
     }
-}
-
-#[allow(dead_code)]
-pub fn open_dev_and_set_device_kind(ddi: &DdiTest, path: &str) -> <DdiTest as Ddi>::Dev {
-    ddi.open_dev(path).unwrap()
 }
 
 #[cfg(test)]

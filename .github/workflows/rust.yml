@@ -62,6 +62,10 @@ jobs:
       id: test-mock-table-64
       run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-64 --profile ci-mock-table-64
       continue-on-error: true
+    - name: SDK Run TBOR types tests against emu backend
+      id: test-tbor-emu
+      run: cargo xtask precheck --nextest --package azihsm_ddi_tbor_types --features emu --profile ci-tbor-emu
+      continue-on-error: true
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
       run: cargo xtask precheck --coverage

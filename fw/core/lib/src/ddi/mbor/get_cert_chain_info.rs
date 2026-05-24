@@ -33,8 +33,8 @@ pub(crate) async fn get_cert_chain_info<'p, P: HsmPal>(
     };
 
     let resp = pal.dma_alloc_var(io, |buf| {
-        ddi::encode_resp(
-            &ddi::success_hdr(hdr, DdiOp::GetCertChainInfo),
+        super::encode_resp(
+            &super::success_hdr(hdr, DdiOp::GetCertChainInfo),
             &resp_data,
             buf,
         )

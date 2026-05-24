@@ -169,7 +169,7 @@ fn gen_accessor(
     };
 
     if field.optional {
-        let none_type_id = 8u8;
+        let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
         quote! {
             #[inline]
             pub fn #name(&self) -> Option<#ret_type> {
@@ -243,6 +243,24 @@ fn gen_validation(schema: &Schema) -> TokenStream {
     let padding_checks = gen_padding_checks(&layout);
     let len_checks = gen_len_checks(schema, &layout);
 
+    // Empty schemas synthesise a single `None` TOC placeholder; the
+    // decoder must reject any other entry type at TOC[0]. See
+    // [`crate::schema::TocLayout::compute`].
+    let empty_body_check = if schema.fields.is_empty() {
+        let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
+        quote! {
+            if raw.toc_entry_type(0) != #none_type_id {
+                return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
+                    entry_index: 0,
+                    expected: #none_type_id,
+                    actual: raw.toc_entry_type(0),
+                });
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         let raw = #parse_call;
         #opcode_check
@@ -263,6 +281,9 @@ fn gen_validation(schema: &Schema) -> TokenStream {
 
         // Validate length constraints.
         #(#len_checks)*
+
+        // Empty schemas: validate the synthetic `None` placeholder.
+        #empty_body_check
     }
 }
 
@@ -276,7 +297,7 @@ fn gen_type_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
             let toc_type_id = field.toc_type_id;
             let toc_idx = layout.field_toc_indices[i];
             if field.optional {
-                let none_type_id = 8u8;
+                let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
                 quote! {
                     {
                         let actual = raw.toc_entry_type(#toc_idx);
@@ -350,7 +371,7 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
             let max_l = field.fixed_len.unwrap_or(field.max_len);
 
             if field.optional {
-                let none_type_id = 8u8;
+                let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
                 Some(quote! {
                     if raw.toc_entry_type(#toc_idx) != #none_type_id {
                         let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(

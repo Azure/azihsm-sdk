@@ -45,11 +45,14 @@ use crate::error::OpError;
 
 // ── Opcode constants ────────────────────────────────────────────────
 
-/// Generic opcode — standard IO command.
-pub const OP_GENERIC: u16 = 0;
+/// MBOR opcode — standard IO command carrying an MBOR-encoded DDI body.
+pub const OP_MBOR: u16 = 0;
 
 /// Flush opcode — flush pending IO.
 pub const OP_FLUSH: u16 = 1;
+
+/// TBOR opcode — standard IO command carrying a TBOR-encoded DDI body.
+pub const OP_TBOR: u16 = 2;
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -66,7 +69,7 @@ const MAX_DST_LEN: u32 = PAGE_4K;
 #[bitfield(u32)]
 #[derive(PartialEq, Eq)]
 pub struct CmdDword {
-    /// Opcode (0 = Generic, 1 = Flush).
+    /// Opcode (0 = MBOR, 1 = Flush, 2 = TBOR).
     #[bits(10)]
     pub op: u16,
 
@@ -244,7 +247,8 @@ impl<'a> Sqe<'a> {
         Ok(())
     }
 
-    /// Validate fields specific to the [`OP_GENERIC`] opcode.
+    /// Validate fields specific to MBOR / TBOR opcodes that carry an
+    /// inbound + outbound DDI body via DMA.
     ///
     /// Checks:
     /// - Source length must be 1..=4096
@@ -253,7 +257,7 @@ impl<'a> Sqe<'a> {
     /// - Destination PRP1 must be 4K-aligned
     ///
     /// Call [`validate`](Self::validate) first for common checks.
-    pub fn validate_generic_op(&self) -> Result<(), OpError> {
+    pub fn validate_io_op(&self) -> Result<(), OpError> {
         if self.src_len() == 0 || self.src_len() > MAX_SRC_LEN {
             error!(
                 "core",

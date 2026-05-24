@@ -26,6 +26,11 @@ path = "junit.xml"
 [profile.ci-mock-table-64.junit]
 path = "junit.xml"
 
+# profile for running the TBOR types tests against the emu backend
+# (in-process firmware).
+[profile.ci-tbor-emu.junit]
+path = "junit.xml"
+
 # profile for running integration tests
 # test-threads = 1: serial_test uses a per-process mutex; nextest runs each test
 # in its own process, so explicit serialization is required to avoid file collisions.

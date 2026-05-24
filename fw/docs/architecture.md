@@ -185,7 +185,7 @@ StdHsm::io(sqe, pid)
   │                                   │  2. Populate CQE header         │
   │                                   │  3. handle_op(io)               │
   │                                   │     ├── validate SQE            │
-  │                                   │     └── handle_generic_op(io)   │
+  │                                   │     └── handle_mbor_op(io)      │
   │                                   │         ├── Inbound DMA         │
   │                                   │         ├── Decode DDI header   │
   │                                   │         ├── Session validation  │

@@ -268,10 +268,11 @@ pub trait DdiDev {
 
     /// Erase the device.
     ///
-    /// Erases all keys and other cryptographic state on the device,
-    /// returning it to a clean, freshly-initialized state. Sessions,
-    /// vault entries, sealed BK3, and any other state established
-    /// since the last erase are discarded.
+    /// Resets device state, clearing active sessions and other volatile
+    /// cryptographic state so the device returns to a clean operational
+    /// state. Implementations may preserve some persistent state across
+    /// this operation, so this method does not guarantee that all sealed
+    /// or stored material is discarded.
     ///
     /// # Returns
     /// * `Ok(())` - Successfully erased the device

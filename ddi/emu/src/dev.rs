@@ -33,6 +33,8 @@ use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
+use azihsm_ddi_tbor_types::TborOpReq;
+use azihsm_ddi_tbor_types::TborResp;
 use azihsm_fw_hsm_std::StdHsm;
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
@@ -41,6 +43,8 @@ use crate::op::CmdDword;
 use crate::op::Cqe;
 use crate::op::SessionFlags;
 use crate::op::Sqe;
+use crate::op::OP_MBOR;
+use crate::op::OP_TBOR;
 
 /// Path returned by [`DdiEmu::dev_info_list`](crate::DdiEmu::dev_info_list).
 ///
@@ -180,7 +184,7 @@ impl DdiDev for DdiEmuDev {
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_ctrl: SessionControlKind = opcode.into();
         let sqe = Sqe::new()
-            .cmd(CmdDword::new().with_id(cmd_id))
+            .cmd(CmdDword::new().with_op(OP_MBOR).with_id(cmd_id))
             .buf_lens(req_len as u32, SCRATCH_LEN as u32)
             .src_prp1(req_buf.as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
@@ -247,8 +251,76 @@ impl DdiDev for DdiEmuDev {
         Ok(resp)
     }
 
-    // ── Fast-path AES + LM-reset are not implemented in the new firmware
-    //         dispatcher; return UnsupportedCmd until they are. ─────
+    /// TBOR exec path — mirrors [`Self::exec_op_mbor`] but uses the
+    /// TBOR codec, sets the SQE opcode to [`OP_TBOR`], and returns a
+    /// fully-decoded owned response value via [`TborResp::decode_response`].
+    fn exec_op_tbor<T: TborOpReq>(
+        &self,
+        req: &T,
+        _cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
+        let mut src = AlignedBuf::new(SCRATCH_LEN);
+        let mut dst = AlignedBuf::new(SCRATCH_LEN);
+
+        let req_len = {
+            let bytes = req.encode_request(src.as_mut_slice())?;
+            bytes.len()
+        };
+        tracing::debug!(
+            opcode = T::OPCODE,
+            len = req_len,
+            "DdiEmu TBOR request (in hex): {:02x?}",
+            &src.as_slice()[..req_len]
+        );
+
+        // ── 2. Build SQE with OP_TBOR ──────────────────────────────
+        let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let req_session_id = req.get_session_id();
+        let sqe = Sqe::new()
+            .cmd(CmdDword::new().with_op(OP_TBOR).with_id(cmd_id))
+            .buf_lens(req_len as u32, SCRATCH_LEN as u32)
+            .src_prp1(src.as_slice().as_ptr() as u64)
+            .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
+            .session_flags(
+                SessionFlags::new()
+                    .with_ctrl(0) // NoSession — TBOR has no sessioned commands yet.
+                    .with_id_valid(req_session_id.is_some()),
+            )
+            .session_id(req_session_id.unwrap_or(0))
+            .build();
+
+        let cqe = Cqe::new(
+            self.handle
+                .block_on(self.hsm.io(sqe, EMU_PID, 0, 0))
+                .map_err(|_| DdiError::DeviceNotReady)?,
+        );
+
+        // ── 3. Pre-decode CQE host status ──────────────────────────
+        if cqe.status() != 0 {
+            tracing::warn!(
+                opcode = T::OPCODE,
+                status = cqe.status(),
+                "DdiEmu TBOR CQE pre-decode error"
+            );
+            return Err(DdiError::DdiError(cqe.status() as u32));
+        }
+
+        // ── 4. Decode the typed response ───────────────────────────
+        let resp_len = cqe.resp_len();
+        if resp_len == 0 {
+            return Err(DdiError::DdiError(0));
+        }
+        let resp_buf = &dst.as_slice()[..resp_len];
+        tracing::trace!(
+            opcode = T::OPCODE,
+            len = resp_len,
+            "DdiEmu TBOR response (in hex): {:02x?}",
+            resp_buf
+        );
+
+        <T::OpResp>::decode_response(resp_buf).map_err(Into::into)
+    }
 
     fn exec_op_fp_gcm_slice(
         &self,
@@ -418,6 +490,8 @@ mod tests {
     use azihsm_ddi_mbor_types::DdiGetApiRevReq;
     use azihsm_ddi_mbor_types::DdiOp;
     use azihsm_ddi_mbor_types::DdiReqHdr;
+    use azihsm_ddi_tbor_types::TborGetApiRevReq;
+    use azihsm_ddi_tbor_types::TborGetApiRevResp;
 
     use crate::DdiEmu;
     use crate::EMU_DEVICE_PATH;
@@ -452,6 +526,26 @@ mod tests {
             resp.data.max,
             DdiApiRev { major: 1, minor: 0 },
             "firmware should report max api rev 1.0",
+        );
+    }
+
+    #[test]
+    fn get_api_rev_tbor_round_trips_through_emulator() {
+        let ddi = DdiEmu::default();
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open emu device");
+
+        let req = TborGetApiRevReq::new();
+        let mut cookie = None;
+        let resp = dev
+            .exec_op_tbor(&req, &mut cookie)
+            .expect("TBOR GetApiRev should succeed against the emulator");
+
+        assert_eq!(
+            resp,
+            TborGetApiRevResp {
+                min_protocol_version: 1,
+                max_protocol_version: 1,
+            }
         );
     }
 }

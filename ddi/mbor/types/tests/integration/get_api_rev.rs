@@ -58,7 +58,7 @@ fn test_api_rev_with_session() {
                 TEST_SESSION_SEED,
             );
 
-            let app_dev = open_dev_and_set_device_kind(ddi, path);
+            let app_dev = ddi.open_dev(path).unwrap();
             let resp = helper_open_session(
                 &app_dev,
                 None,

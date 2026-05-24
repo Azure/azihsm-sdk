@@ -194,7 +194,7 @@ fn test_reopen_session_mismatch_sessions() {
                     .expect("Failed to create empty masked unwrapping key"),
             );
 
-            let file_handle = open_dev_and_set_device_kind(ddi, path);
+            let file_handle = ddi.open_dev(path).unwrap();
             let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                 &file_handle,
                 TEST_CRED_ID,
