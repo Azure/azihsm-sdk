@@ -85,18 +85,11 @@ impl Xtask for Nextest {
             command_args.push("--profile");
             command_args.push(&profile_val);
         }
-        // Collect excludes, auto-adding Linux-only crates on non-Linux platforms
-        #[cfg_attr(target_os = "linux", allow(unused_mut))]
-        let mut all_excludes = self.exclude.clone();
-        #[cfg(not(target_os = "linux"))]
-        {
-            all_excludes.push("azihsm_fw_hsm_std_x509_gen".to_string());
-        }
-
         let exclude_vals: Vec<String>;
-        if !all_excludes.is_empty() && self.package.is_none() {
+        if !self.exclude.is_empty() && self.package.is_none() {
             command_args.push("--workspace");
-            exclude_vals = all_excludes
+            exclude_vals = self
+                .exclude
                 .iter()
                 .flat_map(|c| ["--exclude".to_string(), c.clone()])
                 .collect();

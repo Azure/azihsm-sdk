@@ -36,13 +36,6 @@ impl Xtask for Clippy {
 
         let mut exclude_args: Vec<String> = Vec::new();
 
-        // Exclude Linux-only crates when building on non-Linux platforms
-        #[cfg(not(target_os = "linux"))]
-        {
-            exclude_args.push("--exclude".to_string());
-            exclude_args.push("azihsm_fw_hsm_std_x509_gen".to_string());
-        }
-
         if !self.exclude.is_empty() {
             for crate_name in &self.exclude {
                 exclude_args.push("--exclude".to_string());
