@@ -10,6 +10,7 @@ use clap::Parser;
 
 use crate::audit::Audit;
 use crate::clippy::Clippy;
+use crate::common::non_resiliency_stress_filter;
 use crate::copyright::Copyright;
 use crate::coverage::Coverage;
 use crate::coverage_report::CoverageReport;
@@ -22,12 +23,6 @@ use crate::setup::Setup;
 use crate::validate_members::ValidateMembers;
 use crate::Xtask;
 use crate::XtaskCtx;
-
-const RESILIENCY_STRESS_FILTER: &str = "test(resiliency::stress::) or test(_resiliency_stress::)";
-
-fn non_resiliency_stress_filter() -> String {
-    format!("not ({RESILIENCY_STRESS_FILTER})")
-}
 
 #[derive(Parser, Debug, Clone, Default)]
 struct Stage {
@@ -235,7 +230,7 @@ impl Xtask for Precheck {
                     features: self.features,
                     package: self.package,
                     no_default_features: false,
-                    filterset: None,
+                    filterset: Some(non_resiliency_stress_filter()),
                     profile: self.profile,
                     exclude: self.exclude,
                 }

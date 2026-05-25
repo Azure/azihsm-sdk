@@ -8,6 +8,7 @@ use std::io::Write;
 use glob::glob;
 use junit_parser::TestSuites;
 
+use crate::common::non_resiliency_stress_filter;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -21,7 +22,10 @@ pub struct NextestReport {
 fn profile_to_command(profile_name: &str) -> String {
     // Map known profile names to their corresponding commands
     match profile_name {
-        "ci-mock" => "cargo nextest run --no-fail-fast -E 'not (test(resiliency::stress::) or test(_resiliency_stress::))' --features mock --profile ci-mock".to_string(),
+        "ci-mock" => format!(
+            "cargo nextest run --no-fail-fast --filterset {} --features mock --profile ci-mock",
+            non_resiliency_stress_filter()
+        ),
         "ci-mock-res" => "cargo nextest run --no-fail-fast -E test(resiliency::fault_injection::) --features mock,res-test --package azihsm_api_tests --profile ci-mock-res".to_string(),
         "ci-mock-table-4" => {
             "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi --profile ci-mock-table-4"

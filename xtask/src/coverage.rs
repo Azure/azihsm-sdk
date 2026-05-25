@@ -9,10 +9,9 @@
 use clap::Parser;
 use xshell::cmd;
 
+use crate::common::non_resiliency_stress_filter;
 use crate::Xtask;
 use crate::XtaskCtx;
-
-const RESILIENCY_STRESS_FILTER: &str = "test(resiliency::stress::) or test(_resiliency_stress::)";
 
 /// Xtask to run code coverage
 #[derive(Parser)]
@@ -29,7 +28,7 @@ impl Xtask for Coverage {
         cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
         // Run tests with coverage, excluding the long-running resiliency stress suites.
-        let non_resiliency_stress_filter = format!("not ({RESILIENCY_STRESS_FILTER})");
+        let non_resiliency_stress_filter = non_resiliency_stress_filter();
         log::info!("Building non-resiliency-stress tests and running them with coverage");
         cmd!(
             sh,

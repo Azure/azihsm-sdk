@@ -12,6 +12,15 @@ use std::path::PathBuf;
 use xshell::cmd;
 use xshell::Shell;
 
+/// Nextest filter that selects the long-running resiliency stress suites.
+pub const RESILIENCY_STRESS_FILTER: &str =
+    "test(resiliency::stress::) or test(_resiliency_stress::)";
+
+/// Nextest filter that excludes the long-running resiliency stress suites.
+pub fn non_resiliency_stress_filter() -> String {
+    format!("not ({RESILIENCY_STRESS_FILTER})")
+}
+
 /// Return files tracked by git (excluding those from .gitignore), including
 /// those which have not yet been staged / committed.
 pub fn git_ls_files() -> anyhow::Result<Vec<PathBuf>> {
