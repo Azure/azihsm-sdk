@@ -162,6 +162,7 @@ fn test_reopen_session() {
             let resp = resp.unwrap();
 
             assert_eq!(resp.hdr.sess_id, Some(setup_res.session_id));
+            assert_eq!(resp.data.sess_id, setup_res.session_id);
             assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
             assert_eq!(resp.hdr.status, DdiStatus::Success);
             assert!(!resp.data.bmk_session.is_empty());
