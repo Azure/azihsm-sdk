@@ -23,6 +23,12 @@ use crate::validate_members::ValidateMembers;
 use crate::Xtask;
 use crate::XtaskCtx;
 
+const RESILIENCY_STRESS_FILTER: &str = "test(resiliency::stress::) or test(_resiliency_stress::)";
+
+fn non_resiliency_stress_filter() -> String {
+    format!("not ({RESILIENCY_STRESS_FILTER})")
+}
+
 #[derive(Parser, Debug, Clone, Default)]
 struct Stage {
     /// Run setup checks
@@ -176,7 +182,7 @@ impl Xtask for Precheck {
                     features: Some("mock".to_string()),
                     package: None,
                     no_default_features: false,
-                    filterset: None,
+                    filterset: Some(non_resiliency_stress_filter()),
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: self.exclude.clone(),
                 }

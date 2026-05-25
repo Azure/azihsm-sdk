@@ -59,7 +59,7 @@ cargo xtask copyright --fix
 
 ### coverage
 
-Build and run all tests with code coverage enabled. Generates a cobertura XML, JSON, and HTML report in [reporoot]/target/reports.
+Build and run tests with code coverage enabled, excluding the long-running resiliency stress suites. Generates a cobertura XML, JSON, and HTML report in [reporoot]/target/reports.
 
 ```bash
 # Build/run tests with code coverage and generate reports
@@ -72,7 +72,7 @@ cargo xtask coverage
 - **clippy**: Runs `cargo clippy --workspace --all-targets` with warnings treated as errors
 - **fmt**: Uses `cargo fmt` to check/fix Rust code formatting
 - **copyright**: Ensures all source files have proper Microsoft copyright headers
-- **coverage**: Build/run all tests with code coverage enabled
+- **coverage**: Build/run tests with code coverage enabled, excluding the long-running resiliency stress suites
 
 ## Dependencies
 
