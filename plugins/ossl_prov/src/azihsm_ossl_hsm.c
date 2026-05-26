@@ -1241,6 +1241,22 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
     }
 
     provctx->session_opening = true;
+
+    /* Pre-instantiate the libctx's primary DRBG.  The SDK open below
+     * eventually triggers a deep RAND_priv_bytes fetch that lazily
+     * instantiates the DRBG on the calling thread; on some hosts
+     * (e.g. nginx's config-validation thread) that lazy path fails.
+     * Doing it here moves the instantiation to a stable shallow
+     * frame, after which subsequent RAND calls reuse the cached
+     * primary. */
+    unsigned char primer[1];
+    if (RAND_bytes(primer, sizeof(primer)) != 1)
+    {
+        provctx->session_opening = false;
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    OPENSSL_cleanse(primer, sizeof(primer));
+
     status = azihsm_open_device_and_session(
         &provctx->config,
         &provctx->device,
