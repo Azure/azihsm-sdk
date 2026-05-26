@@ -1,0 +1,61 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+#
+# Dockerfile to run the OpenSSL provider integration test suites
+# (cli + capi + nginx) against Ubuntu's system OpenSSL 3.0.13 with the
+# mock HSM backend.
+#
+# Build:  docker build -f plugins/ossl_prov/Dockerfile.integration -t azihsm-prov-integration .
+# Run:    docker run --rm azihsm-prov-integration
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CARGO_TERM_COLOR=always
+
+# System OpenSSL 3.0.13 (from noble); libssl-dev + pkg-config let the Rust
+# `openssl-sys` crate and CMake's `find_package(OpenSSL)` auto-detect it.
+#
+# nginx is installed from nginx.org's mainline repo because the noble package
+# (1.24.0) lacks `ssl_certificate_key store:URI` support, which arrived in
+# nginx 1.27.1 and is required by the nginx integration tests to load a
+# masked HSM key via the provider's STORE.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake curl git libbsd-dev gnupg \
+        pkg-config ca-certificates perl xxd \
+        openssl libssl-dev \
+        strace ltrace gdb less file \
+ && curl -fsSL https://nginx.org/keys/nginx_signing.key \
+        | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu noble nginx" \
+        > /etc/apt/sources.list.d/nginx.list \
+ && apt-get update && apt-get install -y --no-install-recommends nginx \
+ && rm -rf /var/lib/apt/lists/*
+
+# Rust toolchain pinned to the workspace channel (see rust-toolchain.toml).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain 1.93
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# cargo-nextest is required by `cargo xtask integration-tests`.
+RUN cargo install --locked cargo-nextest
+
+WORKDIR /src
+COPY . .
+
+# Point xtask at the system OpenSSL prefix so its check_openssl() does not
+# attempt to fetch and build OpenSSL from source.  openssl-sys needs the
+# explicit multi-arch lib path on Ubuntu/Debian where libcrypto.so does not
+# live directly under /usr/lib.
+ENV OPENSSL_DIR=/usr
+ENV OPENSSL_INCLUDE_DIR=/usr/include
+ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+
+# Pre-build the provider so we can install its runtime dependency
+# (libazihsm_api_native.so) into the system loader path.  The xtask build
+# step at test time will then hit the cache.
+RUN cargo build -p azihsm_api_native --features mock \
+ && cargo build -p azihsm_ossl_provider --features mock \
+ && cp target/debug/libazihsm_api_native.so /usr/lib/x86_64-linux-gnu/ \
+ && ldconfig
+
+CMD ["cargo", "xtask", "integration-tests"]
