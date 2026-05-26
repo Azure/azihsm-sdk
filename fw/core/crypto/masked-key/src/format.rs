@@ -188,7 +188,7 @@ impl MaskedKeyAesHeader {
             || post_iv_pad_len != pad4(iv_len)
             || post_metadata_pad_len != pad4(metadata_len)
             || ct_len == 0
-            || ct_len % AES_BLOCK_SIZE != 0
+            || !ct_len.is_multiple_of(AES_BLOCK_SIZE)
             || post_ct_pad_len != pad4(ct_len)
             || tag_len != HMAC384_TAG_SIZE
             || !hdr.rsvd.iter().all(|&b| b == 0)

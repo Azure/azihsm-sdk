@@ -47,10 +47,11 @@ fn test_set_sealed_bk3_twice_fails() {
         assert_eq!(set_resp.hdr.status, DdiStatus::Success);
 
         let err = helper_set_sealed_bk3(dev, blob).unwrap_err();
-        assert!(matches!(
-            err,
-            DdiError::DdiStatus(DdiStatus::KeyTagAlreadyExists)
-        ));
+        assert!(
+            matches!(err, DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet)),
+            "expected SealedBk3AlreadySet, got {:?}",
+            err
+        );
     });
 }
 

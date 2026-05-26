@@ -717,6 +717,7 @@ pub trait HsmPartitionManager {
     ///   currently [`Enabled`](PartState::Enabled).
     /// - `Err(HsmError)` — propagated from the underlying KBKDF
     ///   driver.
+    #[allow(clippy::too_many_arguments)]
     async fn derive_masking_key(
         &self,
         io: &impl HsmIo,
