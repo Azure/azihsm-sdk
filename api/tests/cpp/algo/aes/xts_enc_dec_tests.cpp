@@ -3033,3 +3033,77 @@ TEST_F(azihsm_aes_xts, streaming_empty_update_has_zero_output)
         ASSERT_EQ(output.len, 0u);
     });
 }
+
+// Invalid DUL values should be rejected during streaming encryption/decryption setup.
+TEST_F(azihsm_aes_xts, streaming_invalid_dul_values_are_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        struct Case
+        {
+            uint32_t dul;
+            const char *name;
+        };
+
+        const std::vector<Case> cases = {
+            { 0, "zero DUL" },
+            { 15, "DUL smaller than one AES block" },
+            { 17, "DUL not AES-block aligned" },
+            { 8193, "DUL above max" },
+        };
+
+        for (const auto &test_case : cases)
+        {
+            SCOPED_TRACE(test_case.name);
+
+            azihsm_algo_aes_xts_params xts_params{};
+            std::memset(xts_params.sector_num, 0, sizeof(xts_params.sector_num));
+            xts_params.data_unit_length = test_case.dul;
+
+            azihsm_algo crypt_algo{};
+            crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+            crypt_algo.params = &xts_params;
+            crypt_algo.len = sizeof(xts_params);
+
+            auto_ctx enc_ctx;
+            auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS)
+                << "streaming encrypt init unexpectedly accepted invalid DUL " << test_case.dul;
+
+            auto_ctx dec_ctx;
+            err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS)
+                << "streaming decrypt init unexpectedly accepted invalid DUL " << test_case.dul;
+        }
+    });
+}
+
+// Single-shot XTS should reject input that is AES-block aligned but not DUL-aligned.
+TEST_F(azihsm_aes_xts, single_shot_invalid_dul_aligned_input_fails)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        // 256 bytes is AES-block aligned, but it is not a multiple of DUL=192.
+        // This validates DUL alignment specifically, not basic AES block alignment.
+        const size_t plaintext_len = 256;
+        const size_t dul = 192;
+        auto plaintext = make_incrementing_bytes(plaintext_len);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x66, dul);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
