@@ -297,7 +297,19 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
     int *no_store
 )
 {
-    if (azihsm_ensure_session((AZIHSM_OSSL_PROV_CTX *)provctx) != AZIHSM_STATUS_SUCCESS)
+    AZIHSM_OSSL_PROV_CTX *ctx = provctx;
+
+    /* While the session is being opened, claim no algorithms so the
+     * SDK's libcrypto fetches don't recurse back into our half-loaded
+     * dispatch tables.  no_store keeps libcrypto from caching this
+     * empty view past session-open. */
+    if (ctx != NULL && ctx->session_opening)
+    {
+        *no_store = 1;
+        return NULL;
+    }
+
+    if (azihsm_ensure_session(ctx) != AZIHSM_STATUS_SUCCESS)
     {
         return NULL;
     }
