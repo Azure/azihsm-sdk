@@ -23,6 +23,9 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_resiliency_ctx **resiliency_ctx
 );
 
+/* Lazy device+session open. */
+azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx);
+
 /*
  * Compute POTA endorsement for the current device.
  *
