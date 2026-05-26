@@ -7,35 +7,6 @@ use super::*;
 // Helper functions
 // ================================
 
-/// Generates a valid ECC key pair for the given curve with sign/verify permissions
-fn generate_ecc_key_pair(
-    session: &HsmSession,
-    curve: HsmEccCurve,
-) -> (HsmEccPrivateKey, HsmEccPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_sign(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_verify(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut algo = HsmEccKeyGenAlgo::default();
-
-    HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-        .expect("Failed to generate ECC key pair")
-}
-
 /// Computes hash of input data using the specified hash algorithm
 fn hash_data(session: &HsmSession, mut hash_algo: HsmHashAlgo, data: &[u8]) -> Vec<u8> {
     HsmHasher::hash_vec(session, &mut hash_algo, data).expect("Failed to hash data")

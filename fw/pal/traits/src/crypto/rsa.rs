@@ -354,6 +354,7 @@ pub trait HsmRsa {
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_pkcs1_sign<'a>(
         &self,
         io: &impl HsmIo,
@@ -390,6 +391,7 @@ pub trait HsmRsa {
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_pkcs1_verify<'a>(
         &self,
         io: &impl HsmIo,
@@ -425,6 +427,7 @@ pub trait HsmRsa {
     ///   too small.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — RNG / SHA / PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_oaep_encrypt<'a>(
         &self,
         io: &impl HsmIo,
@@ -464,6 +467,7 @@ pub trait HsmRsa {
     ///   detected tampering or label mismatch.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — SHA / PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_oaep_decrypt<'a>(
         &self,
         io: &impl HsmIo,
@@ -500,6 +504,7 @@ pub trait HsmRsa {
     ///   `salt_len` exceeds the EMSA-PSS limit.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — RNG / SHA / PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_pss_sign<'a>(
         &self,
         io: &impl HsmIo,
@@ -536,6 +541,7 @@ pub trait HsmRsa {
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
     /// - `Err(HsmError)` — SHA / PKA failure.
+    #[allow(clippy::too_many_arguments)]
     async fn rsa_pss_verify<'a>(
         &self,
         io: &impl HsmIo,

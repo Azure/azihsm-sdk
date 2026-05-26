@@ -49,9 +49,7 @@ impl HsmHmac for StdHsmPal {
         data: &DmaBuf,
         tag: &mut DmaBuf,
     ) -> HsmResult<()> {
-        self.hmac
-            .sign(to_hash_algo(algo), &key[..], &data[..], &mut tag[..])
-            .await
+        self.hmac.sign(to_hash_algo(algo), key, data, tag).await
     }
 
     async fn hmac_verify(
@@ -62,9 +60,7 @@ impl HsmHmac for StdHsmPal {
         data: &DmaBuf,
         tag: &DmaBuf,
     ) -> HsmResult<bool> {
-        self.hmac
-            .verify(to_hash_algo(algo), &key[..], &data[..], &tag[..])
-            .await
+        self.hmac.verify(to_hash_algo(algo), key, data, tag).await
     }
 
     async fn hmac_begin<'a>(

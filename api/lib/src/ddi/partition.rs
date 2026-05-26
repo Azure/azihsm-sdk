@@ -18,15 +18,16 @@ use super::*;
 
 /// Result of a successful [`init_part`] call.
 ///
-/// Carries the key material plus the POTA endorsement that was actually
-/// sent to the device. When resiliency is enabled and the POTA source is
+/// Carries the BMK plus the POTA endorsement that was actually sent to
+/// the device. When resiliency is enabled and the POTA source is
 /// Caller, this may differ from the original caller-supplied endorsement
 /// because the callback re-signed over the current device's PID cert.
 pub(crate) struct InitPartResult {
+    /// Masked owner backup key (MOBK) derived during initialization, which the caller must persist for future credential establishment calls.
+    /// This is the masked BK3 value returned by the device after successful initialization.
+    pub(crate) mobk: Vec<u8>,
     /// Backup masking key returned by the device.
     pub(crate) bmk: Vec<u8>,
-    /// Masked owner backup key.
-    pub(crate) mobk: Vec<u8>,
     /// POTA endorsement data that was actually used.
     pub(crate) pota_endorsement_data: HsmPotaEndorsementData,
 }
@@ -244,6 +245,15 @@ pub(crate) fn invoke_pota_callback(
 /// and optionally providing master key material. This operation must be performed
 /// before the partition can be used for cryptographic operations.
 ///
+/// MOBK derivation runs once via [`get_mobk_from_config`]. The result
+/// is stashed into the caller-supplied `cached_mobk` slot so that any
+/// subsequent retry of the `#[resiliency_init_part]` loop reuses the
+/// derived value and skips the DDI call. This is required for the
+/// `Caller + raw OBK` path because `init_bk3` is one-shot per device
+/// power cycle. The cache must be declared by the caller (e.g.
+/// `let mut cached_mobk = None;`) because anything `let`-bound inside
+/// the retry loop body resets on each attempt.
+///
 /// # Arguments
 ///
 /// * `dev` - The HSM device handle
@@ -251,7 +261,9 @@ pub(crate) fn invoke_pota_callback(
 /// * `creds` - Application credentials (ID and PIN)
 /// * `bmk` - Optional backup masking key
 /// * `muk` - Optional masked unwrapping key
-/// * `obk_config` - Owner backup key (OBK) configuration
+/// * `obk_config` - Owner backup key configuration
+/// * `cached_mobk` - Retry cache for the derived MOBK; pass
+///   `&mut None` for a fresh init. Populated on first success.
 /// * `pota_endorsement` - The partition owner trust anchor endorsement
 /// * `resiliency_config` - Optional resiliency configuration; when `Some`,
 ///   enables retry with backoff on transient errors and invokes the `PotaEndorsementCallback` on retries.
@@ -267,8 +279,6 @@ pub(crate) fn invoke_pota_callback(
 /// - The API revision is not supported
 /// - Device communication fails
 /// - The DDI operation returns an error
-/// - TPM unsealing fails (when obk_config source is TPM)
-/// - OBK is missing when obk_config source is Caller
 #[resiliency_init_part]
 pub(crate) fn init_part(
     dev: &HsmDev,
@@ -277,6 +287,7 @@ pub(crate) fn init_part(
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
     obk_config: &HsmOwnerBackupKeyConfig,
+    cached_mobk: &mut Option<Vec<u8>>,
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
 ) -> HsmResult<InitPartResult> {
@@ -292,10 +303,86 @@ pub(crate) fn init_part(
         bmk,
         muk,
         obk_config,
+        cached_mobk,
         pota_endorsement,
         resiliency_config,
         reendorse,
     )
+}
+
+/// Resolves the masked owner backup key (MOBK) from the caller's
+/// [`HsmOwnerBackupKeyConfig`].
+///
+/// Called by [`init_part_raw_no_res`] on the *first* attempt of an
+/// init. The result is stashed by the caller into the `cached_mobk`
+/// slot it passes to [`init_part`], so retry attempts inside the
+/// `#[resiliency_init_part]` loop reuse the derived MOBK and do not
+/// invoke `init_bk3` a second time. `init_bk3` (the `Caller` + raw
+/// OBK path) is one-shot per device power cycle; a second call
+/// would fail with `Bk3AlreadyInitialized`.
+///
+/// Resolution rules by source:
+///
+/// - `Caller`: exactly one of `key` (raw OBK) or `masked_key` (MOBK)
+///   must be provided.
+///   - `masked_key` present → returned as-is (no DDI call).
+///   - `key` present → derived on the device via [`init_bk3`], which
+///     returns the masked BK3 (MOBK).
+/// - `Tpm`: must not carry a caller-supplied raw OBK. The sealed BK3 is
+///   fetched from the device via [`get_sealed_bk3`] and unsealed with
+///   the TPM via [`unseal_tpm_backup_key`].
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `obk_config` - The owner backup key configuration supplied by the
+///   caller
+///
+/// # Returns
+///
+/// Returns the resolved MOBK bytes.
+///
+/// # Errors
+///
+/// Returns `HsmError::InvalidArgument` if `obk_config` violates the
+/// source-specific rules above (e.g. both/neither of `key`/`masked_key`
+/// for `Caller`, or a `key` set for `Tpm`). Propagates DDI errors from
+/// [`init_bk3`] / [`get_sealed_bk3`] and TPM errors from
+/// [`unseal_tpm_backup_key`].
+pub(crate) fn get_mobk_from_config(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    obk_config: &HsmOwnerBackupKeyConfig,
+) -> HsmResult<Vec<u8>> {
+    match obk_config.key_source() {
+        HsmOwnerBackupKeySource::Caller => {
+            // Caller source must provide either OBK or MOBK;
+            // if OBK is provided, derive MOBK by sending OBK to the device. If MOBK is provided, use it directly.
+            if (obk_config.key().is_none() && obk_config.masked_key().is_none())
+                || (obk_config.key().is_some() && obk_config.masked_key().is_some())
+            {
+                return Err(HsmError::InvalidArgument);
+            }
+            if let Some(mobk) = obk_config.masked_key() {
+                Ok(mobk.to_vec())
+            } else if let Some(obk) = obk_config.key() {
+                init_bk3(dev, rev, obk)
+            } else {
+                Err(HsmError::InvalidArgument)
+            }
+        }
+        HsmOwnerBackupKeySource::Tpm => {
+            // TPM source must not carry a caller-provided OBK.
+            if obk_config.key().is_some() {
+                return Err(HsmError::InvalidArgument);
+            }
+            // Retrieve sealed BK3 from device and unseal with TPM
+            let sealed_bk3 = get_sealed_bk3(dev, rev)?;
+            unseal_tpm_backup_key(&sealed_bk3)
+        }
+        _ => Err(HsmError::InvalidArgument),
+    }
 }
 
 /// Bare DDI partition initialization — no retry macro, no lock.
@@ -323,29 +410,24 @@ pub(crate) fn init_part_raw_no_res(
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
     obk_config: &HsmOwnerBackupKeyConfig,
+    cached_mobk: &mut Option<Vec<u8>>,
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
     reendorse: bool,
 ) -> HsmResult<InitPartResult> {
-    let mobk = match obk_config.key_source() {
-        HsmOwnerBackupKeySource::Caller => {
-            // Caller must provide a non-empty OBK.
-            let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            if obk.is_empty() {
-                return Err(HsmError::InvalidArgument);
-            }
-            init_bk3(dev, rev, obk)?
+    // Resolve the MOBK from the cache, or derive it from the OBK
+    // config on first call. Caching the result back into
+    // `cached_mobk` is essential for retry safety: `init_bk3`
+    // (Caller + raw OBK) is one-shot per device power cycle, and
+    // re-running it would fail with `Bk3AlreadyInitialized` even on
+    // an otherwise-recoverable transient.
+    let mobk = match cached_mobk {
+        Some(mobk) => mobk.clone(),
+        None => {
+            let mobk = ddi::get_mobk_from_config(dev, rev, obk_config)?;
+            cached_mobk.replace(mobk.clone());
+            mobk
         }
-        HsmOwnerBackupKeySource::Tpm => {
-            // TPM source must not carry a caller-provided OBK.
-            if obk_config.key().is_some() {
-                return Err(HsmError::InvalidArgument);
-            }
-            // Retrieve sealed BK3 from device and unseal with TPM
-            let sealed_bk3 = get_sealed_bk3(dev, rev)?;
-            unseal_tpm_backup_key(&sealed_bk3)?
-        }
-        _ => return Err(HsmError::InvalidArgument),
     };
 
     // Compute POTA endorsement based on source.
@@ -388,14 +470,14 @@ pub(crate) fn init_part_raw_no_res(
         &pub_key,
         &resolved_bmk,
         &resolved_muk,
-        &mobk,
+        mobk.as_ref(),
         &pota_endorsement,
         resiliency_config,
     )?;
 
     Ok(InitPartResult {
-        bmk,
         mobk,
+        bmk,
         pota_endorsement_data: pota_endorsement,
     })
 }

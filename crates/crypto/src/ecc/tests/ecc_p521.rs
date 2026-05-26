@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECC_P521_TEST_VECTORS;
 
 #[test]
-fn test_ecc_sign_verify_p512() {
+fn test_ecc_sign_verify_p521() {
     // Test code for ECC sign and verify on P-521 curve
     let msg = b"Test message for ECC signing on P-521 curve";
 

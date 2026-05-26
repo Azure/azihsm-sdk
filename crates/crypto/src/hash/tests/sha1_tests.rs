@@ -2,6 +2,11 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::hash::SHA1_LONG_MSG_TEST_VECTORS;
+use crate::testvectors::hash::SHA1_MONTE_TEST_VECTORS;
+use crate::testvectors::hash::SHA1_SHORT_MSG_TEST_VECTORS;
+use crate::testvectors::hash::ShaMonteTestVector;
+use crate::testvectors::hash::ShaTestVector;
 
 #[test]
 fn test_sha1_one_shot() {

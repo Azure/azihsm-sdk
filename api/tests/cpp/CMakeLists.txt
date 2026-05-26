@@ -53,6 +53,7 @@ corrosion_experimental_cbindgen(
 set(SOURCE 
     handle/part_list_handle.cpp
     utils/aes_keygen.cpp
+    utils/kdf_derive.cpp
     utils/key_import.cpp
     utils/rsa_keygen.cpp
     utils/shared_secret.cpp
@@ -83,6 +84,11 @@ set(SOURCE
     algo/hmac/sign_verify_tests.cpp
     algo/hmac/keygen_tests.cpp
     algo/secret/unmask_tests.cpp
+    algo/kdf/hkdf_tests.cpp
+    resiliency/init_stress_tests.cpp
+    resiliency/aes_stress_tests.cpp
+    resiliency/ecc_stress_tests.cpp
+    resiliency/mixed_stress_tests.cpp
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

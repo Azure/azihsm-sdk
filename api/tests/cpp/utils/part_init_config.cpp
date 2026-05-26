@@ -5,6 +5,9 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -56,36 +59,16 @@ static const uint8_t TEST_POTA_PUBLIC_KEY_DER[] = {
 
 #ifdef _WIN32
 
-PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
+PotaEndorsement sign_pota_endorsement(const uint8_t *pid_pub_key_der, size_t pid_pub_key_der_len)
 {
-    // Step 1: Get PID public key DER from partition
-    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
-    auto err = azihsm_part_get_prop(part_handle, &prop);
-    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
-    {
-        throw std::runtime_error(
-            "Failed to get PID public key size. Error: " + std::to_string(err)
-        );
-    }
-    std::vector<uint8_t> pid_pub_key_der(prop.len);
-    prop.val = pid_pub_key_der.data();
-    err = azihsm_part_get_prop(part_handle, &prop);
-    if (err != AZIHSM_STATUS_SUCCESS)
-    {
-        throw std::runtime_error("Failed to get PID public key. Error: " + std::to_string(err));
-    }
-
-    // Step 2: Parse DER SubjectPublicKeyInfo to extract uncompressed point
-    const uint8_t *der = pid_pub_key_der.data();
-    size_t der_len = pid_pub_key_der.size();
-
+    // Step 1: Parse DER SubjectPublicKeyInfo to extract uncompressed point
     std::vector<uint8_t> uncompressed_point;
     bool found = false;
-    for (size_t i = 0; i + 97 <= der_len; i++)
+    for (size_t i = 0; i + 97 <= pid_pub_key_der_len; i++)
     {
-        if (der[i] == 0x04 && i > 0 && der[i - 1] == 0x00)
+        if (pid_pub_key_der[i] == 0x04 && i > 0 && pid_pub_key_der[i - 1] == 0x00)
         {
-            uncompressed_point.assign(der + i, der + i + 97);
+            uncompressed_point.assign(pid_pub_key_der + i, pid_pub_key_der + i + 97);
             found = true;
             break;
         }
@@ -95,7 +78,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("Failed to find uncompressed point in PID public key DER");
     }
 
-    // Step 3: Load hardcoded ECC P-384 private key from DER
+    // Step 2: Load hardcoded ECC P-384 private key from DER
     static constexpr size_t KEY_SIZE = 48; // P-384 coordinate/scalar size
     static constexpr size_t D_OFFSET = 35;
     static constexpr size_t X_OFFSET = 89;
@@ -138,7 +121,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("BCryptImportKeyPair failed");
     }
 
-    // Step 4: Hash the uncompressed point with SHA-384
+    // Step 3: Hash the uncompressed point with SHA-384
     BCRYPT_ALG_HANDLE hash_alg = nullptr;
     status = BCryptOpenAlgorithmProvider(&hash_alg, BCRYPT_SHA384_ALGORITHM, nullptr, 0);
     if (status != STATUS_SUCCESS)
@@ -166,7 +149,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("BCryptHash failed");
     }
 
-    // Step 5: Sign the hash with ECDSA P-384
+    // Step 4: Sign the hash with ECDSA P-384
     ULONG sig_len = 0;
     status = BCryptSignHash(key, nullptr, hash, sizeof(hash), nullptr, 0, &sig_len, 0);
     if (status != STATUS_SUCCESS)
@@ -187,7 +170,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
     }
     signature.resize(sig_len);
 
-    // Step 6: Return hardcoded public key DER
+    // Step 5: Return hardcoded public key DER
     std::vector<uint8_t> pub_key_der(
         TEST_POTA_PUBLIC_KEY_DER,
         TEST_POTA_PUBLIC_KEY_DER + sizeof(TEST_POTA_PUBLIC_KEY_DER)
@@ -196,11 +179,9 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
     return { std::move(signature), std::move(pub_key_der) };
 }
 
-#else // Linux - OpenSSL
-
 PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
 {
-    // Step 1: Get PID public key DER from partition
+    // Get PID public key DER from partition
     azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
     auto err = azihsm_part_get_prop(part_handle, &prop);
     if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
@@ -217,17 +198,21 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("Failed to get PID public key. Error: " + std::to_string(err));
     }
 
-    // Step 2: Parse DER SubjectPublicKeyInfo to extract uncompressed point
-    const uint8_t *der = pid_pub_key_der.data();
-    size_t der_len = pid_pub_key_der.size();
+    return sign_pota_endorsement(pid_pub_key_der.data(), pid_pub_key_der.size());
+}
 
+#else // Linux - OpenSSL
+
+PotaEndorsement sign_pota_endorsement(const uint8_t *pid_pub_key_der, size_t pid_pub_key_der_len)
+{
+    // Step 1: Parse DER SubjectPublicKeyInfo to extract uncompressed point
     std::vector<uint8_t> uncompressed_point;
     bool found = false;
-    for (size_t i = 0; i + 97 <= der_len; i++)
+    for (size_t i = 0; i + 97 <= pid_pub_key_der_len; i++)
     {
-        if (der[i] == 0x04 && i > 0 && der[i - 1] == 0x00)
+        if (pid_pub_key_der[i] == 0x04 && i > 0 && pid_pub_key_der[i - 1] == 0x00)
         {
-            uncompressed_point.assign(der + i, der + i + 97);
+            uncompressed_point.assign(pid_pub_key_der + i, pid_pub_key_der + i + 97);
             found = true;
             break;
         }
@@ -237,7 +222,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("Failed to find uncompressed point in PID public key DER");
     }
 
-    // Step 3: Load hardcoded ECC P-384 private key from DER
+    // Step 2: Load hardcoded ECC P-384 private key from DER
     const uint8_t *key_ptr = TEST_POTA_PRIVATE_KEY_DER;
     EVP_PKEY *pkey =
         d2i_PrivateKey(EVP_PKEY_EC, nullptr, &key_ptr, sizeof(TEST_POTA_PRIVATE_KEY_DER));
@@ -246,7 +231,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("d2i_PrivateKey failed to load hardcoded key");
     }
 
-    // Step 4: Hash the uncompressed point with SHA-384
+    // Step 3: Hash the uncompressed point with SHA-384
     uint8_t hash[48] = {};
     unsigned int hash_len = 0;
     EVP_MD_CTX *md_ctx = EVP_MD_CTX_new();
@@ -266,7 +251,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
     }
     EVP_MD_CTX_free(md_ctx);
 
-    // Step 5: Sign the pre-computed hash with ECDSA P-384 using EVP_PKEY_sign
+    // Step 4: Sign the pre-computed hash with ECDSA P-384
     EVP_PKEY_CTX *sign_ctx = EVP_PKEY_CTX_new(pkey, nullptr);
     if (sign_ctx == nullptr)
     {
@@ -281,7 +266,6 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
         throw std::runtime_error("EVP_PKEY_sign_init failed");
     }
 
-    // Query required signature buffer size
     size_t der_sig_len = 0;
     if (EVP_PKEY_sign(sign_ctx, nullptr, &der_sig_len, hash, hash_len) <= 0)
     {
@@ -301,7 +285,7 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
     EVP_PKEY_CTX_free(sign_ctx);
     EVP_PKEY_free(pkey);
 
-    // Convert DER-encoded ECDSA signature to raw r||s (96 bytes)
+    // Step 5: Convert DER-encoded ECDSA signature to raw r||s (96 bytes)
     const uint8_t *der_sig_ptr = der_sig.data();
     ECDSA_SIG *ecdsa_sig = d2i_ECDSA_SIG(nullptr, &der_sig_ptr, static_cast<long>(der_sig_len));
     if (ecdsa_sig == nullptr)
@@ -329,6 +313,28 @@ PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
     return { std::move(signature), std::move(pub_key_der) };
 }
 
+PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
+{
+    // Get PID public key DER from partition
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
+    auto err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        throw std::runtime_error(
+            "Failed to get PID public key size. Error: " + std::to_string(err)
+        );
+    }
+    std::vector<uint8_t> pid_pub_key_der(prop.len);
+    prop.val = pid_pub_key_der.data();
+    err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Failed to get PID public key. Error: " + std::to_string(err));
+    }
+
+    return sign_pota_endorsement(pid_pub_key_der.data(), pid_pub_key_der.size());
+}
+
 #endif // _WIN32
 
 void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
@@ -352,9 +358,25 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
     }
     else
     {
-        config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-        config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        config.backup_config.owner_backup_key = &config.obk_buf;
+        // Prefer a cached MOBK from a prior init (if present on disk) so
+        // that init_bk3 is not re-attempted on a warm device. Fall back to
+        // the raw OBK when no cache exists (cold device / first init).
+        auto cached_mobk = load_mobk_file(get_mobk_path());
+        if (!cached_mobk.empty())
+        {
+            config.mobk_cache = std::move(cached_mobk);
+            config.obk_buf = { config.mobk_cache.data(),
+                               static_cast<uint32_t>(config.mobk_cache.size()) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = nullptr;
+            config.backup_config.masked_owner_backup_key = &config.obk_buf;
+        }
+        else
+        {
+            config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = &config.obk_buf;
+        }
 
         config.generated = generate_pota_endorsement(part_handle);
         config.sig_buf = { config.generated.signature.data(),
@@ -365,4 +387,132 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
         config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
         config.pota_endorsement.endorsement = &config.pota_data;
     }
+}
+
+std::string get_mobk_path()
+{
+#ifdef _WIN32
+    char *val = nullptr;
+    size_t len = 0;
+    _dupenv_s(&val, &len, "AZIHSM_MOBK_PATH");
+    if (val != nullptr)
+    {
+        std::string result(val);
+        free(val);
+        return result;
+    }
+    free(val);
+    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
+#else
+    const char *val = std::getenv("AZIHSM_MOBK_PATH");
+    if (val != nullptr)
+    {
+        return std::string(val);
+    }
+    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
+#endif
+}
+
+std::vector<uint8_t> load_mobk_file(const std::string &path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+    {
+        return {};
+    }
+    return std::vector<uint8_t>(
+        std::istreambuf_iterator<char>(f),
+        std::istreambuf_iterator<char>()
+    );
+}
+
+void save_mobk_file(const std::string &path, const std::vector<uint8_t> &mobk)
+{
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (f)
+    {
+        f.write(reinterpret_cast<const char *>(mobk.data()), mobk.size());
+    }
+}
+
+std::vector<uint8_t> query_mobk_property(azihsm_handle part_handle)
+{
+    azihsm_part_prop prop{};
+    prop.id = AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY;
+    prop.val = nullptr;
+    prop.len = 0;
+    auto err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL || prop.len == 0)
+    {
+        return {};
+    }
+    std::vector<uint8_t> mobk(prop.len);
+    prop.val = mobk.data();
+    err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return {};
+    }
+    mobk.resize(prop.len);
+    return mobk;
+}
+
+azihsm_status part_init_with_mobk_fallback(
+    azihsm_handle part_handle,
+    azihsm_credentials *creds,
+    PartInitConfig &init_config,
+    azihsm_resiliency_config *resiliency_config
+)
+{
+    auto err = azihsm_part_init(
+        part_handle,
+        creds,
+        nullptr,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement,
+        resiliency_config
+    );
+
+    // Warm-device fallback: load cached MOBK from file and retry.
+    std::vector<uint8_t> mobk_data;
+    azihsm_buffer mobk_buf{};
+    if (err == AZIHSM_STATUS_BK3_ALREADY_INITIALIZED &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+    {
+        auto mobk_path = get_mobk_path();
+        mobk_data = load_mobk_file(mobk_path);
+        if (mobk_data.empty())
+        {
+            return err; // no cached MOBK, propagate original error
+        }
+
+        mobk_buf.ptr = mobk_data.data();
+        mobk_buf.len = static_cast<uint32_t>(mobk_data.size());
+        init_config.backup_config.owner_backup_key = nullptr;
+        init_config.backup_config.masked_owner_backup_key = &mobk_buf;
+
+        err = azihsm_part_init(
+            part_handle,
+            creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            resiliency_config
+        );
+    }
+
+    // Persist MOBK on success so subsequent runs can use it.
+    if (err == AZIHSM_STATUS_SUCCESS &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+    {
+        auto mobk = query_mobk_property(part_handle);
+        if (!mobk.empty())
+        {
+            save_mobk_file(get_mobk_path(), mobk);
+        }
+    }
+
+    return err;
 }

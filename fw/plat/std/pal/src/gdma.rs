@@ -13,7 +13,7 @@ use crate::StdHsmPal;
 impl HsmGdmaController for StdHsmPal {
     /// Copy data between HSM-local buffers.
     async fn copy_mem(&self, _io: &impl HsmIo, src: &DmaBuf, dst: &mut DmaBuf) -> HsmResult<()> {
-        self.gdma.copy_mem(&src[..], &mut dst[..]);
+        self.gdma.copy_mem(src, dst);
         Ok(())
     }
 
@@ -31,7 +31,7 @@ impl HsmGdmaController for StdHsmPal {
         // pointers set up by the caller (test harness or integration test).
         // The caller is responsible for ensuring the address is valid and
         // the buffer remains alive for the duration of the copy.
-        unsafe { self.gdma.copy_mem_from_host(src, &mut dst[..]) };
+        unsafe { self.gdma.copy_mem_from_host(src, dst) };
         Ok(())
     }
 
@@ -49,7 +49,7 @@ impl HsmGdmaController for StdHsmPal {
         // pointers set up by the caller (test harness or integration test).
         // The caller is responsible for ensuring the address is valid and
         // the buffer remains alive for the duration of the copy.
-        unsafe { self.gdma.copy_mem_to_host(&src[..], dst) };
+        unsafe { self.gdma.copy_mem_to_host(src, dst) };
         Ok(())
     }
 }

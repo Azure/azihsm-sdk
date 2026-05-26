@@ -429,6 +429,113 @@ TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
     });
 }
 
+TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_unsupported_algorithm)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> data(32, 0x42);
+        azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
+        azihsm_buffer sig_buf{ nullptr, 0 };
+        std::vector<uint8_t> signature(64, 0x24);
+        azihsm_buffer verify_sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key, &data_buf, &sig_buf),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key, &data_buf, &verify_sig_buf),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+
+        auto_ctx ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_precomputed_ecdsa)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
+TEST_F(azihsm_ecc_sign_verify, streaming_operations_reject_key_handles_as_contexts)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> data(32, 0x42);
+        std::vector<uint8_t> dummy_signature(64, 0x24);
+        azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
+        azihsm_buffer sig_buf{ dummy_signature.data(),
+                               static_cast<uint32_t>(dummy_signature.size()) };
+
+        ASSERT_EQ(azihsm_crypt_sign_update(priv_key, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_sign_finish(priv_key, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify_update(pub_key, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify_finish(pub_key, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+    });
+}
+
 TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
 {
     part_list_.for_each_session([&](azihsm_handle session) {

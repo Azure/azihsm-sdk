@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 use super::*;
-use crate::hash::tests::testvectors::SHA512_LONG_MSG_TEST_VECTORS;
-use crate::hash::tests::testvectors::SHA512_MONTE_TEST_VECTORS;
-use crate::hash::tests::testvectors::SHA512_SHORT_MSG_TEST_VECTORS;
+use crate::testvectors::hash::SHA512_LONG_MSG_TEST_VECTORS;
+use crate::testvectors::hash::SHA512_MONTE_TEST_VECTORS;
+use crate::testvectors::hash::SHA512_SHORT_MSG_TEST_VECTORS;
+use crate::testvectors::hash::ShaMonteTestVector;
+use crate::testvectors::hash::ShaTestVector;
 
 #[test]
 fn test_sha512_hash() {

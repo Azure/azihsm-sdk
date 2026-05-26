@@ -18,6 +18,9 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 
 /// Test helper: brand a `&[u8]` as `&DmaBuf`. Safe in tests — no real DMA hw.
 fn dma(buf: &[u8]) -> &DmaBuf {
+    // SAFETY: In tests, no real DMA hardware is involved. The
+    // `DmaBuf::from_raw` transmute is safe because the data is only
+    // read by the decoder, not submitted to a DMA engine.
     unsafe { DmaBuf::from_raw(buf) }
 }
 

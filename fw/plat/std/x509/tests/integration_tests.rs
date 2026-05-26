@@ -23,7 +23,9 @@ use azihsm_fw_hsm_std_x509::cert_builder::RootCertParams;
 use azihsm_fw_hsm_std_x509::cert_builder::CN_LEN;
 use azihsm_fw_hsm_std_x509::cert_builder::SN_LEN;
 use azihsm_fw_hsm_std_x509::cert_builder::{self};
+#[cfg(target_os = "linux")]
 use azihsm_fw_hsm_std_x509::csr_builder::DeviceCsrParams;
+#[cfg(target_os = "linux")]
 use azihsm_fw_hsm_std_x509::csr_builder::{self};
 use x509::X509Certificate;
 use x509::X509CertificateOp;
@@ -106,6 +108,7 @@ const NOT_AFTER: &[u8; 15] = b"20350101000000Z";
 const ROOT_CN: &str = "AZIHSM Root CA";
 const INTER_CN: &str = "AZIHSM Intermediate CA";
 const LEAF_CN: &str = "AZIHSM Attestation Key";
+#[cfg(target_os = "linux")]
 const DEVICE_CN: &str = "AZIHSM Device";
 
 /// Test-local pad helper for CN (space-padded to CN_LEN).
@@ -255,6 +258,7 @@ fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
     tbs[KEY_USAGE_OFFSET..KEY_USAGE_OFFSET + 2].copy_from_slice(&params.key_usage.to_bytes());
 }
 
+#[cfg(target_os = "linux")]
 fn build_test_csr(key: &TestKeyPair) -> Vec<u8> {
     let subject_cn = pad_cn(DEVICE_CN);
     let subject_sn = pad_sn("DEVICE01");

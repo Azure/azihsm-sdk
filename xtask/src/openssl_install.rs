@@ -6,8 +6,11 @@
 
 //! Helper to resolve an OpenSSL installation, building one if necessary.
 
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
+use anyhow::Context as _;
 #[cfg(target_os = "linux")]
 use xshell::cmd;
 #[cfg(target_os = "linux")]
@@ -15,42 +18,21 @@ use xshell::Shell;
 
 #[cfg(target_os = "linux")]
 const OPENSSL_VERSION: &str = "3.0.3";
+#[cfg(target_os = "linux")]
+const OPENSSL_SHA256: &str = "ee0078adcef1de5f003c62c80cc96527721609c6f3bb42b7795df31f8b558c0b";
 
 #[cfg(target_os = "linux")]
-const OPENSSL_INSTALL_DIR: &str = "/opt/openssl-3.0.3";
-
-/// Resolves an OpenSSL installation, building one if necessary.
-///
-/// Resolution order:
-/// 1. `OPENSSL_DIR` env var — if set, checked (must be an existing directory),
-///    and returned as-is. No deep validation of contents is performed; downstream
-///    build scripts and test harnesses will report specific missing-file errors.
-/// 2. `/opt/openssl-3.0.3` — if it already exists (local equivalent of the CI cache).
-/// 3. Download, build, and install OpenSSL 3.0.3 to `/opt/openssl-3.0.3`,
-///    using the same commands as CI. Requires `curl`, `make`, a C compiler,
-///    and `sudo` (system path). The installation persists across `cargo clean`
-///    and `cargo xtask clean`.
-///
-/// Only supported on Linux; returns an error on other platforms.
-#[cfg(not(target_os = "linux"))]
-pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
-    anyhow::bail!("OpenSSL auto-install is only supported on Linux");
+fn default_install_dir() -> anyhow::Result<PathBuf> {
+    let target_dir = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::current_dir()?.join("target"),
+    };
+    Ok(target_dir.join(format!("openssl-{OPENSSL_VERSION}")))
 }
 
-/// Resolves an OpenSSL installation, building one if necessary.
-///
-/// Resolution order:
-/// 1. `OPENSSL_DIR` env var — if set, checked (must be an existing directory),
-///    and returned as-is. No deep validation of contents is performed; downstream
-///    build scripts and test harnesses will report specific missing-file errors.
-/// 2. `/opt/openssl-3.0.3` — if it already exists (local equivalent of the CI cache).
-/// 3. Download, build, and install OpenSSL 3.0.3 to `/opt/openssl-3.0.3`,
-///    using the same commands as CI. Requires `curl`, `make`, a C compiler,
-///    and `sudo` (system path). The installation persists across `cargo clean`
-///    and `cargo xtask clean`.
+/// Checks whether an OpenSSL installation is available, without installing.
 #[cfg(target_os = "linux")]
-pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
-    // 1. Honour explicit OPENSSL_DIR
+pub fn check_openssl() -> anyhow::Result<PathBuf> {
     match std::env::var("OPENSSL_DIR") {
         Ok(val) if val.trim().is_empty() => {
             anyhow::bail!(
@@ -68,34 +50,45 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
         Err(_) => {}
     }
 
-    let install_dir = PathBuf::from(OPENSSL_INSTALL_DIR);
-
-    // 2. Local cache: already installed to /opt
+    let install_dir = default_install_dir()?;
     if install_dir.is_dir() {
-        log::info!("using cached OpenSSL at {OPENSSL_INSTALL_DIR}");
+        log::info!("using cached OpenSSL at {}", install_dir.display());
         return Ok(install_dir);
     }
 
-    // 3. Download and build (mirrors CI exactly)
-    log::info!(
-        "OPENSSL_DIR not set — building OpenSSL {OPENSSL_VERSION} into {OPENSSL_INSTALL_DIR}"
+    anyhow::bail!(
+        "OpenSSL installation not found. \
+         Run 'cargo xtask setup' first, or set OPENSSL_DIR to an existing OpenSSL 3.x prefix."
     );
+}
+
+/// Resolves an OpenSSL installation, building from source if necessary.
+#[cfg(target_os = "linux")]
+pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
+    // If OPENSSL_DIR is explicitly set, honour it strictly (never fall through to build).
+    if std::env::var("OPENSSL_DIR").is_ok() {
+        return check_openssl();
+    }
+
+    if let Ok(path) = check_openssl() {
+        return Ok(path);
+    }
+
+    let install_dir = default_install_dir()?;
+    let prefix = install_dir.display();
+
+    // Download and build (mirrors CI exactly)
+    log::info!("OPENSSL_DIR not set — building OpenSSL {OPENSSL_VERSION} into {prefix}");
 
     // Preflight: check required tools before starting a long build.
     let sh = Shell::new()?;
-    for tool in ["curl", "make", "cc"] {
+    for tool in ["curl", "sha256sum", "make", "cc", "perl"] {
         if cmd!(sh, "which {tool}").quiet().run().is_err() {
             anyhow::bail!(
                 "required tool `{tool}` not found. \
-                 Install build prerequisites: sudo apt-get install build-essential curl"
+                 Install build prerequisites: sudo apt-get install build-essential coreutils curl perl"
             );
         }
-    }
-    if cmd!(sh, "sudo -n true").quiet().run().is_err() {
-        anyhow::bail!(
-            "sudo access required to install OpenSSL into {OPENSSL_INSTALL_DIR}. \
-             Either run with sudo or set OPENSSL_DIR to a user-writable installation."
-        );
     }
 
     let url = format!(
@@ -106,20 +99,28 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
 
     log::info!("downloading OpenSSL {OPENSSL_VERSION}...");
     cmd!(sh, "curl -fsSL -o {tarball} {url}").run()?;
+
+    let checksum_output = cmd!(sh, "sha256sum {tarball}").read()?;
+    let actual_hash = checksum_output
+        .split_whitespace()
+        .next()
+        .context("failed to parse sha256sum output")?;
+    anyhow::ensure!(
+        actual_hash == OPENSSL_SHA256,
+        "SHA-256 mismatch for {tarball}: expected {OPENSSL_SHA256}, got {actual_hash}"
+    );
+
+    cmd!(sh, "rm -rf {src_dir}").run()?;
     cmd!(sh, "tar xz -C /tmp -f {tarball}").run()?;
 
     sh.change_dir(&src_dir);
-    cmd!(
-        sh,
-        "./Configure --prefix={OPENSSL_INSTALL_DIR} --libdir=lib"
-    )
-    .run()?;
+    cmd!(sh, "./Configure --prefix={install_dir} --libdir=lib").run()?;
 
     let nproc = cmd!(sh, "nproc").read()?;
     let nproc = nproc.trim();
     cmd!(sh, "make -j{nproc}").run()?;
-    cmd!(sh, "sudo make install_sw").run()?;
+    cmd!(sh, "make install_sw").run()?;
 
-    log::info!("OpenSSL {OPENSSL_VERSION} installed to {OPENSSL_INSTALL_DIR}");
+    log::info!("OpenSSL {OPENSSL_VERSION} installed to {prefix}");
     Ok(install_dir)
 }

@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 use super::*;
+use crate::testvectors::hkdf::HkdfTestVector;
+use crate::testvectors::hkdf::RFC5869_TEST_VECTORS;
+use crate::testvectors::hkdf::TestHashAlgo;
 
 /// Converts test vector hash algorithm enum to runtime Hash object.
 impl From<TestHashAlgo> for HashAlgo {

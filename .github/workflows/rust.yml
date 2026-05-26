@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   merge_group:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
@@ -22,33 +22,12 @@ jobs:
       run:
         working-directory: .
 
-    env:
-      OPENSSL_DIR: /opt/openssl-3.0.3
-      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-
     steps:
     - uses: actions/checkout@v6
     - name: Install apt packages
       run: |
         sudo apt-get update
         sudo apt-get install -y pkg-config libbsd-dev
-
-    - name: Cache OpenSSL 3.0.3
-      id: cache-openssl
-      uses: actions/cache@v5
-      with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
-
-    - name: Build OpenSSL 3.0.3 (shared)
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
-          | tar xz -C /tmp
-        cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-        make -j"$(nproc)"
-        sudo make install_sw
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -60,9 +39,9 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      run: cargo xtask setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -103,134 +82,6 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
-  
-  provider_integration:
-
-    runs-on: ubuntu-24.04
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libbsd-dev ca-certificates curl gnupg
-
-    - name: Restore Cargo cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-        fail-on-cache-miss: false
-
-    - name: Cache OpenSSL 3.0.3
-      id: cache-openssl
-      uses: actions/cache@v5
-      with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
-
-    - name: Build OpenSSL 3.0.3 (shared)
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
-          | tar xz -C /tmp
-        cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-        make -j"$(nproc)"
-        sudo make install_sw
-
-    - name: Ensure OpenSSL default config exists
-      run: |
-        sudo mkdir -p /opt/openssl-3.0.3/ssl
-        sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
-
-    - name: Build azihsm with OpenSSL 3.0.3
-      env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
-      run: |
-        cargo build -p azihsm_api_native --features mock
-        cargo build -p azihsm_ossl_provider --features mock
-
-    - name: Install provider
-      run: |
-        sudo mkdir -p /usr/lib/ossl-modules
-        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
-        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
-        sudo ldconfig
-
-    - name: Generate dev key material
-      env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-      run: |
-        OSSL=/opt/openssl-3.0.3/bin/openssl
-        # Credential files (fallback if env vars are unset)
-        printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
-        printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
-        # OBK — 48-byte random owner backup key
-        $OSSL rand -out obk.bin 48
-        # POTA — P-384 key pair (legacy EC DER + SubjectPublicKeyInfo DER)
-        $OSSL ecparam -name secp384r1 -genkey -noout | $OSSL ec -outform DER -out pota_private_key.der 2>/dev/null
-        $OSSL ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
-        chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
-
-    - name: Smoke test provider
-      env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: |
-        /opt/openssl-3.0.3/bin/openssl genpkey \
-          -provider-path /usr/lib/ossl-modules \
-          -provider default -provider azihsm_provider \
-          -propquery "?provider=azihsm" \
-          -algorithm EC -pkeyopt group:P-384 \
-          -outform DER -out /dev/null -text
-
-    - name: Run CLI integration tests
-      env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
-        PROPQUERY: "?provider=azihsm"
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: cargo xtask precheck --nextest --package provider-integration-tests-cli --features integration --profile ci-provider-integration
-
-    - name: Run C API integration tests
-      env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
-
-    - name: Install nginx mainline
-      run: |
-        curl -fsSL https://nginx.org/keys/nginx_signing.key \
-          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
-          https://nginx.org/packages/mainline/ubuntu noble nginx" \
-          | sudo tee /etc/apt/sources.list.d/nginx.list
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends nginx
-
-    - name: NGINX integration tests
-      env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: |
-        cargo xtask precheck --nextest \
-          --package provider-integration-tests-nginx \
-          --features integration \
-          --profile ci-provider-integration
 
   build_windows:
 

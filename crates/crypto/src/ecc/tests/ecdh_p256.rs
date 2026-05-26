@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECDH_P256_TEST_VECTORS;
 
 #[test]
 fn test_ecdh_p256_nist_vectors() {

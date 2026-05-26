@@ -49,38 +49,38 @@ impl Xtask for Build {
         let target_dir = common::target_dir()?;
 
         // Convert xtask parameters into cargo command arguments
-        let mut args: Vec<&str> = Vec::new();
+        let mut command_args: Vec<&str> = Vec::new();
         if self.tests {
-            args.push("--tests");
+            command_args.push("--tests");
         }
         if self.all_targets {
-            args.push("--all-targets");
+            command_args.push("--all-targets");
         }
         if self.release {
-            args.push("--release");
+            command_args.push("--release");
         }
 
         // Only pass --features when non-empty
         if let Some(feats) = self.features.as_ref().filter(|s| !s.trim().is_empty()) {
-            args.push("--features");
-            args.push(feats);
+            command_args.push("--features");
+            command_args.push(feats);
         }
 
         // Only pass --package when provided
         if let Some(pkg) = self.package.as_ref().filter(|s| !s.trim().is_empty()) {
-            args.push("--package");
-            args.push(pkg);
+            command_args.push("--package");
+            command_args.push(pkg);
         }
 
         // Always pass target-dir
-        args.push("--target-dir");
+        command_args.push("--target-dir");
         let td = target_dir.to_str().expect("target_dir to str");
-        args.push(td);
+        command_args.push(td);
 
         // Pass --target when provided
         if let Some(triple) = self.target.as_ref().filter(|s| !s.trim().is_empty()) {
-            args.push("--target");
-            args.push(triple);
+            command_args.push("--target");
+            command_args.push(triple);
         }
 
         // Elevate warnings to errors, but do not clobber existing RUSTFLAGS (e.g., custom linker)
@@ -92,7 +92,7 @@ impl Xtask for Build {
         };
         std::env::set_var("RUSTFLAGS", new_rf);
 
-        cmd!(sh, "cargo {rust_toolchain...} build {args...}")
+        cmd!(sh, "cargo {rust_toolchain...} build {command_args...}")
             .quiet()
             .run()?;
 

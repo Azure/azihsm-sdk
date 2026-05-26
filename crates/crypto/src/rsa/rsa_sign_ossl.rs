@@ -122,8 +122,12 @@ impl VerifyOp for OsslRsaSignAlgo {
     ///
     /// # Errors
     ///
-    /// Returns an error if internal OpenSSL operations fail.
-    /// Note: Invalid signatures return `Ok(false)`, not an error.
+    /// Returns an error only for setup/configuration failures before the final
+    /// OpenSSL verify step (for example context creation, `verify_init`, or
+    /// padding/hash configuration).
+    ///
+    /// Any error from the final OpenSSL `verify` call is treated as an invalid
+    /// signature and returns `Ok(false)` (fail-closed).
     fn verify(
         &mut self,
         key: &Self::Key,
@@ -135,9 +139,15 @@ impl VerifyOp for OsslRsaSignAlgo {
             .verify_init()
             .map_err(|_| CryptoError::RsaVerifyError)?;
         self.configure_pkey_ctx(&mut pkey_ctx)?;
-        pkey_ctx
-            .verify(data, signature)
-            .map_err(|_| CryptoError::RsaVerifyError)
+        // After successful setup, OpenSSL may report an invalid RSA signature
+        // either as Ok(false) or, in some cases/platforms, by pushing an error
+        // onto its stack. All operational failure modes (allocation, init,
+        // configuration) have already been handled above, so treat any error
+        // from the final verify step as an invalid signature (fail-closed).
+        match pkey_ctx.verify(data, signature) {
+            Ok(valid) => Ok(valid),
+            Err(_) => Ok(false),
+        }
     }
 }
 
