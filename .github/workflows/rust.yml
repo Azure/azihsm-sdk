@@ -17,6 +17,9 @@ env:
 
 jobs:
   build_ubuntu:
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: ubuntu-24.04
 
@@ -104,6 +107,9 @@ jobs:
         exit 1
   
   provider_integration:
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: ubuntu-24.04
 
@@ -221,6 +227,9 @@ jobs:
           --profile ci-provider-integration
 
   build_windows:
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: windows-latest
 
