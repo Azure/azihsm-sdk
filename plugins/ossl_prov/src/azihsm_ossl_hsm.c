@@ -1223,6 +1223,35 @@ void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session
     azihsm_part_close(device);
 }
 
+azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
+{
+    azihsm_status status;
+
+    if (provctx == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+    if (provctx->session != 0)
+    {
+        return AZIHSM_STATUS_SUCCESS;
+    }
+    if (provctx->session_opening)
+    {
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    provctx->session_opening = true;
+    status = azihsm_open_device_and_session(
+        &provctx->config,
+        &provctx->device,
+        &provctx->session,
+        &provctx->resiliency_ctx
+    );
+    provctx->session_opening = false;
+
+    return status;
+}
+
 /*
  * Wrap a PKCS#8 DER buffer with the HSM's RSA-AES wrapping key, then unwrap
  * into the HSM to produce key handles.

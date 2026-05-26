@@ -292,11 +292,16 @@ static OSSL_STATUS azihsm_ossl_get_params(ossl_unused void *provctx, OSSL_PARAM 
 }
 
 static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
-    ossl_unused void *provctx,
+    void *provctx,
     int operation_id,
     int *no_store
 )
 {
+    if (azihsm_ensure_session((AZIHSM_OSSL_PROV_CTX *)provctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        return NULL;
+    }
+
     // Dispatch tables do not change and may be cached
     *no_store = 0;
     switch (operation_id)
@@ -731,7 +736,6 @@ OSSL_STATUS OSSL_provider_init(
 )
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
-    azihsm_status status;
     const OSSL_DISPATCH *in_iter;
     OSSL_FUNC_core_get_params_fn *get_params_fn = NULL;
 
@@ -856,23 +860,7 @@ OSSL_STATUS OSSL_provider_init(
         }
     }
 
-    status = azihsm_open_device_and_session(
-        &ctx->config,
-        &ctx->device,
-        &ctx->session,
-        &ctx->resiliency_ctx
-    );
-
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
-
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
-    }
+    /* Open is deferred to azihsm_ensure_session. */
 
     *provctx = ctx;
     *out = azihsm_ossl_base_dispatch;
