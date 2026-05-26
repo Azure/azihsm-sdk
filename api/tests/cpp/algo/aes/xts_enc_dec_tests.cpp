@@ -2431,3 +2431,605 @@ TEST_F(azihsm_aes_xts, streaming_multiple_updates_then_finish_consumes_context)
         ASSERT_EQ(ciphertext.size(), plaintext.size());
     });
 }
+
+// Decrypt path should follow the same two-call sizing contract as encrypt.
+TEST_F(azihsm_aes_xts, single_shot_decrypt_output_buffer_sizing)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 128;
+        auto plaintext = make_incrementing_bytes(dul * 2);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x39, dul);
+
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key.get(),
+                &crypt_algo,
+                plaintext.data(),
+                plaintext.size(),
+                ciphertext
+            )
+        );
+
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x39, dul);
+
+        azihsm_buffer input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, plaintext.size());
+
+        std::vector<uint8_t> exact(output.len);
+        output.ptr = exact.data();
+        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, plaintext.size());
+        ASSERT_EQ(std::memcmp(exact.data(), plaintext.data(), plaintext.size()), 0);
+
+        std::vector<uint8_t> too_small_vec(plaintext.size() - 1);
+        azihsm_buffer too_small{ too_small_vec.data(),
+                                 static_cast<uint32_t>(too_small_vec.size()) };
+        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &input, &too_small);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(too_small.len, plaintext.size());
+    });
+}
+
+// Decrypt update() should also report required output size before writing.
+TEST_F(azihsm_aes_xts, streaming_decrypt_update_output_buffer_sizing)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 128;
+        auto plaintext = make_incrementing_bytes(dul);
+
+        azihsm_algo_aes_xts_params enc_params{};
+        azihsm_algo enc_algo{};
+        init_xts_algo(enc_algo, enc_params, AZIHSM_ALGO_ID_AES_XTS, 0x49, dul);
+
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key.get(),
+                &enc_algo,
+                plaintext.data(),
+                plaintext.size(),
+                ciphertext
+            )
+        );
+
+        azihsm_algo_aes_xts_params dec_params{};
+        azihsm_algo dec_algo{};
+        init_xts_algo(dec_algo, dec_params, AZIHSM_ALGO_ID_AES_XTS, 0x49, dul);
+
+        auto_ctx ctx;
+        auto err = azihsm_crypt_decrypt_init(&dec_algo, key.get(), ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = azihsm_crypt_decrypt_update(ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, plaintext.size());
+
+        std::vector<uint8_t> too_small_buf(plaintext.size() - 1);
+        azihsm_buffer too_small{ too_small_buf.data(),
+                                 static_cast<uint32_t>(too_small_buf.size()) };
+        err = azihsm_crypt_decrypt_update(ctx, &input, &too_small);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(too_small.len, plaintext.size());
+
+        std::vector<uint8_t> exact(plaintext.size());
+        azihsm_buffer exact_output{ exact.data(), static_cast<uint32_t>(exact.size()) };
+        err = azihsm_crypt_decrypt_update(ctx, &input, &exact_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(exact_output.len, plaintext.size());
+        ASSERT_EQ(std::memcmp(exact.data(), plaintext.data(), plaintext.size()), 0);
+
+        azihsm_buffer finish_output{ nullptr, 0 };
+        err = azihsm_crypt_decrypt_finish(ctx, &finish_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(finish_output.len, 0u);
+    });
+}
+
+// DUL above the documented/observed 8192-byte cap should fail validation.
+TEST_F(azihsm_aes_xts, dul_above_max_fails)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        constexpr size_t dul = 8192 + AES_BLOCK_SIZE;
+        auto plaintext = make_incrementing_bytes(dul);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x51, dul);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
+
+// DUL should be AES-block aligned for this XTS implementation.
+TEST_F(azihsm_aes_xts, non_block_aligned_dul_fails)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = AES_BLOCK_SIZE + 1;
+        const size_t plaintext_len = dul * 2;
+        std::vector<uint8_t> plaintext(plaintext_len, 0x7C);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x52, dul);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
+
+// XTS crypt calls should reject an algorithm id that is not AES-XTS.
+TEST_F(azihsm_aes_xts, invalid_algo_id_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        uint8_t data[128] = { 0xA5 };
+        azihsm_buffer input{ data, sizeof(data) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x61, sizeof(data));
+
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
+
+        auto err = crypt_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+
+        err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx ctx;
+        err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+TEST_F(azihsm_aes_xts, decrypt_with_wrong_key_does_not_recover_plaintext)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key1 = generate_aes_xts_key(session, 512);
+        auto key2 = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 256;
+        auto plaintext = make_incrementing_bytes(dul * 2);
+
+        azihsm_algo_aes_xts_params enc_params{};
+        azihsm_algo enc_algo{};
+        init_xts_algo(enc_algo, enc_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, dul);
+
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key1.get(),
+                &enc_algo,
+                plaintext.data(),
+                plaintext.size(),
+                ciphertext
+            )
+        );
+
+        azihsm_algo_aes_xts_params dec_params{};
+        azihsm_algo dec_algo{};
+        init_xts_algo(dec_algo, dec_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, dul);
+
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Decrypt,
+                key2.get(),
+                &dec_algo,
+                ciphertext.data(),
+                ciphertext.size(),
+                decrypted
+            )
+        );
+
+        ASSERT_EQ(decrypted.size(), plaintext.size());
+        ASSERT_NE(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
+    });
+}
+
+TEST_F(azihsm_aes_xts, decrypt_with_different_dul_does_not_recover_plaintext)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t encrypt_dul = 256;
+        const size_t decrypt_dul = 512;
+        auto plaintext = make_incrementing_bytes(encrypt_dul * 2);
+
+        azihsm_algo_aes_xts_params enc_params{};
+        azihsm_algo enc_algo{};
+        init_xts_algo(enc_algo, enc_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, encrypt_dul);
+
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key.get(),
+                &enc_algo,
+                plaintext.data(),
+                plaintext.size(),
+                ciphertext
+            )
+        );
+
+        azihsm_algo_aes_xts_params dec_params{};
+        azihsm_algo dec_algo{};
+        init_xts_algo(dec_algo, dec_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, decrypt_dul);
+
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Decrypt,
+                key.get(),
+                &dec_algo,
+                ciphertext.data(),
+                ciphertext.size(),
+                decrypted
+            )
+        );
+
+        ASSERT_EQ(decrypted.size(), plaintext.size());
+        ASSERT_NE(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
+    });
+}
+
+TEST_F(azihsm_aes_xts, zero_length_single_shot_input_returns_zero_output)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
+
+        azihsm_buffer empty_input{ nullptr, 0 };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+    });
+}
+
+TEST_F(azihsm_aes_xts, streaming_empty_update_returns_zero_output)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
+
+        azihsm_buffer empty_input{ nullptr, 0 };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_encrypt_update(enc_ctx, &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_decrypt_update(dec_ctx, &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+    });
+}
+
+TEST_F(azihsm_aes_xts, single_shot_size_query_does_not_advance_tweak)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 128;
+        auto plaintext = make_incrementing_bytes(dul * 2);
+
+        uint8_t initial_tweak[16] = { 0x22, 0x11 };
+
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, initial_tweak, sizeof(initial_tweak));
+        xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, plaintext.size());
+
+        ASSERT_EQ(std::memcmp(xts_params.sector_num, initial_tweak, sizeof(initial_tweak)), 0);
+    });
+}
+TEST_F(azihsm_aes_xts, streaming_size_query_does_not_advance_tweak)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 128;
+        uint8_t initial_tweak[16] = { 0x44, 0x33 };
+
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, initial_tweak, sizeof(initial_tweak));
+        xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        auto_ctx ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t block[128] = { 0x22 };
+        azihsm_buffer input{ block, sizeof(block) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = azihsm_crypt_encrypt_update(ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, dul);
+
+        ASSERT_EQ(std::memcmp(xts_params.sector_num, initial_tweak, sizeof(initial_tweak)), 0);
+    });
+}
+TEST_F(azihsm_aes_xts, streaming_encrypt_decrypt_tweak_overflow_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        const size_t dul = 512;
+        uint8_t block[512] = { 0x11 };
+
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memset(xts_params.sector_num, 0xFF, sizeof(xts_params.sector_num));
+        xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        azihsm_buffer input{ block, sizeof(block) };
+        std::vector<uint8_t> out(dul);
+        azihsm_buffer output{ out.data(), static_cast<uint32_t>(out.size()) };
+
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_encrypt_update(enc_ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_TWEAK);
+
+        std::memset(xts_params.sector_num, 0xFF, sizeof(xts_params.sector_num));
+
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        output.len = static_cast<uint32_t>(out.size());
+        err = azihsm_crypt_decrypt_update(dec_ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_TWEAK);
+    });
+}
+
+// Valid wrapped XTS blob should unwrap into a usable AES-XTS key.
+TEST_F(azihsm_aes_xts, unwrap_valid_xts_blob_roundtrip)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
+        auto err = generate_rsa_unwrapping_keypair(
+            session,
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        auto wrapped_blob = build_xts_wrapped_blob(
+            wrapping_pub_key,
+            std::vector<uint8_t>(32, 0x71),
+            std::vector<uint8_t>(32, 0x72)
+        );
+        ASSERT_FALSE(wrapped_blob.empty());
+
+        auto_key unwrapped_key;
+        err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(unwrapped_key, 0);
+
+        const size_t plaintext_len = 512;
+        auto plaintext = make_incrementing_bytes(plaintext_len);
+
+        test_xts_single_shot_roundtrip(
+            unwrapped_key,
+            AZIHSM_ALGO_ID_AES_XTS,
+            plaintext.data(),
+            plaintext.size(),
+            plaintext.size()
+        );
+    });
+}
+
+// Valid device-exported masked XTS blob should unmask into a usable AES-XTS key.
+TEST_F(azihsm_aes_xts, unmask_valid_xts_blob_roundtrip)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto original_key = generate_aes_xts_key(session, 512);
+
+        auto masked_blob = get_masked_blob_for_key(original_key.get());
+        ASSERT_FALSE(masked_blob.empty());
+
+        azihsm_buffer masked_key_buf{ masked_blob.data(),
+                                      static_cast<uint32_t>(masked_blob.size()) };
+
+        auto_key unmasked_key;
+        auto err = azihsm_key_unmask(
+            session,
+            AZIHSM_KEY_KIND_AES_XTS,
+            &masked_key_buf,
+            unmasked_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(unmasked_key, 0);
+
+        const size_t plaintext_len = 512;
+        auto plaintext = make_incrementing_bytes(plaintext_len);
+
+        test_xts_single_shot_roundtrip(
+            unmasked_key,
+            AZIHSM_ALGO_ID_AES_XTS,
+            plaintext.data(),
+            plaintext.size(),
+            plaintext.size()
+        );
+    });
+}
+
+// XTS key generation should reject unsupported logical key sizes.
+TEST_F(azihsm_aes_xts, key_gen_invalid_bit_lengths_are_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        const std::vector<uint32_t> invalid_bits = {
+            0, 128, 256, 384, 1024,
+        };
+
+        for (uint32_t bits : invalid_bits)
+        {
+            SCOPED_TRACE("bits=" + std::to_string(bits));
+
+            azihsm_algo keygen_algo{};
+            keygen_algo.id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
+            keygen_algo.params = nullptr;
+            keygen_algo.len = 0;
+
+            azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
+            azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+            uint8_t is_session = 1;
+            uint8_t can_encrypt = 1;
+            uint8_t can_decrypt = 1;
+
+            std::vector<azihsm_key_prop> props_vec = {
+                { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+                { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+                { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+                { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+                { .id = AZIHSM_KEY_PROP_ID_ENCRYPT,
+                  .val = &can_encrypt,
+                  .len = sizeof(can_encrypt) },
+                { .id = AZIHSM_KEY_PROP_ID_DECRYPT,
+                  .val = &can_decrypt,
+                  .len = sizeof(can_decrypt) },
+            };
+
+            azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                            .count = static_cast<uint32_t>(props_vec.size()) };
+
+            auto_key key_handle;
+            auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key_handle.get_ptr());
+
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+            ASSERT_EQ(key_handle, 0);
+        }
+    });
+}
+
+// Streaming empty update should not produce output and should not corrupt the context.
+TEST_F(azihsm_aes_xts, streaming_empty_update_has_zero_output)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x65, 128);
+
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t dummy = 0;
+        azihsm_buffer empty_input{ &dummy, 0 };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = azihsm_crypt_encrypt_update(enc_ctx, &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        err = azihsm_crypt_encrypt_finish(enc_ctx, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x65, 128);
+
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        output = { nullptr, 0 };
+        err = azihsm_crypt_decrypt_update(dec_ctx, &empty_input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        err = azihsm_crypt_decrypt_finish(dec_ctx, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+    });
+}
