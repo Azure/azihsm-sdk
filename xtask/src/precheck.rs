@@ -224,7 +224,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi_tbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-tbor-emu".to_string())),
+                        profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
