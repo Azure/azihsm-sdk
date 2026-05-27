@@ -66,7 +66,7 @@ Errors that occur after successful header decode: session validation, DDI comman
 fn encode_ddi_err(op: DdiOp, status: HsmError, smem: &mut [u8]) -> HsmResult<usize>
 ```
 
-## Error Flow in handle_generic_op
+## Error Flow in handle_mbor_op
 
 ```
 SQE validation ────► OpError → CQE host status (no body)

@@ -17,7 +17,7 @@ trusted-encode = []
 azihsm_fw_hsm_pal_traits.workspace = true
 
 [dev-dependencies]
-azihsm_ddi_mbor = { features = [
+azihsm_ddi_mbor_codec = { features = [
   "array",
   "post_decode",
   "pre_encode",

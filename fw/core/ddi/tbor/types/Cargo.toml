@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 [package]
-description = "DDI types with TBOR encoding — placeholder"
+description = "DDI request/response schema types with TBOR-derived encoders and decoders"
 edition = "2021"
 name = "azihsm_fw_ddi_tbor_types"
 version = "0.1.0"
@@ -12,6 +12,8 @@ bench = false
 doctest = false
 
 [dependencies]
+azihsm_fw_ddi_tbor.workspace = true
+azihsm_fw_ddi_tbor_api.workspace = true
 
 [lints]
 workspace = true

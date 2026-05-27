@@ -57,6 +57,20 @@ pub enum EncodeError {
     DataOffsetOverflow { offset: usize },
 }
 
+impl From<DecodeError> for azihsm_fw_hsm_pal_traits::HsmError {
+    #[inline]
+    fn from(_: DecodeError) -> Self {
+        Self::DdiDecodeFailed
+    }
+}
+
+impl From<EncodeError> for azihsm_fw_hsm_pal_traits::HsmError {
+    #[inline]
+    fn from(_: EncodeError) -> Self {
+        Self::DdiEncodeFailed
+    }
+}
+
 impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

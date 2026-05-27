@@ -7,12 +7,20 @@ use azihsm_fw_hsm_pal_traits::HsmCqe;
 use azihsm_fw_hsm_pal_traits::HsmSqe;
 use bitfield_struct::bitfield;
 
+// ── SQE opcode constants ───────────────────────────────────────────
+
+/// SQE opcode carrying an MBOR-encoded DDI body.
+pub(crate) const OP_MBOR: u16 = 0;
+
+/// SQE opcode carrying a TBOR-encoded DDI body.
+pub(crate) const OP_TBOR: u16 = 2;
+
 // ── SQE bitfield dwords ────────────────────────────────────────────
 
 /// SQE command dword (DW0) bitfield.
 #[bitfield(u32)]
 pub(crate) struct CmdDword {
-    /// Opcode (0 = Generic, 1 = Flush).
+    /// Opcode (0 = MBOR, 1 = Flush, 2 = TBOR).
     #[bits(10)]
     pub op: u16,
     /// Command set.

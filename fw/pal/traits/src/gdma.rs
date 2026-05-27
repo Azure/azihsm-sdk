@@ -36,7 +36,7 @@
 //! - `prp = true` — `src`/`dst` is a *PRP1* host pointer; the GDMA
 //!   walks the PRP list to assemble a scatter/gather descriptor.
 //!   Used for the request/response DMAs that bracket every
-//!   [`OP_GENERIC`](crate) command.
+//!   MBOR / TBOR IO command.
 //! - `prp = false` — `src`/`dst` is a flat host physical address; a
 //!   single contiguous transfer is performed.  Used for inline
 //!   sub-blob copies (e.g. cert chain fragments) where PRP overhead

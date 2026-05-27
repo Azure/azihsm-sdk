@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Cross-compatibility tests between the old `azihsm_ddi_mbor` encoder/decoder
+//! Cross-compatibility tests between the old `azihsm_ddi_mbor_codec` encoder/decoder
 //! and the new `azihsm_fw_ddi_mbor` encoder/decoder. Validates that the wire
 //! format is identical.
 
@@ -11,7 +11,7 @@ use core::ops::Deref;
 use std::vec;
 
 // Old crate (dev-dependency)
-use azihsm_ddi_mbor as old;
+use azihsm_ddi_mbor_codec as old;
 // New crate (this crate)
 use azihsm_fw_ddi_mbor as new;
 use azihsm_fw_hsm_pal_traits::DmaBuf;

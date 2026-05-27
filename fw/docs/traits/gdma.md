@@ -46,7 +46,7 @@ pub trait HsmGdmaController {
 
 ## Usage in IO Pipeline
 
-The core's `handle_generic_op` calls GDMA twice:
+The core's `handle_mbor_op` (and TBOR sibling `handle_tbor_op`) calls GDMA twice:
 
 1. **Inbound DMA** (Phase 1): `copy_mem_from_host(part_id, sqe.src_prp1, smem)` — reads the encoded DDI request from host memory into the IO buffer.
 2. **Outbound DMA** (Phase 3): `copy_mem_to_host(part_id, response, sqe.dst_prp1)` — writes the encoded DDI response back to host memory.

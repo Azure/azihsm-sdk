@@ -51,7 +51,7 @@
 //!   for the rest of the IO and survives across `await` points,
 //!   which is required for buffers that bracket a DMA descriptor
 //!   yield (e.g. the inbound/outbound DMA staging buffer in
-//!   `handle_generic_op`).
+//!   `handle_mbor_op` / `handle_tbor_op`).
 //!
 //! ## Errors
 //!

@@ -22,25 +22,6 @@ azihsm_ddi_nix.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 azihsm_ddi_win.workspace = true
 
-[dev-dependencies]
-azihsm_cred_encrypt.workspace = true
-azihsm_crypto.workspace = true
-azihsm_ddi.workspace = true
-azihsm_ddi_mbor.workspace = true
-azihsm_ddi_mock.workspace = true
-azihsm_ddi_nix.workspace = true
-azihsm_ddi_test_helpers.workspace = true
-azihsm_ddi_types.workspace = true
-azihsm_ddi_win.workspace = true
-bitflags.workspace = true
-chrono.workspace = true
-minicbor.workspace = true
-parking_lot.workspace = true
-test_with_tracing.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-x509.workspace = true
-
 [features]
 default = []
 emu = ["azihsm_ddi_emu"]

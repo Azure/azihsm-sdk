@@ -14,8 +14,6 @@ use crate::copyright::Copyright;
 use crate::coverage::Coverage;
 use crate::coverage_report::CoverageReport;
 use crate::fmt::Fmt;
-#[cfg(target_os = "linux")]
-use crate::integration_tests;
 use crate::nextest::Nextest;
 use crate::nextest_report::NextestReport;
 use crate::setup::Setup;
@@ -76,9 +74,6 @@ pub struct Precheck {
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
-    /// Skip OpenSSL installation during setup
-    #[clap(long)]
-    pub skip_openssl: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -126,7 +121,6 @@ impl Xtask for Precheck {
                 config: self.config,
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
-                skip_openssl: self.skip_openssl,
             }
             .run(ctx.clone())?;
         }
@@ -198,10 +192,10 @@ impl Xtask for Precheck {
 
                 #[cfg(not(target_os = "windows"))]
                 {
-                    // SDK Run azihsm_ddi mock tests table-4
+                    // SDK Run azihsm_ddi_mbor_types mock tests table-4
                     Nextest {
                         features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
+                        package: Some("azihsm_ddi_mbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
@@ -209,20 +203,31 @@ impl Xtask for Precheck {
                     }
                     .run(ctx.clone())?;
 
-                    // SDK Run azihsm_ddi mock tests table-64
+                    // SDK Run azihsm_ddi_mbor_types mock tests table-64
                     Nextest {
                         features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
+                        package: Some("azihsm_ddi_mbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
 
-                    // OSSL Provider integration tests (CLI + C API, Linux only)
-                    #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                    // SDK Run azihsm_ddi_tbor_types tests through the emu
+                    // backend (in-process firmware).
+                    Nextest {
+                        features: Some("emu".to_string()),
+                        package: Some("azihsm_ddi_tbor_types".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
                 }
             } else {
                 Nextest {
