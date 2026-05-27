@@ -43,6 +43,7 @@ x509.workspace = true
 [features]
 default = []
 mock = ["azihsm_ddi_mock"]
+res-fi = ["azihsm_ddi_mock/res-fi"]
 table-4 = ["azihsm_ddi_mock/table-4"]
 table-64 = ["azihsm_ddi_mock/table-64"]
 

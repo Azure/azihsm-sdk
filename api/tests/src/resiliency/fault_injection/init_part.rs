@@ -56,7 +56,7 @@
 //! When extending the error lists above, also add a matching
 //! `test_init_bk3_single_fault_<variant>` test below.
 
-use azihsm_res_test_dev::*;
+use azihsm_ddi_mock::*;
 
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;

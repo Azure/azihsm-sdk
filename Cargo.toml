@@ -21,7 +21,6 @@ members = [
   "ddi/lib",
   "ddi/mock",
   "ddi/nix",
-  "ddi/res_test_dev",
   "ddi/serde/derive",
   "ddi/serde/mbor",
   "ddi/serde/types",
@@ -58,7 +57,6 @@ azihsm_ddi_types = { features = [
   "pre_encode",
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
-azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
 azihsm_tpm = { path = "crates/tpm" }
 resiliency_macro = { path = "crates/resiliency_macro" }

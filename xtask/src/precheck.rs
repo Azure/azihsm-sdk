@@ -182,11 +182,11 @@ impl Xtask for Precheck {
                 }
                 .run(ctx.clone())?;
 
-                // SDK Run resiliency fault-injection tests (requires res-test
-                // feature for the fault-injection DDI device)
+                // SDK Run resiliency fault-injection tests (res-fi feature
+                // enables the fault-injection test modules)
                 if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
                     Nextest {
-                        features: Some("mock,res-test".to_string()),
+                        features: Some("mock,res-fi".to_string()),
                         package: Some("azihsm_api_tests".to_string()),
                         no_default_features: false,
                         filterset: Some("test(resiliency::fault_injection::)".to_string()),

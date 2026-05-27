@@ -7,7 +7,7 @@ name = "azihsm_api_tests"
 version = "0.0.0"
 
 [dependencies]
-azihsm_res_test_dev = { optional = true, workspace = true }
+azihsm_ddi_mock = { optional = true, workspace = true }
 
 [build-dependencies]
 cmake.workspace = true
@@ -26,7 +26,7 @@ tracing-tree.workspace = true
 [features]
 default = []
 mock = ["azihsm_api/mock"]
-res-test = ["azihsm_api/res-test", "dep:azihsm_res_test_dev"]
+res-fi = ["azihsm_api/res-fi", "azihsm_ddi_mock/res-fi", "dep:azihsm_ddi_mock"]
 
 [lints]
 workspace = true

@@ -23,7 +23,7 @@
 //! (and to [`super::ALL_RETRYABLE_ERRORS`] if it's new globally).
 //! All loop-based tests will automatically cover it.
 
-use azihsm_res_test_dev::*;
+use azihsm_ddi_mock::*;
 
 use crate::utils::partition::*;
 use crate::*;

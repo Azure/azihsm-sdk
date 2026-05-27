@@ -49,7 +49,7 @@
 //! All loop-based tests will automatically cover it. To add a
 //! non-retryable error, append to [`super::NON_RETRYABLE_ERRORS`].
 
-use azihsm_res_test_dev::*;
+use azihsm_ddi_mock::*;
 
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;

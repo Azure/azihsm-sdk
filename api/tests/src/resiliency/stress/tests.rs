@@ -25,9 +25,9 @@
 //!
 //! # Feature gate
 //!
-//! This module does not require the `res-test` feature.
-//! It does not depend on `azihsm_res_test_dev` (no fault
-//! injection); Resets are triggered directly via `partition.reset()`.
+//! This module does not require the `res-fi` feature.
+//! It does not depend on fault
+//! injection; Resets are triggered directly via `partition.reset()`.
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::atomic::AtomicBool;

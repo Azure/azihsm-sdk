@@ -59,14 +59,14 @@
 //! non-retryable error, append to [`super::NON_RETRYABLE_ERRORS`].
 
 use azihsm_crypto as crypto;
-use azihsm_res_test_dev::DdiOp;
-use azihsm_res_test_dev::DdiStatus;
-use azihsm_res_test_dev::DriverError;
-use azihsm_res_test_dev::FaultError;
-use azihsm_res_test_dev::FaultRule;
-use azihsm_res_test_dev::clear_faults;
-use azihsm_res_test_dev::inject_fault;
-use azihsm_res_test_dev::op_call_count;
+use azihsm_ddi_mock::DdiOp;
+use azihsm_ddi_mock::DdiStatus;
+use azihsm_ddi_mock::DriverError;
+use azihsm_ddi_mock::FaultError;
+use azihsm_ddi_mock::FaultRule;
+use azihsm_ddi_mock::clear_faults;
+use azihsm_ddi_mock::inject_fault;
+use azihsm_ddi_mock::op_call_count;
 
 use super::super::helpers::*;
 use crate::utils::aes_xts::build_xts_wrapped_blob;

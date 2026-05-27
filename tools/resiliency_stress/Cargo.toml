@@ -15,7 +15,6 @@ path = "src/main.rs"
 azihsm_api.workspace = true
 azihsm_crypto.workspace = true
 azihsm_ddi_sim.workspace = true
-azihsm_res_test_dev = { optional = true, workspace = true }
 azihsm_resiliency_test_helpers.workspace = true
 clap = { features = ["derive"], workspace = true }
 libc.workspace = true
@@ -28,7 +27,7 @@ tracing-subscriber.workspace = true
 [features]
 default = []
 mock = ["azihsm_api/mock"]
-res-test = ["azihsm_api/res-test", "azihsm_res_test_dev"]
+res-fi = ["azihsm_api/res-fi"]
 
 [lints]
 workspace = true

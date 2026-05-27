@@ -27,6 +27,9 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 
+#[cfg(feature = "res-fi")]
+use crate::fault;
+
 #[derive(Debug)]
 struct SessionIdInner {
     pub session_id: Option<u16>,
@@ -188,6 +191,18 @@ impl DdiDev for DdiMockDev {
         req: &T,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
+        #[cfg(feature = "res-fi")]
+        // Apply fault-injection hooks used by resiliency fault-injection tests.
+        match fault::check_faults(req.get_opcode()) {
+            Some(fault::FaultAction::ReturnError(err)) => return Err(err.into_ddi_error()),
+            Some(fault::FaultAction::TriggerReset) => {
+                self.simulate_nssr_after_lm()?;
+                // Keep behavior consistent with previous fault-injection wrapper.
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            None => {}
+        }
+
         const REQ_BUF_LEN: usize = 8192;
 
         // validate the request against the device

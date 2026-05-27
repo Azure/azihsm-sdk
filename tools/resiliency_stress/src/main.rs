@@ -103,7 +103,7 @@ struct Args {
     no_reset: bool,
 
     /// Inject random NSSR faults on DDI operations instead of using
-    /// timer-based resets. Requires the `res-test` feature.
+    /// timer-based resets. Requires the `res-fi` feature.
     /// This provides better race coverage by triggering resets
     /// mid-DDI-call rather than between operations.
     #[arg(long, default_value_t = false)]

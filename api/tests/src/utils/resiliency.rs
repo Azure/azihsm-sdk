@@ -38,8 +38,8 @@ use std::sync::atomic::Ordering;
 
 use azihsm_api::*;
 use azihsm_crypto::*;
-#[cfg(feature = "res-test")]
-use azihsm_res_test_dev::DdiOp;
+#[cfg(feature = "res-fi")]
+use azihsm_ddi_mock::DdiOp;
 use azihsm_resiliency_test_helpers::FileLock;
 use azihsm_resiliency_test_helpers::FileStorage;
 
@@ -53,7 +53,7 @@ use crate::utils::partition::*;
 /// re-running the BK3 flow (real-HW `init_bk3` is one-shot per power
 /// cycle). `EstablishCredential` is always invoked by both init and
 /// restore, so it is the reliable signal going forward.
-#[cfg(feature = "res-test")]
+#[cfg(feature = "res-fi")]
 pub(crate) fn bk3_op() -> DdiOp {
     DdiOp::EstablishCredential
 }

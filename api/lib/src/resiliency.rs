@@ -20,15 +20,8 @@ use crate::partition::HsmCredentials;
 use crate::shared_types::HsmOwnerBackupKeySource;
 use crate::shared_types::HsmPotaEndorsementSource;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "res-test")] {
-        /// Concrete DDI type used by the API layer with resiliency fault injection.
-        pub(crate) type HsmDdi = azihsm_res_test_dev::DdiResTest<azihsm_ddi::AzihsmDdi>;
-    } else {
-        /// Concrete DDI type used by the API layer.
-        pub(crate) type HsmDdi = azihsm_ddi::AzihsmDdi;
-    }
-}
+/// Concrete DDI type used by the API layer.
+pub(crate) type HsmDdi = azihsm_ddi::AzihsmDdi;
 
 /// Well-known storage key for the backup masking key.
 pub(crate) const AZIHSM_STORAGE_BMK: &str = "azihsm_bmk";

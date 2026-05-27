@@ -4,7 +4,7 @@
 //! Fault-injection resiliency tests.
 //!
 //! Each sub-module targets a specific API surface and uses the
-//! resiliency DDI device (`azihsm_res_test_dev`) to inject transient
+//! resiliency DDI device (`azihsm_ddi_mock`) to inject transient
 //! faults, verifying that the retry-with-backoff machinery recovers
 //! correctly.
 //!
@@ -21,7 +21,7 @@
 //! parametric tests that iterate all error codes and branch on
 //! retryability.
 
-use azihsm_res_test_dev::*;
+use azihsm_ddi_mock::*;
 
 mod cert_chain;
 mod close_session;

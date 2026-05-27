@@ -40,7 +40,7 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
 }
 
 /// Open and init a partition without resiliency, open a session.
-#[cfg(feature = "res-test")]
+#[cfg(feature = "res-fi")]
 pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
@@ -202,7 +202,7 @@ pub(crate) fn cbc_decrypt(key: &HsmAesKey, iv: &[u8], ciphertext: &[u8]) -> HsmR
 }
 
 /// AES-CBC streaming encrypt: sends data in multiple chunks.
-#[cfg(feature = "res-test")]
+#[cfg(feature = "res-fi")]
 pub(crate) fn cbc_streaming_encrypt(
     key: &HsmAesKey,
     iv: &[u8],
@@ -226,7 +226,7 @@ pub(crate) fn cbc_streaming_encrypt(
 }
 
 /// AES-CBC streaming decrypt: sends data in multiple chunks.
-#[cfg(feature = "res-test")]
+#[cfg(feature = "res-fi")]
 pub(crate) fn cbc_streaming_decrypt(
     key: &HsmAesKey,
     iv: &[u8],

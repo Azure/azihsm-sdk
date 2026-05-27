@@ -12,7 +12,6 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
-azihsm_res_test_dev = { optional = true, workspace = true }
 azihsm_tpm.workspace = true
 bitflags.workspace = true
 cfg-if.workspace = true
@@ -33,7 +32,7 @@ zerocopy = { features = ["derive"], workspace = true }
 [features]
 default = []
 mock = ["azihsm_ddi/mock"]
-res-test = ["azihsm_res_test_dev"]
+res-fi = ["azihsm_ddi/res-fi"]
 
 [lints]
 workspace = true

@@ -638,7 +638,7 @@ Located in `api/tests/src/resiliency/stress/tests.rs`:
 
 ### Fault Injection Tests
 
-Using the `res-test` feature and `azihsm_res_test_dev` crate for
+Using the `res-fi` feature and `azihsm_ddi_mock` crate for
 injecting NSSR faults mid-DDI-call (more precise than timer-based resets).
 
 ### Stress Tool

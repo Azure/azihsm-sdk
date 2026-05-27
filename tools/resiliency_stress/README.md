@@ -83,23 +83,6 @@ cargo run --release -p resiliency_stress -- --no-reset -d 60
 cargo run --release -p resiliency_stress -- -d 60
 ```
 
-### Random DDI Fault Injection
-
-Injects NSSR faults on random DDI operations mid-call, providing much
-better race coverage than timer-based resets. Requires the `res-test`
-feature:
-
-```bash
-# Build with res-test feature
-cargo build --release -p resiliency_stress --features res-test
-
-# Run with random fault injection
-cargo run --release -p resiliency_stress --features res-test -- --random-fault -d 60
-
-# Random faults with faster injection interval
-cargo run --release -p resiliency_stress --features res-test -- --random-fault -r 100 -d 300
-```
-
 ## Command-Line Options
 
 | Flag | Short | Default | Description |
@@ -113,7 +96,6 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `--verbose` | `-v` | false | Enable verbose logging |
 | `--no-resiliency` | | false | Disable resiliency (baseline perf) |
 | `--no-reset` | | false | Resiliency enabled but no resets |
-| `--random-fault` | | false | Random DDI fault injection (needs `res-test`) |
 | `--max-errors` | `-e` | 10 | Max operation errors before stopping (0 = fail-fast, -1 = unlimited) |
 | `--processes` | `-p` | 1 | Number of separate OS processes (each with own partition) |
 
@@ -184,9 +166,5 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 
 - **No partitions found:** Ensure the HSM simulator is available (build
   with `--features mock` for simulator mode)
-- **All ops fail immediately:** Check that the `mock` feature is enabled
-  for simulator mode (`--features mock`). The `res-test` feature must be
-  explicitly enabled when using `--random-fault`
-  (`--features mock,res-test`)
-- **Very low ops/sec:** Increase `--reset-interval-ms` to reduce reset
-  frequency
+- **Very low ops/sec:** Increase `--reset-interval-ms` to reduce reset frequency
+
