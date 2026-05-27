@@ -73,6 +73,63 @@ const P384_COORD_SIZE: usize = 48;
 /// Size of the raw public key (x ∥ y) in bytes.
 pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 
+/// Length of the per-partition VM launch GUID in bytes.
+///
+/// Matches the prior reference firmware's `VmLaunchGuid` size
+/// (16 bytes).
+pub(crate) const VM_LAUNCH_GUID_LEN: usize = 16;
+
+/// Hardcoded std PAL VM launch GUID returned by
+/// [`HsmPartitionManager::part_vm_launch_guid`].
+///
+/// Real hardware reads this from the platform's launch-context table;
+/// the emulator returns a fixed value so tests are deterministic.
+const STD_VM_LAUNCH_GUID: [u8; VM_LAUNCH_GUID_LEN] = [
+    0x53, 0x74, 0x64, 0x56, 0x4d, 0x4c, 0x61, 0x75, 0x6e, 0x63, 0x68, 0x47, 0x75, 0x69, 0x64, 0x00,
+];
+
+/// Hardcoded std PAL SVN returned by [`HsmPartitionManager::part_svn`].
+const STD_SVN: u64 = 0;
+
+/// Length of a single backup-key seed (`BKS1`, `BKS2`) row used by
+/// [`HsmPartitionManager::derive_masking_key`] in bytes.
+const BK_SEED_LEN: usize = 32;
+
+/// Hardcoded std PAL firmware boot seed used as the KDK input to
+/// [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware reads this from a one-time-programmed, device-bound
+/// hardware register that is not visible outside the secure-world
+/// firmware.  The std PAL emulator uses a fixed pattern so tests are
+/// deterministic.  The seed never crosses the trait boundary; callers
+/// only see derived masking keys.
+const STD_FW_SEED: [u8; 48] = [0x42u8; 48];
+
+/// Hardcoded std PAL `BKS1` seed row used as the first half of the
+/// KDF context in [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware selects this row from a `BKS1` table indexed by SVN;
+/// the std PAL emulator has a single row because the simulator models
+/// a single SVN.  The bytes are taken from the prior reference
+/// firmware so derived masking keys are bit-compatible with persisted
+/// `Masked_BK_BOOT` blobs across emulator and real hardware.
+const STD_BKS1: [u8; BK_SEED_LEN] = [
+    0x9b, 0x4e, 0x4e, 0xb7, 0xad, 0xab, 0xdc, 0xd6, 0xb4, 0xd5, 0x07, 0xeb, 0x68, 0xeb, 0x26, 0x99,
+    0x2a, 0xbb, 0xca, 0xb5, 0x5c, 0xfb, 0x77, 0x3b, 0xc4, 0xd0, 0xa8, 0x8c, 0x21, 0x02, 0xb0, 0xac,
+];
+
+/// Hardcoded std PAL `BKS2` seed row used as the second half of the
+/// KDF context in [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware selects this row from a `BKS2` table indexed by
+/// `bks2_index`; the std PAL emulator has a single row because the
+/// simulator models a single partition lineage.  The bytes are taken
+/// from the prior reference firmware for bit-compatibility.
+const STD_BKS2: [u8; BK_SEED_LEN] = [
+    0xad, 0x1a, 0x17, 0xe9, 0xed, 0x38, 0x27, 0x5e, 0x8b, 0x30, 0x5d, 0xb8, 0x19, 0x0f, 0x82, 0xb6,
+    0x2d, 0xa2, 0x5a, 0xc6, 0xf0, 0x70, 0xa3, 0xe1, 0x75, 0x9c, 0x61, 0x92, 0xcc, 0xf4, 0x19, 0xa3,
+];
+
 /// A single partition's state and cryptographic material.
 ///
 /// Each partition entry holds all per-partition data in fixed-size
@@ -165,6 +222,46 @@ pub(crate) struct PartitionEntry {
 
     /// Length of valid data in `sealed_bk3` (0 = not yet stored).
     sealed_bk3_len: u32,
+
+    /// `BK_BOOT` boot-key material, generated during partition enable.
+    ///
+    /// On the std PAL this is opaque random bytes; on real hardware it
+    /// is derived from `BKS1` / `BKS2`.  Never exposed outside the
+    /// PAL — application code only sees `Masked_BK_BOOT` (and only
+    /// indirectly, through the masked outputs produced from it).
+    bk_boot: [u8; BK_BOOT_LEN],
+
+    /// `Masked_BK_BOOT` — `BK_BOOT` enveloped with a platform-derived
+    /// `BKx` masking key.
+    ///
+    /// Populated by the application layer (the DDI `InitBk3` handler)
+    /// — the PAL only provides the fixed-size storage slot and the
+    /// raw `BK_BOOT` material via
+    /// [`HsmPartitionManager::part_bk_boot`].  Cleared on disable /
+    /// free via [`StdHsmPal::clear_enabled_state`].
+    masked_bk_boot: [u8; MASKED_BK_BOOT_LEN],
+
+    /// Length of valid data in `masked_bk_boot` (0 = not yet
+    /// populated).
+    ///
+    /// Set by the application layer when it writes the masked envelope
+    /// into [`PartitionEntry::masked_bk_boot`]; reset to 0 on every
+    /// disable / free via [`StdHsmPal::clear_enabled_state`].
+    masked_bk_boot_len: u32,
+
+    /// VM launch GUID, set during partition enable.
+    ///
+    /// On the std PAL this is a fixed constant
+    /// ([`STD_VM_LAUNCH_GUID`]); on real hardware it is sourced from
+    /// the platform.  Zeroed on disable / free.
+    vm_launch_guid: [u8; VM_LAUNCH_GUID_LEN],
+
+    /// BK3 initialization state for the current partition incarnation.
+    ///
+    /// `false` on every enable; set to `true` by a successful
+    /// `part_mark_bk3_initialized`.  Acts as the authoritative
+    /// one-shot gate for `InitBk3`.
+    bk3_initialized: bool,
 }
 
 impl Default for PartitionEntry {
@@ -187,6 +284,11 @@ impl Default for PartitionEntry {
             nonce: [0u8; NONCE_LEN],
             sealed_bk3: [0u8; SEALED_BK3_SIZE],
             sealed_bk3_len: 0,
+            bk_boot: [0u8; BK_BOOT_LEN],
+            masked_bk_boot: [0u8; MASKED_BK_BOOT_LEN],
+            masked_bk_boot_len: 0,
+            vm_launch_guid: [0u8; VM_LAUNCH_GUID_LEN],
+            bk3_initialized: false,
         }
     }
 }
@@ -393,6 +495,122 @@ impl HsmPartitionManager for StdHsmPal {
         entry.sealed_bk3[..data.len()].copy_from_slice(data);
         entry.sealed_bk3_len = data.len() as u32;
         Ok(())
+    }
+
+    fn part_vm_launch_guid(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        copy_out(&entry.vm_launch_guid, out)
+    }
+
+    fn part_svn(&self, io: &impl HsmIo) -> HsmResult<u64> {
+        // Validate enabled state but discard the borrow; the value is a
+        // platform constant on the std PAL.
+        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(STD_SVN)
+    }
+
+    fn part_bks2_id(&self, io: &impl HsmIo) -> HsmResult<u16> {
+        // No BKS2 selector modelled in the emulator; return slot 0 for
+        // wire-format compatibility.
+        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(0)
+    }
+
+    fn part_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        if let Some(buf) = out {
+            if buf.len() < BK_BOOT_LEN {
+                return Err(HsmError::InvalidArg);
+            }
+            buf[..BK_BOOT_LEN].copy_from_slice(&entry.bk_boot);
+        }
+        Ok(BK_BOOT_LEN)
+    }
+
+    fn part_is_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<bool> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(entry.bk3_initialized)
+    }
+
+    fn part_mark_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        if entry.bk3_initialized {
+            return Err(HsmError::Bk3AlreadyInitialized);
+        }
+        entry.bk3_initialized = true;
+        Ok(())
+    }
+
+    fn part_masked_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        let len = entry.masked_bk_boot_len as usize;
+        copy_out(&entry.masked_bk_boot[..len], out)
+    }
+
+    fn part_set_masked_bk_boot(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
+        if data.len() > MASKED_BK_BOOT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        entry.masked_bk_boot[..data.len()].copy_from_slice(data);
+        entry.masked_bk_boot_len = data.len() as u32;
+        Ok(())
+    }
+
+    fn fw_seed(&self) -> &[u8] {
+        &STD_FW_SEED
+    }
+
+    async fn derive_masking_key(
+        &self,
+        io: &impl HsmIo,
+        kdk: &[u8],
+        label: &[u8],
+        extra_context: &[u8],
+        svn: u64,
+        bks2_index: u16,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.enabled_part(u8::from(io.pid()))?;
+
+        // Std PAL models a single SVN + single BKS2 lineage; reject any
+        // out-of-range selector.
+        if svn != 0 || bks2_index != 0 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Co-locate all KDF inputs (KDK, label, context) in one DMA
+        // alloc; pad each region to 4-byte alignment so DMA-driven
+        // engines on real hardware see the same layout as
+        // per-allocation arrangements.
+        let kdk_area_len = kdk.len().next_multiple_of(4);
+        let label_area_len = label.len().next_multiple_of(4);
+        let ctx_len = STD_BKS1.len() + STD_BKS2.len() + extra_context.len();
+
+        let arena = self.dma_alloc(io, kdk_area_len + label_area_len + ctx_len)?;
+        let (kdk_area, rest) = arena.split_at_mut(kdk_area_len);
+        let (key_dma, _kdk_pad) = kdk_area.split_at_mut(kdk.len());
+        let (label_area, ctx_dma) = rest.split_at_mut(label_area_len);
+        let (label_dma, _label_pad) = label_area.split_at_mut(label.len());
+
+        if !kdk.is_empty() {
+            key_dma.copy_from_slice(kdk);
+        }
+        if !label.is_empty() {
+            label_dma.copy_from_slice(label);
+        }
+        {
+            let (bks1_slot, ctx_rest) = ctx_dma.split_at_mut(STD_BKS1.len());
+            let (bks2_slot, extra_slot) = ctx_rest.split_at_mut(STD_BKS2.len());
+            bks1_slot.copy_from_slice(&STD_BKS1);
+            bks2_slot.copy_from_slice(&STD_BKS2);
+            if !extra_context.is_empty() {
+                extra_slot.copy_from_slice(extra_context);
+            }
+        }
+
+        self.sp800_108_kdf(io, HsmHashAlgo::Sha384, key_dma, label_dma, ctx_dma, output)
+            .await
     }
 }
 
@@ -633,6 +851,16 @@ impl StdHsmPal {
             return Err(HsmError::InternalError);
         }
 
+        // Generate per-partition `BK_BOOT`; real hardware derives this
+        // from BKS1/BKS2, the emulator uses random bytes.
+        if Rng::rand_bytes(&mut entry.bk_boot).is_err() {
+            Self::clear_enabled_state(entry);
+            return Err(HsmError::BkBootGenerationFailed);
+        }
+
+        entry.vm_launch_guid = STD_VM_LAUNCH_GUID;
+        entry.bk3_initialized = false;
+
         entry.state = PartState::Enabled;
         Ok(())
     }
@@ -743,7 +971,15 @@ impl StdHsmPal {
     }
 
     /// Clear all state associated with an enabled partition (internal keys,
-    /// nonce, vault keys, sessions).  Does NOT change the state field.
+    /// nonce, vault keys, sessions, boot-key material, BK3 state).  Does
+    /// NOT change the state field.
+    ///
+    /// This is the single clearing site shared by `part_disable_internal`
+    /// and `part_free_internal`; it mirrors the prior reference
+    /// firmware's `clear_partition_info` grouping so that
+    /// `Masked_BK_BOOT`, `sealed_bk3`, `vm_launch_guid`, and BK3 init
+    /// state are all zeroized together whenever the partition's
+    /// enabled lifecycle ends.
     fn clear_enabled_state(entry: &mut PartitionEntry) {
         if let Some(kid) = entry.establish_cred_key_id.take() {
             let _ = entry.vault.delete(kid);
@@ -760,5 +996,14 @@ impl StdHsmPal {
         entry.session_table = SessionTable::new();
         entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);
         entry.sealed_bk3_len = 0;
+
+        // Boot-key + BK3-incarnation state — mirrors the prior
+        // reference firmware's `clear_partition_info` zeroize
+        // grouping.
+        entry.bk_boot.fill(0);
+        entry.masked_bk_boot[..entry.masked_bk_boot_len as usize].fill(0);
+        entry.masked_bk_boot_len = 0;
+        entry.vm_launch_guid.fill(0);
+        entry.bk3_initialized = false;
     }
 }
