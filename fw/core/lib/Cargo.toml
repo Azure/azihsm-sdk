@@ -11,6 +11,7 @@ doctest = false
 test = false
 
 [dependencies]
+azihsm_fw_core_crypto_masked_key.workspace = true
 azihsm_fw_ddi_mbor = { features = ["trusted-encode"], workspace = true }
 azihsm_fw_ddi_mbor_api.workspace = true
 azihsm_fw_ddi_mbor_types.workspace = true

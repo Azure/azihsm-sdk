@@ -925,7 +925,7 @@ impl FunctionState {
 
     pub(crate) fn set_sealed_bk3_data(&self, data: &[u8]) -> Result<(), ManticoreError> {
         if self.inner.read().sealed_bk3_data.is_some() {
-            return Err(ManticoreError::KeyAlreadyExists);
+            return Err(ManticoreError::SealedBk3AlreadySet);
         }
         if data.len() > SEALED_BK3_SIZE {
             return Err(ManticoreError::SealedBk3TooLarge);

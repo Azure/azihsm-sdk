@@ -315,11 +315,11 @@ fn test_live_migration_sealed_bk3() {
             assert!(
                 matches!(
                     set_result.unwrap_err(),
-                    DdiError::DdiStatus(DdiStatus::KeyTagAlreadyExists)
+                    DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet)
                 ),
-                "Should get KeyTagAlreadyExists error."
+                "Should get SealedBk3AlreadySet error."
             );
-            info!("Successfully got expected KeyTagAlreadyExists error after migration");
+            info!("Successfully got expected SealedBk3AlreadySet error after migration");
 
             // Verify: Get sealed BK3 again to confirm it was migrated correctly
             let sealed_bk3_after = helper_get_sealed_bk3(dev);
