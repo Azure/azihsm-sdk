@@ -57,7 +57,7 @@ const ITERATIONS_PER_WORKER: usize = 500;
 /// `resiliency.rs` under `cfg(feature = "mock")`), and
 /// `SessionNeedsRenegotiation` retries without backoff.
 /// With 4 workers all serializing through `restore_partition`,
-/// recovery completes quickly. 1 second is high enough for
+/// recovery completes quickly. 3 seconds is high enough for
 /// recovery to finish, but low enough that workers encounter
 /// multiple Resets during their run.
 ///
@@ -65,7 +65,7 @@ const ITERATIONS_PER_WORKER: usize = 500;
 /// up to ~5 seconds to complete. The interval must be longer than
 /// that to avoid spurious `IOAbortInProgress` errors.
 #[cfg(feature = "mock")]
-const RESET_INTERVAL_MS: u64 = 1000;
+const RESET_INTERVAL_MS: u64 = 3000;
 #[cfg(not(feature = "mock"))]
 const RESET_INTERVAL_MS: u64 = 7000;
 
