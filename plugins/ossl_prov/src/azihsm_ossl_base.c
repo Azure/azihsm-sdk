@@ -240,6 +240,7 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         provctx->unwrapping_key.priv = 0;
     }
     CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
+    CRYPTO_THREAD_lock_free(provctx->session_lock);
 
     /* Destroy resiliency context before closing the device */
     if (provctx->resiliency_ctx != NULL)
@@ -785,6 +786,17 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
+    ctx->session_lock = CRYPTO_THREAD_lock_new();
+    if (ctx->session_lock == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
     /* Find get_params_fn from the core dispatch table for config parsing */
     for (in_iter = in; in_iter->function_id != 0; in_iter++)
     {
@@ -798,6 +810,7 @@ OSSL_STATUS OSSL_provider_init(
     /* Parse configuration from openssl.cnf and environment variables */
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
+        CRYPTO_THREAD_lock_free(ctx->session_lock);
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
         OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
@@ -819,6 +832,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MAJOR,
             AZIHSM_API_REVISION_MAX_MINOR
         );
+        CRYPTO_THREAD_lock_free(ctx->session_lock);
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
         OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
@@ -845,6 +859,7 @@ OSSL_STATUS OSSL_provider_init(
                 "unsafe resiliency storage dir '%s'",
                 dir
             );
+            CRYPTO_THREAD_lock_free(ctx->session_lock);
             CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
             OSSL_PROVIDER_unload(ctx->default_provider);
             OSSL_LIB_CTX_free(ctx->libctx);
@@ -864,6 +879,7 @@ OSSL_STATUS OSSL_provider_init(
                 PROV_R_INVALID_CONFIG_DATA,
                 "Resiliency storage dir path too long"
             );
+            CRYPTO_THREAD_lock_free(ctx->session_lock);
             CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
             OSSL_PROVIDER_unload(ctx->default_provider);
             OSSL_LIB_CTX_free(ctx->libctx);

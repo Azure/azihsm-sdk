@@ -1231,15 +1231,28 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
+
+    /* Fast path: session already open. */
     if (provctx->session != 0)
     {
         return AZIHSM_STATUS_SUCCESS;
     }
-    if (provctx->session_opening)
+
+    if (!CRYPTO_THREAD_write_lock(provctx->session_lock))
     {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Another thread opened the session while we waited for the lock. */
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
         return AZIHSM_STATUS_SUCCESS;
     }
 
+    /* Set before the open so query_operation's lock-free re-entry guard is
+     * active for every libcrypto fetch the open triggers on this thread. */
     provctx->session_opening = true;
 
     /* Pre-instantiate the libctx's primary DRBG.  The SDK open below
@@ -1253,6 +1266,7 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
     if (RAND_bytes(primer, sizeof(primer)) != 1)
     {
         provctx->session_opening = false;
+        CRYPTO_THREAD_unlock(provctx->session_lock);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
     OPENSSL_cleanse(primer, sizeof(primer));
@@ -1264,6 +1278,8 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         &provctx->resiliency_ctx
     );
     provctx->session_opening = false;
+
+    CRYPTO_THREAD_unlock(provctx->session_lock);
 
     return status;
 }
