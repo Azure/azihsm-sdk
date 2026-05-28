@@ -483,6 +483,31 @@ TEST(azihsm_part, get_prop_manufacturer_cert)
     });
 }
 
+TEST(azihsm_part, get_prop_manufacturer_cert_returns_larger_size_hint)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        uint32_t size_hint = prop.len;
+        ASSERT_GT(size_hint, 0);
+
+        std::vector<azihsm_char> buffer(size_hint);
+        prop.val = buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        uint32_t actual_size = prop.len;
+        ASSERT_GT(actual_size, 0);
+
+        uint32_t expected_size_hint = actual_size + (actual_size / 2) + (actual_size % 2);
+        ASSERT_EQ(size_hint, expected_size_hint);
+    });
+}
+
 TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
 {
     auto part_list = PartitionListHandle();
