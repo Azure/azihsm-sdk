@@ -23,7 +23,17 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_resiliency_ctx **resiliency_ctx
 );
 
-/* Lazy device+session open. */
+/*
+ * Lazy device+session open.
+ *
+ * Ensures the provider context has an open HSM device + session, opening it
+ * on first call. After a successful return the caller may read provctx->session
+ * directly.
+ *
+ * Must NOT be called from the provider's OSSL_FUNC_PROVIDER_QUERY_OPERATION
+ * dispatch hook — see azihsm_ossl_query_operation() for the re-entrancy
+ * rationale.
+ */
 azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx);
 
 /*

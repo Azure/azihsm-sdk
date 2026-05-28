@@ -292,17 +292,26 @@ static OSSL_STATUS azihsm_ossl_get_params(ossl_unused void *provctx, OSSL_PARAM 
 }
 
 static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
-    void *provctx,
+    ossl_unused void *provctx,
     int operation_id,
     int *no_store
 )
 {
-    if (azihsm_ensure_session((AZIHSM_OSSL_PROV_CTX *)provctx) != AZIHSM_STATUS_SUCCESS)
-    {
-        return NULL;
-    }
-
-    // Dispatch tables do not change and may be cached
+    /* query_operation is a pure discovery callback.  OpenSSL invokes it from
+     * inside libcrypto initialisation paths — notably EVP_RAND_instantiate,
+     * which fetches its AES cipher provider while the global DRBG is being
+     * brought up.  Any work performed here that calls back into libcrypto
+     * (for example opening the HSM session, which in turn instantiates the
+     * simulator backend and asks libcrypto for random bytes / EC keys) would
+     * re-enter the very initialisation path that is on the stack, deadlock
+     * the OpenSSL Once cell guarding DRBG init, and ultimately poison the
+     * lazy-initialised dispatcher in the mock DDI.  See the integration test
+     * `nginx_tests` and the design note in azihsm_ossl_hsm.c
+     * (azihsm_ensure_session) for the full backtrace.
+     *
+     * The dispatch tables are static, so we always return them
+     * unconditionally and defer azihsm_ensure_session() to each algorithm's
+     * first real entry point (newctx / open / init). */
     *no_store = 0;
     switch (operation_id)
     {
@@ -326,9 +335,9 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_encoders;
     case OSSL_OP_STORE:
         return azihsm_ossl_store;
+    default:
+        return NULL;
     }
-
-    return NULL;
 }
 
 static OSSL_STATUS azihsm_ossl_get_capabilities(

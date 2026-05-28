@@ -1235,9 +1235,20 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
     {
         return AZIHSM_STATUS_SUCCESS;
     }
+
+    /* Re-entrancy: a code path reached during the open itself is asking
+     * for the session.  We cannot satisfy it (the handle is still being
+     * produced) and we must not recurse into azihsm_open_device_and_session.
+     * Fail loudly so the caller's operation aborts cleanly instead of
+     * silently proceeding with session == 0. */
     if (provctx->session_opening)
     {
-        return AZIHSM_STATUS_SUCCESS;
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "azihsm_ensure_session: re-entrant call during HSM session open"
+        );
+        return AZIHSM_STATUS_INVALID_CONTEXT_STATE;
     }
 
     provctx->session_opening = true;
