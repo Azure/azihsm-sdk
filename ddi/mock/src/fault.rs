@@ -8,18 +8,25 @@
 //! the global fault list. If a rule matches the current opcode, the
 //! configured [`FaultAction`] is executed:
 //!
-//! - [`FaultAction::ReturnError`] - returns the error immediately
-//!   instead of dispatching the operation.
-//! - [`FaultAction::TriggerReset`] - performs a device reset
-//!   (`simulate_nssr_after_lm`) and then allows normal dispatch,
-//!   which fails naturally because credentials are wiped.
+//! - [`FaultAction::ReturnError`] — returns the error immediately
+//!   instead of delegating to the inner mock.
+//! - [`FaultAction::TriggerReset`] — performs a device reset
+//!   (`erase`) *then* lets the inner mock handle the
+//!   call, which will fail naturally because credentials are wiped.
+//!
+//! # Per-op call tracking
+//!
+//! Each [`DdiOp`] has its own call counter (1-based). This lets tests
+//! target a specific occurrence of an op — e.g., "fail the 2nd
+//! `GetApiRev` call with `IoAborted`".
+//!
 
 use std::collections::HashMap;
 
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DriverError;
-use azihsm_ddi_types::DdiOp;
-use azihsm_ddi_types::DdiStatus;
+use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiStatus;
 use parking_lot::Mutex;
 
 /// Per-op call counters - keyed by the `DdiOp` inner `u32` value.
@@ -76,8 +83,9 @@ impl FaultError {
 pub enum FaultAction {
     /// Return the given error immediately; operation is not dispatched.
     ReturnError(FaultError),
-    /// Trigger a device reset (`simulate_nssr_after_lm`) and then
-    /// continue operation dispatch.
+    /// Trigger a device reset (`erase`) then let the
+    /// inner DDI op proceed. The op will fail naturally because the
+    /// reset wiped all established credentials.
     TriggerReset,
 }
 

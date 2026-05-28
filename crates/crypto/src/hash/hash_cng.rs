@@ -25,6 +25,14 @@ pub struct CngHashAlgo {
     size: usize,
 }
 
+#[allow(unsafe_code)]
+// SAFETY: CngHashAlgo wraps a Windows CNG pseudo-handle constant which is thread-safe and can be sent across threads
+unsafe impl Send for CngHashAlgo {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngHashAlgo wraps a Windows CNG pseudo-handle constant which is thread-safe and can be shared across threads
+unsafe impl Sync for CngHashAlgo {}
+
 impl CngHashAlgo {
     /// Creates a new instance of the CNG hash implementation.
     ///

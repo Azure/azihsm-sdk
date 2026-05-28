@@ -1,0 +1,5 @@
+error: #[tbor(align = N)] can only be applied to data-section types (uint32, uint64, buffer, sealed_key)
+ --> tests/compile_tests/fail/align_on_inline.rs:9:5
+  |
+9 |     value: u8,
+  |     ^^^^^

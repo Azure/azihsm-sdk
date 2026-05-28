@@ -1306,7 +1306,6 @@ fn main() {
             std::process::exit(1);
         }
         run_single_process(args);
-        return;
     }
 
     #[cfg(not(feature = "mock"))]
@@ -1524,6 +1523,8 @@ fn run_single_process(args: Args) {
     print_config(&args, &ops);
 
     // Heap-allocate SharedMem (zero-initialized = all atomics start at 0/false).
+    // SAFETY: SharedMem contains only atomic integers and booleans, all of which
+    // are valid when zero-initialized.
     let shmem: Box<SharedMem> = unsafe { Box::new(std::mem::zeroed()) };
     let shmem: &'static SharedMem = Box::leak(shmem);
     let proc_stats = &shmem.procs[0];

@@ -16,7 +16,7 @@ bitfield-struct.workspace = true
 parking_lot.workspace = true
 
 # These dependencies are only used with "vtpm-tests" feature
-getrandom = { optional = true, version = "0.2" }
+getrandom = { optional = true, workspace = true }
 
 # NOTE: this dependency uses OpenSSL which is not approved by CryptoBoard.
 # You can uncomment locally to use the vtpm-tests feature.
@@ -29,4 +29,4 @@ vtpm-tests = ["getrandom"]
 # vtpm-tests = ["ms-tpm-20-ref", "getrandom"]
 
 [dev-dependencies]
-num-bigint = "0.4"
+num-bigint = { workspace = true }

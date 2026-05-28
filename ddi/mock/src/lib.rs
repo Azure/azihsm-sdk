@@ -18,8 +18,8 @@ pub use dev::DdiMockDev;
 #[cfg(feature = "res-fi")]
 mod fault_exports {
     pub use azihsm_ddi_interface::DriverError;
-    pub use azihsm_ddi_types::DdiOp;
-    pub use azihsm_ddi_types::DdiStatus;
+    pub use azihsm_ddi_mbor_types::DdiOp;
+    pub use azihsm_ddi_mbor_types::DdiStatus;
 
     pub use super::fault::clear_faults;
     pub use super::fault::inject_fault;

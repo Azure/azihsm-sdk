@@ -44,10 +44,6 @@ pub struct Setup {
     /// Skip installing cargo-audit
     #[clap(long)]
     pub skip_audit: bool,
-
-    /// Skip installing OpenSSL
-    #[clap(long)]
-    pub skip_openssl: bool,
 }
 
 impl Xtask for Setup {
@@ -166,11 +162,9 @@ impl Xtask for Setup {
             let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
-        // Install OpenSSL (Linux only)
+        // Verify OpenSSL is discoverable (Linux only).
         #[cfg(target_os = "linux")]
-        if !self.skip_openssl {
-            crate::openssl_install::ensure_openssl()?;
-        }
+        crate::host_openssl::check_openssl()?;
 
         log::trace!("done setup");
         Ok(())
