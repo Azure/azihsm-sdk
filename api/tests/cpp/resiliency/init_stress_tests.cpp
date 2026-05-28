@@ -37,29 +37,57 @@ TEST_F(init_resiliency_stress, cert_chain_under_reset)
         auto reset_h = open_reset_handle(path);
         auto reset_guard = scope_guard::make_scope_exit([&] { azihsm_part_close(reset_h); });
 
+        constexpr uint32_t MAX_CERT_CHAIN_FETCH_ATTEMPTS = 3;
+
         run_under_reset(
             reset_h,
             [&]() -> uint32_t {
                 uint32_t ok = 0;
                 for (uint32_t i = 0; i < STRESS_OPS; ++i)
                 {
-                    // Two-call pattern: query size, then fetch.
-                    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
-                                              nullptr,
-                                              0 };
-                    auto err = azihsm_part_get_prop(r.part, &prop);
-                    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                    bool fetched = false;
+                    azihsm_status last_err = AZIHSM_STATUS_SUCCESS;
+                    for (uint32_t attempt = 0; attempt < MAX_CERT_CHAIN_FETCH_ATTEMPTS; ++attempt)
                     {
-                        ADD_FAILURE() << "cert_chain size query " << i << " got " << err;
-                        continue;
+                        // Two-call pattern: query size, then fetch. Under reset pressure,
+                        // the required size can change between the two calls, so a second
+                        // BUFFER_TOO_SMALL result means the client should retry negotiation.
+                        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
+                                                  nullptr,
+                                                  0 };
+                        auto err = azihsm_part_get_prop(r.part, &prop);
+                        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                        {
+                            last_err = err;
+                            ADD_FAILURE() << "cert_chain size query " << i << " got " << err;
+                            break;
+                        }
+
+                        std::vector<azihsm_char> buf(prop.len);
+                        prop.val = buf.data();
+                        err = azihsm_part_get_prop(r.part, &prop);
+                        if (err == AZIHSM_STATUS_SUCCESS)
+                        {
+                            fetched = true;
+                            break;
+                        }
+                        last_err = err;
+                        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                        {
+                            ADD_FAILURE() << "cert_chain fetch " << i << " got " << err;
+                            break;
+                        }
                     }
 
-                    std::vector<azihsm_char> buf(prop.len);
-                    prop.val = buf.data();
-                    err = azihsm_part_get_prop(r.part, &prop);
-                    if (err != AZIHSM_STATUS_SUCCESS)
+                    if (!fetched)
                     {
-                        ADD_FAILURE() << "cert_chain fetch " << i << " got " << err;
+                        if (last_err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                        {
+                            ADD_FAILURE()
+                                << "cert_chain fetch " << i << " kept returning " << last_err
+                                << " after " << MAX_CERT_CHAIN_FETCH_ATTEMPTS << " attempts";
+                        }
+                        std::this_thread::sleep_for(WORKER_SLEEP);
                         continue;
                     }
                     ++ok;

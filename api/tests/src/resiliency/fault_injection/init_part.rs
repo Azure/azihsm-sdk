@@ -175,14 +175,30 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     result
 }
 
+fn prime_mobk_cache() {
+    if use_tpm() {
+        return;
+    }
+
+    // Downstream init-op exhaustion tests intentionally fail after InitBk3.
+    // Prime the cache once so later loop iterations keep targeting those ops.
+    let part = open_and_reset();
+    let result = init_with_resiliency(&part);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "failed to prime process-local MOBK cache: {result:?}"
+    );
+}
+
 /// Helper: call `part.init(...)` forcing the Caller+OBK path so the
 /// device's `init_bk3` is invoked. Used by tests that explicitly target
-/// `InitBk3` faults — those tests must bypass the cross-process MOBK
-/// file cache (`/tmp/mobk.bin`) that [`make_init_params`] would
-/// otherwise read, since a cached MOBK would skip `init_bk3` entirely.
-/// The cache is also not written afterward (no `save_mobk_after_init`
-/// call), so the file remains in whatever state the surrounding tests
-/// left it in.
+/// `InitBk3` faults — those tests must bypass the per-process MOBK
+/// file cache that [`make_init_params`] would otherwise read, since a
+/// cached MOBK would skip `init_bk3` entirely. The cache is also not
+/// written afterward (no `save_mobk_after_init` call), so the file
+/// remains in whatever state the surrounding tests left it in.
 fn init_with_resiliency_force_obk(part: &HsmPartition) -> HsmResult<()> {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (sig, pubkey) = generate_pota_endorsement(part);
@@ -472,6 +488,8 @@ fn test_init_recovers_from_establish_credential_last_retry() {
 /// error code.
 #[api_test]
 fn test_init_fails_from_get_establish_cred_key_exhausted() {
+    prime_mobk_cache();
+
     for error in INIT_RETRYABLE_ERRORS {
         let part = open_and_reset();
         let before = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
@@ -507,6 +525,8 @@ fn test_init_fails_from_get_establish_cred_key_exhausted() {
 /// `MAX_RETRIES + 1` consecutive calls, for every retryable error code.
 #[api_test]
 fn test_init_fails_from_establish_credential_exhausted() {
+    prime_mobk_cache();
+
     for error in INIT_RETRYABLE_ERRORS {
         let part = open_and_reset();
         let before = op_call_count(DdiOp::EstablishCredential);
@@ -659,11 +679,11 @@ fn test_init_no_retry_without_resiliency() {
 /// at most once per `init` call (the first attempt, when the
 /// `cached_mobk` retry slot is empty); subsequent retries inside
 /// the `#[resiliency_init_part]` loop reuse the cached MOBK and skip
-/// `InitBk3` entirely. Across processes the cross-process MOBK file
-/// cache (`/tmp/mobk.bin`) plays the same role for [`make_init_params`].
+/// `InitBk3` entirely. Across calls in the same process, the per-process
+/// MOBK file cache plays the same role for [`make_init_params`].
 /// So the reset fault may consume the single `InitBk3` call (count
-/// == 1) or be skipped if a previous test already populated the
-/// cross-process MOBK cache (count == 0).
+/// == 1) or be skipped if a previous call already populated the
+/// per-process MOBK cache (count == 0).
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_recovers_after_reset_on_init_bk3() {
