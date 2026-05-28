@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_hsm_core_tracing"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[features]
+default = []
+
+## Log level threshold (compile-time). Only messages at or above the
+## selected level are compiled in. Default (no feature): error only.
+## Enable exactly one:
+level-debug = [] # debug + info + warn + error
+level-error = [] # error only (default when tracing is on)
+level-info = []  # info + warn + error
+level-trace = [] # all levels
+level-warn = []  # warn + error

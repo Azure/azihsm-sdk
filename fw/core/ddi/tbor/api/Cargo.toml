@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+description = "Tabular Binary Object Representation (TBOR) — encoder/decoder with derive macros"
+edition = "2021"
+name = "azihsm_fw_ddi_tbor_api"
+version = "0.1.0"
+
+[features]
+default = ["derive"]
+derive = ["dep:azihsm_fw_ddi_tbor_derive"]
+std = ["azihsm_fw_ddi_tbor/std"]
+
+[dependencies]
+azihsm_fw_ddi_tbor.workspace = true
+azihsm_fw_ddi_tbor_derive = { optional = true, workspace = true }
+
+[dev-dependencies]
+trybuild.workspace = true
+
+[lints]
+workspace = true

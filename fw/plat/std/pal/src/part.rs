@@ -1,0 +1,1009 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Partition management for the standard (host-native) PAL.
+//!
+//! Implements the [`HsmPartitionManager`] trait from
+//! `azihsm_fw_hsm_pal_traits` for [`StdHsmPal`] and provides sideband
+//! partition allocation/deallocation via [`PartCommand`].
+//!
+//! ## Architecture
+//!
+//! The partition table lives on the Embassy thread inside [`StdHsmPal`],
+//! stored in an [`UnsafeCell`] to allow the `&self` trait methods to
+//! return borrowed slices tied to the PAL's lifetime. This is safe
+//! because the Embassy executor is single-threaded — no concurrent
+//! access is possible.
+//!
+//! Sideband commands ([`PartCommand::Alloc`] / [`PartCommand::Free`])
+//! arrive from the user-facing [`StdHsm`] via an `async_channel` and
+//! are processed by a dedicated Embassy task. These commands mutate
+//! the partition table through [`part_alloc_internal`] and
+//! [`part_free_internal`], which obtain `&mut` access through the
+//! `UnsafeCell`. Because Embassy tasks only interleave at `.await`
+//! points and the trait read methods are synchronous, no aliasing
+//! violations can occur.
+//!
+//! ## Partition lifecycle
+//!
+//! ```text
+//! Disabled ──► part_alloc ──► Uninitialized ──► (future: Initialized)
+//!    ▲                              │
+//!    └────────── part_free ─────────┘
+//! ```
+//!
+//! ## Resource allocation
+//!
+//! Each partition is assigned a **resource bitmask** (`u128`) where each
+//! set bit represents one vault table (resource).  There are 65 total
+//! resources (bits 0..64).  A global bitmask on [`PartitionTable`]
+//! tracks which resources are already allocated across all partitions
+//! to prevent double-allocation.  `popcount(res_mask)` gives the
+//! partition's table count (= what [`part_res_count`] returns).
+//!
+//! [`StdHsm`]: azihsm_fw_hsm_std::StdHsm
+//! [`part_alloc_internal`]: StdHsmPal::part_alloc_internal
+//! [`part_free_internal`]: StdHsmPal::part_free_internal
+
+use azihsm_crypto::*;
+
+use super::*;
+use crate::cert::MAX_CERT_DER_LEN;
+use crate::drivers::session::SessionTable;
+use crate::drivers::vault::KeyVault;
+
+/// Total number of partitions supported by the HSM.
+pub const NUM_PARTITIONS: usize = 65;
+
+/// Maximum total resources across all partitions.
+pub const MAX_RESOURCES: u8 = 65;
+
+/// Length of the per-partition random nonce in bytes.
+const NONCE_LEN: usize = 32;
+
+/// Maximum size of the sealed BK3 blob in bytes.
+const SEALED_BK3_SIZE: usize = 512;
+
+/// Length of a partition's random identity blob in bytes.
+const PART_ID_LEN: usize = 16;
+
+/// Size of a single P-384 coordinate (x or y) in bytes.
+const P384_COORD_SIZE: usize = 48;
+
+/// Size of the raw public key (x ∥ y) in bytes.
+pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
+
+/// Length of the per-partition VM launch GUID in bytes.
+///
+/// Matches the prior reference firmware's `VmLaunchGuid` size
+/// (16 bytes).
+pub(crate) const VM_LAUNCH_GUID_LEN: usize = 16;
+
+/// Hardcoded std PAL VM launch GUID returned by
+/// [`HsmPartitionManager::part_vm_launch_guid`].
+///
+/// Real hardware reads this from the platform's launch-context table;
+/// the emulator returns a fixed value so tests are deterministic.
+const STD_VM_LAUNCH_GUID: [u8; VM_LAUNCH_GUID_LEN] = [
+    0x53, 0x74, 0x64, 0x56, 0x4d, 0x4c, 0x61, 0x75, 0x6e, 0x63, 0x68, 0x47, 0x75, 0x69, 0x64, 0x00,
+];
+
+/// Hardcoded std PAL SVN returned by [`HsmPartitionManager::part_svn`].
+const STD_SVN: u64 = 0;
+
+/// Length of a single backup-key seed (`BKS1`, `BKS2`) row used by
+/// [`HsmPartitionManager::derive_masking_key`] in bytes.
+const BK_SEED_LEN: usize = 32;
+
+/// Hardcoded std PAL firmware boot seed used as the KDK input to
+/// [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware reads this from a one-time-programmed, device-bound
+/// hardware register that is not visible outside the secure-world
+/// firmware.  The std PAL emulator uses a fixed pattern so tests are
+/// deterministic.  The seed never crosses the trait boundary; callers
+/// only see derived masking keys.
+const STD_FW_SEED: [u8; 48] = [0x42u8; 48];
+
+/// Hardcoded std PAL `BKS1` seed row used as the first half of the
+/// KDF context in [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware selects this row from a `BKS1` table indexed by SVN;
+/// the std PAL emulator has a single row because the simulator models
+/// a single SVN.  The bytes are taken from the prior reference
+/// firmware so derived masking keys are bit-compatible with persisted
+/// `Masked_BK_BOOT` blobs across emulator and real hardware.
+const STD_BKS1: [u8; BK_SEED_LEN] = [
+    0x9b, 0x4e, 0x4e, 0xb7, 0xad, 0xab, 0xdc, 0xd6, 0xb4, 0xd5, 0x07, 0xeb, 0x68, 0xeb, 0x26, 0x99,
+    0x2a, 0xbb, 0xca, 0xb5, 0x5c, 0xfb, 0x77, 0x3b, 0xc4, 0xd0, 0xa8, 0x8c, 0x21, 0x02, 0xb0, 0xac,
+];
+
+/// Hardcoded std PAL `BKS2` seed row used as the second half of the
+/// KDF context in [`HsmPartitionManager::derive_masking_key`].
+///
+/// Real hardware selects this row from a `BKS2` table indexed by
+/// `bks2_index`; the std PAL emulator has a single row because the
+/// simulator models a single partition lineage.  The bytes are taken
+/// from the prior reference firmware for bit-compatibility.
+const STD_BKS2: [u8; BK_SEED_LEN] = [
+    0xad, 0x1a, 0x17, 0xe9, 0xed, 0x38, 0x27, 0x5e, 0x8b, 0x30, 0x5d, 0xb8, 0x19, 0x0f, 0x82, 0xb6,
+    0x2d, 0xa2, 0x5a, 0xc6, 0xf0, 0x70, 0xa3, 0xe1, 0x75, 0x9c, 0x61, 0x92, 0xcc, 0xf4, 0x19, 0xa3,
+];
+
+/// A single partition's state and cryptographic material.
+///
+/// Each partition entry holds all per-partition data in fixed-size
+/// inline buffers.  This avoids heap allocations, simplifies the
+/// lifetime model for borrowed trait returns, and mirrors the
+/// fixed-slot storage model used by the hardware HSM.
+///
+/// ## Memory layout
+///
+/// | Field | Size | Description |
+/// |-------|------|-------------|
+/// | `state` | 1 B | Lifecycle state (`Disabled` / `Uninitialized`) |
+/// | `gen` | 4 B | Incarnation counter (bumped on alloc / free) |
+/// | `res_mask` | 16 B | Resource bitmask (each bit = one vault table) |
+/// | `id` | 16 B | Random identity blob |
+/// | `pub_key` | 96 B | Raw P-384 public key (x ∥ y) |
+/// | `priv_key_der` | 256 B | PKCS#8 DER-encoded P-384 private key |
+/// | `leaf_cert` | 2 KB | Cached DER-encoded partition leaf certificate |
+/// | `session_table` | 2 B | Bitmask session allocator |
+///
+/// ## Generation counter
+///
+/// `gen` increments on every `part_alloc_internal` and
+/// `part_free_internal` call.  RAII guards (`StdVaultKeyGuard`,
+/// `StdSessionGuard`) capture the value at create time and refuse to
+/// roll back if the partition has since been freed and reallocated —
+/// otherwise a stale guard could delete unrelated state from a
+/// re-incarnated partition.
+///
+/// ## Zeroization
+///
+/// When a partition is freed via [`part_free_internal`], all
+/// cryptographic material (`id`, `pub_key`, `priv_key_der`,
+/// `leaf_cert`) is explicitly zeroed before the state transitions
+/// back to `Disabled`.
+///
+/// [`part_free_internal`]: StdHsmPal::part_free_internal
+pub(crate) struct PartitionEntry {
+    /// Current lifecycle state.
+    pub(crate) state: PartState,
+
+    /// Partition incarnation counter.  Bumped on every alloc and free.
+    pub(crate) gen: u32,
+
+    /// Resource bitmask — each set bit corresponds to one vault table
+    /// assigned to this partition.  `count_ones()` gives the table count.
+    res_mask: u128,
+
+    /// 16-byte random identity blob, generated on allocation.
+    id: [u8; PART_ID_LEN],
+
+    /// Vault key ID for the partition's identity ECC-384 private key.
+    id_key_id: Option<HsmKeyId>,
+
+    /// Raw public key coordinates (x ∥ y, 96 bytes) for identity key.
+    pub(crate) id_pub_key: [u8; P384_PUB_KEY_LEN],
+
+    /// Cached DER-encoded partition leaf certificate (lazily generated).
+    pub(crate) leaf_cert: [u8; MAX_CERT_DER_LEN],
+
+    /// Length of valid data in `leaf_cert` (0 = not yet generated).
+    pub(crate) leaf_cert_len: usize,
+
+    /// Per-partition session table for tracking allocated sessions.
+    pub(crate) session_table: SessionTable,
+
+    /// Per-partition key vault — number of tables determined by
+    /// `res_mask.count_ones()` at allocation time.
+    pub(crate) vault: KeyVault,
+
+    /// Vault key ID for the establish-credential encryption ECC-384 key.
+    /// `None` before enable or after one-time clear.
+    pub(crate) establish_cred_key_id: Option<HsmKeyId>,
+
+    /// DER-encoded public key for establish-credential encryption.
+    establish_cred_pub_key: [u8; P384_PUB_KEY_LEN],
+
+    /// Vault key ID for the session encryption ECC-384 key.
+    /// `None` before enable.
+    pub(crate) session_enc_key_id: Option<HsmKeyId>,
+
+    /// Raw public key coordinates (x ∥ y) for session encryption.
+    session_enc_pub_key: [u8; P384_PUB_KEY_LEN],
+
+    /// 32-byte random nonce, generated on enable and refreshable.
+    pub(crate) nonce: [u8; NONCE_LEN],
+
+    /// Sealed BK3 blob — up to 512 bytes of opaque data.
+    sealed_bk3: [u8; SEALED_BK3_SIZE],
+
+    /// Length of valid data in `sealed_bk3` (0 = not yet stored).
+    sealed_bk3_len: u32,
+
+    /// `BK_BOOT` boot-key material, generated during partition enable.
+    ///
+    /// On the std PAL this is opaque random bytes; on real hardware it
+    /// is derived from `BKS1` / `BKS2`.  Never exposed outside the
+    /// PAL — application code only sees `Masked_BK_BOOT` (and only
+    /// indirectly, through the masked outputs produced from it).
+    bk_boot: [u8; BK_BOOT_LEN],
+
+    /// `Masked_BK_BOOT` — `BK_BOOT` enveloped with a platform-derived
+    /// `BKx` masking key.
+    ///
+    /// Populated by the application layer (the DDI `InitBk3` handler)
+    /// — the PAL only provides the fixed-size storage slot and the
+    /// raw `BK_BOOT` material via
+    /// [`HsmPartitionManager::part_bk_boot`].  Cleared on disable /
+    /// free via [`StdHsmPal::clear_enabled_state`].
+    masked_bk_boot: [u8; MASKED_BK_BOOT_LEN],
+
+    /// Length of valid data in `masked_bk_boot` (0 = not yet
+    /// populated).
+    ///
+    /// Set by the application layer when it writes the masked envelope
+    /// into [`PartitionEntry::masked_bk_boot`]; reset to 0 on every
+    /// disable / free via [`StdHsmPal::clear_enabled_state`].
+    masked_bk_boot_len: u32,
+
+    /// VM launch GUID, set during partition enable.
+    ///
+    /// On the std PAL this is a fixed constant
+    /// ([`STD_VM_LAUNCH_GUID`]); on real hardware it is sourced from
+    /// the platform.  Zeroed on disable / free.
+    vm_launch_guid: [u8; VM_LAUNCH_GUID_LEN],
+
+    /// BK3 initialization state for the current partition incarnation.
+    ///
+    /// `false` on every enable; set to `true` by a successful
+    /// `part_mark_bk3_initialized`.  Acts as the authoritative
+    /// one-shot gate for `InitBk3`.
+    bk3_initialized: bool,
+}
+
+impl Default for PartitionEntry {
+    fn default() -> Self {
+        Self {
+            state: PartState::Unallocated,
+            gen: 0,
+            res_mask: 0,
+            id: [0u8; PART_ID_LEN],
+            id_key_id: None,
+            id_pub_key: [0u8; P384_PUB_KEY_LEN],
+            leaf_cert: [0u8; MAX_CERT_DER_LEN],
+            leaf_cert_len: 0,
+            session_table: SessionTable::new(),
+            vault: KeyVault::new(0),
+            establish_cred_key_id: None,
+            establish_cred_pub_key: [0u8; P384_PUB_KEY_LEN],
+            session_enc_key_id: None,
+            session_enc_pub_key: [0u8; P384_PUB_KEY_LEN],
+            nonce: [0u8; NONCE_LEN],
+            sealed_bk3: [0u8; SEALED_BK3_SIZE],
+            sealed_bk3_len: 0,
+            bk_boot: [0u8; BK_BOOT_LEN],
+            masked_bk_boot: [0u8; MASKED_BK_BOOT_LEN],
+            masked_bk_boot_len: 0,
+            vm_launch_guid: [0u8; VM_LAUNCH_GUID_LEN],
+            bk3_initialized: false,
+        }
+    }
+}
+
+/// Table of all partition entries.
+///
+/// Stored in an [`UnsafeCell`] on [`StdHsmPal`] so that `&self` trait
+/// methods can return borrowed slices into the entries.  The table is
+/// heap-allocated (boxed) because `NUM_PARTITIONS × sizeof(PartitionEntry)`
+/// exceeds 155 KB — too large for the stack during construction and
+/// moves.
+///
+/// # Thread safety
+///
+/// Not `Sync` — the [`UnsafeCell`] wrapper on `StdHsmPal` prevents
+/// sharing across threads.  All access occurs on the single-threaded
+/// Embassy executor.
+pub(crate) struct PartitionTable {
+    /// Fixed array of partition entries indexed by `pid`.
+    ///
+    /// Boxed to avoid 155KB+ on the stack during construction and moves.
+    pub(crate) entries: Box<[PartitionEntry; NUM_PARTITIONS]>,
+
+    /// Global resource bitmask — union of all partitions' `res_mask` values.
+    ///
+    /// Used to detect double-allocation: a new partition's `res_mask` must
+    /// not overlap with this value (`res_mask & global_res_mask == 0`).
+    global_res_mask: u128,
+}
+
+impl Default for PartitionTable {
+    fn default() -> Self {
+        Self {
+            entries: Box::new(core::array::from_fn(|_| PartitionEntry::default())),
+            global_res_mask: 0,
+        }
+    }
+}
+
+/// A sideband command sent from [`StdHsm`] to the Embassy thread for
+/// partition allocation or deallocation.
+///
+/// Each command carries a oneshot reply channel so the caller can
+/// `await` the result.
+///
+/// [`StdHsm`]: azihsm_fw_hsm_std::StdHsm
+pub enum PartCommand {
+    /// Allocate a partition: generate a random ID and ECC-384 key pair,
+    /// assign resources, and transition from `Disabled` to `Uninitialized`.
+    Alloc {
+        /// Partition index (must be < [`NUM_PARTITIONS`]).
+        pid: u8,
+        /// Resource bitmask — each set bit assigns one vault table to
+        /// this partition.  Must not overlap with any already-allocated
+        /// resource (checked against [`PartitionTable::global_res_mask`]).
+        res_mask: u128,
+        /// Oneshot channel for the allocation result.
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Free a partition: zeroize all cryptographic material, release
+    /// resources, and transition to `Unallocated`.
+    Free {
+        pid: u8,
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Enable a partition: create internal ECC-384 key pairs and nonce.
+    /// Transitions `Allocated | Disabled → Enabled`.
+    Enable {
+        pid: u8,
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Disable a partition: clear internal keys, nonce, vault, sessions.
+    /// Transitions `Enabled → Disabled`.
+    Disable {
+        pid: u8,
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// HsmPartitionManager trait implementation (read-only, called by core)
+// ---------------------------------------------------------------------------
+
+impl HsmPartitionManager for StdHsmPal {
+    /// Returns the current state of the calling partition (`io.pid()`).
+    fn part_state(&self, io: &impl HsmIo) -> HsmResult<PartState> {
+        // SAFETY: Embassy is single-threaded. This synchronous method
+        // completes without yielding, so no concurrent mutation occurs.
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(io.pid()) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(table.entries[idx].state)
+    }
+
+    /// Returns the resource count allocated to the calling partition.
+    fn part_res_count(&self, io: &impl HsmIo) -> HsmResult<u8> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(io.pid()) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        let entry = &table.entries[idx];
+        if entry.state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(entry.res_mask.count_ones() as u8)
+    }
+
+    /// Returns the 16-byte identity blob for the calling partition.
+    fn part_id(&self, io: &impl HsmIo) -> HsmResult<PartId<'_>> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(io.pid()) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        let entry = &table.entries[idx];
+        if entry.state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&entry.id)
+    }
+
+    fn part_id_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        self.active_part(io.pid())?
+            .id_key_id
+            .ok_or(HsmError::InternalError)
+    }
+
+    fn part_id_pub_key(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.active_part(io.pid())?.id_pub_key, out)
+    }
+
+    fn part_establish_cred_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.establish_cred_key_id)
+    }
+
+    fn part_establish_cred_pub_key(
+        &self,
+        io: &impl HsmIo,
+        out: Option<&mut [u8]>,
+    ) -> HsmResult<usize> {
+        copy_out(
+            &self
+                .enabled_part(u8::from(io.pid()))?
+                .establish_cred_pub_key,
+            out,
+        )
+    }
+
+    fn part_session_enc_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        self.enabled_part(u8::from(io.pid()))?
+            .session_enc_key_id
+            .ok_or(HsmError::InternalError)
+    }
+
+    fn part_session_enc_pub_key(
+        &self,
+        io: &impl HsmIo,
+        out: Option<&mut [u8]>,
+    ) -> HsmResult<usize> {
+        copy_out(
+            &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key,
+            out,
+        )
+    }
+
+    fn part_clear_establish_cred_key(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        if let Some(kid) = entry.establish_cred_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.establish_cred_pub_key.fill(0);
+        Ok(())
+    }
+
+    fn part_nonce(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(u8::from(io.pid()))?.nonce, out)
+    }
+
+    fn part_nonce_refresh(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
+    }
+
+    fn part_sealed_bk3(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.active_part(io.pid())?;
+        let len = entry.sealed_bk3_len as usize;
+        copy_out(&entry.sealed_bk3[..len], out)
+    }
+
+    fn part_set_sealed_bk3(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
+        let entry = self.active_part_mut(io.pid())?;
+        if entry.sealed_bk3_len != 0 {
+            return Err(HsmError::SealedBk3AlreadySet);
+        }
+        if data.len() > SEALED_BK3_SIZE {
+            return Err(HsmError::SealedBk3TooLarge);
+        }
+        entry.sealed_bk3[..data.len()].copy_from_slice(data);
+        entry.sealed_bk3_len = data.len() as u32;
+        Ok(())
+    }
+
+    fn part_vm_launch_guid(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        copy_out(&entry.vm_launch_guid, out)
+    }
+
+    fn part_svn(&self, io: &impl HsmIo) -> HsmResult<u64> {
+        // Validate enabled state but discard the borrow; the value is a
+        // platform constant on the std PAL.
+        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(STD_SVN)
+    }
+
+    fn part_bks2_id(&self, io: &impl HsmIo) -> HsmResult<u16> {
+        // No BKS2 selector modelled in the emulator; return slot 0 for
+        // wire-format compatibility.
+        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(0)
+    }
+
+    fn part_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        if let Some(buf) = out {
+            if buf.len() < BK_BOOT_LEN {
+                return Err(HsmError::InvalidArg);
+            }
+            buf[..BK_BOOT_LEN].copy_from_slice(&entry.bk_boot);
+        }
+        Ok(BK_BOOT_LEN)
+    }
+
+    fn part_is_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<bool> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        Ok(entry.bk3_initialized)
+    }
+
+    fn part_mark_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        if entry.bk3_initialized {
+            return Err(HsmError::Bk3AlreadyInitialized);
+        }
+        entry.bk3_initialized = true;
+        Ok(())
+    }
+
+    fn part_masked_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.enabled_part(u8::from(io.pid()))?;
+        let len = entry.masked_bk_boot_len as usize;
+        copy_out(&entry.masked_bk_boot[..len], out)
+    }
+
+    fn part_set_masked_bk_boot(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
+        if data.len() > MASKED_BK_BOOT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
+        entry.masked_bk_boot[..data.len()].copy_from_slice(data);
+        entry.masked_bk_boot_len = data.len() as u32;
+        Ok(())
+    }
+
+    fn fw_seed(&self) -> &[u8] {
+        &STD_FW_SEED
+    }
+
+    async fn derive_masking_key(
+        &self,
+        io: &impl HsmIo,
+        kdk: &[u8],
+        label: &[u8],
+        extra_context: &[u8],
+        svn: u64,
+        bks2_index: u16,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.enabled_part(u8::from(io.pid()))?;
+
+        // Std PAL models a single SVN + single BKS2 lineage; reject any
+        // out-of-range selector.
+        if svn != 0 || bks2_index != 0 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Co-locate all KDF inputs (KDK, label, context) in one DMA
+        // alloc; pad each region to 4-byte alignment so DMA-driven
+        // engines on real hardware see the same layout as
+        // per-allocation arrangements.
+        let kdk_area_len = kdk.len().next_multiple_of(4);
+        let label_area_len = label.len().next_multiple_of(4);
+        let ctx_len = STD_BKS1.len() + STD_BKS2.len() + extra_context.len();
+
+        let arena = self.dma_alloc(io, kdk_area_len + label_area_len + ctx_len)?;
+        let (kdk_area, rest) = arena.split_at_mut(kdk_area_len);
+        let (key_dma, _kdk_pad) = kdk_area.split_at_mut(kdk.len());
+        let (label_area, ctx_dma) = rest.split_at_mut(label_area_len);
+        let (label_dma, _label_pad) = label_area.split_at_mut(label.len());
+
+        if !kdk.is_empty() {
+            key_dma.copy_from_slice(kdk);
+        }
+        if !label.is_empty() {
+            label_dma.copy_from_slice(label);
+        }
+        {
+            let (bks1_slot, ctx_rest) = ctx_dma.split_at_mut(STD_BKS1.len());
+            let (bks2_slot, extra_slot) = ctx_rest.split_at_mut(STD_BKS2.len());
+            bks1_slot.copy_from_slice(&STD_BKS1);
+            bks2_slot.copy_from_slice(&STD_BKS2);
+            if !extra_context.is_empty() {
+                extra_slot.copy_from_slice(extra_context);
+            }
+        }
+
+        self.sp800_108_kdf(io, HsmHashAlgo::Sha384, key_dma, label_dma, ctx_dma, output)
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared partition access helpers (used by vault.rs, session.rs, etc.)
+// ---------------------------------------------------------------------------
+
+impl StdHsmPal {
+    /// Returns the partition incarnation counter.
+    ///
+    /// Captured by RAII guards (`StdVaultKeyGuard`, `StdSessionGuard`)
+    /// at create time; if the value differs at drop time, the guard
+    /// has outlived its partition incarnation and skips rollback to
+    /// avoid corrupting a re-allocated partition.
+    pub(crate) fn partition_gen(&self, pid: HsmPartId) -> u32 {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return 0;
+        }
+        table.entries[idx].gen
+    }
+
+    /// Borrow a partition entry that is not Unallocated.
+    pub(crate) fn active_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&table.entries[idx])
+    }
+
+    /// Borrow a partition entry that is not Unallocated (mutable).
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn active_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut table.entries[idx])
+    }
+
+    /// Borrow a partition that is in Enabled state.
+    fn enabled_part(&self, pid: u8) -> HsmResult<&PartitionEntry> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&table.entries[idx])
+    }
+
+    /// Borrow a partition that is in Enabled state (mutable).
+    #[allow(clippy::mut_from_ref)]
+    fn enabled_part_mut(&self, pid: u8) -> HsmResult<&mut PartitionEntry> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut table.entries[idx])
+    }
+}
+
+/// Copy `data` into `out` if provided, return length.
+///
+/// Returns [`HsmError::InvalidArg`] (per the new partition trait
+/// docs) when the caller-supplied buffer is too small.
+fn copy_out(data: &[u8], out: Option<&mut [u8]>) -> HsmResult<usize> {
+    if let Some(buf) = out {
+        if buf.len() < data.len() {
+            return Err(HsmError::InvalidArg);
+        }
+        buf[..data.len()].copy_from_slice(data);
+    }
+    Ok(data.len())
+}
+
+// ---------------------------------------------------------------------------
+// Internal partition lifecycle (called by part_cmd_task on Embassy thread)
+// ---------------------------------------------------------------------------
+
+impl StdHsmPal {
+    /// Allocate a partition: generate identity and ECC-384 key pair.
+    ///
+    /// Transitions `Unallocated → Allocated`.
+    pub async fn part_alloc_internal(&self, pid: u8, res_mask: u128) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Validate before mutating anything.
+        let valid_bits: u128 = (1u128 << MAX_RESOURCES) - 1;
+        if res_mask & !valid_bits != 0 {
+            return Err(HsmError::InvalidArg);
+        }
+        if res_mask & table.global_res_mask != 0 {
+            return Err(HsmError::NotEnoughSpace);
+        }
+
+        // Generate identity outside the table borrow — no partial state on failure.
+        let mut id = [0u8; PART_ID_LEN];
+        Rng::rand_bytes(&mut id).map_err(|_| HsmError::InternalError)?;
+
+        // Reserve resources + create vault so keygen has somewhere to store.
+        let entry = &mut table.entries[idx];
+        // Bump the partition incarnation counter so RAII guards captured
+        // against the prior incarnation refuse to roll back.
+        entry.gen = entry.gen.wrapping_add(1);
+        entry.res_mask = res_mask;
+        entry.vault = KeyVault::new(res_mask.count_ones() as usize);
+        table.global_res_mask |= res_mask;
+
+        // Generate identity ECC P-384 key pair.
+        let id_attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_sign(true);
+        let mut id_pub = [0u8; P384_PUB_KEY_LEN];
+        let id_result = self
+            .create_internal_ecc384_key(
+                idx as u8,
+                HsmVaultKeyKind::Ecc384Private,
+                id_attrs,
+                HsmEccPct::SignVerify,
+                &mut id_pub,
+            )
+            .await;
+
+        // Commit or rollback.
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        match id_result {
+            Ok(id_kid) => {
+                entry.id = id;
+                entry.id_key_id = Some(id_kid);
+                entry.id_pub_key = id_pub;
+                entry.state = PartState::Allocated;
+            }
+            Err(e) => {
+                // Rollback: release resources.
+                table.global_res_mask &= !res_mask;
+                entry.res_mask = 0;
+                entry.vault = KeyVault::new(0);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Enable a partition: create internal ECC-384 key pairs and nonce.
+    ///
+    /// Transitions `Allocated | Disabled → Enabled`.
+    pub async fn part_enable_internal(&self, pid: u8) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        let state = table.entries[idx].state;
+        if state != PartState::Allocated && state != PartState::Disabled {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_derive(true);
+
+        // Generate establish-credential encryption ECC-384 key pair.
+        let mut ec_pub = [0u8; P384_PUB_KEY_LEN];
+        let ec_kid = self
+            .create_internal_ecc384_key(
+                pid,
+                HsmVaultKeyKind::EstablishCred,
+                attrs,
+                HsmEccPct::KeyAgreement,
+                &mut ec_pub,
+            )
+            .await?;
+
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        entry.establish_cred_key_id = Some(ec_kid);
+        entry.establish_cred_pub_key = ec_pub;
+
+        // Generate session encryption ECC-384 key pair.
+        let mut se_pub = [0u8; P384_PUB_KEY_LEN];
+        let se_result = self
+            .create_internal_ecc384_key(
+                pid,
+                HsmVaultKeyKind::SessionEncryption,
+                attrs,
+                HsmEccPct::KeyAgreement,
+                &mut se_pub,
+            )
+            .await;
+
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        match se_result {
+            Ok(se_kid) => {
+                entry.session_enc_key_id = Some(se_kid);
+                entry.session_enc_pub_key = se_pub;
+            }
+            Err(e) => {
+                let _ = entry.vault.delete(ec_kid);
+                entry.establish_cred_key_id = None;
+                entry.establish_cred_pub_key.fill(0);
+                return Err(e);
+            }
+        }
+
+        // Generate 32-byte random nonce.
+        if Rng::rand_bytes(&mut entry.nonce).is_err() {
+            // Rollback both keys.
+            Self::clear_enabled_state(entry);
+            return Err(HsmError::InternalError);
+        }
+
+        // Generate per-partition `BK_BOOT`; real hardware derives this
+        // from BKS1/BKS2, the emulator uses random bytes.
+        if Rng::rand_bytes(&mut entry.bk_boot).is_err() {
+            Self::clear_enabled_state(entry);
+            return Err(HsmError::BkBootGenerationFailed);
+        }
+
+        entry.vm_launch_guid = STD_VM_LAUNCH_GUID;
+        entry.bk3_initialized = false;
+
+        entry.state = PartState::Enabled;
+        Ok(())
+    }
+
+    /// Disable a partition: clear internal keys, nonce, vault, sessions.
+    ///
+    /// Transitions `Enabled → Disabled`.
+    pub fn part_disable_internal(&self, pid: u8) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+
+        Self::clear_enabled_state(&mut table.entries[idx]);
+        table.entries[idx].state = PartState::Disabled;
+        Ok(())
+    }
+
+    /// Free a partition: zeroize all material and release resources.
+    ///
+    /// Accepts `Allocated | Enabled | Disabled → Unallocated`.
+    /// If `Enabled`, implicitly clears internal keys first.
+    pub fn part_free_internal(&self, pid: u8) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let entry = &mut table.entries[idx];
+
+        // Bump the partition incarnation counter so RAII guards captured
+        // before this free refuse to roll back into the next incarnation.
+        entry.gen = entry.gen.wrapping_add(1);
+
+        // If enabled, clear internal keys/nonce/vault/sessions first.
+        if entry.state == PartState::Enabled {
+            Self::clear_enabled_state(entry);
+        }
+
+        // Zeroize identity material.
+        entry.id.fill(0);
+        if let Some(kid) = entry.id_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.id_pub_key.fill(0);
+        entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+        entry.leaf_cert_len = 0;
+
+        // Release resources.
+        table.global_res_mask &= !entry.res_mask;
+        entry.res_mask = 0;
+        entry.vault = KeyVault::new(0);
+        entry.state = PartState::Unallocated;
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /// Generate an ECC P-384 key pair, store the PKCS#8 DER private
+    /// key in the vault, and write raw public key coordinates (x ∥ y)
+    /// into `pub_key_out`.
+    ///
+    /// Bypasses [`HsmEcc::ecc_gen_keypair`] (which now requires an
+    /// `HsmIo`) and drives the [`StdEcc`](crate::drivers::ecc::StdEcc)
+    /// driver directly — this helper runs from the partition lifecycle
+    /// task where no IO context exists.
+    ///
+    /// Returns the vault key ID.
+    async fn create_internal_ecc384_key(
+        &self,
+        pid: u8,
+        kind: HsmVaultKeyKind,
+        attrs: HsmVaultKeyAttrs,
+        _pct: HsmEccPct,
+        pub_key_out: &mut [u8; P384_PUB_KEY_LEN],
+    ) -> HsmResult<HsmKeyId> {
+        let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
+
+        // Export private key as PKCS#8 DER.
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
+        let mut priv_buf = vec![0u8; priv_len];
+        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+            .map_err(|_| HsmError::EccToDerError)?;
+
+        // Export raw P-384 public key coordinates (x ∥ y).
+        let half = P384_PUB_KEY_LEN / 2;
+        let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
+        pubk.coord(Some((x_buf, y_buf)))
+            .map_err(|_| HsmError::EccToDerError)?;
+
+        // Store private key DER in vault.
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[pid as usize];
+        entry
+            .vault
+            .create(&priv_buf[..priv_len], kind, None, attrs, &[])
+    }
+
+    /// Clear all state associated with an enabled partition (internal keys,
+    /// nonce, vault keys, sessions, boot-key material, BK3 state).  Does
+    /// NOT change the state field.
+    ///
+    /// This is the single clearing site shared by `part_disable_internal`
+    /// and `part_free_internal`; it mirrors the prior reference
+    /// firmware's `clear_partition_info` grouping so that
+    /// `Masked_BK_BOOT`, `sealed_bk3`, `vm_launch_guid`, and BK3 init
+    /// state are all zeroized together whenever the partition's
+    /// enabled lifecycle ends.
+    fn clear_enabled_state(entry: &mut PartitionEntry) {
+        if let Some(kid) = entry.establish_cred_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.establish_cred_pub_key.fill(0);
+
+        if let Some(kid) = entry.session_enc_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.session_enc_pub_key.fill(0);
+
+        entry.nonce.fill(0);
+        entry.vault.clear();
+        entry.session_table = SessionTable::new();
+        entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);
+        entry.sealed_bk3_len = 0;
+
+        // Boot-key + BK3-incarnation state — mirrors the prior
+        // reference firmware's `clear_partition_info` zeroize
+        // grouping.
+        entry.bk_boot.fill(0);
+        entry.masked_bk_boot[..entry.masked_bk_boot_len as usize].fill(0);
+        entry.masked_bk_boot_len = 0;
+        entry.vm_launch_guid.fill(0);
+        entry.bk3_initialized = false;
+    }
+}

@@ -334,6 +334,90 @@ impl OsslEccPrivateKey {
         Self::generate(curve.into())
     }
 
+    /// Builds an ECC private key from a caller-supplied raw scalar `d`.
+    ///
+    /// The scalar is interpreted as a big-endian integer of length
+    /// `curve.point_size()`. The public point `Q = d * G` is computed
+    /// internally; the caller is responsible for any deterministic
+    /// derivation (DRBG, HKDF, BIP-32, ...) that produced `d`.
+    ///
+    /// # Arguments
+    ///
+    /// * `curve` - The elliptic curve to use (P-256, P-384, or P-521).
+    /// * `scalar` - Raw big-endian private scalar, exactly `curve.point_size()`
+    ///   bytes. Must satisfy `1 <= d < n` where `n` is the curve order.
+    ///
+    /// # Errors
+    ///
+    /// * [`CryptoError::EccInvalidKeySize`] if `scalar.len() != curve.point_size()`.
+    /// * [`CryptoError::EccKeyImportError`] if `d == 0` or `d >= n`, or if
+    ///   the resulting key fails OpenSSL's `check_key` validation.
+    /// * [`CryptoError::EccError`] if OpenSSL context allocation fails.
+    pub fn from_scalar(curve: EccCurve, scalar: &[u8]) -> Result<Self, CryptoError> {
+        curve.validate_scalar(scalar)?;
+
+        let nid = Nid::try_from(EccKeySize(curve.into()))?;
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccError)?;
+
+        let d = BigNum::from_slice(scalar).map_err(|_| CryptoError::EccKeyImportError)?;
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccError)?;
+
+        let mut pub_point = EcPoint::new(&group).map_err(|_| CryptoError::EccError)?;
+        pub_point
+            .mul_generator2(&group, &d, &mut ctx)
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let ec_key = EcKey::from_private_components(&group, &d, &pub_point)
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+        ec_key
+            .check_key()
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let pkey = PKey::from_ec_key(ec_key).map_err(|_| CryptoError::EccError)?;
+
+        Ok(OsslEccPrivateKey::new(pkey, curve))
+    }
+
+    /// Builds an ECC private key from caller-supplied output keying material
+    /// per FIPS 186-5 Appendix A.2.1 ("Key Pair Generation Using Extra Random
+    /// Bits"), composed with NIST SP 800-133r2 §6.2.3.
+    ///
+    /// `okm.len()` MUST equal [`EccCurve::a2_1_okm_len`], i.e.
+    /// `ceil((N + 64) / 8)` bytes. The bytes are interpreted as a big-endian
+    /// integer `c`; the private scalar is `d = (c mod (n - 1)) + 1`, and the
+    /// public point is `Q = d * G`.
+    ///
+    /// No retry loop, no rejection, work is linear in `okm.len()`. The caller
+    /// owns the OKM source (an Approved DRBG per SP 800-90A for fresh keys,
+    /// or an Approved KDF such as [`crate::HkdfAlgo`] for deterministic
+    /// derivation).
+    ///
+    /// # Errors
+    ///
+    /// * [`CryptoError::EccInvalidKeySize`] if `okm.len()` does not equal
+    ///   `curve.a2_1_okm_len()`.
+    /// * Any error returned by [`Self::from_scalar`] for the computed `d`.
+    ///   (Mathematically the reduced scalar is always in `[1, n - 1]`, so
+    ///   this only fires if the backend rejects the import.)
+    pub fn from_okm_a2_1(curve: EccCurve, okm: &[u8]) -> Result<Self, CryptoError> {
+        if okm.len() != curve.a2_1_okm_len() {
+            return Err(CryptoError::EccInvalidKeySize);
+        }
+
+        // m = n - 1. The last byte of every supported curve order is non-zero,
+        // so this single-byte decrement is safe.
+        let mut m = curve.order().to_vec();
+        *m.last_mut().expect("curve order is never empty") -= 1;
+
+        let reduced = super::be::be_reduce(okm, &m);
+        let point_size = curve.point_size();
+        let mut d = [0u8; super::be::MAX_MOD_LEN];
+        d[..point_size].copy_from_slice(&reduced[..point_size]);
+        super::be::be_inc(&mut d[..point_size]);
+
+        Self::from_scalar(curve, &d[..point_size])
+    }
+
     /// Returns a reference to the underlying OpenSSL private key.
     ///
     /// This is an internal method used by other cryptographic operations that
@@ -535,6 +619,37 @@ impl OsslEccPublicKey {
     /// A reference to the OpenSSL `PKey<Public>` wrapper.
     pub(crate) fn pkey(&self) -> &PKeyRef<Public> {
         &self.key
+    }
+
+    /// Creates a public key from raw X and Y coordinate bytes.
+    ///
+    /// Reconstructs an ECC public key from its affine coordinates. Each
+    /// coordinate must be exactly `curve.point_size()` bytes in big-endian
+    /// format.
+    ///
+    /// # Arguments
+    ///
+    /// * `curve` - The NIST curve this point belongs to.
+    /// * `x` - The X coordinate as big-endian bytes.
+    /// * `y` - The Y coordinate as big-endian bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError::EccError` if the point is invalid or cannot
+    /// be constructed from the given coordinates.
+    pub fn from_coordinates(curve: EccCurve, x: &[u8], y: &[u8]) -> Result<Self, CryptoError> {
+        let nid: Nid = curve.into();
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccError)?;
+        let x_bn = BigNum::from_slice(x).map_err(|_| CryptoError::EccError)?;
+        let y_bn = BigNum::from_slice(y).map_err(|_| CryptoError::EccError)?;
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccError)?;
+        let mut point = EcPoint::new(&group).map_err(|_| CryptoError::EccError)?;
+        point
+            .set_affine_coordinates_gfp(&group, &x_bn, &y_bn, &mut ctx)
+            .map_err(|_| CryptoError::EccError)?;
+        let ec_key = EcKey::from_public_key(&group, &point).map_err(|_| CryptoError::EccError)?;
+        let pkey = PKey::from_ec_key(ec_key).map_err(|_| CryptoError::EccError)?;
+        Ok(Self::new(pkey, curve))
     }
 
     /// Extracts both X and Y coordinates of the public key point.

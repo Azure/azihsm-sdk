@@ -1,0 +1,5 @@
+error: #[tbor] can only be applied to structs and enums
+ --> tests/compile_tests/fail/tbor_on_function.rs:5:1
+  |
+5 | fn bad() {}
+  | ^^

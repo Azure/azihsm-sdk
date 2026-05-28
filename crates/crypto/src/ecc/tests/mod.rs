@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::unwrap_used)]
+
 //! Tests for Elliptic Curve Cryptography (ECC) operations.
+mod ecc_from_okm_a2_1;
+mod ecc_from_scalar;
 mod ecc_helpers;
 mod ecc_p256;
 mod ecc_p384;

@@ -1,0 +1,47 @@
+error: #[tbor] enums must have #[repr(u8)], #[repr(u16)], or #[repr(u32)]
+ --> tests/compile_tests/fail/enum_missing_repr.rs:6:10
+  |
+6 | pub enum BadEnum { A = 1, B = 2 }
+  |          ^^^^^^^
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:10
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |          ^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:17
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                 ^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:28
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                            ^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:32
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                ^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:39
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                       ^^^^ not found in this scope
+
+error[E0206]: the trait `Copy` cannot be implemented for this type
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:39
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                       ^^^^ type is not a structure or enumeration
+
+error[E0433]: failed to resolve: use of undeclared type `BadEnum`
+ --> tests/compile_tests/fail/enum_missing_repr.rs:4:10
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |          ^^^^^ use of undeclared type `BadEnum`

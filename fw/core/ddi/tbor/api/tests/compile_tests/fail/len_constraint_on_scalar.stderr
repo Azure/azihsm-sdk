@@ -1,0 +1,5 @@
+error: #[tbor(min_len/max_len)] can only be applied to buffer or sealed_key fields
+ --> tests/compile_tests/fail/len_constraint_on_scalar.rs:9:5
+  |
+9 |     value: u32,
+  |     ^^^^^
