@@ -1508,15 +1508,15 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_rejects_null_arguments)
         auto_key key;
 
         auto err = azihsm_key_gen(session, nullptr, &prop_list, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_gen(session, &keygen_algo, nullptr, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_gen(session, &keygen_algo, &prop_list, nullptr);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
     });
 }
 
@@ -1542,7 +1542,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_rejects_invalid_property_lengths)
             auto_key key;
             auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
             ASSERT_EQ(key.get(), 0u);
         };
 
@@ -1665,6 +1665,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_session_property_uses_default)
         verify_key_property(key, AZIHSM_KEY_PROP_ID_BIT_LEN, static_cast<uint32_t>(256));
         verify_key_property(key, AZIHSM_KEY_PROP_ID_ENCRYPT, true);
         verify_key_property(key, AZIHSM_KEY_PROP_ID_DECRYPT, true);
+        verify_key_property(key, AZIHSM_KEY_PROP_ID_SESSION, false);
     });
 }
 
@@ -1874,8 +1875,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_kind_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(key.get(), 0u);
+         ASSERT_EQ(err, AZIHSM_STATUS_KEY_KIND_NOT_SPECIFIED);
+         ASSERT_EQ(key.get(), 0u);
     });
 }
 
@@ -1907,7 +1908,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_class_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_KEY_CLASS_NOT_SPECIFIED);
         ASSERT_EQ(key.get(), 0u);
     });
 }
@@ -1940,8 +1941,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_bit_len_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(key.get(), 0u);
+         ASSERT_EQ(err, AZIHSM_STATUS_PROPERTY_NOT_PRESENT);
+               ASSERT_EQ(key.get(), 0u);
     });
 }
 
@@ -1976,8 +1977,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_key_class_fails)
             auto_key key;
             auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(key.get(), 0u);
+             ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+                         ASSERT_EQ(key.get(), 0u);
         }
     });
 }
