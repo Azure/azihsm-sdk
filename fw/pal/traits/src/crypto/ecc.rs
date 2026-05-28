@@ -184,10 +184,17 @@ pub trait HsmEcc {
     /// - `curve` — NIST curve the public key is on; determines the
     ///   expected signature length.
     /// - `pub_key` — verification key; uncompressed `x || y`,
-    ///   `curve.pub_key_len()` bytes.
-    /// - `hash` — message digest that was signed.
+    ///   `curve.pub_key_len()` bytes.  **Each coordinate is in
+    ///   little-endian byte order** — matches the on-wire DDI
+    ///   representation and real PKA hardware.  Implementations that
+    ///   delegate to a big-endian-native primitive (e.g. OpenSSL) must
+    ///   reverse each coordinate internally.
+    /// - `hash` — message digest that was signed.  Raw digest bytes;
+    ///   no endianness conversion is applied.
     /// - `signature` — signature to verify; must be exactly
-    ///   `curve.sig_len()` bytes.
+    ///   `curve.sig_len()` bytes (`r || s`).  **Each component is in
+    ///   little-endian byte order** — matches the on-wire DDI
+    ///   representation and real PKA hardware.
     ///
     /// # Returns
     ///
@@ -215,7 +222,11 @@ pub trait HsmEcc {
     /// - `priv_key` — local private scalar; must be exactly
     ///   `curve.priv_key_len()` bytes.
     /// - `pub_key` — remote uncompressed point; must be exactly
-    ///   `curve.pub_key_len()` bytes.
+    ///   `curve.pub_key_len()` bytes (`x || y`).  **Each coordinate
+    ///   is in little-endian byte order** — matches the on-wire DDI
+    ///   representation and real PKA hardware.  Implementations that
+    ///   delegate to a big-endian-native primitive (e.g. OpenSSL) must
+    ///   reverse each coordinate internally.
     /// - `secret` — output buffer; must be at least
     ///   `curve.secret_len()` bytes.  On success, holds the
     ///   x-coordinate of the shared point.

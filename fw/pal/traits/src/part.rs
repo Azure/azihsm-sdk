@@ -728,6 +728,87 @@ pub trait HsmPartitionManager {
         bks2_index: u16,
         output: &mut DmaBuf,
     ) -> HsmResult<()>;
+
+    // ------------------------------------------------------------------
+    // Establish-credential and provisioning state
+    // ------------------------------------------------------------------
+
+    /// Verifies that the provided nonce matches the partition's current
+    /// nonce.
+    ///
+    /// Returns `Ok(())` if the nonces match, or
+    /// `Err(HsmError::NonceMismatch)` if they differ.  The check is
+    /// constant-time where supported by the platform.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `nonce` — 32-byte nonce to compare against the partition's
+    ///   stored nonce.
+    fn part_verify_nonce(&self, io: &impl HsmIo, nonce: &[u8]) -> HsmResult<()>;
+
+    /// Stores the user credential (ID and PIN) for the partition.
+    ///
+    /// Write-once per credential lifecycle: if credentials are already
+    /// set, returns [`HsmError::VaultAppLimitReached`] (matching the
+    /// `verify_cred_is_not_set` behavior in real firmware).  The PAL is
+    /// responsible for storing the credential securely and clearing it
+    /// on partition disable/deprovision.
+    ///
+    /// Both `id` and `pin` are exactly 16 bytes (AES block size).  An
+    /// all-zero `id` or `pin` is rejected with
+    /// [`HsmError::InvalidAppCredentials`], matching the reference
+    /// firmware's `cred_mgr::change_user_cred` invariant.  The all-zero
+    /// value is also the sentinel that `part_is_credential_set` uses
+    /// for "unset", so accepting it would corrupt the lifecycle.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `id` — 16-byte user credential identifier (non-zero).
+    /// - `pin` — 16-byte user credential PIN (non-zero).
+    fn part_set_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()>;
+
+    /// Returns whether the partition's user credential is already set.
+    fn part_is_credential_set(&self, io: &impl HsmIo) -> HsmResult<bool>;
+
+    /// Returns whether the partition has been fully provisioned.
+    ///
+    /// A partition is provisioned when it has a masking key (MK)
+    /// imported into its vault.  This flag is the gate that
+    /// `EstablishCredential` uses to prevent double-provisioning.
+    fn part_is_provisioned(&self, io: &impl HsmIo) -> HsmResult<bool>;
+
+    /// Stores the BK3 session key (48 bytes) for the partition.
+    ///
+    /// The BK3 session key is derived from BK3 via SP 800-108 KDF
+    /// during `EstablishCredential` and used for subsequent session
+    /// operations.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `data` — 48-byte BK3 session key.
+    fn part_set_bk3_session(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()>;
+
+    /// Returns the vault key ID of the partition's masking key (MK),
+    /// or `None` if no MK has been imported.
+    fn part_mk_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>>;
+
+    /// Stores the vault key ID of the partition's masking key (MK).
+    ///
+    /// Set once during `EstablishCredential` provisioning.  After this
+    /// call, [`part_is_provisioned`](Self::part_is_provisioned) returns
+    /// `true` and [`part_mk_key_id`](Self::part_mk_key_id) returns the
+    /// stored ID.
+    fn part_set_mk_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Returns the vault key ID of the partition's unwrapping key, or
+    /// `None` if no unwrapping key has been imported.
+    fn part_unwrapping_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>>;
+
+    /// Stores the vault key ID of the partition's unwrapping key.
+    fn part_set_unwrapping_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.

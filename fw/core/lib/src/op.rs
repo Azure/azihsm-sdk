@@ -595,6 +595,7 @@ impl SessionCtrl {
             | DdiOp::GetSealedBk3
             | DdiOp::InitBk3
             | DdiOp::SetSealedBk3
+            | DdiOp::EstablishCredential
             | DdiOp::ShaDigest => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,

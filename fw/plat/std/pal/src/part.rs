@@ -262,6 +262,29 @@ pub(crate) struct PartitionEntry {
     /// `part_mark_bk3_initialized`.  Acts as the authoritative
     /// one-shot gate for `InitBk3`.
     bk3_initialized: bool,
+
+    /// User credential ID (16 bytes).  Zeroed until set by
+    /// `part_set_credential`.
+    credential_id: [u8; 16],
+
+    /// User credential PIN (16 bytes).  Zeroed until set by
+    /// `part_set_credential`.
+    credential_pin: [u8; 16],
+
+    /// Whether the user credential has been set for this incarnation.
+    credential_set: bool,
+
+    /// BK3 session key (48 bytes), derived during EstablishCredential.
+    bk3_session: [u8; 48],
+
+    /// Whether `bk3_session` has been populated.
+    bk3_session_set: bool,
+
+    /// Vault key ID of the partition masking key (MK).
+    mk_key_id: Option<HsmKeyId>,
+
+    /// Vault key ID of the partition unwrapping key.
+    unwrapping_key_id: Option<HsmKeyId>,
 }
 
 impl Default for PartitionEntry {
@@ -289,6 +312,13 @@ impl Default for PartitionEntry {
             masked_bk_boot_len: 0,
             vm_launch_guid: [0u8; VM_LAUNCH_GUID_LEN],
             bk3_initialized: false,
+            credential_id: [0u8; 16],
+            credential_pin: [0u8; 16],
+            credential_set: false,
+            bk3_session: [0u8; 48],
+            bk3_session_set: false,
+            mk_key_id: None,
+            unwrapping_key_id: None,
         }
     }
 }
@@ -435,12 +465,16 @@ impl HsmPartitionManager for StdHsmPal {
         io: &impl HsmIo,
         out: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
-        copy_out(
-            &self
-                .enabled_part(u8::from(io.pid()))?
-                .establish_cred_pub_key,
-            out,
-        )
+        // Stored internally as big-endian `x ∥ y` (OpenSSL convention).
+        // The wire contract — matching real PKA hardware — is
+        // little-endian, and the host-side `post_decode_fn` on
+        // `DdiDerPublicKey` reverses each coord back to big-endian
+        // before DER-encoding.  Reverse each coord here so the wire
+        // bytes are LE.
+        let raw = &self
+            .enabled_part(u8::from(io.pid()))?
+            .establish_cred_pub_key;
+        copy_out_pub_key_le(raw, out)
     }
 
     fn part_session_enc_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
@@ -612,6 +646,72 @@ impl HsmPartitionManager for StdHsmPal {
         self.sp800_108_kdf(io, HsmHashAlgo::Sha384, key_dma, label_dma, ctx_dma, output)
             .await
     }
+
+    fn part_verify_nonce(&self, io: &impl HsmIo, nonce: &[u8]) -> HsmResult<()> {
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        if part.nonce != nonce {
+            return Err(HsmError::NonceMismatch);
+        }
+        Ok(())
+    }
+
+    fn part_set_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()> {
+        if id.len() != 16 || pin.len() != 16 {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        if part.credential_set {
+            return Err(HsmError::VaultAppLimitReached);
+        }
+        // Reject all-zero ID or PIN — matches the reference firmware's
+        // `cred_mgr::change_user_cred` invariant and is also what
+        // `verify_user_cred_is_set` uses as the sentinel for "unset".
+        if id == [0u8; 16].as_slice() || pin == [0u8; 16].as_slice() {
+            return Err(HsmError::InvalidAppCredentials);
+        }
+        part.credential_id.copy_from_slice(id);
+        part.credential_pin.copy_from_slice(pin);
+        part.credential_set = true;
+        Ok(())
+    }
+
+    fn part_is_credential_set(&self, io: &impl HsmIo) -> HsmResult<bool> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.credential_set)
+    }
+
+    fn part_is_provisioned(&self, io: &impl HsmIo) -> HsmResult<bool> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.mk_key_id.is_some())
+    }
+
+    fn part_set_bk3_session(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
+        if data.len() != 48 {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        part.bk3_session.copy_from_slice(data);
+        part.bk3_session_set = true;
+        Ok(())
+    }
+
+    fn part_mk_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.mk_key_id)
+    }
+
+    fn part_set_mk_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        part.mk_key_id = Some(key_id);
+        Ok(())
+    }
+
+    fn part_unwrapping_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.unwrapping_key_id)
+    }
+
+    fn part_set_unwrapping_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        part.unwrapping_key_id = Some(key_id);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +801,37 @@ fn copy_out(data: &[u8], out: Option<&mut [u8]>) -> HsmResult<usize> {
         buf[..data.len()].copy_from_slice(data);
     }
     Ok(data.len())
+}
+
+/// Copy a raw P-384 public key (`x ∥ y`, big-endian) into `out`,
+/// reversing each coord so the bytes on the wire are little-endian.
+///
+/// This is the byte-order pivot point between the firmware's internal
+/// big-endian representation (matches OpenSSL conventions and is used
+/// by cert generation and other crypto consumers) and the wire contract
+/// expected by the host-side `post_decode_fn` on
+/// [`DdiDerPublicKey`](azihsm_ddi_types::DdiDerPublicKey), which expects
+/// little-endian raw coords (matching real PKA hardware) and reverses
+/// them back to big-endian before DER-encoding.
+///
+/// `data` must be exactly `P384_PUB_KEY_LEN` bytes; returns
+/// [`HsmError::InvalidArg`] when `out` is too small.
+fn copy_out_pub_key_le(data: &[u8; P384_PUB_KEY_LEN], out: Option<&mut [u8]>) -> HsmResult<usize> {
+    if let Some(buf) = out {
+        if buf.len() < P384_PUB_KEY_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let half = P384_PUB_KEY_LEN / 2;
+        let (x_be, y_be) = data.split_at(half);
+        let (x_out, y_out) = buf.split_at_mut(half);
+        for (dst, src) in x_out.iter_mut().zip(x_be.iter().rev()) {
+            *dst = *src;
+        }
+        for (dst, src) in y_out[..half].iter_mut().zip(y_be.iter().rev()) {
+            *dst = *src;
+        }
+    }
+    Ok(P384_PUB_KEY_LEN)
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +1087,11 @@ impl StdHsmPal {
         pk.to_bytes(Some(&mut priv_buf[..priv_len]))
             .map_err(|_| HsmError::EccToDerError)?;
 
-        // Export raw P-384 public key coordinates (x ∥ y).
+        // Export raw P-384 public key coordinates (x ∥ y) in big-endian
+        // form — matches OpenSSL conventions and is the form expected by
+        // internal consumers (cert generation, POTA hash).  Wire-facing
+        // PAL accessors (e.g. [`part_establish_cred_pub_key`]) handle
+        // BE→LE conversion at the response boundary.
         let half = P384_PUB_KEY_LEN / 2;
         let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
         pubk.coord(Some((x_buf, y_buf)))
@@ -1005,5 +1140,17 @@ impl StdHsmPal {
         entry.masked_bk_boot_len = 0;
         entry.vm_launch_guid.fill(0);
         entry.bk3_initialized = false;
+
+        entry.credential_id.fill(0);
+        entry.credential_pin.fill(0);
+        entry.credential_set = false;
+        entry.bk3_session.fill(0);
+        entry.bk3_session_set = false;
+        if let Some(kid) = entry.mk_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        if let Some(kid) = entry.unwrapping_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
     }
 }
