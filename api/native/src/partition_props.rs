@@ -235,8 +235,11 @@ fn copy_to_part_prop(part_prop: &mut AzihsmPartProp, bytes: &[u8]) -> Result<(),
     copy_to_part_prop_with_len_hint(part_prop, bytes, bytes.len())
 }
 
-/// Copy a byte slice into a partition property buffer and require/report a custom minimum
-/// caller buffer length.
+/// Copy a byte slice into a partition property buffer with a caller-visible minimum buffer length.
+///
+/// When `part_prop.len` is smaller than `min_buffer_len`, this returns
+/// [`AzihsmStatus::BufferTooSmall`] and updates `part_prop.len` to `min_buffer_len`. On success,
+/// it copies `bytes` into the caller buffer and updates `part_prop.len` to the actual byte count.
 fn copy_to_part_prop_with_len_hint(
     part_prop: &mut AzihsmPartProp,
     bytes: &[u8],
@@ -258,6 +261,10 @@ fn copy_to_part_prop_with_len_hint(
     Ok(())
 }
 
+/// Return the caller buffer length to request for certificate-chain fetches.
+///
+/// The hint is `ceil(actual_len * 1.5)`, giving C callers extra room if the certificate chain
+/// grows between their size query and follow-up fetch.
 fn cert_chain_buffer_len_hint(actual_len: usize) -> usize {
     actual_len
         .saturating_add(actual_len / 2)
