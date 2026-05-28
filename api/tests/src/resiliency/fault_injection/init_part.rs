@@ -175,13 +175,31 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     result
 }
 
+/// Runs one fault-free `init` to populate the per-process MOBK cache so
+/// subsequent `init` calls in this process skip `InitBk3` entirely (its
+/// MOBK is already cached and reused via [`make_init_params`]).
+///
+/// Exhaustion tests inject `MAX_RETRIES + 1` failures on a later op
+/// (e.g., `GetEstablishCredEncryptionKey` or `EstablishCredential`).
+/// Without priming, the very first iteration would call `InitBk3` on a
+/// cold device, then fail on the targeted op before `save_mobk_after_init`
+/// runs, leaving the cache empty. The next iteration would call `InitBk3`
+/// again, which is one-shot per power cycle and returns
+/// `Bk3AlreadyInitialized`, so `init` would fail on `InitBk3` instead of
+/// the op under test and the call-count assertions would not hold.
+///
+/// Priming once up front pays the `InitBk3` cost (and the MOBK write)
+/// before any faults are injected, so every test-loop iteration enters
+/// the cached-MOBK path and the injected fault always lands on the
+/// targeted op.
+///
+/// No-op when `AZIHSM_USE_TPM` is set, since the TPM path does not use
+/// the MOBK cache.
 fn prime_mobk_cache() {
     if use_tpm() {
         return;
     }
 
-    // Downstream init-op exhaustion tests intentionally fail after InitBk3.
-    // Prime the cache once so later loop iterations keep targeting those ops.
     let part = open_and_reset();
     let result = init_with_resiliency(&part);
     clear_faults();
@@ -488,6 +506,9 @@ fn test_init_recovers_from_establish_credential_last_retry() {
 /// error code.
 #[api_test]
 fn test_init_fails_from_get_establish_cred_key_exhausted() {
+    // Ensure later iterations skip `InitBk3` so the injected fault
+    // always lands on `GetEstablishCredEncryptionKey`. See
+    // [`prime_mobk_cache`] for details.
     prime_mobk_cache();
 
     for error in INIT_RETRYABLE_ERRORS {
@@ -525,6 +546,9 @@ fn test_init_fails_from_get_establish_cred_key_exhausted() {
 /// `MAX_RETRIES + 1` consecutive calls, for every retryable error code.
 #[api_test]
 fn test_init_fails_from_establish_credential_exhausted() {
+    // Ensure later iterations skip `InitBk3` so the injected fault
+    // always lands on `EstablishCredential`. See [`prime_mobk_cache`]
+    // for details.
     prime_mobk_cache();
 
     for error in INIT_RETRYABLE_ERRORS {
