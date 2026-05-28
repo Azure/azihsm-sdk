@@ -1798,8 +1798,7 @@ TEST_F(azihsm_aes_xts, plaintext_too_small_fails)
         azihsm_buffer output{ nullptr, 0 };
 
         azihsm_status err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -1826,7 +1825,7 @@ TEST_F(azihsm_aes_xts, zero_dul_fails)
         azihsm_buffer output{ nullptr, 0 };
 
         azihsm_status err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -1861,8 +1860,7 @@ TEST_F(azihsm_aes_xts, streaming_non_dul_aligned_fails)
 
         err = azihsm_crypt_encrypt_update(ctx, &input, &output);
         // Misaligned update should be rejected before any output-size negotiation.
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -1900,8 +1898,7 @@ TEST_F(azihsm_aes_xts, decrypt_non_dul_aligned_ciphertext_fails)
         azihsm_buffer plain_buf{ nullptr, 0 };
 
         auto err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &cipher_buf, &plain_buf);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2001,7 +1998,7 @@ TEST_F(azihsm_aes_xts, unwrap_malformed_xts_blob_header_is_rejected)
 
         auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2030,7 +2027,7 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_length_mismatch_is_rejected)
 
         auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2060,7 +2057,7 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_missing_second_half_is_rejected)
 
         auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2083,7 +2080,7 @@ TEST_F(azihsm_aes_xts, unmask_malformed_xts_blob_header_is_rejected)
             &masked_key_buf,
             unmasked_key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2107,7 +2104,7 @@ TEST_F(azihsm_aes_xts, unmask_xts_blob_length_mismatch_is_rejected)
             &masked_key_buf,
             unmasked_key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2132,7 +2129,7 @@ TEST_F(azihsm_aes_xts, unmask_xts_blob_missing_second_half_is_rejected)
             &masked_key_buf,
             unmasked_key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2159,7 +2156,7 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_mismatched_half_properties_is_rejected)
 
         auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_DDI_CMD_FAILURE);
     });
 }
 
@@ -2204,10 +2201,10 @@ TEST_F(azihsm_aes_xts, streaming_operation_mismatch_on_context_is_rejected)
         azihsm_buffer output{ nullptr, 0 };
 
         err = azihsm_crypt_decrypt_update(enc_ctx, &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
         err = azihsm_crypt_decrypt_finish(enc_ctx, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
         // Original encrypt context remains valid for its matching finish call.
         err = azihsm_crypt_encrypt_finish(enc_ctx, &output);
@@ -2562,8 +2559,7 @@ TEST_F(azihsm_aes_xts, dul_above_max_fails)
         azihsm_buffer output{ nullptr, 0 };
 
         auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2585,8 +2581,7 @@ TEST_F(azihsm_aes_xts, non_block_aligned_dul_fails)
         azihsm_buffer output{ nullptr, 0 };
 
         auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2607,17 +2602,17 @@ TEST_F(azihsm_aes_xts, invalid_algo_id_is_rejected)
         crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
 
         auto err = crypt_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
         err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
         auto_ctx ctx;
         err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
         err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -3099,11 +3094,9 @@ TEST_F(azihsm_aes_xts, single_shot_invalid_dul_aligned_input_fails)
         azihsm_buffer output{ nullptr, 0 };
 
         auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
         err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
