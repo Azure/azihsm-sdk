@@ -63,6 +63,7 @@ pub enum HsmError {
     UnsupportedApiRevision = -38,
     DeviceNotAccessible = -39,
     InvalidContextState = -40,
+    Bk3AlreadyInitialized = -41,
     Panic = i32::MIN,
 }
 

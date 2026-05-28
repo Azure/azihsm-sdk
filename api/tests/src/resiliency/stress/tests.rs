@@ -1863,15 +1863,29 @@ fn test_stress_init_part_under_reset() {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let resiliency_config = make_resiliency_config_in(&shared_dir);
-    part.init(
+    init_with_mobk_fallback(
+        &part,
         creds,
-        None,
-        None,
         obk_info,
         pota_endorsement,
         Some(resiliency_config),
-    )
-    .expect("Initial partition init failed");
+    );
+
+    // Capture the cached MOBK so worker re-inits can supply it
+    // directly instead of re-providing OBK. `init_bk3` is one-shot
+    // per device power cycle (preserved across reset), so the SDK
+    // re-derivation path would fail on subsequent inits.
+    let cached_mobk: Arc<Vec<u8>> = Arc::new(part.mobk_vec());
+
+    // Pre-compute the POTA endorsement once. The device PID public
+    // key is stable across reset, so signing it once here avoids
+    // racing `part.pub_key()` against the reset thread, which would
+    // return `IoAbortInProgress` mid-reset.
+    let cached_pota: Arc<Option<(Vec<u8>, Vec<u8>)>> = Arc::new(if use_tpm() {
+        None
+    } else {
+        Some(generate_pota_endorsement(&part))
+    });
 
     let stop = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
@@ -1885,12 +1899,34 @@ fn test_stress_init_part_under_reset() {
             let barrier = barrier.clone();
             let part = part.clone();
             let dir = shared_dir.clone();
+            let cached_mobk = cached_mobk.clone();
+            let cached_pota = cached_pota.clone();
             thread::spawn(move || {
                 barrier.wait();
                 let mut successes = 0u32;
                 for i in 0..ITERATIONS_PER_WORKER {
                     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-                    let (obk_info, pota_endorsement) = make_init_params(&part);
+                    let (obk_info, pota_endorsement) = if use_tpm() {
+                        (
+                            HsmOwnerBackupKeyConfig::new(
+                                HsmOwnerBackupKeySource::Tpm,
+                                HsmOwnerBackupKey::default(),
+                            ),
+                            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+                        )
+                    } else {
+                        let (sig, pubkey) = cached_pota.as_ref().as_ref().unwrap();
+                        (
+                            HsmOwnerBackupKeyConfig::new(
+                                HsmOwnerBackupKeySource::Caller,
+                                HsmOwnerBackupKey::from_masked_key(&cached_mobk),
+                            ),
+                            HsmPotaEndorsement::new(
+                                HsmPotaEndorsementSource::Caller,
+                                Some(HsmPotaEndorsementData::new(sig, pubkey)),
+                            ),
+                        )
+                    };
                     let resiliency_config = make_resiliency_config_in(&dir);
 
                     let result = part.init(

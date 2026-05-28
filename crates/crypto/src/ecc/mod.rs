@@ -60,6 +60,8 @@ cfg_if::cfg_if! {
 }
 mod ecdsa;
 
+mod be;
+
 pub use ecdsa::EcdsaAlgo;
 pub use ecdsa::EcdsaAlgoSignContext;
 pub use ecdsa::EcdsaAlgoVerifyContext;
@@ -105,7 +107,61 @@ pub enum EccCurve {
     P521,
 }
 
+/// NIST P-256 curve order `n` (big-endian).
+const P256_ORDER: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+];
+
+/// NIST P-384 curve order `n` (big-endian).
+const P384_ORDER: [u8; 48] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xc7, 0x63, 0x4d, 0x81, 0xf4, 0x37, 0x2d, 0xdf,
+    0x58, 0x1a, 0x0d, 0xb2, 0x48, 0xb0, 0xa7, 0x7a, 0xec, 0xec, 0x19, 0x6a, 0xcc, 0xc5, 0x29, 0x73,
+];
+
+/// NIST P-521 curve order `n` (big-endian, 66 bytes).
+const P521_ORDER: [u8; 66] = [
+    0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xfa, 0x51, 0x86, 0x87, 0x83, 0xbf, 0x2f, 0x96, 0x6b, 0x7f, 0xcc, 0x01, 0x48, 0xf7, 0x09,
+    0xa5, 0xd0, 0x3b, 0xb5, 0xc9, 0xb8, 0x89, 0x9c, 0x47, 0xae, 0xbb, 0x6f, 0xb7, 0x1e, 0x91, 0x38,
+    0x64, 0x09,
+];
+
 impl EccCurve {
+    /// Returns the big-endian byte representation of the curve order `n`.
+    pub(crate) fn order(&self) -> &'static [u8] {
+        match self {
+            EccCurve::P256 => &P256_ORDER,
+            EccCurve::P384 => &P384_ORDER,
+            EccCurve::P521 => &P521_ORDER,
+        }
+    }
+
+    /// Validates that the given big-endian byte string represents a scalar
+    /// `d` in the range `[1, n - 1]` for this curve.
+    ///
+    /// # Errors
+    ///
+    /// * [`CryptoError::EccInvalidKeySize`] if `scalar.len() != point_size()`.
+    /// * [`CryptoError::EccKeyImportError`] if `d == 0` or `d >= n`.
+    pub(crate) fn validate_scalar(&self, scalar: &[u8]) -> Result<(), CryptoError> {
+        if scalar.len() != self.point_size() {
+            return Err(CryptoError::EccInvalidKeySize);
+        }
+        // d == 0 is rejected.
+        if scalar.iter().all(|&b| b == 0) {
+            return Err(CryptoError::EccKeyImportError);
+        }
+        // d >= n is rejected (big-endian lexicographic compare with equal lengths).
+        let order = self.order();
+        if scalar >= order {
+            return Err(CryptoError::EccKeyImportError);
+        }
+        Ok(())
+    }
+
     /// Returns the coordinate size in bytes for the curve.
     ///
     /// Each curve point coordinate (x or y) has a fixed size determined
@@ -134,6 +190,18 @@ impl EccCurve {
             EccCurve::P384 => 384,
             EccCurve::P521 => 521,
         }
+    }
+
+    /// Returns the OKM length in bytes required by
+    /// [`EccPrivateKey::from_okm_a2_1`] for this curve.
+    ///
+    /// Per FIPS 186-5 Appendix A.2.1 the input bit string must be
+    /// `N + 64` bits long, where `N = curve.bit_size()`:
+    /// - P-256: 40 bytes (320 bits)
+    /// - P-384: 56 bytes (448 bits)
+    /// - P-521: 74 bytes (585 bits, rounded up to a byte boundary)
+    pub fn a2_1_okm_len(&self) -> usize {
+        (self.bit_size() + 64).div_ceil(8)
     }
 }
 

@@ -25,7 +25,7 @@ use tracing_tree::*;
 /// The subscriber is configured with:
 /// - Debug level logging by default
 /// - Info level for `azihsm_ddi_mock`
-/// - Disabled logging for `azihsm_ddi_sim` and `azihsm_ddi_mock`
+/// - Disabled logging for `azihsm_ddi_mbor_sim` and `azihsm_ddi_mock`
 /// - Thread names and IDs in output
 /// - Indented hierarchical output format
 /// - Target information in log messages
@@ -39,7 +39,7 @@ use tracing_tree::*;
 #[allow(clippy::expect_used)]
 pub fn init() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    let rust_log = "debug";
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     let filter: Targets = rust_log.parse().expect("failed to parse the log");
     ONCE.call_once(|| {
         let layer = HierarchicalLayer::default()

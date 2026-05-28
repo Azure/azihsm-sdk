@@ -1,0 +1,16 @@
+error[E0599]: no method named `b` found for struct `OrderReqEnc<'_, OrderReqS0>` in the current scope
+  --> tests/compile_tests/fail/wrong_field_order.rs:16:10
+   |
+ 7 |   #[tbor(opcode = 0x01)]
+   |   ---------------------- method `b` not found for this struct
+...
+15 |       let _ = OrderReq::encode(&mut buf).unwrap()
+   |  _____________-
+16 | |         .b(2).unwrap()  // ERROR: b is not available on State0
+   | |_________-^
+   |
+help: there is a method `a` with a similar name
+   |
+16 -         .b(2).unwrap()  // ERROR: b is not available on State0
+16 +         .a(2).unwrap()  // ERROR: b is not available on State0
+   |

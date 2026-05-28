@@ -103,15 +103,17 @@ pub struct AzihsmPotaCallbackOps {
     ) -> AzihsmStatus,
 }
 
-/// OBK provider callback.
+/// MOBK provider callback.
 ///
-/// The `get_obk` callback returns the caller's OBK (owner backup key)
-/// during resiliency restore. Uses the two-call buffer pattern: first call
-/// with null/zero output buffer to query size, second call to fill it.
+/// The `get_mobk` callback returns the caller's MOBK (masked owner backup
+/// key) during resiliency restore, allowing the SDK to re-provision the
+/// partition without re-running `init_bk3` (which is one-shot per device
+/// power cycle). Uses the two-call buffer pattern: first call with
+/// null/zero output buffer to query size, second call to fill it.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AzihsmObkCallbackOps {
-    pub get_obk: unsafe extern "C" fn(ctx: *mut c_void, obk: *mut AzihsmBuffer) -> AzihsmStatus,
+pub struct AzihsmMobkCallbackOps {
+    pub get_mobk: unsafe extern "C" fn(ctx: *mut c_void, mobk: *mut AzihsmBuffer) -> AzihsmStatus,
 }
 
 /// Resiliency configuration passed to `azihsm_part_init`.
@@ -123,7 +125,7 @@ pub struct AzihsmObkCallbackOps {
 /// - `storage_ops` and `lock_ops` are always required (inline).
 /// - `pota_callback_ops`: Pointer to POTA callback ops. NULL when POTA
 ///   endorsement source is TPM. Must be non-null when source is Caller.
-/// - `obk_callback_ops`: Pointer to OBK callback ops. NULL when OBK
+/// - `mobk_callback_ops`: Pointer to MOBK callback ops. NULL when OBK
 ///   source is TPM. Must be non-null when source is Caller.
 #[repr(C)]
 pub struct AzihsmResiliencyConfig {
@@ -131,7 +133,7 @@ pub struct AzihsmResiliencyConfig {
     pub storage_ops: AzihsmResiliencyStorageOps,
     pub lock_ops: AzihsmResiliencyLockOps,
     pub pota_callback_ops: *const AzihsmPotaCallbackOps,
-    pub obk_callback_ops: *const AzihsmObkCallbackOps,
+    pub mobk_callback_ops: *const AzihsmMobkCallbackOps,
 }
 
 /// Bridge that implements [`api::ResiliencyStorage`] by calling through
@@ -183,20 +185,20 @@ unsafe impl Send for PotaCallbackAdapter {}
 #[allow(unsafe_code)]
 unsafe impl Sync for PotaCallbackAdapter {}
 
-/// Bridge that implements [`api::ObkProviderCallback`] by calling
+/// Bridge that implements [`api::MobkProviderCallback`] by calling
 /// through C function pointers.
-struct ObkCallbackAdapter {
+struct MobkCallbackAdapter {
     ctx: *mut c_void,
-    ops: AzihsmObkCallbackOps,
+    ops: AzihsmMobkCallbackOps,
 }
 
 // SAFETY: See ResiliencyStorageBridge safety comment.
 #[allow(unsafe_code)]
-unsafe impl Send for ObkCallbackAdapter {}
+unsafe impl Send for MobkCallbackAdapter {}
 
 // SAFETY: See ResiliencyStorageBridge safety comment.
 #[allow(unsafe_code)]
-unsafe impl Sync for ObkCallbackAdapter {}
+unsafe impl Sync for MobkCallbackAdapter {}
 
 impl api::ResiliencyStorage for ResiliencyStorageAdapter {
     #[allow(unsafe_code)]
@@ -413,17 +415,17 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
     }
 }
 
-impl api::ObkProviderCallback for ObkCallbackAdapter {
+impl api::MobkProviderCallback for MobkCallbackAdapter {
     #[allow(unsafe_code)]
-    fn get_obk(&self) -> api::HsmResult<Vec<u8>> {
+    fn get_mobk(&self) -> api::HsmResult<Vec<u8>> {
         // First call: query required output size
-        let mut obk_buf = AzihsmBuffer {
+        let mut mobk_buf = AzihsmBuffer {
             ptr: std::ptr::null_mut(),
             len: 0,
         };
 
         // SAFETY: obk_buf is zero-initialized for size query.
-        let status: api::HsmError = unsafe { (self.ops.get_obk)(self.ctx, &mut obk_buf) }.into();
+        let status: api::HsmError = unsafe { (self.ops.get_mobk)(self.ctx, &mut mobk_buf) }.into();
 
         match status {
             api::HsmError::BufferTooSmall => { /* expected — size now in len field */ }
@@ -434,22 +436,23 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
         }
 
         // Second call: fill allocated buffer
-        let len = obk_buf.len as usize;
-        if len != OBK_SIZE {
+        let len = mobk_buf.len as usize;
+        // length of MOBK must be minimum OBK_SIZE bytes as per the API contract.
+        if len < OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
         let mut data = vec![0u8; len];
-        obk_buf.ptr = data.as_mut_ptr() as *mut c_void;
+        mobk_buf.ptr = data.as_mut_ptr() as *mut c_void;
 
         // SAFETY: obk_buf.ptr points to a valid Vec allocation of obk_buf.len bytes.
-        let status: api::HsmError = unsafe { (self.ops.get_obk)(self.ctx, &mut obk_buf) }.into();
+        let status: api::HsmError = unsafe { (self.ops.get_mobk)(self.ctx, &mut mobk_buf) }.into();
 
         if status != api::HsmError::Success {
             return Err(status);
         }
 
-        let returned_len = obk_buf.len as usize;
-        if returned_len != OBK_SIZE {
+        let returned_len = mobk_buf.len as usize;
+        if returned_len != len {
             return Err(api::HsmError::InvalidArgument);
         }
 
@@ -497,24 +500,24 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
             }) as Box<dyn api::PotaEndorsementCallback>)
         };
 
-        let obk_callback = if config.obk_callback_ops.is_null() {
+        let mobk_callback = if config.mobk_callback_ops.is_null() {
             None
         } else {
-            let ops = *deref_ptr(config.obk_callback_ops)?;
-            if (ops.get_obk as usize) == 0 {
+            let ops = *deref_ptr(config.mobk_callback_ops)?;
+            if (ops.get_mobk as usize) == 0 {
                 return Err(AzihsmStatus::InvalidArgument);
             }
-            Some(Box::new(ObkCallbackAdapter {
+            Some(Box::new(MobkCallbackAdapter {
                 ctx: config.ctx,
                 ops,
-            }) as Box<dyn api::ObkProviderCallback>)
+            }) as Box<dyn api::MobkProviderCallback>)
         };
 
         Ok(api::HsmResiliencyConfig {
             storage,
             lock,
             pota_callback,
-            obk_callback,
+            mobk_callback,
         })
     }
 }
@@ -835,11 +838,11 @@ mod tests {
         }
     }
 
-    fn obk_adapter(ctx: *mut c_void) -> ObkCallbackAdapter {
-        ObkCallbackAdapter {
+    fn obk_adapter(ctx: *mut c_void) -> MobkCallbackAdapter {
+        MobkCallbackAdapter {
             ctx,
-            ops: AzihsmObkCallbackOps {
-                get_obk: obk_callback,
+            ops: AzihsmMobkCallbackOps {
+                get_mobk: obk_callback,
             },
         }
     }
@@ -850,8 +853,8 @@ mod tests {
             let mut ctx = ObkCtx { mode, calls: 0 };
             let adapter = obk_adapter(&mut ctx as *mut _ as *mut c_void);
 
-            let err = api::ObkProviderCallback::get_obk(&adapter)
-                .expect_err("get_obk should reject invalid callback protocol");
+            let err = api::MobkProviderCallback::get_mobk(&adapter)
+                .expect_err("get_mobk should reject invalid callback protocol");
             assert_eq!(err, api::HsmError::InvalidArgument);
         }
 
@@ -860,8 +863,8 @@ mod tests {
             calls: 0,
         };
         let adapter = obk_adapter(&mut second_call_ctx as *mut _ as *mut c_void);
-        let err = api::ObkProviderCallback::get_obk(&adapter)
-            .expect_err("get_obk should propagate callback failure");
+        let err = api::MobkProviderCallback::get_mobk(&adapter)
+            .expect_err("get_mobk should propagate callback failure");
         assert_eq!(err, api::HsmError::InternalError);
         assert_eq!(second_call_ctx.calls, 2);
 
@@ -870,8 +873,8 @@ mod tests {
             calls: 0,
         };
         let adapter = obk_adapter(&mut wrong_len_ctx as *mut _ as *mut c_void);
-        let err = api::ObkProviderCallback::get_obk(&adapter)
-            .expect_err("get_obk should reject the returned length");
+        let err = api::MobkProviderCallback::get_mobk(&adapter)
+            .expect_err("get_mobk should reject the returned length");
         assert_eq!(err, api::HsmError::InvalidArgument);
         assert_eq!(wrong_len_ctx.calls, 2);
     }
@@ -893,12 +896,12 @@ mod tests {
                 unlock: lock_callback,
             },
             pota_callback_ops: ptr::null(),
-            obk_callback_ops: ptr::null(),
+            mobk_callback_ops: ptr::null(),
         };
 
         let resiliency_config = api::HsmResiliencyConfig::try_from(&config)
             .expect("config should accept null optional callbacks");
         assert!(resiliency_config.pota_callback.is_none());
-        assert!(resiliency_config.obk_callback.is_none());
+        assert!(resiliency_config.mobk_callback.is_none());
     }
 }

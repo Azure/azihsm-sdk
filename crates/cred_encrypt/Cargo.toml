@@ -8,8 +8,8 @@ version = "0.1.0"
 
 [dependencies]
 azihsm_crypto.workspace = true
-azihsm_ddi_mbor.workspace = true
-azihsm_ddi_types.workspace = true
+azihsm_ddi_mbor_codec.workspace = true
+azihsm_ddi_mbor_types.workspace = true
 thiserror.workspace = true
 
 [features]

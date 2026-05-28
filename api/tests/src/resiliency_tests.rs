@@ -34,15 +34,13 @@ fn test_init_reset_init_with_resiliency() {
         let (obk_info, pota_endorsement) = make_init_params(&part);
 
         let (resiliency_config, _ctx) = make_resiliency_config();
-        part.init(
+        init_with_mobk_fallback(
+            &part,
             creds,
-            None,
-            None,
             obk_info,
             pota_endorsement,
             Some(resiliency_config),
-        )
-        .expect("First init with resiliency config failed");
+        );
 
         let bmk_first = part.bmk_vec();
         assert!(
@@ -57,15 +55,13 @@ fn test_init_reset_init_with_resiliency() {
         let (obk_info2, pota_endorsement2) = make_init_params(&part);
 
         let resiliency_config2 = make_resiliency_config_in(_ctx.dir());
-        part.init(
+        init_with_mobk_fallback(
+            &part,
             creds,
-            None,
-            None,
             obk_info2,
             pota_endorsement2,
             Some(resiliency_config2),
-        )
-        .expect("Second init with resiliency config failed");
+        );
 
         let bmk_second = part.bmk_vec();
         assert_eq!(

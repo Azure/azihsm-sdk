@@ -17,8 +17,8 @@ mod tpm;
 pub(crate) use aes::*;
 pub(crate) use aes_xts_key::*;
 use azihsm_ddi::*;
-use azihsm_ddi_mbor::*;
-use azihsm_ddi_types::*;
+use azihsm_ddi_mbor_codec::*;
+use azihsm_ddi_mbor_types::*;
 pub(crate) use dev::*;
 pub(crate) use ecc::*;
 pub(crate) use hkdf::*;
@@ -67,6 +67,9 @@ impl From<DdiError> for HsmError {
                 HsmError::MaskedKeyDecodeFailed
             }
             DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
+            DdiError::DdiStatus(DdiStatus::Bk3AlreadyInitialized) => {
+                HsmError::Bk3AlreadyInitialized
+            }
             DdiError::DdiStatus(DdiStatus::SessionNeedsRenegotiation) => {
                 HsmError::SessionNeedsRenegotiation
             }

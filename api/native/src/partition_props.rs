@@ -180,7 +180,16 @@ fn get_partition_prop(
         }
         AzihsmPartPropId::ManufacturerCertChain => {
             let cert_chain = AzihsmStr::from_string(&partition.cert_chain(0)?);
-            copy_to_part_prop(part_prop, cert_chain.as_bytes())
+            let cert_chain_bytes = cert_chain.as_bytes();
+            // Cert-chain retrieval can race with reset between the C API size
+            // query and fetch. Require a larger caller buffer than the current
+            // payload so a caller that follows the hint has room for modest
+            // chain-size changes; success still reports the actual bytes copied.
+            copy_to_part_prop_with_len_hint(
+                part_prop,
+                cert_chain_bytes,
+                cert_chain_buffer_len_hint(cert_chain_bytes.len()),
+            )
         }
         AzihsmPartPropId::PartPubKey => {
             let pub_key = partition.pub_key()?;
@@ -223,9 +232,26 @@ impl<'a> TryFrom<&'a mut AzihsmPartProp> for &'a mut [u8] {
 /// * `Ok(())` - On success
 /// * `Err(AzihsmStatus::BufferTooSmall)` - If the partition property buffer is too small
 fn copy_to_part_prop(part_prop: &mut AzihsmPartProp, bytes: &[u8]) -> Result<(), AzihsmStatus> {
-    let required_len = bytes.len() as u32;
-    if part_prop.len < required_len {
-        part_prop.len = required_len;
+    copy_to_part_prop_with_len_hint(part_prop, bytes, bytes.len())
+}
+
+/// Copy a byte slice into a partition property buffer with a caller-visible minimum buffer length.
+///
+/// When `part_prop.len` is smaller than `min_buffer_len`, this returns
+/// [`AzihsmStatus::BufferTooSmall`] and updates `part_prop.len` to `min_buffer_len`. On success,
+/// it copies `bytes` into the caller buffer and updates `part_prop.len` to the actual byte count.
+fn copy_to_part_prop_with_len_hint(
+    part_prop: &mut AzihsmPartProp,
+    bytes: &[u8],
+    min_buffer_len: usize,
+) -> Result<(), AzihsmStatus> {
+    let required_len = u32::try_from(bytes.len()).map_err(|_| AzihsmStatus::InvalidArgument)?;
+    let min_buffer_len = u32::try_from(min_buffer_len)
+        .unwrap_or(u32::MAX)
+        .max(required_len);
+
+    if part_prop.len < min_buffer_len {
+        part_prop.len = min_buffer_len;
         Err(AzihsmStatus::BufferTooSmall)?;
     }
 
@@ -233,6 +259,16 @@ fn copy_to_part_prop(part_prop: &mut AzihsmPartProp, bytes: &[u8]) -> Result<(),
     buf[..bytes.len()].copy_from_slice(bytes);
     part_prop.len = required_len;
     Ok(())
+}
+
+/// Return the caller buffer length to request for certificate-chain fetches.
+///
+/// The hint is `ceil(actual_len * 1.5)`, giving C callers extra room if the certificate chain
+/// grows between their size query and follow-up fetch.
+fn cert_chain_buffer_len_hint(actual_len: usize) -> usize {
+    actual_len
+        .saturating_add(actual_len / 2)
+        .saturating_add(actual_len % 2)
 }
 
 /// Helper function to retrieve a property that requires a buffer.
