@@ -1295,7 +1295,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_tag_fails)
         std::vector<uint8_t> decrypted(plain_buf.len);
         plain_buf.ptr = decrypted.data();
         err = azihsm_crypt_decrypt(&crypt_algo, key, &cipher_buf, &plain_buf);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_DDI_CMD_FAILURE);
 
         // Clean up
         err = azihsm_key_delete(key);
@@ -1423,7 +1423,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
         std::vector<uint8_t> decrypted(plain_buf.len);
         plain_buf.ptr = decrypted.data();
         err = azihsm_crypt_decrypt(&dec_algo, key2, &cipher_buf, &plain_buf);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_DDI_CMD_FAILURE);
 
         // Clean up
         err = azihsm_key_delete(key1);
@@ -1508,15 +1508,15 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_rejects_null_arguments)
         auto_key key;
 
         auto err = azihsm_key_gen(session, nullptr, &prop_list, key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_gen(session, &keygen_algo, nullptr, key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_gen(session, &keygen_algo, &prop_list, nullptr);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -1542,7 +1542,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_rejects_invalid_property_lengths)
             auto_key key;
             auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);  
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
             ASSERT_EQ(key.get(), 0u);
         };
 
@@ -1875,8 +1875,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_kind_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-         ASSERT_EQ(err, AZIHSM_STATUS_KEY_KIND_NOT_SPECIFIED);
-         ASSERT_EQ(key.get(), 0u);
+        ASSERT_EQ(err, AZIHSM_STATUS_KEY_KIND_NOT_SPECIFIED);
+        ASSERT_EQ(key.get(), 0u);
     });
 }
 
@@ -1941,8 +1941,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_missing_bit_len_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-         ASSERT_EQ(err, AZIHSM_STATUS_PROPERTY_NOT_PRESENT);
-               ASSERT_EQ(key.get(), 0u);
+        ASSERT_EQ(err, AZIHSM_STATUS_PROPERTY_NOT_PRESENT);
+        ASSERT_EQ(key.get(), 0u);
     });
 }
 
@@ -1977,8 +1977,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_key_class_fails)
             auto_key key;
             auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
 
-             ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
-                         ASSERT_EQ(key.get(), 0u);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+            ASSERT_EQ(key.get(), 0u);
         }
     });
 }
@@ -2034,16 +2034,16 @@ TEST_F(azihsm_aes_keygen, aes_key_unwrap_rejects_null_arguments)
             &prop_list,
             key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_unwrap(&unwrap_algo, 0, &wrapped_blob_buf, &prop_list, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(key.get(), 0u);
 
         err =
             azihsm_key_unwrap(&unwrap_algo, wrapping_priv_key, nullptr, &prop_list, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_unwrap(
@@ -2053,7 +2053,7 @@ TEST_F(azihsm_aes_keygen, aes_key_unwrap_rejects_null_arguments)
             nullptr,
             key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_unwrap(
@@ -2063,7 +2063,7 @@ TEST_F(azihsm_aes_keygen, aes_key_unwrap_rejects_null_arguments)
             &prop_list,
             nullptr
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -2078,14 +2078,14 @@ TEST_F(azihsm_aes_keygen, aes_key_unmask_rejects_null_arguments)
         auto_key key;
 
         auto err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, nullptr, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, &masked_blob_buf, nullptr);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
         err = azihsm_key_unmask(0, AZIHSM_KEY_KIND_AES, &masked_blob_buf, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(key.get(), 0u);
 
         azihsm_buffer null_ptr_nonzero_len_buf{ nullptr, 16 };
@@ -2095,7 +2095,7 @@ TEST_F(azihsm_aes_keygen, aes_key_unmask_rejects_null_arguments)
             &null_ptr_nonzero_len_buf,
             key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(key.get(), 0u);
 
         azihsm_buffer valid_ptr_zero_len_buf{ dummy_masked_blob.data(), 0 };
