@@ -25,6 +25,7 @@ pub mod common;
 mod copyright;
 mod coverage;
 mod coverage_report;
+mod custom_openssl;
 mod fmt;
 mod host_openssl;
 mod install;
@@ -71,6 +72,7 @@ enum Commands {
     Copyright(copyright::Copyright),
     Coverage(coverage::Coverage),
     CoverageReport(coverage_report::CoverageReport),
+    CustomOpenssl(custom_openssl::CustomOpenssl),
     Fmt(fmt::Fmt),
     IntegrationTests(integration_tests::IntegrationTest),
     Nextest(nextest::Nextest),
@@ -112,6 +114,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Copyright(task) => task.run(ctx),
         Commands::Coverage(task) => task.run(ctx),
         Commands::CoverageReport(task) => task.run(ctx),
+        Commands::CustomOpenssl(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
         Commands::IntegrationTests(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
