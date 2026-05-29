@@ -26,9 +26,6 @@ use super::*;
 /// Credential field length (user ID or PIN), one AES block.
 const CRED_FIELD_LEN: usize = 16;
 
-/// AES key length (low half of HKDF OKM).
-const AES_KEY_LEN: usize = 32;
-
 /// BK3 plaintext length in bytes — matches `BK3_LEN` in
 /// [`init_bk3`](super::init_bk3).
 const BK3_LEN: usize = 48;
@@ -102,7 +99,9 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
         okm,
     )
     .await?;
-    let (aes_key, hmac_key) = okm.split_at(AES_KEY_LEN);
+    // HMAC-SHA-384 key length matches the digest length; AES key is
+    // the leading remainder of the 80-byte OKM.
+    let (aes_key, hmac_key) = okm.split_at(okm.len() - HsmHashAlgo::Sha384.digest_len());
 
     // ── Step 5: HMAC verify the credential ───────────────────────────
     //
