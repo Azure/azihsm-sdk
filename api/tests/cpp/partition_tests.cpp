@@ -515,21 +515,65 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
     part_list.for_each_part([](std::vector<azihsm_char> &path) {
         auto part = PartitionHandle(path);
 
-        // First get the required size
+        // Discover the actual payload size via a successful fetch using the
+        // size hint returned by the nullptr query.
         azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        uint32_t required_size = prop.len;
-        ASSERT_GT(required_size, 0);
+        uint32_t size_hint = prop.len;
+        ASSERT_GT(size_hint, 0);
 
-        // Provide buffer that's too small
-        std::vector<uint8_t> buffer(required_size - 1);
-        prop.val = buffer.data();
-        prop.len = static_cast<uint32_t>(buffer.size());
+        std::vector<uint8_t> hint_buffer(size_hint);
+        prop.val = hint_buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        uint32_t actual_size = prop.len;
+        ASSERT_GT(actual_size, 0);
 
+        // A caller buffer strictly smaller than the actual payload must fail
+        // and the API must report a size hint that is at least the actual
+        // payload size so a retry with the hinted size succeeds.
+        std::vector<uint8_t> too_small(actual_size - 1);
+        prop.val = too_small.data();
+        prop.len = static_cast<uint32_t>(too_small.size());
         err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(prop.len, required_size); // Should return required size
+        ASSERT_GE(prop.len, actual_size);
+    });
+}
+
+// A caller buffer that fits the actual payload but is smaller than the
+// advisory size hint must still succeed. The hint is advisory headroom for
+// cert-chain growth across resets; it must not cause spurious failures when
+// the buffer already fits the current payload.
+TEST(azihsm_part, get_prop_manufacturer_cert_buffer_below_hint_succeeds)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        uint32_t size_hint = prop.len;
+        ASSERT_GT(size_hint, 0);
+
+        std::vector<uint8_t> hint_buffer(size_hint);
+        prop.val = hint_buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        uint32_t actual_size = prop.len;
+        ASSERT_GT(actual_size, 0);
+        ASSERT_LT(actual_size, size_hint);
+
+        // Buffer sized exactly to the actual payload (below the hint) must succeed.
+        std::vector<uint8_t> exact_buffer(actual_size);
+        prop.val = exact_buffer.data();
+        prop.len = static_cast<uint32_t>(exact_buffer.size());
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(prop.len, actual_size);
     });
 }
 

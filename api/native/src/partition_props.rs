@@ -235,23 +235,25 @@ fn copy_to_part_prop(part_prop: &mut AzihsmPartProp, bytes: &[u8]) -> Result<(),
     copy_to_part_prop_with_len_hint(part_prop, bytes, bytes.len())
 }
 
-/// Copy a byte slice into a partition property buffer with a caller-visible minimum buffer length.
+/// Copy a byte slice into a partition property buffer, reporting a larger size hint on shortage.
 ///
-/// When `part_prop.len` is smaller than `min_buffer_len`, this returns
-/// [`AzihsmStatus::BufferTooSmall`] and updates `part_prop.len` to `min_buffer_len`. On success,
-/// it copies `bytes` into the caller buffer and updates `part_prop.len` to the actual byte count.
+/// If `part_prop.len` is large enough to hold `bytes`, the copy succeeds and `part_prop.len`
+/// is set to the actual byte count. If the caller's buffer is too small, `part_prop.len` is set
+/// to `max(bytes.len(), suggested_len)` and [`AzihsmStatus::BufferTooSmall`] is returned. The
+/// suggestion is advisory only — a caller buffer that already fits `bytes` never fails, even if
+/// it is smaller than `suggested_len`.
 fn copy_to_part_prop_with_len_hint(
     part_prop: &mut AzihsmPartProp,
     bytes: &[u8],
-    min_buffer_len: usize,
+    suggested_len: usize,
 ) -> Result<(), AzihsmStatus> {
     let required_len = u32::try_from(bytes.len()).map_err(|_| AzihsmStatus::InvalidArgument)?;
-    let min_buffer_len = u32::try_from(min_buffer_len)
-        .unwrap_or(u32::MAX)
-        .max(required_len);
 
-    if part_prop.len < min_buffer_len {
-        part_prop.len = min_buffer_len;
+    if part_prop.len < required_len {
+        let suggested_len = u32::try_from(suggested_len)
+            .unwrap_or(u32::MAX)
+            .max(required_len);
+        part_prop.len = suggested_len;
         Err(AzihsmStatus::BufferTooSmall)?;
     }
 
