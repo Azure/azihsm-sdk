@@ -26,7 +26,10 @@ tracing-tree.workspace = true
 [features]
 default = []
 mock = ["azihsm_api/mock"]
-res-fi = ["azihsm_api/res-fi", "azihsm_ddi_mock/res-fi", "dep:azihsm_ddi_mock"]
+# Fault-injection requires the mock DDI since the FaultRule hooks live there;
+# enabling res-fi without mock would compile the fault API but never observe
+# the injected rules at runtime.
+res-fi = ["mock", "azihsm_api/res-fi", "azihsm_ddi_mock/res-fi", "dep:azihsm_ddi_mock"]
 
 [lints]
 workspace = true
