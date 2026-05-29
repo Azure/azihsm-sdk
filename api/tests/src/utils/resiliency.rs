@@ -8,8 +8,10 @@
 //! [`PotaEndorsementCallback`], and a dummy [`MobkProviderCallback`] for
 //! use in integration tests.
 //!
-//! All callers share a single well-known directory under the system
-//! temp dir. Storage uses one file per key inside that directory.
+//! Each [`ResiliencyTestCtx`] owns a unique subdirectory under the
+//! system temp dir. Storage uses one file per key inside that directory.
+//! Tests share storage only when they explicitly pass the same context
+//! directory to [`make_resiliency_config_in`].
 //!
 //! # Usage
 //!
