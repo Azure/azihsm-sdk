@@ -1,0 +1,332 @@
+name: Provider (OpenSSL integration)
+
+# This workflow is intentionally NOT triggered by GitHub events (no push /
+# pull_request / merge_group / schedule).  It is designed to be run locally
+# via `act`:
+#
+#   docker pull catthehacker/ubuntu:act-22.04
+#   docker pull catthehacker/ubuntu:act-24.04
+#   act --reuse -W .github/workflows/provider.yml -j openssl-3-0 \
+#     -P ubuntu-22.04=catthehacker/ubuntu:act-22.04 \
+#     -P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+#   # ... same with -j openssl-3-5
+#
+# It is the blueprint for a future nightly GitHub CI run; once trigger
+# conditions are added, the two jobs cover the OpenSSL ABI versions we
+# support and should run unchanged on GitHub-hosted runners.
+#
+# Architectural choice: two separate jobs (not a matrix) with different
+# `runs-on:` containers, so we can switch each job to use the container's
+# system OpenSSL once that version is acceptable for our needs.  For
+# now each job installs a pinned OpenSSL via `xtask custom-openssl` —
+# necessary today because no Ubuntu LTS ships OpenSSL 3.5 as system.
+# The pinned-install layer is bracketed with `# === TEMPORARY ===`
+# markers per job; deleting that block reverts the job to system OpenSSL
+# via `host_openssl::check_openssl`'s well-known prefix scan.
+#
+# Steps that are present specifically so this workflow also runs under
+# `act` (and which are harmless / idempotent no-ops on GitHub-hosted
+# runners) are marked with an "act-compat:" comment.
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+
+jobs:
+  openssl-3-0:
+    runs-on: ubuntu-22.04
+    # ubuntu-22.04 (jammy) ships system libssl 3.0.2 while we pin custom
+    # OpenSSL to 3.0.13.  apt-installed `nginx` links against system libssl
+    # 3.0.2, then dlopens our provider (built against 3.0.13), and
+    # OSSL_STORE_load() fails on the version skew when loading an azihsm
+    # masked key.  Mark non-blocking until this is resolved (either by
+    # pinning custom to 3.0.2, or moving the job to ubuntu-24.04 whose
+    # system libssl already matches 3.0.13).
+    continue-on-error: true
+    env:
+      OPENSSL_VERSION: "3.0.13"
+      OPENSSL_INSTALL: target/openssl-custom/3.0.13
+      AZIHSM_TEST_OPENSSL_MAJOR_MINOR: "3.0"
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install apt packages
+      # act-compat: `xxd` is preinstalled on GitHub-hosted Ubuntu (via the
+      # vim-common base) but absent from the catthehacker/ubuntu:act-* image.
+      # Installing it explicitly is harmless on GitHub (apt-get install on an
+      # already-installed package is a no-op) and required under act for the
+      # wrapped-key CLI tests (testfiles/{ec,rsa}/import_wrapped_key/...).
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake pkg-config libbsd-dev ca-certificates curl gnupg \
+          xxd
+
+    # act-compat: GitHub-hosted runners come with Rust preinstalled, but
+    # act's catthehacker images don't.  This step is a no-op on GitHub
+    # (where `cargo` is already on PATH) and installs rustup under act.
+    # rust-toolchain.toml then triggers rustup to install the pinned
+    # version on the first cargo invocation.
+    - name: Install Rust (if missing)
+      run: |
+        if ! command -v cargo >/dev/null 2>&1; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        fail-on-cache-miss: false
+
+    # === TEMPORARY: pinned OpenSSL install ============================
+    # Once Ubuntu ships OpenSSL ${{ env.OPENSSL_VERSION }} as system on
+    # this runner (or a version we accept), delete the three steps in
+    # this block (Cache, Install, Set OPENSSL_DIR).  host_openssl.rs
+    # falls through to the well-known prefix scan and picks up the
+    # container's system OpenSSL automatically.
+
+    - name: Cache custom OpenSSL ${{ env.OPENSSL_VERSION }}
+      id: cache-openssl
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.OPENSSL_INSTALL }}
+        key: openssl-custom-${{ env.OPENSSL_VERSION }}-linux-x64
+
+    - name: Install custom OpenSSL ${{ env.OPENSSL_VERSION }}
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      run: cargo xtask custom-openssl --version ${{ env.OPENSSL_VERSION }}
+
+    - name: Set OPENSSL_DIR
+      run: echo "OPENSSL_DIR=${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}" >> "$GITHUB_ENV"
+
+    # === END TEMPORARY ================================================
+
+    - name: Install dev tools
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      run: cargo xtask setup
+
+    - name: Build provider stack
+      # Two per-package `cargo build` invocations (matching main's deleted
+      # provider_integration pattern).  The provider has azihsm_api_native
+      # as a build-dependency, and `mock` doesn't propagate across build-dep
+      # edges, so we build api_native with `--features mock` first then the
+      # provider on top.  Output lands in the workspace's default
+      # `target/debug/` — exactly where the integration test harnesses'
+      # default `PROVIDER_PATH` looks.  `cargo xtask build` is NOT used
+      # here because it redirects to `target/xtask/debug/`.
+      run: |
+        cargo build -p azihsm_api_native --features mock
+        cargo build -p azihsm_ossl_provider --features mock
+
+    - name: Generate dev key material
+      env:
+        LD_LIBRARY_PATH: ${{ env.OPENSSL_DIR }}/lib
+      run: |
+        OSSL=$OPENSSL_DIR/bin/openssl
+        # act-compat: clean derived files from any previous provider init.
+        # On GitHub-hosted runners these never exist (fresh VM per run);
+        # `rm -f` on missing files is a no-op.  Under `act --reuse` they
+        # persist between runs and cause MUK/MOBK mismatches against a
+        # freshly-initialised mock simulator.
+        rm -f bmk.bin muk.bin mobk.bin
+        printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
+        printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
+        $OSSL rand -out obk.bin 48
+        $OSSL ecparam -name secp384r1 -genkey -noout | $OSSL ec -outform DER -out pota_private_key.der 2>/dev/null
+        $OSSL ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
+        chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
+
+    - name: Smoke test provider
+      env:
+        LD_LIBRARY_PATH: ${{ env.OPENSSL_DIR }}/lib:${{ github.workspace }}/target/debug
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        $OPENSSL_DIR/bin/openssl genpkey \
+          -provider-path ${{ github.workspace }}/target/debug \
+          -provider default -provider azihsm_provider \
+          -propquery "?provider=azihsm" \
+          -algorithm EC -pkeyopt group:P-384 \
+          -outform DER -out /dev/null -text
+
+    - name: Run CLI integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite cli
+
+    - name: Run C API integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite capi
+
+    - name: Install libazihsm_api_native for NGINX tests
+      run: |
+        sudo cp ${{ github.workspace }}/target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
+
+    - name: Install nginx mainline
+      run: |
+        # act-compat: `gpg --dearmor` prompts on /dev/tty when the output
+        # file already exists, which breaks under `act --reuse` (no tty).
+        # On GitHub-hosted runners the file never pre-exists (fresh VM).
+        # `rm -f` on a missing file is a no-op.
+        sudo rm -f /usr/share/keyrings/nginx-archive-keyring.gpg
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+          https://nginx.org/packages/mainline/ubuntu jammy nginx" \
+          | sudo tee /etc/apt/sources.list.d/nginx.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends nginx
+
+    - name: NGINX integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite nginx
+
+  openssl-3-5:
+    runs-on: ubuntu-24.04
+    # 3.5 support is still stabilising in the SDK; don't fail the workflow
+    # until tests are reliable in this container.
+    continue-on-error: true
+    env:
+      OPENSSL_VERSION: "3.5.4"
+      OPENSSL_INSTALL: target/openssl-custom/3.5.4
+      AZIHSM_TEST_OPENSSL_MAJOR_MINOR: "3.5"
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install apt packages
+      # act-compat: see the openssl-3-0 job above for the `xxd` rationale.
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake pkg-config libbsd-dev ca-certificates curl gnupg \
+          xxd
+
+    # act-compat: see the openssl-3-0 job above for the Rust-install rationale.
+    - name: Install Rust (if missing)
+      run: |
+        if ! command -v cargo >/dev/null 2>&1; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        fail-on-cache-miss: false
+
+    # === TEMPORARY: pinned OpenSSL install ============================
+    # Once Ubuntu ships OpenSSL 3.5.x as system on this runner, delete
+    # the three steps in this block (Cache, Install, Set OPENSSL_DIR).
+    # host_openssl.rs falls through to the well-known prefix scan.
+
+    - name: Cache custom OpenSSL ${{ env.OPENSSL_VERSION }}
+      id: cache-openssl
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.OPENSSL_INSTALL }}
+        key: openssl-custom-${{ env.OPENSSL_VERSION }}-linux-x64
+
+    - name: Install custom OpenSSL ${{ env.OPENSSL_VERSION }}
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      run: cargo xtask custom-openssl --version ${{ env.OPENSSL_VERSION }}
+
+    - name: Set OPENSSL_DIR
+      run: echo "OPENSSL_DIR=${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}" >> "$GITHUB_ENV"
+
+    # === END TEMPORARY ================================================
+
+    - name: Install dev tools
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      run: cargo xtask setup
+
+    - name: Build provider stack
+      # See openssl-3-0 job for the per-package build rationale.
+      run: |
+        cargo build -p azihsm_api_native --features mock
+        cargo build -p azihsm_ossl_provider --features mock
+
+    - name: Generate dev key material
+      env:
+        LD_LIBRARY_PATH: ${{ env.OPENSSL_DIR }}/lib
+      run: |
+        OSSL=$OPENSSL_DIR/bin/openssl
+        # act-compat: see openssl-3-0 job for the rm -f rationale.
+        rm -f bmk.bin muk.bin mobk.bin
+        printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
+        printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
+        $OSSL rand -out obk.bin 48
+        $OSSL ecparam -name secp384r1 -genkey -noout | $OSSL ec -outform DER -out pota_private_key.der 2>/dev/null
+        $OSSL ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
+        chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
+
+    - name: Smoke test provider
+      env:
+        LD_LIBRARY_PATH: ${{ env.OPENSSL_DIR }}/lib:${{ github.workspace }}/target/debug
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        $OPENSSL_DIR/bin/openssl genpkey \
+          -provider-path ${{ github.workspace }}/target/debug \
+          -provider default -provider azihsm_provider \
+          -propquery "?provider=azihsm" \
+          -algorithm EC -pkeyopt group:P-384 \
+          -outform DER -out /dev/null -text
+
+    - name: Run CLI integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite cli
+
+    - name: Run C API integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite capi
+
+    - name: Install libazihsm_api_native for NGINX tests
+      run: |
+        sudo cp ${{ github.workspace }}/target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
+
+    - name: Install nginx mainline
+      run: |
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+          https://nginx.org/packages/mainline/ubuntu noble nginx" \
+          | sudo tee /etc/apt/sources.list.d/nginx.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends nginx
+
+    - name: NGINX integration tests
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask integration-tests --suite nginx
