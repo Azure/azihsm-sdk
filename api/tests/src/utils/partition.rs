@@ -208,21 +208,33 @@ fn mobk_cache_file_path(_part_path: &str) -> std::path::PathBuf {
     }
 }
 
+/// Returns the default per-process MOBK cache file path used when
+/// `AZIHSM_MOBK_PATH` is unset.
+///
+/// The path is computed once on first access and reused for the
+/// lifetime of the process. It lives in the system temp directory and
+/// is named `azihsm-mobk-{pid}-{nanos}.bin`, which keeps concurrent
+/// nextest processes from sharing a cache file.
 fn default_mobk_cache_file_path() -> &'static std::path::PathBuf {
-    static DEFAULT_MOBK_CACHE_FILE: std::sync::OnceLock<std::path::PathBuf> =
-        std::sync::OnceLock::new();
+    /// Process-unique MOBK cache file path, computed once on first access.
+    ///
+    /// Naming includes the PID and a nanosecond timestamp so concurrent
+    /// nextest processes do not collide on the same file, and so a
+    /// re-run after a process restart does not reuse a stale cache.
+    static DEFAULT_MOBK_CACHE_FILE: std::sync::LazyLock<std::path::PathBuf> =
+        std::sync::LazyLock::new(|| {
+            let started_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
 
-    DEFAULT_MOBK_CACHE_FILE.get_or_init(|| {
-        let started_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default();
+            std::env::temp_dir().join(format!(
+                "azihsm-mobk-{}-{started_at}.bin",
+                std::process::id()
+            ))
+        });
 
-        std::env::temp_dir().join(format!(
-            "azihsm-mobk-{}-{started_at}.bin",
-            std::process::id()
-        ))
-    })
+    &DEFAULT_MOBK_CACHE_FILE
 }
 
 /// Reads the previously-persisted MOBK for `part_path`, if any.
