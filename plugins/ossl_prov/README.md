@@ -715,3 +715,54 @@ openssl mac -digest SHA256 ${PROV} \
     -in data.bin \
     HMAC
 ```
+
+## Integration tests and CI
+
+The three integration test crates under `plugins/ossl_prov/integration-tests/`
+exercise the provider through OpenSSL:
+
+- `provider-integration-tests-cli` — lit-driven shell scripts (`.sh` files
+  under `openssl-cli/testfiles/`)
+- `provider-integration-tests-capi` — libtest-mimic + Google Test (C++)
+- `provider-integration-tests-nginx` — libtest-mimic, runs a real NGINX
+  daemon with the provider loaded
+
+Run any of them via the xtask wrapper, which sets up `OPENSSL_BIN` /
+`OPENSSL_LIB` / `OPENSSL_DIR` for the harnesses from whatever
+`host_openssl::check_openssl` discovers:
+
+```bash
+# All three suites
+cargo xtask integration-tests
+
+# Just one
+cargo xtask integration-tests --suite cli   # | capi | nginx
+```
+
+The provider must be built first: `cargo xtask build --features mock`.
+
+### Version gating for 3.5-only tests
+
+Tests that require OpenSSL 3.5 use one of three skip mechanisms so the
+3.0 CI lane runs cleanly:
+
+- **C++ tests**: `#if OPENSSL_VERSION_MINOR >= 5` — compile-time, from
+  the headers the provider links against.
+- **C++ tests (runtime)**: suffix the gtest case name with
+  `_RequiresOpenssl35` — the CAPI harness reports it as `ignored` when
+  `AZIHSM_TEST_OPENSSL_MAJOR_MINOR="3.0"`.
+- **Shell tests**: source `env.sh` and call `skip_below_ossl_3_5` near
+  the top. The helper exits 0 (lit treats this as a passing skip) when
+  the running `openssl version` is below 3.5.
+- **NGINX assertion scripts**: name the script `*_requires_openssl_3_5.sh`
+  — the NGINX harness prints `[SKIP]` for it under the same env var.
+
+### CI workflow
+
+Provider integration runs in [`.github/workflows/provider.yml`](../../.github/workflows/provider.yml),
+not in the main `rust.yml`.  The workflow has two jobs (`openssl-3-0`
+and `openssl-3-5`), each pinning its OpenSSL version via
+`xtask custom-openssl`.  The workflow is `workflow_dispatch`-only today
+and is designed to run locally via [`act`](https://github.com/nektos/act);
+see the [repo root README](../../README.md#running-provideryml-locally-with-act)
+for the local-run recipe.

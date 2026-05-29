@@ -98,6 +98,75 @@ cargo xtask precheck --all
 
 It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
 
+## CI Workflows
+
+Two GitHub Actions workflows live under `.github/workflows/`:
+
+- [`rust.yml`](.github/workflows/rust.yml) — runs on every push / PR / merge
+  group. SDK-only: copyright, audit, fmt, clippy, mock tests (table-4 /
+  table-64 / tbor-emu), coverage, Windows build. Does not install OpenSSL
+  or run the provider.
+- [`provider.yml`](.github/workflows/provider.yml) — heavy provider +
+  OpenSSL integration. Two jobs (`openssl-3-0` on Ubuntu 22.04 pinned to
+  OpenSSL 3.0.13, `openssl-3-5` on Ubuntu 24.04 pinned to OpenSSL 3.5.4).
+  Triggered only by `workflow_dispatch`; designed to be run locally via
+  [`act`](https://github.com/nektos/act) (see below) and intended as the
+  blueprint for a future nightly CI run.
+
+### Running `provider.yml` locally with `act`
+
+One-time setup: install [`act`](https://github.com/nektos/act/#installation),
+ensure Docker is up, and pull the runner images. The default `act` image
+(`node:16-bullseye-slim`) is too small — it has no `sudo`/`apt`, so the
+apt-install step would fail immediately. Use the matching
+[`catthehacker/ubuntu`](https://github.com/catthehacker/docker_images)
+images that ship a real Ubuntu userland:
+
+```bash
+docker pull catthehacker/ubuntu:act-22.04
+docker pull catthehacker/ubuntu:act-24.04
+```
+
+Then run a job, mapping each `runs-on:` value with `-P`:
+
+```bash
+act --reuse -W .github/workflows/provider.yml -j openssl-3-0 \
+  -P ubuntu-22.04=catthehacker/ubuntu:act-22.04 \
+  -P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+
+act --reuse -W .github/workflows/provider.yml -j openssl-3-5 \
+  -P ubuntu-22.04=catthehacker/ubuntu:act-22.04 \
+  -P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+```
+
+`--reuse` keeps the container across invocations so the cold install
+(rustup install, dev-tool `cargo install`s, custom OpenSSL build from
+source — together ~10–15 min the first time) does not repeat.
+
+Each job sets `AZIHSM_TEST_OPENSSL_MAJOR_MINOR` (e.g., `"3.0"` or `"3.5"`)
+so the test suites can skip cases that require a different OpenSSL
+major.minor — see [xtask/README.md](xtask/README.md#integration-tests)
+for the skip conventions used by the CLI, CAPI, and NGINX harnesses.
+
+Steps in `provider.yml` marked `act-compat:` exist solely so the
+workflow runs under `act`; they are idempotent no-ops on GitHub-hosted
+runners (which come with Rust, `xxd`, etc. preinstalled).
+
+### Why each job pins its OpenSSL version (and how that disappears later)
+
+`provider.yml` calls `cargo xtask custom-openssl --version <X.Y.Z>` in
+each job to install a workspace-local OpenSSL into
+`target/openssl-custom/<version>/`, then exports `OPENSSL_DIR` to point
+there. This is a **temporary bridge**: until Ubuntu LTS ships OpenSSL
+3.5 as system, the openssl-3-5 job has no other way to test 3.5
+features. The openssl-3-0 job pins to 3.0.13 (matching what Ubuntu 24.04
+ships) so the eventual switch to system OpenSSL is uneventful.
+
+The pinned-install layer is bracketed with `# === TEMPORARY ===`
+markers in each job. Deleting the bracketed block per job reverts that
+job to system OpenSSL via `host_openssl::check_openssl`'s well-known
+prefix scan (`/usr`, `/usr/local`, …).
+
 ## License
 
 See [LICENSE](./LICENSE) for details.
