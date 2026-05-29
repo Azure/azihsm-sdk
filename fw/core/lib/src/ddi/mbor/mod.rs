@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub(crate) mod establish_credential;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
@@ -16,6 +17,7 @@ use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
+pub(crate) use establish_credential::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;
@@ -27,6 +29,33 @@ pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
 
 use super::*;
+
+/// Minimum DDI API revision accepted by this firmware.
+pub(crate) const DDI_API_REV_MIN: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+
+/// Maximum DDI API revision accepted by this firmware.
+pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+
+/// Central DDI API revision check.
+///
+/// All commands except [`DdiOp::GetApiRev`] must carry `hdr.rev` set to a
+/// supported revision. `GetApiRev` is the bootstrap command — the host
+/// does not yet know the supported revision, so its `hdr.rev` must be
+/// `None` (enforced inside its handler).
+///
+/// Returns [`HsmError::UnsupportedRevision`] if `hdr.rev` is missing or
+/// outside the supported range.
+#[inline]
+fn check_api_rev(hdr: &DdiReqHdr) -> HsmResult<()> {
+    if hdr.op == DdiOp::GetApiRev {
+        return Ok(());
+    }
+    let rev = hdr.rev.ok_or(HsmError::UnsupportedRevision)?;
+    if rev < DDI_API_REV_MIN || rev > DDI_API_REV_MAX {
+        return Err(HsmError::UnsupportedRevision);
+    }
+    Ok(())
+}
 
 /// Dispatch a DDI command to its handler.
 ///
@@ -42,6 +71,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
 ) -> HsmResult<&'p DmaBuf> {
+    check_api_rev(hdr)?;
+
     match hdr.op {
         DdiOp::GetApiRev => get_api_rev(pal, io, decoder, hdr),
         DdiOp::GetDeviceInfo => get_device_info(pal, io, decoder, hdr),
@@ -54,6 +85,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
+        DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }

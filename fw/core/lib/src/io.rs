@@ -155,7 +155,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Phase 2: decode + validate + dispatch (no yield) ───────
         let (resp, session_ctrl) = {
-            let req = &req_buf[..params.src_len];
+            let req = &mut req_buf[..params.src_len];
             let mut decoder = DdiDecoder::new(req);
             let hdr: DdiReqHdr = decoder.decode_hdr().op_err(
                 "core",

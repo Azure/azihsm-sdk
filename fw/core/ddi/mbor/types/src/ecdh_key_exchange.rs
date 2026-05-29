@@ -11,7 +11,7 @@ pub struct DdiEcdhKeyExchangeReq<'a> {
     #[ddi(id = 1)]
     pub priv_key_id: u16,
     #[ddi(id = 2, max_len = 192)]
-    pub pub_key_der: &'a DmaBuf,
+    pub pub_key_der: &'a mut DmaBuf,
     #[ddi(id = 3)]
     pub key_type: DdiKeyType,
     #[ddi(id = 4)]

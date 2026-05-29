@@ -24,6 +24,7 @@ mod integration {
     pub mod ecdh_384_key_exchange;
     pub mod ecdh_521_key_exchange;
     pub mod establish_credential;
+    pub mod establish_credential_smoke;
     pub mod extension_support;
     pub mod flush_session;
     pub mod get_api_rev;

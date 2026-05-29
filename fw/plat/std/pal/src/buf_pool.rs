@@ -136,11 +136,39 @@ impl BufferPool {
 
     /// Free a buffer slot back to the pool.
     ///
-    /// Sets the slot's bit in the free bitmap and wakes any task
-    /// suspended in [`alloc`](Self::alloc).  Watermarks for the slot
-    /// are *not* reset here; they will be reset on the next
+    /// Zeroes the regions of the slot's NonDma and Dma buffers that
+    /// this IO actually touched (using the bump watermarks as
+    /// high-water marks) before clearing the free bit.  This
+    /// preserves the invariant that every fresh `dma_alloc` /
+    /// `nondma_alloc` returns zeroed memory, which is required by
+    /// zero-on-entry contracts (e.g. `mask_cbc`'s `out[..total_len]
+    /// must be zero on entry`) and prevents stale crypto material
+    /// from outliving an IO.  Watermarks are then reset on the next
     /// [`alloc`](Self::alloc).
+    ///
+    /// Sets the slot's bit in the free bitmap and wakes any task
+    /// suspended in [`alloc`](Self::alloc).
+    ///
+    /// # Safety
+    ///
+    /// Callers must guarantee that no outstanding `&mut [u8]` views
+    /// into this slot's buffers exist — i.e. `free` is invoked only
+    /// after the owning IO's handler has returned and its [`HsmIo`]
+    /// has been consumed.  This is the same exclusivity discipline
+    /// the bump allocator relies on; the Embassy executor is
+    /// single-threaded, so once the handler returns no aliasing
+    /// borrow can outlive it.
     pub fn free(&self, idx: u16) {
+        let i = idx as usize;
+        let nondma_hi = self.nondma_marks[i].get().min(NONDMA_BUF_SIZE);
+        let dma_hi = self.dma_marks[i].get().min(DMA_BUF_SIZE);
+        // SAFETY: no outstanding borrows — see method-level Safety.
+        unsafe {
+            let nondma = &mut *self.nondma_bufs[i].get();
+            nondma[..nondma_hi].fill(0);
+            let dma = &mut *self.dma_bufs[i].get();
+            dma[..dma_hi].fill(0);
+        }
         self.free_mask.set(self.free_mask.get() | (1u64 << idx));
         self.waker.borrow_mut().wake();
     }

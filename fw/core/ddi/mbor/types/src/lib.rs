@@ -331,7 +331,7 @@ pub struct DdiRespExt {}
 #[ddi(map)]
 pub struct DdiPublicKey<'a> {
     #[ddi(id = 1, max_len = 768)]
-    pub raw: &'a DmaBuf,
+    pub raw: &'a mut DmaBuf,
     #[ddi(id = 2)]
     pub key_kind: DdiKeyType,
 }
@@ -345,7 +345,7 @@ pub struct DdiKeyProperties<'a> {
     #[ddi(id = 2)]
     pub key_availability: DdiKeyAvailability,
     #[ddi(id = 3, max_len = 128)]
-    pub key_label: &'a DmaBuf,
+    pub key_label: &'a mut DmaBuf,
 }
 
 /// Target key metadata (16-byte bitflag blob).
@@ -363,7 +363,7 @@ pub struct DdiTargetKeyProperties<'a> {
     #[ddi(id = 1)]
     pub key_metadata: DdiTargetKeyMetadata,
     #[ddi(id = 2, max_len = 128)]
-    pub key_label: &'a DmaBuf,
+    pub key_label: &'a mut DmaBuf,
 }
 
 // ── ddi_op_req_resp! macro ─────────────────────────────────────────────
