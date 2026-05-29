@@ -190,8 +190,6 @@ impl Xtask for Precheck {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running precheck");
 
-        let sh = Shell::new()?;
-
         // choose defaults based on --all/--full flags & whether CLI-provided stages exist
         let mut stage = if self.all {
             Stage::all()
@@ -209,18 +207,6 @@ impl Xtask for Precheck {
         }
 
         if stage.setup {
-            // first try path of .cargo inside current directory
-            let mut config_path = ".cargo".to_string();
-            if !sh.path_exists(&config_path) {
-                // next try path of .cargo inside parent directory
-                config_path = "../.cargo".to_string();
-                if !sh.path_exists(&config_path) {
-                    anyhow::bail!("Could not find .cargo directory at {}", config_path);
-                }
-            }
-
-            config_path.push_str("/config.toml");
-
             Setup {
                 force: false,
                 config: self.config,
@@ -380,7 +366,10 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi_tbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.clone().or_else(|| Some("ci-tbor-emu".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or_else(|| Some("ci-tbor-emu".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
