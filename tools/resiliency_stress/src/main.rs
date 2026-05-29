@@ -102,13 +102,6 @@ struct Args {
     #[arg(long, default_value_t = false)]
     no_reset: bool,
 
-    /// Inject random NSSR faults on DDI operations instead of using
-    /// timer-based resets. Requires the `res-fi` feature.
-    /// This provides better race coverage by triggering resets
-    /// mid-DDI-call rather than between operations.
-    #[arg(long, default_value_t = false)]
-    random_fault: bool,
-
     // -- Internal (hidden) --
     /// (Internal) Child process ID — set automatically by the parent.
     #[arg(long, hide = true)]
