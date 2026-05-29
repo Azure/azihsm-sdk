@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_hsm_core"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+azihsm_fw_core_crypto_masked_key.workspace = true
+azihsm_fw_ddi_mbor = { features = ["trusted-encode"], workspace = true }
+azihsm_fw_ddi_mbor_api.workspace = true
+azihsm_fw_ddi_mbor_types.workspace = true
+azihsm_fw_ddi_tbor.workspace = true
+azihsm_fw_ddi_tbor_types.workspace = true
+azihsm_fw_hsm_core_tracing.workspace = true
+azihsm_fw_hsm_pal_traits.workspace = true
+
+bitfield-struct.workspace = true
+
+[features]
+default = ["std"]
+std = []
+tracing = []

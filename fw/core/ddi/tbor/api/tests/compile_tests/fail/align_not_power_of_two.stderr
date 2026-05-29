@@ -1,0 +1,5 @@
+error: #[tbor(align = N)] requires N to be a power of two
+ --> tests/compile_tests/fail/align_not_power_of_two.rs:9:5
+  |
+9 |     data: &'a [u8],
+  |     ^^^^

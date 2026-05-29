@@ -46,7 +46,7 @@ pub(crate) fn get_rsa_unwrapping_key_raw_no_res(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     let handle = to_key_handle(resp.data.key_id, None);
     let guard = HsmKeyIdGuard::new(session, handle);
@@ -115,7 +115,7 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = key.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     let handle = ddi::to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
     let session = key.session();
@@ -167,7 +167,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     };
 
     let resp =
-        unwrapping_key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+        unwrapping_key.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     let key_handle = resp.data.key_id;
 
@@ -288,7 +288,7 @@ fn rsa_mod_exp(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = key.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     output.copy_from_slice(resp.data.x.as_slice());
 

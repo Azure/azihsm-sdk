@@ -483,6 +483,31 @@ TEST(azihsm_part, get_prop_manufacturer_cert)
     });
 }
 
+TEST(azihsm_part, get_prop_manufacturer_cert_returns_larger_size_hint)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        uint32_t size_hint = prop.len;
+        ASSERT_GT(size_hint, 0);
+
+        std::vector<azihsm_char> buffer(size_hint);
+        prop.val = buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        uint32_t actual_size = prop.len;
+        ASSERT_GT(actual_size, 0);
+
+        uint32_t expected_size_hint = actual_size + (actual_size / 2) + (actual_size % 2);
+        ASSERT_EQ(size_hint, expected_size_hint);
+    });
+}
+
 TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
 {
     auto part_list = PartitionListHandle();
@@ -903,15 +928,7 @@ TEST(azihsm_part, init_with_resiliency_config)
         azihsm_resiliency_config resiliency_config{};
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
 
-        err = azihsm_part_init(
-            part_handle,
-            &creds,
-            nullptr,
-            nullptr,
-            &init_config.backup_config,
-            &init_config.pota_endorsement,
-            &resiliency_config
-        );
+        err = part_init_with_mobk_fallback(part_handle, &creds, init_config, &resiliency_config);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }
@@ -1039,7 +1056,7 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         // TPM + callback is rejected as InvalidArgument.
         init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
         init_config.pota_endorsement.endorsement = nullptr;
-        // Use TPM OBK so obk_callback_ops=null is valid; we're testing
+        // Use TPM OBK so mobk_callback_ops=null is valid; we're testing
         // that TPM POTA + pota_callback is rejected.
         init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
         init_config.backup_config.owner_backup_key = nullptr;
@@ -1048,8 +1065,8 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
         // Force pota_callback_ops non-null so the TPM + callback mismatch triggers.
         resiliency_config.pota_callback_ops = get_pota_callback_ops();
-        // Ensure obk_callback_ops matches OBK source (TPM → null).
-        resiliency_config.obk_callback_ops = nullptr;
+        // Ensure mobk_callback_ops matches OBK source (TPM → null).
+        resiliency_config.mobk_callback_ops = nullptr;
 
         err = azihsm_part_init(
             part_handle,

@@ -1,0 +1,47 @@
+error: #[tbor] enum variants must have explicit discriminants
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:7:20
+  |
+7 | pub enum BadEnum { A, B }
+  |                    ^
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:10
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |          ^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:17
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                 ^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:28
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                            ^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:32
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                ^^^^^ not found in this scope
+
+error[E0425]: cannot find type `BadEnum` in this scope
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:39
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                       ^^^^ not found in this scope
+
+error[E0206]: the trait `Copy` cannot be implemented for this type
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:39
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |                                       ^^^^ type is not a structure or enumeration
+
+error[E0433]: failed to resolve: use of undeclared type `BadEnum`
+ --> tests/compile_tests/fail/enum_missing_discriminant.rs:4:10
+  |
+4 | #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+  |          ^^^^^ use of undeclared type `BadEnum`

@@ -1,0 +1,7 @@
+error: #[tbor] requires `opcode = N`, `response`, or `fields`
+ --> tests/compile_tests/fail/missing_kind.rs:6:1
+  |
+6 | #[tbor]
+  | ^^^^^^^
+  |
+  = note: this error originates in the attribute macro `tbor` (in Nightly builds, run with -Z macro-backtrace for more info)

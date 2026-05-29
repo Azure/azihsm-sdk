@@ -111,6 +111,7 @@ activate = 1
 azihsm-bmk-path = $AZIHSM_KEY_DIR/bmk.bin
 azihsm-muk-path = $AZIHSM_KEY_DIR/muk.bin
 azihsm-obk-path = $AZIHSM_KEY_DIR/obk.bin
+azihsm-mobk-path = $AZIHSM_KEY_DIR/mobk.bin
 azihsm-obk-source = caller
 azihsm-pota-source = caller
 azihsm-pota-private-key-path = $AZIHSM_KEY_DIR/pota_private_key.der

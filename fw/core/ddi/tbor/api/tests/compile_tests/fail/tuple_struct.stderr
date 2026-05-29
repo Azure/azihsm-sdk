@@ -1,0 +1,5 @@
+error: #[tbor] structs must have named fields or be a unit struct
+ --> tests/compile_tests/fail/tuple_struct.rs:7:20
+  |
+7 | pub struct TupleReq(u8, u16);
+  |                    ^^^^^^^^^
