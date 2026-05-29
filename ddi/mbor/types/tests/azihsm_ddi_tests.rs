@@ -33,6 +33,7 @@ mod integration {
     pub mod get_device_info;
     pub mod get_establish_cred_encryption_key;
     pub mod get_session_encryption_key;
+    pub mod get_session_encryption_key_smoke;
     pub mod get_unwrapping_key;
     pub mod hmac;
     pub mod init_bk3_smoke;

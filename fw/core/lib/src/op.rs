@@ -592,6 +592,7 @@ impl SessionCtrl {
             | DdiOp::GetCertChainInfo
             | DdiOp::GetCertificate
             | DdiOp::GetEstablishCredEncryptionKey
+            | DdiOp::GetSessionEncryptionKey
             | DdiOp::GetSealedBk3
             | DdiOp::InitBk3
             | DdiOp::SetSealedBk3

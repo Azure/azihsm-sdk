@@ -488,10 +488,14 @@ impl HsmPartitionManager for StdHsmPal {
         io: &impl HsmIo,
         out: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
-        copy_out(
-            &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key,
-            out,
-        )
+        // Stored internally as big-endian `x ∥ y` (OpenSSL convention).
+        // The wire contract — matching real PKA hardware — is
+        // little-endian, and the host-side `post_decode_fn` on
+        // `DdiDerPublicKey` reverses each coord back to big-endian
+        // before DER-encoding.  Reverse each coord here so the wire
+        // bytes are LE.
+        let raw = &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key;
+        copy_out_pub_key_le(raw, out)
     }
 
     fn part_clear_establish_cred_key(&self, io: &impl HsmIo) -> HsmResult<()> {
@@ -931,6 +935,32 @@ impl StdHsmPal {
             .with_local(true)
             .with_derive(true);
 
+        // If the identity key was wiped (e.g., by a prior part_disable),
+        // regenerate it before any other key — mirrors real hardware
+        // where NSSR/erase always provisions a fresh partition identity
+        // key.  Must be created first so it lands in the same vault
+        // slot the `id_key_id` field was originally bound to.
+        if table.entries[idx].id_key_id.is_none() {
+            let id_attrs = HsmVaultKeyAttrs::new()
+                .with_internal(true)
+                .with_local(true)
+                .with_sign(true);
+            let mut id_pub = [0u8; P384_PUB_KEY_LEN];
+            let id_kid = self
+                .create_internal_ecc384_key(
+                    pid,
+                    HsmVaultKeyKind::Ecc384Private,
+                    id_attrs,
+                    HsmEccPct::SignVerify,
+                    &mut id_pub,
+                )
+                .await?;
+            let table = unsafe { &mut *self.part_table.get() };
+            let entry = &mut table.entries[idx];
+            entry.id_key_id = Some(id_kid);
+            entry.id_pub_key = id_pub;
+        }
+
         // Generate establish-credential encryption ECC-384 key pair.
         let mut ec_pub = [0u8; P384_PUB_KEY_LEN];
         let ec_kid = self
@@ -1127,6 +1157,16 @@ impl StdHsmPal {
         entry.session_enc_pub_key.fill(0);
 
         entry.nonce.fill(0);
+
+        // Take id_key_id BEFORE vault.clear() so part_enable_internal
+        // knows the identity key was wiped and needs to be regenerated.
+        // The cached leaf cert is keyed off the old id_pub_key so it
+        // must also be invalidated.
+        entry.id_key_id.take();
+        entry.id_pub_key.fill(0);
+        entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+        entry.leaf_cert_len = 0;
+
         entry.vault.clear();
         entry.session_table = SessionTable::new();
         entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);
