@@ -136,9 +136,9 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
 ///
 /// Automatically selects TPM or Caller source based on the
 /// `AZIHSM_USE_TPM` environment variable. For Caller source, prefers
-/// a cached MOBK from a prior init (if present on disk) so that
-/// `init_bk3` is not re-attempted on a warm device. Falls back to the
-/// raw OBK when no cache exists (cold device / first-ever init).
+/// a cached MOBK from a prior init in this process (if present on disk)
+/// so that `init_bk3` is not re-attempted on a warm device. Falls back
+/// to the raw OBK when no cache exists (cold device / first-ever init).
 #[allow(clippy::expect_used)]
 pub(crate) fn make_init_params(
     part: &HsmPartition,
@@ -197,16 +197,44 @@ pub(crate) fn init_with_mobk_fallback(
 /// Returns the MOBK cache file path.
 ///
 /// Uses `AZIHSM_MOBK_PATH` from the environment if set, otherwise
-/// defaults to `{tmp}/mobk.bin` (system temp directory). The temp
-/// directory is cleared on reboot on most Linux systems, which
-/// naturally aligns with cold-device semantics (power cycle = new
-/// `init_bk3`). On HW where you need persistence across reboots,
-/// set `AZIHSM_MOBK_PATH` to a persistent path.
+/// defaults to a process-unique file in the system temp directory. Each
+/// nextest process owns an independent simulator instance, so sharing a
+/// cache across processes can make one process observe another process's
+/// partially-written cache file.
 fn mobk_cache_file_path(_part_path: &str) -> std::path::PathBuf {
     match std::env::var("AZIHSM_MOBK_PATH") {
         Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
-        _ => std::env::temp_dir().join("mobk.bin"),
+        _ => default_mobk_cache_file_path().clone(),
     }
+}
+
+/// Returns the default per-process MOBK cache file path used when
+/// `AZIHSM_MOBK_PATH` is unset.
+///
+/// The path is computed once on first access and reused for the
+/// lifetime of the process. It lives in the system temp directory and
+/// is named `azihsm-mobk-{pid}-{nanos}.bin`, which keeps concurrent
+/// nextest processes from sharing a cache file.
+fn default_mobk_cache_file_path() -> &'static std::path::PathBuf {
+    /// Process-unique MOBK cache file path, computed once on first access.
+    ///
+    /// Naming includes the PID and a nanosecond timestamp so concurrent
+    /// nextest processes do not collide on the same file, and so a
+    /// re-run after a process restart does not reuse a stale cache.
+    static DEFAULT_MOBK_CACHE_FILE: std::sync::LazyLock<std::path::PathBuf> =
+        std::sync::LazyLock::new(|| {
+            let started_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+
+            std::env::temp_dir().join(format!(
+                "azihsm-mobk-{}-{started_at}.bin",
+                std::process::id()
+            ))
+        });
+
+    &DEFAULT_MOBK_CACHE_FILE
 }
 
 /// Reads the previously-persisted MOBK for `part_path`, if any.
@@ -216,7 +244,7 @@ fn read_cached_mobk(part_path: &str) -> Option<Vec<u8>> {
 }
 
 /// Records the MOBK derived during a successful init so subsequent
-/// inits on the same partition path (in any process) can reuse it via
+/// inits on the same partition path in this process can reuse it via
 /// [`make_init_params`].
 pub(crate) fn save_mobk_after_init(part: &HsmPartition) {
     if use_tpm() {
