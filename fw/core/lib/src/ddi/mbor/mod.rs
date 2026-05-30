@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub(crate) mod close_session;
 pub(crate) mod establish_credential;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
@@ -10,6 +11,7 @@ pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod get_sealed_bk3;
 pub(crate) mod get_session_encryption_key;
 pub(crate) mod init_bk3;
+pub(crate) mod open_session;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
@@ -18,6 +20,7 @@ use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
+pub(crate) use close_session::*;
 pub(crate) use establish_credential::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
@@ -27,6 +30,7 @@ pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use get_sealed_bk3::*;
 pub(crate) use get_session_encryption_key::*;
 pub(crate) use init_bk3::*;
+pub(crate) use open_session::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
 
@@ -37,6 +41,19 @@ pub(crate) const DDI_API_REV_MIN: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 
 /// Maximum DDI API revision accepted by this firmware.
 pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+
+/// User credential field length (user ID or PIN) — one AES block.
+///
+/// Shared by [`establish_credential`] and [`open_session`] for the
+/// all-zero sentinel check on decrypted credential plaintext.
+pub(crate) const CRED_FIELD_LEN: usize = 16;
+
+/// Partition / session `BK` and `MK` length — 80 bytes = 32-byte
+/// AES-256 key ‖ 48-byte HMAC-SHA-384 key.  Matches the HKDF-Expand
+/// OKM length used for the credential keys and the masked-key
+/// envelope plaintext size used to wrap MK / MK_SESSION.
+pub(crate) const BK_LEN: usize =
+    azihsm_fw_core_crypto_masked_key::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 
 /// Central DDI API revision check.
 ///
@@ -89,6 +106,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
+        DdiOp::OpenSession => open_session(pal, io, decoder, hdr).await,
+        DdiOp::CloseSession => close_session(pal, io, decoder, hdr),
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -136,6 +155,21 @@ pub(crate) fn success_hdr(req: &DdiReqHdr, op: DdiOp) -> DdiRespHdr {
         rev: req.rev,
         op,
         sess_id: None,
+        status: 0, // DDI Success
+        fips_approved: false,
+    }
+}
+
+/// Build a success [`DdiRespHdr`] for a session-bearing command.
+///
+/// Use this for handlers whose response header must carry the session
+/// id the command opened or closed (e.g. `OpenSession` returns the
+/// freshly-allocated id; `CloseSession` echoes the closed id back).
+pub(crate) fn success_hdr_sess(req: &DdiReqHdr, op: DdiOp, sess_id: u16) -> DdiRespHdr {
+    DdiRespHdr {
+        rev: req.rev,
+        op,
+        sess_id: Some(sess_id),
         status: 0, // DDI Success
         fips_approved: false,
     }

@@ -12,7 +12,6 @@ use core::ops::Deref;
 
 use azihsm_fw_core_crypto_masked_key::mask_cbc;
 use azihsm_fw_core_crypto_masked_key::unmask_cbc_in_place;
-use azihsm_fw_core_crypto_masked_key::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialReq;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialResp;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -23,17 +22,9 @@ use super::*;
 
 // ── Field sizes ──────────────────────────────────────────────────────
 
-/// Credential field length (user ID or PIN), one AES block.
-const CRED_FIELD_LEN: usize = 16;
-
 /// BK3 plaintext length in bytes — matches `BK3_LEN` in
 /// [`init_bk3`](super::init_bk3).
 const BK3_LEN: usize = 48;
-
-/// Partition `BK` and `MK` length: 80 bytes = 32-byte AES-256 key
-/// ‖ 48-byte HMAC-SHA-384 key.  Identical to the HKDF-Expand OKM
-/// length used for the credential keys.
-const BK_LEN: usize = MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 
 // ── Labels and metadata ──────────────────────────────────────────────
 

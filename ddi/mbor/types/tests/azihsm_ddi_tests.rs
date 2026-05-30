@@ -12,6 +12,7 @@ mod integration {
     pub mod attest_key;
     pub mod change_pin;
     pub mod close_session;
+    pub mod close_session_smoke;
     pub mod common;
     pub mod ddi_dev_info;
     pub mod delete_key;
@@ -52,6 +53,7 @@ mod integration {
     pub mod open_key;
     pub mod open_key_no_import;
     pub mod open_session;
+    pub mod open_session_smoke;
     pub mod prov_part;
     pub mod reopen_session;
     pub mod rsa_2k_decrypt_no_crt;
