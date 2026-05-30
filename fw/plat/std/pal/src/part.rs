@@ -959,6 +959,12 @@ impl StdHsmPal {
             let entry = &mut table.entries[idx];
             entry.id_key_id = Some(id_kid);
             entry.id_pub_key = id_pub;
+            // Defensive: a `GetCertificate` request that slipped in
+            // between `part_disable` and here would have rebuilt the
+            // leaf-cert cache over the zeroed `id_pub_key`.  Invalidate
+            // again so the next request rebuilds against the fresh key.
+            entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+            entry.leaf_cert_len = 0;
         }
 
         // Generate establish-credential encryption ECC-384 key pair.
