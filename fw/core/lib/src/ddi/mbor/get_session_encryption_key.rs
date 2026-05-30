@@ -5,9 +5,9 @@
 //!
 //! Returns the session-encryption public key, a nonce, and a signature
 //! over the public key (signed with the partition identity key). This
-//! is a NoSession command and is the bootstrap for [`OpenSession`]:
+//! is a NoSession command and is the bootstrap for [`DdiOp::OpenSession`]:
 //! the host uses the returned public key + nonce to wrap the session
-//! credential it then sends in [`OpenSession`].
+//! credential it then sends in [`DdiOp::OpenSession`].
 //!
 //! Uses the encode-frame-then-fill pattern: all variable fields are
 //! filled directly into the encoder-reserved slots — zero intermediate
