@@ -1162,8 +1162,7 @@ impl StdHsmPal {
         // knows the identity key was wiped and needs to be regenerated.
         // The cached leaf cert is keyed off the old id_pub_key so it
         // must also be invalidated.
-        entry.id_key_id.take();
-        entry.id_pub_key.fill(0);
+        entry.id_key_id = None;
         entry.leaf_cert[..entry.leaf_cert_len].fill(0);
         entry.leaf_cert_len = 0;
 
