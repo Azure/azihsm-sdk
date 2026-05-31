@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
@@ -42,6 +43,9 @@ use crate::suite::HpkeSuite;
 ///
 /// * If `pk_s` is `None`: `enc ‖ pk_r` (Base modes).
 /// * If `pk_s` is `Some(_)`: `enc ‖ pk_r ‖ pk_s` (Auth modes).
+///
+/// All inputs are SEC1 uncompressed (`0x04 ‖ X ‖ Y`, big-endian) per
+/// RFC 9180 §7.1.1.
 ///
 /// # Parameters
 /// * `dst` — destination buffer of `npk * (2 + auth as usize)` bytes.
@@ -60,6 +64,65 @@ fn build_kem_context(dst: &mut [u8], enc: &[u8], pk_r: &[u8], pk_s: Option<&[u8]
 
 fn alloc_bytes(len: usize, alloc: &impl HsmScopedAlloc) -> HsmResult<&mut DmaBuf> {
     alloc.dma_alloc(len)
+}
+
+// =============================================================================
+// Wire ↔ PAL coordinate conversion
+// =============================================================================
+//
+// HPKE on the wire (and inside `kem_context`) uses SEC1 uncompressed
+// `0x04 ‖ X_be ‖ Y_be` per RFC 9180 §7.1.1. The HSM PAL, by contrast,
+// passes raw `X_le ‖ Y_le` (no prefix) to / from
+// [`HsmCrypto::ecc_gen_keypair`] / [`HsmCrypto::ecdh_derive`]. These
+// helpers are the only place the two encodings touch each other; all
+// public entry points below take and return wire-format bytes.
+
+/// Convert a SEC1 wire-format public key into the PAL's
+/// `X_le ‖ Y_le` layout.
+///
+/// `wire.len() == 1 + 2 * nsk` (SEC1 with 0x04 prefix).
+/// `pal.len()  == 2 * nsk` (raw, LE).
+///
+/// Returns `Err(HsmError::InvalidArg)` if the wire prefix is not 0x04
+/// or the lengths don't match.
+fn wire_to_pal(wire: &[u8], pal: &mut [u8], nsk: usize) -> HsmResult<()> {
+    if wire.len() != 1 + 2 * nsk || pal.len() != 2 * nsk {
+        return Err(HsmError::InvalidArg);
+    }
+    if wire[0] != 0x04 {
+        return Err(HsmError::InvalidArg);
+    }
+    pal[..nsk].copy_from_slice(&wire[1..1 + nsk]);
+    pal[..nsk].reverse();
+    pal[nsk..].copy_from_slice(&wire[1 + nsk..1 + 2 * nsk]);
+    pal[nsk..].reverse();
+    Ok(())
+}
+
+/// Convert a PAL-format public key (`X_le ‖ Y_le`) into the SEC1
+/// uncompressed wire layout (`0x04 ‖ X_be ‖ Y_be`).
+fn pal_to_wire(pal: &[u8], wire: &mut [u8], nsk: usize) -> HsmResult<()> {
+    if wire.len() != 1 + 2 * nsk || pal.len() != 2 * nsk {
+        return Err(HsmError::InvalidArg);
+    }
+    wire[0] = 0x04;
+    wire[1..1 + nsk].copy_from_slice(&pal[..nsk]);
+    wire[1..1 + nsk].reverse();
+    wire[1 + nsk..1 + 2 * nsk].copy_from_slice(&pal[nsk..2 * nsk]);
+    wire[1 + nsk..1 + 2 * nsk].reverse();
+    Ok(())
+}
+
+/// Allocate a PAL-format scratch buffer and populate it from a
+/// wire-format pk. Returns the borrowed scratch buffer.
+fn pk_wire_to_pal_dma<'a>(
+    wire: &[u8],
+    nsk: usize,
+    alloc: &'a impl HsmScopedAlloc,
+) -> HsmResult<&'a mut DmaBuf> {
+    let pal = alloc_bytes(2 * nsk, alloc)?;
+    wire_to_pal(wire, pal, nsk)?;
+    Ok(pal)
 }
 
 // =============================================================================
@@ -108,18 +171,23 @@ where
     let curve = suite.kem_curve();
     let nsk = suite.nsk();
     let npk = suite.npk();
+    let npk_pal = suite.npk_pal();
     let ndh = suite.ndh();
 
-    let keygen_buf = alloc_bytes(nsk + npk, alloc)?;
+    // PAL impls may return the private key as raw scalar bytes
+    // (`nsk`) *or* as a PKCS#8 DER blob (up to `priv_key_der_max`),
+    // depending on whether they're hardware-backed or std/OpenSSL.
+    // Use the larger upper bound so both shapes fit.
+    let keygen_buf = alloc_bytes(curve.priv_key_der_max() + npk_pal, alloc)?;
     let (sk_e, pk_e) = pal
         .ecc_gen_keypair(io, curve, keygen_buf, HsmEccPct::None)
         .await?;
 
     let dh = alloc_bytes(ndh, alloc)?;
-    let pk_r_dma = dma_copy_in(alloc, pk_r)?;
-    pal.ecdh_derive(io, curve, sk_e, pk_r_dma, dh).await?;
+    let pk_r_pal = pk_wire_to_pal_dma(pk_r, nsk, alloc)?;
+    pal.ecdh_derive(io, curve, sk_e, pk_r_pal, dh).await?;
 
-    enc[..npk].copy_from_slice(pk_e);
+    pal_to_wire(pk_e, &mut enc[..npk], nsk)?;
 
     let kem_context = alloc_bytes(npk * 2, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, None);
@@ -163,15 +231,14 @@ where
     P: HsmCrypto + HsmAlloc + 'a,
 {
     let curve = suite.kem_curve();
+    let nsk = suite.nsk();
     let npk = suite.npk();
     let ndh = suite.ndh();
 
-    let pk_e = &enc[..npk];
-
     let dh = alloc_bytes(ndh, alloc)?;
     let sk_r_dma = dma_copy_in(alloc, sk_r)?;
-    let pk_e_dma = dma_copy_in(alloc, pk_e)?;
-    pal.ecdh_derive(io, curve, sk_r_dma, pk_e_dma, dh).await?;
+    let pk_e_pal = pk_wire_to_pal_dma(&enc[..npk], nsk, alloc)?;
+    pal.ecdh_derive(io, curve, sk_r_dma, pk_e_pal, dh).await?;
 
     let kem_context = alloc_bytes(npk * 2, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, None);
@@ -222,22 +289,24 @@ where
     let curve = suite.kem_curve();
     let nsk = suite.nsk();
     let npk = suite.npk();
+    let npk_pal = suite.npk_pal();
     let ndh = suite.ndh();
 
-    let keygen_buf = alloc_bytes(nsk + npk, alloc)?;
+    // See `encap` for buffer-sizing rationale.
+    let keygen_buf = alloc_bytes(curve.priv_key_der_max() + npk_pal, alloc)?;
     let (sk_e, pk_e) = pal
         .ecc_gen_keypair(io, curve, keygen_buf, HsmEccPct::None)
         .await?;
 
     let dh = alloc_bytes(ndh * 2, alloc)?;
-    let pk_r_dma = dma_copy_in(alloc, pk_r)?;
+    let pk_r_pal = pk_wire_to_pal_dma(pk_r, nsk, alloc)?;
     let sk_s_dma = dma_copy_in(alloc, sk_s)?;
-    pal.ecdh_derive(io, curve, sk_e, pk_r_dma, &mut dh[..ndh])
+    pal.ecdh_derive(io, curve, sk_e, pk_r_pal, &mut dh[..ndh])
         .await?;
-    pal.ecdh_derive(io, curve, sk_s_dma, pk_r_dma, &mut dh[ndh..])
+    pal.ecdh_derive(io, curve, sk_s_dma, pk_r_pal, &mut dh[ndh..])
         .await?;
 
-    enc[..npk].copy_from_slice(pk_e);
+    pal_to_wire(pk_e, &mut enc[..npk], nsk)?;
 
     let kem_context = alloc_bytes(npk * 3, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, Some(pk_s));
@@ -284,18 +353,17 @@ where
     P: HsmCrypto + HsmAlloc + 'a,
 {
     let curve = suite.kem_curve();
+    let nsk = suite.nsk();
     let npk = suite.npk();
     let ndh = suite.ndh();
 
-    let pk_e = &enc[..npk];
-
     let dh = alloc_bytes(ndh * 2, alloc)?;
     let sk_r_dma = dma_copy_in(alloc, sk_r)?;
-    let pk_e_dma = dma_copy_in(alloc, pk_e)?;
-    let pk_s_dma = dma_copy_in(alloc, pk_s)?;
-    pal.ecdh_derive(io, curve, sk_r_dma, pk_e_dma, &mut dh[..ndh])
+    let pk_e_pal = pk_wire_to_pal_dma(&enc[..npk], nsk, alloc)?;
+    let pk_s_pal = pk_wire_to_pal_dma(pk_s, nsk, alloc)?;
+    pal.ecdh_derive(io, curve, sk_r_dma, pk_e_pal, &mut dh[..ndh])
         .await?;
-    pal.ecdh_derive(io, curve, sk_r_dma, pk_s_dma, &mut dh[ndh..])
+    pal.ecdh_derive(io, curve, sk_r_dma, pk_s_pal, &mut dh[ndh..])
         .await?;
 
     let kem_context = alloc_bytes(npk * 3, alloc)?;

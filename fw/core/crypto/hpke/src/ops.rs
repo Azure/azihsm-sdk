@@ -3,34 +3,31 @@
 
 //! HPKE single-shot seal / open / export operations (RFC 9180 §6).
 //!
-//! All four HPKE modes (Base / PSK / Auth / AuthPSK) reduce to the
-//! same three steps:
+//! Each of the four operations ([`seal`], [`open`], [`send_export`],
+//! [`receive_export`]) takes a per-operation configuration struct that
+//! carries the ciphersuite, the static inputs (`info`, `aad`, keys),
+//! and the HPKE mode. The mode is selected at construction time via
+//! `Config::base / psk / auth / auth_psk` (mirrors the host
+//! `azihsm_crypto::hpke` API).
 //!
-//! 1. **KEM** — encapsulate or decapsulate a `Nsecret`-byte shared
-//!    secret using the recipient's public key (and the sender's own
-//!    keypair for Auth modes).
-//! 2. **Key schedule** — derive an AEAD `key` and a `base_nonce` from
-//!    the shared secret, the application info, and the optional PSK
-//!    (RFC 9180 §5.1).
-//! 3. **AEAD** — seal or open with `key`/`base_nonce` against the
-//!    caller-supplied AAD and plaintext/ciphertext.
+//! Outputs are passed as `Option<&mut [u8]>` slices following the
+//! `EccKeyOp::coord` pattern: passing `None` for the output slice
+//! returns a [`SealSizes`] / [`ExportSizes`] sizing structure without
+//! writing anything. Passing `Some(_)` writes the operation's outputs
+//! and returns the actual byte counts.
 //!
-//! [`seal`] and [`open`] perform the full pipeline under a single
-//! caller-provided [`HsmScopedAlloc`]. The eight thin wrappers
-//! ([`seal_base`], [`open_psk`], …) match the trait-level naming
-//! convention of the HSM core and select the right [`Mode`] /
-//! [`AuthInputs`] / [`PskInputs`] arguments.
+//! ## Symbol parity with host
 //!
-//! ## Buffer layout invariants
-//!
-//! Each helper allocates only the intermediates it needs from `alloc`:
-//! a KEM shared secret, then AEAD key + base nonce, then any
-//! key-schedule / KDF formatting buffers. The scoped allocator frees the
-//! whole tree when the public call returns.
+//! Symbol names match the host `azihsm_crypto` HPKE module exactly so
+//! that callers reading host code can read firmware code by adding
+//! `pal`/`io`/`alloc` parameters and `.await`. The only host-only
+//! symbols are the `_vec` convenience wrappers, which are not exposed
+//! on the firmware side because the crate is `#![no_std]`.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
@@ -42,68 +39,22 @@ use crate::schedule;
 use crate::suite::HpkeSuite;
 
 // =============================================================================
-// HPKE mode (RFC 9180 §5.1 Table 1)
+// Mode + auxiliary input structs
 // =============================================================================
 
-/// HPKE operating mode (RFC 9180 §5.1 Table 1).
-///
-/// Encoded as a single byte at byte 0 of the key-schedule context.
+/// HPKE operating mode (RFC 9180 §5.1 Table 1). Encoded as the first
+/// byte of the key-schedule context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-enum Mode {
+pub(crate) enum Mode {
     Base = 0x00,
     Psk = 0x01,
     Auth = 0x02,
     AuthPsk = 0x03,
 }
 
-// =============================================================================
-// Request / parameter structs
-// =============================================================================
-
-/// Common parameters for an HPKE seal (encrypt) operation.
-#[derive(Debug)]
-pub struct SealRequest<'a> {
-    /// HPKE ciphersuite.
-    pub suite: HpkeSuite,
-    /// Recipient public key (`Npk` bytes).
-    pub pk_r: &'a [u8],
-    /// Application-supplied info (may be empty).
-    pub info: &'a [u8],
-    /// Additional authenticated data (may be empty).
-    pub aad: &'a [u8],
-    /// Plaintext to encrypt.
-    pub pt: &'a [u8],
-    /// Output: encapsulated key (`Nenc` bytes).
-    pub enc: &'a mut [u8],
-    /// Output: ciphertext.
-    pub ct: &'a mut [u8],
-}
-
-/// Common parameters for an HPKE open (decrypt) operation.
-#[derive(Debug)]
-pub struct OpenRequest<'a> {
-    /// HPKE ciphersuite.
-    pub suite: HpkeSuite,
-    /// Recipient private key (`Nsk` bytes).
-    pub sk_r: &'a [u8],
-    /// Recipient public key (`Npk` bytes).
-    pub pk_r: &'a [u8],
-    /// Encapsulated key from the sender (`Nenc` bytes).
-    pub enc: &'a [u8],
-    /// Application-supplied info — must equal the sender's value.
-    pub info: &'a [u8],
-    /// Additional authenticated data — must equal the sender's value.
-    pub aad: &'a [u8],
-    /// Ciphertext to decrypt.
-    pub ct: &'a [u8],
-    /// Output: recovered plaintext.
-    pub pt: &'a mut [u8],
-}
-
-/// Pre-shared key parameters for [`seal_psk`] / [`open_psk`] and
-/// [`seal_auth_psk`] / [`open_auth_psk`].
-#[derive(Debug)]
+/// Pre-shared key parameters for `Config::psk` / `Config::auth_psk`.
+#[derive(Debug, Clone, Copy)]
 pub struct PskParams<'a> {
     /// Pre-shared key (≥ 32 bytes of entropy recommended by RFC 9180).
     pub psk: &'a [u8],
@@ -111,10 +62,10 @@ pub struct PskParams<'a> {
     pub psk_id: &'a [u8],
 }
 
-/// Sender authentication parameters for [`seal_auth`] /
-/// [`seal_auth_psk`] (sender side only — the recipient passes
-/// `auth_pk_s` directly to [`open_auth`] / [`open_auth_psk`]).
-#[derive(Debug)]
+/// Sender-authentication parameters for `Config::auth` /
+/// `Config::auth_psk`. The receiver-side configs take `auth_pk_s`
+/// directly.
+#[derive(Debug, Clone, Copy)]
 pub struct AuthParams<'a> {
     /// Sender private key.
     pub sk_s: &'a [u8],
@@ -123,552 +74,765 @@ pub struct AuthParams<'a> {
 }
 
 // =============================================================================
-// Internal driver
+// Output size types
 // =============================================================================
 
-/// PSK inputs threaded into [`Mode::Psk`] / [`Mode::AuthPsk`] calls.
-/// Equivalent to a flattened `Option<PskParams>` (empty slices mean
-/// "no PSK").
-#[derive(Default, Clone, Copy)]
-struct PskInputs<'a> {
-    psk: &'a [u8],
-    psk_id: &'a [u8],
+/// Returned by [`seal`] — number of bytes written to (or required for)
+/// each output buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SealSizes {
+    /// Encapsulated-key buffer size in bytes.
+    pub enc_len: usize,
+    /// Ciphertext (AEAD output) buffer size in bytes.
+    pub ct_len: usize,
 }
 
-impl<'a> From<Option<&'a PskParams<'a>>> for PskInputs<'a> {
-    fn from(p: Option<&'a PskParams<'a>>) -> Self {
-        match p {
-            Some(p) => Self {
-                psk: p.psk,
-                psk_id: p.psk_id,
-            },
-            None => Self::default(),
+/// Returned by [`send_export`] — number of bytes written to (or
+/// required for) each output buffer. `exported_len` is caller-chosen
+/// (it equals the caller's `exported_out.len()`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExportSizes {
+    /// Encapsulated-key buffer size in bytes.
+    pub enc_len: usize,
+    /// Exported-bytes buffer size (caller-supplied `L`).
+    pub exported_len: usize,
+}
+
+// =============================================================================
+// Config: HpkeSealConfig
+// =============================================================================
+
+/// Configuration for an HPKE seal operation.
+#[derive(Debug, Clone, Copy)]
+pub struct HpkeSealConfig<'a> {
+    /// HPKE ciphersuite.
+    pub suite: HpkeSuite,
+    /// Recipient public key.
+    pub pk_r: &'a [u8],
+    /// Application-supplied info (may be empty).
+    pub info: &'a [u8],
+    /// Additional authenticated data (may be empty).
+    pub aad: &'a [u8],
+    pub(crate) mode: Mode,
+    pub(crate) auth: Option<AuthParams<'a>>,
+    pub(crate) psk: Option<PskParams<'a>>,
+}
+
+impl<'a> HpkeSealConfig<'a> {
+    /// Base mode.
+    pub fn base(suite: HpkeSuite, pk_r: &'a [u8], info: &'a [u8], aad: &'a [u8]) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Base,
+            auth: None,
+            psk: None,
+        }
+    }
+    /// PSK mode.
+    pub fn psk(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Psk,
+            auth: None,
+            psk: Some(psk),
+        }
+    }
+    /// Auth mode.
+    pub fn auth(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        auth: AuthParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Auth,
+            auth: Some(auth),
+            psk: None,
+        }
+    }
+    /// AuthPSK mode.
+    pub fn auth_psk(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        auth: AuthParams<'a>,
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::AuthPsk,
+            auth: Some(auth),
+            psk: Some(psk),
         }
     }
 }
 
-/// Sender-authentication inputs threaded into [`Mode::Auth`] /
-/// [`Mode::AuthPsk`] encap calls.
-#[derive(Clone, Copy)]
-struct AuthInputs<'a> {
-    sk_s: &'a [u8],
-    pk_s: &'a [u8],
+// =============================================================================
+// Config: HpkeOpenConfig
+// =============================================================================
+
+/// Configuration for an HPKE open operation.
+#[derive(Debug, Clone, Copy)]
+pub struct HpkeOpenConfig<'a> {
+    /// HPKE ciphersuite.
+    pub suite: HpkeSuite,
+    /// Recipient private key.
+    pub sk_r: &'a [u8],
+    /// Recipient public key.
+    pub pk_r: &'a [u8],
+    /// Application-supplied info — must equal sender's value.
+    pub info: &'a [u8],
+    /// Additional authenticated data — must equal sender's value.
+    pub aad: &'a [u8],
+    pub(crate) mode: Mode,
+    pub(crate) auth_pk_s: Option<&'a [u8]>,
+    pub(crate) psk: Option<PskParams<'a>>,
 }
+
+impl<'a> HpkeOpenConfig<'a> {
+    /// Base mode.
+    pub fn base(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Base,
+            auth_pk_s: None,
+            psk: None,
+        }
+    }
+    /// PSK mode.
+    pub fn psk(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Psk,
+            auth_pk_s: None,
+            psk: Some(psk),
+        }
+    }
+    /// Auth mode.
+    pub fn auth(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        auth_pk_s: &'a [u8],
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::Auth,
+            auth_pk_s: Some(auth_pk_s),
+            psk: None,
+        }
+    }
+    /// AuthPSK mode.
+    pub fn auth_psk(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        aad: &'a [u8],
+        auth_pk_s: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            aad,
+            mode: Mode::AuthPsk,
+            auth_pk_s: Some(auth_pk_s),
+            psk: Some(psk),
+        }
+    }
+}
+
+// =============================================================================
+// Config: HpkeSendExportConfig
+// =============================================================================
+
+/// Configuration for an HPKE send-export operation.
+#[derive(Debug, Clone, Copy)]
+pub struct HpkeSendExportConfig<'a> {
+    /// HPKE ciphersuite.
+    pub suite: HpkeSuite,
+    /// Recipient public key.
+    pub pk_r: &'a [u8],
+    /// Application-supplied info.
+    pub info: &'a [u8],
+    /// Exporter context bytes.
+    pub exporter_context: &'a [u8],
+    pub(crate) mode: Mode,
+    pub(crate) auth: Option<AuthParams<'a>>,
+    pub(crate) psk: Option<PskParams<'a>>,
+}
+
+impl<'a> HpkeSendExportConfig<'a> {
+    /// Base mode.
+    pub fn base(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Base,
+            auth: None,
+            psk: None,
+        }
+    }
+    /// PSK mode.
+    pub fn psk(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Psk,
+            auth: None,
+            psk: Some(psk),
+        }
+    }
+    /// Auth mode.
+    pub fn auth(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        auth: AuthParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Auth,
+            auth: Some(auth),
+            psk: None,
+        }
+    }
+    /// AuthPSK mode.
+    pub fn auth_psk(
+        suite: HpkeSuite,
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        auth: AuthParams<'a>,
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::AuthPsk,
+            auth: Some(auth),
+            psk: Some(psk),
+        }
+    }
+}
+
+// =============================================================================
+// Config: HpkeReceiveExportConfig
+// =============================================================================
+
+/// Configuration for an HPKE receive-export operation.
+#[derive(Debug, Clone, Copy)]
+pub struct HpkeReceiveExportConfig<'a> {
+    /// HPKE ciphersuite.
+    pub suite: HpkeSuite,
+    /// Recipient private key.
+    pub sk_r: &'a [u8],
+    /// Recipient public key.
+    pub pk_r: &'a [u8],
+    /// Application-supplied info — must equal sender's value.
+    pub info: &'a [u8],
+    /// Exporter context bytes — must equal sender's value.
+    pub exporter_context: &'a [u8],
+    pub(crate) mode: Mode,
+    pub(crate) auth_pk_s: Option<&'a [u8]>,
+    pub(crate) psk: Option<PskParams<'a>>,
+}
+
+impl<'a> HpkeReceiveExportConfig<'a> {
+    /// Base mode.
+    pub fn base(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Base,
+            auth_pk_s: None,
+            psk: None,
+        }
+    }
+    /// PSK mode.
+    pub fn psk(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Psk,
+            auth_pk_s: None,
+            psk: Some(psk),
+        }
+    }
+    /// Auth mode.
+    pub fn auth(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        auth_pk_s: &'a [u8],
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::Auth,
+            auth_pk_s: Some(auth_pk_s),
+            psk: None,
+        }
+    }
+    /// AuthPSK mode.
+    pub fn auth_psk(
+        suite: HpkeSuite,
+        sk_r: &'a [u8],
+        pk_r: &'a [u8],
+        info: &'a [u8],
+        exporter_context: &'a [u8],
+        auth_pk_s: &'a [u8],
+        psk: PskParams<'a>,
+    ) -> Self {
+        Self {
+            suite,
+            sk_r,
+            pk_r,
+            info,
+            exporter_context,
+            mode: Mode::AuthPsk,
+            auth_pk_s: Some(auth_pk_s),
+            psk: Some(psk),
+        }
+    }
+}
+
+// =============================================================================
+// Internal helpers
+// =============================================================================
 
 fn alloc_bytes(len: usize, alloc: &impl HsmScopedAlloc) -> HsmResult<&mut DmaBuf> {
     alloc.dma_alloc(len)
 }
 
-/// Run the key schedule on `ss`, then AEAD-seal `pt → ct`.
-async fn seal_finish<'a, P>(
+fn psk_bytes<'a>(psk: &Option<PskParams<'a>>) -> (&'a [u8], &'a [u8]) {
+    match psk {
+        Some(p) => (p.psk, p.psk_id),
+        None => (&[], &[]),
+    }
+}
+
+fn aead_ct_len(suite: HpkeSuite, pt_len: usize) -> usize {
+    if suite.is_cbc() {
+        let padded = pt_len + 16 - (pt_len % 16);
+        16 + padded + suite.nt()
+    } else {
+        pt_len + 16
+    }
+}
+
+// =============================================================================
+// seal
+// =============================================================================
+
+/// HPKE seal (encrypt). Writes `enc` and `ct` to caller-supplied
+/// buffers. Passing `None` for both performs a size query and returns
+/// the required [`SealSizes`] without writing anything.
+pub async fn seal<'a, P>(
     pal: &P,
     io: &impl HsmIo,
-    suite: HpkeSuite,
-    mode: Mode,
-    ss: &mut [u8],
-    info: &[u8],
-    psk: PskInputs<'_>,
-    aad: &[u8],
+    cfg: &HpkeSealConfig<'_>,
     pt: &[u8],
-    ct: &mut [u8],
+    enc_out: Option<&mut [u8]>,
+    ct_out: Option<&mut [u8]>,
     alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
+) -> HsmResult<SealSizes>
 where
     P: HsmCrypto + HsmAlloc + 'a,
 {
-    let key = alloc_bytes(suite.nk(), alloc)?;
-    let nonce = alloc_bytes(suite.nn(), alloc)?;
-    schedule::key_schedule(
-        pal, io, suite, mode as u8, ss, info, psk.psk, psk.psk_id, key, nonce, alloc,
-    )
-    .await?;
-    aead::seal(pal, io, suite, key, nonce, aad, pt, ct, alloc).await
-}
-
-/// Run the key schedule on `ss`, then AEAD-open `ct → pt`.
-async fn open_finish<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    suite: HpkeSuite,
-    mode: Mode,
-    ss: &mut [u8],
-    info: &[u8],
-    psk: PskInputs<'_>,
-    aad: &[u8],
-    ct: &[u8],
-    pt: &mut [u8],
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    let key = alloc_bytes(suite.nk(), alloc)?;
-    let nonce = alloc_bytes(suite.nn(), alloc)?;
-    schedule::key_schedule(
-        pal, io, suite, mode as u8, ss, info, psk.psk, psk.psk_id, key, nonce, alloc,
-    )
-    .await?;
-    aead::open(pal, io, suite, key, nonce, aad, ct, pt, alloc).await
-}
-
-/// Unified seal driver used by every mode-specific wrapper.
-///
-/// Allocates the `Nsecret`-byte KEM shared secret from `alloc`, runs
-/// encapsulation to populate it, then passes it to [`seal_finish`].
-async fn seal<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut SealRequest<'_>,
-    mode: Mode,
-    auth: Option<&AuthInputs<'_>>,
-    psk: PskInputs<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    let ss = alloc_bytes(req.suite.nsecret(), alloc)?;
-    match auth {
-        None => kem::encap(pal, io, req.suite, req.pk_r, req.enc, ss, alloc).await?,
-        Some(a) => {
-            kem::auth_encap(
-                pal, io, req.suite, req.pk_r, a.sk_s, a.pk_s, req.enc, ss, alloc,
+    let sizes = SealSizes {
+        enc_len: cfg.suite.nenc(),
+        ct_len: aead_ct_len(cfg.suite, pt.len()),
+    };
+    match (enc_out, ct_out) {
+        (None, None) => Ok(sizes),
+        (Some(enc), Some(ct)) => {
+            if enc.len() < sizes.enc_len || ct.len() < sizes.ct_len {
+                return Err(HsmError::InvalidArg);
+            }
+            do_seal(
+                pal,
+                io,
+                cfg,
+                pt,
+                &mut enc[..sizes.enc_len],
+                &mut ct[..sizes.ct_len],
+                alloc,
             )
             .await?;
+            Ok(sizes)
         }
+        _ => Err(HsmError::InvalidArg),
     }
-    seal_finish(
-        pal, io, req.suite, mode, ss, req.info, psk, req.aad, req.pt, req.ct, alloc,
-    )
-    .await
 }
 
-/// Unified open driver used by every mode-specific wrapper.
-async fn open<'a, P>(
+async fn do_seal<'a, P>(
     pal: &P,
     io: &impl HsmIo,
-    req: &mut OpenRequest<'_>,
-    mode: Mode,
-    auth_pk_s: Option<&[u8]>,
-    psk: PskInputs<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    let ss = alloc_bytes(req.suite.nsecret(), alloc)?;
-    match auth_pk_s {
-        None => kem::decap(pal, io, req.suite, req.enc, req.sk_r, req.pk_r, ss, alloc).await?,
-        Some(pk_s) => {
-            kem::auth_decap(
-                pal, io, req.suite, req.enc, req.sk_r, req.pk_r, pk_s, ss, alloc,
-            )
-            .await?;
-        }
-    }
-    open_finish(
-        pal, io, req.suite, mode, ss, req.info, psk, req.aad, req.ct, req.pt, alloc,
-    )
-    .await
-}
-
-// =============================================================================
-// Mode-specific public entry points
-// =============================================================================
-
-/// HPKE Base-mode seal: encrypt to the recipient's public key.
-///
-/// # Type parameters
-///
-/// * `P` — any [`HsmCrypto`] PAL implementation.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers; see [`SealRequest`].
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// * `Ok(ct_len)` — ciphertext bytes written to `req.ct`.
-/// * `Err(HsmError::InvalidArg)` — buffer-size violation.
-/// * `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
-/// * `Err(HsmError)` — propagated from the KEM, key schedule, or
-///   AEAD step.
-pub async fn seal_base<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut SealRequest<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    seal(pal, io, req, Mode::Base, None, PskInputs::default(), alloc).await
-}
-
-/// HPKE Base-mode open: decrypt with the recipient's private key.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers; see [`OpenRequest`].
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// * `Ok(pt_len)` — plaintext bytes written to `req.pt`.
-/// * `Err(HsmError::InvalidArg)` — buffer-size violation.
-/// * `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
-/// * `Err(HsmError::AesGcmDecryptTagDoesNotMatch)` — AEAD tag
-///   mismatch (GCM suites).
-/// * `Err(HsmError::AesDecryptFailed)` — AEAD tag mismatch (CBC
-///   suites).
-/// * `Err(HsmError)` — propagated from the KEM, key schedule, or
-///   AEAD step.
-pub async fn open_base<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut OpenRequest<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    open(pal, io, req, Mode::Base, None, PskInputs::default(), alloc).await
-}
-
-/// HPKE PSK-mode seal: encrypt with PSK authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `psk` — pre-shared key + identifier.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`seal_base`].
-pub async fn seal_psk<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut SealRequest<'_>,
-    psk: &PskParams<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    seal(pal, io, req, Mode::Psk, None, Some(psk).into(), alloc).await
-}
-
-/// HPKE PSK-mode open: decrypt with PSK authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `psk` — pre-shared key + identifier; must equal the sender's.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`open_base`].
-pub async fn open_psk<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut OpenRequest<'_>,
-    psk: &PskParams<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    open(pal, io, req, Mode::Psk, None, Some(psk).into(), alloc).await
-}
-
-/// HPKE Auth-mode seal: encrypt with sender-key authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `auth` — sender keypair used to authenticate the
-///   encapsulation.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`seal_base`].
-pub async fn seal_auth<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut SealRequest<'_>,
-    auth: &AuthParams<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    let auth_inputs = AuthInputs {
-        sk_s: auth.sk_s,
-        pk_s: auth.pk_s,
-    };
-    seal(
-        pal,
-        io,
-        req,
-        Mode::Auth,
-        Some(&auth_inputs),
-        PskInputs::default(),
-        alloc,
-    )
-    .await
-}
-
-/// HPKE Auth-mode open: decrypt with sender-key authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `auth_pk_s` — sender's public key (used to verify the
-///   authenticated encapsulation).
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`open_base`].
-pub async fn open_auth<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut OpenRequest<'_>,
-    auth_pk_s: &[u8],
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    open(
-        pal,
-        io,
-        req,
-        Mode::Auth,
-        Some(auth_pk_s),
-        PskInputs::default(),
-        alloc,
-    )
-    .await
-}
-
-/// HPKE AuthPSK-mode seal: encrypt with both sender-key and PSK
-/// authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `auth` — sender keypair.
-/// * `psk` — pre-shared key + identifier.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`seal_base`].
-pub async fn seal_auth_psk<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut SealRequest<'_>,
-    auth: &AuthParams<'_>,
-    psk: &PskParams<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    let auth_inputs = AuthInputs {
-        sk_s: auth.sk_s,
-        pk_s: auth.pk_s,
-    };
-    seal(
-        pal,
-        io,
-        req,
-        Mode::AuthPsk,
-        Some(&auth_inputs),
-        Some(psk).into(),
-        alloc,
-    )
-    .await
-}
-
-/// HPKE AuthPSK-mode open: decrypt with both sender-key and PSK
-/// authentication.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `req` — input/output buffers.
-/// * `auth_pk_s` — sender's public key.
-/// * `psk` — pre-shared key + identifier; must equal the sender's.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// Same shape as [`open_base`].
-pub async fn open_auth_psk<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    req: &mut OpenRequest<'_>,
-    auth_pk_s: &[u8],
-    psk: &PskParams<'_>,
-    alloc: &'a impl HsmScopedAlloc,
-) -> HsmResult<usize>
-where
-    P: HsmCrypto + HsmAlloc + 'a,
-{
-    open(
-        pal,
-        io,
-        req,
-        Mode::AuthPsk,
-        Some(auth_pk_s),
-        Some(psk).into(),
-        alloc,
-    )
-    .await
-}
-
-// =============================================================================
-// Export operations (Base mode only)
-// =============================================================================
-
-/// Sender-side derivation of an HPKE export key (Base mode).
-///
-/// Performs encap + the Base-mode key-schedule export step, then
-/// `LabeledExpand`s the exporter secret with `exporter_context` to
-/// produce `exported.len()` derived bytes.
-///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `suite` — HPKE ciphersuite.
-/// * `pk_r` — recipient public key.
-/// * `info` — application-supplied info; must equal the
-///   receiver's.
-/// * `exporter_context` — context bytes mixed into the final
-///   export; must equal the receiver's.
-/// * `enc` — output: encapsulated key (`Nenc` bytes).
-/// * `exported` — output: derived key bytes.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// * `Ok(())` — `enc` and `exported` populated.
-/// * `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
-/// * `Err(HsmError)` — propagated from the KEM, key schedule, or
-///   HKDF.
-pub async fn send_export_base<'a, P>(
-    pal: &P,
-    io: &impl HsmIo,
-    suite: HpkeSuite,
-    pk_r: &[u8],
-    info: &[u8],
-    exporter_context: &[u8],
-    enc: &mut [u8],
-    exported: &mut [u8],
+    cfg: &HpkeSealConfig<'_>,
+    pt: &[u8],
+    enc_out: &mut [u8],
+    ct_out: &mut [u8],
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
     P: HsmCrypto + HsmAlloc + 'a,
 {
+    let suite = cfg.suite;
     let ss = alloc_bytes(suite.nsecret(), alloc)?;
-    kem::encap(pal, io, suite, pk_r, enc, ss, alloc).await?;
-    export_finish(pal, io, suite, ss, info, exporter_context, exported, alloc).await
+    match (cfg.mode, &cfg.auth) {
+        (Mode::Base, None) | (Mode::Psk, None) => {
+            kem::encap(pal, io, suite, cfg.pk_r, enc_out, ss, alloc).await?
+        }
+        (Mode::Auth, Some(a)) | (Mode::AuthPsk, Some(a)) => {
+            kem::auth_encap(pal, io, suite, cfg.pk_r, a.sk_s, a.pk_s, enc_out, ss, alloc).await?
+        }
+        _ => return Err(HsmError::InvalidArg),
+    }
+
+    let key = alloc_bytes(suite.nk(), alloc)?;
+    let nonce = alloc_bytes(suite.nn(), alloc)?;
+    let (psk, psk_id) = psk_bytes(&cfg.psk);
+    schedule::key_schedule(
+        pal,
+        io,
+        suite,
+        cfg.mode as u8,
+        ss,
+        cfg.info,
+        psk,
+        psk_id,
+        key,
+        nonce,
+        alloc,
+    )
+    .await?;
+    aead::seal(pal, io, suite, key, nonce, cfg.aad, pt, ct_out, alloc).await?;
+    Ok(())
 }
 
-/// Receiver-side derivation of an HPKE export key (Base mode).
+// =============================================================================
+// open
+// =============================================================================
+
+/// HPKE open (decrypt). Writes plaintext to `pt_out`.
 ///
-/// # Parameters
-///
-/// * `pal` — PAL providing all crypto primitives.
-/// * `io` — caller's I/O context (per-IO scope).
-/// * `suite` — HPKE ciphersuite.
-/// * `sk_r` — recipient private key.
-/// * `pk_r` — recipient public key.
-/// * `enc` — encapsulated key from sender.
-/// * `info` — application-supplied info; must equal the sender's.
-/// * `exporter_context` — context bytes mixed into the final
-///   export; must equal the sender's.
-/// * `exported` — output: derived key bytes.
-/// * `alloc` — scoped allocator owning every HPKE intermediate.
-///
-/// # Returns
-///
-/// * `Ok(())` — `exported` populated.
-/// * `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
-/// * `Err(HsmError)` — propagated from the KEM, key schedule, or
-///   HKDF.
-pub async fn receive_export_base<'a, P>(
+/// `pt_out = None` returns the upper-bound plaintext length (= `ct.len()`).
+pub async fn open<'a, P>(
     pal: &P,
     io: &impl HsmIo,
-    suite: HpkeSuite,
-    sk_r: &[u8],
-    pk_r: &[u8],
+    cfg: &HpkeOpenConfig<'_>,
     enc: &[u8],
-    info: &[u8],
-    exporter_context: &[u8],
-    exported: &mut [u8],
+    ct: &[u8],
+    pt_out: Option<&mut [u8]>,
+    alloc: &'a impl HsmScopedAlloc,
+) -> HsmResult<usize>
+where
+    P: HsmCrypto + HsmAlloc + 'a,
+{
+    let max_pt = ct.len();
+    let pt = match pt_out {
+        None => return Ok(max_pt),
+        Some(buf) => {
+            if buf.len() < max_pt {
+                return Err(HsmError::InvalidArg);
+            }
+            buf
+        }
+    };
+
+    let suite = cfg.suite;
+    let ss = alloc_bytes(suite.nsecret(), alloc)?;
+    match (cfg.mode, cfg.auth_pk_s) {
+        (Mode::Base, None) | (Mode::Psk, None) => {
+            kem::decap(pal, io, suite, enc, cfg.sk_r, cfg.pk_r, ss, alloc).await?
+        }
+        (Mode::Auth, Some(pk_s)) | (Mode::AuthPsk, Some(pk_s)) => {
+            kem::auth_decap(pal, io, suite, enc, cfg.sk_r, cfg.pk_r, pk_s, ss, alloc).await?
+        }
+        _ => return Err(HsmError::InvalidArg),
+    }
+
+    let key = alloc_bytes(suite.nk(), alloc)?;
+    let nonce = alloc_bytes(suite.nn(), alloc)?;
+    let (psk, psk_id) = psk_bytes(&cfg.psk);
+    schedule::key_schedule(
+        pal,
+        io,
+        suite,
+        cfg.mode as u8,
+        ss,
+        cfg.info,
+        psk,
+        psk_id,
+        key,
+        nonce,
+        alloc,
+    )
+    .await?;
+
+    aead::open(pal, io, suite, key, nonce, cfg.aad, ct, pt, alloc).await
+}
+
+// =============================================================================
+// send_export
+// =============================================================================
+
+/// HPKE send-export.
+///
+/// Both `None` returns [`ExportSizes`] with `enc_len` and
+/// `exported_len = 0` (the caller chooses `L`, so its size can't be
+/// pre-computed).
+pub async fn send_export<'a, P>(
+    pal: &P,
+    io: &impl HsmIo,
+    cfg: &HpkeSendExportConfig<'_>,
+    enc_out: Option<&mut [u8]>,
+    exported_out: Option<&mut [u8]>,
+    alloc: &'a impl HsmScopedAlloc,
+) -> HsmResult<ExportSizes>
+where
+    P: HsmCrypto + HsmAlloc + 'a,
+{
+    let enc_len = cfg.suite.nenc();
+    match (enc_out, exported_out) {
+        (None, None) => Ok(ExportSizes {
+            enc_len,
+            exported_len: 0,
+        }),
+        (Some(enc), Some(exported)) => {
+            if enc.len() < enc_len {
+                return Err(HsmError::InvalidArg);
+            }
+            do_send_export(pal, io, cfg, &mut enc[..enc_len], exported, alloc).await?;
+            Ok(ExportSizes {
+                enc_len,
+                exported_len: exported.len(),
+            })
+        }
+        _ => Err(HsmError::InvalidArg),
+    }
+}
+
+async fn do_send_export<'a, P>(
+    pal: &P,
+    io: &impl HsmIo,
+    cfg: &HpkeSendExportConfig<'_>,
+    enc_out: &mut [u8],
+    exported_out: &mut [u8],
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
     P: HsmCrypto + HsmAlloc + 'a,
 {
+    let suite = cfg.suite;
     let ss = alloc_bytes(suite.nsecret(), alloc)?;
-    kem::decap(pal, io, suite, enc, sk_r, pk_r, ss, alloc).await?;
-    export_finish(pal, io, suite, ss, info, exporter_context, exported, alloc).await
+    match (cfg.mode, &cfg.auth) {
+        (Mode::Base, None) | (Mode::Psk, None) => {
+            kem::encap(pal, io, suite, cfg.pk_r, enc_out, ss, alloc).await?
+        }
+        (Mode::Auth, Some(a)) | (Mode::AuthPsk, Some(a)) => {
+            kem::auth_encap(pal, io, suite, cfg.pk_r, a.sk_s, a.pk_s, enc_out, ss, alloc).await?
+        }
+        _ => return Err(HsmError::InvalidArg),
+    }
+
+    derive_exported(
+        pal,
+        io,
+        suite,
+        cfg.mode,
+        ss,
+        cfg.info,
+        &cfg.psk,
+        cfg.exporter_context,
+        exported_out,
+        alloc,
+    )
+    .await
 }
 
-/// Run the Base-mode export key schedule, then expand the exporter
-/// secret with `exporter_context`. Shared by [`send_export_base`] and
-/// [`receive_export_base`].
-async fn export_finish<'a, P>(
+// =============================================================================
+// receive_export
+// =============================================================================
+
+/// HPKE receive-export.
+///
+/// `exported_out = None` returns 0 — the export length is
+/// caller-chosen and not pre-computed.
+pub async fn receive_export<'a, P>(
+    pal: &P,
+    io: &impl HsmIo,
+    cfg: &HpkeReceiveExportConfig<'_>,
+    enc: &[u8],
+    exported_out: Option<&mut [u8]>,
+    alloc: &'a impl HsmScopedAlloc,
+) -> HsmResult<usize>
+where
+    P: HsmCrypto + HsmAlloc + 'a,
+{
+    let exported = match exported_out {
+        None => return Ok(0),
+        Some(buf) => buf,
+    };
+
+    let suite = cfg.suite;
+    let ss = alloc_bytes(suite.nsecret(), alloc)?;
+    match (cfg.mode, cfg.auth_pk_s) {
+        (Mode::Base, None) | (Mode::Psk, None) => {
+            kem::decap(pal, io, suite, enc, cfg.sk_r, cfg.pk_r, ss, alloc).await?
+        }
+        (Mode::Auth, Some(pk_s)) | (Mode::AuthPsk, Some(pk_s)) => {
+            kem::auth_decap(pal, io, suite, enc, cfg.sk_r, cfg.pk_r, pk_s, ss, alloc).await?
+        }
+        _ => return Err(HsmError::InvalidArg),
+    }
+
+    derive_exported(
+        pal,
+        io,
+        suite,
+        cfg.mode,
+        ss,
+        cfg.info,
+        &cfg.psk,
+        cfg.exporter_context,
+        exported,
+        alloc,
+    )
+    .await?;
+    Ok(exported.len())
+}
+
+/// Run `key_schedule_export` + a final `LabeledExpand("sec", ctx, L)`.
+#[allow(clippy::too_many_arguments)]
+async fn derive_exported<'a, P>(
     pal: &P,
     io: &impl HsmIo,
     suite: HpkeSuite,
-    ss: &mut [u8],
+    mode: Mode,
+    shared_secret: &[u8],
     info: &[u8],
+    psk: &Option<PskParams<'_>>,
     exporter_context: &[u8],
-    exported: &mut [u8],
+    out: &mut [u8],
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
     P: HsmCrypto + HsmAlloc + 'a,
 {
+    let (psk_b, psk_id) = psk_bytes(psk);
     let exp_secret = alloc_bytes(suite.nh(), alloc)?;
     schedule::key_schedule_export(
         pal,
         io,
         suite,
-        Mode::Base as u8,
-        ss,
+        mode as u8,
+        shared_secret,
         info,
-        &[],
-        &[],
+        psk_b,
+        psk_id,
         exp_secret,
         alloc,
     )
     .await?;
+
     kdf::labeled_expand(
         pal,
         io,
@@ -677,7 +841,7 @@ where
         exp_secret,
         b"sec",
         exporter_context,
-        exported,
+        out,
         alloc,
     )
     .await
