@@ -12,9 +12,9 @@
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
-#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_file_io.h"
+#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_pkey_param.h"
 #include "azihsm_ossl_rsa.h"
 #include "azihsm_ossl_store.h"

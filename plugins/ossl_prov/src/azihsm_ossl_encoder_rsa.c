@@ -9,8 +9,8 @@
 #include <openssl/proverr.h>
 
 #include "azihsm_ossl_base.h"
-#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_rsa.h"
 
 typedef struct
