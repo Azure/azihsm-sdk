@@ -2608,7 +2608,7 @@ TEST_F(azihsm_aes_xts, xts_key_rejects_aes_cbc_algorithm)
 
         auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output_buf);
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -3059,12 +3059,12 @@ TEST_F(azihsm_aes_xts, streaming_invalid_dul_values_are_rejected)
 
             auto_ctx enc_ctx;
             auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS)
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT)
                 << "streaming encrypt init unexpectedly accepted invalid DUL " << test_case.dul;
 
             auto_ctx dec_ctx;
             err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS)
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT)
                 << "streaming decrypt init unexpectedly accepted invalid DUL " << test_case.dul;
         }
     });
