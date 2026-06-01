@@ -25,7 +25,6 @@ struct KeygenTestParams
     const char *test_name;
 };
 
-
 static void run_generated_keypair_has_expected_properties(
     azihsm_handle session,
     azihsm_ecc_curve curve
@@ -34,13 +33,7 @@ static void run_generated_keypair_has_expected_properties(
     auto_key priv_key;
     auto_key pub_key;
 
-    auto err = generate_ecc_keypair(
-        session,
-        curve,
-        true,
-        priv_key.get_ptr(),
-        pub_key.get_ptr()
-    );
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(priv_key.get(), 0u);
     ASSERT_NE(pub_key.get(), 0u);
@@ -94,28 +87,7 @@ static void run_generated_keypair_has_expected_properties(
     }
 }
 
-static void get_masked_key_bytes(azihsm_handle key, std::vector<uint8_t> &masked_key_data)
-{
-    azihsm_key_prop masked_prop{};
-    masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
-    masked_prop.val = nullptr;
-    masked_prop.len = 0;
-
-    auto err = azihsm_key_get_prop(key, &masked_prop);
-    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-    ASSERT_GT(masked_prop.len, 0u);
-
-    masked_key_data.resize(masked_prop.len);
-    masked_prop.val = masked_key_data.data();
-
-    err = azihsm_key_get_prop(key, &masked_prop);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-}
-
-static void run_unmask_ecc_keypair_for_curve(
-    azihsm_handle session,
-    azihsm_ecc_curve curve
-)
+static void run_unmask_ecc_keypair_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
 {
     auto_key original_priv_key;
     auto_key original_pub_key;
@@ -132,7 +104,9 @@ static void run_unmask_ecc_keypair_for_curve(
     ASSERT_NE(original_pub_key.get(), 0u);
 
     std::vector<uint8_t> masked_key_data;
-    get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+    err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_FALSE(masked_key_data.empty());
 
     azihsm_buffer masked_key_buf{};
     masked_key_buf.ptr = masked_key_data.data();
@@ -151,6 +125,30 @@ static void run_unmask_ecc_keypair_for_curve(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unmasked_priv_key.get(), 0u);
     ASSERT_NE(unmasked_pub_key.get(), 0u);
+
+    {
+        azihsm_key_kind actual_kind{};
+        azihsm_key_prop prop{};
+        prop.id = AZIHSM_KEY_PROP_ID_KIND;
+        prop.val = &actual_kind;
+        prop.len = sizeof(actual_kind);
+
+        err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_ECC);
+    }
+
+    {
+        azihsm_key_kind actual_kind{};
+        azihsm_key_prop prop{};
+        prop.id = AZIHSM_KEY_PROP_ID_KIND;
+        prop.val = &actual_kind;
+        prop.len = sizeof(actual_kind);
+
+        err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_ECC);
+    }
 
     {
         azihsm_ecc_curve actual_curve{};
@@ -190,10 +188,7 @@ static void expect_ecc_key_kind(azihsm_handle key)
     ASSERT_EQ(kind, AZIHSM_KEY_KIND_ECC);
 }
 
-static void expect_ecc_curve(
-    azihsm_handle key,
-    azihsm_ecc_curve expected_curve
-)
+static void expect_ecc_curve(azihsm_handle key, azihsm_ecc_curve expected_curve)
 {
     azihsm_ecc_curve actual_curve{};
     azihsm_key_prop prop{};
@@ -214,13 +209,7 @@ static void run_generated_keypair_has_expected_kind_and_curve(
     auto_key priv_key;
     auto_key pub_key;
 
-    auto err = generate_ecc_keypair(
-        session,
-        curve,
-        true,
-        priv_key.get_ptr(),
-        pub_key.get_ptr()
-    );
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(priv_key.get(), 0u);
     ASSERT_NE(pub_key.get(), 0u);
@@ -252,7 +241,8 @@ static void run_unmask_ecc_keypair_preserves_kind_and_curve(
     ASSERT_NE(original_pub_key.get(), 0u);
 
     std::vector<uint8_t> masked_key_data;
-    get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+    err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_FALSE(masked_key_data.empty());
 
     azihsm_buffer masked_key_buf{};
@@ -279,7 +269,6 @@ static void run_unmask_ecc_keypair_preserves_kind_and_curve(
     expect_ecc_curve(unmasked_priv_key.get(), curve);
     expect_ecc_curve(unmasked_pub_key.get(), curve);
 }
-
 
 static azihsm_status run_ecc_keygen_with_props(
     azihsm_handle session,
@@ -327,10 +316,7 @@ static azihsm_status run_ecc_keygen_with_props(
 // No for-loops: each curve has its own TEST_F.
 // ============================================================
 
-static void run_unmask_after_original_keys_deleted(
-    azihsm_handle session,
-    azihsm_ecc_curve curve
-)
+static void run_unmask_after_original_keys_deleted(azihsm_handle session, azihsm_ecc_curve curve)
 {
     auto_key original_priv_key;
     auto_key original_pub_key;
@@ -347,7 +333,8 @@ static void run_unmask_after_original_keys_deleted(
     ASSERT_NE(original_pub_key.get(), 0u);
 
     std::vector<uint8_t> masked_key_data;
-    get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+    err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_FALSE(masked_key_data.empty());
 
     auto original_priv_handle = original_priv_key.get();
@@ -401,7 +388,8 @@ static void run_unmasked_handles_are_distinct_from_original(
     ASSERT_NE(original_pub_key.get(), 0u);
 
     std::vector<uint8_t> masked_key_data;
-    get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+    err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_FALSE(masked_key_data.empty());
 
     azihsm_buffer masked_key_buf{};
@@ -427,27 +415,19 @@ static void run_unmasked_handles_are_distinct_from_original(
     ASSERT_NE(unmasked_pub_key.get(), original_pub_key.get());
 }
 
-static void run_masked_key_property_is_non_empty(
-    azihsm_handle session,
-    azihsm_ecc_curve curve
-)
+static void run_masked_key_property_is_non_empty(azihsm_handle session, azihsm_ecc_curve curve)
 {
     auto_key priv_key;
     auto_key pub_key;
 
-    auto err = generate_ecc_keypair(
-        session,
-        curve,
-        true,
-        priv_key.get_ptr(),
-        pub_key.get_ptr()
-    );
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(priv_key.get(), 0u);
     ASSERT_NE(pub_key.get(), 0u);
 
     std::vector<uint8_t> masked_key_data;
-    get_masked_key_bytes(priv_key.get(), masked_key_data);
+    err = get_masked_key_blob(priv_key.get(), masked_key_data);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     ASSERT_FALSE(masked_key_data.empty());
     ASSERT_GT(masked_key_data.size(), 0u);
@@ -699,7 +679,6 @@ TEST_F(azihsm_ecc_keygen, unmask_pair_rejects_unsupported_key_kind)
     });
 }
 
-   
 TEST_F(azihsm_ecc_keygen, generated_p256_keypair_has_expected_properties)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -758,7 +737,8 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         std::vector<uint8_t> masked_key_data;
-        get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+        err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_FALSE(masked_key_data.empty());
 
         masked_key_data[masked_key_data.size() / 2] ^= 0x5A;
@@ -787,50 +767,35 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
 TEST_F(azihsm_ecc_keygen, generated_p256_keypair_has_expected_kind_and_curve)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(
-            session,
-            AZIHSM_ECC_CURVE_P256
-        );
+        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P256);
     });
 }
 
 TEST_F(azihsm_ecc_keygen, generated_p384_keypair_has_expected_kind_and_curve)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(
-            session,
-            AZIHSM_ECC_CURVE_P384
-        );
+        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P384);
     });
 }
 
 TEST_F(azihsm_ecc_keygen, generated_p521_keypair_has_expected_kind_and_curve)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(
-            session,
-            AZIHSM_ECC_CURVE_P521
-        );
+        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P521);
     });
 }
 
 TEST_F(azihsm_ecc_keygen, unmask_p384_keypair_preserves_kind_and_curve)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        run_unmask_ecc_keypair_preserves_kind_and_curve(
-            session,
-            AZIHSM_ECC_CURVE_P384
-        );
+        run_unmask_ecc_keypair_preserves_kind_and_curve(session, AZIHSM_ECC_CURVE_P384);
     });
 }
 
 TEST_F(azihsm_ecc_keygen, unmask_p521_keypair_preserves_kind_and_curve)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        run_unmask_ecc_keypair_preserves_kind_and_curve(
-            session,
-            AZIHSM_ECC_CURVE_P521
-        );
+        run_unmask_ecc_keypair_preserves_kind_and_curve(session, AZIHSM_ECC_CURVE_P521);
     });
 }
 
@@ -926,50 +891,6 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_empty_masked_key_buffer)
     });
 }
 
-TEST_F(azihsm_ecc_keygen, unmask_rejects_corrupted_masked_key_data)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto_key original_priv_key;
-        auto_key original_pub_key;
-
-        auto err = generate_ecc_keypair(
-            session,
-            AZIHSM_ECC_CURVE_P256,
-            true,
-            original_priv_key.get_ptr(),
-            original_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(original_priv_key.get(), 0u);
-        ASSERT_NE(original_pub_key.get(), 0u);
-
-        std::vector<uint8_t> masked_key_data;
-        get_masked_key_bytes(original_priv_key.get(), masked_key_data);
-        ASSERT_FALSE(masked_key_data.empty());
-
-        masked_key_data[masked_key_data.size() / 2] ^= 0x5A;
-
-        azihsm_buffer masked_key_buf{};
-        masked_key_buf.ptr = masked_key_data.data();
-        masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
-
-        auto_key unmasked_priv_key;
-        auto_key unmasked_pub_key;
-
-        err = azihsm_key_unmask_pair(
-            session,
-            AZIHSM_KEY_KIND_ECC,
-            &masked_key_buf,
-            unmasked_priv_key.get_ptr(),
-            unmasked_pub_key.get_ptr()
-        );
-
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unmasked_priv_key.get(), 0u);
-        ASSERT_EQ(unmasked_pub_key.get(), 0u);
-    });
-}
-
 TEST_F(azihsm_ecc_keygen, unmask_rejects_wrong_key_kind_for_real_ecc_masked_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -988,7 +909,8 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_wrong_key_kind_for_real_ecc_masked_key)
         ASSERT_NE(original_pub_key.get(), 0u);
 
         std::vector<uint8_t> masked_key_data;
-        get_masked_key_bytes(original_priv_key.get(), masked_key_data);
+        err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_FALSE(masked_key_data.empty());
 
         azihsm_buffer masked_key_buf{};
