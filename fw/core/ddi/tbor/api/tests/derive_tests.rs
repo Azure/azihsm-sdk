@@ -1173,6 +1173,192 @@ fn nested_include_constants() {
     assert_eq!(FullHeader::TOC_COUNT, 2 + KeyInfo::TOC_COUNT);
 }
 
+// ── Typed decode of include groups ────────────────────────────────────
+
+#[test]
+fn include_group_typed_decode() {
+    let mut buf = [0u8; 512];
+    let frame = IncludeReq::encode(&mut buf)
+        .unwrap()
+        .header(|h| {
+            h.session(azihsm_fw_ddi_tbor_api::SessionId(7))?
+                .key(azihsm_fw_ddi_tbor_api::KeyId(42))?
+                .algorithm(3)
+        })
+        .unwrap()
+        .payload(b"test data")
+        .unwrap()
+        .finish();
+
+    // Typed Layer-2 decode (exercises the group's `validate` helper and
+    // the generated sub-view accessor).
+    let view = IncludeReq::decode(frame.as_bytes()).unwrap();
+    let header = view.header();
+    assert_eq!(header.session().0, 7);
+    assert_eq!(header.key().0, 42);
+    assert_eq!(header.algorithm(), 3);
+    assert_eq!(view.payload(), b"test data");
+}
+
+#[test]
+fn nested_include_typed_decode() {
+    let mut buf = [0u8; 512];
+    let frame = NestedIncludeReq::encode(&mut buf)
+        .unwrap()
+        .header(|h| {
+            h.session(azihsm_fw_ddi_tbor_api::SessionId(99))?
+                .key_info(|k: KeyInfoEnc<'_, KeyInfoS0>| {
+                    k.key(azihsm_fw_ddi_tbor_api::KeyId(5))?.key_type(2)
+                })?
+                .algorithm(3)
+        })
+        .unwrap()
+        .payload(b"nested!")
+        .unwrap()
+        .finish();
+
+    // Typed decode must succeed: previously `FullHeader::validate`
+    // treated the nested `KeyInfo` TOC entries as scalar placeholders
+    // (type 0) and rejected them.
+    let view = NestedIncludeReq::decode(frame.as_bytes()).unwrap();
+    let header = view.header();
+    assert_eq!(header.session().0, 99);
+    let key_info = header.key_info();
+    assert_eq!(key_info.key().0, 5);
+    assert_eq!(key_info.key_type(), 2);
+    assert_eq!(header.algorithm(), 3);
+    assert_eq!(view.payload(), b"nested!");
+}
+
+// ── Optional include field groups ─────────────────────────────────────
+
+#[tbor(fields)]
+pub struct OptInfo {
+    #[tbor(key_id)]
+    key: u16,
+    flag: u8,
+}
+
+#[tbor(opcode = 0x72)]
+pub struct OptIncludeReq<'a> {
+    #[tbor(include)]
+    info: Option<OptInfo>,
+    #[tbor(max_len = 256)]
+    payload: &'a [u8],
+}
+
+#[test]
+fn optional_include_present_decode() {
+    fn fill_info<'a>(
+        i: OptInfoEnc<'a, OptInfoS0>,
+    ) -> Result<OptInfoEnc<'a, OptInfoDone>, azihsm_fw_ddi_tbor::EncodeError> {
+        i.key(azihsm_fw_ddi_tbor_api::KeyId(9))?.flag(1)
+    }
+
+    let mut buf = [0u8; 512];
+    let frame = OptIncludeReq::encode(&mut buf)
+        .unwrap()
+        .info(Some(fill_info))
+        .unwrap()
+        .payload(b"hi")
+        .unwrap()
+        .finish();
+
+    let view = OptIncludeReq::decode(frame.as_bytes()).unwrap();
+    let info = view.info().expect("group present");
+    assert_eq!(info.key().0, 9);
+    assert_eq!(info.flag(), 1);
+    assert_eq!(view.payload(), b"hi");
+}
+
+#[test]
+fn optional_include_omitted_decode() {
+    let mut buf = [0u8; 512];
+    // Skip the optional group entirely; the encoder writes `None` to
+    // every one of its TOC entries.
+    let frame = OptIncludeReq::encode(&mut buf)
+        .unwrap()
+        .payload(b"hi")
+        .unwrap()
+        .finish();
+
+    // Previously this failed to decode: `OptInfo::validate` rejected the
+    // all-`None` group because `key`/`flag` are required inner fields.
+    let view = OptIncludeReq::decode(frame.as_bytes()).unwrap();
+    assert!(view.info().is_none());
+    assert_eq!(view.payload(), b"hi");
+}
+
+// ── Length constraints inside include groups ──────────────────────────
+
+#[tbor(fields)]
+pub struct StrictBufGroup<'a> {
+    #[tbor(session_id)]
+    tag: u16,
+    #[tbor(max_len = 8)]
+    data: &'a [u8],
+}
+
+#[tbor(opcode = 0x73)]
+pub struct StrictBufReq<'a> {
+    #[tbor(include)]
+    grp: StrictBufGroup<'a>,
+}
+
+// Same wire layout and opcode but a looser length cap, used to forge a
+// structurally-valid frame whose group buffer exceeds the strict cap.
+#[tbor(fields)]
+pub struct LooseBufGroup<'a> {
+    #[tbor(session_id)]
+    tag: u16,
+    #[tbor(max_len = 64)]
+    data: &'a [u8],
+}
+
+#[tbor(opcode = 0x73)]
+pub struct LooseBufReq<'a> {
+    #[tbor(include)]
+    grp: LooseBufGroup<'a>,
+}
+
+#[test]
+fn include_group_len_check_passes() {
+    let mut buf = [0u8; 256];
+    let frame = StrictBufReq::encode(&mut buf)
+        .unwrap()
+        .grp(|g: StrictBufGroupEnc<'_, StrictBufGroupS0>| {
+            g.tag(azihsm_fw_ddi_tbor_api::SessionId(1))?.data(b"ok")
+        })
+        .unwrap()
+        .finish();
+
+    let view = StrictBufReq::decode(frame.as_bytes()).unwrap();
+    assert_eq!(view.grp().tag().0, 1);
+    assert_eq!(view.grp().data(), b"ok");
+}
+
+#[test]
+fn include_group_len_check_rejects_oversize() {
+    let mut buf = [0u8; 256];
+    let frame = LooseBufReq::encode(&mut buf)
+        .unwrap()
+        .grp(|g: LooseBufGroupEnc<'_, LooseBufGroupS0>| {
+            g.tag(azihsm_fw_ddi_tbor_api::SessionId(1))?
+                .data(&[0u8; 20])
+        })
+        .unwrap()
+        .finish();
+
+    // The wire layout/opcode match `StrictBufReq`, but its group caps
+    // `data` at 8 bytes. The length constraint is now enforced inside
+    // the group's `validate` helper.
+    let err = StrictBufReq::decode(frame.as_bytes()).unwrap_err();
+    assert!(matches!(
+        err,
+        azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength { .. }
+    ));
+}
+
 // ── Trait-based dispatch ──────────────────────────────────────────────
 
 use azihsm_fw_ddi_tbor_api::TborRequest;

@@ -107,7 +107,7 @@ fn gen_accessor(
     // Include-group fields expose the group's zero-copy sub-view rather
     // than a single primitive accessor.
     if let Some(group) = &field.include_group {
-        return gen_group_accessor(name, group, toc_index, header_len);
+        return gen_group_accessor(name, group, toc_index, header_len, field.optional);
     }
 
     let body = match field.wire_type {
@@ -197,19 +197,59 @@ fn gen_accessor(
     }
 }
 
+/// Emit a `bool` expression that is `true` when an optional include
+/// group is *present* — i.e. at least one of its `TOC_COUNT` entries at
+/// `group_off` is not `None`. The encoder omits an optional group by
+/// writing `None` to every one of its TOC entries. Entry types are read
+/// from `buf` at `header_len`.
+pub(crate) fn group_present_expr(
+    group: &syn::Ident,
+    buf: &TokenStream,
+    header_len: &TokenStream,
+    group_off: &TokenStream,
+) -> TokenStream {
+    let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
+    quote! {
+        (0..#group::TOC_COUNT).any(|__k| {
+            azihsm_fw_ddi_tbor::toc::raw_toc_entry_type(
+                azihsm_fw_ddi_tbor::toc::read_toc_word(#buf, #header_len, (#group_off) + __k)
+            ) != #none_type_id
+        })
+    }
+}
+
 /// Generate an accessor that returns the group's zero-copy sub-view for
 /// an `#[tbor(include)]` field.
+///
+/// Optional groups are exposed as `Option<GroupView>`: the encoder omits
+/// a group by writing `None` to every one of its TOC entries, so the
+/// accessor reports the group absent when all entries are `None`.
 fn gen_group_accessor(
     name: &syn::Ident,
     group: &syn::Ident,
     toc_index: &TokenStream,
     header_len: &TokenStream,
+    optional: bool,
 ) -> TokenStream {
     let group_view = format_ident!("{}View", group);
-    quote! {
-        #[inline]
-        pub fn #name(&self) -> #group_view<'a> {
-            #group_view::__new(self.buf, #header_len, #toc_index)
+    if optional {
+        let present = group_present_expr(group, &quote! { self.buf }, header_len, toc_index);
+        quote! {
+            #[inline]
+            pub fn #name(&self) -> Option<#group_view<'a>> {
+                if #present {
+                    Some(#group_view::__new(self.buf, #header_len, #toc_index))
+                } else {
+                    None
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[inline]
+            pub fn #name(&self) -> #group_view<'a> {
+                #group_view::__new(self.buf, #header_len, #toc_index)
+            }
         }
     }
 }
@@ -324,8 +364,25 @@ fn gen_type_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
             let toc_idx = effective_toc_idx(i, layout, &schema.fields);
 
             // Include-group fields delegate validation of their TOC
-            // entries to the group's own `validate` helper.
+            // entries to the group's own `validate` helper. Optional
+            // groups are skipped when the encoder omitted them (every
+            // group TOC entry written as `None`); validating them would
+            // reject required inner fields and make the group
+            // undecodable.
             if let Some(group) = &field.include_group {
+                if field.optional {
+                    let present = group_present_expr(
+                        group,
+                        &quote! { raw.as_bytes() },
+                        &header_len_val,
+                        &toc_idx,
+                    );
+                    return quote! {
+                        if #present {
+                            #group::validate(raw.as_bytes(), #header_len_val, #toc_idx)?;
+                        }
+                    };
+                }
                 return quote! {
                     #group::validate(raw.as_bytes(), #header_len_val, #toc_idx)?;
                 };

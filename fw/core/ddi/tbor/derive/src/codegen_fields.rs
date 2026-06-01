@@ -13,6 +13,7 @@ use proc_macro2::TokenStream;
 use quote::format_ident;
 use quote::quote;
 
+use crate::codegen_view::group_present_expr;
 use crate::schema::*;
 
 /// Generate all code for a field group (`#[tbor(fields)]`).
@@ -326,8 +327,29 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
 
     // ── Validation helper ─────────────────────────────────────────────
     let type_checks: Vec<_> = schema.fields.iter().enumerate().map(|(i, field)| {
-        let toc_type_id = field.toc_type_id;
         let toc_idx = effective_toc_idx(i);
+
+        // Nested include-group fields delegate to the nested group's own
+        // `validate` helper rather than being treated as scalar entries.
+        // Optional nested groups are skipped when the encoder omitted
+        // them (every group TOC entry written as `None`).
+        if let Some(group) = &field.include_group {
+            if field.optional {
+                let group_off = quote! { toc_offset + #toc_idx };
+                let present =
+                    group_present_expr(group, &quote! { buf }, &quote! { header_len }, &group_off);
+                return quote! {
+                    if #present {
+                        #group::validate(buf, header_len, #group_off)?;
+                    }
+                };
+            }
+            return quote! {
+                #group::validate(buf, header_len, toc_offset + #toc_idx)?;
+            };
+        }
+
+        let toc_type_id = field.toc_type_id;
         if field.optional {
             let none_type_id = 8u8;
             quote! {
@@ -388,6 +410,66 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
         }
     }).collect();
 
+    // Length-constraint checks for buffer/sealed_key fields. Without
+    // these, an included group's constrained buffer could decode even
+    // when its length violates the schema (top-level `validate` skips
+    // include fields and delegates entirely to this helper).
+    let len_checks: Vec<_> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
+        if field.include_group.is_some() {
+            return None;
+        }
+        if !matches!(field.wire_type, WireType::Buffer | WireType::SealedKey) {
+            return None;
+        }
+        let has_constraint =
+            field.fixed_len.is_some() || field.min_len > 0 || field.max_len < 8191;
+        if !has_constraint {
+            return None;
+        }
+        let toc_idx = effective_toc_idx(i);
+        let min_l = field.fixed_len.unwrap_or(field.min_len);
+        let max_l = field.fixed_len.unwrap_or(field.max_len);
+        if field.optional {
+            let none_type_id = 8u8;
+            Some(quote! {
+                {
+                    let actual = azihsm_fw_ddi_tbor::toc::raw_toc_entry_type(
+                        azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
+                    );
+                    if actual != #none_type_id {
+                        let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(
+                            azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
+                        );
+                        if !(#min_l..=#max_l).contains(&len) {
+                            return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
+                                entry_index: toc_offset + #toc_idx,
+                                entry_type: 7,
+                                expected: #min_l,
+                                actual: len,
+                            });
+                        }
+                    }
+                }
+            })
+        } else {
+            Some(quote! {
+                {
+                    let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(
+                        azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
+                    );
+                    if !(#min_l..=#max_l).contains(&len) {
+                        return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
+                            entry_index: toc_offset + #toc_idx,
+                            entry_type: 7,
+                            expected: #min_l,
+                            actual: len,
+                        });
+                    }
+                }
+            })
+        }
+    }).collect();
+
     quote! {
         #vis struct #name;
 
@@ -402,6 +484,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
             pub fn validate(buf: &[u8], header_len: usize, toc_offset: usize) -> Result<(), azihsm_fw_ddi_tbor::DecodeError> {
                 #(#padding_checks)*
                 #(#type_checks)*
+                #(#len_checks)*
                 Ok(())
             }
         }
@@ -531,6 +614,38 @@ fn gen_field_write_group(
 /// Generate a view accessor for a group field.
 fn gen_group_view_accessor(field: &SchemaField, toc_idx: &TokenStream) -> TokenStream {
     let name = &field.name;
+
+    // Nested include-group fields expose the nested group's sub-view
+    // rather than a scalar accessor. Optional nested groups are reported
+    // absent when every group TOC entry is `None`.
+    if let Some(group) = &field.include_group {
+        let group_view = format_ident!("{}View", group);
+        if field.optional {
+            let group_off = quote! { self.toc_offset + #toc_idx };
+            let present = group_present_expr(
+                group,
+                &quote! { self.buf },
+                &quote! { self.header_len },
+                &group_off,
+            );
+            return quote! {
+                #[inline]
+                pub fn #name(&self) -> Option<#group_view<'a>> {
+                    if #present {
+                        Some(#group_view::__new(self.buf, self.header_len, #group_off))
+                    } else {
+                        None
+                    }
+                }
+            };
+        }
+        return quote! {
+            #[inline]
+            pub fn #name(&self) -> #group_view<'a> {
+                #group_view::__new(self.buf, self.header_len, self.toc_offset + #toc_idx)
+            }
+        };
+    }
 
     let body = match field.wire_type {
         WireType::Uint8 => quote! {
