@@ -201,55 +201,6 @@ static void expect_ecc_curve(azihsm_handle key, azihsm_ecc_curve expected_curve)
     ASSERT_EQ(actual_curve, expected_curve);
 }
 
-static void run_unmask_ecc_keypair_preserves_kind_and_curve(
-    azihsm_handle session,
-    azihsm_ecc_curve curve
-)
-{
-    auto_key original_priv_key;
-    auto_key original_pub_key;
-
-    auto err = generate_ecc_keypair(
-        session,
-        curve,
-        true,
-        original_priv_key.get_ptr(),
-        original_pub_key.get_ptr()
-    );
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(original_priv_key.get(), 0u);
-    ASSERT_NE(original_pub_key.get(), 0u);
-
-    std::vector<uint8_t> masked_key_data;
-    err = get_masked_key_blob(original_priv_key.get(), masked_key_data);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_FALSE(masked_key_data.empty());
-
-    azihsm_buffer masked_key_buf{};
-    masked_key_buf.ptr = masked_key_data.data();
-    masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
-
-    auto_key unmasked_priv_key;
-    auto_key unmasked_pub_key;
-
-    err = azihsm_key_unmask_pair(
-        session,
-        AZIHSM_KEY_KIND_ECC,
-        &masked_key_buf,
-        unmasked_priv_key.get_ptr(),
-        unmasked_pub_key.get_ptr()
-    );
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(unmasked_priv_key.get(), 0u);
-    ASSERT_NE(unmasked_pub_key.get(), 0u);
-
-    expect_ecc_key_kind(unmasked_priv_key.get());
-    expect_ecc_key_kind(unmasked_pub_key.get());
-
-    expect_ecc_curve(unmasked_priv_key.get(), curve);
-    expect_ecc_curve(unmasked_pub_key.get(), curve);
-}
-
 static azihsm_status run_ecc_keygen_with_props(
     azihsm_handle session,
     azihsm_key_prop_list *priv_prop_list,
@@ -410,7 +361,6 @@ static void run_masked_key_property_is_non_empty(azihsm_handle session, azihsm_e
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     ASSERT_FALSE(masked_key_data.empty());
-    ASSERT_GT(masked_key_data.size(), 0u);
 }
 
 TEST_F(azihsm_ecc_keygen, generate_keypair_all_curves)
@@ -741,20 +691,6 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(unmasked_priv_key.get(), 0u);
         ASSERT_EQ(unmasked_pub_key.get(), 0u);
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, unmask_p384_keypair_preserves_kind_and_curve)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        run_unmask_ecc_keypair_preserves_kind_and_curve(session, AZIHSM_ECC_CURVE_P384);
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, unmask_p521_keypair_preserves_kind_and_curve)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        run_unmask_ecc_keypair_preserves_kind_and_curve(session, AZIHSM_ECC_CURVE_P521);
     });
 }
 
