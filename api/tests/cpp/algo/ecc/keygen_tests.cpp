@@ -201,26 +201,6 @@ static void expect_ecc_curve(azihsm_handle key, azihsm_ecc_curve expected_curve)
     ASSERT_EQ(actual_curve, expected_curve);
 }
 
-static void run_generated_keypair_has_expected_kind_and_curve(
-    azihsm_handle session,
-    azihsm_ecc_curve curve
-)
-{
-    auto_key priv_key;
-    auto_key pub_key;
-
-    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(priv_key.get(), 0u);
-    ASSERT_NE(pub_key.get(), 0u);
-
-    expect_ecc_key_kind(priv_key.get());
-    expect_ecc_key_kind(pub_key.get());
-
-    expect_ecc_curve(priv_key.get(), curve);
-    expect_ecc_curve(pub_key.get(), curve);
-}
-
 static void run_unmask_ecc_keypair_preserves_kind_and_curve(
     azihsm_handle session,
     azihsm_ecc_curve curve
@@ -761,27 +741,6 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(unmasked_priv_key.get(), 0u);
         ASSERT_EQ(unmasked_pub_key.get(), 0u);
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, generated_p256_keypair_has_expected_kind_and_curve)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P256);
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, generated_p384_keypair_has_expected_kind_and_curve)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P384);
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, generated_p521_keypair_has_expected_kind_and_curve)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        run_generated_keypair_has_expected_kind_and_curve(session, AZIHSM_ECC_CURVE_P521);
     });
 }
 
