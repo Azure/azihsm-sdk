@@ -7,6 +7,9 @@ use proc_macro2::TokenStream;
 use quote::format_ident;
 use quote::quote;
 
+use crate::codegen_enc::build_toc_count_expr;
+use crate::codegen_enc::effective_toc_idx;
+use crate::codegen_enc::offset_by_preceding_groups;
 use crate::schema::*;
 
 /// Generate the `FooView<'a>` struct with typed, infallible accessors
@@ -26,12 +29,8 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
 
     // Generate accessor methods.
     let accessors = schema.fields.iter().enumerate().map(|(i, field)| {
-        gen_accessor(
-            field,
-            layout.field_toc_indices[i],
-            &header_len,
-            schema.needs_data_start,
-        )
+        let toc_index = effective_toc_idx(i, &layout, &schema.fields);
+        gen_accessor(field, &toc_index, &header_len, schema.needs_data_start)
     });
 
     // Response-specific accessors.
@@ -99,11 +98,17 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
 /// Generate a single field accessor method for the View type.
 fn gen_accessor(
     field: &SchemaField,
-    toc_index: usize,
+    toc_index: &TokenStream,
     header_len: &TokenStream,
     needs_data_start: bool,
 ) -> TokenStream {
     let name = &field.name;
+
+    // Include-group fields expose the group's zero-copy sub-view rather
+    // than a single primitive accessor.
+    if let Some(group) = &field.include_group {
+        return gen_group_accessor(name, group, toc_index, header_len);
+    }
 
     let body = match field.wire_type {
         WireType::Uint8 => quote! {
@@ -192,6 +197,23 @@ fn gen_accessor(
     }
 }
 
+/// Generate an accessor that returns the group's zero-copy sub-view for
+/// an `#[tbor(include)]` field.
+fn gen_group_accessor(
+    name: &syn::Ident,
+    group: &syn::Ident,
+    toc_index: &TokenStream,
+    header_len: &TokenStream,
+) -> TokenStream {
+    let group_view = format_ident!("{}View", group);
+    quote! {
+        #[inline]
+        pub fn #name(&self) -> #group_view<'a> {
+            #group_view::__new(self.buf, #header_len, #toc_index)
+        }
+    }
+}
+
 /// Compute the `data_start` expression used by data-section accessors.
 fn data_start_expr(header_len: &TokenStream, _needs_data_start: bool) -> TokenStream {
     // TOC count byte position:
@@ -216,7 +238,7 @@ pub fn gen_validation_standalone(schema: &Schema) -> TokenStream {
 /// Generate the full validation block for a message schema.
 fn gen_validation(schema: &Schema) -> TokenStream {
     let layout = TocLayout::compute(&schema.fields);
-    let total_toc_count = layout.total_toc_count;
+    let total_toc_count = build_toc_count_expr(&layout, &schema.fields);
 
     let (parse_call, _header_len_val, opcode_check) = match schema.kind {
         MessageKind::Request { opcode } => (
@@ -240,7 +262,7 @@ fn gen_validation(schema: &Schema) -> TokenStream {
     };
 
     let type_checks = gen_type_checks(schema, &layout);
-    let padding_checks = gen_padding_checks(&layout);
+    let padding_checks = gen_padding_checks(schema, &layout);
     let len_checks = gen_len_checks(schema, &layout);
 
     // Empty schemas synthesise a single `None` TOC placeholder; the
@@ -289,13 +311,27 @@ fn gen_validation(schema: &Schema) -> TokenStream {
 
 /// Generate TOC entry type checks for each schema field.
 fn gen_type_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
+    let header_len_val = match schema.kind {
+        MessageKind::Request { .. } => quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },
+        MessageKind::Response => quote! { azihsm_fw_ddi_tbor::RESP_HEADER_LEN },
+        MessageKind::Fields => unreachable!(),
+    };
     schema
         .fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            let toc_idx = effective_toc_idx(i, layout, &schema.fields);
+
+            // Include-group fields delegate validation of their TOC
+            // entries to the group's own `validate` helper.
+            if let Some(group) = &field.include_group {
+                return quote! {
+                    #group::validate(raw.as_bytes(), #header_len_val, #toc_idx)?;
+                };
+            }
+
             let toc_type_id = field.toc_type_id;
-            let toc_idx = layout.field_toc_indices[i];
             if field.optional {
                 let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
                 quote! {
@@ -326,12 +362,14 @@ fn gen_type_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
 }
 
 /// Generate validation checks for padding TOC entries.
-fn gen_padding_checks(layout: &TocLayout) -> Vec<TokenStream> {
+fn gen_padding_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
     let padding_type_id = 9u8;
     layout
         .padding_positions
         .iter()
-        .map(|&(toc_idx, _)| {
+        .map(|&(toc_idx, field_idx)| {
+            let toc_idx =
+                offset_by_preceding_groups(quote! { #toc_idx }, &schema.fields[..field_idx]);
             quote! {
                 if raw.toc_entry_type(#toc_idx) != #padding_type_id {
                     return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
@@ -358,6 +396,9 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
         .iter()
         .enumerate()
         .filter_map(|(i, field)| {
+            if field.include_group.is_some() {
+                return None;
+            }
             if !matches!(field.wire_type, WireType::Buffer | WireType::SealedKey) {
                 return None;
             }
@@ -366,7 +407,7 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
             if !has_constraint {
                 return None;
             }
-            let toc_idx = layout.field_toc_indices[i];
+            let toc_idx = effective_toc_idx(i, layout, &schema.fields);
             let min_l = field.fixed_len.unwrap_or(field.min_len);
             let max_l = field.fixed_len.unwrap_or(field.max_len);
 
@@ -413,6 +454,11 @@ fn gen_display(schema: &Schema, view_name: &syn::Ident) -> TokenStream {
     let struct_name_str = schema.name.to_string();
 
     let field_displays = schema.fields.iter().map(|field| {
+        // Include-group fields expose a sub-view rather than a scalar;
+        // skip them in the flat Display rendering.
+        if field.include_group.is_some() {
+            return quote! {};
+        }
         let name = &field.name;
         let name_str = field.name.to_string();
         let pad = 16usize.saturating_sub(name_str.len());

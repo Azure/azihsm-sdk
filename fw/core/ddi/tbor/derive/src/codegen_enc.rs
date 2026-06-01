@@ -84,7 +84,7 @@ pub fn gen_encoder_and_frame(schema: &Schema) -> TokenStream {
 // ── Helper: TOC count expression ──────────────────────────────────────
 
 /// Build the compile-time `TOC_COUNT` expression including nested groups.
-fn build_toc_count_expr(layout: &TocLayout, fields: &[SchemaField]) -> TokenStream {
+pub(crate) fn build_toc_count_expr(layout: &TocLayout, fields: &[SchemaField]) -> TokenStream {
     let local_toc_count = layout.total_toc_count;
     let group_addends: Vec<_> = fields
         .iter()
@@ -230,25 +230,35 @@ fn gen_new_fn(
     }
 }
 
-// ── Helper: effective TOC index ───────────────────────────────────────
+/// Offset a base TOC-index expression by the `TOC_COUNT` of every
+/// preceding include-group field, returning the combined expression.
+///
+/// The group counts are only known to the compiler after expansion, so
+/// they are emitted symbolically (e.g. `(5usize + FooGroup::TOC_COUNT)`).
+pub(crate) fn offset_by_preceding_groups(
+    base: TokenStream,
+    preceding: &[SchemaField],
+) -> TokenStream {
+    let preceding_group_counts: Vec<_> = preceding
+        .iter()
+        .filter_map(|f| f.include_group.as_ref().map(|g| quote! { + #g::TOC_COUNT }))
+        .collect();
+    if preceding_group_counts.is_empty() {
+        base
+    } else {
+        quote! { (#base #(#preceding_group_counts)*) }
+    }
+}
 
 /// Compute the effective TOC index expression for field `i`, accounting
 /// for preceding include-group contributions.
-fn effective_toc_idx(i: usize, layout: &TocLayout, fields: &[SchemaField]) -> TokenStream {
+pub(crate) fn effective_toc_idx(
+    i: usize,
+    layout: &TocLayout,
+    fields: &[SchemaField],
+) -> TokenStream {
     let local_idx = layout.field_toc_indices[i];
-    let group_addends: Vec<_> = fields[..i]
-        .iter()
-        .filter_map(|pf| {
-            pf.include_group
-                .as_ref()
-                .map(|pg| quote! { + #pg::TOC_COUNT })
-        })
-        .collect();
-    if group_addends.is_empty() {
-        quote! { #local_idx }
-    } else {
-        quote! { (#local_idx #(#group_addends)*) }
-    }
+    offset_by_preceding_groups(quote! { #local_idx }, &fields[..i])
 }
 
 // ── Helper: emit None for skipped optional fields ─────────────────────
