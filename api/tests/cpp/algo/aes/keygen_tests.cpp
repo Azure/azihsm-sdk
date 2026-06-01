@@ -2101,7 +2101,7 @@ TEST_F(azihsm_aes_keygen, aes_key_unmask_rejects_null_arguments)
         azihsm_buffer valid_ptr_zero_len_buf{ dummy_masked_blob.data(), 0 };
         err =
             azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, &valid_ptr_zero_len_buf, key.get_ptr());
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(key.get(), 0u);
     });
 }
