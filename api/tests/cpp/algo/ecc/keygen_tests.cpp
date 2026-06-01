@@ -175,32 +175,6 @@ static void run_unmask_ecc_keypair_for_curve(azihsm_handle session, azihsm_ecc_c
     }
 }
 
-static void expect_ecc_key_kind(azihsm_handle key)
-{
-    azihsm_key_kind kind{};
-    azihsm_key_prop prop{};
-    prop.id = AZIHSM_KEY_PROP_ID_KIND;
-    prop.val = &kind;
-    prop.len = sizeof(kind);
-
-    auto err = azihsm_key_get_prop(key, &prop);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_EQ(kind, AZIHSM_KEY_KIND_ECC);
-}
-
-static void expect_ecc_curve(azihsm_handle key, azihsm_ecc_curve expected_curve)
-{
-    azihsm_ecc_curve actual_curve{};
-    azihsm_key_prop prop{};
-    prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
-    prop.val = &actual_curve;
-    prop.len = sizeof(actual_curve);
-
-    auto err = azihsm_key_get_prop(key, &prop);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_EQ(actual_curve, expected_curve);
-}
-
 static azihsm_status run_ecc_keygen_with_props(
     azihsm_handle session,
     azihsm_key_prop_list *priv_prop_list,
