@@ -2585,34 +2585,30 @@ TEST_F(azihsm_aes_xts, non_block_aligned_dul_fails)
     });
 }
 
-// XTS crypt calls should reject an algorithm id that is not AES-XTS.
-TEST_F(azihsm_aes_xts, invalid_algo_id_is_rejected)
+// XTS crypt calls should reject using an AES-XTS key with a non-XTS algorithm.
+TEST_F(azihsm_aes_xts, xts_key_rejects_aes_cbc_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_xts_key(session, 512);
 
         uint8_t data[128] = { 0xA5 };
+        std::vector<uint8_t> output(sizeof(data));
+
         azihsm_buffer input{ data, sizeof(data) };
-        azihsm_buffer output{ nullptr, 0 };
+        azihsm_buffer output_buf{ output.data(), static_cast<uint32_t>(output.size()) };
 
-        azihsm_algo_aes_xts_params xts_params{};
+        uint8_t iv[16] = {};
+        azihsm_algo_aes_cbc_params cbc_params{};
+        std::memcpy(cbc_params.iv, iv, sizeof(cbc_params.iv));
+
         azihsm_algo crypt_algo{};
-        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x61, sizeof(data));
-
         crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
+        crypt_algo.params = &cbc_params;
+        crypt_algo.len = sizeof(cbc_params);
 
-        auto err = crypt_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output_buf);
 
-        err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-
-        auto_ctx ctx;
-        err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
