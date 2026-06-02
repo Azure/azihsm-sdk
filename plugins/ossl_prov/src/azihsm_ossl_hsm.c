@@ -1218,10 +1218,20 @@ cleanup:
 
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session)
 {
-
-    azihsm_sess_close(session);
-    azihsm_part_close(device);
+    if (session != 0)
+    {
+        azihsm_sess_close(session);
+    }
+    if (device != 0)
+    {
+        azihsm_part_close(device);
+    }
 }
+
+/* Per-thread re-entry guard: set while this thread is opening the session, so
+ * a libcrypto fetch the open triggers on the same thread fails fast instead of
+ * recursing into the non-recursive session lock. */
+static __thread bool azihsm_session_opening = false;
 
 azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
 {
@@ -1232,20 +1242,8 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Fast path: session already open. */
-    if (provctx->session != 0)
-    {
-        return AZIHSM_STATUS_SUCCESS;
-    }
-
-    /* Re-entrancy: a code path reached during the open itself is asking
-     * for the session.  We cannot satisfy it (the handle is still being
-     * produced) and we must not recurse into azihsm_open_device_and_session.
-     * Checked before taking the (non-recursive) session lock, since a
-     * re-entrant call is on the same thread that already holds it and would
-     * otherwise self-deadlock.  Fail loudly so the caller's operation aborts
-     * cleanly instead of silently proceeding with session == 0. */
-    if (provctx->session_opening)
+    /* Re-entrant call on the opening thread: must not touch the session lock. */
+    if (azihsm_session_opening)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
@@ -1254,6 +1252,19 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         );
         return AZIHSM_STATUS_INVALID_CONTEXT_STATE;
     }
+
+    /* Fast path: session already open. */
+    if (!CRYPTO_THREAD_read_lock(provctx->session_lock))
+    {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+    CRYPTO_THREAD_unlock(provctx->session_lock);
 
     if (!CRYPTO_THREAD_write_lock(provctx->session_lock))
     {
@@ -1268,21 +1279,15 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         return AZIHSM_STATUS_SUCCESS;
     }
 
-    /* Set before the open so query_operation's lock-free re-entry guard is
-     * active for every libcrypto fetch the open triggers on this thread. */
-    provctx->session_opening = true;
+    azihsm_session_opening = true;
 
-    /* Pre-instantiate the libctx's primary DRBG.  The SDK open below
-     * eventually triggers a deep RAND_priv_bytes fetch that lazily
-     * instantiates the DRBG on the calling thread; on some hosts
-     * (e.g. nginx's config-validation thread) that lazy path fails.
-     * Doing it here moves the instantiation to a stable shallow
-     * frame, after which subsequent RAND calls reuse the cached
-     * primary. */
+    /* Prime the default libctx's DRBG: the SDK open below draws randomness
+     * via bare RAND_bytes, whose lazy DRBG instantiation otherwise fails
+     * deep in the open on some hosts (e.g. nginx's config thread). */
     unsigned char primer[1];
     if (RAND_bytes(primer, sizeof(primer)) != 1)
     {
-        provctx->session_opening = false;
+        azihsm_session_opening = false;
         CRYPTO_THREAD_unlock(provctx->session_lock);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -1294,7 +1299,7 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         &provctx->session,
         &provctx->resiliency_ctx
     );
-    provctx->session_opening = false;
+    azihsm_session_opening = false;
 
     CRYPTO_THREAD_unlock(provctx->session_lock);
 
