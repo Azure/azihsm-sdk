@@ -518,6 +518,7 @@ TEST_F(azihsm_ecc_keyattest, output_buffer_null_ptr_with_nonzero_len_fails)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -546,6 +547,7 @@ TEST_F(azihsm_ecc_keyattest, oversized_output_buffer_succeeds)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
