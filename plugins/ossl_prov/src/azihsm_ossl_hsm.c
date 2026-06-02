@@ -1228,10 +1228,10 @@ void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session
     }
 }
 
-/* Per-thread re-entry guard: set while this thread is opening the session, so
- * a libcrypto fetch the open triggers on the same thread fails fast instead of
- * recursing into the non-recursive session lock. */
-static __thread bool azihsm_session_opening = false;
+/* The context this thread is currently opening a session for, so a libcrypto
+ * fetch the open triggers re-enters that same context and fails fast instead of
+ * recursing into its non-recursive lock.  Other contexts are unaffected. */
+static __thread AZIHSM_OSSL_PROV_CTX *azihsm_opening_ctx = NULL;
 
 azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
 {
@@ -1242,8 +1242,8 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Re-entrant call on the opening thread: must not touch the session lock. */
-    if (azihsm_session_opening)
+    /* Re-entrant call on the context being opened: must not touch its lock. */
+    if (azihsm_opening_ctx == provctx)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
@@ -1279,7 +1279,8 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         return AZIHSM_STATUS_SUCCESS;
     }
 
-    azihsm_session_opening = true;
+    AZIHSM_OSSL_PROV_CTX *prev_opening = azihsm_opening_ctx;
+    azihsm_opening_ctx = provctx;
 
     /* Prime the default libctx's DRBG: the SDK open below draws randomness
      * via bare RAND_bytes, whose lazy DRBG instantiation otherwise fails
@@ -1287,7 +1288,7 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
     unsigned char primer[1];
     if (RAND_bytes(primer, sizeof(primer)) != 1)
     {
-        azihsm_session_opening = false;
+        azihsm_opening_ctx = prev_opening;
         CRYPTO_THREAD_unlock(provctx->session_lock);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -1299,7 +1300,7 @@ azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
         &provctx->session,
         &provctx->resiliency_ctx
     );
-    azihsm_session_opening = false;
+    azihsm_opening_ctx = prev_opening;
 
     CRYPTO_THREAD_unlock(provctx->session_lock);
 
