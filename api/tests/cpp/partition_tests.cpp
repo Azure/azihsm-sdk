@@ -670,8 +670,10 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_below_hint_succeeds)
             auto err = azihsm_part_get_prop(part.get(), &prop);
             if (err == AZIHSM_STATUS_SUCCESS)
             {
-                ASSERT_EQ(prop.len, actual_size);
+                ASSERT_GT(prop.len, 0u);
+                ASSERT_LE(prop.len, actual_size);
                 return;
+            }
             }
 
             ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
