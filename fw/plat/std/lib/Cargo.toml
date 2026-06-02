@@ -1,0 +1,31 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_hsm_std"
+version = "0.1.0"
+
+[dependencies]
+async-channel.workspace = true
+azihsm_fw_ddi_mbor_types.workspace = true
+azihsm_fw_hsm_core = { features = ["tracing"], workspace = true }
+azihsm_fw_hsm_core_tracing = { features = ["level-debug"], workspace = true }
+azihsm_fw_hsm_pal_std.workspace = true
+azihsm_fw_hsm_pal_traits = { workspace = true }
+critical-section = { features = ["std"], workspace = true }
+embassy-executor = { features = [
+  "executor-thread",
+  "platform-std",
+  "trace",
+], workspace = true }
+embassy-sync.workspace = true
+static_cell.workspace = true
+tokio = { features = ["rt-multi-thread", "time"], workspace = true }
+
+[dev-dependencies]
+azihsm_crypto.workspace = true
+azihsm_ddi_mbor_codec.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+hex.workspace = true
+tokio = { features = ["macros", "rt-multi-thread", "time"], workspace = true }
+x509.workspace = true

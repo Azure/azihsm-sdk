@@ -16,9 +16,9 @@ doctest = false
 
 [dependencies]
 azihsm_ddi_interface.workspace = true
-azihsm_ddi_mbor.workspace = true
-azihsm_ddi_sim.workspace = true
-azihsm_ddi_types.workspace = true
+azihsm_ddi_mbor_codec.workspace = true
+azihsm_ddi_mbor_sim.workspace = true
+azihsm_ddi_mbor_types.workspace = true
 lazy_static = { workspace = true }
 parking_lot.workspace = true
 rand.workspace = true

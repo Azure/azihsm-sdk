@@ -6,23 +6,23 @@
 use std::sync::Arc;
 
 use azihsm_ddi_interface::*;
-use azihsm_ddi_mbor::MborDecode;
-use azihsm_ddi_mbor::MborDecoder;
-use azihsm_ddi_mbor::MborEncoder;
-use azihsm_ddi_sim::aesgcmxts::*;
-use azihsm_ddi_sim::crypto::aes::AesMode;
-use azihsm_ddi_sim::dispatcher::Dispatcher;
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDecoder;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOp;
-use azihsm_ddi_types::DdiOpReq;
-use azihsm_ddi_types::DdiOpenSessionCmdResp;
-use azihsm_ddi_types::DdiRespHdr;
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
-use azihsm_ddi_types::SessionControlKind;
-use azihsm_ddi_types::SessionInfoRequest;
+use azihsm_ddi_mbor_codec::MborDecode;
+use azihsm_ddi_mbor_codec::MborDecoder;
+use azihsm_ddi_mbor_codec::MborEncoder;
+use azihsm_ddi_mbor_sim::aesgcmxts::*;
+use azihsm_ddi_mbor_sim::crypto::aes::AesMode;
+use azihsm_ddi_mbor_sim::dispatcher::Dispatcher;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDecoder;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiOpenSessionCmdResp;
+use azihsm_ddi_mbor_types::DdiRespHdr;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
+use azihsm_ddi_mbor_types::SessionControlKind;
+use azihsm_ddi_mbor_types::SessionInfoRequest;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -76,15 +76,6 @@ impl DdiMockDev {
             })),
             dispatcher: G_DISPATCHER.clone(),
         })
-    }
-
-    /// Returns the device kind (Virtual or Physical).
-    ///
-    /// # Returns
-    ///
-    /// The device kind that was determined when the device was opened.
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        Some(DdiDeviceKind::Virtual)
     }
 }
 
@@ -161,15 +152,11 @@ fn validate_request(
 }
 
 impl DdiDev for DdiMockDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
-        assert_eq!(kind, DdiDeviceKind::Virtual);
+    /// `DdiMockDev` always reports [`DdiDeviceKind::Virtual`].
+    fn device_kind(&self) -> DdiDeviceKind {
+        DdiDeviceKind::Virtual
     }
 
     /// Execute Operation
@@ -183,7 +170,7 @@ impl DdiDev for DdiMockDev {
     ///
     /// # Error
     /// * `DdiError` - Error encountered while executing the command
-    fn exec_op<T: DdiOpReq>(
+    fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
         _cookie: &mut Option<DdiCookie>,
@@ -646,13 +633,16 @@ impl DdiDev for DdiMockDev {
         Ok(mcr_ddi_aes_xts_result)
     }
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
-    /// For mock device, we call a migration_sim function on the dispatcher
+    /// Erase the device.
+    ///
+    /// For the mock backend, delegates to the dispatcher's migration
+    /// simulator which discards all keys, sessions, and other
+    /// cryptographic state, returning the device to a clean state.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+    fn erase(&self) -> Result<(), DdiError> {
         self.dispatcher
             .write()
             .dispatch_migration_sim()

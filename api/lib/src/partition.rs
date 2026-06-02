@@ -386,7 +386,7 @@ impl HsmPartitionManager {
         let dev = ddi::open_dev(path)?;
         let dev_info = ddi::dev_info_by_path(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
-        let part_type = HsmPartType::from(dev.device_kind().ok_or(HsmError::InternalError)?);
+        let part_type = HsmPartType::from(dev.device_kind());
 
         // Validate that the requested API revision is within the partition's supported range.
         if api_rev < min || api_rev > max {
@@ -1187,7 +1187,7 @@ impl HsmPartitionInner {
 
     /// Resets the partition and clears cached masked keys.
     pub(crate) fn reset(&mut self) -> HsmResult<()> {
-        self.dev.simulate_nssr_after_lm().map_err(HsmError::from)?;
+        self.dev.erase().map_err(HsmError::from)?;
         self.clear_masked_keys();
         Ok(())
     }

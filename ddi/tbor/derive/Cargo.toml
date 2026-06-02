@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_tbor_derive"
+version = "0.1.0"
+
+# NOTE: this is a regular library crate (not `proc-macro = true`) that
+# re-exports the proc-macro definitions from `azihsm_fw_ddi_tbor_derive`.
+# Proc-macro crates have restrictions on what they may export, so wrapping
+# them with a normal lib lets host code access the macros via the
+# host-side path `azihsm_ddi_tbor_derive::tbor`.
+
+[dependencies]
+azihsm_fw_ddi_tbor_derive.workspace = true
+
+[lib]
+doctest = false
+test = false
+
+[lints]
+workspace = true

@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_tbor_codec"
+version = "0.1.0"
+
+[dependencies]
+azihsm_fw_ddi_tbor.workspace = true
+
+[lib]
+doctest = false
+test = false
+
+[lints]
+workspace = true

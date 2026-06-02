@@ -53,7 +53,7 @@ pub(crate) fn aes_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = ddi::HsmKeyIdGuard::new(
@@ -225,7 +225,7 @@ fn aes_cbc_encrypt_decrypt(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = key.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     // Update IV for chaining
     let resp_iv = resp.data.iv.as_slice();
@@ -402,7 +402,7 @@ pub(crate) fn aes_gcm_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
     let key_id = ddi::HsmKeyIdGuard::new(
         session,

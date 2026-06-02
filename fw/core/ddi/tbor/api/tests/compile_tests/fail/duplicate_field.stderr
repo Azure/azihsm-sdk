@@ -1,0 +1,19 @@
+error[E0599]: no method named `a` found for struct `DupReqEnc<'_, DupReqS1>` in the current scope
+  --> tests/compile_tests/fail/duplicate_field.rs:16:10
+   |
+ 6 |   #[tbor(opcode = 0x06)]
+   |   ---------------------- method `a` not found for this struct
+...
+14 |       let _ = DupReq::encode(&mut buf).unwrap()
+   |               -                        -------- method `a` is available on `DupReqEnc<'_, DupReqS0>`
+   |  _____________|
+   | |
+15 | |         .a(1).unwrap()
+16 | |         .a(2).unwrap() // ERROR: `a` not available on State1
+   | |_________-^
+   |
+help: there is a method `b` with a similar name
+   |
+16 -         .a(2).unwrap() // ERROR: `a` not available on State1
+16 +         .b(2).unwrap() // ERROR: `a` not available on State1
+   |

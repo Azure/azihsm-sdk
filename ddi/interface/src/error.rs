@@ -5,8 +5,8 @@
 
 use std::convert::Infallible;
 
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
 use thiserror::Error;
 
 use crate::*;
@@ -95,4 +95,57 @@ pub enum DdiError {
     /// Reset Device error
     #[error("Reset Device operation error")]
     ResetDeviceError(u32),
+
+    /// Host-side backend does not support the requested wire encoding
+    /// (e.g., a TBOR request was issued against a backend that has not
+    /// been wired for TBOR yet). Distinct from a device-side
+    /// `DdiStatus::UnsupportedCmd`, which indicates the firmware
+    /// rejected an otherwise well-formed request.
+    #[error("host backend does not support the requested wire encoding")]
+    UnsupportedEncoding,
+
+    /// TBOR wire-format encode failure on the host. Indicates the
+    /// outgoing request could not be serialised — typically a buffer
+    /// sizing issue or a programmer error in the request type.
+    /// Distinct from [`DdiError::MborError`] so callers debugging a
+    /// TBOR command can tell which codec failed.
+    #[error("TBOR encode error")]
+    TborEncodeError,
+
+    /// TBOR wire-format decode failure on the host. Indicates the
+    /// incoming response was malformed or did not match the schema.
+    /// Distinct from [`DdiError::MborError`] for the same reason as
+    /// [`DdiError::TborEncodeError`].
+    #[error("TBOR decode error")]
+    TborDecodeError,
+}
+
+// ── Codec error → DdiError conversions ──────────────────────────────
+//
+// Wire encode/decode failures convert into per-codec variants so `?`
+// works on every `encode`/`decode` call site in the backends without
+// per-call `.map_err(...)` boilerplate, and so a host-side failure
+// preserves which codec produced it. The structured error payload is
+// intentionally dropped: the host treats wire-level failures uniformly
+// and the codec-specific detail is recovered from logs / tracing.
+
+impl From<MborError> for DdiError {
+    #[inline]
+    fn from(e: MborError) -> Self {
+        Self::MborError(e)
+    }
+}
+
+impl From<azihsm_ddi_tbor_codec::EncodeError> for DdiError {
+    #[inline]
+    fn from(_: azihsm_ddi_tbor_codec::EncodeError) -> Self {
+        Self::TborEncodeError
+    }
+}
+
+impl From<azihsm_ddi_tbor_codec::DecodeError> for DdiError {
+    #[inline]
+    fn from(_: azihsm_ddi_tbor_codec::DecodeError) -> Self {
+        Self::TborDecodeError
+    }
 }
