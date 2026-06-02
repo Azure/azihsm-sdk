@@ -449,9 +449,7 @@ mod tests {
     #[test]
     fn metadata_bit_positions_match_host_wire_contract() {
         let m = DdiTargetKeyMetadata {
-            blob: [
-                0x55, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
+            blob: [0x55, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         };
         // Byte 0 — `0x55` = bits 0, 2, 4, 6
         assert!(m.session(), "BIT_FLAG_SESSION = 0");
