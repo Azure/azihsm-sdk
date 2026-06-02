@@ -674,13 +674,13 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_below_hint_succeeds)
                 ASSERT_LE(prop.len, actual_size);
                 return;
             }
-            }
+        }
 
-            ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         }
 
         FAIL() << "manufacturer certificate chain changed while testing below-hint buffer";
-    });
+});
 }
 
 TEST(azihsm_part, get_prop_backup_masking_key)
