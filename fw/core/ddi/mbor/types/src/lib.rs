@@ -356,6 +356,58 @@ pub struct DdiTargetKeyMetadata {
     pub blob: [u8; 16],
 }
 
+impl DdiTargetKeyMetadata {
+    const BIT_FLAG_SESSION: usize = 0;
+    const BIT_FLAG_ENCRYPT: usize = 2;
+    const BIT_FLAG_DECRYPT: usize = 3;
+    const BIT_FLAG_SIGN: usize = 4;
+    const BIT_FLAG_VERIFY: usize = 5;
+    const BIT_FLAG_DERIVE: usize = 6;
+    const BIT_FLAG_UNWRAP: usize = 8;
+
+    #[inline]
+    fn get_bit(&self, bit: usize) -> bool {
+        let index = bit / u8::BITS as usize;
+        let bit = bit % u8::BITS as usize;
+        (self.blob[index] & (1 << bit)) != 0
+    }
+
+    /// Flag indicating the key is a session-scoped key.
+    pub fn session(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_SESSION)
+    }
+
+    /// Flag indicating the key can be used for encryption.
+    pub fn encrypt(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_ENCRYPT)
+    }
+
+    /// Flag indicating the key can be used for decryption.
+    pub fn decrypt(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_DECRYPT)
+    }
+
+    /// Flag indicating the key can be used for signing.
+    pub fn sign(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_SIGN)
+    }
+
+    /// Flag indicating the key can be used for verification.
+    pub fn verify(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_VERIFY)
+    }
+
+    /// Flag indicating the key can be used for deriving other keys.
+    pub fn derive(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_DERIVE)
+    }
+
+    /// Flag indicating the key can be used for unwrapping.
+    pub fn unwrap(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_UNWRAP)
+    }
+}
+
 /// Target key properties for key creation/unwrap.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
