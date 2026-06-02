@@ -358,15 +358,19 @@ pub struct DdiTargetKeyMetadata {
 
 impl DdiTargetKeyMetadata {
     const BIT_FLAG_SESSION: usize = 0;
+    const BIT_FLAG_MODIFIABLE: usize = 1;
     const BIT_FLAG_ENCRYPT: usize = 2;
     const BIT_FLAG_DECRYPT: usize = 3;
     const BIT_FLAG_SIGN: usize = 4;
     const BIT_FLAG_VERIFY: usize = 5;
     const BIT_FLAG_DERIVE: usize = 6;
+    const BIT_FLAG_WRAP: usize = 7;
     const BIT_FLAG_UNWRAP: usize = 8;
 
     #[inline]
     fn get_bit(&self, bit: usize) -> bool {
+        debug_assert_eq!(Self::BIT_FLAG_MODIFIABLE, 1);
+        debug_assert_eq!(Self::BIT_FLAG_WRAP, 7);
         let index = bit / u8::BITS as usize;
         let bit = bit % u8::BITS as usize;
         (self.blob[index] & (1 << bit)) != 0
@@ -405,6 +409,24 @@ impl DdiTargetKeyMetadata {
     /// Flag indicating the key can be used for unwrapping.
     pub fn unwrap(&self) -> bool {
         self.get_bit(Self::BIT_FLAG_UNWRAP)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DdiTargetKeyMetadata;
+
+    #[test]
+    fn target_key_metadata_flag_positions_match_wire_format() {
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_SESSION, 0);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_MODIFIABLE, 1);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_ENCRYPT, 2);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_DECRYPT, 3);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_SIGN, 4);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_VERIFY, 5);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_DERIVE, 6);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_WRAP, 7);
+        assert_eq!(DdiTargetKeyMetadata::BIT_FLAG_UNWRAP, 8);
     }
 }
 
