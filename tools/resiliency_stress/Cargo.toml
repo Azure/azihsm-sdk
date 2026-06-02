@@ -14,12 +14,12 @@ path = "src/main.rs"
 [dependencies]
 azihsm_api.workspace = true
 azihsm_crypto.workspace = true
-azihsm_ddi_sim.workspace = true
+azihsm_ddi_mbor_sim.workspace = true
 azihsm_res_test_dev = { optional = true, workspace = true }
 azihsm_resiliency_test_helpers.workspace = true
 clap = { features = ["derive"], workspace = true }
 libc.workspace = true
-memmap2 = "0.9"
+memmap2 = { workspace = true }
 parking_lot = { features = ["deadlock_detection"], workspace = true }
 rand.workspace = true
 tracing.workspace = true

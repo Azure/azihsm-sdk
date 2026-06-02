@@ -35,6 +35,7 @@ impl Xtask for Clippy {
             .run()?;
 
         let mut exclude_args: Vec<String> = Vec::new();
+
         if !self.exclude.is_empty() {
             for crate_name in &self.exclude {
                 exclude_args.push("--exclude".to_string());

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECC_P256_TEST_VECTORS;
 
 #[test]
 fn test_ecc_sign_verify_p256() {
@@ -109,4 +110,32 @@ fn test_ecc_p256_import_priv_sign_import_pub_verify() {
             .expect("Verification failed");
         assert!(is_valid, "NIST P-256 import/sign/import/verify failed");
     }
+}
+
+#[test]
+fn test_ecc_p256_from_coordinates_roundtrip() {
+    let mut algo = EccAlgo {};
+    let pri_key = EccPrivateKey::from_curve(EccCurve::P256).expect("Key generation failed");
+    let pub_key = pri_key.public_key().expect("Failed to get public key");
+
+    let (x, y) = pub_key.coord_vec().expect("Failed to get coordinates");
+
+    let reconstructed =
+        EccPublicKey::from_coordinates(EccCurve::P256, &x, &y).expect("from_coordinates failed");
+
+    let digest = [0xABu8; 32];
+    let sig_size = Signer::sign(&mut algo, &pri_key, &digest, None).expect("Signing failed");
+    let mut signature = vec![0u8; sig_size];
+    Signer::sign(&mut algo, &pri_key, &digest, Some(&mut signature)).expect("Signing failed");
+
+    let valid_orig = Verifier::verify(&mut algo, &pub_key, &digest, &signature)
+        .expect("Verification with original key failed");
+    assert!(valid_orig);
+
+    let valid_recon = Verifier::verify(&mut algo, &reconstructed, &digest, &signature)
+        .expect("Verification with reconstructed key failed");
+    assert!(
+        valid_recon,
+        "Reconstructed key must verify the same signature"
+    );
 }

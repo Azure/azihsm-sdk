@@ -135,26 +135,126 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
 /// Builds the OBK config and POTA endorsement for partition init.
 ///
 /// Automatically selects TPM or Caller source based on the
-/// `AZIHSM_USE_TPM` environment variable.
+/// `AZIHSM_USE_TPM` environment variable. For Caller source, prefers
+/// a cached MOBK from a prior init in this process (if present on disk)
+/// so that `init_bk3` is not re-attempted on a warm device. Falls back
+/// to the raw OBK when no cache exists (cold device / first-ever init).
 #[allow(clippy::expect_used)]
 pub(crate) fn make_init_params(
     part: &HsmPartition,
 ) -> (HsmOwnerBackupKeyConfig, HsmPotaEndorsement) {
     if use_tpm() {
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+            HsmOwnerBackupKeyConfig::new(
+                HsmOwnerBackupKeySource::Tpm,
+                HsmOwnerBackupKey::default(),
+            ),
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {
         let (sig, pubkey) = generate_pota_endorsement(part);
+        let backup_key = if let Some(mobk) = read_cached_mobk(&part.path()) {
+            HsmOwnerBackupKey::from_masked_key(&mobk)
+        } else {
+            HsmOwnerBackupKey::from_obk(&TEST_OBK)
+        };
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, backup_key),
             HsmPotaEndorsement::new(
                 HsmPotaEndorsementSource::Caller,
                 Some(HsmPotaEndorsementData::new(&sig, &pubkey)),
             ),
         )
     }
+}
+
+/// Performs partition init and persists the MOBK on success.
+///
+/// `make_init_params` already selects cached MOBK vs raw OBK, so this
+/// function simply calls `part.init(...)` and saves the resulting MOBK
+/// to disk for subsequent runs.
+#[allow(clippy::expect_used)]
+pub(crate) fn init_with_mobk_fallback(
+    part: &HsmPartition,
+    creds: HsmCredentials,
+    obk_config: HsmOwnerBackupKeyConfig,
+    pota_endorsement: HsmPotaEndorsement,
+    resiliency_config: Option<HsmResiliencyConfig>,
+) {
+    part.init(
+        creds,
+        None,
+        None,
+        obk_config,
+        pota_endorsement,
+        resiliency_config,
+    )
+    .expect("Partition init failed");
+
+    save_mobk_after_init(part);
+}
+
+/// Returns the MOBK cache file path.
+///
+/// Uses `AZIHSM_MOBK_PATH` from the environment if set, otherwise
+/// defaults to a process-unique file in the system temp directory. Each
+/// nextest process owns an independent simulator instance, so sharing a
+/// cache across processes can make one process observe another process's
+/// partially-written cache file.
+fn mobk_cache_file_path(_part_path: &str) -> std::path::PathBuf {
+    match std::env::var("AZIHSM_MOBK_PATH") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => default_mobk_cache_file_path().clone(),
+    }
+}
+
+/// Returns the default per-process MOBK cache file path used when
+/// `AZIHSM_MOBK_PATH` is unset.
+///
+/// The path is computed once on first access and reused for the
+/// lifetime of the process. It lives in the system temp directory and
+/// is named `azihsm-mobk-{pid}-{nanos}.bin`, which keeps concurrent
+/// nextest processes from sharing a cache file.
+fn default_mobk_cache_file_path() -> &'static std::path::PathBuf {
+    /// Process-unique MOBK cache file path, computed once on first access.
+    ///
+    /// Naming includes the PID and a nanosecond timestamp so concurrent
+    /// nextest processes do not collide on the same file, and so a
+    /// re-run after a process restart does not reuse a stale cache.
+    static DEFAULT_MOBK_CACHE_FILE: std::sync::LazyLock<std::path::PathBuf> =
+        std::sync::LazyLock::new(|| {
+            let started_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+
+            std::env::temp_dir().join(format!(
+                "azihsm-mobk-{}-{started_at}.bin",
+                std::process::id()
+            ))
+        });
+
+    &DEFAULT_MOBK_CACHE_FILE
+}
+
+/// Reads the previously-persisted MOBK for `part_path`, if any.
+fn read_cached_mobk(part_path: &str) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(mobk_cache_file_path(part_path)).ok()?;
+    if bytes.is_empty() { None } else { Some(bytes) }
+}
+
+/// Records the MOBK derived during a successful init so subsequent
+/// inits on the same partition path in this process can reuse it via
+/// [`make_init_params`].
+pub(crate) fn save_mobk_after_init(part: &HsmPartition) {
+    if use_tpm() {
+        return;
+    }
+    let mobk = part.mobk_vec();
+    if mobk.is_empty() {
+        return;
+    }
+    let _ = std::fs::write(mobk_cache_file_path(&part.path()), &mobk);
 }
 
 /// Executes a test function with an initialized HSM partition.
@@ -192,8 +292,7 @@ where
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let (obk_info, pota_endorsement) = make_init_params(&part);
-        part.init(creds, None, None, obk_info, pota_endorsement, None)
-            .expect("Partition init failed");
+        init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
         test(part, creds);
     }
 }

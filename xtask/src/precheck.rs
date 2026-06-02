@@ -7,7 +7,6 @@
 //! Xtask to run various repo-specific checks
 
 use clap::Parser;
-use xshell::Shell;
 
 use crate::audit::Audit;
 use crate::clippy::Clippy;
@@ -15,8 +14,6 @@ use crate::copyright::Copyright;
 use crate::coverage::Coverage;
 use crate::coverage_report::CoverageReport;
 use crate::fmt::Fmt;
-#[cfg(target_os = "linux")]
-use crate::integration_tests;
 use crate::nextest::Nextest;
 use crate::nextest_report::NextestReport;
 use crate::setup::Setup;
@@ -92,13 +89,16 @@ pub struct Precheck {
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
+    /// Pass through to `cargo install --config`; accepts either `KEY=VALUE`
+    /// or a path to a Cargo `config.toml` file.
+    /// Only used for --setup ignored otherwise.
+    #[clap(long)]
+    pub config: Option<String>,
 }
 
 impl Xtask for Precheck {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running precheck");
-
-        let sh = Shell::new()?;
 
         // if no specific stages are requested, run all stages except code coverage, nextest report and coverage report
         let stage = self.stage.unwrap_or(Stage {
@@ -116,21 +116,9 @@ impl Xtask for Precheck {
         });
 
         if stage.setup || stage.all {
-            // first try path of .cargo inside current directory
-            let mut config_path = ".cargo".to_string();
-            if !sh.path_exists(&config_path) {
-                // next try path of .cargo inside parent directory
-                config_path = "../.cargo".to_string();
-                if !sh.path_exists(&config_path) {
-                    anyhow::bail!("Could not find .cargo directory at {}", config_path);
-                }
-            }
-
-            config_path.push_str("/config.toml");
-
             Setup {
                 force: false,
-                config: Some(config_path),
+                config: self.config,
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
             }
@@ -196,7 +184,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_api_tests".to_string()),
                         no_default_features: false,
                         filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
@@ -204,10 +192,10 @@ impl Xtask for Precheck {
 
                 #[cfg(not(target_os = "windows"))]
                 {
-                    // SDK Run azihsm_ddi mock tests table-4
+                    // SDK Run azihsm_ddi_mbor_types mock tests table-4
                     Nextest {
                         features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
+                        package: Some("azihsm_ddi_mbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
@@ -215,20 +203,31 @@ impl Xtask for Precheck {
                     }
                     .run(ctx.clone())?;
 
-                    // SDK Run azihsm_ddi mock tests table-64
+                    // SDK Run azihsm_ddi_mbor_types mock tests table-64
                     Nextest {
                         features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
+                        package: Some("azihsm_ddi_mbor_types".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
 
-                    // OSSL Provider integration tests (CLI + C API, Linux only)
-                    #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                    // SDK Run azihsm_ddi_tbor_types tests through the emu
+                    // backend (in-process firmware).
+                    Nextest {
+                        features: Some("emu".to_string()),
+                        package: Some("azihsm_ddi_tbor_types".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
                 }
             } else {
                 Nextest {

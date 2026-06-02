@@ -162,6 +162,10 @@ impl Xtask for Setup {
             let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
+        // Verify OpenSSL is discoverable (Linux only).
+        #[cfg(target_os = "linux")]
+        crate::host_openssl::check_openssl()?;
+
         log::trace!("done setup");
         Ok(())
     }

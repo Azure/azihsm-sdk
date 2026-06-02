@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECDH_P521_TEST_VECTORS;
 
 #[test]
 fn test_ecdh_p521_nist_vectors() {

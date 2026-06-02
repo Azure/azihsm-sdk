@@ -285,7 +285,7 @@ static azihsm_status pota_endorse(
 // Dummy OBK provider callback
 static constexpr uint32_t TEST_OBK_SIZE = 48;
 
-static azihsm_status obk_get_obk(void * /*ctx*/, azihsm_buffer *obk)
+static azihsm_status mobk_get_mobk(void * /*ctx*/, azihsm_buffer *obk)
 {
     // First call: report required size.
     if (obk->ptr == nullptr || obk->len < TEST_OBK_SIZE)
@@ -335,7 +335,7 @@ void make_resiliency_config_in(ResiliencyTestCtx &ctx, azihsm_resiliency_config 
     bool is_tpm = (std::getenv("AZIHSM_USE_TPM") != nullptr);
 #endif
     config_out.pota_callback_ops = is_tpm ? nullptr : get_pota_callback_ops();
-    config_out.obk_callback_ops = is_tpm ? nullptr : get_obk_callback_ops();
+    config_out.mobk_callback_ops = is_tpm ? nullptr : get_mobk_callback_ops();
 }
 
 /// Returns a pointer to the shared POTA callback ops vtable backed by
@@ -346,12 +346,12 @@ const azihsm_pota_callback_ops *get_pota_callback_ops()
     return &pota_ops;
 }
 
-/// Returns a pointer to the shared OBK callback ops vtable backed by
-/// `obk_get_obk`. The returned pointer has static lifetime.
-const azihsm_obk_callback_ops *get_obk_callback_ops()
+/// Returns a pointer to the shared MOBK callback ops vtable backed by
+/// `mobk_get_mobk`. The returned pointer has static lifetime.
+const azihsm_mobk_callback_ops *get_mobk_callback_ops()
 {
-    static azihsm_obk_callback_ops obk_ops = { obk_get_obk };
-    return &obk_ops;
+    static azihsm_mobk_callback_ops mobk_ops = { mobk_get_mobk };
+    return &mobk_ops;
 }
 
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_config &config_out)

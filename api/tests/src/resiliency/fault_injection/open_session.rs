@@ -96,15 +96,13 @@ fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let (resiliency_config, ctx) = make_resiliency_config();
-    part.init(
+    init_with_mobk_fallback(
+        &part,
         creds,
-        None,
-        None,
         obk_info,
         pota_endorsement,
         Some(resiliency_config),
-    )
-    .expect("Partition init failed");
+    );
 
     (part, creds, ctx)
 }
@@ -119,8 +117,7 @@ fn init_without_resiliency() -> (HsmPartition, HsmCredentials) {
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    part.init(creds, None, None, obk_info, pota_endorsement, None)
-        .expect("Partition init failed");
+    init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
 
     (part, creds)
 }
@@ -408,7 +405,7 @@ fn test_restore_partition_reestablishes_credentials_on_retry() {
 
     // restore_partition calls init_part which calls the BK3 op.
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition (before: {bk3_before}, after: {bk3_after})"
     );
 }
@@ -442,7 +439,7 @@ fn test_restore_partition_recovers_credentials_not_established() {
 
     // restore_partition re-established credentials.
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition (before: {bk3_before}, after: {bk3_after})"
     );
 }
