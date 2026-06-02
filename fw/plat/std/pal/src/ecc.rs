@@ -105,29 +105,98 @@ impl HsmEcc for StdHsmPal {
     }
 
     /// Raw EC verify a signature over a pre-computed hash digest.
+    ///
+    /// Per the [`HsmEcc::ecc_verify`] trait contract, `pub_key` is the
+    /// raw uncompressed point `x || y` with **each coordinate in
+    /// little-endian** byte order, and `signature` is `r || s` with
+    /// each component in little-endian.  OpenSSL is big-endian-native
+    /// for elliptic-curve scalars, so we reverse each component before
+    /// constructing the verification inputs.
     async fn ecc_verify(
         &self,
         _io: &impl HsmIo,
-        _curve: HsmEccCurve,
+        curve: HsmEccCurve,
         pub_key: &DmaBuf,
         hash: &DmaBuf,
         signature: &DmaBuf,
     ) -> HsmResult<bool> {
-        let key = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecc_verify(&key, hash, signature).await
+        let coord_len = curve.priv_key_len();
+        let pub_key_len = curve.pub_key_len();
+        let sig_len = curve.sig_len();
+
+        if pub_key.len() < pub_key_len || signature.len() < sig_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Reverse each coord from wire-LE to OpenSSL-BE.
+        let (x_le, y_le) = pub_key[..pub_key_len].split_at(coord_len);
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        for (dst, src) in x_be[..coord_len].iter_mut().zip(x_le.iter().rev()) {
+            *dst = *src;
+        }
+        for (dst, src) in y_be[..coord_len].iter_mut().zip(y_le.iter().rev()) {
+            *dst = *src;
+        }
+
+        let key = EccPublicKey::from_coordinates(
+            to_ecc_curve(curve),
+            &x_be[..coord_len],
+            &y_be[..coord_len],
+        )
+        .map_err(|_| HsmError::InvalidArg)?;
+
+        // Reverse each sig half from wire-LE to OpenSSL-BE.
+        let (r_le, s_le) = signature[..sig_len].split_at(coord_len);
+        let mut sig_be = [0u8; 132];
+        for (dst, src) in sig_be[..coord_len].iter_mut().zip(r_le.iter().rev()) {
+            *dst = *src;
+        }
+        for (dst, src) in sig_be[coord_len..sig_len].iter_mut().zip(s_le.iter().rev()) {
+            *dst = *src;
+        }
+
+        self.ecc.ecc_verify(&key, hash, &sig_be[..sig_len]).await
     }
 
     /// ECDH key agreement — derives a shared secret.
+    ///
+    /// Per the [`HsmEcc::ecdh_derive`] trait contract, `pub_key` is the
+    /// raw uncompressed point `x || y` with **each coordinate in
+    /// little-endian** byte order.  We reverse each coordinate before
+    /// handing to OpenSSL.
     async fn ecdh_derive(
         &self,
         _io: &impl HsmIo,
-        _curve: HsmEccCurve,
+        curve: HsmEccCurve,
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
+        let coord_len = curve.priv_key_len();
+        let pub_key_len = curve.pub_key_len();
+        if pub_key.len() < pub_key_len {
+            return Err(HsmError::InvalidArg);
+        }
+
         let pk = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
-        let pubk = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecdh_derive(&pk, &pubk, secret).await
+
+        let (x_le, y_le) = pub_key[..pub_key_len].split_at(coord_len);
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        for (dst, src) in x_be[..coord_len].iter_mut().zip(x_le.iter().rev()) {
+            *dst = *src;
+        }
+        for (dst, src) in y_be[..coord_len].iter_mut().zip(y_le.iter().rev()) {
+            *dst = *src;
+        }
+        let pubk = EccPublicKey::from_coordinates(
+            to_ecc_curve(curve),
+            &x_be[..coord_len],
+            &y_be[..coord_len],
+        )
+        .map_err(|_| HsmError::InvalidArg)?;
+
+        self.ecc.ecdh_derive(&pk, &pubk, &mut secret[..]).await
     }
 }

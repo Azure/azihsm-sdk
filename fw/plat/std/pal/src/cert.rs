@@ -384,7 +384,13 @@ impl StdHsmPal {
             if idx >= NUM_PARTITIONS {
                 return Err(HsmError::InvalidArg);
             }
-            if table.entries[idx].state == PartState::Unallocated {
+            // Reject Unallocated and Disabled — in both cases the
+            // partition has no live identity key to sign against
+            // (Unallocated has no `id_pub_key` at all; Disabled has
+            // a zeroed one).  Allocated is fine: `part_alloc`
+            // provisions `id_pub_key` before transitioning.
+            let state = table.entries[idx].state;
+            if state == PartState::Unallocated || state == PartState::Disabled {
                 return Err(HsmError::InvalidArg);
             }
             if table.entries[idx].leaf_cert_len > 0 {

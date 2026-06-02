@@ -11,7 +11,7 @@ pub struct DdiEccSignReq<'a> {
     #[ddi(id = 1)]
     pub key_id: u16,
     #[ddi(id = 2, max_len = 96)]
-    pub digest: &'a DmaBuf,
+    pub digest: &'a mut DmaBuf,
     #[ddi(id = 3)]
     pub digest_algo: DdiHashAlgorithm,
 }

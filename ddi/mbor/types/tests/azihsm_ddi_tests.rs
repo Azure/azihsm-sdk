@@ -5,13 +5,16 @@
 #[cfg(test)]
 mod integration {
     pub mod aes_cbc;
+    pub mod aes_cbc_smoke;
     pub mod aes_gcm_bulk_stress;
     pub mod aes_generate;
+    pub mod aes_generate_smoke;
     pub mod aes_xts_bulk_stress;
     pub mod aes_xts_encrypt_decrypt;
     pub mod attest_key;
     pub mod change_pin;
     pub mod close_session;
+    pub mod close_session_smoke;
     pub mod common;
     pub mod ddi_dev_info;
     pub mod delete_key;
@@ -24,6 +27,7 @@ mod integration {
     pub mod ecdh_384_key_exchange;
     pub mod ecdh_521_key_exchange;
     pub mod establish_credential;
+    pub mod establish_credential_smoke;
     pub mod extension_support;
     pub mod flush_session;
     pub mod get_api_rev;
@@ -32,6 +36,7 @@ mod integration {
     pub mod get_device_info;
     pub mod get_establish_cred_encryption_key;
     pub mod get_session_encryption_key;
+    pub mod get_session_encryption_key_smoke;
     pub mod get_unwrapping_key;
     pub mod hmac;
     pub mod init_bk3_smoke;
@@ -50,6 +55,7 @@ mod integration {
     pub mod open_key;
     pub mod open_key_no_import;
     pub mod open_session;
+    pub mod open_session_smoke;
     pub mod prov_part;
     pub mod reopen_session;
     pub mod rsa_2k_decrypt_no_crt;
