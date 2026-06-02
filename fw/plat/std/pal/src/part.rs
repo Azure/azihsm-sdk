@@ -488,10 +488,14 @@ impl HsmPartitionManager for StdHsmPal {
         io: &impl HsmIo,
         out: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
-        copy_out(
-            &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key,
-            out,
-        )
+        // Stored internally as big-endian `x ∥ y` (OpenSSL convention).
+        // The wire contract — matching real PKA hardware — is
+        // little-endian, and the host-side `post_decode_fn` on
+        // `DdiDerPublicKey` reverses each coord back to big-endian
+        // before DER-encoding.  Reverse each coord here so the wire
+        // bytes are LE.
+        let raw = &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key;
+        copy_out_pub_key_le(raw, out)
     }
 
     fn part_clear_establish_cred_key(&self, io: &impl HsmIo) -> HsmResult<()> {
@@ -677,6 +681,28 @@ impl HsmPartitionManager for StdHsmPal {
 
     fn part_is_credential_set(&self, io: &impl HsmIo) -> HsmResult<bool> {
         Ok(self.enabled_part(u8::from(io.pid()))?.credential_set)
+    }
+
+    fn part_verify_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()> {
+        if id.len() != 16 || pin.len() != 16 {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        if !part.credential_set {
+            return Err(HsmError::InvalidAppCredentials);
+        }
+        // Constant-time compare both fields fully regardless of any
+        // mismatch in either, so we don't leak which one was wrong via
+        // timing.
+        let mut diff = 0u8;
+        for i in 0..16 {
+            diff |= part.credential_id[i] ^ id[i];
+            diff |= part.credential_pin[i] ^ pin[i];
+        }
+        if diff != 0 {
+            return Err(HsmError::InvalidAppCredentials);
+        }
+        Ok(())
     }
 
     fn part_is_provisioned(&self, io: &impl HsmIo) -> HsmResult<bool> {
@@ -931,6 +957,38 @@ impl StdHsmPal {
             .with_local(true)
             .with_derive(true);
 
+        // If the identity key was wiped (e.g., by a prior part_disable),
+        // regenerate it before any other key — mirrors real hardware
+        // where NSSR/erase always provisions a fresh partition identity
+        // key.  Must be created first so it lands in the same vault
+        // slot the `id_key_id` field was originally bound to.
+        if table.entries[idx].id_key_id.is_none() {
+            let id_attrs = HsmVaultKeyAttrs::new()
+                .with_internal(true)
+                .with_local(true)
+                .with_sign(true);
+            let mut id_pub = [0u8; P384_PUB_KEY_LEN];
+            let id_kid = self
+                .create_internal_ecc384_key(
+                    pid,
+                    HsmVaultKeyKind::Ecc384Private,
+                    id_attrs,
+                    HsmEccPct::SignVerify,
+                    &mut id_pub,
+                )
+                .await?;
+            let table = unsafe { &mut *self.part_table.get() };
+            let entry = &mut table.entries[idx];
+            entry.id_key_id = Some(id_kid);
+            entry.id_pub_key = id_pub;
+            // Defensive: a `GetCertificate` request that slipped in
+            // between `part_disable` and here would have rebuilt the
+            // leaf-cert cache over the zeroed `id_pub_key`.  Invalidate
+            // again so the next request rebuilds against the fresh key.
+            entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+            entry.leaf_cert_len = 0;
+        }
+
         // Generate establish-credential encryption ECC-384 key pair.
         let mut ec_pub = [0u8; P384_PUB_KEY_LEN];
         let ec_kid = self
@@ -1127,6 +1185,15 @@ impl StdHsmPal {
         entry.session_enc_pub_key.fill(0);
 
         entry.nonce.fill(0);
+
+        // Take id_key_id BEFORE vault.clear() so part_enable_internal
+        // knows the identity key was wiped and needs to be regenerated.
+        // The cached leaf cert is keyed off the old id_pub_key so it
+        // must also be invalidated.
+        entry.id_key_id = None;
+        entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+        entry.leaf_cert_len = 0;
+
         entry.vault.clear();
         entry.session_table = SessionTable::new();
         entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);

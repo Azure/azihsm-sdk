@@ -772,6 +772,30 @@ pub trait HsmPartitionManager {
     /// Returns whether the partition's user credential is already set.
     fn part_is_credential_set(&self, io: &impl HsmIo) -> HsmResult<bool>;
 
+    /// Constant-time compares `id` and `pin` against the partition's
+    /// stored user credential.
+    ///
+    /// Used by `OpenSession` to authenticate the credential the host
+    /// just decrypted from the wrapped session-credential payload.
+    /// Both fields are compared even when the first mismatches so a
+    /// timing side-channel cannot distinguish "wrong id" from "wrong
+    /// pin" — both yield [`HsmError::InvalidAppCredentials`].
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `id` — 16-byte user credential identifier to compare.
+    /// - `pin` — 16-byte user credential PIN to compare.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — both `id` and `pin` match the stored credential.
+    /// - `Err(HsmError::InvalidAppCredentials)` — credential is not
+    ///   yet set, or either field does not match.
+    /// - `Err(HsmError::InvalidArg)` — `id` or `pin` length differs
+    ///   from 16 bytes.
+    fn part_verify_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()>;
+
     /// Returns whether the partition has been fully provisioned.
     ///
     /// A partition is provisioned when it has a masking key (MK)
