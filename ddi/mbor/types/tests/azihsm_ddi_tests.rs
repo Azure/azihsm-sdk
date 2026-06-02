@@ -20,7 +20,9 @@ mod integration {
     pub mod delete_key;
     pub mod device_handle_session;
     pub mod ecc_generate;
+    pub mod ecc_generate_smoke;
     pub mod ecc_sign_compat;
+    pub mod ecc_sign_smoke;
     pub mod ecc_sign_stress;
     pub mod ecc_sign_verify;
     pub mod ecdh_256_key_exchange;

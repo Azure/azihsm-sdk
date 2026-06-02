@@ -1124,9 +1124,10 @@ impl StdHsmPal {
     /// into `pub_key_out`.
     ///
     /// Bypasses [`HsmEcc::ecc_gen_keypair`] (which now requires an
-    /// `HsmIo`) and drives the [`StdEcc`](crate::drivers::ecc::StdEcc)
-    /// driver directly — this helper runs from the partition lifecycle
-    /// task where no IO context exists.
+    /// `HsmIo` and a scoped allocator) and drives the
+    /// [`StdEcc`](crate::drivers::ecc::StdEcc) driver directly — this
+    /// helper runs from the partition lifecycle task where neither
+    /// an IO context nor a scoped allocator exists.
     ///
     /// Returns the vault key ID.
     async fn create_internal_ecc384_key(
