@@ -17,7 +17,10 @@ namespace
 
 uint32_t manufacturer_cert_chain_size_hint(uint32_t actual_size)
 {
-    return actual_size + (actual_size / 2) + (actual_size % 2);
+    constexpr uint32_t u32_max = static_cast<uint32_t>(-1);
+    const uint64_t actual = actual_size;
+    const uint64_t hint = actual + (actual / 2) + (actual % 2);
+    return hint > u32_max ? u32_max : static_cast<uint32_t>(hint);
 }
 
 bool get_manufacturer_cert_chain_size_hint(azihsm_handle part, uint32_t &size_hint)
