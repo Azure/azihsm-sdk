@@ -636,6 +636,17 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GE(prop.len, actual_size);
+
+        // Retry with the hinted size must succeed, covering the retry contract.
+        uint32_t retry_size = prop.len;
+        std::vector<uint8_t> retry_buffer(retry_size);
+        prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
+                 retry_buffer.data(),
+                 retry_size };
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(prop.len, 0u);
+        ASSERT_LE(prop.len, retry_size);
     });
 }
 
