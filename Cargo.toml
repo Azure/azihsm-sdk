@@ -17,23 +17,48 @@ members = [
   "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
   "crates/x509",
+  "ddi/emu",
   "ddi/interface",
   "ddi/lib",
+  "ddi/mbor/codec",
+  "ddi/mbor/derive",
+  "ddi/mbor/sim",
+  "ddi/mbor/test_helpers",
+  "ddi/mbor/types",
   "ddi/mock",
   "ddi/nix",
   "ddi/res_test_dev",
-  "ddi/serde/derive",
-  "ddi/serde/mbor",
-  "ddi/serde/types",
-  "ddi/sim",
-  "ddi/test_helpers",
+  "ddi/tbor/codec",
+  "ddi/tbor/derive",
+  "ddi/tbor/test_helpers",
+  "ddi/tbor/types",
   "ddi/win",
+  "fw/core/crypto/aes-cbc-pad",
+  "fw/core/crypto/gcm-buf",
+  "fw/core/crypto/hpke",
+  "fw/core/crypto/masked-key",
+  "fw/core/ddi/mbor/api",
+  "fw/core/ddi/mbor/codec",
+  "fw/core/ddi/mbor/derive",
+  "fw/core/ddi/mbor/types",
+  "fw/core/ddi/tbor/api",
+  "fw/core/ddi/tbor/codec",
+  "fw/core/ddi/tbor/derive",
+  "fw/core/ddi/tbor/types",
+  "fw/core/lib",
+  "fw/core/tracing",
+  "fw/pal/traits",
+  "fw/plat/std/lib",
+  "fw/plat/std/pal",
+  "fw/plat/std/x509",
+  "fw/plat/std/x509/gen",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
   "tools/resiliency_stress",
   "xtask",
+
 ]
 
 [workspace.dependencies]
@@ -45,18 +70,23 @@ azihsm_api_tests_macro = { path = "api/tests/macro" }
 azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }
 azihsm_ddi = { path = "ddi/lib" }
-azihsm_ddi_derive = { path = "ddi/serde/derive" }
+azihsm_ddi_emu = { path = "ddi/emu" }
 azihsm_ddi_interface = { path = "ddi/interface" }
-azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
-azihsm_ddi_mock = { path = "ddi/mock" }
-azihsm_ddi_nix = { path = "ddi/nix" }
-azihsm_ddi_sim = { path = "ddi/sim" }
-azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
-azihsm_ddi_types = { features = [
+azihsm_ddi_mbor_codec = { path = "ddi/mbor/codec" }
+azihsm_ddi_mbor_derive = { path = "ddi/mbor/derive" }
+azihsm_ddi_mbor_sim = { path = "ddi/mbor/sim" }
+azihsm_ddi_mbor_test_helpers = { path = "ddi/mbor/test_helpers" }
+azihsm_ddi_mbor_types = { features = [
   "array",
   "post_decode",
   "pre_encode",
-], path = "ddi/serde/types" }
+], path = "ddi/mbor/types" }
+azihsm_ddi_mock = { path = "ddi/mock" }
+azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
+azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
+azihsm_ddi_tbor_test_helpers = { path = "ddi/tbor/test_helpers" }
+azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
@@ -66,23 +96,61 @@ test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }
 
+# Firmware crates — MBOR
+azihsm_fw_ddi_mbor = { path = "fw/core/ddi/mbor/codec" }
+azihsm_fw_ddi_mbor_api = { path = "fw/core/ddi/mbor/api" }
+azihsm_fw_ddi_mbor_derive = { path = "fw/core/ddi/mbor/derive" }
+azihsm_fw_ddi_mbor_types = { path = "fw/core/ddi/mbor/types" }
+
+# Firmware crates — TBOR
+azihsm_fw_ddi_tbor = { path = "fw/core/ddi/tbor/codec" }
+azihsm_fw_ddi_tbor_api = { path = "fw/core/ddi/tbor/api" }
+azihsm_fw_ddi_tbor_derive = { path = "fw/core/ddi/tbor/derive" }
+azihsm_fw_ddi_tbor_types = { path = "fw/core/ddi/tbor/types" }
+
+# Firmware crates — crypto
+azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
+azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
+azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
+azihsm_fw_core_crypto_masked_key = { path = "fw/core/crypto/masked-key" }
+
+# Firmware crates — common
+azihsm_fw_hsm_core = { path = "fw/core/lib" }
+azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
+azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
+azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
+azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
+azihsm_fw_hsm_std_x509 = { path = "fw/plat/std/x509" }
+azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
+
+# Embassy crates
+embassy-executor = "0.10.0"
+embassy-futures = "0.1.2"
+embassy-sync = "0.8.0"
+embassy-time = "0.5.1"
+embassy-time-driver = "0.2.2"
+embassy-time-queue-utils = "0.3.1"
+
 # Public crates
 anyhow = "1.0"
 arbitrary = "1"
 asn1 = "0.23.0"
+async-channel = "2.0.0"
 bitfield = "0.19.1"
-bitfield-struct = "0.5"
+bitfield-struct = "0.13.0"
 bitflags = "2.10.0"
 cfg-if = "1"
 chrono = "0.4.31"
 clap = "4.2"
 cmake = "0.1.57"
 convert_case = "0.6.0"
+critical-section = "1.2.0"
 darling = "0.20.11"
 delegate = "0.13.3"
 der = "0.7.8"
 env_logger = "0.11.8"
 fs2 = "0.4.3"
+getrandom = "0.2"
 glob = "0.3"
 hex = "0.4.3"
 is-terminal = "0.4"
@@ -92,11 +160,14 @@ jzon = "0.12.5"
 lazy_static = "1.5.0"
 libc = "0.2"
 libtest-mimic = "0.8.1"
+lit = "1.0.4"
 log = "0.4"
+memmap2 = "0.9"
 minicbor = "0.19.1"
 nix = "0.26"
+num-bigint = "0.4"
 open-enum = "0.3.0"
-openssl = "0.10.68"
+openssl = "0.10.79"
 openssl-sys = "0.9"
 p384 = "0.13.0"
 parking_lot = "0.12"
@@ -104,15 +175,18 @@ pastey = "0.2.1"
 pem-rfc7468 = "0.7.0"
 pkcs1 = "0.7.5"
 pkcs8 = "0.10.2"
-proc-macro2 = "1.0.103"
+proc-macro2 = "1.0.106"
 quote = "1.0"
 rand = "0.10.1"
 sec1 = "=0.8.0-rc.10"
+serial_test = "3.3.1"
 similar = "2.4"
 spki = "0.7.3"
+static_cell = "2"
 syn = "2"
 test-log = "0.2.8"
 thiserror = "1.0"
+tokio = "1.0.0"
 toml_edit = "0.25.11"
 tracing = "0.1"
 tracing-subscriber = "0.3.16"

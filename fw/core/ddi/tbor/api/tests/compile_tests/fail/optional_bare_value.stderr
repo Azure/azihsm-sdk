@@ -1,0 +1,22 @@
+error[E0308]: mismatched types
+  --> tests/compile_tests/fail/optional_bare_value.rs:17:14
+   |
+17 |         .opt(42u16).unwrap() // ERROR: expected Option<u16>, got u16
+   |          --- ^^^^^ expected `Option<u16>`, found `u16`
+   |          |
+   |          arguments to this method are incorrect
+   |
+   = note: expected enum `Option<u16>`
+              found type `u16`
+note: method defined here
+  --> tests/compile_tests/fail/optional_bare_value.rs:10:5
+   |
+ 7 | #[tbor(opcode = 0x05)]
+   | ----------------------
+...
+10 |     opt: Option<u16>,
+   |     ^^^
+help: try wrapping the expression in `Some`
+   |
+17 |         .opt(Some(42u16)).unwrap() // ERROR: expected Option<u16>, got u16
+   |              +++++     +

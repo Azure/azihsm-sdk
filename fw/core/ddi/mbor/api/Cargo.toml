@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_ddi_mbor_api"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+
+[dependencies]
+azihsm_fw_ddi_mbor.workspace = true
+azihsm_fw_ddi_mbor_types.workspace = true
+azihsm_fw_hsm_pal_traits.workspace = true
+
+[lints]
+workspace = true

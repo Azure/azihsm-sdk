@@ -36,7 +36,7 @@ impl MobkProviderCallback for DummyMobkCallback {
 }
 
 /// Builds a valid caller-source OBK config. Uses a previously-cached
-/// MOBK for this partition path (from any prior init in any process)
+/// MOBK for this partition path (from any prior init in this process)
 /// when available, since the device's `init_bk3` is one-shot per
 /// power cycle.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {

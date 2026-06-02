@@ -9,7 +9,7 @@
 # they do not run in parallel with any other test or each other.
 [[profile.ci-mock.overrides]]
 filter = "test(resiliency::stress::) or test(_resiliency_stress::)"
-threads-required = "num-cpus"
+# threads-required = "num-cpus"
 
 [profile.ci-mock.junit]
 path = "junit.xml"
@@ -24,6 +24,11 @@ path = "junit.xml"
 
 # profile for running all mock tests w/ table-64
 [profile.ci-mock-table-64.junit]
+path = "junit.xml"
+
+# profile for running the TBOR types tests against the emu backend
+# (in-process firmware).
+[profile.ci-tbor-emu.junit]
 path = "junit.xml"
 
 # profile for running integration tests

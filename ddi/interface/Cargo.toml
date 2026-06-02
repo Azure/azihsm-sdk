@@ -11,7 +11,9 @@ doctest = false
 test = false
 
 [dependencies]
-azihsm_ddi_types.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+azihsm_ddi_tbor_codec.workspace = true
+azihsm_ddi_tbor_types.workspace = true
 minicbor = { features = ["derive", "std"], workspace = true }
 thiserror.workspace = true
 

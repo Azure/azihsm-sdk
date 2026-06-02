@@ -14,7 +14,7 @@ mod cred_encrypt;
 mod error;
 
 use azihsm_crypto::*;
-use azihsm_ddi_mbor::MborByteArray;
-use azihsm_ddi_types::*;
+use azihsm_ddi_mbor_codec::MborByteArray;
+use azihsm_ddi_mbor_types::*;
 pub use cred_encrypt::*;
 pub use error::*;

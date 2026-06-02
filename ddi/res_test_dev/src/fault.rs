@@ -11,7 +11,7 @@
 //! - [`FaultAction::ReturnError`] — returns the error immediately
 //!   instead of delegating to the inner mock.
 //! - [`FaultAction::TriggerReset`] — performs a device reset
-//!   (`simulate_nssr_after_lm`) *then* lets the inner mock handle the
+//!   (`erase`) *then* lets the inner mock handle the
 //!   call, which will fail naturally because credentials are wiped.
 //!
 //! # Per-op call tracking
@@ -25,8 +25,8 @@ use std::collections::HashMap;
 
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DriverError;
-use azihsm_ddi_types::DdiOp;
-use azihsm_ddi_types::DdiStatus;
+use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiStatus;
 use parking_lot::Mutex;
 
 /// Per-op call counters — keyed by the `DdiOp` inner `u32` value.
@@ -86,7 +86,7 @@ impl FaultError {
 pub enum FaultAction {
     /// Return the given error immediately — the inner DDI op is *not* called.
     ReturnError(FaultError),
-    /// Trigger a device reset (`simulate_nssr_after_lm`) then let the
+    /// Trigger a device reset (`erase`) then let the
     /// inner DDI op proceed. The op will fail naturally because the
     /// reset wiped all established credentials.
     TriggerReset,
