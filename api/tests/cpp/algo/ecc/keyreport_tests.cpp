@@ -582,6 +582,8 @@ TEST_F(azihsm_ecc_keyattest, failed_attestation_does_not_modify_output_buffer)
             pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> report_data(129, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -594,7 +596,7 @@ TEST_F(azihsm_ecc_keyattest, failed_attestation_does_not_modify_output_buffer)
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
 
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(report, original_report);
     });
 }
@@ -671,6 +673,7 @@ TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
         });
     }
 }
+
 TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves)
 {
     std::vector<KeyAttestTestParams> curve_cases = {
