@@ -103,8 +103,8 @@ fn aes_key_size_to_kind(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKin
 /// attribute set for a non-bulk AES key.
 ///
 /// AES (non-bulk) keys can only carry the `EncryptDecrypt` usage.
-/// Any other single-usage request (sign+verify, derive, unwrap) is
-/// rejected with `InvalidPermissions`, mirroring the reference
+/// Any other usage flag — sign, verify, derive, wrap, or unwrap —
+/// is rejected with `InvalidPermissions`, mirroring the reference
 /// firmware's `Kind::allows_usage` check.
 ///
 /// Internally-generated keys always carry `local = true`.
@@ -116,11 +116,18 @@ fn build_attrs_for_aes(
     let sign_verify = metadata.sign() && metadata.verify();
     let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();
     let derive = metadata.derive();
+    let wrap = metadata.wrap();
     let unwrap = metadata.unwrap();
 
-    // Exactly one usage.
-    let usage_count =
-        (sign_verify as u8) + (encrypt_decrypt as u8) + (derive as u8) + (unwrap as u8);
+    // Exactly one usage — all five mutually-exclusive usage flags are
+    // counted so a host that piles on extras (e.g.
+    // encrypt+decrypt+wrap) is rejected instead of silently dropping
+    // the unsupported bits.
+    let usage_count = (sign_verify as u8)
+        + (encrypt_decrypt as u8)
+        + (derive as u8)
+        + (wrap as u8)
+        + (unwrap as u8);
     if usage_count != 1 {
         return Err(HsmError::InvalidPermissions);
     }

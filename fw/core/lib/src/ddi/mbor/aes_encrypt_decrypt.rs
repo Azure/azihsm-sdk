@@ -18,10 +18,6 @@ use super::*;
 /// AES-CBC block size in bytes — also the required IV length.
 const AES_BLOCK_LEN: usize = 16;
 
-/// Maximum AES-CBC message length per request, matching the host
-/// `DdiAesEncryptDecryptReq::MAX_MSG_SIZE`.
-const MAX_MSG_LEN: usize = 1024;
-
 /// Handle `DdiAesEncryptDecryptCmd`.
 pub(crate) async fn aes_encrypt_decrypt<'p, P: HsmPal>(
     pal: &'p P,
@@ -36,13 +32,14 @@ pub(crate) async fn aes_encrypt_decrypt<'p, P: HsmPal>(
     let op = ddi_to_pal_aes_op(body.op)?;
 
     // IV must be exactly one block, message must be non-empty,
-    // multiple of one block, and within the wire max.
+    // multiple of one block, and within the wire max (single source
+    // of truth: `DdiAesEncryptDecryptReq::MAX_MSG_SIZE`).
     if body.iv.len() != AES_BLOCK_LEN {
         return Err(HsmError::InvalidArg);
     }
     if body.msg.is_empty()
         || !body.msg.len().is_multiple_of(AES_BLOCK_LEN)
-        || body.msg.len() > MAX_MSG_LEN
+        || body.msg.len() > DdiAesEncryptDecryptReq::MAX_MSG_SIZE
     {
         return Err(HsmError::InvalidArg);
     }
@@ -64,12 +61,16 @@ pub(crate) async fn aes_encrypt_decrypt<'p, P: HsmPal>(
     }
     let key = pal.vault_key(io, key_id)?;
 
-    // Reserve the response with the exact wire sizes, copy the
-    // request message + IV into the response slots, and run the
-    // in-place AES-CBC transform directly inside those slots — no
-    // scratch buffer needed.  The encoder layout produces disjoint
-    // `&mut DmaBuf` views for `msg` and `iv`, so we can pass both to
-    // the PAL call without overlap.
+    // Reserve the response with the exact wire sizes, then run the
+    // AES-CBC transform with the slots wired up as follows:
+    //   - request msg is staged into the response `msg` slot, which
+    //     is then transformed in place;
+    //   - request iv is consumed as the input IV (`iv_in`);
+    //   - the updated chaining IV produced by the AES engine is
+    //     written directly into the response `iv` slot.
+    // No scratch buffers are needed: the encoder layout produces
+    // disjoint `&mut DmaBuf` views for `msg` and `iv`, so we can
+    // pass both to the PAL call without overlap.
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
         let mut encoder = super::encode_resp_hdr(
             &super::success_hdr_sess(hdr, DdiOp::AesEncryptDecrypt, sess_id),

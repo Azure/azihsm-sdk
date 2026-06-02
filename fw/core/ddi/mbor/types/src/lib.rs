@@ -443,9 +443,11 @@ mod tests {
     /// The blob byte pattern below corresponds to a metadata payload
     /// with bits 0, 2, 4, 6, 8 set (alternating in byte 0 — `0x55`
     /// — and bit 0 of byte 1 — `0x01`).  Any reordering / shifting
-    /// of the `BIT_FLAG_*` constants on either side of the wire will
-    /// fail this test.  Keep in lockstep with the host-side test in
-    /// `ddi/mbor/types/src/metadata.rs`.
+    /// of the `BIT_FLAG_*` constants on the firmware side will fail
+    /// this test.  The asserted positions must match the host-side
+    /// `BIT_FLAG_*` definitions in `ddi/mbor/types/src/metadata.rs`
+    /// (lines 19-27 at time of writing) — those constants are the
+    /// wire contract this test pins against.
     #[test]
     fn metadata_bit_positions_match_host_wire_contract() {
         let m = DdiTargetKeyMetadata {
