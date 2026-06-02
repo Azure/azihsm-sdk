@@ -250,10 +250,7 @@ fn copy_to_part_prop_with_len_hint(
     let required_len = u32::try_from(bytes.len()).map_err(|_| AzihsmStatus::InvalidArgument)?;
 
     if part_prop.len < required_len {
-        let suggested_len = u32::try_from(suggested_len)
-            .unwrap_or(u32::MAX)
-            .max(required_len);
-        part_prop.len = suggested_len;
+        part_prop.len = suggested_len as u32;
         Err(AzihsmStatus::BufferTooSmall)?;
     }
 
