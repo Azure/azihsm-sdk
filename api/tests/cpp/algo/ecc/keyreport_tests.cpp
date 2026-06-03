@@ -12,6 +12,7 @@
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
 
+/// Test fixture for ECC key attestation tests across available partition sessions.
 class azihsm_ecc_keyattest : public ::testing::Test
 {
   protected:
@@ -25,6 +26,8 @@ struct KeyAttestTestParams
     const char *test_name;
 };
 
+/// Verifies that key attestation succeeds for generated ECC private keys across all supported
+/// curves.
 TEST_F(azihsm_ecc_keyattest, attest_key_all_curves)
 {
     std::vector<KeyAttestTestParams> test_cases = {
@@ -89,6 +92,7 @@ TEST_F(azihsm_ecc_keyattest, attest_key_all_curves)
     }
 }
 
+/// Verifies that key attestation rejects a null report data buffer.
 TEST_F(azihsm_ecc_keyattest, null_report_data_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -114,6 +118,7 @@ TEST_F(azihsm_ecc_keyattest, null_report_data_buffer)
     });
 }
 
+/// Verifies that key attestation rejects a null report output buffer.
 TEST_F(azihsm_ecc_keyattest, null_report_output_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -140,6 +145,7 @@ TEST_F(azihsm_ecc_keyattest, null_report_output_buffer)
     });
 }
 
+/// Verifies that key attestation rejects an invalid key handle.
 TEST_F(azihsm_ecc_keyattest, invalid_key_handle)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -158,6 +164,7 @@ TEST_F(azihsm_ecc_keyattest, invalid_key_handle)
     });
 }
 
+/// Verifies that key attestation fails when attempted with an ECC public key.
 TEST_F(azihsm_ecc_keyattest, public_key_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -188,6 +195,7 @@ TEST_F(azihsm_ecc_keyattest, public_key_fails)
     });
 }
 
+/// Verifies that key attestation succeeds with zero-length report data.
 TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -221,6 +229,7 @@ TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds)
     });
 }
 
+/// Verifies that key attestation succeeds with one byte of report data.
 TEST_F(azihsm_ecc_keyattest, one_byte_report_data_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -255,6 +264,7 @@ TEST_F(azihsm_ecc_keyattest, one_byte_report_data_succeeds)
     });
 }
 
+/// Verifies that key attestation succeeds with the maximum supported report data length.
 TEST_F(azihsm_ecc_keyattest, max_length_report_data_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -290,6 +300,7 @@ TEST_F(azihsm_ecc_keyattest, max_length_report_data_succeeds)
     });
 }
 
+/// Verifies that key attestation rejects report data larger than the maximum supported length.
 TEST_F(azihsm_ecc_keyattest, report_data_larger_than_max_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -319,6 +330,7 @@ TEST_F(azihsm_ecc_keyattest, report_data_larger_than_max_fails)
     });
 }
 
+/// Verifies that key attestation rejects a null report data pointer with a nonzero length.
 TEST_F(azihsm_ecc_keyattest, report_data_null_ptr_with_nonzero_len_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -346,6 +358,7 @@ TEST_F(azihsm_ecc_keyattest, report_data_null_ptr_with_nonzero_len_fails)
     });
 }
 
+/// Verifies that a too-small output buffer reports the required attestation report size.
 TEST_F(azihsm_ecc_keyattest, output_buffer_too_small_reports_required_size)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -376,6 +389,7 @@ TEST_F(azihsm_ecc_keyattest, output_buffer_too_small_reports_required_size)
     });
 }
 
+/// Verifies that key attestation succeeds when the output buffer is exactly the required size.
 TEST_F(azihsm_ecc_keyattest, exact_sized_output_buffer_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -425,6 +439,7 @@ TEST_F(azihsm_ecc_keyattest, exact_sized_output_buffer_succeeds)
     });
 }
 
+/// Verifies that successful key attestation does not modify the input report data.
 TEST_F(azihsm_ecc_keyattest, valid_report_generation_does_not_modify_report_data)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -463,6 +478,7 @@ TEST_F(azihsm_ecc_keyattest, valid_report_generation_does_not_modify_report_data
     });
 }
 
+/// Verifies that repeated key attestation succeeds for the same ECC private key.
 TEST_F(azihsm_ecc_keyattest, repeated_attestation_succeeds_for_same_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -503,6 +519,7 @@ TEST_F(azihsm_ecc_keyattest, repeated_attestation_succeeds_for_same_key)
     });
 }
 
+/// Verifies that key attestation rejects a null output buffer pointer with a nonzero length.
 TEST_F(azihsm_ecc_keyattest, output_buffer_null_ptr_with_nonzero_len_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -532,6 +549,7 @@ TEST_F(azihsm_ecc_keyattest, output_buffer_null_ptr_with_nonzero_len_fails)
     });
 }
 
+/// Verifies that key attestation succeeds when the output buffer is larger than required.
 TEST_F(azihsm_ecc_keyattest, oversized_output_buffer_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -570,6 +588,7 @@ TEST_F(azihsm_ecc_keyattest, oversized_output_buffer_succeeds)
     });
 }
 
+/// Verifies that failed key attestation does not modify the output buffer.
 TEST_F(azihsm_ecc_keyattest, failed_attestation_does_not_modify_output_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -603,6 +622,8 @@ TEST_F(azihsm_ecc_keyattest, failed_attestation_does_not_modify_output_buffer)
     });
 }
 
+/// Verifies that size-query attestation fails when report data has a null pointer and nonzero
+/// length.
 TEST_F(azihsm_ecc_keyattest, invalid_report_data_size_query_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -631,6 +652,7 @@ TEST_F(azihsm_ecc_keyattest, invalid_report_data_size_query_fails)
     });
 }
 
+/// Verifies that zero-length report data succeeds for key attestation across all supported curves.
 TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
 {
     std::vector<KeyAttestTestParams> test_cases = {
@@ -676,6 +698,8 @@ TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
     }
 }
 
+/// Verifies that boundary report data lengths succeed for key attestation across all supported
+/// curves.
 TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves)
 {
     std::vector<KeyAttestTestParams> curve_cases = {
