@@ -235,23 +235,24 @@ fn copy_to_part_prop(part_prop: &mut AzihsmPartProp, bytes: &[u8]) -> Result<(),
     copy_to_part_prop_with_len_hint(part_prop, bytes, bytes.len())
 }
 
-/// Copy a byte slice into a partition property buffer with a caller-visible minimum buffer length.
+/// Copy a byte slice into a partition property buffer, reporting a larger size hint on shortage.
 ///
-/// When `part_prop.len` is smaller than `min_buffer_len`, this returns
-/// [`AzihsmStatus::BufferTooSmall`] and updates `part_prop.len` to `min_buffer_len`. On success,
-/// it copies `bytes` into the caller buffer and updates `part_prop.len` to the actual byte count.
+/// If `part_prop.len` is large enough to hold `bytes`, the copy succeeds and `part_prop.len`
+/// is set to the actual byte count. If the caller's buffer is too small, `part_prop.len` is set
+/// to `max(bytes.len(), suggested_len)`, capped at `u32::MAX` if needed, and
+/// [`AzihsmStatus::BufferTooSmall`] is returned. The suggestion is advisory only — a caller
+/// buffer that already fits `bytes` never fails, even if
+/// it is smaller than `suggested_len`.
 fn copy_to_part_prop_with_len_hint(
     part_prop: &mut AzihsmPartProp,
     bytes: &[u8],
-    min_buffer_len: usize,
+    suggested_len: usize,
 ) -> Result<(), AzihsmStatus> {
     let required_len = u32::try_from(bytes.len()).map_err(|_| AzihsmStatus::InvalidArgument)?;
-    let min_buffer_len = u32::try_from(min_buffer_len)
-        .unwrap_or(u32::MAX)
-        .max(required_len);
 
-    if part_prop.len < min_buffer_len {
-        part_prop.len = min_buffer_len;
+    if part_prop.len < required_len {
+        let reported_len = suggested_len.max(bytes.len());
+        part_prop.len = u32::try_from(reported_len).unwrap_or(u32::MAX);
         Err(AzihsmStatus::BufferTooSmall)?;
     }
 
@@ -316,4 +317,44 @@ where
     let actual_size = getter(Some(buffer_slice))?;
     part_prop.len = actual_size as u32;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn len_hint_shortage_reports_at_least_required_len() {
+        let bytes = [0u8; 4];
+        let mut part_prop = AzihsmPartProp {
+            id: AzihsmPartPropId::Type,
+            val: std::ptr::null_mut(),
+            len: 0,
+        };
+
+        let result = copy_to_part_prop_with_len_hint(&mut part_prop, &bytes, 2);
+
+        assert_eq!(result, Err(AzihsmStatus::BufferTooSmall));
+        assert_eq!(part_prop.len, bytes.len() as u32);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn len_hint_shortage_saturates_oversized_suggestion() {
+        let bytes = [0u8; 4];
+        let mut part_prop = AzihsmPartProp {
+            id: AzihsmPartPropId::Type,
+            val: std::ptr::null_mut(),
+            len: 0,
+        };
+
+        let result = copy_to_part_prop_with_len_hint(
+            &mut part_prop,
+            &bytes,
+            (u32::MAX as usize).saturating_add(1),
+        );
+
+        assert_eq!(result, Err(AzihsmStatus::BufferTooSmall));
+        assert_eq!(part_prop.len, u32::MAX);
+    }
 }
