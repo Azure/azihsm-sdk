@@ -42,6 +42,7 @@ mod integration {
     pub mod get_session_encryption_key;
     pub mod get_session_encryption_key_smoke;
     pub mod get_unwrapping_key;
+    pub mod get_unwrapping_key_smoke;
     pub mod hkdf_smoke;
     pub mod hmac;
     pub mod hmac_smoke;
@@ -76,6 +77,7 @@ mod integration {
     pub mod rsa_4k_sign;
     pub mod rsa_mod_exp;
     pub mod rsa_unwrap_generated_key;
+    pub mod rsa_unwrap_smoke;
     pub mod sealed_bk3_smoke;
     pub mod secret_hkdf_derive;
     pub mod secret_kbkdf_derive;

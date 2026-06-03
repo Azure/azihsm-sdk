@@ -36,8 +36,10 @@
 //! mode returns the same deterministic sizes.
 
 use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableHsmKey;
+use azihsm_crypto::ImportableKey;
 
 use super::*;
 
@@ -48,6 +50,15 @@ fn to_ecc_curve(curve: HsmEccCurve) -> EccCurve {
         HsmEccCurve::P256 => EccCurve::P256,
         HsmEccCurve::P384 => EccCurve::P384,
         HsmEccCurve::P521 => EccCurve::P521,
+    }
+}
+
+/// Reverse of [`to_ecc_curve`].
+fn from_ecc_curve(curve: EccCurve) -> HsmEccCurve {
+    match curve {
+        EccCurve::P256 => HsmEccCurve::P256,
+        EccCurve::P384 => HsmEccCurve::P384,
+        EccCurve::P521 => HsmEccCurve::P521,
     }
 }
 
@@ -184,5 +195,62 @@ impl HsmEcc for StdHsmPal {
                 &mut secret[..],
             )
             .await
+    }
+
+    /// Parse the imported PKCS#8 DER private key into an OpenSSL
+    /// handle just long enough to read its curve.
+    fn ecc_priv_key_curve(&self, _io: &impl HsmIo, key: &DmaBuf) -> HsmResult<HsmEccCurve> {
+        let pk = EccPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        Ok(from_ecc_curve(EccKeyOp::curve(&pk)))
+    }
+
+    /// Parse the imported PKCS#8 DER private key into an OpenSSL
+    /// handle, derive the matching public key, and delegate to the
+    /// driver's wire-LE pub-key extraction (which handles BE → LE
+    /// reversal and P-521 per-coordinate padding).
+    fn ecc_priv_pub_key(
+        &self,
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        let pk = EccPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        let curve = from_ecc_curve(EccKeyOp::curve(&pk));
+        let wire_len = curve.wire_pub_key_len();
+
+        let Some(out) = pub_out else {
+            return Ok(wire_len);
+        };
+
+        if out.len() < wire_len {
+            return Err(HsmError::InvalidArg);
+        }
+        self.ecc.priv_to_pub_le(&pk, &mut out[..wire_len])?;
+        Ok(wire_len)
+    }
+
+    /// Re-encode the imported PKCS#8 DER private key into the raw
+    /// HSM scalar form the vault stores (so a later
+    /// [`ecc_sign`](HsmEcc::ecc_sign) / [`ecdh_derive`](HsmEcc::ecdh_derive)
+    /// reads it back via `from_hsm_bytes`).  Query-alloc-use.
+    fn ecc_priv_to_hsm(
+        &self,
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        let pk = EccPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        let hsm_len = pk.hsm_bytes_len();
+
+        let Some(out) = out else {
+            return Ok(hsm_len);
+        };
+
+        if out.len() < hsm_len {
+            return Err(HsmError::InvalidArg);
+        }
+        pk.to_hsm_bytes(&mut out[..hsm_len])
+            .map_err(|_| HsmError::EccExportError)?;
+        Ok(hsm_len)
     }
 }

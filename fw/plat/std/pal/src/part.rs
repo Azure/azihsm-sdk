@@ -73,6 +73,13 @@ const P384_COORD_SIZE: usize = 48;
 /// Size of the raw public key (x ∥ y) in bytes.
 pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 
+/// Length of the per-partition cached RSA-2048 unwrap-key public key
+/// in bytes: `modulus_len (256) + pub_exp_len (4) = 260`.  Sized at
+/// the wire-format `n_le || e_le` layout.  Currently the unwrap key
+/// is always RSA-2048; if larger unwrap keys are introduced this
+/// constant must grow accordingly.
+pub(crate) const UNWRAP_RSA_PUB_KEY_LEN: usize = 260;
+
 /// Length of the per-partition VM launch GUID in bytes.
 ///
 /// Matches the prior reference firmware's `VmLaunchGuid` size
@@ -294,6 +301,17 @@ pub(crate) struct PartitionEntry {
     /// Crypto User PSK.  `None` while the well-known default applies;
     /// set to `Some` once `part_psk_set(psk_id=1, ..)` is invoked.
     psk_cu: Option<[u8; PSK_LEN]>,
+    /// Cached wire-format public key (`n_le || e_le`) of the
+    /// partition's unwrapping RSA-2048 key.  Populated atomically
+    /// alongside `unwrapping_key_id`.
+    unwrapping_pub_key: [u8; UNWRAP_RSA_PUB_KEY_LEN],
+
+    /// Whether `unwrapping_pub_key` has been populated.  Kept as a
+    /// separate flag (rather than peeking at the bytes) because a
+    /// freshly generated RSA modulus could theoretically be all
+    /// zeros — vanishingly improbable but cleanest to track
+    /// explicitly.
+    unwrapping_pub_key_set: bool,
 }
 
 impl Default for PartitionEntry {
@@ -330,6 +348,8 @@ impl Default for PartitionEntry {
             unwrapping_key_id: None,
             psk_co: None,
             psk_cu: None,
+            unwrapping_pub_key: [0u8; UNWRAP_RSA_PUB_KEY_LEN],
+            unwrapping_pub_key_set: false,
         }
     }
 }
@@ -821,6 +841,30 @@ impl HsmPartitionManager for StdHsmPal {
             _ => &DEFAULT_PSK_CU[..],
         };
         Ok(stored == default)
+    }
+    fn part_unwrapping_pub_key(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        if !part.unwrapping_pub_key_set {
+            return Ok(0);
+        }
+        let len = part.unwrapping_pub_key.len();
+        if let Some(buf) = out {
+            if buf.len() < len {
+                return Err(HsmError::InvalidArg);
+            }
+            buf[..len].copy_from_slice(&part.unwrapping_pub_key);
+        }
+        Ok(len)
+    }
+
+    fn part_set_unwrapping_pub_key(&self, io: &impl HsmIo, pub_key: &[u8]) -> HsmResult<()> {
+        if pub_key.len() != UNWRAP_RSA_PUB_KEY_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        part.unwrapping_pub_key.copy_from_slice(pub_key);
+        part.unwrapping_pub_key_set = true;
+        Ok(())
     }
 }
 
@@ -1321,5 +1365,7 @@ impl StdHsmPal {
             psk.fill(0);
         }
         entry.psk_cu = None;
+        entry.unwrapping_pub_key.fill(0);
+        entry.unwrapping_pub_key_set = false;
     }
 }

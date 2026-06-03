@@ -348,4 +348,104 @@ pub trait HsmEcc {
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()>;
+
+    /// Introspect the [`HsmEccCurve`] of a freshly imported ECC
+    /// private key supplied as **PKCS#8 DER** (the on-wire import
+    /// encoding recovered by `RsaUnwrap`), without otherwise
+    /// importing the key.
+    ///
+    /// Mirrors [`HsmRsa::rsa_priv_key_size`] for ECC imports —
+    /// used by the firmware-side `RsaUnwrap` handler to tag the
+    /// vault entry with the right curve-private kind after a
+    /// successful unwrap.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — imported private key in PKCS#8 DER.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(HsmEccCurve)` — curve the key was generated on.
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as an ECC
+    ///   private key on a supported curve (P-256 / P-384 / P-521).
+    fn ecc_priv_key_curve(&self, io: &impl HsmIo, key: &DmaBuf) -> HsmResult<HsmEccCurve>;
+
+    /// Extract the wire-format public key (`x_le || y_le`, padded
+    /// to `curve.wire_pub_key_len()` bytes for P-521) from a
+    /// freshly imported ECC private key supplied as **PKCS#8 DER**,
+    /// using the query-alloc-use pattern:
+    ///
+    /// 1. **Query** — call with `pub_out = None` to learn the
+    ///    wire-format length the caller must allocate
+    ///    ([`HsmEccCurve::wire_pub_key_len`]).
+    /// 2. **Alloc** — caller allocates a DMA buffer of that size.
+    /// 3. **Use** — call with `pub_out = Some(buf)` to write the
+    ///    wire-format pub key into `buf` and receive the actual
+    ///    length (always equal to the query result).
+    ///
+    /// Used by the firmware-side `RsaUnwrap` handler to populate
+    /// the `pub_key` field of its response so callers can verify
+    /// the imported private key bytewise without an extra DDI
+    /// round-trip.  Mirrors [`HsmRsa::rsa_priv_pub_key`].
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — imported private key in PKCS#8 DER.
+    /// - `pub_out` — `None` to query the buffer size; `Some(buf)`
+    ///   to write the wire-format pub key.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — pub-key length (query) or bytes written (use).
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as a
+    ///   supported ECC private key, or `pub_out` is too small.
+    fn ecc_priv_pub_key(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
+
+    /// Re-encode a freshly imported ECC private key from its
+    /// on-wire **PKCS#8 DER** import form into the PAL's native
+    /// vault encoding (raw HSM scalar, padded to
+    /// `curve.wire_coord_len()` bytes), using the query-alloc-use
+    /// pattern:
+    ///
+    /// 1. **Query** — call with `out = None` to learn the
+    ///    vault-encoding length the caller must allocate.
+    /// 2. **Alloc** — caller allocates a DMA buffer of that size.
+    /// 3. **Use** — call with `out = Some(buf)` to write the
+    ///    vault-format private key into `buf` and receive the
+    ///    actual length (always equal to the query result).
+    ///
+    /// `RsaUnwrap`'s ECC import path stores the returned scalar in
+    /// the vault so a later [`ecc_sign`](Self::ecc_sign) /
+    /// [`ecdh_derive`](Self::ecdh_derive) reads back the same
+    /// vault-native encoding it expects.  This mirrors the
+    /// reference firmware's `to_pka_bytes` step.  There is no RSA
+    /// analogue because the std PAL stores RSA private keys in
+    /// their DER form directly.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — imported private key in PKCS#8 DER.
+    /// - `out` — `None` to query the buffer size; `Some(buf)` to
+    ///   write the vault-format private key.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — vault-encoding length (query) or bytes written
+    ///   (use).
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as a
+    ///   supported ECC private key, or `out` is too small.
+    fn ecc_priv_to_hsm(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
 }

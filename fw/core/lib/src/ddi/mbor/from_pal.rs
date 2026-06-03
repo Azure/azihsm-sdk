@@ -23,6 +23,7 @@ use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 // ── HsmVaultKeyKind → … ───────────────────────────────────────────
@@ -64,6 +65,21 @@ pub(crate) fn assert_aes(kind: HsmVaultKeyKind) -> HsmResult<()> {
     }
 }
 
+/// Map an RSA private vault kind to its [`HsmRsaKey`] counterpart
+/// (used for the modulus length).  Public-only or non-RSA kinds
+/// return [`HsmError::InvalidKeyType`].
+pub(crate) fn rsa_key(kind: HsmVaultKeyKind) -> HsmResult<HsmRsaKey> {
+    match kind {
+        HsmVaultKeyKind::Rsa2kPrivate => Ok(HsmRsaKey::Rsa2048Priv),
+        HsmVaultKeyKind::Rsa3kPrivate => Ok(HsmRsaKey::Rsa3072Priv),
+        HsmVaultKeyKind::Rsa4kPrivate => Ok(HsmRsaKey::Rsa4096Priv),
+        HsmVaultKeyKind::Rsa2kPrivateCrt => Ok(HsmRsaKey::Rsa2048CrtPriv),
+        HsmVaultKeyKind::Rsa3kPrivateCrt => Ok(HsmRsaKey::Rsa3072CrtPriv),
+        HsmVaultKeyKind::Rsa4kPrivateCrt => Ok(HsmRsaKey::Rsa4096CrtPriv),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
+
 // ── HsmEccCurve → … ───────────────────────────────────────────────
 
 /// Map a [`HsmEccCurve`] to its private ECC vault kind.
@@ -85,6 +101,15 @@ pub(crate) fn ecdh_secret(curve: HsmEccCurve) -> HsmVaultKeyKind {
     }
 }
 
+/// Map a [`HsmEccCurve`] to the matching DDI private-key type tag.
+pub(crate) fn ecc_private_ddi(curve: HsmEccCurve) -> DdiKeyType {
+    match curve {
+        HsmEccCurve::P256 => DdiKeyType::Ecc256Private,
+        HsmEccCurve::P384 => DdiKeyType::Ecc384Private,
+        HsmEccCurve::P521 => DdiKeyType::Ecc521Private,
+    }
+}
+
 /// Map a [`HsmEccCurve`] to the matching DDI public-key type tag
 /// the host expects in an ECC response (or in a target-key request
 /// field).
@@ -103,5 +128,54 @@ pub(crate) fn ecdh_secret_ddi(curve: HsmEccCurve) -> DdiKeyType {
         HsmEccCurve::P256 => DdiKeyType::Secret256,
         HsmEccCurve::P384 => DdiKeyType::Secret384,
         HsmEccCurve::P521 => DdiKeyType::Secret521,
+    }
+}
+
+// ── HsmRsaKey → … ─────────────────────────────────────────────────
+
+/// Map an [`HsmRsaKey`] private size + a CRT flag to the
+/// corresponding private-key vault kind.  Unknown / non-private
+/// inputs fall through to `Rsa2kPrivate` (forward compatibility);
+/// `HsmRsa::rsa_priv_key_size` only ever returns the non-CRT
+/// private variants, so the practical inputs are the three
+/// `Rsa*Priv` enums.
+pub(crate) fn rsa_private(size: HsmRsaKey, crt: bool) -> HsmVaultKeyKind {
+    match (size, crt) {
+        (HsmRsaKey::Rsa3072Priv, false) => HsmVaultKeyKind::Rsa3kPrivate,
+        (HsmRsaKey::Rsa4096Priv, false) => HsmVaultKeyKind::Rsa4kPrivate,
+        (HsmRsaKey::Rsa2048Priv, true) => HsmVaultKeyKind::Rsa2kPrivateCrt,
+        (HsmRsaKey::Rsa3072Priv, true) => HsmVaultKeyKind::Rsa3kPrivateCrt,
+        (HsmRsaKey::Rsa4096Priv, true) => HsmVaultKeyKind::Rsa4kPrivateCrt,
+        _ => HsmVaultKeyKind::Rsa2kPrivate,
+    }
+}
+
+/// Map an [`HsmRsaKey`] private size + a CRT flag to the matching
+/// DDI private-key type tag.  Same input domain as
+/// [`rsa_private`].
+pub(crate) fn rsa_private_ddi(size: HsmRsaKey, crt: bool) -> DdiKeyType {
+    match (size, crt) {
+        (HsmRsaKey::Rsa3072Priv, false) => DdiKeyType::Rsa3kPrivate,
+        (HsmRsaKey::Rsa4096Priv, false) => DdiKeyType::Rsa4kPrivate,
+        (HsmRsaKey::Rsa2048Priv, true) => DdiKeyType::Rsa2kPrivateCrt,
+        (HsmRsaKey::Rsa3072Priv, true) => DdiKeyType::Rsa3kPrivateCrt,
+        (HsmRsaKey::Rsa4096Priv, true) => DdiKeyType::Rsa4kPrivateCrt,
+        _ => DdiKeyType::Rsa2kPrivate,
+    }
+}
+
+/// Map an [`HsmRsaKey`] (typically the non-CRT private variant
+/// returned by `HsmRsa::rsa_priv_key_size`) to the corresponding
+/// DDI public-key type tag, used when populating the `pub_key`
+/// field of an RSA-key response.
+pub(crate) fn rsa_public_ddi(size: HsmRsaKey) -> DdiKeyType {
+    match size {
+        HsmRsaKey::Rsa3072Priv | HsmRsaKey::Rsa3072CrtPriv | HsmRsaKey::Rsa3072Pub => {
+            DdiKeyType::Rsa3kPublic
+        }
+        HsmRsaKey::Rsa4096Priv | HsmRsaKey::Rsa4096CrtPriv | HsmRsaKey::Rsa4096Pub => {
+            DdiKeyType::Rsa4kPublic
+        }
+        _ => DdiKeyType::Rsa2kPublic,
     }
 }

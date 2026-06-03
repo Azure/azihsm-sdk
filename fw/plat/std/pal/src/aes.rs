@@ -245,11 +245,24 @@ impl HsmAes for StdHsmPal {
     async fn aes_kwp_unwrap(
         &self,
         _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _input: &DmaBuf,
-        _output: &mut DmaBuf,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<usize> {
-        todo!()
+        use azihsm_crypto::AesKey;
+        use azihsm_crypto::AesKeyWrapPadAlgo;
+        use azihsm_crypto::Decrypter;
+        use azihsm_crypto::ImportableKey;
+
+        let kek = AesKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
+        let written = Decrypter::decrypt(
+            &mut AesKeyWrapPadAlgo::default(),
+            &kek,
+            input,
+            Some(&mut output[..]),
+        )
+        .map_err(|_| HsmError::AesUnwrapFailed)?;
+        Ok(written)
     }
 
     async fn aes_xts_gen_key(&self, _io: &impl HsmIo, _key: &mut [u8]) -> HsmResult<()> {

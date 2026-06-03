@@ -48,8 +48,11 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
         return Err(HsmError::InvalidKeyType);
     }
 
-    let target_attrs = super::key_attrs::for_ecdh_secret(&body.key_properties.key_metadata)?;
-    super::key_attrs::check_session_key_tag(target_attrs, body.key_tag)?;
+    let target_attrs = super::key_attrs::prepare_ecdh_secret(
+        &body.key_properties.key_metadata,
+        body.key_tag,
+        true,
+    )?;
 
     // The on-wire `pub_key_der` field is named "der" for historical
     // reasons but already carries wire-LE `x || y` (P-521 padded to
@@ -80,11 +83,12 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
     // fails.  `masked_key` is the host's opaque re-import blob;
     // firmware-side masking is pending the `UnmaskKey` handler, so
     // we emit an empty placeholder for wire validity.
+    let session_binding = target_attrs.session().then_some(HsmSessId::from(sess_id));
     let guard = pal.vault_key_create(
         io,
         secret,
         super::from_pal::ecdh_secret(curve),
-        target_attrs.session().then_some(HsmSessId::from(sess_id)),
+        session_binding,
         target_attrs,
         body.key_properties.key_label,
     )?;

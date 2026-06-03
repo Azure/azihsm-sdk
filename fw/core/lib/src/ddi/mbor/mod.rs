@@ -18,6 +18,7 @@ pub(crate) mod get_device_info;
 pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod get_sealed_bk3;
 pub(crate) mod get_session_encryption_key;
+pub(crate) mod get_unwrapping_key;
 pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod init_bk3;
@@ -25,6 +26,7 @@ pub(crate) mod kbkdf_derive;
 pub(crate) mod kdf;
 pub(crate) mod key_attrs;
 pub(crate) mod open_session;
+pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
@@ -48,11 +50,13 @@ pub(crate) use get_device_info::*;
 pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use get_sealed_bk3::*;
 pub(crate) use get_session_encryption_key::*;
+pub(crate) use get_unwrapping_key::*;
 pub(crate) use hkdf_derive::*;
 pub(crate) use hmac::*;
 pub(crate) use init_bk3::*;
 pub(crate) use kbkdf_derive::*;
 pub(crate) use open_session::*;
+pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
 
@@ -124,6 +128,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
             get_establish_cred_encryption_key(pal, io, decoder, hdr).await
         }
         DdiOp::GetSessionEncryptionKey => get_session_encryption_key(pal, io, decoder, hdr).await,
+        DdiOp::GetUnwrappingKey => get_unwrapping_key(pal, io, decoder, hdr).await,
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
@@ -139,6 +144,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::HkdfDerive => hkdf_derive(pal, io, decoder, hdr).await,
         DdiOp::KbkdfCounterHmacDerive => kbkdf_counter_hmac_derive(pal, io, decoder, hdr).await,
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
+        DdiOp::RsaUnwrap => rsa_unwrap(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }

@@ -34,12 +34,15 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
     let pal_curve = super::from_ddi::curve(body.curve)?;
     let vault_kind = super::from_pal::ecc_private(pal_curve);
-    let attrs = super::key_attrs::for_ecc(pal_curve, &body.key_properties.key_metadata)?;
-
-    // Session-only keys are anonymous — disallow a host-supplied
-    // `key_tag` because the key cannot be looked up across sessions.
-    // Matches `test_ecc_generate_session_only_key_with_key_tag`.
-    super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;
+    // Validate attrs + session/key_tag rules before doing any crypto
+    // — keygen can take several ms, so a malformed request must fail
+    // before we burn PKA / RNG cycles.
+    let attrs = super::key_attrs::prepare_ecc(
+        pal_curve,
+        &body.key_properties.key_metadata,
+        body.key_tag,
+        true,
+    )?;
 
     // ECC key generation follows the trait's query-alloc-use flow.
     // The IO-lifetime priv/pub buffers must outlive the scoped
@@ -74,11 +77,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     // Store the private key in the vault, session-scoped iff the
     // requested attrs say so.  RAII guard rolls the entry back if
     // the response encoding below fails.
-    let session_binding = if attrs.session() {
-        Some(HsmSessId::from(sess_id))
-    } else {
-        None
-    };
+    let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
     let guard = pal.vault_key_create(
         io,
         &priv_key[..priv_len],

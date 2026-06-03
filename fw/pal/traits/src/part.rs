@@ -928,6 +928,27 @@ pub trait HsmPartitionManager {
     /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
     ///   currently [`Enabled`](PartState::Enabled).
     fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool>;
+    /// Returns the wire-format public key (`n_le || e_le`) of the
+    /// partition's unwrapping key, or `0` if no unwrapping key has
+    /// been generated yet.
+    ///
+    /// Follows the same query/copy pattern as
+    /// [`part_establish_cred_pub_key`](Self::part_establish_cred_pub_key).
+    /// When [`part_unwrapping_key_id`](Self::part_unwrapping_key_id)
+    /// is `Some`, the cached pub-key payload is exactly the matching
+    /// wire-format `n_le || e_le` blob (`HsmRsaKey::pub_wire_len`
+    /// for the partition's unwrap-key modulus, currently always
+    /// 2048-bit → 260 bytes).  Cleared together with
+    /// `part_set_unwrapping_key_id` whenever the partition is
+    /// reset.
+    fn part_unwrapping_pub_key(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Stores the wire-format public key for the partition's
+    /// unwrapping key.  Must be called atomically alongside
+    /// [`part_set_unwrapping_key_id`](Self::part_set_unwrapping_key_id)
+    /// (typically while holding the partition lock) so the cached
+    /// pub key always matches the vault-stored private key.
+    fn part_set_unwrapping_pub_key(&self, io: &impl HsmIo, pub_key: &[u8]) -> HsmResult<()>;
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.

@@ -127,6 +127,38 @@ impl StdEcc {
         Ok(priv_key)
     }
 
+    /// Extract the public key from a private-key handle and write
+    /// it in wire-LE `x_le || y_le` form (with P-521 padded to 68
+    /// bytes per coordinate) into `pub_le_out`.
+    ///
+    /// Sync — runs entirely in the caller's thread because it only
+    /// touches OpenSSL key handles (no PKA-style compute).
+    ///
+    /// `pub_le_out.len()` must be `wire_pub_key_len(curve)`
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).
+    pub fn priv_to_pub_le(&self, priv_key: &EccPrivateKey, pub_le_out: &mut [u8]) -> HsmResult<()> {
+        let curve = EccKeyOp::curve(priv_key);
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        if pub_le_out.len() != wire_coord * 2 {
+            return Err(HsmError::EccGetCoordinatesError);
+        }
+        let pub_key = priv_key
+            .public_key()
+            .map_err(|_| HsmError::EccGetCoordinatesError)?;
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        pub_key
+            .coord(Some((&mut x_be[..coord_len], &mut y_be[..coord_len])))
+            .map_err(|_| HsmError::EccGetCoordinatesError)?;
+
+        pub_le_out.fill(0);
+        let (x_dst, y_dst) = pub_le_out.split_at_mut(wire_coord);
+        reverse_copy(x_dst, &x_be[..coord_len]);
+        reverse_copy(y_dst, &y_be[..coord_len]);
+        Ok(())
+    }
+
     /// Raw EC sign over a pre-computed hash digest.
     ///
     /// Clones the private key handle (cheap, ref-counted), copies the

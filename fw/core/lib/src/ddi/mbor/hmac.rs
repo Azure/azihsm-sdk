@@ -41,7 +41,7 @@ pub(crate) async fn hmac<'p, P: HsmPal>(
 
     // Generating a MAC is a PKCS#11 `C_Sign` operation, so the key
     // must carry `CKA_SIGN`.  An HMAC key derived for `derive`-only
-    // use (a valid `for_var_hmac` outcome) is rejected here.
+    // use (a valid `prepare_var_hmac` outcome) is rejected here.
     if !pal.vault_key_attrs(io, key_id)?.sign() {
         return Err(HsmError::InvalidPermissions);
     }

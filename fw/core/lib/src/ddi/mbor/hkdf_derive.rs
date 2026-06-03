@@ -47,10 +47,15 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
     let algo = super::from_ddi::hash(body.hash_algorithm)?;
     let target = super::kdf::resolve_target(body.key_type, body.key_length)?;
     let attrs = match target.class {
-        KdfClass::Aes => super::key_attrs::for_aes(&body.key_properties.key_metadata)?,
-        KdfClass::Hmac => super::key_attrs::for_var_hmac(&body.key_properties.key_metadata)?,
+        KdfClass::Aes => {
+            super::key_attrs::prepare_aes(&body.key_properties.key_metadata, body.key_tag, true)?
+        }
+        KdfClass::Hmac => super::key_attrs::prepare_var_hmac(
+            &body.key_properties.key_metadata,
+            body.key_tag,
+            true,
+        )?,
     };
-    super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;
 
     // Derive the OKM into a DMA scratch slot; `vault_key_create`
     // copies it into vault-owned storage so the scratch can drop

@@ -144,6 +144,48 @@ impl HsmRsaKey {
         let h_len = algo.digest_len();
         k + algo.mgf1_state_len(h_len)
     }
+
+    /// Fixed-width public exponent length used in the wire-format
+    /// public key — 4 bytes, sized to comfortably hold the canonical
+    /// 65537 exponent (`01 00 01 00` LE) with room for any other
+    /// 32-bit-fitting choice.
+    pub const fn pub_exp_len() -> usize {
+        4
+    }
+
+    /// Length in bytes of the raw wire-format public key
+    /// (`n_le || e_le`, with `n` padded to `modulus_len` and `e`
+    /// padded to [`pub_exp_len`](Self::pub_exp_len)).
+    pub const fn pub_wire_len(&self) -> usize {
+        self.modulus_len() + Self::pub_exp_len()
+    }
+
+    /// Generous upper bound on the PKCS#8 DER encoding of a private
+    /// key on this size.  Retained for callers that still serialize
+    /// to DER; the std PAL now vaults raw HSM bytes (see
+    /// [`priv_key_hsm_len`](Self::priv_key_hsm_len)).
+    pub const fn priv_key_der_max(&self) -> usize {
+        // PKCS#8 DER for a 2-prime RSA private key contains n, e, d,
+        // p, q, dP, dQ, qInv (≈ 5×modulus_len) plus ASN.1 framing.
+        // 6×modulus_len + 256 leaves comfortable headroom across
+        // 2048 / 3072 / 4096.
+        6 * self.modulus_len() + 256
+    }
+
+    /// Length in bytes of the raw **non-CRT** HSM private-key
+    /// encoding (`n || e(4) || p || q`, each integer zero-padded to
+    /// its fixed width), i.e. `2 × modulus_len + 4`.
+    ///
+    /// This is the vault-native private-key format the std PAL
+    /// stores: [`rsa_gen_keypair`](HsmRsa::rsa_gen_keypair) writes it
+    /// and [`rsa_priv_to_hsm`](HsmRsa::rsa_priv_to_hsm) converts an
+    /// imported DER key into it.  Matches the firmware's canonical
+    /// `Rsa*Private` raw blob size (516 / 772 / 1028 for 2048 / 3072
+    /// / 4096).  CRT private keys use a larger layout and are not yet
+    /// supported by the unwrap import path.
+    pub const fn priv_key_hsm_len(&self) -> usize {
+        2 * self.modulus_len() + Self::pub_exp_len()
+    }
 }
 
 /// Pairwise Consistency Test (PCT) mode for RSA key generation.
@@ -170,35 +212,64 @@ pub enum HsmRsaPct {
 /// and modular exponentiation. The async signatures allow hardware-backed
 /// implementations to yield while the PKA engine processes operations.
 pub trait HsmRsa {
-    /// Generate an RSA key pair.
+    /// Generate an RSA key pair, query-alloc-use style.
+    ///
+    /// Uses the canonical query-alloc-use workflow:
+    ///
+    /// 1. **Query** — call with `out = None`.  No key generation
+    ///    happens; the method returns `(priv_max, pub_max)` upper
+    ///    bounds the caller must allocate.  `pub_max` is always
+    ///    [`HsmRsaKey::pub_wire_len`] (raw `n || e` on the wire);
+    ///    `priv_max` depends on the PAL's encoding — std PAL uses
+    ///    PKCS#8 DER and returns [`HsmRsaKey::priv_key_der_max`],
+    ///    while real-HW PALs return the size of their raw
+    ///    component layout.
+    /// 2. **Alloc** — caller allocates two DMA buffers of those
+    ///    sizes.
+    /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.
+    ///    The method generates a fresh keypair (using `alloc` for
+    ///    any internal contiguous PKA scratch), writes the
+    ///    PAL-format private key into `priv_out[..priv_actual]` and
+    ///    the wire-format LE public key (`n_le || e_le`) into
+    ///    `pub_out[..pub_actual]`, and returns the actual lengths.
+    ///    Both are guaranteed to be `≤` the upper bounds reported
+    ///    by the matching query call (real-HW PALs always return
+    ///    the same value in both modes; std-PAL DER may be shorter
+    ///    than the max).
     ///
     /// # Parameters
     ///
     /// - `io` — caller's I/O context (per-IO scope).
+    /// - `alloc` — scoped allocator used by the implementation for
+    ///   any internal scratch (e.g. a contiguous `priv || pub`
+    ///   buffer real PKA hardware emits).  Unused in query mode.
     /// - `key_size` — modulus size selector (2048 / 3072 / 4096).
-    /// - `priv_key` — destination for the serialized private key;
-    ///   length depends on `key_size` and CRT vs non-CRT layout.
-    /// - `pub_key` — destination for the serialized public key;
-    ///   length is `key_size.modulus_len()` plus the encoded
-    ///   exponent.
+    /// - `out` — `None` to query buffer sizes; `Some((priv_out,
+    ///   pub_out))` to actually generate.  Each output buffer must
+    ///   be at least as large as the corresponding length returned
+    ///   by an earlier query call.
     /// - `pct` — Pairwise Consistency Test selector.  When not
     ///   [`HsmRsaPct::None`], a sign / verify or encrypt / decrypt
     ///   round-trip is performed (FIPS 140-3 requirement).
     ///
     /// # Returns
     ///
-    /// - `Ok(())` — both buffers populated.
-    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Ok((priv_len, pub_len))` — in query mode, the upper-bound
+    ///   sizes the caller must allocate; in use mode, the actual
+    ///   bytes written into `priv_out` / `pub_out` (always `≤` the
+    ///   query bounds).
+    /// - `Err(HsmError::InvalidArg)` — `out` is `Some` and one of
+    ///   the buffers is shorter than the required length.
     /// - `Err(HsmError)` — PKA / RNG failure or PCT failed (the key
     ///   pair is rejected).
-    async fn ras_gen_keypair(
+    async fn rsa_gen_keypair(
         &self,
         io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
         key_size: HsmRsaKey,
-        priv_key: &mut DmaBuf,
-        pub_key: &mut DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         pct: HsmRsaPct,
-    ) -> Result<(), HsmError>;
+    ) -> HsmResult<(usize, usize)>;
 
     /// Private-key modular exponentiation: `x = y^d mod n`.
     ///
@@ -228,6 +299,113 @@ pub trait HsmRsa {
         y: &DmaBuf,
         x: &mut DmaBuf,
     ) -> Result<(), HsmError>;
+
+    /// Determine the modulus size of a serialized RSA private key.
+    ///
+    /// Used by [`RsaUnwrap`](../../../../../../fw/core/lib/src/ddi/mbor/rsa_unwrap.rs)
+    /// to pick the right [`HsmVaultKeyKind`] for an imported key
+    /// whose size is announced only by its encoding.  Std PAL parses
+    /// PKCS#8 DER; real-HW PALs parse their own raw-component layout.
+    ///
+    /// Always returns the non-CRT variant
+    /// ([`HsmRsaKey::Rsa2048Priv`] etc.) since PKCS#8 DER (and most
+    /// raw layouts) contain the same component set regardless of
+    /// whether the caller intends to use CRT acceleration —
+    /// callers that need the CRT variant should re-tag via
+    /// [`HsmRsaKey::pub_variant`] inversely or pick the kind based
+    /// on context.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — serialized private key bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(HsmRsaKey)` — matching non-CRT size variant.
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as an RSA
+    ///   private key, or the modulus isn't one of the supported
+    ///   sizes (2048 / 3072 / 4096).
+    fn rsa_priv_key_size(&self, io: &impl HsmIo, key: &DmaBuf) -> HsmResult<HsmRsaKey>;
+
+    /// Extract the wire-format public key (`n_le || e_le`, padded
+    /// to `key_size.pub_wire_len()` bytes) from a serialized RSA
+    /// private key, using the query-alloc-use pattern:
+    ///
+    /// 1. **Query** — call with `pub_out = None` to learn the
+    ///    wire-format length the caller must allocate
+    ///    ([`HsmRsaKey::pub_wire_len`]).
+    /// 2. **Alloc** — caller allocates a DMA buffer of that size.
+    /// 3. **Use** — call with `pub_out = Some(buf)` to write the
+    ///    wire-format pub key into `buf` and receive the actual
+    ///    length (always equal to the query result).
+    ///
+    /// Used by [`RsaUnwrap`](../../../../../../fw/core/lib/src/ddi/mbor/rsa_unwrap.rs)
+    /// to populate the optional `pub_key` field of its response
+    /// so callers can verify the imported private key bytewise
+    /// without an extra DDI round-trip.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — serialized private key bytes.
+    /// - `pub_out` — `None` to query the buffer size; `Some(buf)`
+    ///   to write the wire-format pub key.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — pub-key length (query) or bytes written (use).
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as a
+    ///   supported RSA private key, or `pub_out` is too small.
+    fn rsa_priv_pub_key(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
+
+    /// Re-encode a freshly imported RSA private key from its on-wire
+    /// **PKCS#8 DER** import form into the PAL's native vault
+    /// encoding (raw non-CRT HSM bytes, `n || e || p || q` =
+    /// [`HsmRsaKey::priv_key_hsm_len`] bytes), using the
+    /// query-alloc-use pattern:
+    ///
+    /// 1. **Query** — call with `out = None` to learn the
+    ///    vault-encoding length the caller must allocate.
+    /// 2. **Alloc** — caller allocates a DMA buffer of that size.
+    /// 3. **Use** — call with `out = Some(buf)` to write the
+    ///    vault-format private key into `buf` and receive the actual
+    ///    length (always equal to the query result).
+    ///
+    /// `RsaUnwrap`'s RSA import path stores the returned bytes in the
+    /// vault so a later [`mod_exp_priv`](Self::mod_exp_priv) /
+    /// [`rsa_oaep_decrypt`](Self::rsa_oaep_decrypt) reads back the
+    /// same vault-native encoding it expects.  This mirrors the
+    /// reference firmware's `to_pka_bytes` step and the ECC twin
+    /// `HsmEcc::ecc_priv_to_hsm`.
+    ///
+    /// Only non-CRT private keys are supported; CRT keys use a
+    /// larger vault layout and are handled by a future change.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key` — imported private key in PKCS#8 DER.
+    /// - `out` — `None` to query the buffer size; `Some(buf)` to
+    ///   write the vault-format private key.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — vault-encoding length (query) or bytes written
+    ///   (use).
+    /// - `Err(HsmError::InvalidArg)` — bytes don't parse as a
+    ///   supported RSA private key, or `out` is too small.
+    fn rsa_priv_to_hsm(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
 
     /// Public-key modular exponentiation: `y = x^e mod n`.
     ///
