@@ -1218,9 +1218,93 @@ cleanup:
 
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session)
 {
+    if (session != 0)
+    {
+        azihsm_sess_close(session);
+    }
+    if (device != 0)
+    {
+        azihsm_part_close(device);
+    }
+}
 
-    azihsm_sess_close(session);
-    azihsm_part_close(device);
+/* The context this thread is currently opening a session for, so a libcrypto
+ * fetch the open triggers re-enters that same context and fails fast instead of
+ * recursing into its non-recursive lock.  Other contexts are unaffected. */
+static __thread AZIHSM_OSSL_PROV_CTX *azihsm_opening_ctx = NULL;
+
+azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
+{
+    azihsm_status status;
+
+    if (provctx == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* Re-entrant call on the context being opened: must not touch its lock. */
+    if (azihsm_opening_ctx == provctx)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "azihsm_ensure_session: re-entrant call during HSM session open"
+        );
+        return AZIHSM_STATUS_INVALID_CONTEXT_STATE;
+    }
+
+    /* Fast path: session already open. */
+    if (!CRYPTO_THREAD_read_lock(provctx->session_lock))
+    {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+    CRYPTO_THREAD_unlock(provctx->session_lock);
+
+    if (!CRYPTO_THREAD_write_lock(provctx->session_lock))
+    {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Another thread opened the session while we waited for the lock. */
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    AZIHSM_OSSL_PROV_CTX *prev_opening = azihsm_opening_ctx;
+    azihsm_opening_ctx = provctx;
+
+    /* Prime the default libctx's DRBG: the SDK open below draws randomness
+     * via bare RAND_bytes, whose lazy DRBG instantiation otherwise fails
+     * deep in the open on some hosts (e.g. nginx's config thread). */
+    unsigned char primer[1];
+    if (RAND_bytes(primer, sizeof(primer)) != 1)
+    {
+        azihsm_opening_ctx = prev_opening;
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    OPENSSL_cleanse(primer, sizeof(primer));
+
+    status = azihsm_open_device_and_session(
+        &provctx->config,
+        &provctx->device,
+        &provctx->session,
+        &provctx->resiliency_ctx
+    );
+    azihsm_opening_ctx = prev_opening;
+
+    CRYPTO_THREAD_unlock(provctx->session_lock);
+
+    return status;
 }
 
 /*

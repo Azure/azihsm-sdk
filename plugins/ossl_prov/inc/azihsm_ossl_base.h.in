@@ -121,6 +121,7 @@ typedef struct
                                       * always have a provider to service them. */
     azihsm_handle device;
     azihsm_handle session;
+    CRYPTO_RWLOCK *session_lock; /* serializes lazy session-open */
     AZIHSM_CONFIG config;
     struct
     {
