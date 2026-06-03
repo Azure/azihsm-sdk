@@ -761,37 +761,27 @@ OSSL_STATUS OSSL_provider_init(
     if (ctx->libctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ctx->default_provider = ensure_default_provider();
     if (ctx->default_provider == NULL)
     {
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ctx->session_lock = CRYPTO_THREAD_lock_new();
     if (ctx->session_lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Find get_params_fn from the core dispatch table for config parsing */
@@ -807,12 +797,7 @@ OSSL_STATUS OSSL_provider_init(
     /* Parse configuration from openssl.cnf and environment variables */
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
-        CRYPTO_THREAD_lock_free(ctx->session_lock);
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Validate API revision is within supported range */
@@ -829,12 +814,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MAJOR,
             AZIHSM_API_REVISION_MAX_MINOR
         );
-        CRYPTO_THREAD_lock_free(ctx->session_lock);
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Check if resiliency is enabled via environment variable */
@@ -856,12 +836,7 @@ OSSL_STATUS OSSL_provider_init(
                 "unsafe resiliency storage dir '%s'",
                 dir
             );
-            CRYPTO_THREAD_lock_free(ctx->session_lock);
-            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-            OSSL_PROVIDER_unload(ctx->default_provider);
-            OSSL_LIB_CTX_free(ctx->libctx);
-            OPENSSL_free(ctx);
-            return OSSL_FAILURE;
+            goto cleanup;
         }
         int ret = snprintf(
             ctx->config.resiliency_storage_dir,
@@ -876,12 +851,7 @@ OSSL_STATUS OSSL_provider_init(
                 PROV_R_INVALID_CONFIG_DATA,
                 "Resiliency storage dir path too long"
             );
-            CRYPTO_THREAD_lock_free(ctx->session_lock);
-            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-            OSSL_PROVIDER_unload(ctx->default_provider);
-            OSSL_LIB_CTX_free(ctx->libctx);
-            OPENSSL_free(ctx);
-            return OSSL_FAILURE;
+            goto cleanup;
         }
     }
 
@@ -891,6 +861,17 @@ OSSL_STATUS OSSL_provider_init(
     *out = azihsm_ossl_base_dispatch;
 
     return OSSL_SUCCESS;
+
+cleanup:
+    CRYPTO_THREAD_lock_free(ctx->session_lock);
+    CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+    if (ctx->default_provider != NULL)
+    {
+        OSSL_PROVIDER_unload(ctx->default_provider);
+    }
+    OSSL_LIB_CTX_free(ctx->libctx);
+    OPENSSL_free(ctx);
+    return OSSL_FAILURE;
 }
 
 #if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR == 0
