@@ -10,7 +10,6 @@
 
 use azihsm_fw_ddi_mbor_types::ecc_sign::DdiEccSignReq;
 use azihsm_fw_ddi_mbor_types::ecc_sign::DdiEccSignResp;
-use azihsm_fw_ddi_mbor_types::DdiHashAlgorithm;
 
 use super::*;
 
@@ -34,7 +33,7 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
     // responsible for any endianness flip its underlying primitive
     // requires (e.g. std PAL reverses to BE for OpenSSL; real-HW
     // PALs pass through to the PKA engine).
-    let pal_algo = ddi_to_pal_hash(body.digest_algo)?;
+    let pal_algo = super::from_ddi::hash(body.digest_algo)?;
     let real_digest_len = pal_algo.digest_len();
     if body.digest.len() < real_digest_len {
         return Err(HsmError::InvalidArg);
@@ -70,17 +69,6 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
     .await?;
 
     Ok(resp)
-}
-
-/// Map the DDI digest enum to its PAL counterpart.
-fn ddi_to_pal_hash(algo: DdiHashAlgorithm) -> HsmResult<HsmHashAlgo> {
-    match algo {
-        DdiHashAlgorithm::Sha1 => Ok(HsmHashAlgo::Sha1),
-        DdiHashAlgorithm::Sha256 => Ok(HsmHashAlgo::Sha256),
-        DdiHashAlgorithm::Sha384 => Ok(HsmHashAlgo::Sha384),
-        DdiHashAlgorithm::Sha512 => Ok(HsmHashAlgo::Sha512),
-        _ => Err(HsmError::InvalidArg),
-    }
 }
 
 /// Infer the ECC curve from a vault key kind.

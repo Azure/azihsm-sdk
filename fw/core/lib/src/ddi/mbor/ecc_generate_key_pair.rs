@@ -12,7 +12,6 @@
 
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairReq;
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairResp;
-use azihsm_fw_ddi_mbor_types::DdiEccCurve;
 use azihsm_fw_ddi_mbor_types::DdiKeyType;
 
 use super::*;
@@ -34,7 +33,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     let body: DdiEccGenerateKeyPairReq = decoder.decode_data()?;
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
-    let pal_curve = ddi_to_pal_curve(body.curve)?;
+    let pal_curve = super::from_ddi::curve(body.curve)?;
     let vault_kind = curve_to_vault_kind(pal_curve);
     let attrs = build_attrs_for_curve(pal_curve, &body.key_properties.key_metadata)?;
 
@@ -121,16 +120,6 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     let _ = guard.dismiss();
 
     Ok(resp)
-}
-
-/// Map a `DdiEccCurve` to its PAL-level [`HsmEccCurve`].
-fn ddi_to_pal_curve(curve: DdiEccCurve) -> HsmResult<HsmEccCurve> {
-    match curve {
-        DdiEccCurve::P256 => Ok(HsmEccCurve::P256),
-        DdiEccCurve::P384 => Ok(HsmEccCurve::P384),
-        DdiEccCurve::P521 => Ok(HsmEccCurve::P521),
-        _ => Err(HsmError::InvalidArg),
-    }
 }
 
 /// Map a `HsmEccCurve` to its private [`HsmVaultKeyKind`].

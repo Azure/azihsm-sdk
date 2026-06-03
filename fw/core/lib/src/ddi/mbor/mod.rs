@@ -7,6 +7,7 @@ pub(crate) mod close_session;
 pub(crate) mod ecc_generate_key_pair;
 pub(crate) mod ecc_sign;
 pub(crate) mod establish_credential;
+pub(crate) mod from_ddi;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;

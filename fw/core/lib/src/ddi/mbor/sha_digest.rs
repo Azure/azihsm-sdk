@@ -17,17 +17,6 @@ use azihsm_fw_ddi_mbor_types::sha_digest::DdiShaDigestResp;
 
 use super::*;
 
-/// Map DDI hash algorithm to PAL hash algorithm.
-fn to_hsm_hash_algo(ddi: DdiHashAlgorithm) -> HsmResult<HsmHashAlgo> {
-    match ddi {
-        DdiHashAlgorithm::Sha1 => Ok(HsmHashAlgo::Sha1),
-        DdiHashAlgorithm::Sha256 => Ok(HsmHashAlgo::Sha256),
-        DdiHashAlgorithm::Sha384 => Ok(HsmHashAlgo::Sha384),
-        DdiHashAlgorithm::Sha512 => Ok(HsmHashAlgo::Sha512),
-        _ => Err(HsmError::InvalidArg),
-    }
-}
-
 /// Handle DdiShaDigestCmd.
 pub(crate) async fn sha_digest<'p, P: HsmPal>(
     pal: &'p P,
@@ -37,7 +26,7 @@ pub(crate) async fn sha_digest<'p, P: HsmPal>(
 ) -> HsmResult<&'p DmaBuf> {
     let body: DdiShaDigestReq<'_> = decoder.decode_data()?;
 
-    let algo = to_hsm_hash_algo(body.sha_mode)?;
+    let algo = super::from_ddi::hash(body.sha_mode)?;
     let digest_len = algo.digest_len();
 
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
