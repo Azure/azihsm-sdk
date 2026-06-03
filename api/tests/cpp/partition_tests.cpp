@@ -5,11 +5,123 @@
 #include <gtest/gtest.h>
 #include <scope_guard.hpp>
 #include <thread>
+#include <vector>
 
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/resiliency_config.hpp"
 #include "utils/utils.hpp"
+
+namespace
+{
+
+uint32_t manufacturer_cert_chain_size_hint(uint32_t actual_size)
+{
+    constexpr uint32_t u32_max = static_cast<uint32_t>(-1);
+    const uint64_t actual = actual_size;
+    const uint64_t hint = actual + (actual / 2) + (actual % 2);
+    return hint > u32_max ? u32_max : static_cast<uint32_t>(hint);
+}
+
+bool get_manufacturer_cert_chain_size_hint(azihsm_handle part, uint32_t &size_hint)
+{
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
+    auto err = azihsm_part_get_prop(part, &prop);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "Expected manufacturer cert-chain size query to return BUFFER_TOO_SMALL";
+        return false;
+    }
+    if (prop.len == 0)
+    {
+        ADD_FAILURE() << "Expected manufacturer cert-chain size hint to be non-zero";
+        return false;
+    }
+
+    size_hint = prop.len;
+    return true;
+}
+
+bool get_manufacturer_cert_chain_with_retry(
+    azihsm_handle part,
+    uint32_t size_hint,
+    std::vector<uint8_t> &buffer
+)
+{
+    for (auto attempt = 0u; attempt < 8; ++attempt)
+    {
+        buffer.assign(size_hint, 0);
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
+                                  buffer.data(),
+                                  size_hint };
+        auto err = azihsm_part_get_prop(part, &prop);
+        if (err == AZIHSM_STATUS_SUCCESS)
+        {
+            if (prop.len == 0)
+            {
+                ADD_FAILURE() << "Expected manufacturer cert-chain payload to be non-zero";
+                return false;
+            }
+
+            buffer.resize(prop.len);
+            return true;
+        }
+
+        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            ADD_FAILURE() << "Expected success or BUFFER_TOO_SMALL";
+            return false;
+        }
+        if (prop.len <= size_hint)
+        {
+            ADD_FAILURE() << "Expected BUFFER_TOO_SMALL to increase the hint";
+            return false;
+        }
+
+        size_hint = prop.len;
+    }
+
+    ADD_FAILURE() << "Manufacturer cert-chain fetch did not stabilize after retries";
+    return false;
+}
+
+bool get_stable_manufacturer_cert_chain_snapshot(
+    azihsm_handle part,
+    std::vector<uint8_t> &buffer,
+    uint32_t &size_hint
+)
+{
+    for (auto attempt = 0u; attempt < 8; ++attempt)
+    {
+        uint32_t initial_size_hint = 0;
+        if (!get_manufacturer_cert_chain_size_hint(part, initial_size_hint))
+        {
+            return false;
+        }
+        if (!get_manufacturer_cert_chain_with_retry(part, initial_size_hint, buffer))
+        {
+            return false;
+        }
+
+        uint32_t current_size_hint = 0;
+        if (!get_manufacturer_cert_chain_size_hint(part, current_size_hint))
+        {
+            return false;
+        }
+
+        uint32_t actual_size = static_cast<uint32_t>(buffer.size());
+        if (current_size_hint == manufacturer_cert_chain_size_hint(actual_size))
+        {
+            size_hint = current_size_hint;
+            return true;
+        }
+    }
+
+    ADD_FAILURE() << "Manufacturer cert-chain size changed while reading a stable snapshot";
+    return false;
+}
+
+} // namespace
 
 TEST(azihsm_part, get_list)
 {
@@ -490,20 +602,12 @@ TEST(azihsm_part, get_prop_manufacturer_cert_returns_larger_size_hint)
     part_list.for_each_part([](std::vector<azihsm_char> &path) {
         auto part = PartitionHandle(path);
 
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
-        auto err = azihsm_part_get_prop(part.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        uint32_t size_hint = prop.len;
-        ASSERT_GT(size_hint, 0);
+        std::vector<uint8_t> buffer;
+        uint32_t size_hint = 0;
+        ASSERT_TRUE(get_stable_manufacturer_cert_chain_snapshot(part.get(), buffer, size_hint));
+        uint32_t actual_size = static_cast<uint32_t>(buffer.size());
 
-        std::vector<azihsm_char> buffer(size_hint);
-        prop.val = buffer.data();
-        err = azihsm_part_get_prop(part.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        uint32_t actual_size = prop.len;
-        ASSERT_GT(actual_size, 0);
-
-        uint32_t expected_size_hint = actual_size + (actual_size / 2) + (actual_size % 2);
+        uint32_t expected_size_hint = manufacturer_cert_chain_size_hint(actual_size);
         ASSERT_EQ(size_hint, expected_size_hint);
     });
 }
@@ -515,21 +619,75 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
     part_list.for_each_part([](std::vector<azihsm_char> &path) {
         auto part = PartitionHandle(path);
 
-        // First get the required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
+        std::vector<uint8_t> hint_buffer;
+        uint32_t size_hint = 0;
+        ASSERT_TRUE(get_stable_manufacturer_cert_chain_snapshot(part.get(), hint_buffer, size_hint)
+        );
+        uint32_t actual_size = static_cast<uint32_t>(hint_buffer.size());
+        ASSERT_GT(actual_size, 1);
+
+        // A caller buffer strictly smaller than the actual payload must fail
+        // and the API must report a size hint that is at least the actual
+        // payload size so a retry with the hinted size succeeds.
+        std::vector<uint8_t> too_small(actual_size - 1);
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
+                                  too_small.data(),
+                                  static_cast<uint32_t>(too_small.size()) };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        uint32_t required_size = prop.len;
-        ASSERT_GT(required_size, 0);
+        ASSERT_GE(prop.len, actual_size);
 
-        // Provide buffer that's too small
-        std::vector<uint8_t> buffer(required_size - 1);
-        prop.val = buffer.data();
-        prop.len = static_cast<uint32_t>(buffer.size());
-
+        // Retry with the hinted size must succeed, covering the retry contract.
+        uint32_t retry_size = prop.len;
+        std::vector<uint8_t> retry_buffer(retry_size);
+        prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, retry_buffer.data(), retry_size };
         err = azihsm_part_get_prop(part.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(prop.len, required_size); // Should return required size
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(prop.len, 0u);
+        ASSERT_LE(prop.len, retry_size);
+    });
+}
+
+// A caller buffer that fits the actual payload but is smaller than the
+// advisory size hint must still succeed. The hint is advisory headroom for
+// cert-chain growth across resets; it must not cause spurious failures when
+// the buffer already fits the current payload.
+TEST(azihsm_part, get_prop_manufacturer_cert_buffer_below_hint_succeeds)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        uint32_t size_hint = 0;
+        uint32_t actual_size = 0;
+
+        for (auto attempt = 0u; attempt < 8; ++attempt)
+        {
+            std::vector<uint8_t> hint_buffer;
+            ASSERT_TRUE(
+                get_stable_manufacturer_cert_chain_snapshot(part.get(), hint_buffer, size_hint)
+            );
+            actual_size = static_cast<uint32_t>(hint_buffer.size());
+            ASSERT_LT(actual_size, size_hint);
+
+            // Buffer sized exactly to the actual payload (below the hint) must succeed.
+            std::vector<uint8_t> exact_buffer(actual_size);
+            azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN,
+                                      exact_buffer.data(),
+                                      static_cast<uint32_t>(exact_buffer.size()) };
+            auto err = azihsm_part_get_prop(part.get(), &prop);
+            if (err == AZIHSM_STATUS_SUCCESS)
+            {
+                ASSERT_GT(prop.len, 0u);
+                ASSERT_LE(prop.len, actual_size);
+                return;
+            }
+
+            ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        }
+
+        FAIL() << "manufacturer certificate chain changed while testing below-hint buffer";
     });
 }
 
