@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub(crate) mod aes_encrypt_decrypt;
+pub(crate) mod aes_generate_key;
 pub(crate) mod close_session;
 pub(crate) mod establish_credential;
 pub(crate) mod get_api_rev;
@@ -15,6 +17,8 @@ pub(crate) mod open_session;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
+pub(crate) use aes_encrypt_decrypt::*;
+pub(crate) use aes_generate_key::*;
 use azihsm_fw_ddi_mbor::*;
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
@@ -108,6 +112,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
         DdiOp::OpenSession => open_session(pal, io, decoder, hdr).await,
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr),
+        DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
+        DdiOp::AesEncryptDecrypt => aes_encrypt_decrypt(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
