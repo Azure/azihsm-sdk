@@ -869,6 +869,7 @@ impl VaultInner {
     /// # Arguments
     /// * `api_rev` - API revision
     /// * `mk_session` - Masking key for the session
+    /// * `session_count_check` - Whether to check/enforce the session count limit
     ///
     /// # Returns
     /// * `Ok(physical_session_key_num)` if successful
@@ -879,8 +880,9 @@ impl VaultInner {
         &mut self,
         api_rev: ApiRev,
         mk_session: &[u8],
+        session_count_check: bool,
     ) -> Result<u16, ManticoreError> {
-        if self.get_session_count() >= MAX_SESSIONS {
+        if session_count_check && self.get_session_count() >= MAX_SESSIONS {
             Err(ManticoreError::VaultSessionLimitReached)?;
         }
 
@@ -1028,7 +1030,7 @@ impl VaultInner {
                 ManticoreError::InternalError
             })?;
 
-        let sess_key_num = self.create_physical_session(api_rev, &decoded_session_mk)?;
+        let sess_key_num = self.create_physical_session(api_rev, &decoded_session_mk, true)?;
         let virtual_session_id = self.session_table.create_session(sess_key_num)?;
 
         Ok(SessionResult {
@@ -1115,7 +1117,7 @@ impl VaultInner {
 
         // Get session_seed from verify_encrypted_session_credentials
         let physical_session_key_num =
-            self.create_physical_session(api_rev, &decoded_session_mk)?;
+            self.create_physical_session(api_rev, &decoded_session_mk, false)?;
 
         // Now recreate the session
         self.session_table

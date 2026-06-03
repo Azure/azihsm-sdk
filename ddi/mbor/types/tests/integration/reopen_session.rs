@@ -1409,6 +1409,264 @@ fn test_reopen_session_dest_smaller_svn() {
 }
 
 #[test]
+fn test_reopen_session_after_lm_with_max() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _| {
+            // Step 1: Setup -- establish credentials and open session S1 (slot 0).
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            // Step 2: Simulate live migration. S1 -> renegotiation-pending (alloc=1, reneg=1).
+            let result = dev.erase();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            // Step 3: Re-establish credentials after LM. NSSR wipes regular partition RAM
+            // (unwrapping_key_id, masking_key, etc.) so the host must re-provision before
+            // it can open or reopen any sessions.
+            let _partition_bmk = helper_common_establish_credential_with_bmk(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty Mbor array"),
+            );
+
+            // Step 4: Open new sessions on new file handles. Slot 0 is held by S1
+            // (reneg-pending). Slots 1..7 are free -> MAX_SESSIONS - 1 = 7 should succeed.
+            //
+            // Keep the file handles alive in a Vec so the driver does not flush sessions
+            // (file-handle close would trigger FlushSession -> free the slot).
+            let expected_success = MAX_SESSIONS - 1;
+            let mut file_handles: Vec<<DdiTest as Ddi>::Dev> = Vec::new();
+
+            for i in 0..expected_success {
+                let new_dev = ddi.open_dev(path).unwrap();
+
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
+
+                let resp = helper_open_session(
+                    &new_dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
+
+                assert!(
+                    resp.is_ok(),
+                    "OpenSession #{} of {} should succeed (slots 1..7 are free after LM): {:?}",
+                    i + 1,
+                    expected_success,
+                    resp
+                );
+
+                let resp = resp.unwrap();
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                file_handles.push(new_dev);
+            }
+
+            // Step 5: The 8th OpenSession MUST fail with VaultSessionLimitReached.
+            // Slot 0 is reserved for S1 (reneg-pending) and must not be silently evicted --
+            // the host may still call ReopenSession on S1 later (lazy renegotiation).
+            let new_dev = ddi.open_dev(path).unwrap();
+
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                &new_dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
+
+            let resp = helper_open_session(
+                &new_dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
+
+            assert!(
+                resp.is_err(),
+                "OpenSession #{} must fail -- slot 0 is reserved for reneg-pending S1 \
+                 (lazy reopen must remain possible). Got Ok: {:?}",
+                MAX_SESSIONS,
+                resp
+            );
+
+            let err = resp.unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    DdiError::DdiStatus(DdiStatus::VaultSessionLimitReached)
+                ),
+                "OpenSession #{} should fail with VaultSessionLimitReached, got: {:?}",
+                MAX_SESSIONS,
+                err
+            );
+
+            // Step 6: Reopen S1 on the ORIGINAL file handle. This is the key assertion --
+            // it proves the firmware actually preserved slot 0 for the reneg-pending
+            // session (rather than just blocking new opens). If the slot had been silently
+            // evicted by the open attempts in Step 4/5, this reopen would fail with
+            // SessionNotFound / SessionMismatch and prove an LM regression.
+            let (reopen_enc_cred, reopen_pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.random_seed,
+            );
+
+            let reopen_resp = helper_reopen_session(
+                dev,
+                setup_res.session_id,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                reopen_enc_cred,
+                reopen_pub_key,
+                setup_res.session_bmk,
+            );
+            assert!(
+                reopen_resp.is_ok(),
+                "ReopenSession of S1 (reneg-pending in slot 0) must succeed -- \
+             firmware must preserve the slot across competing OpenSession calls. \
+             Failure here indicates the reneg-pending session was silently \
+             evicted/clobbered (LM regression). Got: {:?}",
+                reopen_resp
+            );
+
+            let reopen_resp = reopen_resp.unwrap();
+            assert_eq!(reopen_resp.hdr.op, DdiOp::ReopenSession);
+            assert_eq!(reopen_resp.hdr.status, DdiStatus::Success);
+            assert_eq!(
+                reopen_resp.hdr.sess_id,
+                Some(setup_res.session_id),
+                "Reopened session id must match the original S1 id"
+            );
+
+            // Step 7: Close S1 cleanly to free slot 0 (cleanup hygiene). The other
+            // 7 sessions opened on new file handles are freed implicitly when their
+            // file handles are dropped (FlushSession on driver close).
+            let close_resp = helper_close_session(
+                dev,
+                Some(setup_res.session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
+            assert!(
+                close_resp.is_ok(),
+                "CloseSession of S1 after reopen must succeed: {:?}",
+                close_resp
+            );
+        },
+    );
+}
+
+#[test]
+fn test_reopen_session_with_invalid_session_id() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            let result = dev.erase();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            let _ = helper_common_establish_credential_with_bmk(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+
+            {
+                // Session id doesnt exist
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    setup_res.random_seed,
+                );
+
+                let resp = helper_reopen_session(
+                    dev,
+                    9999, // invalid session id
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                    setup_res.session_bmk,
+                );
+
+                assert!(resp.is_err(), "resp {:?}", resp);
+            }
+
+            {
+                // Session id exists but doesnt need to be re-open
+                let new_dev = ddi.open_dev(path).unwrap();
+
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
+
+                let resp = helper_open_session(
+                    &new_dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
+
+                assert!(resp.is_ok(), "OpenSession should succeed: {:?}", resp);
+
+                let resp = resp.unwrap();
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    setup_res.random_seed,
+                );
+
+                let resp = helper_reopen_session(
+                    &new_dev,
+                    resp.hdr.sess_id.unwrap(), // valid session id but doesnt need to be reopened
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                    resp.data.bmk_session,
+                );
+                assert!(resp.is_err(), "ReopenSession should fail: {:?}", resp);
+            }
+        },
+    );
+}
+
+#[test]
 fn test_reopen_session_multi_threaded_single_winner() {
     ddi_dev_test(
         |_, _, _| 0,
