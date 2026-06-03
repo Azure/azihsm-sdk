@@ -680,7 +680,7 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
             unmasked_pub_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_priv_key.get(), 0u);
         ASSERT_EQ(unmasked_pub_key.get(), 0u);
     });
@@ -776,7 +776,7 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_empty_masked_key_buffer)
             pub_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(priv_key.get(), 0u);
         ASSERT_EQ(pub_key.get(), 0u);
     });
@@ -820,7 +820,7 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_wrong_key_kind_for_real_ecc_masked_key)
             unmasked_pub_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INTERNAL_ERROR);
         ASSERT_EQ(unmasked_priv_key.get(), 0u);
         ASSERT_EQ(unmasked_pub_key.get(), 0u);
     });
@@ -840,7 +840,7 @@ TEST_F(azihsm_ecc_keygen, keygen_rejects_curve_mismatch_p256_private_p384_public
         auto pub_prop_list = pub_props.get_prop_list();
 
         auto err = run_ecc_keygen_with_props(session, &priv_prop_list, &pub_prop_list);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
     });
 }
 
@@ -858,7 +858,7 @@ TEST_F(azihsm_ecc_keygen, keygen_rejects_curve_mismatch_p384_private_p521_public
         auto pub_prop_list = pub_props.get_prop_list();
 
         auto err = run_ecc_keygen_with_props(session, &priv_prop_list, &pub_prop_list);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
     });
 }
 
@@ -876,7 +876,7 @@ TEST_F(azihsm_ecc_keygen, keygen_rejects_curve_mismatch_p521_private_p256_public
         auto pub_prop_list = pub_props.get_prop_list();
 
         auto err = run_ecc_keygen_with_props(session, &priv_prop_list, &pub_prop_list);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
     });
 }
 
