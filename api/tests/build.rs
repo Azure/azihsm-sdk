@@ -29,14 +29,21 @@ fn try_main() -> anyhow::Result<()> {
     // Run 'cmake -E capabilities' command to gather JSON output of CMake capabilities.
     let capabilities_output = cmd!(sh, "cmake -E capabilities").quiet().output()?;
     if !capabilities_output.status.success() {
-        panic!("'cmake -E capabilities' command failed with status: {}", capabilities_output.status);
+        panic!(
+            "'cmake -E capabilities' command failed with status: {}",
+            capabilities_output.status
+        );
     }
     let capabilities_json = String::from_utf8(capabilities_output.stdout)?;
     let capabilities = parse(&capabilities_json)?;
 
     // parse the JSON output and extract the list of available generators.
     let mut gen_names = Vec::new();
-    if let Some(gen_objs) = capabilities["generators"].members().next().map(|_| capabilities["generators"].members()) {
+    if let Some(gen_objs) = capabilities["generators"]
+        .members()
+        .next()
+        .map(|_| capabilities["generators"].members())
+    {
         for gen_obj in gen_objs {
             if let Some(name) = gen_obj["name"].as_str() {
                 gen_names.push(name.to_string());
@@ -52,8 +59,7 @@ fn try_main() -> anyhow::Result<()> {
         let vs2026_available = gen_names.iter().any(|name| name == VS2026_GEN_NAME);
         if vs2026_available {
             config.generator(VS2026_GEN_NAME);
-        }
-        else {
+        } else {
             // fall back to VS2022 if VS2026 is not available
             config.generator(VS2022_GEN_NAME);
         }
