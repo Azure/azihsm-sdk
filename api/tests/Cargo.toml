@@ -11,6 +11,7 @@ azihsm_res_test_dev = { optional = true, workspace = true }
 
 [build-dependencies]
 cmake.workspace = true
+jzon.workspace = true
 
 [dev-dependencies]
 azihsm_api.workspace = true
