@@ -378,7 +378,7 @@ async fn encode_response<'p, P: HsmPal>(
     })?;
     let frame = DdiOpenSessionResp::from_layout(resp, &layout);
 
-    // `mask_cbc` requires `out[..total_len]` to be zero on entry.
+    // `mask` requires `out[..total_len]` to be zero on entry.
     frame.bmk_session.fill(0);
     mask(
         pal,
