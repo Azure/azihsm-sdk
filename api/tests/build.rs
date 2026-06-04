@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use std::env;
+#[cfg(target_os = "windows")]
 use std::path::Path;
 use std::process;
 
@@ -10,7 +11,9 @@ use xshell::Shell;
 #[cfg(target_os = "windows")]
 use xshell::cmd;
 
+#[cfg(target_os = "windows")]
 const VS2026_GEN_NAME: &str = "Visual Studio 18 2026";
+#[cfg(target_os = "windows")]
 const VS2022_GEN_NAME: &str = "Visual Studio 17 2022";
 
 fn main() {
