@@ -17,6 +17,11 @@ const VS2026_GEN_NAME: &str = "Visual Studio 18 2026";
 const VS2022_GEN_NAME: &str = "Visual Studio 17 2022";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MOCK");
+    println!("cargo:rerun-if-env-changed=CMAKE_GENERATOR");
+    println!("cargo:rerun-if-env-changed=ProgramFiles(x86)");
+    println!("cargo:rerun-if-env-changed=ProgramFiles");
+
     env_logger::init();
 
     if let Err(e) = try_main() {
