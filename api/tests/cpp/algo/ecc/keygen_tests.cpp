@@ -40,53 +40,14 @@ static void run_generated_keypair_has_expected_properties(
     ASSERT_NE(priv_key.get(), 0u);
     ASSERT_NE(pub_key.get(), 0u);
 
-    {
-        azihsm_key_kind kind{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.val = &kind;
-        prop.len = sizeof(kind);
+    EccKeySummary private_summary{};
+    EccKeySummary public_summary{};
 
-        err = azihsm_key_get_prop(priv_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(kind, AZIHSM_KEY_KIND_ECC);
-    }
+    ASSERT_EQ(read_ecc_key_summary(priv_key.get(), private_summary), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(read_ecc_key_summary(pub_key.get(), public_summary), AZIHSM_STATUS_SUCCESS);
 
-    {
-        azihsm_key_kind kind{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.val = &kind;
-        prop.len = sizeof(kind);
-
-        err = azihsm_key_get_prop(pub_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(kind, AZIHSM_KEY_KIND_ECC);
-    }
-
-    {
-        azihsm_ecc_curve actual_curve{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
-        prop.val = &actual_curve;
-        prop.len = sizeof(actual_curve);
-
-        err = azihsm_key_get_prop(priv_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_curve, curve);
-    }
-
-    {
-        azihsm_ecc_curve actual_curve{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
-        prop.val = &actual_curve;
-        prop.len = sizeof(actual_curve);
-
-        err = azihsm_key_get_prop(pub_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_curve, curve);
-    }
+    ASSERT_TRUE(is_expected_ecc_curve(private_summary, curve));
+    ASSERT_TRUE(is_expected_ecc_curve(public_summary, curve));
 }
 
 /// Verifies that a masked ECC private key can be unmasked into a valid key pair for the given
@@ -130,53 +91,17 @@ static void run_unmask_ecc_keypair_for_curve(azihsm_handle session, azihsm_ecc_c
     ASSERT_NE(unmasked_priv_key.get(), 0u);
     ASSERT_NE(unmasked_pub_key.get(), 0u);
 
-    {
-        azihsm_key_kind actual_kind{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.val = &actual_kind;
-        prop.len = sizeof(actual_kind);
+    EccKeySummary private_summary{};
+    EccKeySummary public_summary{};
 
-        err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_ECC);
-    }
+    ASSERT_EQ(
+        read_ecc_key_summary(unmasked_priv_key.get(), private_summary),
+        AZIHSM_STATUS_SUCCESS
+    );
+    ASSERT_EQ(read_ecc_key_summary(unmasked_pub_key.get(), public_summary), AZIHSM_STATUS_SUCCESS);
 
-    {
-        azihsm_key_kind actual_kind{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.val = &actual_kind;
-        prop.len = sizeof(actual_kind);
-
-        err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_ECC);
-    }
-
-    {
-        azihsm_ecc_curve actual_curve{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
-        prop.val = &actual_curve;
-        prop.len = sizeof(actual_curve);
-
-        err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_curve, curve);
-    }
-
-    {
-        azihsm_ecc_curve actual_curve{};
-        azihsm_key_prop prop{};
-        prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
-        prop.val = &actual_curve;
-        prop.len = sizeof(actual_curve);
-
-        err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_curve, curve);
-    }
+    ASSERT_TRUE(is_expected_ecc_curve(private_summary, curve));
+    ASSERT_TRUE(is_expected_ecc_curve(public_summary, curve));
 }
 
 /// Runs ECC key pair generation with caller-provided private and public key properties.
