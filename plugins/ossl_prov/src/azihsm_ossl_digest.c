@@ -54,6 +54,14 @@ static void *azihsm_ossl_digest_newctx_algo(void *provctx, int algo_id, uint32_t
     }
 
     dctx->ctx_handle = 0;
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session(prov_ctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(dctx);
+        return NULL;
+    }
     dctx->session_handle = prov_ctx->session;
     dctx->digest_size = digest_size;
     dctx->algo_id = algo_id;

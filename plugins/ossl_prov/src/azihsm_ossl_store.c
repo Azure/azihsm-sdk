@@ -14,6 +14,7 @@
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_file_io.h"
+#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_pkey_param.h"
 #include "azihsm_ossl_rsa.h"
 #include "azihsm_ossl_store.h"
@@ -439,6 +440,14 @@ static void *azihsm_store_open(
     AZIHSM_OSSL_PROV_CTX *prov_ctx = (AZIHSM_OSSL_PROV_CTX *)provctx;
 
     if (uri == NULL)
+    {
+        return NULL;
+    }
+
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session(prov_ctx) != AZIHSM_STATUS_SUCCESS)
     {
         return NULL;
     }

@@ -4,7 +4,10 @@
 pub(crate) mod aes_encrypt_decrypt;
 pub(crate) mod aes_generate_key;
 pub(crate) mod close_session;
+pub(crate) mod ecc_generate_key_pair;
+pub(crate) mod ecc_sign;
 pub(crate) mod establish_credential;
+pub(crate) mod from_ddi;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
@@ -25,6 +28,8 @@ use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
 pub(crate) use close_session::*;
+pub(crate) use ecc_generate_key_pair::*;
+pub(crate) use ecc_sign::*;
 pub(crate) use establish_credential::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
@@ -114,6 +119,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr),
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
         DdiOp::AesEncryptDecrypt => aes_encrypt_decrypt(pal, io, decoder, hdr).await,
+        DdiOp::EccGenerateKeyPair => ecc_generate_key_pair(pal, io, decoder, hdr).await,
+        DdiOp::EccSign => ecc_sign(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }

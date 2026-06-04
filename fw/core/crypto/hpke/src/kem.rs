@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
@@ -106,20 +107,41 @@ where
     P: HsmCrypto + HsmAlloc + 'a,
 {
     let curve = suite.kem_curve();
-    let nsk = suite.nsk();
     let npk = suite.npk();
     let ndh = suite.ndh();
 
-    let keygen_buf = alloc_bytes(nsk + npk, alloc)?;
-    let (sk_e, pk_e) = pal
-        .ecc_gen_keypair(io, curve, keygen_buf, HsmEccPct::None)
+    // Query-alloc-use ECC keygen.  `priv_max` covers any PAL's
+    // private-key encoding (raw scalar for real HW, PKCS#8 DER for
+    // std); `pub_max` always equals the wire-format public-key
+    // length (== npk).
+    let (priv_max, pub_max) = pal
+        .ecc_gen_keypair(io, alloc, curve, None, HsmEccPct::None)
         .await?;
+    let sk_e = alloc_bytes(priv_max, alloc)?;
+    let pk_e = alloc_bytes(pub_max, alloc)?;
+    let (sk_len, pk_len) = pal
+        .ecc_gen_keypair(
+            io,
+            alloc,
+            curve,
+            Some((&mut *sk_e, &mut *pk_e)),
+            HsmEccPct::None,
+        )
+        .await?;
+    // Validate the PAL honored the query-alloc-use contract (pk_len
+    // must equal npk for the wire format) and the caller's `enc`
+    // buffer is large enough — fail fast before doing the ECDH so we
+    // don't burn an ephemeral keypair on a request we can't complete.
+    if pk_len != npk || enc.len() < npk {
+        return Err(HsmError::InvalidArg);
+    }
 
     let dh = alloc_bytes(ndh, alloc)?;
     let pk_r_dma = dma_copy_in(alloc, pk_r)?;
-    pal.ecdh_derive(io, curve, sk_e, pk_r_dma, dh).await?;
+    pal.ecdh_derive(io, curve, &sk_e[..sk_len], pk_r_dma, dh)
+        .await?;
 
-    enc[..npk].copy_from_slice(pk_e);
+    enc[..npk].copy_from_slice(&pk_e[..npk]);
 
     let kem_context = alloc_bytes(npk * 2, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, None);
@@ -220,24 +242,38 @@ where
     P: HsmCrypto + HsmAlloc + 'a,
 {
     let curve = suite.kem_curve();
-    let nsk = suite.nsk();
     let npk = suite.npk();
     let ndh = suite.ndh();
 
-    let keygen_buf = alloc_bytes(nsk + npk, alloc)?;
-    let (sk_e, pk_e) = pal
-        .ecc_gen_keypair(io, curve, keygen_buf, HsmEccPct::None)
+    // Query-alloc-use ECC keygen — same flow as `encap`.
+    let (priv_max, pub_max) = pal
+        .ecc_gen_keypair(io, alloc, curve, None, HsmEccPct::None)
         .await?;
+    let sk_e = alloc_bytes(priv_max, alloc)?;
+    let pk_e = alloc_bytes(pub_max, alloc)?;
+    let (sk_len, pk_len) = pal
+        .ecc_gen_keypair(
+            io,
+            alloc,
+            curve,
+            Some((&mut *sk_e, &mut *pk_e)),
+            HsmEccPct::None,
+        )
+        .await?;
+    // Same fail-fast as `encap` — validate before any ECDH work.
+    if pk_len != npk || enc.len() < npk {
+        return Err(HsmError::InvalidArg);
+    }
 
     let dh = alloc_bytes(ndh * 2, alloc)?;
     let pk_r_dma = dma_copy_in(alloc, pk_r)?;
     let sk_s_dma = dma_copy_in(alloc, sk_s)?;
-    pal.ecdh_derive(io, curve, sk_e, pk_r_dma, &mut dh[..ndh])
+    pal.ecdh_derive(io, curve, &sk_e[..sk_len], pk_r_dma, &mut dh[..ndh])
         .await?;
     pal.ecdh_derive(io, curve, sk_s_dma, pk_r_dma, &mut dh[ndh..])
         .await?;
 
-    enc[..npk].copy_from_slice(pk_e);
+    enc[..npk].copy_from_slice(&pk_e[..npk]);
 
     let kem_context = alloc_bytes(npk * 3, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, Some(pk_s));

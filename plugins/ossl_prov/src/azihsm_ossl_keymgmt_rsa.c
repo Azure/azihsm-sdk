@@ -558,8 +558,17 @@ static AZIHSM_RSA_GEN_CTX *azihsm_ossl_keymgmt_gen_init_common(
         return NULL;
     }
 
-    genctx->provctx = provctx;
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session(provctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(genctx);
+        return NULL;
+    }
+
     genctx->session = provctx->session;
+    genctx->provctx = provctx;
     genctx->key_type = key_type;
     genctx->pubkey_bits = AIHSM_RSA_PUBKEY_BITS_DEFAULT;
     genctx->key_usage = AIHSM_KEY_USAGE_DEFAULT;
