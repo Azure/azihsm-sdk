@@ -1,16 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Golden hex fixtures shared by both fw and host crates.
+//! Deterministic fixtures shared by both fw and host crates.
 //!
-//! These constants pin the wire format. Any drift on either side
-//! breaks its own tests immediately. To regenerate a fixture, run
-//! the corresponding `seal` invocation and copy the produced bytes
-//! (the format is fully deterministic given key/iv/aad/pt).
-//!
-//! When adding a fixture here, also add the **same** `KEY`, `IV`,
-//! `AAD`, `PT`, and `ENVELOPE` constants to
-//! `fw/core/crypto/aead-envelope/tests/golden_fixtures.rs`.
+//! These constants (KEY/IV/AAD/PT) drive seal→open round-trips and
+//! wire-layout assertions. The envelope bytes are deterministic given
+//! the inputs, but are intentionally re-generated at runtime here
+//! rather than stored as a separate golden hex blob.
 
 #![allow(dead_code)] // fixtures are consumed by ops_tests below.
 
