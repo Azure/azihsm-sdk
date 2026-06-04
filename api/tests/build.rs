@@ -21,7 +21,7 @@ fn main() {
 
     if let Err(e) = try_main() {
         log::error!("Error: {:#}", e);
-        process::exit(-1);
+        process::exit(1);
     }
 }
 
@@ -38,6 +38,10 @@ fn try_main() -> anyhow::Result<()> {
     // Tried Ninja but it was producing invalid paths on Windows.
     #[cfg(target_os = "windows")]
     if env::var("CMAKE_GENERATOR").is_err() {
+        // default to VS2022 generator
+        config.generator(VS2022_GEN_NAME);
+
+        // locate and run vswhere tool to detect VS2026
         let vswhere_dir = env::var("ProgramFiles(x86)")
             .or_else(|_| env::var("ProgramFiles"))
             .unwrap_or_else(|_| r"C:\Program Files (x86)".to_string());
@@ -58,9 +62,6 @@ fn try_main() -> anyhow::Result<()> {
                 let has_vs2026 = stdout.lines().any(|v| v.trim().starts_with("18."));
                 if has_vs2026 {
                     config.generator(VS2026_GEN_NAME);
-                } else {
-                    // default to VS2022 generator
-                    config.generator(VS2022_GEN_NAME);
                 }
             }
         }

@@ -3,8 +3,8 @@
 
 cmake_minimum_required(VERSION 3.14)
 
-if(WIN32)
-    # Windows requires 4.2 for VS2026 generator
+if(CMAKE_GENERATOR STREQUAL "Visual Studio 18 2026")
+    # VS2026 generator requires 4.2
     cmake_minimum_required(VERSION 4.2)
 endif()
 
