@@ -1,7 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use jzon::parse;
+use std::env;
+use std::path::Path;
+use std::process;
+
+#[cfg(target_os = "windows")]
+use xshell::Shell;
+#[cfg(target_os = "windows")]
 use xshell::cmd;
 
 const VS2026_GEN_NAME: &str = "Visual Studio 18 2026";
@@ -12,56 +18,48 @@ fn main() {
 
     if let Err(e) = try_main() {
         log::error!("Error: {:#}", e);
-        std::process::exit(-1);
+        process::exit(-1);
     }
 }
 
 fn try_main() -> anyhow::Result<()> {
     let mut features = Vec::new();
-    if std::env::var("CARGO_FEATURE_MOCK").is_ok() {
+    if env::var("CARGO_FEATURE_MOCK").is_ok() {
         features.push("mock");
     }
     let mut config = cmake::Config::new("cpp");
     config.define("TEST_FEATURES", features.join(" "));
 
-    let sh = xshell::Shell::new()?;
-
-    // Run 'cmake -E capabilities' command to gather JSON output of CMake capabilities.
-    let capabilities_output = cmd!(sh, "cmake -E capabilities").quiet().output()?;
-    if !capabilities_output.status.success() {
-        panic!(
-            "'cmake -E capabilities' command failed with status: {}",
-            capabilities_output.status
-        );
-    }
-    let capabilities_json = String::from_utf8(capabilities_output.stdout)?;
-    let capabilities = parse(&capabilities_json)?;
-
-    // parse the JSON output and extract the list of available generators.
-    let mut gen_names = Vec::new();
-    if let Some(gen_objs) = capabilities["generators"]
-        .members()
-        .next()
-        .map(|_| capabilities["generators"].members())
-    {
-        for gen_obj in gen_objs {
-            if let Some(name) = gen_obj["name"].as_str() {
-                gen_names.push(name.to_string());
-            }
-        }
-    }
-
-    // On Windows, force the VS 2026 generator unless CMAKE_GENERATOR is set.
+    // On Windows, use vswhere.exe to detect installed Visual Studio versions and
+    // select the appropriate CMake generator unless CMAKE_GENERATOR is already set.
     // Tried Ninja but it was producing invalid paths on Windows.
     #[cfg(target_os = "windows")]
-    if std::env::var("CMAKE_GENERATOR").is_err() {
-        // check if VS2026 generator is available
-        let vs2026_available = gen_names.iter().any(|name| name == VS2026_GEN_NAME);
-        if vs2026_available {
-            config.generator(VS2026_GEN_NAME);
-        } else {
-            // fall back to VS2022 if VS2026 is not available
-            config.generator(VS2022_GEN_NAME);
+    if env::var("CMAKE_GENERATOR").is_err() {
+        let vswhere_dir = env::var("ProgramFiles(x86)")
+            .or_else(|_| env::var("ProgramFiles"))
+            .unwrap_or_else(|_| r"C:\Program Files (x86)".to_string());
+        let vswhere = Path::new(&vswhere_dir)
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe");
+        if vswhere.exists() {
+            let sh = Shell::new()?;
+            let output = cmd!(
+                sh,
+                "{vswhere} -products * -property installationVersion -prerelease"
+            )
+            .quiet()
+            .output()?;
+            if output.status.success() {
+                let stdout = String::from_utf8(output.stdout)?;
+                let has_vs2026 = stdout.lines().any(|v| v.trim().starts_with("18."));
+                if has_vs2026 {
+                    config.generator(VS2026_GEN_NAME);
+                } else {
+                    // default to VS2022 generator
+                    config.generator(VS2022_GEN_NAME);
+                }
+            }
         }
     }
 

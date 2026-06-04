@@ -13,7 +13,6 @@ azihsm_res_test_dev = { optional = true, workspace = true }
 anyhow.workspace = true
 cmake.workspace = true
 env_logger.workspace = true
-jzon.workspace = true
 log.workspace = true
 xshell.workspace = true
 
