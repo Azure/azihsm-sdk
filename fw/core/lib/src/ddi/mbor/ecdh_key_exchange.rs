@@ -54,8 +54,12 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
     // The on-wire `pub_key_der` field is named "der" for historical
     // reasons but already carries wire-LE `x || y` (P-521 padded to
     // 4-byte words) after the host's `pub_key_der_pre_encode`.
+    // The host emits a fixed-length frame for the selected curve,
+    // and the PAL trait requires exactly `wire_pub_key_len` bytes
+    // — reject any non-exact length so trailing junk isn't silently
+    // accepted.
     let wire_pub_key_len = curve.wire_pub_key_len();
-    if body.pub_key_der.len() < wire_pub_key_len {
+    if body.pub_key_der.len() != wire_pub_key_len {
         return Err(HsmError::InvalidArg);
     }
 

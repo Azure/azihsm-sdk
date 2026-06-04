@@ -41,6 +41,7 @@ pub(crate) fn for_ecc(
     metadata: &DdiTargetKeyMetadata,
 ) -> HsmResult<HsmVaultKeyAttrs> {
     let _ = curve;
+    validate_pairs(metadata)?;
     let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
 
     let sign_verify = metadata.sign() && metadata.verify();
@@ -82,6 +83,7 @@ pub(crate) fn for_ecc(
 /// usage flag — sign, verify, derive, wrap, or unwrap — is rejected
 /// with [`HsmError::InvalidPermissions`].
 pub(crate) fn for_aes(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
     let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
 
     let sign_verify = metadata.sign() && metadata.verify();
@@ -117,6 +119,7 @@ pub(crate) fn for_aes(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyA
 /// is `derive` (PKCS#11 `CKA_DERIVE`).  Any other usage is rejected
 /// with [`HsmError::InvalidPermissions`].
 pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
     let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
 
     let sign_verify = metadata.sign() && metadata.verify();
@@ -144,6 +147,23 @@ pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmV
     }
 
     Ok(attrs)
+}
+
+/// Reject metadata where one half of a paired usage flag is set
+/// without the other (`sign` without `verify`, or `encrypt`
+/// without `decrypt`).  The host is supposed to encode these as
+/// matched pairs; a half-set pair is either a malformed request
+/// or an attempt to smuggle in a usage bit that would be silently
+/// dropped by the `sign && verify` / `encrypt && decrypt` grouping
+/// in the per-kind builders below.
+fn validate_pairs(metadata: &DdiTargetKeyMetadata) -> HsmResult<()> {
+    if metadata.sign() != metadata.verify() {
+        return Err(HsmError::InvalidPermissions);
+    }
+    if metadata.encrypt() != metadata.decrypt() {
+        return Err(HsmError::InvalidPermissions);
+    }
+    Ok(())
 }
 
 /// Reject a session-only key request that also carries a host-

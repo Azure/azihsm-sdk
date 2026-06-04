@@ -296,8 +296,10 @@ pub trait HsmEcc {
     ///
     /// - `Ok(true)` — signature is valid.
     /// - `Ok(false)` — signature is invalid (not an error).
-    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or
-    ///   malformed public key.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::EccPublicKeyValidationFailed)` — `pub_key`
+    ///   does not parse as a valid point on `curve` (out-of-range
+    ///   coordinate, malformed encoding, etc.).
     /// - `Err(HsmError)` — propagated from the PKA driver.
     async fn ecc_verify(
         &self,
@@ -333,8 +335,10 @@ pub trait HsmEcc {
     /// # Returns
     ///
     /// - `Ok(())` — `secret[..secret_len]` populated.
-    /// - `Err(HsmError::InvalidArg)` — buffer mismatch or invalid
-    ///   public-key point.
+    /// - `Err(HsmError::InvalidArg)` — buffer mismatch.
+    /// - `Err(HsmError::EccPublicKeyValidationFailed)` — `pub_key`
+    ///   does not parse as a valid point on `curve` (out-of-range
+    ///   coordinate, malformed encoding, etc.).
     /// - `Err(HsmError)` — PKA driver failure.
     async fn ecdh_derive(
         &self,

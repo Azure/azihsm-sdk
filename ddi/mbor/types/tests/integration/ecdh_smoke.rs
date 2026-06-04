@@ -41,8 +41,6 @@ fn test_ecdh_key_exchange_smoke() {
                     None,
                 );
 
-            let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
-
             // Side A: derive Secret256 from (priv1, pub2).
             let resp1 = helper_ecdh_key_exchange(
                 dev,
@@ -52,7 +50,7 @@ fn test_ecdh_key_exchange_smoke() {
                 MborByteArray::new(pub_key2, pub_key2_len).expect("failed to create byte array"),
                 None,
                 DdiKeyType::Secret256,
-                key_props,
+                helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App),
             )
             .unwrap();
             assert_eq!(resp1.hdr.op, DdiOp::EcdhKeyExchange);
@@ -72,7 +70,7 @@ fn test_ecdh_key_exchange_smoke() {
                 MborByteArray::new(pub_key1, pub_key1_len).expect("failed to create byte array"),
                 None,
                 DdiKeyType::Secret256,
-                key_props,
+                helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App),
             )
             .unwrap();
             assert_eq!(resp2.hdr.status, DdiStatus::Success);
