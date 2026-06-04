@@ -101,12 +101,29 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     io: &impl HsmIo,
     view: &RequestView<'_>,
     opcode: u8,
+    sqe_session_id: u16,
 ) -> HsmResult<&'p DmaBuf> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
     // unsupported opcodes through a different error code.
     if !is_known_opcode(opcode) {
         return Err(HsmError::UnsupportedCmd);
+    }
+
+    // SQE/body session-id cross-check: for every opcode whose
+    // `SessionCtrl` requires `id_valid = true` (close + in-session),
+    // the SQE-carried `session_id` MUST match the inline body
+    // `session_id` TOC entry.  Out-of-session opcodes do not carry a
+    // body session id, and `validate_tbor_session_flags` has already
+    // rejected the `id_valid = true` case for them upstream.
+    //
+    // This matches MBOR's `validate_session` (Rule 3): the audit
+    // trail / CQE always reflects the same slot the handler mutates.
+    if needs_session_id_cross_check(opcode) {
+        let body_sess_id = extract_session_id(view)?;
+        if u16::from(body_sess_id) != sqe_session_id {
+            return Err(HsmError::InvalidArg);
+        }
     }
 
     // Default-PSK gate: applies only to in-session commands that are
@@ -173,6 +190,34 @@ fn is_in_session(opcode: u8) -> bool {
         opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
+        _ => true,
+    }
+}
+
+/// Returns `true` iff `opcode` carries an inline body `session_id`
+/// TOC entry that the dispatcher should cross-check against the SQE
+/// `session_id` field.
+///
+/// Equivalent to "the opcode's [`SessionCtrl`] requires
+/// `id_valid = true`" (see
+/// [`SessionCtrl::from_tbor_opcode`](crate::op::SessionCtrl::from_tbor_opcode)):
+/// `OpenSessionFinish`, `CloseSession`, and `ChangePsk` all carry
+/// the targeted slot id both in the SQE header and in the body's
+/// `SessionId` TOC entry, and the two MUST agree.
+///
+/// Out-of-session opcodes (`GetApiRev`, `OpenSessionInit`) carry no
+/// body `session_id` and are not cross-checked here;
+/// `validate_tbor_session_flags` already rejects them if the SQE
+/// `id_valid` bit is set.
+///
+/// Default-deny for unknown opcodes: a new TBOR opcode is assumed to
+/// be session-bearing until explicitly classified, so any future
+/// addition that is *not* session-bearing must opt out here in the
+/// same change that wires it into `dispatch`.
+fn needs_session_id_cross_check(opcode: u8) -> bool {
+    match opcode {
+        opcode::GET_API_REV | opcode::OPEN_SESSION_INIT => false,
+        opcode::OPEN_SESSION_FINISH | opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
         _ => true,
     }
 }

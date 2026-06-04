@@ -79,11 +79,16 @@ impl HsmEccCurve {
         self.priv_key_len() * 2
     }
 
-    /// Return the **raw cryptographic** ECDSA signature length in
-    /// bytes (`r || s`, each [`HsmEccCurve::priv_key_len`] bytes).
+    /// Return the **wire-format / HSM-serialized** private-key length
+    /// in bytes — the size of an HSM-format private scalar buffer.
     ///
-    /// **This is _not_ the on-wire/HSM size.**  See
-    /// [`HsmEccCurve::wire_sig_len`].
+    /// Alias of [`HsmEccCurve::wire_coord_len`] kept for caller-site
+    /// clarity (private keys are a single padded scalar; this name
+    /// makes intent explicit at allocation sites).  Matches
+    /// `azihsm_crypto`'s `ExportableHsmKey::hsm_bytes_len` /
+    /// `to_hsm_bytes` output for an ECC private key.
+    ///
+    /// Per-curve sizes (P-256 → 32, P-384 → 48, P-521 → 68).
     pub fn wire_priv_key_len(&self) -> usize {
         self.wire_coord_len()
     }

@@ -262,7 +262,9 @@ impl<P: HsmPal> Hsm<P> {
                     .op_status(HostStatus::INTERNAL_ERROR)?;
                 (resp, session_ctrl)
             } else {
-                let dispatch_result = ddi::tbor::dispatch(self.pal(), io, &req_view, opcode).await;
+                let dispatch_result =
+                    ddi::tbor::dispatch(self.pal(), io, &req_view, opcode, params.sqe_session_id)
+                        .await;
                 let resp: &DmaBuf = dispatch_result.or_else(|err| {
                     self.pal()
                         .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))
@@ -342,11 +344,11 @@ impl<P: HsmPal> Hsm<P> {
     /// only the SQE-flag shape against the opcode's expected
     /// [`SessionCtrl`].
     ///
-    /// Cross-checking the SQE `session_id` against an in-body
-    /// session id is deferred to each per-opcode handler (the
-    /// session id lives inside the TBOR request body's `SessionId`
-    /// TOC entry, not in a generic header), so this validator only
-    /// enforces the `ctrl` / `id_valid` consistency.
+    /// Cross-checking the SQE `session_id` against the inline body
+    /// `session_id` TOC entry happens in [`ddi::tbor::dispatch`] for
+    /// every in-session / close opcode (i.e. every opcode whose
+    /// [`SessionCtrl`] requires `id_valid = true`).  This validator
+    /// only enforces the `ctrl` / `id_valid` consistency.
     #[inline(always)]
     fn validate_tbor_session_flags(expected: SessionCtrl, flags: SessionFlags) -> HsmResult<()> {
         if flags.ctrl() != expected as u8 {
