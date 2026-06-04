@@ -63,7 +63,7 @@ pub struct TborOpenSessionInitReq {
 impl Default for TborOpenSessionInitReq {
     fn default() -> Self {
         Self {
-            psk_id: 0,
+            psk_id: 1,
             session_type: 0,
             suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
             pk_init: [0u8; PK_INIT_LEN],
