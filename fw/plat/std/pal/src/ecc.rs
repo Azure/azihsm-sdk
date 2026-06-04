@@ -24,9 +24,9 @@
 //!
 //! | Direction | Private key | Public key |
 //! |-----------|-------------|------------|
-//! | Trait → PAL (input)  | PKCS#8 DER `&DmaBuf` (variable, `≤ priv_key_der_max`) | Wire-LE `x \|\| y` `&DmaBuf` (`pub_key_len` bytes) |
+//! | Trait → PAL (input)  | PKCS#8 DER `&DmaBuf` (variable, `≤ priv_key_der_max`) | Wire-LE `x \|\| y` `&DmaBuf` (`wire_pub_key_len` bytes, P-521 padded) |
 //! | PAL → Trait (output) | PKCS#8 DER `&mut DmaBuf` (variable, `≤ priv_key_der_max`) | Wire-LE `x \|\| y` `&mut DmaBuf` (`wire_pub_key_len` bytes, P-521 padded) |
-//! | PAL → Driver (internal) | `EccPrivateKey` handle | Wire-LE bytes (raw `_le` slices) |
+//! | PAL → Driver (internal) | `EccPrivateKey` handle | Wire-LE bytes (`_le` slices, P-521 padded) |
 //! | Driver → OpenSSL (internal) | `EccPrivateKey` handle | `EccPublicKey` handle (raw BE coords) |
 //!
 //! The trait-level [`HsmEcc::ecc_gen_keypair`] query mode reports
@@ -86,7 +86,7 @@ impl HsmEcc for StdHsmPal {
         };
 
         if priv_out.len() < priv_max || pub_out.len() < wire_pub_len {
-            return Err(HsmError::EccInvalidKeyLength);
+            return Err(HsmError::InvalidArg);
         }
 
         // Allocate the contiguous `priv || pub` scratch a real PKA
@@ -146,17 +146,17 @@ impl HsmEcc for StdHsmPal {
         hash: &DmaBuf,
         signature: &DmaBuf,
     ) -> HsmResult<bool> {
-        let pub_key_len = curve.pub_key_len();
-        let sig_len = curve.sig_len();
-        if pub_key.len() < pub_key_len || signature.len() < sig_len {
+        let wire_pub_len = curve.wire_pub_key_len();
+        let wire_sig_len = curve.wire_sig_len();
+        if pub_key.len() < wire_pub_len || signature.len() < wire_sig_len {
             return Err(HsmError::InvalidArg);
         }
         self.ecc
             .ecc_verify_le(
                 to_ecc_curve(curve),
-                &pub_key[..pub_key_len],
+                &pub_key[..wire_pub_len],
                 hash,
-                &signature[..sig_len],
+                &signature[..wire_sig_len],
             )
             .await
     }
@@ -166,7 +166,8 @@ impl HsmEcc for StdHsmPal {
     /// Parses the local PKCS#8 DER private into an OpenSSL handle
     /// and delegates to the driver's wire-LE ECDH method which
     /// constructs the remote pub-key handle internally from the
-    /// wire-LE coordinates.
+    /// wire-LE coordinates (stripping per-coordinate padding for
+    /// P-521).
     async fn ecdh_derive(
         &self,
         _io: &impl HsmIo,
@@ -175,8 +176,8 @@ impl HsmEcc for StdHsmPal {
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let pub_key_len = curve.pub_key_len();
-        if pub_key.len() < pub_key_len {
+        let wire_pub_len = curve.wire_pub_key_len();
+        if pub_key.len() < wire_pub_len || secret.len() < curve.secret_len() {
             return Err(HsmError::InvalidArg);
         }
         let pk = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
@@ -184,7 +185,7 @@ impl HsmEcc for StdHsmPal {
             .ecdh_derive_le(
                 &pk,
                 to_ecc_curve(curve),
-                &pub_key[..pub_key_len],
+                &pub_key[..wire_pub_len],
                 &mut secret[..],
             )
             .await

@@ -253,17 +253,21 @@ pub trait HsmEcc {
     /// - `curve` — NIST curve the public key is on; determines the
     ///   expected signature length.
     /// - `pub_key` — verification key; uncompressed `x || y`,
-    ///   `curve.pub_key_len()` bytes.  **Each coordinate is in
-    ///   little-endian byte order** — matches the on-wire DDI
+    ///   exactly `curve.wire_pub_key_len()` bytes.  **Each coordinate
+    ///   is in little-endian byte order** with P-521 coordinates
+    ///   padded to 68 bytes (66 real + 2-byte trailing zero pad) for
+    ///   32-bit word alignment — matches the on-wire DDI
     ///   representation and real PKA hardware.  Implementations that
-    ///   delegate to a big-endian-native primitive (e.g. OpenSSL) must
-    ///   reverse each coordinate internally.
+    ///   delegate to a big-endian-native primitive (e.g. OpenSSL)
+    ///   must strip the per-coordinate padding and reverse each
+    ///   coordinate internally.
     /// - `hash` — message digest that was signed.  Raw digest bytes;
     ///   no endianness conversion is applied.
     /// - `signature` — signature to verify; must be exactly
-    ///   `curve.sig_len()` bytes (`r || s`).  **Each component is in
-    ///   little-endian byte order** — matches the on-wire DDI
-    ///   representation and real PKA hardware.
+    ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
+    ///   is in little-endian byte order** with P-521 components
+    ///   padded to 68 bytes — matches the on-wire DDI representation
+    ///   and real PKA hardware.
     ///
     /// # Returns
     ///
@@ -291,11 +295,14 @@ pub trait HsmEcc {
     /// - `priv_key` — local private key (PAL-format byte blob — std
     ///   uses PKCS#8 DER; real-HW PALs use the raw scalar).
     /// - `pub_key` — remote uncompressed point; must be exactly
-    ///   `curve.pub_key_len()` bytes (`x || y`).  **Each coordinate
-    ///   is in little-endian byte order** — matches the on-wire DDI
-    ///   representation and real PKA hardware.  Implementations that
-    ///   delegate to a big-endian-native primitive (e.g. OpenSSL) must
-    ///   reverse each coordinate internally.
+    ///   `curve.wire_pub_key_len()` bytes (`x || y`).  **Each
+    ///   coordinate is in little-endian byte order** with P-521
+    ///   coordinates padded to 68 bytes (66 real + 2-byte trailing
+    ///   zero pad) for 32-bit word alignment — matches the on-wire
+    ///   DDI representation and real PKA hardware.  Implementations
+    ///   that delegate to a big-endian-native primitive (e.g.
+    ///   OpenSSL) must strip the per-coordinate padding and reverse
+    ///   each coordinate internally.
     /// - `secret` — output buffer; must be at least
     ///   `curve.secret_len()` bytes.  On success, holds the
     ///   x-coordinate of the shared point.

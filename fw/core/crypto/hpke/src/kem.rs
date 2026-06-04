@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
@@ -127,13 +128,20 @@ where
             HsmEccPct::None,
         )
         .await?;
+    // Validate the PAL honored the query-alloc-use contract (pk_len
+    // must equal npk for the wire format) and the caller's `enc`
+    // buffer is large enough — fail fast before doing the ECDH so we
+    // don't burn an ephemeral keypair on a request we can't complete.
+    if pk_len != npk || enc.len() < npk {
+        return Err(HsmError::InvalidArg);
+    }
 
     let dh = alloc_bytes(ndh, alloc)?;
     let pk_r_dma = dma_copy_in(alloc, pk_r)?;
     pal.ecdh_derive(io, curve, &sk_e[..sk_len], pk_r_dma, dh)
         .await?;
 
-    enc[..npk].copy_from_slice(&pk_e[..pk_len]);
+    enc[..npk].copy_from_slice(&pk_e[..npk]);
 
     let kem_context = alloc_bytes(npk * 2, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, None);
@@ -252,6 +260,10 @@ where
             HsmEccPct::None,
         )
         .await?;
+    // Same fail-fast as `encap` — validate before any ECDH work.
+    if pk_len != npk || enc.len() < npk {
+        return Err(HsmError::InvalidArg);
+    }
 
     let dh = alloc_bytes(ndh * 2, alloc)?;
     let pk_r_dma = dma_copy_in(alloc, pk_r)?;
@@ -261,7 +273,7 @@ where
     pal.ecdh_derive(io, curve, sk_s_dma, pk_r_dma, &mut dh[ndh..])
         .await?;
 
-    enc[..npk].copy_from_slice(&pk_e[..pk_len]);
+    enc[..npk].copy_from_slice(&pk_e[..npk]);
 
     let kem_context = alloc_bytes(npk * 3, alloc)?;
     build_kem_context(kem_context, &enc[..npk], pk_r, Some(pk_s));
