@@ -20,11 +20,13 @@
 //! - Linux: OpenSSL-based implementations
 //! - Windows: Native Windows cryptography APIs
 
+pub mod aead_envelope;
 mod aes;
 mod der;
 mod ecc;
 mod hash;
 mod hmac;
+mod hpke;
 mod kdf;
 mod rand;
 mod rsa;
@@ -39,6 +41,7 @@ pub use der::*;
 pub use ecc::*;
 pub use hash::*;
 pub use hmac::*;
+pub use hpke::*;
 pub use kdf::*;
 pub use op::*;
 pub use rand::*;
@@ -390,6 +393,62 @@ pub enum CryptoError {
     /// AES-GCM decryption operation failed.
     #[error("AES-GCM decryption failed")]
     GcmDecryptionFailed,
+
+    // AEAD envelope (see crates/crypto/src/aead_envelope) — wire-format-level
+    // errors not already covered by the underlying GCM variants above.
+    /// AEAD envelope magic byte does not match the expected format.
+    #[error("AEAD envelope invalid format")]
+    AeadEnvelopeInvalidFormat,
+    /// AEAD envelope `alg` byte is not supported in this build.
+    #[error("AEAD envelope unsupported algorithm")]
+    AeadEnvelopeUnsupportedAlg,
+    /// AEAD envelope `aad_len` violates the algorithm's AAD
+    /// granularity (for AES-256-GCM: must be `0` or a multiple
+    /// of `32`, and `<= u16::MAX`).
+    #[error("AEAD envelope invalid AAD length")]
+    AeadEnvelopeInvalidAadLength,
+
+    // HPKE-related errors (see crates/crypto/src/hpke).
+    /// HPKE recipient or sender public key is malformed (bad length /
+    /// not SEC1 uncompressed / point not on curve).
+    #[error("HPKE invalid public key")]
+    HpkeInvalidPublicKey,
+    /// HPKE private key is malformed (bad length or scalar out of range).
+    #[error("HPKE invalid private key")]
+    HpkeInvalidPrivateKey,
+    /// HPKE input or output buffer has an incorrect length.
+    #[error("HPKE invalid buffer size")]
+    HpkeInvalidBufferSize,
+    /// HPKE output buffer is too small for the requested operation.
+    #[error("HPKE output buffer too small")]
+    HpkeOutputBufferTooSmall,
+    /// HPKE KEM encapsulation failed (ephemeral key generation or ECDH).
+    #[error("HPKE KEM encapsulation failed")]
+    HpkeKemEncapFailed,
+    /// HPKE KEM decapsulation failed (ECDH).
+    #[error("HPKE KEM decapsulation failed")]
+    HpkeKemDecapFailed,
+    /// HPKE key schedule (Extract / Expand) failed.
+    #[error("HPKE key schedule failed")]
+    HpkeKeyScheduleFailed,
+    /// HPKE AEAD seal failed before authenticating the ciphertext.
+    #[error("HPKE AEAD seal failed")]
+    HpkeAeadSealFailed,
+    /// HPKE AEAD open failed — authentication tag mismatch or decrypt error.
+    #[error("HPKE AEAD open failed")]
+    HpkeAeadOpenFailed,
+    /// HPKE export length exceeds RFC 9180 limit (`L > 255 * Nh`).
+    #[error("HPKE export length too large")]
+    HpkeExportTooLarge,
+    /// HPKE config-struct invariant violated (mode does not match the
+    /// auth / PSK fields present). Constructible only via internal
+    /// mutation of `pub(crate)` fields — public constructors enforce
+    /// the invariant.
+    #[error("HPKE config mode/inputs mismatch")]
+    HpkeInvalidModeConfig,
+    /// HPKE ciphersuite not supported by the current build.
+    #[error("HPKE unsupported ciphersuite")]
+    HpkeUnsupportedSuite,
 }
 
 /// Macro for defining platform-specific algorithm type aliases.

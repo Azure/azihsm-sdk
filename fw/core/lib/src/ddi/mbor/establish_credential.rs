@@ -10,8 +10,8 @@
 
 use core::ops::Deref;
 
-use azihsm_fw_core_crypto_masked_key::mask_cbc;
-use azihsm_fw_core_crypto_masked_key::unmask_cbc_in_place;
+use azihsm_fw_core_crypto_key_masking::cbc::mask;
+use azihsm_fw_core_crypto_key_masking::cbc::unmask;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialReq;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialResp;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -422,7 +422,7 @@ async fn decrypt_credential<P: HsmPal>(
 /// BK3 plaintext sealed under the partition's `BK_BOOT` (an 80-byte
 /// AES-CBC-256 + HMAC-SHA-384 masking key).
 ///
-/// `unmask_cbc_in_place` decrypts the ciphertext slot inside the
+/// `unmask` decrypts the ciphertext slot inside the
 /// blob in place, so this helper takes the blob as `&mut DmaBuf` and
 /// the caller passes `body.masked_bk3` (whose decoded byte-slice
 /// field is mutable — see the MBOR mut-decoder refactor) directly.
@@ -441,7 +441,7 @@ async fn unmask_partition_bk3<P: HsmPal>(
     let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
     pal.part_bk_boot(io, Some(bk_boot))?;
 
-    let layout = unmask_cbc_in_place(pal, io, bk_boot, masked_bk3).await?;
+    let layout = unmask(pal, io, bk_boot, masked_bk3).await?;
     if layout.plaintext_max_len < BK3_LEN {
         return Err(HsmError::MaskedKeyDecodeFailed);
     }
@@ -546,7 +546,7 @@ async fn provision_mk<'p, P: HsmPal>(
         );
     }
 
-    let layout = unmask_cbc_in_place(pal, io, bk, bmk).await?;
+    let layout = unmask(pal, io, bk, bmk).await?;
     if layout.plaintext_max_len < BK_LEN {
         return Err(HsmError::MaskedKeyDecodeFailed);
     }
@@ -593,12 +593,12 @@ async fn encode_bmk_response<'p, P: HsmPal>(
         key_length: BK_LEN as u16,
     };
 
-    // Borrow MK from the vault so `mask_cbc` reads it through a
+    // Borrow MK from the vault so `mask` reads it through a
     // `&DmaBuf` view rather than retaining the original input buffer.
     let mk_dma = pal.vault_key(io, mk_key_id)?;
 
     // Size-query the BMK envelope length (no crypto performed).
-    let bmk_len = mask_cbc(pal, io, bk, mk_dma, &bmk_metadata, None).await?;
+    let bmk_len = mask(pal, io, bk, mk_dma, &bmk_metadata, None).await?;
 
     // Reserve the response buffer (encoder-frame-then-fill pattern).
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
@@ -609,10 +609,10 @@ async fn encode_bmk_response<'p, P: HsmPal>(
     })?;
     let frame = DdiEstablishCredentialResp::from_layout(resp, &layout);
 
-    // `mask_cbc` requires `out[..total_len]` to be zero on entry; the
+    // `mask` requires `out[..total_len]` to be zero on entry; the
     // MBOR `reserve_offset` path advances the cursor without clearing
     // the reserved data region, so explicitly zero it here.
     frame.bmk.fill(0);
-    mask_cbc(pal, io, bk, mk_dma, &bmk_metadata, Some(frame.bmk)).await?;
+    mask(pal, io, bk, mk_dma, &bmk_metadata, Some(frame.bmk)).await?;
     Ok(resp)
 }

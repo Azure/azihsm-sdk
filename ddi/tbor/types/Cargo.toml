@@ -12,9 +12,12 @@ azihsm_ddi_tbor_derive.workspace = true
 azihsm_fw_ddi_tbor_types.workspace = true
 
 [dev-dependencies]
+azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_interface.workspace = true
 azihsm_ddi_tbor_test_helpers.workspace = true
+azihsm_fw_hsm_pal_traits.workspace = true
+serial_test.workspace = true
 
 [lib]
 doctest = false

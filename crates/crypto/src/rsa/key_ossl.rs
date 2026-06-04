@@ -489,6 +489,230 @@ impl OsslRsaPrivateKey {
             .map_err(|_| CryptoError::RsaKeyImportError)?;
         Ok(d)
     }
+
+    /// Import from non-CRT `n || e(4) || p || q` or CRT format (auto-detected by length).
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        // Detect key size from blob length.
+        // Non-CRT: key_bytes * 2 + 4 → key_bytes = (len - 4) / 2
+        // CRT:     key_bytes + 4 + key_bytes + half*5 = key_bytes*7/2 + 4
+        //          → key_bytes = (len - 4) * 2 / 9
+        let len = bytes.len();
+
+        // Try non-CRT first: key_bytes = (len - 4) / 2
+        if len >= 8 && (len - 4).is_multiple_of(2) {
+            let key_bytes = (len - 4) / 2;
+            let half = key_bytes / 2;
+            if key_bytes == 256 || key_bytes == 384 || key_bytes == 512 {
+                return Self::from_hsm_bytes_non_crt(bytes, key_bytes, half);
+            }
+        }
+
+        // Try CRT: key_bytes = (len - 4) * 2 / 9
+        //   CRT layout: n(kb) + e(4) + d(kb) + p(kb/2) + q(kb/2) + dp(kb/2) + dq(kb/2) + qinv(kb/2)
+        //             = 2*kb + 4 + 5*(kb/2) = 4.5*kb + 4
+        if len >= 8 && ((len - 4) * 2).is_multiple_of(9) {
+            let key_bytes = (len - 4) * 2 / 9;
+            let half = key_bytes / 2;
+            if key_bytes == 256 || key_bytes == 384 || key_bytes == 512 {
+                return Self::from_hsm_bytes_crt(bytes, key_bytes, half);
+            }
+        }
+
+        Err(CryptoError::RsaKeyImportError)
+    }
+
+    fn from_hsm_bytes_non_crt(
+        bytes: &[u8],
+        key_bytes: usize,
+        half: usize,
+    ) -> Result<Self, CryptoError> {
+        let mut off = 0;
+        let n = BigNum::from_slice(&bytes[off..off + key_bytes])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += key_bytes;
+        let e =
+            BigNum::from_slice(&bytes[off..off + 4]).map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += 4;
+        let p = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += half;
+        let q = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let d = Self::compute_private_exponent(&e, &p, &q)?;
+
+        let rsa_key = openssl::rsa::Rsa::from_private_components(
+            n,
+            e,
+            d,
+            p,
+            q,
+            BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?,
+            BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?,
+            BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?,
+        )
+        .map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let pkey = PKey::from_rsa(rsa_key).map_err(|_| CryptoError::RsaKeyImportError)?;
+        Ok(Self::new(pkey))
+    }
+
+    fn from_hsm_bytes_crt(
+        bytes: &[u8],
+        key_bytes: usize,
+        half: usize,
+    ) -> Result<Self, CryptoError> {
+        let mut off = 0;
+        let n = BigNum::from_slice(&bytes[off..off + key_bytes])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += key_bytes;
+        let e =
+            BigNum::from_slice(&bytes[off..off + 4]).map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += 4;
+        let d = BigNum::from_slice(&bytes[off..off + key_bytes])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += key_bytes;
+        let p = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += half;
+        let q = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += half;
+        let dp = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += half;
+        let dq = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        off += half;
+        let qinv = BigNum::from_slice(&bytes[off..off + half])
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let rsa_key = openssl::rsa::Rsa::from_private_components(n, e, d, p, q, dp, dq, qinv)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let pkey = PKey::from_rsa(rsa_key).map_err(|_| CryptoError::RsaKeyImportError)?;
+        Ok(Self::new(pkey))
+    }
+}
+
+impl ExportableHsmKey for OsslRsaPrivateKey {
+    fn hsm_bytes_len(&self) -> usize {
+        let key_bytes = self.key.size();
+        key_bytes * 2 + 4
+    }
+
+    /// Write non-CRT `n || e(4) || p || q` into `buf`.
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let rsa = self.key.rsa().map_err(|_| CryptoError::RsaKeyExportError)?;
+        let key_bytes = rsa.size() as usize;
+        let half = key_bytes / 2;
+        let total = key_bytes * 2 + 4;
+
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+
+        let n = rsa
+            .n()
+            .to_vec_padded(key_bytes as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let e = rsa
+            .e()
+            .to_vec_padded(4)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let p = rsa
+            .p()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let q = rsa
+            .q()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+
+        let mut off = 0;
+        buf[off..off + key_bytes].copy_from_slice(&n);
+        off += key_bytes;
+        buf[off..off + 4].copy_from_slice(&e);
+        off += 4;
+        buf[off..off + half].copy_from_slice(&p);
+        off += half;
+        buf[off..off + half].copy_from_slice(&q);
+
+        Ok(total)
+    }
+}
+
+impl ImportableHsmKey for OsslRsaPrivateKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
+    }
+}
+
+impl ExportableHsmRsaKey for OsslRsaPrivateKey {
+    fn hsm_crt_bytes_len(&self) -> usize {
+        let key_bytes = self.key.size();
+        key_bytes + 4 + key_bytes + (key_bytes / 2) * 5
+    }
+
+    /// Write CRT `n || e(4) || d || p || q || dp || dq || qinv` into `buf`.
+    fn to_hsm_crt_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let rsa = self.key.rsa().map_err(|_| CryptoError::RsaKeyExportError)?;
+        let key_bytes = rsa.size() as usize;
+        let half = key_bytes / 2;
+        let total = key_bytes + 4 + key_bytes + half * 5;
+
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+
+        let n = rsa
+            .n()
+            .to_vec_padded(key_bytes as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let e = rsa
+            .e()
+            .to_vec_padded(4)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let d = rsa
+            .d()
+            .to_vec_padded(key_bytes as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let p = rsa
+            .p()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let q = rsa
+            .q()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let dp = rsa
+            .dmp1()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let dq = rsa
+            .dmq1()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let qinv = rsa
+            .iqmp()
+            .ok_or(CryptoError::RsaKeyExportError)?
+            .to_vec_padded(half as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+
+        let mut off = 0;
+        for component in [n.as_slice(), &e, &d, &p, &q, &dp, &dq, &qinv] {
+            buf[off..off + component.len()].copy_from_slice(component);
+            off += component.len();
+        }
+
+        Ok(total)
+    }
 }
 
 /// Marks this type as a cryptographic key.
@@ -684,6 +908,64 @@ impl OsslRsaPublicKey {
     /// A reference to the OpenSSL `PKey<Public>` wrapper.
     pub(crate) fn pkey(&self) -> &PKeyRef<Public> {
         &self.key
+    }
+
+    /// Import from `n || e(4)`.
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let len = bytes.len();
+        if len < 8 {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+        let key_bytes = len - 4;
+        if !is_valid_key_size(key_bytes) {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+
+        let n =
+            BigNum::from_slice(&bytes[..key_bytes]).map_err(|_| CryptoError::RsaKeyImportError)?;
+        let e =
+            BigNum::from_slice(&bytes[key_bytes..]).map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let rsa_key = openssl::rsa::Rsa::from_public_components(n, e)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        let pkey = PKey::from_rsa(rsa_key).map_err(|_| CryptoError::RsaKeyImportError)?;
+        Ok(Self::new(pkey))
+    }
+}
+
+impl ExportableHsmKey for OsslRsaPublicKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.key.size() + 4
+    }
+
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let rsa = self.key.rsa().map_err(|_| CryptoError::RsaKeyExportError)?;
+        let key_bytes = rsa.size() as usize;
+        let total = key_bytes + 4;
+
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+
+        let n = rsa
+            .n()
+            .to_vec_padded(key_bytes as i32)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+        let e = rsa
+            .e()
+            .to_vec_padded(4)
+            .map_err(|_| CryptoError::RsaKeyExportError)?;
+
+        buf[..key_bytes].copy_from_slice(&n);
+        buf[key_bytes..total].copy_from_slice(&e);
+
+        Ok(total)
+    }
+}
+
+impl ImportableHsmKey for OsslRsaPublicKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
     }
 }
 

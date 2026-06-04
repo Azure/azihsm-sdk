@@ -146,7 +146,7 @@ const STD_BKS2: [u8; BK_SEED_LEN] = [
 /// | `res_mask` | 16 B | Resource bitmask (each bit = one vault table) |
 /// | `id` | 16 B | Random identity blob |
 /// | `pub_key` | 96 B | Raw P-384 public key (x ∥ y) |
-/// | `priv_key_der` | 256 B | PKCS#8 DER-encoded P-384 private key |
+/// | `priv_key` | 48 B | Raw HSM P-384 private scalar |
 /// | `leaf_cert` | 2 KB | Cached DER-encoded partition leaf certificate |
 /// | `session_table` | 2 B | Bitmask session allocator |
 ///
@@ -162,7 +162,7 @@ const STD_BKS2: [u8; BK_SEED_LEN] = [
 /// ## Zeroization
 ///
 /// When a partition is freed via [`part_free_internal`], all
-/// cryptographic material (`id`, `pub_key`, `priv_key_der`,
+/// cryptographic material (`id`, `pub_key`, `priv_key`,
 /// `leaf_cert`) is explicitly zeroed before the state transitions
 /// back to `Disabled`.
 ///
@@ -285,6 +285,15 @@ pub(crate) struct PartitionEntry {
 
     /// Vault key ID of the partition unwrapping key.
     unwrapping_key_id: Option<HsmKeyId>,
+
+    /// Crypto Officer PSK.  `None` while the well-known default
+    /// applies; set to `Some` once `part_psk_set(psk_id=0, ..)` is
+    /// invoked.
+    psk_co: Option<[u8; PSK_LEN]>,
+
+    /// Crypto User PSK.  `None` while the well-known default applies;
+    /// set to `Some` once `part_psk_set(psk_id=1, ..)` is invoked.
+    psk_cu: Option<[u8; PSK_LEN]>,
 }
 
 impl Default for PartitionEntry {
@@ -319,6 +328,8 @@ impl Default for PartitionEntry {
             bk3_session_set: false,
             mk_key_id: None,
             unwrapping_key_id: None,
+            psk_co: None,
+            psk_cu: None,
         }
     }
 }
@@ -738,6 +749,72 @@ impl HsmPartitionManager for StdHsmPal {
         part.unwrapping_key_id = Some(key_id);
         Ok(())
     }
+
+    fn part_psk(&self, io: &impl HsmIo, psk_id: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        if psk_id > 1 {
+            return Err(HsmError::InvalidPskId);
+        }
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        let stored: Option<&[u8; PSK_LEN]> = match psk_id {
+            0 => part.psk_co.as_ref(),
+            _ => part.psk_cu.as_ref(),
+        };
+        let src: &[u8] = match stored {
+            Some(rotated) => rotated.as_slice(),
+            None if psk_id == 0 => DEFAULT_PSK_CO.as_slice(),
+            None => DEFAULT_PSK_CU.as_slice(),
+        };
+        match out {
+            None => Ok(PSK_LEN),
+            Some(buf) => {
+                if buf.len() < PSK_LEN {
+                    return Err(HsmError::InvalidArg);
+                }
+                buf[..PSK_LEN].copy_from_slice(src);
+                Ok(PSK_LEN)
+            }
+        }
+    }
+
+    fn part_psk_set(&self, io: &impl HsmIo, psk_id: u8, psk: &[u8]) -> HsmResult<()> {
+        if psk_id > 1 {
+            return Err(HsmError::InvalidPskId);
+        }
+        if psk.len() != PSK_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        let mut buf = [0u8; PSK_LEN];
+        buf.copy_from_slice(psk);
+        if psk_id == 0 {
+            part.psk_co = Some(buf);
+        } else {
+            part.psk_cu = Some(buf);
+        }
+        Ok(())
+    }
+
+    fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool> {
+        if psk_id > 1 {
+            return Err(HsmError::InvalidPskId);
+        }
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        // Authoritative byte-compare against the compiled-in default,
+        // not just `Option::is_some()`.  This way the gate cannot be
+        // bypassed by a (malformed/malicious) `ChangePsk` that writes
+        // the public default bytes back into the slot — the slot then
+        // shows up as `Some(default)`, but `is_default` still reports
+        // `true` because the effective PSK is still the public one.
+        let stored: &[u8] = match psk_id {
+            0 => part.psk_co.as_ref().map_or(&DEFAULT_PSK_CO[..], |k| &k[..]),
+            _ => part.psk_cu.as_ref().map_or(&DEFAULT_PSK_CU[..], |k| &k[..]),
+        };
+        let default: &[u8] = match psk_id {
+            0 => &DEFAULT_PSK_CO[..],
+            _ => &DEFAULT_PSK_CU[..],
+        };
+        Ok(stored == default)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,9 +1196,9 @@ impl StdHsmPal {
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// Generate an ECC P-384 key pair, store the PKCS#8 DER private
-    /// key in the vault, and write raw public key coordinates (x ∥ y)
-    /// into `pub_key_out`.
+    /// Generate an ECC P-384 key pair, store the raw HSM-format private
+    /// key (scalar `d`, 48 bytes) in the vault, and write raw public key
+    /// coordinates (x ∥ y) into `pub_key_out`.
     ///
     /// Bypasses [`HsmEcc::ecc_gen_keypair`] (which now requires an
     /// `HsmIo` and a scoped allocator) and drives the
@@ -1140,11 +1217,11 @@ impl StdHsmPal {
     ) -> HsmResult<HsmKeyId> {
         let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
 
-        // Export private key as PKCS#8 DER.
-        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
+        // Export private key as raw HSM scalar bytes (48 B for P-384).
+        let priv_len = pk.hsm_bytes_len();
         let mut priv_buf = vec![0u8; priv_len];
-        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
-            .map_err(|_| HsmError::EccToDerError)?;
+        pk.to_hsm_bytes(&mut priv_buf[..priv_len])
+            .map_err(|_| HsmError::EccExportError)?;
 
         // Export raw P-384 public key coordinates (x ∥ y) in big-endian
         // form — matches OpenSSL conventions and is the form expected by
@@ -1154,9 +1231,9 @@ impl StdHsmPal {
         let half = P384_PUB_KEY_LEN / 2;
         let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
         pubk.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
-        // Store private key DER in vault.
+        // Store raw HSM private-key bytes in vault.
         let table = unsafe { &mut *self.part_table.get() };
         let entry = &mut table.entries[pid as usize];
         entry
@@ -1220,5 +1297,22 @@ impl StdHsmPal {
         if let Some(kid) = entry.unwrapping_key_id.take() {
             let _ = entry.vault.delete(kid);
         }
+
+        // Wipe rotated PSK material in place before dropping the
+        // `Option`.  Using `as_mut().fill(0)` ensures the bytes that
+        // live inside `entry`'s `Option<[u8; PSK_LEN]>` payload are
+        // overwritten on the struct itself; the subsequent
+        // `= None` write only changes the discriminant and leaves
+        // those zeros in place (an `Option<[u8; N]>` has no niche so
+        // the payload bytes are stable storage, not a reused
+        // tagged-union slot).
+        if let Some(psk) = entry.psk_co.as_mut() {
+            psk.fill(0);
+        }
+        entry.psk_co = None;
+        if let Some(psk) = entry.psk_cu.as_mut() {
+            psk.fill(0);
+        }
+        entry.psk_cu = None;
     }
 }

@@ -62,7 +62,7 @@ pub(crate) const CRED_FIELD_LEN: usize = 16;
 /// OKM length used for the credential keys and the masked-key
 /// envelope plaintext size used to wrap MK / MK_SESSION.
 pub(crate) const BK_LEN: usize =
-    azihsm_fw_core_crypto_masked_key::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
+    azihsm_fw_core_crypto_key_masking::cbc::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 
 /// Central DDI API revision check.
 ///

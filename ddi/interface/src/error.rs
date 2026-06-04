@@ -145,7 +145,14 @@ impl From<azihsm_ddi_tbor_codec::EncodeError> for DdiError {
 
 impl From<azihsm_ddi_tbor_codec::DecodeError> for DdiError {
     #[inline]
-    fn from(_: azihsm_ddi_tbor_codec::DecodeError) -> Self {
-        Self::TborDecodeError
+    fn from(e: azihsm_ddi_tbor_codec::DecodeError) -> Self {
+        match e {
+            // FW-signalled error: surface the typed HsmError discriminant
+            // so callers can match on specific codes (InvalidSessionType,
+            // AeadEnvelopeAuthFailed, etc.) instead of losing the detail to a
+            // generic `TborDecodeError`.
+            azihsm_ddi_tbor_codec::DecodeError::FwError(status) => Self::DdiError(status),
+            _ => Self::TborDecodeError,
+        }
     }
 }

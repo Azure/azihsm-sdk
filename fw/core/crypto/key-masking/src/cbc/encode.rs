@@ -3,7 +3,7 @@
 
 //! AES-CBC-256 + HMAC-SHA-384 masking pipeline.
 //!
-//! Implements [`mask_cbc`]: a single async function that follows the
+//! Implements [`mask`]: a single async function that follows the
 //! firmware `out: Option<&mut DmaBuf>` query-size-then-fill convention.
 //! Metadata is supplied as a typed [`DdiMaskedKeyMetadata`] struct and
 //! MBOR-encoded **directly** into the metadata slot of the output
@@ -46,11 +46,11 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmRng;
 
-use crate::format::MaskedKeyAesHeader;
-use crate::format::MaskedKeyHeader;
-use crate::format::AES_CBC_256_KEY_SIZE;
-use crate::format::AES_CBC_IV_SIZE;
-use crate::format::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
+use crate::cbc::format::MaskedKeyAesHeader;
+use crate::cbc::format::MaskedKeyHeader;
+use crate::cbc::format::AES_CBC_256_KEY_SIZE;
+use crate::cbc::format::AES_CBC_IV_SIZE;
+use crate::cbc::format::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 
 /// Build an authenticated-encryption "masked key" blob using
 /// AES-CBC-256 + HMAC-SHA-384 (encrypt-then-MAC).
@@ -110,7 +110,7 @@ use crate::format::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 ///   MBOR-encoded (for example, a byte-slice field exceeds its
 ///   `#[ddi(max_len)]` cap).
 /// * Any [`HsmError`] surfaced by the PAL RNG, AES, or HMAC drivers.
-pub async fn mask_cbc<P>(
+pub async fn mask<P>(
     pal: &P,
     io: &impl HsmIo,
     masking_key: &DmaBuf,
@@ -141,7 +141,7 @@ where
     }
     debug_assert!(
         out[..total_len].iter().all(|&b| b == 0),
-        "mask_cbc: `out[..total_len]` must be zero on entry",
+        "mask: `out[..total_len]` must be zero on entry",
     );
 
     MaskedKeyHeader::new_cbc().write_into(out);

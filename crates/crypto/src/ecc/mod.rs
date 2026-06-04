@@ -203,6 +203,24 @@ impl EccCurve {
     pub fn a2_1_okm_len(&self) -> usize {
         (self.bit_size() + 64).div_ceil(8)
     }
+
+    /// Returns the hardware-aligned component size in bytes for the HSM
+    /// wire format.
+    ///
+    /// For P-256 and P-384 this matches [`point_size`](Self::point_size).
+    /// For P-521 the size is rounded up to 68 bytes (4-byte aligned) to
+    /// match hardware DMA requirements.
+    ///
+    /// - P-256: 32 bytes
+    /// - P-384: 48 bytes
+    /// - P-521: 68 bytes
+    pub fn hsm_point_size(&self) -> usize {
+        match self {
+            EccCurve::P256 => 32,
+            EccCurve::P384 => 48,
+            EccCurve::P521 => 68,
+        }
+    }
 }
 
 /// Converts a curve bit size to an ECC curve identifier.

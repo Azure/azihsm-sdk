@@ -46,20 +46,17 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
 
     // ECC key generation follows the trait's query-alloc-use flow,
     // wrapped in a single scoped allocator: query reports the PAL's
-    // per-curve upper bounds (priv_max is PKCS#8 DER max for std /
-    // raw-scalar size for real HW; pub_max is the deterministic
-    // wire-format LE public-key length), we allocate the IO-lifetime
-    // output buffers, then use returns the actual bytes written
-    // (priv_actual ≤ priv_max for std DER; equal for real HW;
-    // pub_actual always == pub_max).
-    let (priv_key, pub_key, priv_actual, pub_actual) = pal
+    // per-curve deterministic sizes (raw HSM scalar for the private
+    // key; wire-format LE public-key length), we allocate the
+    // IO-lifetime output buffers, then use returns the same lengths.
+    let (priv_key, pub_key, priv_len, pub_len) = pal
         .alloc_scoped_async(io, async |a| -> HsmResult<_> {
-            let (priv_max, pub_max) = pal
+            let (priv_size, pub_size) = pal
                 .ecc_gen_keypair(io, a, pal_curve, None, HsmEccPct::SignVerify)
                 .await?;
-            let priv_key = pal.dma_alloc(io, priv_max)?;
-            let pub_key = pal.dma_alloc(io, pub_max)?;
-            let (priv_actual, pub_actual) = pal
+            let priv_key = pal.dma_alloc(io, priv_size)?;
+            let pub_key = pal.dma_alloc(io, pub_size)?;
+            let (priv_len, pub_len) = pal
                 .ecc_gen_keypair(
                     io,
                     a,
@@ -68,7 +65,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
                     HsmEccPct::SignVerify,
                 )
                 .await?;
-            Ok((priv_key, pub_key, priv_actual, pub_actual))
+            Ok((priv_key, pub_key, priv_len, pub_len))
         })
         .await?;
 
@@ -82,7 +79,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     };
     let guard = pal.vault_key_create(
         io,
-        &priv_key[..priv_actual],
+        &priv_key[..priv_len],
         vault_kind,
         session_binding,
         attrs,
@@ -103,7 +100,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
             &mut encoder,
             private_key_id,
             DdiPublicKeyFrameParams {
-                raw_len: pub_actual,
+                raw_len: pub_len,
                 key_kind: curve_to_pub_key_kind(pal_curve),
             },
             0, /* masked_key length — empty placeholder */
@@ -114,7 +111,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
 
     // PAL already emitted the public key in wire format (LE + P-521
     // padding), so copy directly without further reordering.
-    frame.pub_key.raw.copy_from_slice(&pub_key[..pub_actual]);
+    frame.pub_key.raw.copy_from_slice(&pub_key[..pub_len]);
 
     // Commit the vault entry; response is now fully populated.
     let _ = guard.dismiss();

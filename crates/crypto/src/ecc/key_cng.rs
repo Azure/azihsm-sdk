@@ -133,6 +133,63 @@ impl ImportableKey for CngEccPrivateKey {
     }
 }
 
+impl ExportableHsmKey for CngEccPrivateKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.curve().hsm_point_size()
+    }
+
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let curve = self.curve();
+        let hsm_ps = curve.hsm_point_size();
+        if buf.len() < hsm_ps {
+            return Err(CryptoError::EccBufferTooSmall);
+        }
+        let blob = self.ecdsa_key.to_blob()?;
+        let ps = curve.point_size();
+        let d_offset = CngEccKeyBlob::<CngEcdsaPrivateKeyInfo>::HEADER_SIZE + 2 * ps;
+        let d = &blob.as_slice()[d_offset..d_offset + ps];
+        buf[..hsm_ps].fill(0);
+        let pad = hsm_ps - ps;
+        buf[pad..pad + ps].copy_from_slice(d);
+        Ok(hsm_ps)
+    }
+}
+
+impl CngEccPrivateKey {
+    /// Import a private key from the raw scalar `d` (HSM wire format).
+    ///
+    /// The curve is auto-detected from `bytes.len()`:
+    /// 32 → P-256, 48 → P-384, 68 → P-521 (hardware-aligned).
+    ///
+    /// X and Y coordinates are left zero in the imported blob; CNG
+    /// recomputes them from `d` during `BCryptImportKeyPair`.
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let curve = match bytes.len() {
+            32 => EccCurve::P256,
+            48 => EccCurve::P384,
+            68 => EccCurve::P521,
+            _ => return Err(CryptoError::EccKeyImportError),
+        };
+        let ps = curve.point_size();
+        let pad = curve.hsm_point_size() - ps;
+        // Strip leading zero pad to reach the natural-length scalar.
+        let scalar = &bytes[pad..pad + ps];
+        let der_key = DerEccPrivateKey::new(curve, scalar);
+        let ecdsa_key = CngEcdsaPrivateKeyHandle::try_from(&der_key)?;
+        let ecdh_key = CngEcdhPrivateKeyHandle::try_from(&ecdsa_key)?;
+        Ok(Self {
+            ecdsa_key,
+            ecdh_key,
+        })
+    }
+}
+
+impl ImportableHsmKey for CngEccPrivateKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
+    }
+}
+
 impl KeyGenerationOp for CngEccPrivateKey {
     type Key = Self;
 
@@ -403,6 +460,62 @@ impl ImportableKey for CngEccPublicKey {
             ecdsa_key,
             ecdh_key,
         })
+    }
+}
+
+impl ExportableHsmKey for CngEccPublicKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.curve().hsm_point_size() * 2
+    }
+
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let curve = self.curve();
+        let hsm_ps = curve.hsm_point_size();
+        let total = hsm_ps * 2;
+        if buf.len() < total {
+            return Err(CryptoError::EccBufferTooSmall);
+        }
+        let blob = self.ecdsa_key.to_blob()?;
+        let ps = curve.point_size();
+        let pad = hsm_ps - ps;
+        buf[..total].fill(0);
+        buf[pad..pad + ps].copy_from_slice(blob.x());
+        buf[hsm_ps + pad..hsm_ps + pad + ps].copy_from_slice(blob.y());
+        Ok(total)
+    }
+}
+
+impl CngEccPublicKey {
+    /// Import a public key from raw `x || y` (HSM wire format).
+    ///
+    /// The curve is auto-detected from `bytes.len()`:
+    /// 64 → P-256, 96 → P-384, 136 → P-521 (hardware-aligned).
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let curve = match bytes.len() {
+            64 => EccCurve::P256,
+            96 => EccCurve::P384,
+            136 => EccCurve::P521,
+            _ => return Err(CryptoError::EccKeyImportError),
+        };
+        let hsm_ps = curve.hsm_point_size();
+        let ps = curve.point_size();
+        let pad = hsm_ps - ps;
+        // Strip leading zero pad to reach natural-length coordinates.
+        let x = &bytes[pad..pad + ps];
+        let y = &bytes[hsm_ps + pad..hsm_ps + pad + ps];
+        let der_key = DerEccPublicKey::new(curve, x, y)?;
+        let ecdsa_key = CngEcdsaPublicKeyHandle::try_from(&der_key)?;
+        let ecdh_key = CngEcdhPublicKeyHandle::try_from(&der_key)?;
+        Ok(Self {
+            ecdsa_key,
+            ecdh_key,
+        })
+    }
+}
+
+impl ImportableHsmKey for CngEccPublicKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
     }
 }
 

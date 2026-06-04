@@ -141,9 +141,10 @@ impl BufferPool {
     /// high-water marks) before clearing the free bit.  This
     /// preserves the invariant that every fresh `dma_alloc` /
     /// `nondma_alloc` returns zeroed memory, which is required by
-    /// zero-on-entry contracts (e.g. `mask_cbc`'s `out[..total_len]
-    /// must be zero on entry`) and prevents stale crypto material
-    /// from outliving an IO.  Watermarks are then reset on the next
+    /// zero-on-entry contracts (e.g. `key_masking::cbc::mask`'s
+    /// `out[..total_len] must be zero on entry`) and prevents stale
+    /// crypto material from outliving an IO.  Watermarks are then
+    /// reset on the next
     /// [`alloc`](Self::alloc).
     ///
     /// Sets the slot's bit in the free bitmap and wakes any task

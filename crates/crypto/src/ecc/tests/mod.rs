@@ -7,6 +7,7 @@
 mod ecc_from_okm_a2_1;
 mod ecc_from_scalar;
 mod ecc_helpers;
+mod ecc_hsm_format;
 mod ecc_p256;
 mod ecc_p384;
 mod ecc_p521;

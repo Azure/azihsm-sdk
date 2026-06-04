@@ -5,7 +5,7 @@
 //!
 //! These types describe the cleartext metadata embedded inside a
 //! masked-key blob (see
-//! [`azihsm_fw_core_crypto_masked_key::MaskedKey`]).  The bytes
+//! [`azihsm_fw_core_crypto_key_masking::MaskedKey`]).  The bytes
 //! produced by MBOR-encoding [`DdiMaskedKeyMetadata`] are bound by
 //! the integrity tag, so any change to the field values is detected
 //! by the unmask path.
@@ -46,7 +46,7 @@ impl From<HsmVaultKeyAttrs> for DdiMaskedKeyAttributes {
 /// Cleartext metadata embedded inside a masked-key blob.
 ///
 /// MBOR-encoded into the metadata slot of an
-/// [`azihsm_fw_core_crypto_masked_key::MaskedKey`] blob and bound by
+/// [`azihsm_fw_core_crypto_key_masking::MaskedKey`] blob and bound by
 /// the trailing integrity tag.
 #[derive(Debug, Ddi)]
 #[ddi(map)]

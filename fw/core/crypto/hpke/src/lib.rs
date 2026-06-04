@@ -22,19 +22,28 @@
 //!
 //! ## API surface
 //!
-//! Each HPKE mode exposes a `seal_*` and `open_*` pair that takes a
-//! caller-owned [`SealRequest`] / [`OpenRequest`]:
+//! Four operations, each takes a per-operation configuration struct
+//! whose mode is selected by a constructor:
 //!
-//! | Mode    | Seal              | Open              |
-//! |---------|-------------------|-------------------|
-//! | Base    | [`seal_base`]     | [`open_base`]     |
-//! | PSK     | [`seal_psk`]      | [`open_psk`]      |
-//! | Auth    | [`seal_auth`]     | [`open_auth`]     |
-//! | AuthPSK | [`seal_auth_psk`] | [`open_auth_psk`] |
+//! | Operation        | Config                          |
+//! |------------------|---------------------------------|
+//! | [`seal`]         | [`HpkeSealConfig`]              |
+//! | [`open`]         | [`HpkeOpenConfig`]              |
+//! | [`send_export`]  | [`HpkeSendExportConfig`]        |
+//! | [`receive_export`] | [`HpkeReceiveExportConfig`]   |
 //!
-//! Two Base-mode export helpers are also exported:
-//! [`send_export_base`] (sender side, runs Encap) and
-//! [`receive_export_base`] (receiver side, runs Decap).
+//! Each config has four constructors that bake the HPKE mode into
+//! the value and enforce the corresponding auth / PSK invariants at
+//! construction time:
+//!
+//! | Mode    | Constructor                       |
+//! |---------|-----------------------------------|
+//! | Base    | `HpkeSealConfig::base(...)`       |
+//! | PSK     | `HpkeSealConfig::psk(...)`        |
+//! | Auth    | `HpkeSealConfig::auth(...)`       |
+//! | AuthPSK | `HpkeSealConfig::auth_psk(...)`   |
+//!
+//! The other three configs follow the same shape.
 //!
 //! ## Scoped-allocation contract
 //!
@@ -63,18 +72,16 @@ mod ops;
 mod schedule;
 mod suite;
 
-pub use ops::open_auth;
-pub use ops::open_auth_psk;
-pub use ops::open_base;
-pub use ops::open_psk;
-pub use ops::receive_export_base;
-pub use ops::seal_auth;
-pub use ops::seal_auth_psk;
-pub use ops::seal_base;
-pub use ops::seal_psk;
-pub use ops::send_export_base;
+pub use ops::open;
+pub use ops::receive_export;
+pub use ops::seal;
+pub use ops::send_export;
 pub use ops::AuthParams;
-pub use ops::OpenRequest;
+pub use ops::ExportSizes;
+pub use ops::HpkeOpenConfig;
+pub use ops::HpkeReceiveExportConfig;
+pub use ops::HpkeSealConfig;
+pub use ops::HpkeSendExportConfig;
 pub use ops::PskParams;
-pub use ops::SealRequest;
+pub use ops::SealSizes;
 pub use suite::HpkeSuite;

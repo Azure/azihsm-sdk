@@ -33,10 +33,12 @@ members = [
   "ddi/tbor/test_helpers",
   "ddi/tbor/types",
   "ddi/win",
+  "fw/core/crypto/aead-envelope",
   "fw/core/crypto/aes-cbc-pad",
   "fw/core/crypto/gcm-buf",
   "fw/core/crypto/hpke",
-  "fw/core/crypto/masked-key",
+  "fw/core/crypto/key-masking",
+  "fw/core/crypto/x509-chain",
   "fw/core/ddi/mbor/api",
   "fw/core/ddi/mbor/codec",
   "fw/core/ddi/mbor/derive",
@@ -109,10 +111,12 @@ azihsm_fw_ddi_tbor_derive = { path = "fw/core/ddi/tbor/derive" }
 azihsm_fw_ddi_tbor_types = { path = "fw/core/ddi/tbor/types" }
 
 # Firmware crates — crypto
+azihsm_fw_core_crypto_aead_envelope = { path = "fw/core/crypto/aead-envelope" }
 azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
-azihsm_fw_core_crypto_masked_key = { path = "fw/core/crypto/masked-key" }
+azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
+azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
