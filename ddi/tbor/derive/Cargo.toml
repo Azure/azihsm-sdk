@@ -6,18 +6,22 @@ edition = "2021"
 name = "azihsm_ddi_tbor_derive"
 version = "0.1.0"
 
-# NOTE: this is a regular library crate (not `proc-macro = true`) that
-# re-exports the proc-macro definitions from `azihsm_fw_ddi_tbor_derive`.
-# Proc-macro crates have restrictions on what they may export, so wrapping
-# them with a normal lib lets host code access the macros via the
-# host-side path `azihsm_ddi_tbor_derive::tbor`.
-
-[dependencies]
-azihsm_fw_ddi_tbor_derive.workspace = true
+# Host-side `#[tbor]` attribute macro.  Mirrors the attribute spelling
+# of `azihsm_fw_ddi_tbor_derive` but emits owned host wrappers
+# (`Default` + `TborOpReq` / `TborResp` impls) that delegate to the
+# firmware-side zero-copy typestate encoder/decoder.
+#
+# This crate is pure proc-macro: no runtime deps, no link to firmware
+# crates — it only transforms tokens.
 
 [lib]
 doctest = false
-test = false
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { features = ["extra-traits", "full"], workspace = true }
 
 [lints]
 workspace = true

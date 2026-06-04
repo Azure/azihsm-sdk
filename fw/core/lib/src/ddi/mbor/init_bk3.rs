@@ -58,7 +58,7 @@
 //! directly into the encoder-reserved response slot — zero
 //! intermediate copies.
 
-use azihsm_fw_core_crypto_masked_key::mask_cbc;
+use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::init_bk3::DdiInitBk3Req;
 use azihsm_fw_ddi_mbor_types::init_bk3::DdiInitBk3Resp;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -168,7 +168,7 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
     pal.part_bk_boot(io, Some(bk_boot_dma))?;
 
     // Size-only query (no crypto).
-    let masked_bk3_len = mask_cbc(pal, io, bk_boot_dma, body.bk3, &metadata, None).await?;
+    let masked_bk3_len = mask(pal, io, bk_boot_dma, body.bk3, &metadata, None).await?;
 
     let vm_launch_guid_len = pal.part_vm_launch_guid(io, None)?;
 
@@ -184,7 +184,7 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
 
     // Authenticated-encrypt BK3 directly into the reserved masked-BK3
     // slot — no intermediate DMA allocations.
-    mask_cbc(
+    mask(
         pal,
         io,
         bk_boot_dma,
@@ -223,13 +223,12 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
     )
     .await?;
 
-    // Size-query, then zeroed alloc (mask_cbc requires `out` to be zero
+    // Size-query, then zeroed alloc (mask requires `out` to be zero
     // on entry).
     let bk_boot_plain = &bk_boot_dma[..BK_BOOT_LEN];
-    let masked_bk_boot_len =
-        mask_cbc(pal, io, bkx_dma, bk_boot_plain, &bk_boot_metadata, None).await?;
+    let masked_bk_boot_len = mask(pal, io, bkx_dma, bk_boot_plain, &bk_boot_metadata, None).await?;
     let masked_bk_boot_dma = pal.dma_alloc_zeroed(io, masked_bk_boot_len)?;
-    mask_cbc(
+    mask(
         pal,
         io,
         bkx_dma,

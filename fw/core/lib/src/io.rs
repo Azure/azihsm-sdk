@@ -256,10 +256,13 @@ impl<P: HsmPal> Hsm<P> {
                 (resp, session_ctrl)
             } else {
                 let opcode = req_view.opcode();
-                let resp: &DmaBuf = self
-                    .pal()
-                    .dma_alloc_var(io, |buf| ddi::tbor::dispatch(opcode, &req_view, buf))
-                    .op_status(HostStatus::INTERNAL_ERROR)?;
+                let dispatch_result = ddi::tbor::dispatch(self.pal(), io, &req_view, opcode).await;
+                let resp: &DmaBuf = dispatch_result.or_else(|err| {
+                    self.pal()
+                        .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))
+                        .op_status(HostStatus::INTERNAL_ERROR)
+                        .map(|b| &*b)
+                })?;
                 (resp, session_ctrl)
             }
         };

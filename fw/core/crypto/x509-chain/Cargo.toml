@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-
 [package]
 edition = "2021"
-name = "azihsm_fw_core_crypto_masked_key"
+name = "azihsm_fw_core_crypto_x509_chain"
 version = "0.1.0"
 
 [lib]
@@ -12,10 +11,5 @@ doctest = false
 test = false
 
 [dependencies]
-azihsm_fw_ddi_mbor = { workspace = true }
-azihsm_fw_ddi_mbor_types = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
-zerocopy = { features = ["derive"], workspace = true }
-
-[lints]
-workspace = true
+der = { default-features = false, features = ["oid"], version = "0.8" }

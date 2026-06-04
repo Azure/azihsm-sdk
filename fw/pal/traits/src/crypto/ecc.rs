@@ -102,21 +102,6 @@ impl HsmEccCurve {
     pub fn secret_len(&self) -> usize {
         self.priv_key_len()
     }
-
-    /// Maximum PKCS#8 DER size for a private key on this curve.
-    ///
-    /// The std PAL encodes private keys as PKCS#8 DER (variable
-    /// length); callers use this as the upper bound returned by
-    /// [`ecc_gen_keypair`](HsmEcc::ecc_gen_keypair) in query mode.
-    /// Real-HW PALs that work in raw scalars instead report
-    /// [`priv_key_len`](Self::priv_key_len) — always ≤ this max.
-    pub fn priv_key_der_max(&self) -> usize {
-        match self {
-            HsmEccCurve::P256 => 138,
-            HsmEccCurve::P384 => 185,
-            HsmEccCurve::P521 => 241,
-        }
-    }
 }
 
 /// ECC Pairwise Consistency Test (PCT) mode for key generation.
@@ -152,24 +137,19 @@ pub trait HsmEcc {
     /// Uses the canonical query-alloc-use workflow:
     ///
     /// 1. **Query** — call with `out = None`.  No key generation
-    ///    happens; the method returns `(priv_max, pub_max)` upper
-    ///    bounds the caller must allocate.  `pub_max` is always the
-    ///    deterministic `HsmEccCurve::wire_pub_key_len(curve)`;
-    ///    `priv_max` depends on the PAL's encoding — real-HW PALs
-    ///    return the raw-scalar size `HsmEccCurve::priv_key_len`
-    ///    (32 / 48 / 66 bytes), while the std PAL uses PKCS#8 DER
-    ///    and returns `HsmEccCurve::priv_key_der_max`.
+    ///    happens; the method returns `(priv_len, pub_len)` byte
+    ///    counts the caller must allocate.  Both are deterministic
+    ///    per-curve: `priv_len = HsmEccCurve::wire_coord_len(curve)`
+    ///    (raw HSM scalar — 32 / 48 / 68 bytes) and
+    ///    `pub_len = HsmEccCurve::wire_pub_key_len(curve)`.
     /// 2. **Alloc** — caller allocates two DMA buffers of those
     ///    sizes.
     /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.
     ///    The method generates a fresh keypair (using `alloc` for
-    ///    any internal contiguous PKA scratch), writes the PAL-format
-    ///    private key into `priv_out[..priv_actual]` and the
-    ///    wire-format LE public key into `pub_out[..pub_actual]`,
-    ///    and returns the actual lengths.  Both are guaranteed to
-    ///    be `≤` the upper bounds reported by the matching query
-    ///    call (real-HW PALs always return the same value in both
-    ///    modes; std-PAL DER may be shorter than the max).
+    ///    any internal contiguous PKA scratch), writes the raw
+    ///    HSM-format private scalar into `priv_out[..priv_len]` and
+    ///    the wire-format LE public key into `pub_out[..pub_len]`,
+    ///    and returns the same lengths reported by the query call.
     ///
     /// # Parameters
     ///
@@ -213,8 +193,8 @@ pub trait HsmEcc {
     ///
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `curve` — NIST curve the private key is on.
-    /// - `priv_key` — signing key (PAL-format byte blob — std uses
-    ///   PKCS#8 DER; real-HW PALs use the raw scalar).
+    /// - `priv_key` — signing key in raw HSM-format scalar bytes
+    ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
     /// - `hash` — message digest to sign, in **little-endian** byte
     ///   order to match the wire-native format produced by real PKA
     ///   hardware.  Must contain exactly the digest's native length
@@ -292,8 +272,8 @@ pub trait HsmEcc {
     ///
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `curve` — NIST curve both keys are on.
-    /// - `priv_key` — local private key (PAL-format byte blob — std
-    ///   uses PKCS#8 DER; real-HW PALs use the raw scalar).
+    /// - `priv_key` — local private key in raw HSM-format scalar bytes
+    ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
     /// - `pub_key` — remote uncompressed point; must be exactly
     ///   `curve.wire_pub_key_len()` bytes (`x || y`).  **Each
     ///   coordinate is in little-endian byte order** with P-521

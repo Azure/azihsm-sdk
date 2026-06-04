@@ -470,6 +470,68 @@ impl OsslEccPrivateKey {
 
         Ok((x, y))
     }
+
+    /// Import from raw private scalar `d`.
+    ///
+    /// The curve is auto-detected from `bytes.len()`:
+    /// 32 → P-256, 48 → P-384, 68 → P-521 (hardware-aligned).
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let curve = match bytes.len() {
+            32 => EccCurve::P256,
+            48 => EccCurve::P384,
+            68 => EccCurve::P521,
+            _ => return Err(CryptoError::EccKeyImportError),
+        };
+
+        let nid: Nid = curve.into();
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccKeyImportError)?;
+        // For P-521 the buffer is 68 bytes but the scalar is at most 66 bytes.
+        // BigNum::from_slice handles leading zeros correctly.
+        let d = BigNum::from_slice(bytes).map_err(|_| CryptoError::EccKeyImportError)?;
+
+        // Derive public key: Q = d * G
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccKeyImportError)?;
+        let mut pub_point = EcPoint::new(&group).map_err(|_| CryptoError::EccKeyImportError)?;
+        pub_point
+            .mul_generator2(&group, &d, &mut ctx)
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let ec_key = EcKey::from_private_components(&group, &d, &pub_point)
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+        ec_key
+            .check_key()
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let pkey = PKey::from_ec_key(ec_key).map_err(|_| CryptoError::EccKeyImportError)?;
+        Ok(Self::new(pkey, curve))
+    }
+}
+
+impl ExportableHsmKey for OsslEccPrivateKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.curve.hsm_point_size()
+    }
+
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let len = self.curve.hsm_point_size();
+        if buf.len() < len {
+            return Err(CryptoError::EccBufferTooSmall);
+        }
+        let ec_key = self.key.ec_key().map_err(|_| CryptoError::EccError)?;
+        // Zero-pad the scalar to hsm_point_size (68 bytes for P-521).
+        let d = ec_key
+            .private_key()
+            .to_vec_padded(len as i32)
+            .map_err(|_| CryptoError::EccError)?;
+        buf[..len].copy_from_slice(&d);
+        Ok(len)
+    }
+}
+
+impl ImportableHsmKey for OsslEccPrivateKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
+    }
 }
 
 /// Marks this type as a cryptographic key.
@@ -691,6 +753,70 @@ impl OsslEccPublicKey {
             .map_err(|_| CryptoError::EccError)?;
 
         Ok((x, y))
+    }
+
+    /// Import from raw `x || y` coordinates.
+    ///
+    /// The curve is auto-detected from `bytes.len()`:
+    /// 64 → P-256, 96 → P-384, 136 → P-521 (hardware-aligned).
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let curve = match bytes.len() {
+            64 => EccCurve::P256,
+            96 => EccCurve::P384,
+            136 => EccCurve::P521,
+            _ => return Err(CryptoError::EccKeyImportError),
+        };
+        let hsm_ps = curve.hsm_point_size();
+
+        let nid: Nid = curve.into();
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccKeyImportError)?;
+        // BigNum::from_slice handles leading zeros for P-521 (68 → 66 active bytes).
+        let x = BigNum::from_slice(&bytes[..hsm_ps]).map_err(|_| CryptoError::EccKeyImportError)?;
+        let y = BigNum::from_slice(&bytes[hsm_ps..]).map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccKeyImportError)?;
+        let mut point = EcPoint::new(&group).map_err(|_| CryptoError::EccKeyImportError)?;
+        point
+            .set_affine_coordinates_gfp(&group, &x, &y, &mut ctx)
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let ec_key =
+            EcKey::from_public_key(&group, &point).map_err(|_| CryptoError::EccKeyImportError)?;
+        ec_key
+            .check_key()
+            .map_err(|_| CryptoError::EccKeyImportError)?;
+
+        let pkey = PKey::from_ec_key(ec_key).map_err(|_| CryptoError::EccKeyImportError)?;
+        Ok(Self::new(pkey, curve))
+    }
+}
+
+impl ExportableHsmKey for OsslEccPublicKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.curve.hsm_point_size() * 2
+    }
+
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let hsm_ps = self.curve.hsm_point_size();
+        let total = hsm_ps * 2;
+        if buf.len() < total {
+            return Err(CryptoError::EccBufferTooSmall);
+        }
+        // coordinates() returns point_size() bytes; zero-pad to hsm_point_size.
+        let (x, y) = self.coordinates()?;
+        buf[..hsm_ps].fill(0);
+        buf[hsm_ps..total].fill(0);
+        let ps = self.curve.point_size();
+        let pad = hsm_ps - ps;
+        buf[pad..pad + ps].copy_from_slice(&x);
+        buf[hsm_ps + pad..hsm_ps + pad + ps].copy_from_slice(&y);
+        Ok(total)
+    }
+}
+
+impl ImportableHsmKey for OsslEccPublicKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
     }
 }
 

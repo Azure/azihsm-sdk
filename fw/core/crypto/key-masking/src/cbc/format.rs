@@ -7,7 +7,7 @@
 //! the firmware can be parsed by host tooling without any conversion.
 //!
 //! Internal to the crate — only the public masking-key length
-//! constant and [`mask_cbc`](crate::mask_cbc) are exposed through
+//! constant and [`mask`](crate::cbc::mask) are exposed through
 //! [`crate`].
 
 use azihsm_fw_hsm_pal_traits::HsmError;

@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! key       = MAC_KEY[Nh] ‖ ENC_KEY[32]
-//! tag_len   = Nh / 2          (HMAC truncated to half the hash)
+//! tag_len   = Nh             (full HMAC output, no truncation)
 //! mac_input = aad ‖ iv ‖ ciphertext ‖ I2OSP(aad.len() * 8, 8)
 //! ```
 //!
@@ -446,7 +446,7 @@ where
 struct CbcParams<'a> {
     /// Hash algorithm for the HMAC (= suite hash).
     hash: HsmHashAlgo,
-    /// Truncated tag length in bytes (`Nh / 2`).
+    /// Tag length in bytes (= full `Nh`, no truncation).
     tag_len: usize,
     /// HMAC key prefix of `key`.
     mac_key: &'a [u8],
@@ -461,7 +461,7 @@ impl<'a> CbcParams<'a> {
     /// # Returns
     ///
     /// * `Ok(params)` — split `(mac_key, enc_key)` plus the suite's
-    ///   hash algorithm and truncated tag length.
+    ///   hash algorithm and tag length.
     /// * `Err(HsmError::InvalidArg)` — `key.len() != mac_key_len +
     ///   enc_key_len`.
     fn from_suite(suite: HpkeSuite, key: &'a [u8]) -> HsmResult<Self> {
@@ -480,7 +480,7 @@ impl<'a> CbcParams<'a> {
 }
 
 /// Compute `HMAC(mac_key, aad ‖ iv ‖ ciphertext ‖ I2OSP(aad_bits, 8))`
-/// and write the truncated tag into `dest`.
+/// and write the tag into `dest`.
 ///
 /// Shared by [`seal_cbc`] (which writes the tag straight into the
 /// output buffer) and [`open_cbc`] (which writes it into a stack
@@ -495,9 +495,11 @@ impl<'a> CbcParams<'a> {
 /// * `aad` — additional authenticated data (may be empty).
 /// * `iv` — 16-byte AES-CBC IV.
 /// * `ciphertext` — already-encrypted CBC body.
-/// * `dest` — destination for the truncated tag; must be at least
-///   `tag_len` bytes.
-/// * `tag_len` — number of leading HMAC output bytes to copy.
+/// * `dest` — destination for the tag; must be at least `tag_len`
+///   bytes (= `Nh`).
+/// * `tag_len` — number of leading HMAC output bytes to copy
+///   (always `Nh` in current callers; the parameter is retained
+///   so this helper could support truncation in the future).
 /// * `alloc` — scoped allocator backing the HMAC state buffer.
 ///
 /// # Returns

@@ -175,8 +175,19 @@ impl StdHsmBuilder {
 
         let pool_handle = handle.clone();
 
+        // Embassy + Hsm task frames in debug builds are large enough
+        // to overflow Linux's default 2 MiB thread stack — every
+        // emu-backed integration test SIGABRTs with "thread
+        // 'hsm-embassy' has overflowed its stack" when each test
+        // runs in its own process (e.g. under `cargo nextest run`).
+        // Reserve 8 MiB explicitly so debug and release behave
+        // identically; on Linux this is virtual-only and costs no
+        // RSS until pages are touched.
+        const EMBASSY_STACK_SIZE: usize = 8 * 1024 * 1024;
+
         let embassy_thread = std::thread::Builder::new()
             .name("hsm-embassy".into())
+            .stack_size(EMBASSY_STACK_SIZE)
             .spawn(move || {
                 use embassy_executor::Executor;
                 use static_cell::StaticCell;
