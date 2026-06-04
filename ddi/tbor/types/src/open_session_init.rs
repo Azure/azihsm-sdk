@@ -130,10 +130,10 @@ mod tests {
     }
 
     #[test]
-    fn default_uses_plaintext_session_type() {
+    fn default_uses_authenticated_session_type_for_co() {
         let req = TborOpenSessionInitReq::default();
-        assert_eq!(req.session_type, 0);
         assert_eq!(req.psk_id, 0);
+        assert_eq!(req.session_type, 1);
         assert_eq!(req.suite_id, SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256);
     }
 
