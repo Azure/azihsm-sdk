@@ -26,3 +26,4 @@ query-filters:
       paths:
         - "crates/crypto/src/hpke/tests/**"
         - "crates/crypto/src/**/tests/**"
+        - "crates/**/tests/**"
