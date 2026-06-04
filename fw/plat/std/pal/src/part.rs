@@ -1298,11 +1298,13 @@ impl StdHsmPal {
             let _ = entry.vault.delete(kid);
         }
 
-        if let Some(mut psk) = entry.psk_co.take() {
+        if let Some(psk) = entry.psk_co.as_mut() {
             psk.fill(0);
         }
-        if let Some(mut psk) = entry.psk_cu.take() {
+        entry.psk_co = None;
+        if let Some(psk) = entry.psk_cu.as_mut() {
             psk.fill(0);
         }
+        entry.psk_cu = None;
     }
 }
