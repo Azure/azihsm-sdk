@@ -2,18 +2,16 @@ name: Rust
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   merge_group:
-    branches: [ main, dev ]
+    branches: [ main, dev, fw ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
   CARGO_TERM_COLOR: always
   CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
-  OPENSSL_VERSION: "3.0.3"
-  OPENSSL_INSTALL: target/openssl-3.0.3
 
 jobs:
   build_ubuntu:
@@ -31,13 +29,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y pkg-config libbsd-dev
 
-    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
-      id: cache-openssl
-      uses: actions/cache@v5
-      with:
-        path: ${{ env.OPENSSL_INSTALL }}
-        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
-
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -49,7 +40,7 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' || steps.cache-openssl.outputs.cache-hit != 'true'
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
@@ -62,28 +53,21 @@ jobs:
     - name: Cargo format
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: cargo xtask precheck --clippy
     - name: SDK Run all mock tests table-4
       id: test-mock-table-4
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
-        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
-      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4 --profile ci-mock-table-4
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-4 --profile ci-mock-table-4
       continue-on-error: true
     - name: SDK Run all mock tests table-64
       id: test-mock-table-64
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
-        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
-      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64 --profile ci-mock-table-64
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-64 --profile ci-mock-table-64
+      continue-on-error: true
+    - name: SDK Run TBOR types tests against emu backend
+      id: test-tbor-emu
+      run: cargo xtask precheck --nextest --package azihsm_ddi_tbor_types --features emu --profile ci-tbor-emu
       continue-on-error: true
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
-        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: cargo xtask precheck --coverage --skip-integration
       continue-on-error: true
     - name: Generate nextest report

@@ -15,17 +15,17 @@ use std::ptr;
 use std::sync::Arc;
 
 use azihsm_ddi_interface::*;
-use azihsm_ddi_mbor::MborDecode;
-use azihsm_ddi_mbor::MborDecoder;
-use azihsm_ddi_mbor::MborEncoder;
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDecoder;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOpReq;
-use azihsm_ddi_types::DdiRespHdr;
-use azihsm_ddi_types::DdiStatus;
-use azihsm_ddi_types::MborError;
-use azihsm_ddi_types::SessionControlKind;
+use azihsm_ddi_mbor_codec::MborDecode;
+use azihsm_ddi_mbor_codec::MborDecoder;
+use azihsm_ddi_mbor_codec::MborEncoder;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDecoder;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiRespHdr;
+use azihsm_ddi_mbor_types::DdiStatus;
+use azihsm_ddi_mbor_types::MborError;
+use azihsm_ddi_mbor_types::SessionControlKind;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use winapi::ctypes::c_void;
@@ -554,8 +554,9 @@ pub const MCR_IOCTL_RESET_DEVICE: u32 = 0x402;
 pub struct DdiWinDev {
     // File handle
     file: Arc<RwLock<File>>,
-    // Device kind
-    device_kind: Option<DdiDeviceKind>,
+    // Device kind — fixed to `Physical` since this backend wraps the
+    // real Windows device driver.
+    device_kind: DdiDeviceKind,
 }
 
 impl DdiWinDev {
@@ -571,17 +572,8 @@ impl DdiWinDev {
 
         Ok(Self {
             file: Arc::new(RwLock::new(file)),
-            device_kind: None,
+            device_kind: DdiDeviceKind::Physical,
         })
-    }
-
-    /// Returns the device kind (Virtual or Physical).
-    ///
-    /// # Returns
-    ///
-    /// The device kind that was determined when the device was opened.
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        self.device_kind
     }
 
     fn map_ioctl_status(&self, ioctl_status: u32) -> Result<u32, DdiError> {
@@ -686,15 +678,12 @@ pub fn align_aad_in_place(buf: &mut Vec<u8>) {
 }
 
 impl DdiDev for DdiWinDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
-        self.device_kind = Some(kind);
+    /// `DdiWinDev` always reports [`DdiDeviceKind::Physical`] since it
+    /// wraps the real Windows device driver.
+    fn device_kind(&self) -> DdiDeviceKind {
+        self.device_kind
     }
 
     /// Execute Operation
@@ -708,7 +697,7 @@ impl DdiDev for DdiWinDev {
     ///
     /// # Error
     /// * `DdiError` - Error encountered while executing the command
-    fn exec_op<T: DdiOpReq>(
+    fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
         _cookie: &mut Option<DdiCookie>,
@@ -716,7 +705,7 @@ impl DdiDev for DdiWinDev {
         const REQ_BUF_LEN: usize = 8192;
 
         let (pre_encode, post_decode) = match self.device_kind {
-            Some(DdiDeviceKind::Physical) => (true, true),
+            DdiDeviceKind::Physical => (true, true),
             _ => (false, false),
         };
 
@@ -1398,12 +1387,16 @@ impl DdiDev for DdiWinDev {
         })
     }
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
+    /// Erase the device.
+    ///
+    /// Issues an NVMe Subsystem Reset (NSSR) to the underlying device,
+    /// which discards all keys, sessions, and other cryptographic state
+    /// and returns the device to a clean, freshly-initialized state.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+    fn erase(&self) -> Result<(), DdiError> {
         let ioctl_in_buffer = ResetDeviceInData {
             ioctl_hdr: McrIoctlHeader {
                 ioctl_data_size: mem::size_of::<ResetDeviceInData>() as u32,
@@ -1450,10 +1443,7 @@ impl DdiDev for DdiWinDev {
 
         let last_error = std::io::Error::last_os_error();
         if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
-            tracing::warn!(
-                ?last_error,
-                "DeviceIoControl returned error after simulate_nssr_after_lm"
-            );
+            tracing::warn!(?last_error, "DeviceIoControl returned error after erase");
             Err(DdiError::IoError(last_error))?;
         }
 
@@ -1477,7 +1467,7 @@ impl DdiDev for DdiWinDev {
             let last_error = std::io::Error::last_os_error();
             tracing::warn!(
                 ?last_error,
-                "GetOverlappedResult returned error after simulate_nssr_after_lm"
+                "GetOverlappedResult returned error after erase"
             );
             Err(DdiError::IoError(last_error))?;
         }

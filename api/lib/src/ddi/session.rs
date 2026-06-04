@@ -96,7 +96,7 @@ pub(crate) fn open_session(
         },
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
     Ok(OpenSessionResult {
         sess_id: resp.data.sess_id,
         short_app_id: resp.data.short_app_id,
@@ -139,7 +139,7 @@ pub(crate) fn close_session(dev: &HsmDev, id: u16, rev: HsmApiRev) -> HsmResult<
         ext: None,
     };
 
-    let result = dev.exec_op(&req, &mut None).map_err(HsmError::from);
+    let result = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from);
 
     match result {
         Ok(_) => Ok(()),
@@ -195,7 +195,7 @@ pub(crate) fn reopen_session(
         },
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
 
     // The device must confirm the same session ID we requested.
     if resp.data.sess_id != sess_id {
@@ -258,6 +258,6 @@ fn get_session_encryption_key(
         data: DdiGetSessionEncryptionKeyReq {},
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
     Ok(resp)
 }

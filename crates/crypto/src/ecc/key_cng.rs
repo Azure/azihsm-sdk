@@ -215,6 +215,75 @@ impl CngEccPrivateKey {
         Self::generate(curve.bit_size())
     }
 
+    /// Builds an ECC private key from a caller-supplied raw scalar `d`.
+    ///
+    /// The scalar is interpreted as a big-endian integer of length
+    /// `curve.point_size()`. The public point `Q = d * G` is recomputed by
+    /// Windows CNG during `BCryptImportKeyPair` when the imported
+    /// `BCRYPT_ECCPRIVATE_BLOB` carries zeroed `X`/`Y` components, so this
+    /// function does not require any in-tree elliptic-curve arithmetic.
+    /// The caller is responsible for any deterministic derivation
+    /// (DRBG, HKDF, BIP-32, ...) that produced `d`.
+    ///
+    /// # Arguments
+    ///
+    /// * `curve` - The elliptic curve to use (P-256, P-384, or P-521).
+    /// * `scalar` - Raw big-endian private scalar, exactly `curve.point_size()`
+    ///   bytes. Must satisfy `1 <= d < n` where `n` is the curve order.
+    ///
+    /// # Errors
+    ///
+    /// * [`CryptoError::EccInvalidKeySize`] if `scalar.len() != curve.point_size()`.
+    /// * [`CryptoError::EccKeyImportError`] if `d == 0`, `d >= n`, or CNG
+    ///   rejects the import.
+    pub fn from_scalar(curve: EccCurve, scalar: &[u8]) -> Result<Self, CryptoError> {
+        curve.validate_scalar(scalar)?;
+        let ecdsa_key = CngEcdsaPrivateKeyHandle::from_scalar(curve, scalar)?;
+        let ecdh_key = CngEcdhPrivateKeyHandle::try_from(&ecdsa_key)?;
+        Ok(Self {
+            ecdsa_key,
+            ecdh_key,
+        })
+    }
+
+    /// Builds an ECC private key from caller-supplied output keying material
+    /// per FIPS 186-5 Appendix A.2.1 ("Key Pair Generation Using Extra Random
+    /// Bits"), composed with NIST SP 800-133r2 §6.2.3.
+    ///
+    /// `okm.len()` MUST equal [`EccCurve::a2_1_okm_len`], i.e.
+    /// `ceil((N + 64) / 8)` bytes. The bytes are interpreted as a big-endian
+    /// integer `c`; the private scalar is `d = (c mod (n - 1)) + 1`, and the
+    /// public point is `Q = d * G`.
+    ///
+    /// No retry loop, no rejection, work is linear in `okm.len()`. The caller
+    /// owns the OKM source (an Approved DRBG per SP 800-90A for fresh keys,
+    /// or an Approved KDF such as [`crate::HkdfAlgo`] for deterministic
+    /// derivation).
+    ///
+    /// # Errors
+    ///
+    /// * [`CryptoError::EccInvalidKeySize`] if `okm.len()` does not equal
+    ///   `curve.a2_1_okm_len()`.
+    /// * Any error returned by [`Self::from_scalar`] for the computed `d`.
+    pub fn from_okm_a2_1(curve: EccCurve, okm: &[u8]) -> Result<Self, CryptoError> {
+        if okm.len() != curve.a2_1_okm_len() {
+            return Err(CryptoError::EccInvalidKeySize);
+        }
+
+        // m = n - 1. The last byte of every supported curve order is non-zero,
+        // so this single-byte decrement is safe.
+        let mut m = curve.order().to_vec();
+        *m.last_mut().expect("curve order is never empty") -= 1;
+
+        let reduced = super::be::be_reduce(okm, &m);
+        let point_size = curve.point_size();
+        let mut d = [0u8; super::be::MAX_MOD_LEN];
+        d[..point_size].copy_from_slice(&reduced[..point_size]);
+        super::be::be_inc(&mut d[..point_size]);
+
+        Self::from_scalar(curve, &d[..point_size])
+    }
+
     /// Returns the ECDSA key handle for signing operations.
     pub(super) fn ecdsa_handle(&self) -> BCRYPT_KEY_HANDLE {
         self.ecdsa_key.handle()
@@ -386,6 +455,50 @@ impl EccKeyOp for CngEccPublicKey {
 
 #[allow(dead_code)]
 impl CngEccPublicKey {
+    /// Constructs a public key from raw affine coordinates.
+    ///
+    /// # Arguments
+    ///
+    /// * `curve` - The elliptic curve (P256, P384, or P521).
+    /// * `x` - The X coordinate as a big-endian byte slice, zero-padded to the
+    ///   full coordinate size.
+    /// * `y` - The Y coordinate as a big-endian byte slice, zero-padded to the
+    ///   full coordinate size.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError::EccError` if the coordinates are the wrong length
+    /// or the point is invalid.
+    pub fn from_coordinates(curve: EccCurve, x: &[u8], y: &[u8]) -> Result<Self, CryptoError> {
+        let point_size = curve.point_size();
+        if x.len() != point_size || y.len() != point_size {
+            return Err(CryptoError::EccError);
+        }
+
+        let header_size = CngEccKeyBlob::<CngEcdsaPublicKeyInfo>::HEADER_SIZE;
+        let mut data = vec![0u8; header_size + 2 * point_size];
+
+        let header = CngEccKeyBlob::<CngEcdsaPublicKeyInfo>::header_mut(&mut data)?;
+        header.dwMagic = match curve {
+            EccCurve::P256 => BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
+            EccCurve::P384 => BCRYPT_ECDSA_PUBLIC_P384_MAGIC,
+            EccCurve::P521 => BCRYPT_ECDSA_PUBLIC_P521_MAGIC,
+        };
+        header.cbKey = point_size as u32;
+
+        data[header_size..header_size + point_size].copy_from_slice(x);
+        data[header_size + point_size..header_size + 2 * point_size].copy_from_slice(y);
+
+        let ecdsa_key =
+            CngEccKeyHandle::<CngEcdsaPublicKeyInfo>::from_blob(&CngEccKeyBlob::new(data)?)?;
+        let ecdh_key = CngEcdhPublicKeyHandle::try_from(&ecdsa_key)?;
+
+        Ok(Self {
+            ecdsa_key,
+            ecdh_key,
+        })
+    }
+
     /// Returns the ECDSA key handle for verification operations.
     pub(super) fn ecdsa_handle(&self) -> BCRYPT_KEY_HANDLE {
         self.ecdsa_key.handle()
@@ -477,6 +590,11 @@ trait CngEccKeyInfo {
     ///
     /// Returns 2 for public keys (x, y) and 3 for private keys (x, y, d).
     fn blob_component_count() -> usize;
+
+    /// Returns the private-blob magic value for the given curve.
+    ///
+    /// Returns an error for public-key info types (which have no private magic).
+    fn private_magic(curve: EccCurve) -> Result<u32, CryptoError>;
 }
 
 /// Internal wrapper for Windows CNG key handles.
@@ -560,6 +678,38 @@ impl<KeyInfo: CngEccKeyInfo> CngEccKeyHandle<KeyInfo> {
             handle,
             marker: PhantomData,
         })
+    }
+
+    /// Builds a key handle from a caller-supplied raw scalar `d`.
+    ///
+    /// Constructs a `BCRYPT_ECCPRIVATE_BLOB` with zeroed `X`/`Y` components
+    /// and the supplied `d`, then calls `BCryptImportKeyPair`. CNG recomputes
+    /// the public point internally during import. The caller MUST ensure that
+    /// `d` is a valid scalar (`1 <= d < n`) for `curve`; this is normally
+    /// done by [`EccCurve::validate_scalar`] before calling here.
+    ///
+    /// Only valid for private-key info types; returns
+    /// [`CryptoError::EccKeyImportError`] for public-key info types via
+    /// [`CngEccKeyInfo::private_magic`].
+    fn from_scalar(curve: EccCurve, scalar: &[u8]) -> Result<Self, CryptoError> {
+        if scalar.len() != curve.point_size() {
+            return Err(CryptoError::EccInvalidKeySize);
+        }
+
+        let point_size = curve.point_size();
+        let header_size = CngEccKeyBlob::<KeyInfo>::HEADER_SIZE;
+        let mut data = vec![0u8; header_size + 3 * point_size];
+
+        // Build the BCRYPT_ECCKEY_BLOB header.
+        let header = CngEccKeyBlob::<KeyInfo>::header_mut(&mut data)?;
+        header.dwMagic = KeyInfo::private_magic(curve)?;
+        header.cbKey = point_size as u32;
+
+        // X and Y stay zeroed; CNG recomputes them from d during import.
+        let d_offset = header_size + 2 * point_size;
+        data[d_offset..d_offset + point_size].copy_from_slice(scalar);
+
+        Self::from_blob(&CngEccKeyBlob::new(data)?)
     }
 
     /// Returns the underlying Windows CNG key handle.
@@ -838,6 +988,14 @@ impl CngEccKeyInfo for CngEcdsaPrivateKeyInfo {
     fn blob_component_count() -> usize {
         3
     }
+
+    fn private_magic(curve: EccCurve) -> Result<u32, CryptoError> {
+        Ok(match curve {
+            EccCurve::P256 => BCRYPT_ECDSA_PRIVATE_P256_MAGIC,
+            EccCurve::P384 => BCRYPT_ECDSA_PRIVATE_P384_MAGIC,
+            EccCurve::P521 => BCRYPT_ECDSA_PRIVATE_P521_MAGIC,
+        })
+    }
 }
 
 /// Key info for ECDSA public keys.
@@ -884,6 +1042,10 @@ impl CngEccKeyInfo for CngEcdsaPublicKeyInfo {
 
     fn blob_component_count() -> usize {
         2
+    }
+
+    fn private_magic(_curve: EccCurve) -> Result<u32, CryptoError> {
+        Err(CryptoError::EccKeyImportError)
     }
 }
 
@@ -932,6 +1094,14 @@ impl CngEccKeyInfo for CngEcdhPrivateKeyInfo {
     fn blob_component_count() -> usize {
         3
     }
+
+    fn private_magic(curve: EccCurve) -> Result<u32, CryptoError> {
+        Ok(match curve {
+            EccCurve::P256 => BCRYPT_ECDH_PRIVATE_P256_MAGIC,
+            EccCurve::P384 => BCRYPT_ECDH_PRIVATE_P384_MAGIC,
+            EccCurve::P521 => BCRYPT_ECDH_PRIVATE_P521_MAGIC,
+        })
+    }
 }
 
 /// Key info for ECDH public keys.
@@ -973,6 +1143,10 @@ impl CngEccKeyInfo for CngEcdhPublicKeyInfo {
 
     fn blob_component_count() -> usize {
         2
+    }
+
+    fn private_magic(_curve: EccCurve) -> Result<u32, CryptoError> {
+        Err(CryptoError::EccKeyImportError)
     }
 }
 

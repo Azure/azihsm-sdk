@@ -9,9 +9,10 @@ mod error;
 
 use std::cmp::Ordering;
 
-use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDeviceKind;
-use azihsm_ddi_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_tbor_types::TborOpReq;
 pub use error::DdiError;
 
 /// DDI Result
@@ -169,28 +170,13 @@ pub enum DriverError {
 
 /// Device Trait
 pub trait DdiDev {
-    /// Set Device Kind, to determine encode/decode behavior
+    /// Returns the device kind.
     ///
-    /// # Arguments
-    /// * `type`        - Type of device
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered?
-    fn set_device_kind(&mut self, kind: DdiDeviceKind);
-
-    /// Execute Operation
-    ///
-    /// # Arguments
-    /// * `req`         - Operation Request
-    /// * `cookie`      - Cookie
-    ///
-    /// # Returns
-    /// * `OpReq::Resp` - Operation response
-    ///
-    /// # Error
-    /// * `DdiError` - Error encountered while executing the command
-    fn exec_op<T: DdiOpReq>(&self, req: &T, cookie: &mut Option<DdiCookie>)
-        -> DdiResult<T::OpResp>;
+    /// The kind is fixed at construction time per backend
+    /// (`DdiDeviceKind::Virtual` for mock; `DdiDeviceKind::Physical`
+    /// for nix/win/emu). Used by the host-side codec to select the
+    /// matching wire-format mode.
+    fn device_kind(&self) -> DdiDeviceKind;
 
     /// Execute GCM operation (encryption / decryption) with slice buffers
     ///
@@ -280,10 +266,47 @@ pub trait DdiDev {
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError>;
 
-    /// Execute NVMe subsystem reset to help emulate Live Migration
+    /// Erase the device.
+    ///
+    /// Resets device state, clearing active sessions and other volatile
+    /// cryptographic state so the device returns to a clean operational
+    /// state. Implementations may preserve some persistent state across
+    /// this operation, so this method does not guarantee that all sealed
+    /// or stored material is discarded.
     ///
     /// # Returns
-    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Ok(())` - Successfully erased the device
     /// * `Err(DdiError)` - Error occurred while executing the command
-    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError>;
+    fn erase(&self) -> Result<(), DdiError>;
+
+    /// Execute a DDI command whose body is MBOR-encoded.
+    ///
+    /// # Arguments
+    /// * `req`    - MBOR-encodable request
+    /// * `cookie` - Optional cookie threaded through to the backend
+    ///
+    /// # Returns
+    /// * `T::OpResp` - Decoded response
+    ///
+    /// # Errors
+    /// Returns a [`DdiError`] on encoding, IO, or device-side failure.
+    fn exec_op_mbor<T: DdiOpReq>(
+        &self,
+        req: &T,
+        cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp>;
+
+    /// Execute a DDI command whose body is TBOR-encoded.
+    ///
+    /// # Default
+    ///
+    /// Returns [`DdiError::UnsupportedEncoding`]. Override on backends
+    /// that have been wired to emit `OP_TBOR` SQEs.
+    fn exec_op_tbor<T: TborOpReq>(
+        &self,
+        _req: &T,
+        _cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        Err(DdiError::UnsupportedEncoding)
+    }
 }

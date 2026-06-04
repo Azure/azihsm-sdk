@@ -24,11 +24,15 @@ fn profile_to_command(profile_name: &str) -> String {
         "ci-mock" => "cargo nextest run --no-fail-fast --features mock --profile ci-mock".to_string(),
         "ci-mock-res" => "cargo nextest run --no-fail-fast -E test(resiliency::fault_injection::) --features mock,res-test --package azihsm_api_tests --profile ci-mock-res".to_string(),
         "ci-mock-table-4" => {
-            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi --profile ci-mock-table-4"
+            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi_mbor_types --profile ci-mock-table-4"
                 .to_string()
         }
         "ci-mock-table-64" => {
-            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi --profile ci-mock-table-64"
+            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi_mbor_types --profile ci-mock-table-64"
+                .to_string()
+        }
+        "ci-tbor-emu" => {
+            "cargo nextest run --no-fail-fast --features emu --package azihsm_ddi_tbor_types --profile ci-tbor-emu"
                 .to_string()
         }
         // For unknown profiles, construct a generic command showing the profile
