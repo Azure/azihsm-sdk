@@ -41,7 +41,7 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
 
     let key_id = HsmKeyId::from(body.key_id);
     let vault_kind = pal.vault_key_kind(io, key_id)?;
-    let curve = vault_kind_to_curve(vault_kind)?;
+    let curve = super::from_pal::ecc_curve(vault_kind)?;
     let vault_attrs = pal.vault_key_attrs(io, key_id)?;
     if !vault_attrs.sign() {
         return Err(HsmError::InvalidPermissions);
@@ -69,17 +69,4 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
     .await?;
 
     Ok(resp)
-}
-
-/// Infer the ECC curve from a vault key kind.
-///
-/// Returns `InvalidKeyType` if the kind is not an ECC private key —
-/// matches the test that signs against a non-ECC key.
-fn vault_kind_to_curve(kind: HsmVaultKeyKind) -> HsmResult<HsmEccCurve> {
-    match kind {
-        HsmVaultKeyKind::Ecc256Private => Ok(HsmEccCurve::P256),
-        HsmVaultKeyKind::Ecc384Private => Ok(HsmEccCurve::P384),
-        HsmVaultKeyKind::Ecc521Private => Ok(HsmEccCurve::P521),
-        _ => Err(HsmError::InvalidKeyType),
-    }
 }

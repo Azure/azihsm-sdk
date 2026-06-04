@@ -6,8 +6,10 @@ pub(crate) mod aes_generate_key;
 pub(crate) mod close_session;
 pub(crate) mod ecc_generate_key_pair;
 pub(crate) mod ecc_sign;
+pub(crate) mod ecdh_key_exchange;
 pub(crate) mod establish_credential;
 pub(crate) mod from_ddi;
+pub(crate) mod from_pal;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
@@ -16,6 +18,7 @@ pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod get_sealed_bk3;
 pub(crate) mod get_session_encryption_key;
 pub(crate) mod init_bk3;
+pub(crate) mod key_attrs;
 pub(crate) mod open_session;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
@@ -30,6 +33,7 @@ use azihsm_fw_ddi_mbor_types::*;
 pub(crate) use close_session::*;
 pub(crate) use ecc_generate_key_pair::*;
 pub(crate) use ecc_sign::*;
+pub(crate) use ecdh_key_exchange::*;
 pub(crate) use establish_credential::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
@@ -121,6 +125,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::AesEncryptDecrypt => aes_encrypt_decrypt(pal, io, decoder, hdr).await,
         DdiOp::EccGenerateKeyPair => ecc_generate_key_pair(pal, io, decoder, hdr).await,
         DdiOp::EccSign => ecc_sign(pal, io, decoder, hdr).await,
+        DdiOp::EcdhKeyExchange => ecdh_key_exchange(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
