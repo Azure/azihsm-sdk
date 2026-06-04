@@ -431,7 +431,7 @@ pub const SESSION_PARAM_KEY_LEN: usize = 32;
 /// Length in bytes of the per-session `masking_key`.
 ///
 /// 80 B = AES-CBC-256 key (32 B) ‖ HMAC-SHA-384 key (48 B). Consumed
-/// by the `mask_cbc`-based MBOR masked-key system; unrelated to
+/// by the `key_masking::cbc`-based MBOR masked-key system; unrelated to
 /// [`SESSION_PARAM_KEY_LEN`] which now refers to the AEAD-GCM
 /// per-session wrap key.  Present for both CO and CU sessions.
 pub const SESSION_MASKING_KEY_LEN: usize = 80;

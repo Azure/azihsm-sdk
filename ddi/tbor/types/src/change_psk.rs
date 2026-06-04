@@ -3,7 +3,7 @@
 
 //! Host-side wrapper for the TBOR `ChangePsk` command.
 //!
-//! Construction of the inner ECIES envelope is the caller's
+//! Construction of the inner AEAD-GCM envelope is the caller's
 //! responsibility: pass the wire-ready envelope bytes (already wrapped
 //! under the active session's `param_key`, with the
 //! `"psk-change-v1" ‖ session_id` AAD) in `psk_envelope`.  See the FW
@@ -29,12 +29,12 @@ use crate::tbor;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborChangePskReq {
     /// Logical session id the request is bound to.  Same value must
-    /// appear in the ECIES envelope's AAD; see
+    /// appear in the AEAD-GCM envelope's AAD; see
     /// [`build_psk_change_aad`].
     #[tbor(session_id)]
     pub session_id: u16,
 
-    /// ECIES envelope wrapping the 32-byte new PSK under the active
+    /// AEAD-GCM envelope wrapping the 32-byte new PSK under the active
     /// session's `param_key`.
     #[tbor(max_len = 160)]
     pub psk_envelope: Vec<u8>,

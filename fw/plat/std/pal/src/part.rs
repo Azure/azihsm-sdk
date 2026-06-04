@@ -1221,7 +1221,7 @@ impl StdHsmPal {
         let priv_len = pk.hsm_bytes_len();
         let mut priv_buf = vec![0u8; priv_len];
         pk.to_hsm_bytes(&mut priv_buf[..priv_len])
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         // Export raw P-384 public key coordinates (x ∥ y) in big-endian
         // form — matches OpenSSL conventions and is the form expected by
@@ -1231,7 +1231,7 @@ impl StdHsmPal {
         let half = P384_PUB_KEY_LEN / 2;
         let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
         pubk.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         // Store raw HSM private-key bytes in vault.
         let table = unsafe { &mut *self.part_table.get() };
@@ -1298,6 +1298,14 @@ impl StdHsmPal {
             let _ = entry.vault.delete(kid);
         }
 
+        // Wipe rotated PSK material in place before dropping the
+        // `Option`.  Using `as_mut().fill(0)` ensures the bytes that
+        // live inside `entry`'s `Option<[u8; PSK_LEN]>` payload are
+        // overwritten on the struct itself; the subsequent
+        // `= None` write only changes the discriminant and leaves
+        // those zeros in place (an `Option<[u8; N]>` has no niche so
+        // the payload bytes are stable storage, not a reused
+        // tagged-union slot).
         if let Some(psk) = entry.psk_co.as_mut() {
             psk.fill(0);
         }

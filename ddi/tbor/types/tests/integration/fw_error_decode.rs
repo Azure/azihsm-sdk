@@ -37,19 +37,19 @@ fn encode_err_envelope(status: u32, out: &mut [u8]) -> usize {
     bytes.len()
 }
 
-const ECIES_AUTH_FAILED: u32 = 0x0870_00DD;
+const AEAD_ENVELOPE_AUTH_FAILED: u32 = 0x0870_00DD;
 const SESSION_NOT_FOUND: u32 = 0x0870_0004;
 
 #[test]
 fn empty_response_surfaces_fw_status() {
     let mut buf = [0u8; 64];
-    let len = encode_err_envelope(ECIES_AUTH_FAILED, &mut buf);
+    let len = encode_err_envelope(AEAD_ENVELOPE_AUTH_FAILED, &mut buf);
 
     let err = TborCloseSessionResp::decode_response(&buf[..len])
         .expect_err("non-zero status must not decode to Ok on empty-response types");
     assert_eq!(
         err,
-        DecodeError::FwError(ECIES_AUTH_FAILED),
+        DecodeError::FwError(AEAD_ENVELOPE_AUTH_FAILED),
         "expected FwError surfacing the HsmError discriminant",
     );
 }

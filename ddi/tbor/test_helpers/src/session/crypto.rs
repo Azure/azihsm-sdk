@@ -333,7 +333,7 @@ pub(super) fn derive_param_key(exported: &[u8]) -> Result<AesKey, DdiError> {
 /// envelope. Returns the exact 68-byte wire blob that occupies the
 /// `seed_envelope` field of `TborOpenSessionFinishReq`.
 pub(super) fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> Result<Vec<u8>, DdiError> {
-    let iv = Rng::gen_vec(12).map_err(|_| DdiError::InvalidParameter)?;
+    let iv = Rng::rand_vec(12).map_err(|_| DdiError::InvalidParameter)?;
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, &[], seed, None)
         .map_err(|_| DdiError::TborDecodeError)?;
     let mut envelope = vec![0u8; total];

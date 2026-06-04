@@ -230,8 +230,8 @@ pub enum HsmError {
     SessionAuthFailure = 0x087000DA,
     InvalidPskId = 0x087000DB,
     SessionNotPending = 0x087000DC,
-    EciesAuthFailed = 0x087000DD,
-    EciesDecodeFailed = 0x087000DE,
+    AeadEnvelopeAuthFailed = 0x087000DD,
+    AeadEnvelopeDecodeFailed = 0x087000DE,
     InvalidSessionType = 0x087000DF,
 
     // ── Core lifecycle / transport diagnostics ─────────────────────
@@ -287,6 +287,13 @@ pub enum HsmError {
 
     /// `step()` was called after the chain was already fully validated.
     X509AlreadyComplete = 0x087000FA,
+
+    /// Failed to export an ECC key to HSM wire format (raw scalar /
+    /// coordinate bytes).  This is **not** a DER encoding error — the
+    /// HSM ECC format is the raw padded scalar/coordinate bytes
+    /// produced by `ExportableHsmKey::to_hsm_bytes` (see
+    /// `HsmEccCurve::wire_coord_len`).
+    EccExportError = 0x087000FB,
 }
 
 impl core::fmt::Debug for HsmError {

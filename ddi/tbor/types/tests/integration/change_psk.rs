@@ -16,12 +16,12 @@
 //! * One-shot enforcement: second `ChangePsk` on the same session
 //!   surfaces `HsmError::InvalidPermissions`.
 //! * Envelope-tampering negatives: ciphertext bit-flip and AAD
-//!   bit-flip both surface `HsmError::EciesAuthFailed`.
+//!   bit-flip both surface `HsmError::AeadEnvelopeAuthFailed`.
 //! * Empty envelope → `HsmError::InvalidArg`.
 //! * AAD that encodes a session id other than the request's
-//!   session id → `HsmError::EciesAuthFailed`.
+//!   session id → `HsmError::AeadEnvelopeAuthFailed`.
 //! * Envelope encrypted under a *different* session's `param_key`
-//!   shipped through this session → `HsmError::EciesAuthFailed`.
+//!   shipped through this session → `HsmError::AeadEnvelopeAuthFailed`.
 //! * Plaintext that is not exactly `PSK_LEN` bytes → `HsmError::InvalidArg`.
 
 #![cfg(feature = "emu")]
@@ -247,7 +247,7 @@ fn change_psk_ciphertext_tampered_emu() {
     envelope[target] ^= 0x01;
     let err = send_change_psk_raw(&dev, &session, envelope)
         .expect_err("ciphertext bit-flip must fail AEAD tag");
-    assert_fw_rejects(&err, HsmError::EciesAuthFailed);
+    assert_fw_rejects(&err, HsmError::AeadEnvelopeAuthFailed);
     try_close(&dev, session.session_id);
 }
 
@@ -261,7 +261,7 @@ fn change_psk_aad_tampered_emu() {
     envelope[16] ^= 0x01;
     let err =
         send_change_psk_raw(&dev, &session, envelope).expect_err("AAD bit-flip must fail AEAD tag");
-    assert_fw_rejects(&err, HsmError::EciesAuthFailed);
+    assert_fw_rejects(&err, HsmError::AeadEnvelopeAuthFailed);
     try_close(&dev, session.session_id);
 }
 
@@ -290,14 +290,14 @@ fn change_psk_wrong_session_id_in_aad_emu() {
     let dev = open_dev();
     let session = open_session(&dev, CU, SessionType::PlainText).expect("open CU");
     // Build an envelope whose AAD encodes a different (bogus)
-    // session id. ECIES HMAC verifies (the FW recomputes HMAC over
-    // *these* bytes), but the FW then constant-compares the AAD
+    // session id. AEAD-GCM tag verifies (the FW recomputes the tag
+    // over *these* bytes), but the FW then constant-compares the AAD
     // against `build_psk_change_aad(req.session_id)` and rejects.
     let bogus_aad = build_psk_change_aad(session.session_id ^ 0x1234);
     let envelope = build_envelope(&session.param_key, &bogus_aad, &ROTATED_PSK);
     let err = send_change_psk_raw(&dev, &session, envelope)
         .expect_err("AAD encoding the wrong session id must be rejected");
-    assert_fw_rejects(&err, HsmError::EciesAuthFailed);
+    assert_fw_rejects(&err, HsmError::AeadEnvelopeAuthFailed);
     try_close(&dev, session.session_id);
 }
 
@@ -313,12 +313,12 @@ fn change_psk_envelope_from_other_session_emu() {
     let session_b = open_session(&dev, CU, SessionType::PlainText).expect("open B");
     // Encrypt under A's param_key but ship through B (with B's
     // session id in the request). FW uses B's param_key to verify
-    // the ECIES HMAC → mismatch.
+    // the AEAD-GCM tag → mismatch.
     let aad_for_b = build_psk_change_aad(session_b.session_id);
     let envelope = build_envelope(&session_a.param_key, &aad_for_b, &ROTATED_PSK);
     let err = send_change_psk_raw(&dev, &session_b, envelope)
         .expect_err("envelope under wrong param_key must fail HMAC");
-    assert_fw_rejects(&err, HsmError::EciesAuthFailed);
+    assert_fw_rejects(&err, HsmError::AeadEnvelopeAuthFailed);
     try_close(&dev, session_a.session_id);
     try_close(&dev, session_b.session_id);
 }

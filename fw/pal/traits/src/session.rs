@@ -488,7 +488,7 @@ pub trait HsmSessionManager {
     ///   in `OpenSessionFinish`).
     /// - `masking_key` — 80-byte AES-CBC-256 + HMAC-SHA-384 blob;
     ///   required for both CO and CU sessions.  Consumed by the
-    ///   `mask_cbc` masked-key system, not by the per-session AEAD.
+    ///   `key_masking::cbc` masked-key system, not by the per-session AEAD.
     /// - `mac_tx_key` — `Some(48 B)` for Authenticated sessions
     ///   (VM→HSM message-MAC key); `None` for PlainText.
     /// - `mac_rx_key` — `Some(48 B)` for Authenticated sessions

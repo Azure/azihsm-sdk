@@ -65,7 +65,7 @@ Built by the host with [`aead_envelope::seal`](
     ../../../fw/core/ddi/tbor/types/src/change_psk.rs) — re-exported
   from the host wrapper — produces these bytes; the FW handler
   reconstructs the identical buffer via the same helper and rejects
-  any contents mismatch with `EciesAuthFailed`.
+  any contents mismatch with `AeadEnvelopeAuthFailed`.
 
   No `target_psk_id` is bound in the AAD: the target slot is implicit
   in the session role, so there is no slot-selection byte the AAD
@@ -88,7 +88,7 @@ Built by the host with [`aead_envelope::seal`](
 |---|---|
 | `SessionNotFound` | `session_id` does not refer to an Active slot in the calling partition (slot free, destroyed, or still Pending) |
 | `InvalidArg` | `psk_envelope` length is 0 or > 160; decrypted plaintext length ≠ 32; AAD length on the envelope ≠ 32 |
-| `EciesAuthFailed` | Envelope AEAD-GCM tag verification failed (wrong `param_key`, tampering, or AAD **contents** do not match the expected layout) |
+| `AeadEnvelopeAuthFailed` | Envelope AEAD-GCM tag verification failed (wrong `param_key`, tampering, or AAD **contents** do not match the expected layout) |
 | `InvalidPermissions` | A `ChangePsk` has already succeeded on this session (one-rotation-per-session bound) |
 | `InternalError` | Session vault blob shorter than expected; indicates internal corruption |
 

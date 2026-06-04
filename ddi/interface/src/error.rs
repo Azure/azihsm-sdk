@@ -149,7 +149,7 @@ impl From<azihsm_ddi_tbor_codec::DecodeError> for DdiError {
         match e {
             // FW-signalled error: surface the typed HsmError discriminant
             // so callers can match on specific codes (InvalidSessionType,
-            // EciesAuthFailed, etc.) instead of losing the detail to a
+            // AeadEnvelopeAuthFailed, etc.) instead of losing the detail to a
             // generic `TborDecodeError`.
             azihsm_ddi_tbor_codec::DecodeError::FwError(status) => Self::DdiError(status),
             _ => Self::TborDecodeError,

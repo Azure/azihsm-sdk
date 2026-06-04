@@ -82,7 +82,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         env_buf.copy_from_slice(envelope);
         let view = aead_open(pal, io, param_key, env_buf)
             .await
-            .map_err(|_| HsmError::EciesAuthFailed)?;
+            .map_err(|_| HsmError::AeadEnvelopeAuthFailed)?;
 
         // Validate AAD and plaintext shape.  The AEAD tag has already
         // authenticated these bytes, so an attacker cannot drive
@@ -95,19 +95,18 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         }
         let expected_aad = build_psk_change_aad(u16::from(sess_id));
         if view.aad != expected_aad.as_slice() {
-            return Err(HsmError::EciesAuthFailed);
+            return Err(HsmError::AeadEnvelopeAuthFailed);
         }
         if view.payload.len() != PSK_LEN {
             return Err(HsmError::InvalidArg);
         }
 
-        // Persist the new PSK.  Copy the plaintext into a transient
-        // buffer first to give `part_psk_set` a clean slice with a
-        // lifetime independent of the in-place envelope.  The scoped
-        // allocator zeroizes both buffers on scope exit.
-        let new_psk = alloc.dma_alloc(PSK_LEN)?;
-        new_psk.copy_from_slice(view.payload);
-        pal.part_psk_set(io, target_psk_id, new_psk)?;
+        // Persist the new PSK directly from the in-place envelope
+        // view.  `part_psk_set` is synchronous and takes `&[u8]`, so
+        // the borrow ends with the call — no need for a separate
+        // scratch buffer.  The envelope DmaBuf is zeroized by the
+        // scoped allocator on scope exit.
+        pal.part_psk_set(io, target_psk_id, view.payload)?;
 
         encode_response(pal, io)
     })

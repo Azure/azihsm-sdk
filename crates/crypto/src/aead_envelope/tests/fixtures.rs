@@ -1,12 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Deterministic fixtures shared by both fw and host crates.
+//! Deterministic input fixtures (KEY / IV / AAD / PT) for the
+//! `aead_envelope` round-trip tests in `ops_tests.rs`.
 //!
-//! These constants (KEY/IV/AAD/PT) drive seal→open round-trips and
-//! wire-layout assertions. The envelope bytes are deterministic given
-//! the inputs, but are intentionally re-generated at runtime here
-//! rather than stored as a separate golden hex blob.
+//! What is pinned here:
+//!   * fixed test inputs (so failures are reproducible),
+//!   * the wire-layout positions of the envelope header / IV / AAD
+//!     slots inside the `round_trip` helper below.
+//!
+//! What is **not** pinned here: an `ENVELOPE` byte blob.  The
+//! envelope is intentionally re-sealed at runtime in each test
+//! (using the host AEAD-GCM backend) and `open()` is called on the
+//! freshly-sealed bytes — this exercises the host seal+open paths
+//! end-to-end without coupling tests to a specific compiler /
+//! OpenSSL nonce-handling quirk.  Cross-platform "golden ciphertext"
+//! pinning belongs on the fw side (where the implementation is fixed)
+//! and is not duplicated here.
 
 #![allow(dead_code)] // fixtures are consumed by ops_tests below.
 

@@ -97,7 +97,7 @@ impl HsmEcc for StdHsmPal {
             .gen_keypair_le(to_ecc_curve(curve), scratch_pub)
             .await?;
         pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
         pub_out[..wire_pub_len].copy_from_slice(scratch_pub);

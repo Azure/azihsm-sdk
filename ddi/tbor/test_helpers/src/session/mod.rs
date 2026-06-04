@@ -7,8 +7,8 @@
 //! (`OpenSessionInit` + `OpenSessionFinish`) against a [`DdiDev`] and
 //! returns a [`SessionHandshake`] carrier whose fields are everything
 //! a per-command test needs to drive subsequent in-session commands
-//! (param_key for ECIES, session_id, session_type, bmk_session for
-//! later resume tests).
+//! (param_key for the AEAD-GCM envelope, session_id, session_type,
+//! bmk_session for later resume tests).
 //!
 //! The lower-level [`open_session_init`] and [`open_session_finish`]
 //! helpers are also exposed so negative-path tests can intercept the

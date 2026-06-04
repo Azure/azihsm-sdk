@@ -554,7 +554,7 @@ pub trait HsmPartitionManager {
     /// [`part_set_masked_bk_boot`](Self::part_set_masked_bk_boot).
     /// Subsequent handlers (e.g. `DdiEstablishCredential`) read this
     /// blob and recover raw `BK_BOOT` via
-    /// `unmask_cbc_in_place` so plaintext `BK_BOOT` never needs to
+    /// `key_masking::cbc::unmask` so plaintext `BK_BOOT` never needs to
     /// be persisted across calls.
     ///
     /// Follows the same query/copy pattern as

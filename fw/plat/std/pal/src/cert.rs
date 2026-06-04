@@ -326,14 +326,14 @@ impl StdHsmPal {
         let priv_len = pk.hsm_bytes_len();
         let mut priv_key = vec![0u8; priv_len];
         pk.to_hsm_bytes(&mut priv_key[..priv_len])
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         // Export raw P-384 public key (x ∥ y).
         let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
         let half = P384_PUB_KEY_LEN / 2;
         let (x_buf, y_buf) = pub_raw.split_at_mut(half);
         pubk.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         let uncompressed = to_uncompressed(&pub_raw);
         let mut ski = [0u8; 20];

@@ -62,9 +62,12 @@ pub struct TborOpenSessionInitReq {
 
 impl Default for TborOpenSessionInitReq {
     fn default() -> Self {
+        // Default to a valid CO/Authenticated pairing: CO sessions
+        // (psk_id=0) must use the Authenticated session type
+        // (session_type=1) per the role/type compatibility matrix.
         Self {
-            psk_id: 1,
-            session_type: 0,
+            psk_id: 0,
+            session_type: 1,
             suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
             pk_init: [0u8; PK_INIT_LEN],
         }

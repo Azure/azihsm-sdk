@@ -67,7 +67,7 @@ pub(crate) mod opcode {
     pub(crate) const CLOSE_SESSION: u8 = 0x12;
 
     /// `ChangePsk` — rotate the CO or CU partition PSK to a
-    /// new value supplied encrypted inside an ECIES envelope wrapped
+    /// new value supplied encrypted inside an AEAD-GCM envelope wrapped
     /// under the active session's `param_key`.  See
     /// [`super::change_psk`] for the authorization matrix and
     /// AAD layout.
