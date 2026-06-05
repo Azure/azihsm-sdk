@@ -17,7 +17,7 @@ const VS2026_GEN_NAME: &str = "Visual Studio 18 2026";
 const VS2022_GEN_NAME: &str = "Visual Studio 17 2022";
 
 fn main() {
-    // Instruct Cargo to re-run this build script if any of the following env 
+    // Instruct Cargo to re-run this build script if any of the following env
     // vars changed since they impact the CMake configuration.
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MOCK");
     println!("cargo:rerun-if-env-changed=CMAKE_GENERATOR");
@@ -40,8 +40,8 @@ fn try_main() -> anyhow::Result<()> {
     let mut config = cmake::Config::new("cpp");
     config.define("TEST_FEATURES", features.join(" "));
 
-    // On Windows, use get_vs_gen helper method to select the appropriate CMake 
-    // generator unless CMAKE_GENERATOR is already set. Tried Ninja but it was 
+    // On Windows, use get_vs_gen helper method to select the appropriate CMake
+    // generator unless CMAKE_GENERATOR is already set. Tried Ninja but it was
     // producing invalid paths on Windows.
     #[cfg(target_os = "windows")]
     if env::var("CMAKE_GENERATOR").is_err() {
