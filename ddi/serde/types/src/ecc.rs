@@ -104,19 +104,8 @@ impl DdiEccSignReq {
             &data[..input_array.len()],
         );
 
-        // The PKA engine reads operands at curve-specific DWORD-aligned
-        // sizes (P-256: 32, P-384: 48, P-521: 68). Pad the digest to the
-        // engine operand size for the corresponding hash algorithm.
-        // Sending a fixed 68 B for every curve causes the firmware-side
-        // length check to reject P-256 and P-384 requests.
-        let pad_len: usize = match self.digest_algo {
-            DdiHashAlgorithm::Sha256 => 32,
-            DdiHashAlgorithm::Sha384 => 48,
-            DdiHashAlgorithm::Sha512 => 68,
-            _ => return Err(MborEncodeError::InvalidParameter),
-        };
-
-        Ok(MborByteArray::new(output_array, pad_len)?)
+        // Ecc sign digest must be padded with zeros to max length (68)
+        Ok(MborByteArray::new(output_array, 68)?)
     }
 }
 
