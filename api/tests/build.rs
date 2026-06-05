@@ -45,7 +45,7 @@ fn try_main() -> anyhow::Result<()> {
     // producing invalid paths on Windows.
     #[cfg(target_os = "windows")]
     if env::var("CMAKE_GENERATOR").is_err() {
-        config.generator(get_vs_gen()?);
+        config.generator(&get_vs_gen()?);
     }
 
     let _dst = config.build();
@@ -55,7 +55,7 @@ fn try_main() -> anyhow::Result<()> {
 // Windows-specific helper method to use vswhere.exe to detect installed Visual
 // Studio versions.
 #[cfg(target_os = "windows")]
-fn get_vs_gen() -> anyhow::Result<&str> {
+fn get_vs_gen() -> anyhow::Result<String> {
     // locate and run vswhere tool to detect VS2026
     let vswhere_dir = env::var("ProgramFiles(x86)")
         .or_else(|_| env::var("ProgramFiles"))
@@ -85,9 +85,9 @@ fn get_vs_gen() -> anyhow::Result<&str> {
         let has_vs2026 = stdout.lines().any(|v| v.trim().starts_with("18."));
         let has_vs2022 = stdout.lines().any(|v| v.trim().starts_with("17."));
         if has_vs2026 {
-            return Ok(VS2026_GEN_NAME);
+            return Ok(VS2026_GEN_NAME.to_string());
         } else if has_vs2022 {
-            return Ok(VS2022_GEN_NAME);
+            return Ok(VS2022_GEN_NAME.to_string());
         } else {
             return Err(anyhow::anyhow!(
                 "Neither Visual Studio 2026 nor 2022 was detected by vswhere.exe"
