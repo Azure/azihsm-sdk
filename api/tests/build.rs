@@ -72,19 +72,26 @@ fn get_vs_gen() -> anyhow::Result<&str> {
         )
         .quiet()
         .output()?;
-        if output.status.success() {
-            let stdout = String::from_utf8(output.stdout)?;
-            let has_vs2026 = stdout.lines().any(|v| v.trim().starts_with("18."));
-            let has_vs2022 = stdout.lines().any(|v| v.trim().starts_with("17."));
-            if has_vs2026 {
-                return Ok(VS2026_GEN_NAME);
-            } else if has_vs2022 {
-                return Ok(VS2022_GEN_NAME);
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Neither Visual Studio 2026 nor 2022 was detected by vswhere.exe"
-                ));
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "vswhere.exe failed ({}): {}",
+                output.status,
+                stderr.trim()
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        let has_vs2026 = stdout.lines().any(|v| v.trim().starts_with("18."));
+        let has_vs2022 = stdout.lines().any(|v| v.trim().starts_with("17."));
+        if has_vs2026 {
+            return Ok(VS2026_GEN_NAME);
+        } else if has_vs2022 {
+            return Ok(VS2022_GEN_NAME);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Neither Visual Studio 2026 nor 2022 was detected by vswhere.exe"
+            ));
         }
     }
     Err(anyhow::anyhow!(
