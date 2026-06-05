@@ -647,6 +647,33 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_duplicate_public_prope
     });
 }
 
+// Verifies unwrap allows duplicate property IDs in the public property list.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_duplicate_public_property_id)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ctx.pub_props.props.push_back({ AZIHSM_KEY_PROP_ID_EC_CURVE,
+                                        &ctx.pub_props.ecc_curve,
+                                        sizeof(ctx.pub_props.ecc_curve) });
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+    });
+}
+
 // Verifies unwrap rejects private EC_CURVE that does not match the wrapped ECC key.
 TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_private_curve_mismatch_with_wrapped_key)
 {
@@ -1053,22 +1080,58 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_invalid_public_verify_
     });
 }
 
-// Verifies unwrap rejects unknown public property IDs.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unknown_public_property_id)
+// Verifies unwrap ignores unknown private property IDs.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_ignores_unknown_private_property_id)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+        uint8_t value = 1;
+        ctx.priv_props.props.push_back(
+            { static_cast<azihsm_key_prop_id>(0x7FFF), &value, sizeof(value) }
+        );
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+    });
+}
+
+// Verifies unwrap ignores unknown public property IDs.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_ignores_unknown_public_property_id)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
         uint8_t value = 1;
         ctx.pub_props.props.push_back(
             { static_cast<azihsm_key_prop_id>(0x7FFF), &value, sizeof(value) }
         );
 
-        auto result = ctx.try_unwrap_inputs(unwrap_inputs);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
     });
 }
