@@ -143,14 +143,6 @@ struct EcdsaTestParams
     const char *test_name;
 };
 
-// Test data structure for ECC parity test parameters.
-struct EcdsaParityParams
-{
-    azihsm_ecc_curve curve;
-    azihsm_algo_id algo_id;
-    uint32_t signature_len;
-};
-
 // Helper function to sign and verify one ECC message for parity coverage.
 static void run_ecc_sign_verify_message_parity(
     azihsm_handle session,
@@ -1527,6 +1519,7 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_truncated_signature)
             AZIHSM_STATUS_SUCCESS
         );
 
+        ASSERT_GT(sig_buf.len, 0u);
         azihsm_buffer truncated_sig_buf{ signature.data(), sig_buf.len - 1 };
         auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &truncated_sig_buf);
         ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
