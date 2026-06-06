@@ -54,6 +54,34 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
+
+  test_ubuntu:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libbsd-dev
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      run: cargo xtask setup
     - name: SDK Run all mock tests table-4
       id: test-mock-table-4
       run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-4 --profile ci-mock-table-4
@@ -82,7 +110,7 @@ jobs:
       if: ${{ steps.test-mock-coverage.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' || steps.test-tbor-emu.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -122,6 +150,30 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
+
+  test_windows:
+
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup on cache miss
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      run: cargo xtask precheck --setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
       run: cargo xtask precheck --coverage
