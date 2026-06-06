@@ -17,7 +17,10 @@ pub(crate) mod get_device_info;
 pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod get_sealed_bk3;
 pub(crate) mod get_session_encryption_key;
+pub(crate) mod hkdf_derive;
 pub(crate) mod init_bk3;
+pub(crate) mod kbkdf_derive;
+pub(crate) mod kdf;
 pub(crate) mod key_attrs;
 pub(crate) mod open_session;
 pub(crate) mod set_sealed_bk3;
@@ -42,7 +45,9 @@ pub(crate) use get_device_info::*;
 pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use get_sealed_bk3::*;
 pub(crate) use get_session_encryption_key::*;
+pub(crate) use hkdf_derive::*;
 pub(crate) use init_bk3::*;
+pub(crate) use kbkdf_derive::*;
 pub(crate) use open_session::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
@@ -126,6 +131,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::EccGenerateKeyPair => ecc_generate_key_pair(pal, io, decoder, hdr).await,
         DdiOp::EccSign => ecc_sign(pal, io, decoder, hdr).await,
         DdiOp::EcdhKeyExchange => ecdh_key_exchange(pal, io, decoder, hdr).await,
+        DdiOp::HkdfDerive => hkdf_derive(pal, io, decoder, hdr).await,
+        DdiOp::KbkdfCounterHmacDerive => kbkdf_counter_hmac_derive(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
