@@ -223,6 +223,22 @@ impl EccCurve {
     }
 }
 
+/// Converts an ECC curve enum to its key size in bytes.
+///
+/// This conversion provides the private key size for each supported curve:
+/// - P-256: 32 bytes
+/// - P-384: 48 bytes
+/// - P-521: 66 bytes
+impl From<EccCurve> for usize {
+    fn from(curve: EccCurve) -> Self {
+        match curve {
+            EccCurve::P256 => 32,
+            EccCurve::P384 => 48,
+            EccCurve::P521 => 66,
+        }
+    }
+}
+
 /// Converts a curve bit size to an ECC curve identifier.
 ///
 /// This trait implementation allows constructing curve identifiers from

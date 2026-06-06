@@ -425,9 +425,9 @@ pub trait HsmEcc {
     /// the vault so a later [`ecc_sign`](Self::ecc_sign) /
     /// [`ecdh_derive`](Self::ecdh_derive) reads back the same
     /// vault-native encoding it expects.  This mirrors the
-    /// reference firmware's `to_pka_bytes` step.  There is no RSA
-    /// analogue because the std PAL stores RSA private keys in
-    /// their DER form directly.
+    /// reference firmware's `to_pka_bytes` step.  The RSA analogue
+    /// is [`HsmRsa::rsa_priv_to_hsm`], which re-encodes an imported
+    /// RSA private key into the std PAL's raw non-CRT HSM bytes.
     ///
     /// # Parameters
     ///

@@ -85,18 +85,21 @@ fn write_rsa_pub_wire(
 impl HsmRsa for StdHsmPal {
     /// Generate an RSA key pair, query-alloc-use style.
     ///
-    /// In **query mode** (`out = None`) returns the std-PAL upper
-    /// bounds: PKCS#8 DER max for the private key
-    /// ([`HsmRsaKey::priv_key_der_max`]) and the wire-format LE
+    /// In **query mode** (`out = None`) returns the std-PAL
+    /// lengths: the raw non-CRT HSM private-key length
+    /// ([`HsmRsaKey::priv_key_hsm_len`]) and the wire-format LE
     /// public-key length ([`HsmRsaKey::pub_wire_len`]).  In
     /// **use mode** (`out = Some((priv_out, pub_out))`) it generates
     /// a keypair via [`StdRsa::gen_keypair`], serializes the private
-    /// key as PKCS#8 DER, and writes the public key as
-    /// fixed-width `n_le || e_le` (modulus padded to
-    /// `key_size.modulus_len()`, exponent padded to
-    /// [`HsmRsaKey::pub_exp_len`]).  Returns the actual byte counts
-    /// (DER is variable, so `priv_actual ≤ priv_max`; pub is
-    /// deterministic).
+    /// key as raw non-CRT HSM bytes `n || e || p || q` (each integer
+    /// zero-padded to its fixed width) via
+    /// [`to_hsm_bytes`](azihsm_crypto::ExportableHsmKey::to_hsm_bytes),
+    /// and writes the public key as fixed-width `n_le || e_le`
+    /// (modulus padded to `key_size.modulus_len()`, exponent padded
+    /// to [`HsmRsaKey::pub_exp_len`]).  Both encodings are
+    /// fixed-width, so the returned byte counts are deterministic and
+    /// `priv_actual == priv_max` (it is the number of HSM private-key
+    /// bytes written, always equal to `priv_max`).
     ///
     /// `pct` is currently honored only insofar as the underlying
     /// driver call may run an internal PCT; a TODO covers wiring

@@ -220,10 +220,10 @@ pub trait HsmRsa {
     ///    happens; the method returns `(priv_max, pub_max)` upper
     ///    bounds the caller must allocate.  `pub_max` is always
     ///    [`HsmRsaKey::pub_wire_len`] (raw `n || e` on the wire);
-    ///    `priv_max` depends on the PAL's encoding — std PAL uses
-    ///    PKCS#8 DER and returns [`HsmRsaKey::priv_key_der_max`],
-    ///    while real-HW PALs return the size of their raw
-    ///    component layout.
+    ///    `priv_max` depends on the PAL's encoding — std PAL vaults
+    ///    the raw non-CRT HSM bytes (`n || e || p || q`) and returns
+    ///    [`HsmRsaKey::priv_key_hsm_len`], while real-HW PALs return
+    ///    the size of their raw component layout.
     /// 2. **Alloc** — caller allocates two DMA buffers of those
     ///    sizes.
     /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.
@@ -233,9 +233,10 @@ pub trait HsmRsa {
     ///    the wire-format LE public key (`n_le || e_le`) into
     ///    `pub_out[..pub_actual]`, and returns the actual lengths.
     ///    Both are guaranteed to be `≤` the upper bounds reported
-    ///    by the matching query call (real-HW PALs always return
-    ///    the same value in both modes; std-PAL DER may be shorter
-    ///    than the max).
+    ///    by the matching query call.  In practice all current PALs
+    ///    use fixed-width encodings, so the use-mode lengths equal
+    ///    the query-mode values (`priv_actual == priv_max`,
+    ///    `pub_actual == pub_max`).
     ///
     /// # Parameters
     ///
