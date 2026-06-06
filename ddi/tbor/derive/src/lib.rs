@@ -26,10 +26,16 @@
 //!
 //! | Form | Meaning |
 //! |---|---|
-//! | `#[tbor]` | request; opcode pulled from the FW schema's `TborRequest::OPCODE` impl; `OpResp` defaults to `Req → Resp` name swap |
-//! | `#[tbor(resp = TborFooResp)]` | request with explicit response type |
-//! | `#[tbor(schema = path::Type)]` | request/response with explicit FW schema path |
-//! | `#[tbor(response)]` | response |
+//! | `#[tbor(session_ctrl = <v>)]` | **request — required.** Sets the SQE `session_flags.ctrl` byte; one of `no_session`, `open`, `close`, `in_session` |
+//! | `#[tbor(session_ctrl = <v>, resp = TborFooResp)]` | request with explicit response type |
+//! | `#[tbor(session_ctrl = <v>, schema = path::Type)]` | request with explicit FW schema path |
+//! | `#[tbor(response)]` | response (no `session_ctrl`) |
+//! | `#[tbor(response, schema = path::Type)]` | response with explicit FW schema path |
+//!
+//! Opcode is pulled from the FW schema's `TborRequest::OPCODE` impl;
+//! `OpResp` defaults to a `Req → Resp` name swap when `resp` is
+//! omitted.  A request struct without `session_ctrl` is a compile
+//! error.
 //!
 //! ## Field-level attributes
 //!
@@ -180,8 +186,9 @@ fn gen_request(
     let ctrl_variant = attrs.session_ctrl.as_ref().ok_or_else(|| {
         syn::Error::new(
             name.span(),
-            "missing required `session_ctrl` attribute on request struct — \
-             add `#[tbor(session_ctrl = <no_session|open|close|in_session>)]`",
+            "missing required `session_ctrl` attribute on request struct.\n\
+             example: #[tbor(session_ctrl = no_session)]\n\
+             allowed variants: no_session, open, close, in_session",
         )
     })?;
     let session_ctrl_impl = quote! {
