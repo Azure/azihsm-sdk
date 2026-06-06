@@ -17,7 +17,7 @@ pub use azihsm_fw_ddi_tbor_types::TBOR_OP_GET_API_REV;
 use crate::tbor;
 
 /// Host-facing TBOR `GetApiRev` request. Carries no per-call data.
-#[tbor]
+#[tbor(session_ctrl = no_session)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TborGetApiRevReq;
 

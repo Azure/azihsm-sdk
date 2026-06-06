@@ -28,6 +28,12 @@ pub struct StructAttrs {
     /// Explicit FW schema path (`#[tbor(schema = path::T)]`).  Defaults
     /// to `::azihsm_fw_ddi_tbor_types::<SameStructName>` when omitted.
     pub schema: Option<Path>,
+    /// Required `session_ctrl()` value.  Mandatory on request
+    /// structs (no default — explicit only).  Accepts the
+    /// lower-case identifier of a [`SessionControlKind`] variant:
+    /// `no_session`, `open`, `close`, or `in_session`.  Stored as
+    /// the matching CamelCase ident for code generation.
+    pub session_ctrl: Option<Ident>,
 }
 
 impl StructAttrs {
@@ -35,9 +41,11 @@ impl StructAttrs {
         let mut kind = StructKind::Request;
         let mut resp: Option<Path> = None;
         let mut schema: Option<Path> = None;
+        let mut session_ctrl: Option<Ident> = None;
         let mut saw_response = false;
         let mut saw_resp = false;
         let mut saw_schema = false;
+        let mut saw_session_ctrl = false;
 
         if !attr.is_empty() {
             let parser = syn::meta::parser(|m| {
@@ -62,10 +70,31 @@ impl StructAttrs {
                     saw_schema = true;
                     schema = Some(m.value()?.parse()?);
                     Ok(())
+                } else if m.path.is_ident("session_ctrl") {
+                    if saw_session_ctrl {
+                        return Err(m.error("duplicate `session_ctrl`"));
+                    }
+                    saw_session_ctrl = true;
+                    let ident: Ident = m.value()?.parse()?;
+                    let camel = match ident.to_string().as_str() {
+                        "no_session" => "NoSession",
+                        "open" => "Open",
+                        "close" => "Close",
+                        "in_session" => "InSession",
+                        _ => {
+                            return Err(m.error(
+                                "session_ctrl must be one of: \
+                                 no_session, open, close, in_session",
+                            ));
+                        }
+                    };
+                    session_ctrl = Some(Ident::new(camel, ident.span()));
+                    Ok(())
                 } else {
                     Err(m.error(format!(
                         "unknown #[tbor] option `{}` — expected one of: \
-                         `response`, `resp = T`, `schema = path::T`",
+                         `response`, `resp = T`, `schema = path::T`, \
+                         `session_ctrl = variant`",
                         m.path
                             .get_ident()
                             .map(|i| i.to_string())
@@ -83,7 +112,12 @@ impl StructAttrs {
             ));
         }
 
-        Ok(Self { kind, resp, schema })
+        Ok(Self {
+            kind,
+            resp,
+            schema,
+            session_ctrl,
+        })
     }
 }
 

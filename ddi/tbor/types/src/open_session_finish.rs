@@ -26,7 +26,7 @@ pub const SEED_LEN: usize = 32;
 pub const SEED_ENVELOPE_LEN: usize = 8 + 12 + SEED_LEN + 16;
 
 /// Host-facing TBOR `OpenSessionFinish` request.
-#[tbor]
+#[tbor(session_ctrl = in_session)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborOpenSessionFinishReq {
     /// Pending session identifier reserved in Phase 1.

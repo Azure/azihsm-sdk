@@ -26,10 +26,16 @@
 //!
 //! | Form | Meaning |
 //! |---|---|
-//! | `#[tbor]` | request; opcode pulled from the FW schema's `TborRequest::OPCODE` impl; `OpResp` defaults to `Req → Resp` name swap |
-//! | `#[tbor(resp = TborFooResp)]` | request with explicit response type |
-//! | `#[tbor(schema = path::Type)]` | request/response with explicit FW schema path |
-//! | `#[tbor(response)]` | response |
+//! | `#[tbor(session_ctrl = <v>)]` | **request — required.** Sets the SQE `session_flags.ctrl` byte; one of `no_session`, `open`, `close`, `in_session` |
+//! | `#[tbor(session_ctrl = <v>, resp = TborFooResp)]` | request with explicit response type |
+//! | `#[tbor(session_ctrl = <v>, schema = path::Type)]` | request with explicit FW schema path |
+//! | `#[tbor(response)]` | response (no `session_ctrl`) |
+//! | `#[tbor(response, schema = path::Type)]` | response with explicit FW schema path |
+//!
+//! Opcode is pulled from the FW schema's `TborRequest::OPCODE` impl;
+//! `OpResp` defaults to a `Req → Resp` name swap when `resp` is
+//! omitted.  A request struct without `session_ctrl` is a compile
+//! error.
 //!
 //! ## Field-level attributes
 //!
@@ -161,10 +167,43 @@ fn gen_request(
         .map(gen_encode_call)
         .collect::<syn::Result<TokenStream2>>()?;
 
+    // ── `get_session_id` derived from struct shape; `session_ctrl` ──
+    // ── required explicit attribute (no struct-shape guessing) ──
+    let session_id_field = fields
+        .iter()
+        .find(|f| matches!(f.shape, crate::parse::FieldShape::SessionId))
+        .map(|f| f.name.clone());
+
+    let get_session_id_impl = match &session_id_field {
+        Some(name) => quote! {
+            fn get_session_id(&self) -> ::core::option::Option<u16> {
+                ::core::option::Option::Some(self.#name)
+            }
+        },
+        None => quote! {},
+    };
+
+    let ctrl_variant = attrs.session_ctrl.as_ref().ok_or_else(|| {
+        syn::Error::new(
+            name.span(),
+            "missing required `session_ctrl` attribute on request struct.\n\
+             example: #[tbor(session_ctrl = no_session)]\n\
+             allowed variants: no_session, open, close, in_session",
+        )
+    })?;
+    let session_ctrl_impl = quote! {
+        fn session_ctrl(&self) -> ::azihsm_ddi_tbor_types::SessionControlKind {
+            ::azihsm_ddi_tbor_types::SessionControlKind::#ctrl_variant
+        }
+    };
+
     Ok(quote! {
         impl ::azihsm_ddi_tbor_types::TborOpReq for #name {
             const OPCODE: u8 = <#schema as ::azihsm_ddi_tbor_codec::TborRequest>::OPCODE;
             type OpResp = #resp_ty;
+
+            #get_session_id_impl
+            #session_ctrl_impl
 
             fn encode_request<'__b>(
                 &self,
