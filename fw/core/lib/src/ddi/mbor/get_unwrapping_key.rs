@@ -92,27 +92,39 @@ pub(crate) async fn get_unwrapping_key<'p, P: HsmPal>(
 /// PCT is currently `None` — a follow-up will wire the
 /// [`HsmRsaPct::EncryptDecrypt`] round-trip per FIPS 140-3.
 async fn generate_and_cache_unwrap_key<P: HsmPal>(pal: &P, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-    // Single scoped allocator covers both the query and the use
-    // calls; `pal.dma_alloc(io, ...)` returns IO-lifetime buffers
-    // that survive past the scope, so we can carry them out for
-    // the vault-create + caching steps below.
-    let (priv_key, pub_key, priv_actual, pub_actual) = pal
+    // Query the required buffer sizes.  Query mode performs no key
+    // generation and does not use the scoped allocator, so the
+    // scratch scope can close as soon as it returns.
+    let (priv_max, pub_max) = pal
         .alloc_scoped_async(io, async |a| -> HsmResult<_> {
-            let (priv_max, pub_max) = pal
-                .rsa_gen_keypair(io, a, HsmRsaKey::Rsa2048Priv, None, HsmRsaPct::None)
-                .await?;
-            let priv_key = pal.dma_alloc(io, priv_max)?;
-            let pub_key = pal.dma_alloc(io, pub_max)?;
-            let (priv_actual, pub_actual) = pal
-                .rsa_gen_keypair(
-                    io,
-                    a,
-                    HsmRsaKey::Rsa2048Priv,
-                    Some((&mut *priv_key, &mut *pub_key)),
-                    HsmRsaPct::None,
-                )
-                .await?;
-            Ok((priv_key, pub_key, priv_actual, pub_actual))
+            pal.rsa_gen_keypair(io, a, HsmRsaKey::Rsa2048Priv, None, HsmRsaPct::None)
+                .await
+        })
+        .await?;
+
+    // Allocate the output buffers *outside* any scope.  Direct
+    // `pal.dma_alloc(io, ...)` calls share the per-IO bump watermark
+    // with the scoped allocator, so allocations made inside an
+    // `alloc_scoped(_async)` closure would be freed when the scope's
+    // watermark is restored on drop (see the std PAL alloc "Lifetime
+    // gotcha").  Allocating here keeps these IO-lifetime buffers valid
+    // for the vault-create + caching steps below.
+    let priv_key = pal.dma_alloc(io, priv_max)?;
+    let pub_key = pal.dma_alloc(io, pub_max)?;
+
+    // Generate the keypair into the long-lived buffers.  The scoped
+    // allocator only covers the implementation's internal PKA scratch,
+    // which is fine to free when this scope closes.
+    let (priv_actual, pub_actual) = pal
+        .alloc_scoped_async(io, async |a| -> HsmResult<_> {
+            pal.rsa_gen_keypair(
+                io,
+                a,
+                HsmRsaKey::Rsa2048Priv,
+                Some((&mut *priv_key, &mut *pub_key)),
+                HsmRsaPct::None,
+            )
+            .await
         })
         .await?;
 

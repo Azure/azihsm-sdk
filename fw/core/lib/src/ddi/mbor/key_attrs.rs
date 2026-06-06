@@ -276,7 +276,7 @@ fn finalize(
     key_tag: Option<u16>,
 ) -> HsmResult<()> {
     if metadata.session() {
-        *attrs = attrs.with_session(true);
+        attrs.set_session(true);
     }
     if attrs.session() && key_tag.is_some() {
         return Err(HsmError::InvalidArg);
