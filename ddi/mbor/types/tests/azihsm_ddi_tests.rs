@@ -44,6 +44,7 @@ mod integration {
     pub mod get_unwrapping_key;
     pub mod hkdf_smoke;
     pub mod hmac;
+    pub mod hmac_smoke;
     pub mod init_bk3_smoke;
     pub mod invalid_ecc_pub_key_vectors;
     pub mod kbkdf_smoke;

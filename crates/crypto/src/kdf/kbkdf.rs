@@ -80,7 +80,7 @@ impl KbkdfAlgo {
     /// # Arguments
     ///
     /// * `hash` - The hash algorithm to use for HMAC-based PRF
-    /// * `label` - Optional label for context binding (at least one of label or context required)
+    /// * `label` - Optional label for context binding
     /// * `context` - Optional additional context data
     ///
     /// # Returns
@@ -103,7 +103,7 @@ impl KbkdfAlgo {
     /// # Arguments
     ///
     /// * `hash` - The hash algorithm to use for HMAC-based PRF
-    /// * `label` - Optional label for context binding (at least one of label or context required)
+    /// * `label` - Optional label for context binding
     /// * `context` - Optional additional context data
     ///
     /// # Returns
@@ -150,7 +150,6 @@ impl DeriveOp for KbkdfAlgo {
     /// Returns an error if:
     /// - `CryptoError::KbkdfInvalidKdkLength` - Input key is empty (zero length)
     /// - `CryptoError::KbkdfInvalidDerivedKeyLength` - Requested output length is zero
-    /// - `CryptoError::KbkdfSetPropertyError` - Both label and context are None
     /// - `CryptoError::KbkdfDeriveError` - HMAC operation fails during derivation
     #[allow(unsafe_code)]
     fn derive(&self, key: &Self::Key, derive_len: usize) -> Result<Self::DerivedKey, CryptoError> {
@@ -161,10 +160,6 @@ impl DeriveOp for KbkdfAlgo {
         //check if derive_len is zero
         if derive_len == 0 {
             Err(CryptoError::KbkdfInvalidDerivedKeyLength)?
-        }
-        // check if label and context both are not set
-        if self.label.is_none() && self.context.is_none() {
-            Err(CryptoError::KbkdfSetPropertyError)?
         }
 
         // calculate number of rounds required
