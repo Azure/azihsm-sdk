@@ -26,9 +26,8 @@
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
-use azihsm_crypto::ExportableKey;
+use azihsm_crypto::ExportableHsmKey;
 use azihsm_crypto::HashAlgo;
-use azihsm_crypto::ImportableKey;
 use azihsm_fw_hsm_std_x509::cert_builder;
 use azihsm_fw_hsm_std_x509::cert_builder::*;
 
@@ -168,7 +167,7 @@ pub(crate) struct SharedCertStore {
     alias_cert: [u8; MAX_CERT_DER_LEN],
     alias_cert_len: usize,
     /// Alias CA private key DER — for signing leaf certs.
-    alias_priv_key_der: Vec<u8>,
+    alias_priv_key: Vec<u8>,
     /// Alias CA Subject Key Identifier.
     pub(crate) alias_ski: [u8; 20],
     /// Precomputed SHA-256(root_cert || deviceid_cert).
@@ -185,7 +184,7 @@ impl SharedCertStore {
             deviceid_cert_len: 0,
             alias_cert: [0u8; MAX_CERT_DER_LEN],
             alias_cert_len: 0,
-            alias_priv_key_der: Vec::new(),
+            alias_priv_key: Vec::new(),
             alias_ski: [0u8; 20],
             root_deviceid_hash: [0u8; 32],
         }
@@ -200,8 +199,8 @@ impl SharedCertStore {
         }
     }
 
-    pub(crate) fn alias_priv_key_der(&self) -> &[u8] {
-        &self.alias_priv_key_der
+    pub(crate) fn alias_priv_key(&self) -> &[u8] {
+        &self.alias_priv_key
     }
 }
 
@@ -211,7 +210,7 @@ impl SharedCertStore {
 
 /// Temporary key pair: raw pub coords + private DER.
 struct CertKeyPair {
-    priv_der: Vec<u8>,
+    priv_key: Vec<u8>,
     uncompressed: [u8; P384_UNCOMPRESSED_LEN],
     ski: [u8; 20],
 }
@@ -240,7 +239,7 @@ impl StdHsmPal {
         };
         let mut tbs = azihsm_fw_hsm_std_x509::root_cert::TBS_TEMPLATE;
         patch_tbs_root(&mut tbs, &root_params);
-        let (r, s) = self.hash_and_sign(&root_kp.priv_der, &tbs).await?;
+        let (r, s) = self.hash_and_sign(&root_kp.priv_key, &tbs).await?;
         let mut root_cert = [0u8; MAX_CERT_DER_LEN];
         let root_cert_len = cert_builder::build_root_cert(&root_params, &r, &s, &mut root_cert)
             .ok_or(HsmError::InternalError)?;
@@ -262,7 +261,7 @@ impl StdHsmPal {
         };
         let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
         patch_tbs_intermediate(&mut tbs, &deviceid_params);
-        let (r, s) = self.hash_and_sign(&root_kp.priv_der, &tbs).await?;
+        let (r, s) = self.hash_and_sign(&root_kp.priv_key, &tbs).await?;
         let mut deviceid_cert = [0u8; MAX_CERT_DER_LEN];
         let deviceid_cert_len =
             cert_builder::build_intermediate_cert(&deviceid_params, &r, &s, &mut deviceid_cert)
@@ -285,7 +284,7 @@ impl StdHsmPal {
         };
         let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
         patch_tbs_intermediate(&mut tbs, &alias_params);
-        let (r, s) = self.hash_and_sign(&deviceid_kp.priv_der, &tbs).await?;
+        let (r, s) = self.hash_and_sign(&deviceid_kp.priv_key, &tbs).await?;
         let mut alias_cert = [0u8; MAX_CERT_DER_LEN];
         let alias_cert_len =
             cert_builder::build_intermediate_cert(&alias_params, &r, &s, &mut alias_cert)
@@ -308,7 +307,7 @@ impl StdHsmPal {
         store.deviceid_cert_len = deviceid_cert_len;
         store.alias_cert = alias_cert;
         store.alias_cert_len = alias_cert_len;
-        store.alias_priv_key_der = alias_kp.priv_der;
+        store.alias_priv_key = alias_kp.priv_key;
         store.alias_ski = alias_kp.ski;
         store.root_deviceid_hash = root_deviceid_hash;
 
@@ -323,18 +322,18 @@ impl StdHsmPal {
     async fn gen_cert_keypair(&self) -> HsmResult<CertKeyPair> {
         let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
 
-        // Export private key as PKCS#8 DER.
-        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
-        let mut priv_der = vec![0u8; priv_len];
-        pk.to_bytes(Some(&mut priv_der[..priv_len]))
-            .map_err(|_| HsmError::EccToDerError)?;
+        // Export private key as raw HSM scalar bytes (48 B for P-384).
+        let priv_len = pk.hsm_bytes_len();
+        let mut priv_key = vec![0u8; priv_len];
+        pk.to_hsm_bytes(&mut priv_key[..priv_len])
+            .map_err(|_| HsmError::EccExportError)?;
 
         // Export raw P-384 public key (x ∥ y).
         let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
         let half = P384_PUB_KEY_LEN / 2;
         let (x_buf, y_buf) = pub_raw.split_at_mut(half);
         pubk.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::EccToDerError)?;
+            .map_err(|_| HsmError::EccExportError)?;
 
         let uncompressed = to_uncompressed(&pub_raw);
         let mut ski = [0u8; 20];
@@ -343,7 +342,7 @@ impl StdHsmPal {
             .await?;
 
         Ok(CertKeyPair {
-            priv_der,
+            priv_key,
             uncompressed,
             ski,
         })
@@ -355,7 +354,7 @@ impl StdHsmPal {
     /// (no `HsmIo` available during cert init / leaf-cert generation).
     async fn hash_and_sign(
         &self,
-        priv_der: &[u8],
+        priv_key: &[u8],
         tbs: &[u8],
     ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
         let mut tbs_hash = [0u8; 48];
@@ -363,7 +362,7 @@ impl StdHsmPal {
             .hash(HashAlgo::sha384(), tbs, &mut tbs_hash)
             .await?;
 
-        let key = EccPrivateKey::from_bytes(priv_der).map_err(|_| HsmError::InvalidArg)?;
+        let key = EccPrivateKey::from_hsm_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
         let sig = self.ecc.ecc_sign(&key, &tbs_hash).await?;
         if sig.len() < 2 * P384_SIG_COMPONENT {
             return Err(HsmError::EccSignFailed);
@@ -430,7 +429,7 @@ impl StdHsmPal {
 
         // Sign via PAL.
         let (r, s) = self
-            .hash_and_sign(self.cert_store().alias_priv_key_der(), &tbs)
+            .hash_and_sign(self.cert_store().alias_priv_key(), &tbs)
             .await?;
 
         // Build final cert and cache.

@@ -7,6 +7,7 @@ mod rsa_enc_oaep;
 mod rsa_hash_sign_verify_pkcs1;
 mod rsa_hash_sign_verify_pss;
 mod rsa_helpers;
+mod rsa_hsm_format;
 mod rsa_pad_oaep_tests;
 mod rsa_pad_pkcs1_enc_tests;
 mod rsa_pad_pkcs1_sign_tests;

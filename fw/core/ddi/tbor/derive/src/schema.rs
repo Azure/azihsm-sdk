@@ -457,7 +457,10 @@ fn infer_wire_type(ty: &syn::Type, attrs: &[syn::Attribute]) -> syn::Result<Wire
                     // Consume the `= N` value; alignment is parsed separately.
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
-                } else if meta.path.is_ident("min_len") || meta.path.is_ident("max_len") {
+                } else if meta.path.is_ident("min_len")
+                    || meta.path.is_ident("max_len")
+                    || meta.path.is_ident("len")
+                {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
                 }
@@ -544,6 +547,7 @@ fn is_include_field(attrs: &[syn::Attribute]) -> bool {
                 if meta.path.is_ident("align")
                     || meta.path.is_ident("min_len")
                     || meta.path.is_ident("max_len")
+                    || meta.path.is_ident("len")
                 {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
@@ -578,7 +582,10 @@ fn parse_align_attr(attrs: &[syn::Attribute]) -> syn::Result<usize> {
                     let value = meta.value()?;
                     let lit: syn::LitInt = value.parse()?;
                     align_val = Some(lit.base10_parse::<usize>()?);
-                } else if meta.path.is_ident("min_len") || meta.path.is_ident("max_len") {
+                } else if meta.path.is_ident("min_len")
+                    || meta.path.is_ident("max_len")
+                    || meta.path.is_ident("len")
+                {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
                 }
@@ -608,6 +615,15 @@ fn parse_len_constraints(attrs: &[syn::Attribute]) -> syn::Result<(usize, usize)
                     let value = meta.value()?;
                     let lit: syn::LitInt = value.parse()?;
                     max_len = lit.base10_parse::<usize>()?;
+                } else if meta.path.is_ident("len") {
+                    // `len = N` is shorthand for `min_len = N, max_len = N` —
+                    // declares a fixed-length variable buffer/sealed_key
+                    // field without separately repeating the bound.
+                    let value = meta.value()?;
+                    let lit: syn::LitInt = value.parse()?;
+                    let n = lit.base10_parse::<usize>()?;
+                    min_len = n;
+                    max_len = n;
                 } else if meta.path.is_ident("align") {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;

@@ -11,10 +11,14 @@ doctest = false
 test = false
 
 [dependencies]
+azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_tbor_codec.workspace = true
 azihsm_ddi_tbor_types.workspace = true
+azihsm_fw_hsm_pal_traits.workspace = true
+x509.workspace = true
 
 [lints]
 workspace = true

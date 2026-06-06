@@ -50,7 +50,7 @@ pub(crate) async fn aes_encrypt_decrypt<'p, P: HsmPal>(
     // direction (Encrypt needs `encrypt`, Decrypt needs `decrypt`).
     let key_id = HsmKeyId::from(body.key_id);
     let vault_kind = pal.vault_key_kind(io, key_id)?;
-    assert_aes_kind(vault_kind)?;
+    super::from_pal::assert_aes(vault_kind)?;
     let vault_attrs = pal.vault_key_attrs(io, key_id)?;
     let required_attr = match op {
         AesOp::Encrypt => vault_attrs.encrypt(),
@@ -93,16 +93,5 @@ fn ddi_to_pal_aes_op(op: DdiAesOp) -> HsmResult<AesOp> {
         DdiAesOp::Encrypt => Ok(AesOp::Encrypt),
         DdiAesOp::Decrypt => Ok(AesOp::Decrypt),
         _ => Err(HsmError::InvalidArg),
-    }
-}
-
-/// Reject vault key kinds that are not a non-bulk AES key.
-///
-/// Bulk AES kinds (XTS / GCM) are excluded because they are used by
-/// dedicated bulk handlers, not the generic AES-CBC path here.
-fn assert_aes_kind(kind: HsmVaultKeyKind) -> HsmResult<()> {
-    match kind {
-        HsmVaultKeyKind::Aes128 | HsmVaultKeyKind::Aes192 | HsmVaultKeyKind::Aes256 => Ok(()),
-        _ => Err(HsmError::InvalidKeyType),
     }
 }

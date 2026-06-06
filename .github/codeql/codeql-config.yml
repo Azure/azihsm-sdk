@@ -1,0 +1,33 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# CodeQL custom configuration for the azihsm-sdk repository.
+#
+# Inherits the default `security-extended,security-and-quality` query
+# packs configured in `.github/workflows/codeql.yml`; this file adds
+# per-path exclusions for false positives the default queries surface
+# in code that is intentionally deterministic.
+
+name: "azihsm-sdk CodeQL configuration"
+
+query-filters:
+  # The "Hard-coded cryptographic value" query
+  # (`rust/hard-coded-cryptographic-value`) flags any literal byte
+  # string or zero-init buffer assigned to a variable / parameter
+  # whose name contains `iv`, `nonce`, `salt`, `key`, etc. — even
+  # when the value is immediately overwritten with randomness or is
+  # an intentional test fixture.
+  #
+  # Suppressed for test trees only. Production code under
+  # `crates/crypto/src/` and `fw/core/crypto/` is NOT suppressed and
+  # must continue to satisfy this query.
+  - exclude:
+      id: rust/hard-coded-cryptographic-value
+      paths:
+        - "crates/crypto/src/hpke/tests/**"
+        - "crates/crypto/src/**/tests/**"
+        - "crates/**/tests/**"
+        # TBOR host-side test helpers and integration tests use
+        # deterministic IVs to make negative-path tests reproducible.
+        - "ddi/**/tests/**"
+        - "ddi/tbor/test_helpers/**"

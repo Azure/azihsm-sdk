@@ -38,7 +38,7 @@
 //!     `session_create` and `dismiss` rolls the provisional session
 //!     back via the guard's `Drop`.
 
-use azihsm_fw_core_crypto_masked_key::mask_cbc;
+use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
 use azihsm_fw_ddi_mbor_types::open_session::DdiOpenSessionReq;
 use azihsm_fw_ddi_mbor_types::open_session::DdiOpenSessionResp;
@@ -359,7 +359,7 @@ async fn encode_response<'p, P: HsmPal>(
         key_length: BK_LEN as u16,
     };
 
-    let bmk_len = mask_cbc(pal, io, bk_session, mk_session, &bmk_metadata, None).await?;
+    let bmk_len = mask(pal, io, bk_session, mk_session, &bmk_metadata, None).await?;
 
     // OpenSession does not model an app-vault concept; the reference
     // firmware uses `short_app_id` as the user vault id.  Tests on the
@@ -378,9 +378,10 @@ async fn encode_response<'p, P: HsmPal>(
     })?;
     let frame = DdiOpenSessionResp::from_layout(resp, &layout);
 
-    // `mask_cbc` requires `out[..total_len]` to be zero on entry.
+    // `key_masking::cbc::mask` requires `out[..total_len]` to be zero
+    // on entry.
     frame.bmk_session.fill(0);
-    mask_cbc(
+    mask(
         pal,
         io,
         bk_session,

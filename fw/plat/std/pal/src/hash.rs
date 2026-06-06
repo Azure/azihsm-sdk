@@ -41,9 +41,22 @@ impl HsmHash for StdHsmPal {
         algo: HsmHashAlgo,
         data: &DmaBuf,
         digest: &mut DmaBuf,
-        _big_endian: bool,
+        big_endian: bool,
     ) -> HsmResult<()> {
-        self.hash.hash(to_hash_algo(algo), data, digest).await
+        let digest_len = algo.digest_len();
+        if digest.len() < digest_len {
+            return Err(HsmError::InvalidArg);
+        }
+        self.hash
+            .hash(to_hash_algo(algo), data, &mut digest[..digest_len])
+            .await?;
+        if !big_endian {
+            // SHA primitive is BE-native; reverse to the wire-LE
+            // layout used at the PAL boundary for hashes that feed
+            // directly into PKA-style operations (e.g. `ecc_sign`).
+            digest[..digest_len].reverse();
+        }
+        Ok(())
     }
 
     fn hash_begin<'a>(

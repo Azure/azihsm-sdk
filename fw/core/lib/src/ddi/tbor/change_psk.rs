@@ -1,0 +1,171 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! TBOR `ChangePsk` handler.
+//!
+//! Changes the active session's own partition PSK to a new value
+//! delivered encrypted in an AEAD-GCM envelope under the session's
+//! `param_key`.  The target slot is derived from the session role
+//! (CO → CO PSK, CU → CU PSK); the wire request carries no slot
+//! selector.
+//!
+//! ## Replay model
+//!
+//! Cross-session replay is structurally impossible: `param_key` is
+//! HPKE-derived per session, so an envelope captured from session A
+//! cannot decrypt under session B's key (the AEAD tag fails before
+//! any plaintext is produced).
+//!
+//! Intra-session replay is bounded to **one successful change per
+//! session**: the handler marks the session as "change used" on
+//! success; a second `ChangePsk` on the same session is rejected
+//! with `InvalidPermissions`.
+
+use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
+use azihsm_fw_ddi_tbor::RequestView;
+use azihsm_fw_ddi_tbor_types::build_psk_change_aad;
+use azihsm_fw_ddi_tbor_types::TborChangePskReq;
+use azihsm_fw_ddi_tbor_types::TborChangePskResp;
+use azihsm_fw_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
+use azihsm_fw_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmIo;
+use azihsm_fw_hsm_pal_traits::HsmPal;
+use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmSessId;
+use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_pal_traits::PSK_LEN;
+use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
+
+/// PSK slot id written when the active session is the Crypto Officer.
+const PSK_ID_CO: u8 = 0;
+/// PSK slot id written when the active session is a Crypto User.
+const PSK_ID_CU: u8 = 1;
+
+/// Handle a TBOR `ChangePsk` request.
+pub(crate) async fn handle<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
+    view: &RequestView<'_>,
+) -> HsmResult<&'p DmaBuf> {
+    let req = TborChangePskReq::decode(view.as_bytes())?;
+    let sess_id = HsmSessId::from(u16::from(req.session_id()));
+    let envelope = req.psk_envelope();
+
+    // Target slot is implicit in the session role; no cross-role
+    // rotation is permitted.
+    let target_psk_id = target_psk_for_role(sess_id.role());
+
+    if envelope.is_empty() || envelope.len() > PSK_CHANGE_ENVELOPE_MAX_LEN {
+        return Err(HsmError::InvalidArg);
+    }
+
+    // Reserve the session's one-shot PSK-change budget **before** any
+    // crypto work, so replayed-after-success envelopes are rejected
+    // cheaply.  A successful return here means no further `ChangePsk`
+    // can succeed on this session; if the subsequent crypto/persist
+    // steps fail, the session is "burned" — the caller must
+    // renegotiate to retry.  Cross-session replay is already
+    // structurally impossible (HPKE-derived per-session `param_key`).
+    pal.session_try_consume_psk_change(io, sess_id)?;
+
+    pal.alloc_scoped_async(io, async |alloc| {
+        // Fetch the session's `param_key` schedule (the PAL hides the
+        // session-blob layout from us).
+        let param_key = alloc.dma_alloc(SESSION_PARAM_KEY_LEN)?;
+        pal.session_param_key(io, sess_id, param_key)?;
+
+        // AEAD-open the envelope in place.
+        let env_buf = alloc.dma_alloc(envelope.len())?;
+        env_buf.copy_from_slice(envelope);
+        let view = aead_open(pal, io, param_key, env_buf)
+            .await
+            .map_err(|_| HsmError::AeadEnvelopeAuthFailed)?;
+
+        // Validate AAD and plaintext shape.  The AEAD tag has already
+        // authenticated these bytes, so an attacker cannot drive
+        // divergent values through these branches; a non-constant-time
+        // `!=` is safe (no timing oracle on a secret).  A length
+        // mismatch is a client encoding bug, not an auth failure, so
+        // it surfaces as `InvalidArg`.
+        if view.aad.len() != PSK_CHANGE_AAD_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let expected_aad = build_psk_change_aad(u16::from(sess_id));
+        if view.aad != expected_aad.as_slice() {
+            return Err(HsmError::AeadEnvelopeAuthFailed);
+        }
+        if view.payload.len() != PSK_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Persist the new PSK directly from the in-place envelope
+        // view.  `part_psk_set` is synchronous and takes `&[u8]`, so
+        // the borrow ends with the call — no need for a separate
+        // scratch buffer.  The envelope DmaBuf is zeroized by the
+        // scoped allocator on scope exit.
+        pal.part_psk_set(io, target_psk_id, view.payload)?;
+
+        encode_response(pal, io)
+    })
+    .await
+}
+
+/// Maps the active session's role to the partition PSK slot it is
+/// allowed to write.  Self-rotate-only: there is no cross-role
+/// rotation path.
+fn target_psk_for_role(role: SessionRole) -> u8 {
+    match role {
+        SessionRole::CryptoOfficer => PSK_ID_CO,
+        SessionRole::CryptoUser => PSK_ID_CU,
+    }
+}
+
+/// Encode the `ChangePsk` empty acknowledgement into a fresh
+/// IO-scoped DmaBuf.
+fn encode_response<'p, P: HsmPal>(pal: &'p P, io: &impl HsmIo) -> HsmResult<&'p DmaBuf> {
+    let resp = pal.dma_alloc_var(io, |buf| {
+        let frame = TborChangePskResp::encode(buf, 0, false)?.finish();
+        Ok(frame.as_bytes().len())
+    })?;
+    Ok(resp)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use azihsm_fw_ddi_tbor_types::PSK_CHANGE_AAD_LABEL;
+
+    use super::*;
+
+    #[test]
+    fn co_session_targets_co_slot() {
+        assert_eq!(target_psk_for_role(SessionRole::CryptoOfficer), PSK_ID_CO);
+    }
+
+    #[test]
+    fn cu_session_targets_cu_slot() {
+        assert_eq!(target_psk_for_role(SessionRole::CryptoUser), PSK_ID_CU);
+    }
+
+    #[test]
+    fn session_id_zero_is_co_session() {
+        // Sanity guard against drift in the slot-to-role mapping owned
+        // by `HsmSessId::role`.
+        assert_eq!(HsmSessId::from(0u16).role(), SessionRole::CryptoOfficer);
+        for slot in 1u16..=7 {
+            assert_eq!(HsmSessId::from(slot).role(), SessionRole::CryptoUser);
+        }
+    }
+
+    #[test]
+    fn aad_helper_layout_is_label_then_session_id_le() {
+        // Sanity guard on the shared AAD builder both sides use.
+        let aad = build_psk_change_aad(0x1234);
+        assert_eq!(&aad[..13], PSK_CHANGE_AAD_LABEL);
+        assert_eq!(&aad[13..15], &[0x34, 0x12]);
+        assert_eq!(aad.len(), PSK_CHANGE_AAD_LEN);
+    }
+}
