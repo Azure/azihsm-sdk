@@ -25,7 +25,7 @@ use crate::tbor;
 /// The target PSK slot is derived HSM-side from the session role
 /// (CO session → CO slot, CU session → CU slot); the request does
 /// not carry a slot-selection field.
-#[tbor]
+#[tbor(session_ctrl = in_session)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborChangePskReq {
     /// Logical session id the request is bound to.  Same value must

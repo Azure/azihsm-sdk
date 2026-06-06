@@ -34,7 +34,7 @@ pub const SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256: u8 = 0x01;
 /// [`TborOpenSessionFinishReq`](crate::TborOpenSessionFinishReq) and
 /// shipped AEAD-encrypted in Phase 2.  Resume is handled by the MBOR
 /// `ReopenSession` command, not by this opcode.
-#[tbor]
+#[tbor(session_ctrl = open)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborOpenSessionInitReq {
     /// PSK identifier asserting the caller role.

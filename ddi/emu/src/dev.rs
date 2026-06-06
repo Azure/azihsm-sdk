@@ -284,7 +284,7 @@ impl DdiDev for DdiEmuDev {
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .session_flags(
                 SessionFlags::new()
-                    .with_ctrl(0) // NoSession — TBOR has no sessioned commands yet.
+                    .with_ctrl(u8::from(req.session_ctrl()))
                     .with_id_valid(req_session_id.is_some()),
             )
             .session_id(req_session_id.unwrap_or(0))
