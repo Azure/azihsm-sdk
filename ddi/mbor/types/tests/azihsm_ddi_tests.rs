@@ -18,6 +18,7 @@ mod integration {
     pub mod common;
     pub mod ddi_dev_info;
     pub mod delete_key;
+    pub mod delete_key_smoke;
     pub mod device_handle_session;
     pub mod ecc_generate;
     pub mod ecc_generate_smoke;
