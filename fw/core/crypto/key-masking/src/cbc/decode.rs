@@ -19,20 +19,20 @@ use azihsm_fw_hsm_pal_traits::HsmHmac;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
-use crate::format::MaskedKeyAesHeader;
-use crate::format::MaskedKeyHeader;
-use crate::format::AES_CBC_256_KEY_SIZE;
-use crate::format::AES_CBC_IV_SIZE;
-use crate::format::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
+use crate::cbc::format::MaskedKeyAesHeader;
+use crate::cbc::format::MaskedKeyHeader;
+use crate::cbc::format::AES_CBC_256_KEY_SIZE;
+use crate::cbc::format::AES_CBC_IV_SIZE;
+use crate::cbc::format::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
 
 /// Layout of a successfully unmasked blob.
 ///
 /// All offsets are relative to the start of the `blob` passed into
-/// [`unmask_cbc_in_place`].  The function requires `blob.len()` to
+/// [`unmask`].  The function requires `blob.len()` to
 /// equal the on-wire length, so `blob.len()` itself is the total
 /// authenticated length — no separate field is returned for it.
 #[derive(Debug, Clone, Copy)]
-pub struct UnmaskCbcLayout {
+pub struct UnmaskLayout {
     /// Byte offset of the (cleartext, MAC-covered) metadata region.
     pub metadata_offset: usize,
     /// Length of the metadata region in bytes.
@@ -87,12 +87,12 @@ pub struct UnmaskCbcLayout {
 /// * Any [`HsmError`] surfaced by the PAL HMAC or AES drivers.  On
 ///   AES-decrypt failure, the ciphertext slot is wiped before
 ///   returning so partial plaintext does not leak.
-pub async fn unmask_cbc_in_place<P>(
+pub async fn unmask<P>(
     pal: &P,
     io: &impl HsmIo,
     masking_key: &DmaBuf,
     blob: &mut DmaBuf,
-) -> HsmResult<UnmaskCbcLayout>
+) -> HsmResult<UnmaskLayout>
 where
     P: HsmAes + HsmHmac,
 {
@@ -145,7 +145,7 @@ where
         return Err(e);
     }
 
-    Ok(UnmaskCbcLayout {
+    Ok(UnmaskLayout {
         metadata_offset: meta_off,
         metadata_len: meta_len,
         plaintext_offset: ct_off,

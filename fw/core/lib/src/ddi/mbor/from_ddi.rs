@@ -14,12 +14,14 @@
 //! call sites read as `from_ddi::hash(algo)` / `from_ddi::curve(c)`,
 //! mirroring Rust's `From::from(value)` idiom.
 
+use azihsm_fw_ddi_mbor_types::DdiAesKeySize;
 use azihsm_fw_ddi_mbor_types::DdiEccCurve;
 use azihsm_fw_ddi_mbor_types::DdiHashAlgorithm;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 /// Map a [`DdiHashAlgorithm`] to its [`HsmHashAlgo`] counterpart.
 /// Unsupported / unknown variants return [`HsmError::InvalidArg`].
@@ -40,6 +42,19 @@ pub(crate) fn curve(curve: DdiEccCurve) -> HsmResult<HsmEccCurve> {
         DdiEccCurve::P256 => Ok(HsmEccCurve::P256),
         DdiEccCurve::P384 => Ok(HsmEccCurve::P384),
         DdiEccCurve::P521 => Ok(HsmEccCurve::P521),
+        _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// Map a [`DdiAesKeySize`] to its raw byte length and the matching
+/// non-bulk AES vault kind.  Bulk AES variants (XTS / GCM) are
+/// rejected with [`HsmError::InvalidArg`] — handled by separate
+/// future handlers.
+pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
+    match size {
+        DdiAesKeySize::Aes128 => Ok((16, HsmVaultKeyKind::Aes128)),
+        DdiAesKeySize::Aes192 => Ok((24, HsmVaultKeyKind::Aes192)),
+        DdiAesKeySize::Aes256 => Ok((32, HsmVaultKeyKind::Aes256)),
         _ => Err(HsmError::InvalidArg),
     }
 }

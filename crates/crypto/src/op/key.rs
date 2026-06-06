@@ -552,3 +552,85 @@ pub trait KeyGenerationOp {
     /// - Platform-specific key generation fails
     fn generate(size: usize) -> Result<Self::Key, CryptoError>;
 }
+
+/// Export a key in the fixed-size HSM wire format.
+///
+/// Unlike [`ExportableKey`] which uses variable-length DER encoding,
+/// this trait serializes keys into a fixed-size layout determined by
+/// the key's algorithm and size. The format is designed for HSM
+/// hardware that operates on raw byte buffers at fixed offsets.
+///
+/// ## Formats
+///
+/// | Key type | Layout |
+/// |---|---|
+/// | ECC private | raw scalar `d` |
+/// | ECC public | `x \|\| y` |
+/// | RSA public | `n \|\| e(4)` |
+/// | RSA private (non-CRT) | `n \|\| e(4) \|\| p \|\| q` |
+pub trait ExportableHsmKey {
+    /// Returns the total HSM wire format size in bytes.
+    fn hsm_bytes_len(&self) -> usize;
+
+    /// Write the HSM wire format into `buf`.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `buf` is shorter than [`hsm_bytes_len`](Self::hsm_bytes_len).
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError>;
+
+    /// Allocates and returns the HSM wire format.
+    fn to_hsm_bytes_vec(&self) -> Result<Vec<u8>, CryptoError> {
+        let mut buf = vec![0u8; self.hsm_bytes_len()];
+        self.to_hsm_bytes(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+/// Import a key from the fixed-size HSM wire format.
+///
+/// The key type and size are auto-detected from the byte length:
+/// - ECC: 32 → P-256, 48 → P-384, 68 → P-521 (private); doubled for public.
+/// - RSA public: 260/388/516 → 2048/3072/4096.
+/// - RSA private: non-CRT (516/772/1028) or CRT (1156/1732/2308).
+pub trait ImportableHsmKey: Sized {
+    /// Import a key from HSM wire format bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the byte length does not match any supported
+    /// key size or the key material is invalid.
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError>;
+}
+
+/// RSA-specific CRT format export extension.
+///
+/// Extends [`ExportableHsmKey`] with methods to export the full CRT
+/// representation: `n || e(4) || d || p || q || dp || dq || qinv`.
+pub trait ExportableHsmRsaKey: ExportableHsmKey {
+    /// Returns the CRT HSM wire format size in bytes.
+    fn hsm_crt_bytes_len(&self) -> usize;
+
+    /// Write the CRT HSM wire format into `buf`.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `buf` is too short or CRT components are
+    /// unavailable.
+    fn to_hsm_crt_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError>;
+
+    /// Allocates and returns the CRT HSM wire format.
+    fn to_hsm_crt_bytes_vec(&self) -> Result<Vec<u8>, CryptoError> {
+        let mut buf = vec![0u8; self.hsm_crt_bytes_len()];
+        self.to_hsm_crt_bytes(&mut buf)?;
+        Ok(buf)
+    }
+}

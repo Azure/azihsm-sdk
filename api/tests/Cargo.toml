@@ -10,7 +10,13 @@ version = "0.0.0"
 azihsm_res_test_dev = { optional = true, workspace = true }
 
 [build-dependencies]
+anyhow.workspace = true
 cmake.workspace = true
+env_logger.workspace = true
+log.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+xshell.workspace = true
 
 [dev-dependencies]
 azihsm_api.workspace = true

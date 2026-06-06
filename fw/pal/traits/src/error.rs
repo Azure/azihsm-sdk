@@ -226,6 +226,14 @@ pub enum HsmError {
     // ── AES Key Wrap errors ────────────────────────────────────────
     AesUnwrapFailed = 0x087000D9,
 
+    // ── Session establishment protocol ─────────────────────────────
+    SessionAuthFailure = 0x087000DA,
+    InvalidPskId = 0x087000DB,
+    SessionNotPending = 0x087000DC,
+    AeadEnvelopeAuthFailed = 0x087000DD,
+    AeadEnvelopeDecodeFailed = 0x087000DE,
+    InvalidSessionType = 0x087000DF,
+
     // ── Core lifecycle / transport diagnostics ─────────────────────
     SqeInvalidPsdt = 0x087000E0,
     RecvTaskFailure = 0x087000E1,
@@ -233,6 +241,59 @@ pub enum HsmError {
     SendTaskFailure = 0x087000E3,
     CompleteIoFailure = 0x087000E4,
     DropIoFailure = 0x087000E5,
+
+    /// In-session command rejected because the calling role's
+    /// partition PSK is still the well-known compiled-in default.
+    /// The only in-session commands permitted in this state are
+    /// session tear-down (`CloseSession`) and the PSK rotation
+    /// itself (`ChangePsk`); rotate the PSK once and retry.
+    DefaultPskMustRotate = 0x087000E6,
+
+    /// `OpenSessionInit` rejected the caller-supplied `suite_id`
+    /// because no such suite is implemented (or it has been retired).
+    /// See [`SessionSuite`] for the registered values.
+    UnsupportedSessionSuite = 0x087000E7,
+
+    /// X.509 DER parsing failed (malformed structure, bad tag/length,
+    /// or unsupported field encoding).
+    X509ParseError = 0x087000F0,
+
+    /// The root certificate is not self-signed (issuer ≠ subject).
+    X509NotSelfSigned = 0x087000F1,
+
+    /// The certificate's issuer does not match the previous certificate's subject.
+    X509IssuerMismatch = 0x087000F2,
+
+    /// The ECDSA signature did not verify.
+    X509SignatureInvalid = 0x087000F3,
+
+    /// The certificate's AKID does not match the previous certificate's SKID.
+    X509AkidSkidMismatch = 0x087000F4,
+
+    /// An intermediate certificate does not have cA=true in BasicConstraints.
+    X509NotCa = 0x087000F5,
+
+    /// The chain exceeds the maximum path length from BasicConstraints.
+    X509PathLenExceeded = 0x087000F6,
+
+    /// A CA certificate does not have the keyCertSign bit set in KeyUsage.
+    X509KeyUsageInvalid = 0x087000F7,
+
+    /// The signature algorithm is not a supported ECDSA variant.
+    X509UnsupportedAlgorithm = 0x087000F8,
+
+    /// The certificate contains an unrecognized critical extension.
+    X509UnrecognizedCriticalExtension = 0x087000F9,
+
+    /// `step()` was called after the chain was already fully validated.
+    X509AlreadyComplete = 0x087000FA,
+
+    /// Failed to export an ECC key to HSM wire format (raw scalar /
+    /// coordinate bytes).  This is **not** a DER encoding error — the
+    /// HSM ECC format is the raw padded scalar/coordinate bytes
+    /// produced by `ExportableHsmKey::to_hsm_bytes` (see
+    /// `HsmEccCurve::wire_coord_len`).
+    EccExportError = 0x087000FB,
 }
 
 impl core::fmt::Debug for HsmError {

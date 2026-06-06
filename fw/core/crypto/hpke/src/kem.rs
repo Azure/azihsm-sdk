@@ -110,15 +110,14 @@ where
     let npk = suite.npk();
     let ndh = suite.ndh();
 
-    // Query-alloc-use ECC keygen.  `priv_max` covers any PAL's
-    // private-key encoding (raw scalar for real HW, PKCS#8 DER for
-    // std); `pub_max` always equals the wire-format public-key
-    // length (== npk).
-    let (priv_max, pub_max) = pal
+    // Query-alloc-use ECC keygen.  Both lengths are deterministic
+    // per-curve: `priv_size` is the raw HSM scalar length; `pub_size`
+    // equals the wire-format public-key length (== npk).
+    let (priv_size, pub_size) = pal
         .ecc_gen_keypair(io, alloc, curve, None, HsmEccPct::None)
         .await?;
-    let sk_e = alloc_bytes(priv_max, alloc)?;
-    let pk_e = alloc_bytes(pub_max, alloc)?;
+    let sk_e = alloc_bytes(priv_size, alloc)?;
+    let pk_e = alloc_bytes(pub_size, alloc)?;
     let (sk_len, pk_len) = pal
         .ecc_gen_keypair(
             io,
@@ -246,11 +245,11 @@ where
     let ndh = suite.ndh();
 
     // Query-alloc-use ECC keygen — same flow as `encap`.
-    let (priv_max, pub_max) = pal
+    let (priv_size, pub_size) = pal
         .ecc_gen_keypair(io, alloc, curve, None, HsmEccPct::None)
         .await?;
-    let sk_e = alloc_bytes(priv_max, alloc)?;
-    let pk_e = alloc_bytes(pub_max, alloc)?;
+    let sk_e = alloc_bytes(priv_size, alloc)?;
+    let pk_e = alloc_bytes(pub_size, alloc)?;
     let (sk_len, pk_len) = pal
         .ecc_gen_keypair(
             io,

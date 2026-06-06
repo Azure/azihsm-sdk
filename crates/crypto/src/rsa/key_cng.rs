@@ -173,6 +173,173 @@ impl ImportableKey for CngRsaPrivateKey {
     }
 }
 
+impl ExportableHsmKey for CngRsaPrivateKey {
+    fn hsm_bytes_len(&self) -> usize {
+        let key_bytes = self.key.size;
+        key_bytes * 2 + 4
+    }
+
+    /// Write non-CRT `n || e(4) || p || q` into `buf`.
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let key_bytes = self.key.size;
+        let half = key_bytes / 2;
+        let total = key_bytes * 2 + 4;
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+        let blob = self.key.to_blob()?;
+        let mut off = 0;
+        buf[off..off + key_bytes].copy_from_slice(blob.n());
+        off += key_bytes;
+        // e is stored in CNG blob as cbPublicExp bytes (typically 1-4); left-pad to 4.
+        let e = blob.e();
+        buf[off..off + 4].fill(0);
+        let e_pad = 4usize.saturating_sub(e.len());
+        let e_take = e.len().min(4);
+        buf[off + e_pad..off + e_pad + e_take].copy_from_slice(&e[..e_take]);
+        off += 4;
+        buf[off..off + half].copy_from_slice(blob.p());
+        off += half;
+        buf[off..off + half].copy_from_slice(blob.q());
+        Ok(total)
+    }
+}
+
+impl ExportableHsmRsaKey for CngRsaPrivateKey {
+    fn hsm_crt_bytes_len(&self) -> usize {
+        let key_bytes = self.key.size;
+        key_bytes + 4 + key_bytes + (key_bytes / 2) * 5
+    }
+
+    /// Write CRT `n || e(4) || d || p || q || dp || dq || qinv` into `buf`.
+    fn to_hsm_crt_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let key_bytes = self.key.size;
+        let half = key_bytes / 2;
+        let total = key_bytes + 4 + key_bytes + half * 5;
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+        let blob = self.key.to_blob()?;
+        let mut off = 0;
+        buf[off..off + key_bytes].copy_from_slice(blob.n());
+        off += key_bytes;
+        let e = blob.e();
+        buf[off..off + 4].fill(0);
+        let e_pad = 4usize.saturating_sub(e.len());
+        let e_take = e.len().min(4);
+        buf[off + e_pad..off + e_pad + e_take].copy_from_slice(&e[..e_take]);
+        off += 4;
+        buf[off..off + key_bytes].copy_from_slice(blob.d());
+        off += key_bytes;
+        buf[off..off + half].copy_from_slice(blob.p());
+        off += half;
+        buf[off..off + half].copy_from_slice(blob.q());
+        off += half;
+        buf[off..off + half].copy_from_slice(blob.dp());
+        off += half;
+        buf[off..off + half].copy_from_slice(blob.dq());
+        off += half;
+        buf[off..off + half].copy_from_slice(blob.qi());
+        Ok(total)
+    }
+}
+
+impl CngRsaPrivateKey {
+    /// Import from non-CRT `n || e(4) || p || q` or CRT format
+    /// (auto-detected by length).
+    ///
+    /// Non-CRT input is imported as `BCRYPT_RSAPRIVATE_BLOB` (CNG computes
+    /// `d`, `dp`, `dq`, `qinv` internally). CRT input is imported as
+    /// `BCRYPT_RSAFULLPRIVATE_BLOB`.
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let len = bytes.len();
+
+        // Non-CRT: len = key_bytes * 2 + 4
+        if len >= 8 && (len - 4).is_multiple_of(2) {
+            let key_bytes = (len - 4) / 2;
+            let half = key_bytes / 2;
+            if matches!(key_bytes, 256 | 384 | 512) {
+                let n = &bytes[..key_bytes];
+                let e = &bytes[key_bytes..key_bytes + 4];
+                let p = &bytes[key_bytes + 4..key_bytes + 4 + half];
+                let q = &bytes[key_bytes + 4 + half..key_bytes + 4 + 2 * half];
+                let blob = build_rsa_private_blob(key_bytes, e, n, p, q);
+                let key = CngRsaPrivateKeyHandle::from_bcrypt_blob(&blob)?;
+                return Ok(Self { key });
+            }
+        }
+
+        // CRT: len = 4.5 * key_bytes + 4
+        if len >= 8 && ((len - 4) * 2).is_multiple_of(9) {
+            let key_bytes = (len - 4) * 2 / 9;
+            let half = key_bytes / 2;
+            if matches!(key_bytes, 256 | 384 | 512) {
+                let mut off = 0;
+                let n = &bytes[off..off + key_bytes];
+                off += key_bytes;
+                let e = &bytes[off..off + 4];
+                off += 4;
+                let d = &bytes[off..off + key_bytes];
+                off += key_bytes;
+                let p = &bytes[off..off + half];
+                off += half;
+                let q = &bytes[off..off + half];
+                off += half;
+                let dp = &bytes[off..off + half];
+                off += half;
+                let dq = &bytes[off..off + half];
+                off += half;
+                let qi = &bytes[off..off + half];
+                let blob =
+                    CngRsaPrivateKeyBlob::with_components(key_bytes, e, n, p, q, dp, dq, qi, d);
+                let key = CngRsaPrivateKeyHandle::from_blob(&blob)?;
+                return Ok(Self { key });
+            }
+        }
+
+        Err(CryptoError::RsaKeyImportError)
+    }
+}
+
+impl ImportableHsmKey for CngRsaPrivateKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
+    }
+}
+
+/// Build a `BCRYPT_RSAPRIVATE_BLOB` (non-FULL) with `(e, n, p, q)`.
+///
+/// CNG accepts this blob shape and recomputes `d`, `dp`, `dq`, and `qinv`
+/// internally during `BCryptImportKeyPair`.
+#[allow(unsafe_code)]
+fn build_rsa_private_blob(key_bytes: usize, e: &[u8], n: &[u8], p: &[u8], q: &[u8]) -> Vec<u8> {
+    let header_size = std::mem::size_of::<BCRYPT_RSAKEY_BLOB>();
+    let header = BCRYPT_RSAKEY_BLOB {
+        Magic: BCRYPT_RSAPRIVATE_MAGIC,
+        BitLength: (key_bytes * 8) as u32,
+        cbPublicExp: e.len() as u32,
+        cbModulus: n.len() as u32,
+        cbPrime1: p.len() as u32,
+        cbPrime2: q.len() as u32,
+    };
+    let mut blob = Vec::with_capacity(header_size + e.len() + n.len() + p.len() + q.len());
+    // SAFETY: Converting BCRYPT_RSAKEY_BLOB to bytes for serialization. The
+    // header value is owned here and lives for the duration of the slice
+    // borrow; we extend the byte slice into the owned Vec immediately.
+    unsafe {
+        let src = std::slice::from_raw_parts(
+            &header as *const BCRYPT_RSAKEY_BLOB as *const u8,
+            header_size,
+        );
+        blob.extend_from_slice(src);
+    }
+    blob.extend_from_slice(e);
+    blob.extend_from_slice(n);
+    blob.extend_from_slice(p);
+    blob.extend_from_slice(q);
+    blob
+}
+
 impl KeyGenerationOp for CngRsaPrivateKey {
     type Key = Self;
 
@@ -371,6 +538,54 @@ impl ImportableKey for CngRsaPublicKey {
         let der = DerRsaPublicKey::from_der(bytes)?;
         let key = CngRsaPublicKeyHandle::try_from(&der)?;
         Ok(Self { key })
+    }
+}
+
+impl ExportableHsmKey for CngRsaPublicKey {
+    fn hsm_bytes_len(&self) -> usize {
+        self.key.size + 4
+    }
+
+    /// Write `n || e(4)` into `buf`.
+    fn to_hsm_bytes(&self, buf: &mut [u8]) -> Result<usize, CryptoError> {
+        let key_bytes = self.key.size;
+        let total = key_bytes + 4;
+        if buf.len() < total {
+            return Err(CryptoError::RsaKeyExportError);
+        }
+        let blob = self.key.to_blob()?;
+        buf[..key_bytes].copy_from_slice(blob.n());
+        let e = blob.e();
+        buf[key_bytes..total].fill(0);
+        let e_pad = 4usize.saturating_sub(e.len());
+        let e_take = e.len().min(4);
+        buf[key_bytes + e_pad..key_bytes + e_pad + e_take].copy_from_slice(&e[..e_take]);
+        Ok(total)
+    }
+}
+
+impl CngRsaPublicKey {
+    /// Import from `n || e(4)` (HSM wire format).
+    pub fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let len = bytes.len();
+        if len < 8 {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+        let key_bytes = len - 4;
+        if !is_valid_key_size(key_bytes) {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+        let n = &bytes[..key_bytes];
+        let e = &bytes[key_bytes..];
+        let blob = CngRsaPublicKeyBlob::with_components(key_bytes, e, n);
+        let key = CngRsaPublicKeyHandle::from_blob(&blob)?;
+        Ok(Self { key })
+    }
+}
+
+impl ImportableHsmKey for CngRsaPublicKey {
+    fn from_hsm_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Self::from_hsm_bytes(bytes)
     }
 }
 

@@ -15,7 +15,6 @@
 
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyReq;
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyResp;
-use azihsm_fw_ddi_mbor_types::DdiAesKeySize;
 
 use super::*;
 
@@ -34,14 +33,12 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
-    let (key_len, vault_kind) = aes_key_size_to_kind(body.key_size)?;
-    let attrs = build_attrs_for_aes(&body.key_properties.key_metadata)?;
+    let (key_len, vault_kind) = super::from_ddi::aes(body.key_size)?;
+    let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
     // `key_tag` because the key cannot be looked up across sessions.
-    if attrs.session() && body.key_tag.is_some() {
-        return Err(HsmError::InvalidArg);
-    }
+    super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;
 
     // Generate the random AES key bytes into a scratch buffer.  The
     // PAL's `aes_gen_key` wraps the CSPRNG and validates the buffer
@@ -85,61 +82,4 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     let _ = guard.dismiss();
 
     Ok(resp)
-}
-
-/// Map a `DdiAesKeySize` to its raw key byte length + private
-/// [`HsmVaultKeyKind`].  Bulk AES key kinds (XTS / GCM) are rejected
-/// — handled by separate future handlers.
-fn aes_key_size_to_kind(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
-    match size {
-        DdiAesKeySize::Aes128 => Ok((16, HsmVaultKeyKind::Aes128)),
-        DdiAesKeySize::Aes192 => Ok((24, HsmVaultKeyKind::Aes192)),
-        DdiAesKeySize::Aes256 => Ok((32, HsmVaultKeyKind::Aes256)),
-        _ => Err(HsmError::InvalidArg),
-    }
-}
-
-/// Translate the requested `key_metadata` bitflags into a vault
-/// attribute set for a non-bulk AES key.
-///
-/// AES (non-bulk) keys can only carry the `EncryptDecrypt` usage.
-/// Any other usage flag — sign, verify, derive, wrap, or unwrap —
-/// is rejected with `InvalidPermissions`, mirroring the reference
-/// firmware's `Kind::allows_usage` check.
-///
-/// Internally-generated keys always carry `local = true`.
-fn build_attrs_for_aes(
-    metadata: &azihsm_fw_ddi_mbor_types::DdiTargetKeyMetadata,
-) -> HsmResult<HsmVaultKeyAttrs> {
-    let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
-
-    let sign_verify = metadata.sign() && metadata.verify();
-    let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();
-    let derive = metadata.derive();
-    let wrap = metadata.wrap();
-    let unwrap = metadata.unwrap();
-
-    // Exactly one usage — all five mutually-exclusive usage flags are
-    // counted so a host that piles on extras (e.g.
-    // encrypt+decrypt+wrap) is rejected instead of silently dropping
-    // the unsupported bits.
-    let usage_count = (sign_verify as u8)
-        + (encrypt_decrypt as u8)
-        + (derive as u8)
-        + (wrap as u8)
-        + (unwrap as u8);
-    if usage_count != 1 {
-        return Err(HsmError::InvalidPermissions);
-    }
-
-    if !encrypt_decrypt {
-        return Err(HsmError::InvalidPermissions);
-    }
-    attrs = attrs.with_encrypt(true).with_decrypt(true);
-
-    if metadata.session() {
-        attrs = attrs.with_session(true);
-    }
-
-    Ok(attrs)
 }

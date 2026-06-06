@@ -17,11 +17,11 @@
 //!
 //! | Suite      | `MAC_KEY` | `ENC_KEY` | Total `Nk` | Tag `Nt` |
 //! |------------|-----------|-----------|------------|----------|
-//! | P-256/CBC  | 32        | 32        | 64         | 16       |
-//! | P-384/CBC  | 48        | 32        | 80         | 24       |
-//! | P-521/CBC  | 64        | 32        | 96         | 32       |
+//! | P-256/CBC  | 32        | 32        | 64         | 32       |
+//! | P-384/CBC  | 48        | 32        | 80         | 48       |
+//! | P-521/CBC  | 64        | 32        | 96         | 64       |
 //!
-//! The tag is HMAC truncated to half the hash output.
+//! The tag is the full HMAC output (no truncation).
 //!
 //! ## Internal representation
 //!
@@ -46,19 +46,19 @@ use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 #[allow(clippy::upper_case_acronyms)]
 pub enum HpkeSuite {
     /// DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-256-GCM.
-    DHKemP256Sha256Aes256Gcm,
+    DHKemP256Sha256AesGcm256,
 
     /// DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-256-CBC-HMAC-SHA256.
     DHKemP256Sha256Aes256Cbc,
 
     /// DHKEM(P-384, HKDF-SHA384), HKDF-SHA384, AES-256-GCM.
-    DHKemP384Sha384Aes256Gcm,
+    DHKemP384Sha384AesGcm256,
 
     /// DHKEM(P-384, HKDF-SHA384), HKDF-SHA384, AES-256-CBC-HMAC-SHA384.
     DHKemP384Sha384Aes256Cbc,
 
     /// DHKEM(P-521, HKDF-SHA512), HKDF-SHA512, AES-256-GCM.
-    DHKemP521Sha512Aes256Gcm,
+    DHKemP521Sha512AesGcm256,
 
     /// DHKEM(P-521, HKDF-SHA512), HKDF-SHA512, AES-256-CBC-HMAC-SHA512.
     DHKemP521Sha512Aes256Cbc,
@@ -101,6 +101,14 @@ enum KemKind {
 }
 
 /// One entry per [`KemKind`].
+///
+/// `npk` is the SEC1 uncompressed wire size (`1 + 2 * Nsk` per
+/// RFC 9180 §7.1.1) used in `kem_context` and on the wire. The
+/// PAL-native size (raw `x ‖ y`, LE) is `npk_pal = 2 * nsk` derived
+/// at use-site; see [`HpkeSuite::npk_pal`].
+///
+/// P-521 entry is left at the legacy PAL-padded value and is not
+/// RFC 9180 compliant — that suite is not currently supported.
 const KEM_TABLE: [KemEntry; 3] = [
     KemEntry {
         kem_id: 0x0010,
@@ -108,7 +116,7 @@ const KEM_TABLE: [KemEntry; 3] = [
         curve: HsmEccCurve::P256,
         hash: HsmHashAlgo::Sha256,
         nh: 32,
-        npk: 64,
+        npk: 65,
         nsk: 32,
         ndh: 32,
     },
@@ -118,7 +126,7 @@ const KEM_TABLE: [KemEntry; 3] = [
         curve: HsmEccCurve::P384,
         hash: HsmHashAlgo::Sha384,
         nh: 48,
-        npk: 96,
+        npk: 97,
         nsk: 48,
         ndh: 48,
     },
@@ -128,10 +136,10 @@ const KEM_TABLE: [KemEntry; 3] = [
         curve: HsmEccCurve::P521,
         hash: HsmHashAlgo::Sha512,
         nh: 64,
-        // P-521 uses 4-byte aligned HSM wire format → 68-byte coords.
+        // P-521 is unsupported: PAL uses 4-byte aligned coords (68 B
+        // each) which conflicts with RFC 9180 P-521 (66 B each).
         npk: 136,
         nsk: 68,
-        // Raw ECDH x-coordinate is 66 bytes (NOT the HSM-padded size).
         ndh: 66,
     },
 ];
@@ -164,11 +172,11 @@ impl HpkeSuite {
     ///   `is_cbc` selects the AEAD variant.
     const fn parts(&self) -> (KemKind, bool) {
         match self {
-            Self::DHKemP256Sha256Aes256Gcm => (KemKind::P256, false),
+            Self::DHKemP256Sha256AesGcm256 => (KemKind::P256, false),
             Self::DHKemP256Sha256Aes256Cbc => (KemKind::P256, true),
-            Self::DHKemP384Sha384Aes256Gcm => (KemKind::P384, false),
+            Self::DHKemP384Sha384AesGcm256 => (KemKind::P384, false),
             Self::DHKemP384Sha384Aes256Cbc => (KemKind::P384, true),
-            Self::DHKemP521Sha512Aes256Gcm => (KemKind::P521, false),
+            Self::DHKemP521Sha512AesGcm256 => (KemKind::P521, false),
             Self::DHKemP521Sha512Aes256Cbc => (KemKind::P521, true),
         }
     }
@@ -264,10 +272,10 @@ impl HpkeSuite {
     /// AEAD tag length in bytes (`Nt`).
     ///
     /// * GCM: always 16.
-    /// * CBC: HMAC truncated to `Nh / 2`.
+    /// * CBC: full HMAC output (`Nh`), no truncation.
     pub const fn nt(&self) -> usize {
         if self.is_cbc() {
-            self.nh() / 2
+            self.nh()
         } else {
             GCM_TAG_LEN
         }
@@ -275,10 +283,27 @@ impl HpkeSuite {
 
     /// KEM public-key length in bytes (`Npk = Nenc`).
     ///
-    /// Uses the HSM `x ‖ y` wire format (no `0x04` prefix). P-521
-    /// coordinates are padded to 4-byte alignment by the HSM PAL.
+    /// SEC1 uncompressed (`0x04 ‖ X ‖ Y`, big-endian) per
+    /// RFC 9180 §7.1.1. The on-the-wire / `kem_context` encoding.
+    ///
+    /// **P-521 unsupported.** The HSM PAL pads P-521 coords to 4-byte
+    /// alignment (68 B each) which conflicts with the RFC 9180 P-521
+    /// encoding (66 B each). P-521 HPKE is not currently usable; the
+    /// per-suite constant below is left at the legacy padded value
+    /// so callers that don't exercise P-521 keep compiling.
     pub const fn npk(&self) -> usize {
         self.entry().npk
+    }
+
+    /// PAL-native KEM public-key length in bytes
+    /// (`2 * Nsk_pal`, no SEC1 prefix, little-endian coords).
+    ///
+    /// Used only inside this crate to size buffers passed to / from
+    /// the [`HsmCrypto::ecc_gen_keypair`] / [`HsmCrypto::ecdh_derive`]
+    /// PAL entry points, which traffic in the HSM-native LE coord
+    /// format throughout. See [`Self::npk`] for the wire-format size.
+    pub const fn npk_pal(&self) -> usize {
+        2 * self.entry().nsk
     }
 
     /// KEM encapsulated-key length in bytes (`Nenc`). Same as
