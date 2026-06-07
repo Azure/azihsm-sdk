@@ -514,31 +514,34 @@ pub trait HsmSessionManager {
         mac_rx_key: Option<&[u8]>,
     ) -> HsmResult<()>;
 
-    /// Copies the active session's `param_key` (a 32-byte AES-256
-    /// key used by [`azihsm_fw_core_crypto_aead_envelope`]) into
-    /// `out`.
+    /// Returns a borrowed view of the active session's `param_key`
+    /// (a 32-byte AES-256 key used by
+    /// [`azihsm_fw_core_crypto_aead_envelope`]).
     ///
+    /// Zero-copy: the returned `&DmaBuf` borrows directly from the
+    /// PAL's session-schedule storage, so callers can hand it to
+    /// PAL crypto primitives without an intermediate allocation.
     /// This hides the layout of the session schedule blob from
     /// in-session handlers — they no longer need to know that the
     /// schedule is stored as `api_rev ‖ param_key ‖ masking_key …`
-    /// behind a vault key.  If the schedule format changes, only the
-    /// PAL impl needs to update.
+    /// behind a vault key.  If the schedule format changes, only
+    /// the PAL impl needs to update.
     ///
     /// # Parameters
     ///
     /// - `io` — caller's I/O context (partition scope).
     /// - `id` — Active session slot.
-    /// - `out` — destination buffer; MUST be exactly
-    ///   [`SESSION_PARAM_KEY_LEN`] bytes.
     ///
     /// # Returns
     ///
-    /// - `Ok(())` on success; `out` is filled with the schedule.
-    /// - `Err(HsmError::InvalidArg)` — `out.len() != SESSION_PARAM_KEY_LEN`.
+    /// - `Ok(&DmaBuf)` — a sub-view of the schedule blob, exactly
+    ///   [`SESSION_PARAM_KEY_LEN`] bytes long.
     /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to a
     ///   live Active session in the caller's partition (slot free,
     ///   destroyed, or still Pending).
-    fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId, out: &mut [u8]) -> HsmResult<()>;
+    /// - `Err(HsmError::InternalError)` — schedule blob is shorter
+    ///   than expected (corruption indicator).
+    fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf>;
 
     /// Atomically reserves the session's one-shot "PSK change"
     /// budget.  Each session may successfully consume this budget at

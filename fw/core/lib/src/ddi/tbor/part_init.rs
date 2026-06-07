@@ -76,7 +76,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_pal_traits::VaultKeyGuard;
 use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
-use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
 
 use super::*;
 
@@ -276,8 +275,7 @@ async fn open_mach_seed_envelope<'a, P: HsmPal>(
     sess_id: HsmSessId,
     envelope: &[u8],
 ) -> HsmResult<&'a mut DmaBuf> {
-    let param_key = alloc.dma_alloc(SESSION_PARAM_KEY_LEN)?;
-    pal.session_param_key(io, sess_id, param_key)?;
+    let param_key = pal.session_param_key(io, sess_id)?;
 
     let env_buf = alloc.dma_alloc(envelope.len())?;
     env_buf.copy_from_slice(envelope);
