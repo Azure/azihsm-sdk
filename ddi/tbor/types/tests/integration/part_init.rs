@@ -64,8 +64,9 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
 ];
 
 /// Build a 167-byte `PartPolicy` blob that passes
-/// `azihsm_fw_hsm_core::policy::from_bytes`.  Layout mirrors
-/// `fw/plat/std/lib/tests/part_policy.rs::known_good_bytes`.
+/// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`.  Layout mirrors
+/// the canonical wire format defined in
+/// `fw/core/ddi/tbor/types/src/policy.rs`.
 fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     const OFF_VERSION_MAJOR: usize = 0;
     const OFF_VERSION_MINOR: usize = 1;
@@ -199,8 +200,8 @@ fn part_init_smoke_roundtrip_emu() {
     verify_pta_report(&dev, &resp.pta_report, &pta_spki);
 
     // 3. Second PartInit on a freshly-opened session must be rejected
-    //    by the one-shot `part_mark_initializing` guard with
-    //    `HsmError::InvalidState`.  Closing this session before
+    //    by the one-shot `part_set_pta_key` guard with
+    //    `HsmError::PtaKeyAlreadySet`.  Closing this session before
     //    rotating the PSK back keeps the rest of the matrix clean.
     let _ = close_session(&dev, session.session_id);
     let session2 = open_co_with(&dev, &ROTATED_CO_PSK);

@@ -46,7 +46,7 @@
 //! [`part_free_internal`]: StdHsmPal::part_free_internal
 
 use azihsm_crypto::*;
-use azihsm_fw_ddi_tbor_types::policy::PART_POLICY_LEN;
+use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
@@ -791,7 +791,7 @@ impl HsmPartitionManager for StdHsmPal {
         if psk_id > 1 {
             return Err(HsmError::InvalidPskId);
         }
-        let part = self.active_part(io.pid())?;
+        let part = self.serving_part(io.pid())?;
         let stored: Option<&[u8; PSK_LEN]> = match psk_id {
             0 => part.psk_co.as_ref(),
             _ => part.psk_cu.as_ref(),
@@ -820,7 +820,7 @@ impl HsmPartitionManager for StdHsmPal {
         if psk.len() != PSK_LEN {
             return Err(HsmError::InvalidArg);
         }
-        let part = self.active_part_mut(io.pid())?;
+        let part = self.serving_part_mut(io.pid())?;
         let mut buf = [0u8; PSK_LEN];
         buf.copy_from_slice(psk);
         if psk_id == 0 {
@@ -832,7 +832,7 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     fn part_uds(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.active_part(io.pid())?.uds, out)
+        copy_out(&self.serving_part(io.pid())?.uds, out)
     }
 
     fn part_set_pta_key(
@@ -984,6 +984,48 @@ impl StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut table.entries[idx])
+    }
+
+    /// Borrow a partition that is actively serving host traffic.
+    ///
+    /// "Serving" means [`PartState::Enabled`] or
+    /// [`PartState::Initializing`] — i.e. the partition is bound to a
+    /// caller's incarnation and may legitimately expose per-incarnation
+    /// secrets (PSK, UDS).  Stricter than [`Self::active_part`] (which
+    /// permits Allocated and Disabled too) so that PSK/UDS reads cannot
+    /// leak across the allocate/enable boundary, and looser than
+    /// [`Self::enabled_part`] so that PartInit handlers running in
+    /// `Initializing` still observe the rotated PSKs and UDS.
+    fn serving_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if !matches!(
+            table.entries[idx].state,
+            PartState::Enabled | PartState::Initializing
+        ) {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&table.entries[idx])
+    }
+
+    /// Mutable counterpart to [`Self::serving_part`].
+    #[allow(clippy::mut_from_ref)]
+    fn serving_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if !matches!(
+            table.entries[idx].state,
+            PartState::Enabled | PartState::Initializing
+        ) {
             return Err(HsmError::InvalidArg);
         }
         Ok(&mut table.entries[idx])
@@ -1465,7 +1507,14 @@ impl StdHsmPal {
     }
 }
 
-/// Derive a deterministic emulator UDS for a partition incarnation.
+/// Derive a deterministic emulator UDS keyed on the partition slot id.
+///
+/// The std PAL has no fused per-device secret, so we synthesise a UDS
+/// from `pid` alone.  Because the derivation depends only on the slot
+/// id (not on an incarnation counter or wall-clock time), the value is
+/// **stable across enable/disable cycles for the same slot** — which
+/// matches the spec's expectation that UDS is a per-device root
+/// secret, not a per-incarnation one.
 fn derive_sim_uds(pid: u8) -> [u8; UDS_LEN] {
     let mut uds = [0u8; UDS_LEN];
     for (i, b) in uds.iter_mut().enumerate() {

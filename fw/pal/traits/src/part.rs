@@ -958,7 +958,7 @@ pub trait HsmPartitionManager {
     /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
     ///   currently [`Enabled`](PartState::Enabled) (and not
     ///   [`Initializing`](PartState::Initializing)).
-    /// - `Err(HsmError::NotEnoughSpace)` — `out` buffer too small.
+    /// - `Err(HsmError::InvalidArg)` — `out` buffer too small.
     fn part_uds(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize>;
 
     /// Binds the partition's PTA (Partition Trust Anchor) ECC-P384
