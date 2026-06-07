@@ -13,6 +13,8 @@ use openssl::stack::Stack;
 #[cfg(target_os = "linux")]
 use openssl::x509::X509;
 #[cfg(target_os = "linux")]
+use openssl::x509::X509Req;
+#[cfg(target_os = "linux")]
 use openssl::x509::X509StoreContext;
 #[cfg(target_os = "linux")]
 use openssl::x509::store::X509StoreBuilder;
@@ -47,6 +49,12 @@ pub enum X509CertificateError {
 
     #[error("Failed to extract public key blob from certificate")]
     PublicKeyToDerError,
+
+    #[error("Failed to parse DER-encoded CSR")]
+    CsrDerParseError,
+
+    #[error("CSR self-signature verification failed")]
+    CsrVerifyError,
 }
 
 /// A trait defining common functions for `X509Certificate` objects that are
@@ -958,5 +966,180 @@ qUzzk3pb
         // parsed from its DER format into a usable key. The
         // `EccPublicKey::from_der` function would have thrown an error if
         // parsing failed.
+    }
+}
+
+// ============================== X509Csr =================================== //
+
+/// A trait defining common functions for [`X509Csr`] objects.
+///
+/// Mirrors [`X509CertificateOp`] for PKCS#10 CertificationRequests
+/// (CSRs).  The Linux implementation uses OpenSSL's `X509Req`; the
+/// Windows implementation is currently unimplemented (the only
+/// consumer today is the Linux-only `emu` integration tests).
+pub trait X509CsrOp {
+    /// Parse a DER-encoded PKCS#10 CSR.
+    fn from_der(der_bytes: &[u8]) -> Result<X509Csr, X509CertificateError>;
+
+    /// Return the SubjectPublicKeyInfo of the CSR in DER form.
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError>;
+
+    /// Verify the CSR's self-signature against the embedded
+    /// SubjectPublicKeyInfo.  Returns `Ok(true)` only when the
+    /// signature is valid.
+    fn verify(&self) -> Result<bool, X509CertificateError>;
+}
+
+/// A struct representing a PKCS#10 CertificationRequest (CSR).
+pub struct X509Csr {
+    /// DER-encoded bytes of the CSR.
+    der: Vec<u8>,
+
+    /// OpenSSL `X509Req` handle (Linux only).
+    #[cfg(target_os = "linux")]
+    req: X509Req,
+}
+
+impl core::fmt::Debug for X509Csr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("X509Csr")
+            .field("der_len", &self.der.len())
+            .finish()
+    }
+}
+
+impl X509Csr {
+    /// Return the DER-encoded CSR as a byte slice.
+    pub fn as_der(&self) -> &[u8] {
+        &self.der
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl X509CsrOp for X509Csr {
+    /// Create a new [`X509Csr`] from a DER encoding via OpenSSL.
+    fn from_der(der_bytes: &[u8]) -> Result<Self, X509CertificateError> {
+        let req = X509Req::from_der(der_bytes).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::CsrDerParseError
+        })?;
+        Ok(Self {
+            der: der_bytes.to_vec(),
+            req,
+        })
+    }
+
+    /// Return the SubjectPublicKeyInfo of the CSR in DER form.
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError> {
+        let public_key = self.req.public_key().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::OSSLGetPublicKeyError
+        })?;
+        public_key
+            .public_key_to_der()
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                X509CertificateError::PublicKeyToDerError
+            })
+    }
+
+    /// Verify the CSR's self-signature against its embedded
+    /// SubjectPublicKeyInfo.
+    ///
+    /// Returns `Ok(true)` for a valid self-signature, `Ok(false)` for
+    /// a syntactically-well-formed CSR whose signature does not match
+    /// the embedded pubkey, and [`X509CertificateError::CsrVerifyError`]
+    /// when the OpenSSL verify call itself fails to run.
+    fn verify(&self) -> Result<bool, X509CertificateError> {
+        let public_key = self.req.public_key().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::OSSLGetPublicKeyError
+        })?;
+        self.req.verify(&public_key).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::CsrVerifyError
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl X509CsrOp for X509Csr {
+    fn from_der(_der_bytes: &[u8]) -> Result<Self, X509CertificateError> {
+        unimplemented!("X509Csr Windows backend not yet implemented")
+    }
+
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError> {
+        unimplemented!("X509Csr Windows backend not yet implemented")
+    }
+
+    fn verify(&self) -> Result<bool, X509CertificateError> {
+        unimplemented!("X509Csr Windows backend not yet implemented")
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod csr_tests {
+    use openssl::ec::EcGroup;
+    use openssl::ec::EcKey;
+    use openssl::hash::MessageDigest;
+    use openssl::nid::Nid;
+    use openssl::pkey::PKey;
+    use openssl::x509::X509Name;
+    use openssl::x509::X509ReqBuilder;
+
+    use super::*;
+
+    /// Build a self-signed ECDSA-P384 CSR for testing.
+    fn build_p384_csr() -> Vec<u8> {
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let ec_key = EcKey::generate(&group).unwrap();
+        let pkey = PKey::from_ec_key(ec_key).unwrap();
+
+        let mut name = X509Name::builder().unwrap();
+        name.append_entry_by_text("CN", "test-csr").unwrap();
+        let name = name.build();
+
+        let mut builder = X509ReqBuilder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder.sign(&pkey, MessageDigest::sha384()).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
+    #[test]
+    fn x509csr_parses_and_self_verifies() {
+        let der = build_p384_csr();
+        let csr = X509Csr::from_der(&der).expect("CSR parses");
+        assert_eq!(csr.as_der(), der.as_slice());
+        assert!(csr.verify().expect("verify runs"), "self-signature valid");
+        let spki = csr.get_public_key_der().expect("SPKI extracts");
+        assert!(!spki.is_empty(), "SPKI non-empty");
+    }
+
+    #[test]
+    fn x509csr_rejects_garbage_der() {
+        let err = X509Csr::from_der(&[0u8; 16]).expect_err("garbage rejected");
+        assert_eq!(err, X509CertificateError::CsrDerParseError);
+    }
+
+    #[test]
+    fn x509csr_rejects_tampered_signature() {
+        let mut der = build_p384_csr();
+        // Flip a byte in the BIT STRING signature tail.
+        let last = der.len() - 1;
+        der[last] ^= 0x01;
+        // The CSR may still parse (signature isn't validated at parse
+        // time) but `verify` must return Ok(false) or
+        // CsrVerifyError — both signal "not valid".
+        match X509Csr::from_der(&der) {
+            Ok(csr) => {
+                let v = csr.verify();
+                assert!(
+                    matches!(v, Ok(false) | Err(X509CertificateError::CsrVerifyError)),
+                    "tampered CSR must not verify: {v:?}",
+                );
+            }
+            Err(e) => assert_eq!(e, X509CertificateError::CsrDerParseError),
+        }
     }
 }
