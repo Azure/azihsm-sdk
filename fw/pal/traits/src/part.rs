@@ -60,6 +60,9 @@ use super::*;
 /// interpret it.
 pub type PartId<'a> = &'a [u8];
 
+/// Canonical byte length of a TBOR PartPolicy blob.
+pub const PART_POLICY_LEN: usize = 167;
+
 /// Lifecycle state of a partition slot.
 ///
 /// State transitions are driven by host management commands; this
@@ -88,6 +91,13 @@ pub enum PartState {
     /// and identity key pair are retained so the partition can be
     /// re-enabled without a full re-provision.
     Disabled,
+
+    /// The TBOR `PartInit` handler has bound the Partition Trust
+    /// Anchor (PTA) key, the partition policy, and the POTA
+    /// thumbprint to this incarnation, but partition finalization
+    /// has not yet run.  No further `PartInit` is permitted until
+    /// the next alloc/free cycle (one-shot enforcement).
+    Initializing,
 }
 
 /// Partition manager interface.
@@ -928,6 +938,109 @@ pub trait HsmPartitionManager {
     /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
     ///   currently [`Enabled`](PartState::Enabled).
     fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool>;
+
+    // ── PartInit surface ──────────────────────────────────────────
+
+    /// Returns the per-machine Unique Device Secret (UDS).
+    ///
+    /// On real hardware this is a fused per-device secret; on the std
+    /// PAL it is a fixed per-partition pseudo-random blob established
+    /// at allocation time.  Follows the standard query/copy pattern.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `out` — `None` for size query, `Some(buf)` to copy.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(size)` — UDS byte length (`32` for the std PAL).
+    /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
+    ///   currently [`Enabled`](PartState::Enabled) (and not
+    ///   [`Initializing`](PartState::Initializing)).
+    /// - `Err(HsmError::InvalidArg)` — `out` buffer too small.
+    fn part_uds(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Binds the partition's PTA (Partition Trust Anchor) ECC-P384
+    /// key to this incarnation.
+    ///
+    /// One-shot: subsequent calls return
+    /// [`HsmError::PtaKeyAlreadySet`].  The PAL stores both the
+    /// vault key id of the private half and the raw 97-byte SEC1
+    /// uncompressed public key bytes for later attestation use.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key_id` — vault id of the PTA private key (kind
+    ///   [`HsmVaultKeyKind::PartitionTrustAnchor`](crate::HsmVaultKeyKind::PartitionTrustAnchor)).
+    /// - `pub_sec1` — 97-byte SEC1 uncompressed encoding
+    ///   (`0x04 ‖ X_be ‖ Y_be`) of the PTA public key.
+    fn part_set_pta_key(&self, io: &impl HsmIo, key_id: HsmKeyId, pub_sec1: &[u8])
+    -> HsmResult<()>;
+
+    /// Stores the validated `PartPolicy` blob for this incarnation.
+    ///
+    /// The bytes are stored verbatim (the caller is responsible for
+    /// pre-validation via `policy::from_bytes`).
+    ///
+    /// One-shot: subsequent calls return [`HsmError::InvalidArg`].
+    /// The slot is cleared on `part_disable`.
+    fn part_set_policy(&self, io: &impl HsmIo, policy: &[u8]) -> HsmResult<()>;
+
+    /// Stores the 48-byte POTA (Partition Owner Trust Anchor)
+    /// SHA-384 thumbprint for this incarnation.
+    ///
+    /// One-shot: subsequent calls return [`HsmError::InvalidArg`].
+    /// The slot is cleared on `part_disable`.
+    fn part_set_pota_thumbprint(&self, io: &impl HsmIo, thumb: &[u8]) -> HsmResult<()>;
+
+    /// Binds the partition's Unique Machine Secret (UMS) vault key id
+    /// to this incarnation.
+    ///
+    /// The UMS is a 48-byte HMAC-SHA-384-sized secret derived by
+    /// `PartInit` from `UDS` plus the request-side
+    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`) inputs.  The
+    /// raw bytes live inside the partition key vault under `key_id`
+    /// (kind
+    /// [`HsmVaultKeyKind::PartitionUniqueMachineSecret`](crate::HsmVaultKeyKind::PartitionUniqueMachineSecret));
+    /// the PAL only stores the id so later phases can reach the
+    /// material through the normal vault read path.
+    ///
+    /// One-shot: subsequent calls return
+    /// [`HsmError::UmsKeyAlreadySet`].  The slot is cleared (and the
+    /// underlying vault entry deleted) on `part_disable`.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `key_id` — vault id of the UMS secret (kind
+    ///   [`HsmVaultKeyKind::PartitionUniqueMachineSecret`](crate::HsmVaultKeyKind::PartitionUniqueMachineSecret)).
+    fn part_set_ums_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Returns the vault key id of the partition's Unique Machine
+    /// Secret (UMS), set by a prior successful
+    /// [`part_set_ums_key`](Self::part_set_ums_key).
+    ///
+    /// # Errors
+    ///
+    /// - `Err(HsmError::UmsKeyNotSet)` — `PartInit` has not yet
+    ///   successfully bound a UMS for this partition incarnation.
+    /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
+    ///   currently [`Enabled`](PartState::Enabled) (or
+    ///   [`Initializing`](PartState::Initializing)).
+    fn part_ums_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId>;
+
+    /// Transitions the partition from [`Enabled`](PartState::Enabled)
+    /// to [`Initializing`](PartState::Initializing).
+    ///
+    /// All four of [`part_set_pta_key`](Self::part_set_pta_key),
+    /// [`part_set_ums_key`](Self::part_set_ums_key),
+    /// [`part_set_policy`](Self::part_set_policy), and
+    /// [`part_set_pota_thumbprint`](Self::part_set_pota_thumbprint)
+    /// must have succeeded for this call to succeed; otherwise the
+    /// PAL returns [`HsmError::InvalidArg`].
+    fn part_mark_initializing(&self, io: &impl HsmIo) -> HsmResult<()>;
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.

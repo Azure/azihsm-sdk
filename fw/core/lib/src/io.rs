@@ -91,12 +91,12 @@ impl<P: HsmPal> Hsm<P> {
         }
     }
 
-    /// Returns `true` if the partition for this IO is enabled.
+    /// Returns `true` if the partition for this IO can accept host traffic.
     #[inline]
     fn partition_enabled(&self, io: &P::Io) -> bool {
         self.pal()
             .part_state(io)
-            .is_ok_and(|s| s == PartState::Enabled)
+            .is_ok_and(|s| matches!(s, PartState::Enabled | PartState::Initializing))
     }
 
     /// Parses the SQE once, populates the CQE header, and returns the

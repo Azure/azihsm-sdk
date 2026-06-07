@@ -12,4 +12,5 @@ pub mod default_psk_gate;
 pub mod fw_error_decode;
 pub mod get_api_rev;
 pub mod open_session;
+pub mod part_init;
 pub mod session_smoke;
