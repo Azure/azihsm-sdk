@@ -6,10 +6,6 @@
 //! Mirrors the surface shape of [`hpke::ops::seal`]: async,
 //! `pal + io + alloc` plumbing, query/copy on `Option<&mut [u8]>`.
 
-// TODO(impl): real implementation lands once the template module is
-// generated.  This stub gives the compiler a public surface to
-// type-check.
-
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
@@ -285,7 +281,7 @@ pub fn write_payload(
     let head = template::HEAD_LEN;
     let tail = template::TAIL_LEN;
     if out.len() != head + flags_width + tail {
-        return Err(HsmError::InternalError);
+        return Err(HsmError::InvalidArg);
     }
 
     // HEAD: copy template, then patch pk_x / pk_y holes.
@@ -296,7 +292,7 @@ pub fn write_payload(
         .copy_from_slice(params.pk_y);
 
     // Canonical flags varint.
-    write_canonical_u32(params.flags, &mut out[head..head + flags_width]);
+    write_canonical_u32(params.flags, &mut out[head..head + flags_width])?;
 
     // TAIL: copy template, then patch app_uuid / report_data / vm_launch_id.
     let tail_start = head + flags_width;
@@ -316,7 +312,7 @@ pub fn write_payload(
 #[doc(hidden)]
 pub fn write_sig_struct(out: &mut [u8], payload: &[u8], payload_len: usize) -> HsmResult<()> {
     if out.len() != SIG_STRUCT_FIXED_LEN + payload_len || payload.len() != payload_len {
-        return Err(HsmError::InternalError);
+        return Err(HsmError::InvalidArg);
     }
     out[0] = 0x84; // array(4)
     out[1] = 0x6a; // tstr(10)
@@ -344,7 +340,7 @@ pub fn write_cose_sign1(
         || payload.len() != payload_len
         || signature_le.len() != SIGNATURE_LEN
     {
-        return Err(HsmError::InternalError);
+        return Err(HsmError::InvalidArg);
     }
     out[0] = 0xD2; // tag 18 (COSE_Sign1)
     out[1] = 0x84; // array(4)
@@ -388,10 +384,13 @@ pub fn canonical_u32_width(value: u32) -> usize {
 }
 
 /// Writes a canonical CBOR unsigned-integer encoding of `value` into
-/// `out`.  `out.len()` must equal [`canonical_u32_width(value)`].
+/// `out`.  `out.len()` must equal [`canonical_u32_width(value)`];
+/// otherwise returns [`HsmError::InvalidArg`].
 #[doc(hidden)]
-pub fn write_canonical_u32(value: u32, out: &mut [u8]) {
-    debug_assert_eq!(out.len(), canonical_u32_width(value));
+pub fn write_canonical_u32(value: u32, out: &mut [u8]) -> HsmResult<()> {
+    if out.len() != canonical_u32_width(value) {
+        return Err(HsmError::InvalidArg);
+    }
     if value <= 23 {
         out[0] = value as u8;
     } else if value <= 0xFF {
@@ -408,6 +407,7 @@ pub fn write_canonical_u32(value: u32, out: &mut [u8]) {
         out[3] = (value >> 8) as u8;
         out[4] = value as u8;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -429,13 +429,13 @@ mod tests {
     #[test]
     fn canonical_bytes() {
         let mut buf = [0u8; 5];
-        write_canonical_u32(0, &mut buf[..1]);
+        write_canonical_u32(0, &mut buf[..1]).unwrap();
         assert_eq!(&buf[..1], &[0x00]);
-        write_canonical_u32(24, &mut buf[..2]);
+        write_canonical_u32(24, &mut buf[..2]).unwrap();
         assert_eq!(&buf[..2], &[0x18, 0x18]);
-        write_canonical_u32(0x1234, &mut buf[..3]);
+        write_canonical_u32(0x1234, &mut buf[..3]).unwrap();
         assert_eq!(&buf[..3], &[0x19, 0x12, 0x34]);
-        write_canonical_u32(0xDEAD_BEEF, &mut buf[..5]);
+        write_canonical_u32(0xDEAD_BEEF, &mut buf[..5]).unwrap();
         assert_eq!(&buf[..5], &[0x1A, 0xDE, 0xAD, 0xBE, 0xEF]);
     }
 }

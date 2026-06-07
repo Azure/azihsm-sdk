@@ -17,6 +17,9 @@
 //! cargo run -p azihsm_fw_core_crypto_key_report_gen
 //! ```
 
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+
 #[cfg(not(target_os = "linux"))]
 fn main() {
     eprintln!("azihsm_fw_core_crypto_key_report_gen requires minicbor and only runs on Linux.");

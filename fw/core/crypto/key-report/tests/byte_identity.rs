@@ -405,20 +405,20 @@ fn keyflags_bitfield_matches_reference() {
 #[test]
 fn canonical_u32_widths() {
     let mut buf = [0u8; 5];
-    write_canonical_u32(0, &mut buf[..1]);
+    write_canonical_u32(0, &mut buf[..1]).unwrap();
     assert_eq!(buf[..1], [0x00]);
-    write_canonical_u32(23, &mut buf[..1]);
+    write_canonical_u32(23, &mut buf[..1]).unwrap();
     assert_eq!(buf[..1], [0x17]);
-    write_canonical_u32(24, &mut buf[..2]);
+    write_canonical_u32(24, &mut buf[..2]).unwrap();
     assert_eq!(buf[..2], [0x18, 0x18]);
-    write_canonical_u32(0xFF, &mut buf[..2]);
+    write_canonical_u32(0xFF, &mut buf[..2]).unwrap();
     assert_eq!(buf[..2], [0x18, 0xFF]);
-    write_canonical_u32(0x100, &mut buf[..3]);
+    write_canonical_u32(0x100, &mut buf[..3]).unwrap();
     assert_eq!(buf[..3], [0x19, 0x01, 0x00]);
-    write_canonical_u32(0xFFFF, &mut buf[..3]);
+    write_canonical_u32(0xFFFF, &mut buf[..3]).unwrap();
     assert_eq!(buf[..3], [0x19, 0xFF, 0xFF]);
-    write_canonical_u32(0x1_0000, &mut buf[..5]);
+    write_canonical_u32(0x1_0000, &mut buf[..5]).unwrap();
     assert_eq!(buf[..5], [0x1A, 0x00, 0x01, 0x00, 0x00]);
-    write_canonical_u32(u32::MAX, &mut buf[..5]);
+    write_canonical_u32(u32::MAX, &mut buf[..5]).unwrap();
     assert_eq!(buf[..5], [0x1A, 0xFF, 0xFF, 0xFF, 0xFF]);
 }

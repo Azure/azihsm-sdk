@@ -39,6 +39,7 @@ members = [
   "fw/core/crypto/hpke",
   "fw/core/crypto/key-masking",
   "fw/core/crypto/key-report",
+  "fw/core/crypto/key-report/gen",
   "fw/core/crypto/x509-chain",
   "fw/core/ddi/mbor/api",
   "fw/core/ddi/mbor/codec",
