@@ -260,7 +260,7 @@ impl StdEcc {
         reverse_copy(&mut x_be[..coord_len], &x_wire[..coord_len]);
         reverse_copy(&mut y_be[..coord_len], &y_wire[..coord_len]);
         let key = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
-            .map_err(|_| HsmError::EccPublicKeyValidationFailed)?;
+            .map_err(|_| HsmError::InvalidArg)?;
 
         let (r_wire, s_wire) = sig_le[..wire_len].split_at(wire_coord);
         let sig_len = coord_len * 2;
@@ -344,7 +344,7 @@ impl StdEcc {
         reverse_copy(&mut x_be[..coord_len], &x_wire[..coord_len]);
         reverse_copy(&mut y_be[..coord_len], &y_wire[..coord_len]);
         let pubk = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
-            .map_err(|_| HsmError::EccPublicKeyValidationFailed)?;
+            .map_err(|_| HsmError::InvalidArg)?;
 
         self.ecdh_derive(priv_key, &pubk, secret_out).await
     }

@@ -36,13 +36,21 @@
 //! mode returns the same deterministic sizes.
 
 use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableHsmKey;
+use azihsm_crypto::PrivateKey;
 
 use super::*;
 
 /// Map the PAL-level [`HsmEccCurve`] to the crypto library's
 /// [`azihsm_crypto::EccCurve`].
+fn reverse_copy(dst: &mut [u8], src: &[u8]) {
+    for (d, s) in dst[..src.len()].iter_mut().zip(src.iter().rev()) {
+        *d = *s;
+    }
+}
+
 fn to_ecc_curve(curve: HsmEccCurve) -> EccCurve {
     match curve {
         HsmEccCurve::P256 => EccCurve::P256,
@@ -98,6 +106,61 @@ impl HsmEcc for StdHsmPal {
             .await?;
         pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
             .map_err(|_| HsmError::EccExportError)?;
+
+        priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
+        pub_out[..wire_pub_len].copy_from_slice(scratch_pub);
+
+        Ok((priv_len, wire_pub_len))
+    }
+
+    /// Deterministically derive an ECC keypair from KDF output.
+    async fn ecc_gen_keypair_from_okm(
+        &self,
+        _io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
+        curve: HsmEccCurve,
+        okm: &DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
+        _pct: HsmEccPct,
+    ) -> HsmResult<(usize, usize)> {
+        let priv_len = curve.wire_coord_len();
+        let wire_pub_len = curve.wire_pub_key_len();
+
+        if okm.len() != curve.a2_1_okm_len() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let Some((priv_out, pub_out)) = out else {
+            return Ok((priv_len, wire_pub_len));
+        };
+
+        if priv_out.len() < priv_len || pub_out.len() < wire_pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let scratch = alloc.dma_alloc(priv_len + wire_pub_len)?;
+        let (scratch_priv, scratch_pub) = scratch.split_at_mut(priv_len);
+
+        let pk = EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), okm)
+            .map_err(|_| HsmError::EccGenerateError)?;
+        pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
+            .map_err(|_| HsmError::EccExportError)?;
+
+        let pub_key = pk
+            .public_key()
+            .map_err(|_| HsmError::EccGetCoordinatesError)?;
+        let coord_len = curve.priv_key_len();
+        let wire_coord = curve.wire_coord_len();
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        pub_key
+            .coord(Some((&mut x_be[..coord_len], &mut y_be[..coord_len])))
+            .map_err(|_| HsmError::EccGetCoordinatesError)?;
+
+        scratch_pub.fill(0);
+        let (x_dst, y_dst) = scratch_pub.split_at_mut(wire_coord);
+        reverse_copy(x_dst, &x_be[..coord_len]);
+        reverse_copy(y_dst, &y_be[..coord_len]);
 
         priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
         pub_out[..wire_pub_len].copy_from_slice(scratch_pub);

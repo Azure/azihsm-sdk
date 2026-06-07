@@ -25,6 +25,8 @@ pub(crate) mod close_session;
 pub(crate) mod get_api_rev;
 pub(crate) mod open_session_finish;
 pub(crate) mod open_session_init;
+pub mod part_init;
+pub mod policy;
 
 use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor::ResponseEncoder;
@@ -72,6 +74,9 @@ pub(crate) mod opcode {
     /// [`super::change_psk`] for the authorization matrix and
     /// AAD layout.
     pub(crate) const CHANGE_PSK: u8 = 0x20;
+
+    /// `PartInit` — bind PTA, policy, and POTA thumbprint.
+    pub(crate) const PART_INIT: u8 = 0x30;
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -152,6 +157,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::OPEN_SESSION_FINISH => open_session_finish::handle(pal, io, view).await,
         opcode::CLOSE_SESSION => close_session::handle(pal, io, view).await,
         opcode::CHANGE_PSK => change_psk::handle(pal, io, view).await,
+        opcode::PART_INIT => part_init::handle(pal, io, view).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -168,6 +174,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::OPEN_SESSION_FINISH
             | opcode::CLOSE_SESSION
             | opcode::CHANGE_PSK
+            | opcode::PART_INIT
     )
 }
 
@@ -187,7 +194,7 @@ fn is_known_opcode(opcode: u8) -> bool {
 fn is_in_session(opcode: u8) -> bool {
     match opcode {
         opcode::GET_API_REV | opcode::OPEN_SESSION_INIT | opcode::OPEN_SESSION_FINISH => false,
-        opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
+        opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -217,7 +224,10 @@ fn is_in_session(opcode: u8) -> bool {
 fn needs_session_id_cross_check(opcode: u8) -> bool {
     match opcode {
         opcode::GET_API_REV | opcode::OPEN_SESSION_INIT => false,
-        opcode::OPEN_SESSION_FINISH | opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
+        opcode::OPEN_SESSION_FINISH
+        | opcode::CLOSE_SESSION
+        | opcode::CHANGE_PSK
+        | opcode::PART_INIT => true,
         _ => true,
     }
 }

@@ -20,6 +20,7 @@ pub mod close_session;
 mod crypto;
 pub mod finish;
 pub mod init;
+pub mod part_init;
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
@@ -36,6 +37,8 @@ pub use init::open_session_init;
 pub use init::open_session_init_with_options;
 pub use init::OpenSessionInitOptions;
 pub use init::PendingHandshake;
+pub use part_init::encrypt_mach_seed_envelope;
+pub use part_init::part_init;
 
 /// One-shot helper: run both phases of the session handshake against
 /// `dev`. Equivalent to `open_session_init(...)? → open_session_finish(...)`.

@@ -15,9 +15,13 @@ azihsm_fw_ddi_tbor_types.workspace = true
 azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor_sim.workspace = true
+azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_tbor_test_helpers.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
+minicbor = { features = ["derive"], workspace = true }
 serial_test.workspace = true
+x509.workspace = true
 
 [lib]
 doctest = false
