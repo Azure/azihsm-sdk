@@ -7,8 +7,7 @@
 
 use azihsm_fw_hsm_pal_traits::HsmError;
 
-/// Errors produced by [`seal`](crate::seal), [`open`](crate::open),
-/// and [`inspect`](crate::inspect).
+/// Errors produced by [`seal`](crate::seal) and [`open`](crate::open).
 ///
 /// `Error` exists so the per-call validation logic can be unit-tested
 /// without dragging in the full [`HsmError`] surface. It is converted
@@ -17,7 +16,7 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     /// The output buffer (for [`seal`](crate::seal)) or input buffer
-    /// (for [`open`](crate::open) / [`inspect`](crate::inspect)) is
+    /// (for [`open`](crate::open)) is
     /// shorter than the envelope length implied by the inputs /
     /// header.
     BufferTooSmall {
