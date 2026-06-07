@@ -313,20 +313,18 @@ impl HsmSessionManager for StdHsmPal {
         Ok(())
     }
 
-    fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId, out: &mut [u8]) -> HsmResult<()> {
-        if out.len() != SESSION_PARAM_KEY_LEN {
-            return Err(HsmError::InvalidArg);
-        }
+    fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf> {
         let entry = self.active_part(io.pid())?;
         let kid = entry.session_table.physical_id(id)?;
         let blob = entry.vault.key(kid)?;
         if blob.len() < SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN {
             return Err(HsmError::InternalError);
         }
-        out.copy_from_slice(
-            &blob[SESSION_API_REV_SIZE..SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN],
-        );
-        Ok(())
+        let key_bytes = &blob[SESSION_API_REV_SIZE..SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN];
+        // SAFETY: same justification as `vault_key` — on the host,
+        // any heap byte is reachable; branding the sub-slice as
+        // `DmaBuf` only satisfies the type system.
+        Ok(unsafe { DmaBuf::from_raw(key_bytes) })
     }
 
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {

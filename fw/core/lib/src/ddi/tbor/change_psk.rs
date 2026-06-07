@@ -37,7 +37,6 @@ use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_pal_traits::PSK_LEN;
-use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
 
 /// PSK slot id written when the active session is the Crypto Officer.
 const PSK_ID_CO: u8 = 0;
@@ -74,8 +73,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal.alloc_scoped_async(io, async |alloc| {
         // Fetch the session's `param_key` schedule (the PAL hides the
         // session-blob layout from us).
-        let param_key = alloc.dma_alloc(SESSION_PARAM_KEY_LEN)?;
-        pal.session_param_key(io, sess_id, param_key)?;
+        let param_key = pal.session_param_key(io, sess_id)?;
 
         // AEAD-open the envelope in place.
         let env_buf = alloc.dma_alloc(envelope.len())?;
