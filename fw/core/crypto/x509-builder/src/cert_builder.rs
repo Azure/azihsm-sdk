@@ -199,9 +199,10 @@ pub fn pad_cn(cn: &str) -> Option<[u8; CN_LEN]> {
 
 /// Pad an ASCII SN string to exactly [`SN_LEN`] bytes with trailing `'0'` chars.
 ///
-/// Returns `None` if the input is too long or contains non-ASCII bytes.
+/// Returns `None` if the input is too long or contains characters that
+/// are not ASCII hex digits (`0..=9 | a..=f | A..=F`).
 pub fn pad_sn(sn: &str) -> Option<[u8; SN_LEN]> {
-    if sn.len() > SN_LEN || !sn.is_ascii() {
+    if sn.len() > SN_LEN || !sn.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let mut result = [b'0'; SN_LEN];
@@ -338,6 +339,9 @@ fn patch_root_tbs(out: &mut [u8], params: &RootCertParams<'_>) -> HsmResult<()> 
 fn patch_leaf_tbs(out: &mut [u8], params: &LeafCertParams<'_>) -> HsmResult<()> {
     use crate::leaf_cert::*;
     validate_serial(params.serial_number)?;
+    if params.key_usage.unused_bits() > 7 {
+        return Err(HsmError::InvalidArg);
+    }
     let subject_cn = pad_cn(params.subject_cn).ok_or(HsmError::InvalidArg)?;
     let subject_sn = pad_sn(params.subject_sn).ok_or(HsmError::InvalidArg)?;
     let issuer_cn = pad_cn(params.issuer_cn).ok_or(HsmError::InvalidArg)?;

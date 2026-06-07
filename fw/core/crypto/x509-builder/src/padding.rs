@@ -30,10 +30,11 @@ pub fn pad_cn_to(cn: &str, out: &mut [u8]) -> Option<()> {
 /// (0x30).
 ///
 /// # Returns
-/// `Some(())` on success, or `None` if `sn` is non-ASCII or longer
-/// than `out`.
+/// `Some(())` on success, or `None` if `sn` is longer than `out` or
+/// contains characters that are not ASCII hex digits
+/// (`0..=9 | a..=f | A..=F`).
 pub fn pad_sn_to(sn: &str, out: &mut [u8]) -> Option<()> {
-    if !sn.is_ascii() || sn.len() > out.len() {
+    if sn.len() > out.len() || !sn.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     out[..sn.len()].copy_from_slice(sn.as_bytes());
@@ -91,5 +92,13 @@ mod tests {
     fn pad_sn_to_overlong_string_returns_none() {
         let mut out = [0u8; 2];
         assert!(pad_sn_to("abcd", &mut out).is_none());
+    }
+
+    #[test]
+    fn pad_sn_to_non_hex_returns_none() {
+        let mut out = [0u8; 8];
+        assert!(pad_sn_to("ZZ", &mut out).is_none());
+        assert!(pad_sn_to("hello", &mut out).is_none());
+        assert!(pad_sn_to("12 34", &mut out).is_none());
     }
 }

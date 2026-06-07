@@ -3,9 +3,12 @@
 
 //! X.509 template generator for AZIHSM.
 //!
-//! Generates DER TBS (To-Be-Signed) templates for Root CA, Intermediate CA,
-//! Leaf certificates, and PKCS#10 CSRs. Output is written as Rust source
-//! files to the runtime crate's `src/` directory.
+//! Generates DER TBS (To-Be-Signed) templates for Root CA and Leaf
+//! certificates, and a PKCS#10 CSR. Output is written as Rust source
+//! files to the runtime crate's `src/` directory (`root_cert.rs`,
+//! `leaf_cert.rs`, `csr.rs`). An intermediate CA is constructed
+//! internally only to act as the leaf's issuer; no `intermediate_cert.rs`
+//! is emitted.
 //!
 //! # How It Works
 //!
@@ -20,7 +23,7 @@
 //! # Usage
 //!
 //! ```sh
-//! cargo run -p azihsm_fw_hsm_std_x509_gen
+//! cargo run -p azihsm_fw_core_crypto_x509_builder_gen
 //! ```
 //!
 //! This tool requires OpenSSL and **only builds on Linux**.
@@ -99,12 +102,12 @@ fn main() {
 
 /// Determine the output directory (runtime crate's `src/` directory).
 ///
-/// The generator lives at `fw/plat/std/x509/gen/`; templates are written
-/// to `fw/plat/std/x509/src/`.
+/// The generator lives at `fw/core/crypto/x509-builder/gen/`; templates
+/// are written to `fw/core/crypto/x509-builder/src/`.
 #[cfg(target_os = "linux")]
 fn output_dir() -> std::path::PathBuf {
-    // The generator is at fw/plat/std/x509/gen/
-    // Output goes to fw/plat/std/x509/src/
+    // The generator is at fw/core/crypto/x509-builder/gen/
+    // Output goes to fw/core/crypto/x509-builder/src/
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     std::path::PathBuf::from(manifest_dir)
         .parent()

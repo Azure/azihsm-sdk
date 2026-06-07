@@ -168,7 +168,7 @@ pub async fn build_csr<'a>(
     Ok(n)
 }
 
-/// Worst-case `Certificate ::= SEQUENCE { TBS, AlgId, BIT STRING sig }`
+/// Worst-case PKCS#10 `CertificationRequest ::= SEQUENCE { TBS, AlgId, BIT STRING sig }`
 /// size for a TBS of the given length.
 fn max_signed_size(tbs_len: usize) -> usize {
     let max_content = tbs_len + ECDSA_SHA384_ALG_ID.len() + MAX_ECDSA384_SIG_DER_LEN;
@@ -203,7 +203,7 @@ fn patch_field(tbs: &mut [u8], offset: usize, value: &[u8]) -> HsmResult<()> {
     Ok(())
 }
 
-/// Assemble `CertificationRequest ::= SEQUENCE { TBS, AlgId, BIT STRING sig }`
+/// Assemble PKCS#10 `CertificationRequest ::= SEQUENCE { TBS, AlgId, BIT STRING sig }`
 /// into `out`.  The PAL-returned signature is in `r || s` LE-by-half
 /// wire format and is converted to big-endian halves for DER
 /// INTEGER encoding.
