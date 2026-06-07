@@ -79,7 +79,7 @@ impl AeadAlg {
 
     /// AAD-length granularity in bytes. `aad_len` must be `0` or a
     /// multiple of this value at [`seal`](crate::seal) /
-    /// [`open`](crate::open) / [`inspect`](crate::inspect).
+    /// [`open`](crate::open).
     ///
     /// AES-256-GCM uses `32` — the ocelot BCP `[padded_AAD | text]`
     /// hardware layout requires AAD padding to a 32-byte boundary,

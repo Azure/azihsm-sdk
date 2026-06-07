@@ -150,27 +150,15 @@ pub(crate) async fn open_gcm<'a>(
             other => Error::Backend(other),
         })?;
 
-    // Re-borrow `buf` immutably to construct the borrowed view.
+    // Re-borrow `buf` immutably to construct the DmaBuf sub-views.
+    // All ranges are validated by `region_offsets`; the indexed
+    // accesses below cannot panic.
     let view = &*buf;
-    let iv = view
-        .get(iv_off..aad_off)
-        .ok_or(Error::BufferTooSmall { needed: aad_off })?;
-    let aad = view
-        .get(aad_off..payload_off)
-        .ok_or(Error::BufferTooSmall {
-            needed: payload_off,
-        })?;
-    let payload = view
-        .get(payload_off..tag_off)
-        .ok_or(Error::BufferTooSmall { needed: tag_off })?;
-    let tag_view = view
-        .get(tag_off..total_len)
-        .ok_or(Error::BufferTooSmall { needed: total_len })?;
     Ok(AeadEnvelope {
         alg: header.alg,
-        iv,
-        aad,
-        payload,
-        tag: tag_view,
+        iv: &view[iv_off..aad_off],
+        aad: &view[aad_off..payload_off],
+        payload: &view[payload_off..tag_off],
+        tag: &view[tag_off..total_len],
     })
 }

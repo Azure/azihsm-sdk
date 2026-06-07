@@ -94,7 +94,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             return Err(HsmError::InvalidArg);
         }
         let expected_aad = build_psk_change_aad(u16::from(sess_id));
-        if view.aad != expected_aad.as_slice() {
+        let aad_bytes: &[u8] = view.aad;
+        if aad_bytes != expected_aad.as_slice() {
             return Err(HsmError::AeadEnvelopeAuthFailed);
         }
         if view.payload.len() != PSK_LEN {

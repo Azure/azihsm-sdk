@@ -3,14 +3,13 @@
 
 //! Borrowed view of a parsed envelope.
 //!
-//! Returned by both [`inspect`](crate::inspect) and
-//! [`open`](crate::open). The semantics of
-//! [`AeadEnvelope::payload`] depend on which call produced the view:
-//!
-//! | Producer  | `payload` contents |
-//! |-----------|---------------------|
-//! | [`inspect`](crate::inspect) | Ciphertext — header is parsed, no decryption. |
-//! | [`open`](crate::open)       | Plaintext — PAL has decrypted in place. |
+//! Returned by [`open`](crate::open) after the PAL has decrypted
+//! the envelope in place.  All fields are sub-views (`&DmaBuf`)
+//! of the same source buffer so the parsed regions retain their
+//! DMA provenance and can flow into further PAL crypto primitives
+//! without a re-allocation.
+
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 
 use crate::alg::AeadAlg;
 use crate::error::Error;
@@ -19,25 +18,24 @@ use crate::format::Header;
 use crate::format::HEADER_LEN;
 
 /// Borrowed view over the regions of an envelope sitting in a
-/// caller-owned buffer.
+/// caller-owned [`DmaBuf`].
 ///
-/// All fields are sub-slices of the input buffer; constructing an
+/// All fields are sub-views of the input buffer; constructing an
 /// `AeadEnvelope` performs no copies. The `'a` lifetime ties every
 /// field back to the source buffer.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct AeadEnvelope<'a> {
     /// AEAD algorithm read from the envelope header.
     pub alg: AeadAlg,
     /// The 12-byte GCM nonce.
-    pub iv: &'a [u8],
+    pub iv: &'a DmaBuf,
     /// Additional authenticated data (may be empty).
-    pub aad: &'a [u8],
-    /// Ciphertext (after [`inspect`](crate::inspect)) or plaintext
-    /// (after [`open`](crate::open)). Length always equals
-    /// `envelope_total - header - iv - aad - tag`.
-    pub payload: &'a [u8],
+    pub aad: &'a DmaBuf,
+    /// Plaintext payload (decrypted in place by [`open`](crate::open)).
+    /// Length always equals `envelope_total - header - iv - aad - tag`.
+    pub payload: &'a DmaBuf,
     /// The 16-byte GCM authentication tag.
-    pub tag: &'a [u8],
+    pub tag: &'a DmaBuf,
 }
 
 /// Compute the byte offsets of the IV, AAD, payload, and tag
