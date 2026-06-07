@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_core_crypto_key_report_gen"
+version = "0.1.0"
+
+[[bin]]
+name = "key-report-gen"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+minicbor = { features = ["derive", "std"], workspace = true }
+
+[lints]
+workspace = true

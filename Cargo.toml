@@ -38,6 +38,8 @@ members = [
   "fw/core/crypto/gcm-buf",
   "fw/core/crypto/hpke",
   "fw/core/crypto/key-masking",
+  "fw/core/crypto/key-report",
+  "fw/core/crypto/key-report/gen",
   "fw/core/crypto/x509-chain",
   "fw/core/ddi/mbor/api",
   "fw/core/ddi/mbor/codec",
@@ -116,6 +118,7 @@ azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
 azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
+azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common
