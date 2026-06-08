@@ -739,7 +739,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_zero_unwrap_key_handle
             &pub_prop_list
         );
 
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -767,7 +767,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_public_rsa_key_as_unwr
             &pub_prop_list
         );
 
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_HANDLE); 
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -1051,7 +1051,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_private_prop_list_zero
             &public_key
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
         ASSERT_EQ(private_key, 0);
         ASSERT_EQ(public_key, 0);
     });
