@@ -7,29 +7,63 @@
 //! deterministic PTA keypair, persists the caller-asserted
 //! `PartPolicy` + POTA thumbprint into partition state, and returns
 //! the PTA CSR + COSE_Sign1 PTA key-attestation report.  See
-//! [`azihsm_fw_ddi_tbor_types::part_init`] for the full wire schema.
+//! `azihsm_fw_ddi_tbor_types::part_init` for the full wire schema.
 
 use alloc::vec::Vec;
 
-pub use azihsm_fw_ddi_tbor_types::build_part_init_mach_seed_aad;
-pub use azihsm_fw_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
-pub use azihsm_fw_ddi_tbor_types::MACH_SEED_LEN;
-pub use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
-pub use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
-pub use azihsm_fw_ddi_tbor_types::PART_POLICY_LEN;
-pub use azihsm_fw_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-pub use azihsm_fw_ddi_tbor_types::PTA_CSR_MAX_LEN;
-pub use azihsm_fw_ddi_tbor_types::PTA_REPORT_MAX_LEN;
-pub use azihsm_fw_ddi_tbor_types::TBOR_OP_PART_INIT;
+use open_enum::open_enum;
 
 use crate::tbor;
+
+/// TBOR opcode for `PartInit`.
+pub const TBOR_OP_PART_INIT: u8 = 0x30;
+
+/// Length of the raw `mach_seed` plaintext (32 B).
+pub const MACH_SEED_LEN: usize = 32;
+
+/// AAD label prefix bound into the `mach_seed_envelope` AAD.
+pub const PART_INIT_MACH_SEED_AAD_LABEL: &[u8; 17] = b"part-init-seed-v1";
+
+/// Total AAD length bound into the `mach_seed_envelope` (label + session_id LE + zero-padding).
+pub const PART_INIT_MACH_SEED_AAD_LEN: usize = 32;
+
+/// Maximum on-the-wire length of the `mach_seed_envelope`.
+pub const MACH_SEED_ENVELOPE_MAX_LEN: usize = 160;
+
+/// Wire-pinned `PartPolicy` byte length.
+pub const PART_POLICY_LEN: usize = 167;
+
+/// Length of the SHA-384 POTA thumbprint (48 B).
+pub const POTA_THUMBPRINT_LEN: usize = 48;
+
+/// Maximum on-the-wire length of the PTA CSR (`pta_csr` response field).
+pub const PTA_CSR_MAX_LEN: usize = 512;
+
+/// Maximum on-the-wire length of the PTA attestation report (`pta_report` response field).
+pub const PTA_REPORT_MAX_LEN: usize = 1024;
+
+/// Discriminants for the `PolicyPubKey::kind` field within the wire
+/// [`PartPolicy`] bytes.
+///
+/// Stored in the wire layout as little-endian `[u8; 2]`.  Host-side
+/// mirror of `azihsm_fw_ddi_tbor_types::policy::PolicyKeyKind` —
+/// defined locally so this crate has no firmware dependency.  Open
+/// enum so a future spec value gets a new associated `pub const`
+/// without breaking exhaustive matches in older code.
+#[repr(u16)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyKeyKind {
+    /// ECC P-384 public key.
+    Ecc384 = 0,
+}
 
 /// Host-facing TBOR `PartInit` request.
 ///
 /// Field sizes are pinned to the FW schema; passing a slice of the
 /// wrong length produces a host-side encode error before the request
 /// reaches the device.
-#[tbor(session_ctrl = in_session)]
+#[tbor(opcode = TBOR_OP_PART_INIT, session_ctrl = in_session)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TborPartInitReq {
     /// CO session id this request is bound to.  Cross-checked
@@ -38,14 +72,16 @@ pub struct TborPartInitReq {
     pub session_id: u16,
 
     /// AEAD-GCM envelope wrapping the 32-byte `mach_seed` plaintext
-    /// under the active session's `param_key`.  Construct with
-    /// [`build_part_init_mach_seed_aad`] as the AAD.
+    /// under the active session's `param_key`.  Construct via the
+    /// `encrypt_mach_seed_envelope` test harness helper, or by sealing
+    /// directly under the canonical AAD layout
+    /// pinned by [`PART_INIT_MACH_SEED_AAD_LABEL`] /
+    /// [`PART_INIT_MACH_SEED_AAD_LEN`].
     #[tbor(max_len = 160)]
     pub mach_seed_envelope: Vec<u8>,
 
-    /// Caller-asserted [`PartPolicy`] bytes.
-    ///
-    /// [`PartPolicy`]: azihsm_fw_ddi_tbor_types::policy::PartPolicy
+    /// Caller-asserted `PartPolicy` bytes (167 B, alignment-1 fixed
+    /// layout pinned by the FW schema).
     pub part_policy: [u8; PART_POLICY_LEN],
 
     /// SHA-384 thumbprint of the POTA certificate the partition is
@@ -78,44 +114,4 @@ pub struct TborPartInitResp {
     /// COSE_Sign1 PTA key-attestation report signed by the PID.
     #[tbor(max_len = 1024)]
     pub pta_report: Vec<u8>,
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use azihsm_fw_ddi_tbor_types::TborPartInitReq as ReqSchema;
-
-    use super::*;
-    use crate::TborOpReq;
-
-    #[test]
-    fn opcode_matches_schema() {
-        assert_eq!(<TborPartInitReq as TborOpReq>::OPCODE, TBOR_OP_PART_INIT);
-    }
-
-    #[test]
-    fn encode_decode_round_trip() {
-        let mach_seed_envelope: Vec<u8> = (0u8..100).collect();
-        let mut part_policy = [0u8; PART_POLICY_LEN];
-        for (i, b) in part_policy.iter_mut().enumerate() {
-            *b = i as u8;
-        }
-        let mut pota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
-        for (i, b) in pota_thumbprint.iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(3);
-        }
-        let req = TborPartInitReq {
-            session_id: 0x0042,
-            mach_seed_envelope: mach_seed_envelope.clone(),
-            part_policy,
-            pota_thumbprint,
-        };
-        let mut buf = [0u8; 512];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(u16::from(view.session_id()), 0x0042);
-        assert_eq!(view.mach_seed_envelope(), mach_seed_envelope.as_slice());
-        assert_eq!(view.part_policy(), &part_policy);
-        assert_eq!(view.pota_thumbprint(), &pota_thumbprint);
-    }
 }

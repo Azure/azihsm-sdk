@@ -7,4 +7,7 @@
 //! happy-path round-trip tests, or `--features mock` for the negative
 //! `UnsupportedEncoding` test.
 
-pub mod integration;
+#[cfg(any(feature = "emu", feature = "mock"))]
+pub mod harness;
+
+pub mod commands;
