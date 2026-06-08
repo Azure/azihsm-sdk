@@ -6,10 +6,12 @@
 //! `RequestView` and `ResponseView` borrow the input buffer and provide
 //! infallible accessor methods after a single upfront validation pass.
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+
 use crate::error::DecodeError;
 use crate::toc::*;
 
-// ── RequestView ────────────────────────────────────────────────────────
+// ── RequestView ───────────────────────────────────────────────────────
 
 /// Zero-copy view over a TBOR request message.
 ///
@@ -17,7 +19,7 @@ use crate::toc::*;
 /// The view borrows the input buffer for the lifetime `'a`.
 #[derive(Debug)]
 pub struct RequestView<'a> {
-    buf: &'a [u8],
+    buf: &'a DmaBuf,
 }
 
 impl<'a> RequestView<'a> {
@@ -31,7 +33,7 @@ impl<'a> RequestView<'a> {
     /// - Fixed-size types have correct lengths (uint32=4, uint64=8)
     ///
     /// Reserved bits are silently ignored per spec.
-    pub fn parse(buf: &'a [u8]) -> Result<Self, DecodeError> {
+    pub fn parse(buf: &'a DmaBuf) -> Result<Self, DecodeError> {
         // Minimum: 4-byte header + 1 TOC entry = 8 bytes.
         if buf.len() < REQ_HEADER_LEN + 4 {
             return Err(DecodeError::BufferTooShort {
@@ -60,10 +62,7 @@ impl<'a> RequestView<'a> {
         // Validate all known offset/length TOC entries.
         validate_toc_entries(buf, REQ_HEADER_LEN, toc_count, data_size)?;
 
-        // Pre-slice to exact message bounds.
-        Ok(Self {
-            buf: &buf[..buf.len()],
-        })
+        Ok(Self { buf })
     }
 
     /// Protocol version.
@@ -110,7 +109,7 @@ impl<'a> RequestView<'a> {
 
     /// The raw message bytes.
     #[inline]
-    pub fn as_bytes(&self) -> &'a [u8] {
+    pub fn as_bytes(&self) -> &'a DmaBuf {
         self.buf
     }
 
@@ -135,7 +134,7 @@ impl<'a> RequestView<'a> {
 
     /// The raw variable-length data section.
     #[inline]
-    pub fn data_section(&self) -> &'a [u8] {
+    pub fn data_section(&self) -> &'a DmaBuf {
         &self.buf[self.data_start()..]
     }
 }
@@ -147,7 +146,7 @@ impl<'a> RequestView<'a> {
 /// After [`parse()`](Self::parse) succeeds, all accessors are infallible.
 #[derive(Debug)]
 pub struct ResponseView<'a> {
-    buf: &'a [u8],
+    buf: &'a DmaBuf,
 }
 
 impl<'a> ResponseView<'a> {
@@ -161,7 +160,7 @@ impl<'a> ResponseView<'a> {
     /// - Fixed-size types have correct lengths (uint32=4, uint64=8)
     ///
     /// Reserved bits are silently ignored per spec.
-    pub fn parse(buf: &'a [u8]) -> Result<Self, DecodeError> {
+    pub fn parse(buf: &'a DmaBuf) -> Result<Self, DecodeError> {
         // Minimum: 8-byte header + 1 TOC entry = 12 bytes.
         if buf.len() < RESP_HEADER_LEN + 4 {
             return Err(DecodeError::BufferTooShort {
@@ -189,9 +188,7 @@ impl<'a> ResponseView<'a> {
 
         validate_toc_entries(buf, RESP_HEADER_LEN, toc_count, data_size)?;
 
-        Ok(Self {
-            buf: &buf[..buf.len()],
-        })
+        Ok(Self { buf })
     }
 
     /// Protocol version.
@@ -250,7 +247,7 @@ impl<'a> ResponseView<'a> {
 
     /// The raw message bytes.
     #[inline]
-    pub fn as_bytes(&self) -> &'a [u8] {
+    pub fn as_bytes(&self) -> &'a DmaBuf {
         self.buf
     }
 
@@ -275,7 +272,7 @@ impl<'a> ResponseView<'a> {
 
     /// The raw variable-length data section.
     #[inline]
-    pub fn data_section(&self) -> &'a [u8] {
+    pub fn data_section(&self) -> &'a DmaBuf {
         &self.buf[self.data_start()..]
     }
 }

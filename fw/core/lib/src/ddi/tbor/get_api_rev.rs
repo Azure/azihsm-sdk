@@ -9,7 +9,6 @@
 //! the request body is empty (the derive emits a synthetic `none`
 //! placeholder TOC entry), and the response carries `(min, max)`.
 
-use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor_types::TborGetApiRevReq;
 use azihsm_fw_ddi_tbor_types::TborGetApiRevResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -34,9 +33,9 @@ pub(crate) const MAX_PROTOCOL_VERSION: u8 = 1;
 pub(crate) fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let _ = TborGetApiRevReq::decode(view.as_bytes())?;
+    let _ = TborGetApiRevReq::decode(req_buf)?;
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborGetApiRevResp::encode(buf, 0, false)?
             .min_protocol_version(MIN_PROTOCOL_VERSION)?

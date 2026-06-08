@@ -99,9 +99,14 @@ fn part_init_envelope_from_other_session_emu() {
 /// AAD bytes of arbitrary but valid AEAD granularity (64 bytes —
 /// double the canonical [`PART_INIT_MACH_SEED_AAD_LEN`] of 32).
 /// AEAD-open succeeds (the FW recomputes the tag over these bytes),
-/// but the FW's `view.aad.len() != PART_INIT_MACH_SEED_AAD_LEN`
-/// length check rejects with [`TborStatus::InvalidArg`] before the
-/// AAD content compare runs. Mirrors `change_psk_wrong_aad_length_emu`.
+/// but the FW collapses any post-auth wire-shape mismatch (AAD
+/// length / layout / payload length) into
+/// [`TborStatus::AeadEnvelopeAuthFailed`] — see
+/// `open_mach_seed_envelope` in the FW part_init handler: once
+/// authentication has succeeded the only way the shape can diverge
+/// is a sender that constructed the envelope against a different
+/// protocol contract, which is operationally indistinguishable from
+/// a forgery attempt.
 #[test]
 fn part_init_wrong_aad_length_emu() {
     let ctx = TestCtx::new();
@@ -117,14 +122,15 @@ fn part_init_wrong_aad_length_emu() {
     req.part_policy.copy_from_slice(&known_good_part_policy());
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
 
 /// `mach_seed` plaintext length ≠ [`MACH_SEED_LEN`] (32). AEAD-open
-/// succeeds, but the FW's plaintext-length check rejects with
-/// [`TborStatus::InvalidArg`] before any partition-state mutation.
-/// Loop over `MACH_SEED_LEN ± 1` to cover the shortest excursions on
-/// either side of the canonical length. Mirrors
+/// succeeds, but the FW collapses the post-auth length mismatch into
+/// [`TborStatus::AeadEnvelopeAuthFailed`] (see
+/// `part_init_wrong_aad_length_emu` for the rationale). Loop over
+/// `MACH_SEED_LEN ± 1` to cover the shortest excursions on either
+/// side of the canonical length. Mirrors
 /// `change_psk_wrong_plaintext_length_emu`.
 #[test]
 fn part_init_wrong_mach_seed_length_emu() {
@@ -150,7 +156,7 @@ fn part_init_wrong_mach_seed_length_emu() {
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed length {len} (\u{2260} MACH_SEED_LEN={MACH_SEED_LEN}) must be rejected",
         ));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidArg);
+        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
     }
 }
 
