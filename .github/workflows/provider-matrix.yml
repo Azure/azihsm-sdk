@@ -220,14 +220,20 @@ jobs:
             "https://nginx.org/packages/mainline/${host}/pool/nginx/n/nginx/nginx_1.29.0-1~${codename}_amd64.deb"
           apt-get install -y --no-install-recommends /tmp/nginx.deb
 
-      # On 3.5.x cells the system OpenSSL provides OPENSSL_3.2.0+ symbols, so
-      # the distro's own nginx links fine and needs no version pin.  (nginx.org
-      # has no 1.29.0 build for the 26.04 codename anyway.)
-      - name: Install nginx (OpenSSL 3.5)
+      # On 3.5.x cells we need nginx >= 1.29.0 for the `store:` cert-key scheme
+      # (added in mainline 1.29.0; the distro's stable 1.28.x lacks it and would
+      # treat `store:azihsm://...` as a filename).  nginx.org now publishes a
+      # mainline build for the 26.04 codename (resolute), and 1.29.1+ linking
+      # against OPENSSL_3.2.0+ is fine here since system OpenSSL is 3.5.x.
+      - name: Install nginx 1.29.8 (OpenSSL 3.5)
         if: matrix.nginx && matrix.openssl_minor == '3.5'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends nginx
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          host=$(. /etc/os-release && echo "$ID")
+          curl -fsSL -o /tmp/nginx.deb \
+            "https://nginx.org/packages/mainline/${host}/pool/nginx/n/nginx/nginx_1.29.8-1~${codename}_amd64.deb"
+          apt-get install -y --no-install-recommends /tmp/nginx.deb
 
       # Each suite is its own GHA step.  `!cancelled()` lets capi + nginx
       # run even when cli fails, so the cell's PR check list shows three
