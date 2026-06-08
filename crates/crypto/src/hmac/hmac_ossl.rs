@@ -126,13 +126,23 @@ impl IsolatedHmac {
     /// number of bytes written.
     #[allow(unsafe_code)]
     fn finish(&mut self, out: &mut [u8]) -> Result<usize, CryptoError> {
-        let mut outl: usize = 0;
-        // SAFETY: `out` is valid for `out.len()` bytes; `outl` receives the
-        // number of bytes written.
-        let ok =
-            unsafe { ffi::EVP_MAC_final(self.ctx, out.as_mut_ptr(), &mut outl, out.len() as _) };
+        // `outl` is a pure C out-parameter: `EVP_MAC_final` writes the number of
+        // bytes produced and never reads it, so it starts uninitialised and
+        // carries no initial value into the call.
+        let mut outl = std::mem::MaybeUninit::<usize>::uninit();
+        // SAFETY: `out` is valid for `out.len()` bytes; `outl` is a valid
+        // `*mut size_t` that receives the number of bytes written.
+        let ok = unsafe {
+            ffi::EVP_MAC_final(
+                self.ctx,
+                out.as_mut_ptr(),
+                outl.as_mut_ptr(),
+                out.len() as _,
+            )
+        };
         if ok == 1 {
-            Ok(outl)
+            // SAFETY: a successful `EVP_MAC_final` initialised `outl`.
+            Ok(unsafe { outl.assume_init() })
         } else {
             Err(CryptoError::HmacSignFinishError)
         }
