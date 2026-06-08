@@ -65,12 +65,14 @@ mod get_api_rev;
 mod open_session_finish;
 mod open_session_init;
 mod part_init;
+mod status;
 pub use change_psk::*;
 pub use close_session::*;
 pub use get_api_rev::*;
 pub use open_session_finish::*;
 pub use open_session_init::*;
 pub use part_init::*;
+pub use status::*;
 
 /// Trait implemented by host-side TBOR request value types.
 ///
