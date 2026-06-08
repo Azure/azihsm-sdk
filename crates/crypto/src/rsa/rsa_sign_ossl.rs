@@ -23,10 +23,26 @@
 //! - PKCS#1 v1.5 is deterministic and may be vulnerable to certain attacks
 //! - Always hash messages before signing (this module expects pre-computed digests)
 
-use openssl::pkey_ctx::*;
 use openssl::rsa::*;
 
 use super::*;
+
+// `EVP_PKEY_CTX_new_from_pkey` builds an operation context in an explicit
+// `OSSL_LIB_CTX`. The `openssl` crate's `PkeyCtx` uses the legacy
+// `EVP_PKEY_CTX_new`, which fetches the RSA sign/verify op from the *process
+// default* libctx regardless of the key — on OpenSSL 3.5 that resolves to the
+// azihsm provider and re-enters it during the HSM session open. Building the
+// ctx in the crate-private libctx (default-provider only) keeps the op fetch
+// off azihsm. This symbol exists in OpenSSL 3.0+ libcrypto but is not bound by
+// openssl-sys 0.9.x, so it is declared here. See [`crate::libctx`].
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    fn EVP_PKEY_CTX_new_from_pkey(
+        libctx: *mut openssl_sys::OSSL_LIB_CTX,
+        pkey: *mut openssl_sys::EVP_PKEY,
+        propquery: *const std::os::raw::c_char,
+    ) -> *mut openssl_sys::EVP_PKEY_CTX;
+}
 
 /// RSA signing and verification context for pre-hashed data using OpenSSL.
 ///
@@ -83,20 +99,58 @@ impl SignOp for OsslRsaSignAlgo {
     /// - The digest size doesn't match the expected hash output size
     /// - The OpenSSL signing operation fails
     /// - The signature buffer is too small
+    #[allow(unsafe_code)]
     fn sign(
         &mut self,
         key: &Self::Key,
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        let mut pkey_ctx = PkeyCtx::new(key.pkey()).map_err(|_| CryptoError::RsaError)?;
-        pkey_ctx
-            .sign_init()
-            .map_err(|_| CryptoError::RsaSignError)?;
-        self.configure_pkey_ctx(&mut pkey_ctx)?;
-        let len = pkey_ctx
-            .sign(data, signature)
-            .map_err(|_| CryptoError::RsaSignError)?;
+        use std::ptr;
+
+        use foreign_types::ForeignTypeRef;
+        use openssl_sys as ffi;
+
+        // Fetch the signature digest (and MGF1 digest for PSS) from the
+        // crate-private libctx so it never resolves to azihsm; kept alive for
+        // the whole op via `md`.
+        let md = self.fetch_md()?;
+
+        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
+        // path; the signature length is sized from the first `EVP_PKEY_sign`
+        // (sig=NULL) query. `md` outlives the call.
+        let len = unsafe {
+            let ctx = EVP_PKEY_CTX_new_from_pkey(
+                crate::libctx::crypto_libctx_ptr(),
+                key.pkey().as_ptr(),
+                ptr::null(),
+            );
+            if ctx.is_null() {
+                return Err(CryptoError::RsaError);
+            }
+            let result = (|| {
+                if ffi::EVP_PKEY_sign_init(ctx) != 1 {
+                    return Err(CryptoError::RsaSignError);
+                }
+                self.configure_ctx(ctx, md.as_ref())?;
+                // Mirror `PkeyCtx::sign`: a single `EVP_PKEY_sign`. With no
+                // buffer, sig=NULL and siglen=0 yields the required size; with
+                // a buffer, siglen starts at its length and is updated to the
+                // bytes written. Any failure (including a too-small buffer)
+                // maps to `RsaSignError`, as before.
+                let mut siglen = signature.as_ref().map_or(0, |b| b.len());
+                let sig_ptr = signature.map_or(ptr::null_mut(), |b| b.as_mut_ptr());
+                if ffi::EVP_PKEY_sign(ctx, sig_ptr, &mut siglen, data.as_ptr(), data.len() as _)
+                    != 1
+                {
+                    return Err(CryptoError::RsaSignError);
+                }
+                Ok(siglen)
+            })();
+            ffi::EVP_PKEY_CTX_free(ctx);
+            result?
+        };
+
         Ok(len)
     }
 }
@@ -128,26 +182,58 @@ impl VerifyOp for OsslRsaSignAlgo {
     ///
     /// Any error from the final OpenSSL `verify` call is treated as an invalid
     /// signature and returns `Ok(false)` (fail-closed).
+    #[allow(unsafe_code)]
     fn verify(
         &mut self,
         key: &Self::Key,
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, CryptoError> {
-        let mut pkey_ctx = PkeyCtx::new(key.pkey()).map_err(|_| CryptoError::RsaError)?;
-        pkey_ctx
-            .verify_init()
-            .map_err(|_| CryptoError::RsaVerifyError)?;
-        self.configure_pkey_ctx(&mut pkey_ctx)?;
-        // After successful setup, OpenSSL may report an invalid RSA signature
-        // either as Ok(false) or, in some cases/platforms, by pushing an error
-        // onto its stack. All operational failure modes (allocation, init,
-        // configuration) have already been handled above, so treat any error
-        // from the final verify step as an invalid signature (fail-closed).
-        match pkey_ctx.verify(data, signature) {
-            Ok(valid) => Ok(valid),
-            Err(_) => Ok(false),
-        }
+        use std::ptr;
+
+        use foreign_types::ForeignTypeRef;
+        use openssl_sys as ffi;
+
+        // Fetch the signature digest (and MGF1 digest for PSS) from the
+        // crate-private libctx so it never resolves to azihsm; kept alive for
+        // the whole op via `md`.
+        let md = self.fetch_md()?;
+
+        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
+        // path; `data`/`signature` are valid for the call. `md` outlives it.
+        let valid = unsafe {
+            let ctx = EVP_PKEY_CTX_new_from_pkey(
+                crate::libctx::crypto_libctx_ptr(),
+                key.pkey().as_ptr(),
+                ptr::null(),
+            );
+            if ctx.is_null() {
+                return Err(CryptoError::RsaError);
+            }
+            let result = (|| {
+                if ffi::EVP_PKEY_verify_init(ctx) != 1 {
+                    return Err(CryptoError::RsaVerifyError);
+                }
+                self.configure_ctx(ctx, md.as_ref())?;
+                // After successful setup, all operational failure modes
+                // (allocation, init, configuration) have been handled above.
+                // `EVP_PKEY_verify` returns 1 for a valid signature; anything
+                // else (0 invalid, negative error, malformed signature) is
+                // treated as an invalid signature (fail-closed), matching the
+                // prior `Err(_) => Ok(false)` behaviour.
+                Ok(ffi::EVP_PKEY_verify(
+                    ctx,
+                    signature.as_ptr(),
+                    signature.len() as _,
+                    data.as_ptr(),
+                    data.len() as _,
+                ) == 1)
+            })();
+            ffi::EVP_PKEY_CTX_free(ctx);
+            result?
+        };
+
+        Ok(valid)
     }
 }
 
@@ -176,20 +262,59 @@ impl VerifyRecoverOp for OsslRsaSignAlgo {
     /// Returns an error if:
     /// - The OpenSSL verification or recovery operation fails
     /// - The output buffer is too small
+    #[allow(unsafe_code)]
     fn verify_recover(
         &mut self,
         key: &Self::Key,
         signature: &[u8],
         output: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        let mut pkey_ctx = PkeyCtx::new(key.pkey()).map_err(|_| CryptoError::RsaError)?;
-        pkey_ctx
-            .verify_recover_init()
-            .map_err(|_| CryptoError::RsaVerifyError)?;
-        self.configure_pkey_ctx(&mut pkey_ctx)?;
-        let len = pkey_ctx
-            .verify_recover(signature, output)
-            .map_err(|_| CryptoError::RsaVerifyError)?;
+        use std::ptr;
+
+        use foreign_types::ForeignTypeRef;
+        use openssl_sys as ffi;
+
+        // Fetch the signature digest (and MGF1 digest for PSS) from the
+        // crate-private libctx so it never resolves to azihsm; kept alive for
+        // the whole op via `md`.
+        let md = self.fetch_md()?;
+
+        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
+        // path; `signature` is valid for the call. `md` outlives it.
+        let len = unsafe {
+            let ctx = EVP_PKEY_CTX_new_from_pkey(
+                crate::libctx::crypto_libctx_ptr(),
+                key.pkey().as_ptr(),
+                ptr::null(),
+            );
+            if ctx.is_null() {
+                return Err(CryptoError::RsaError);
+            }
+            let result = (|| {
+                if ffi::EVP_PKEY_verify_recover_init(ctx) != 1 {
+                    return Err(CryptoError::RsaVerifyError);
+                }
+                self.configure_ctx(ctx, md.as_ref())?;
+                // Mirror `PkeyCtx::verify_recover`: a single call with the
+                // output length pre-seeded (buffer length, or 0 when querying).
+                let mut written = output.as_ref().map_or(0, |b| b.len());
+                let out_ptr = output.map_or(ptr::null_mut(), |b| b.as_mut_ptr());
+                if ffi::EVP_PKEY_verify_recover(
+                    ctx,
+                    out_ptr,
+                    &mut written,
+                    signature.as_ptr(),
+                    signature.len() as _,
+                ) != 1
+                {
+                    return Err(CryptoError::RsaVerifyError);
+                }
+                Ok(written)
+            })();
+            ffi::EVP_PKEY_CTX_free(ctx);
+            result?
+        };
+
         Ok(len)
     }
 }
@@ -270,30 +395,72 @@ impl OsslRsaSignAlgo {
         }
     }
 
-    /// Configures the OpenSSL signer with the appropriate padding and parameters.
-    ///
-    /// Sets the padding mode and, for PSS, configures the salt length and MGF1 hash algorithm.
-    ///
-    /// # Arguments
-    ///
-    /// * `signer` - The OpenSSL signer to configure
-    fn configure_pkey_ctx<T>(&self, pkey_ctx: &mut PkeyCtx<T>) -> Result<(), CryptoError> {
-        pkey_ctx
-            .set_rsa_padding(self.padding)
-            .map_err(|_| CryptoError::RsaSetPropertyError)?;
+    /// Fetches the configured signature digest from the crate-private libctx so
+    /// it never resolves to azihsm, returning `None` when no hash is configured
+    /// (raw no-padding signing). The returned `Md` owns its `EVP_MD` and must be
+    /// kept alive for the whole operation.
+    fn fetch_md(&self) -> Result<Option<openssl::md::Md>, CryptoError> {
+        match &self.hash {
+            Some(hash) => Ok(Some(
+                openssl::md::Md::fetch(Some(crate::libctx::crypto_libctx()), hash.md_name(), None)
+                    .map_err(|_| CryptoError::RsaSetPropertyError)?,
+            )),
+            None => Ok(None),
+        }
+    }
 
-        if let Some(hash) = &self.hash {
-            pkey_ctx
-                .set_signature_md(hash.md())
-                .map_err(|_| CryptoError::RsaSetPropertyError)?;
+    /// Applies the padding configuration to an `EVP_PKEY_CTX` created from the
+    /// crate-private libctx and already initialised for the sign/verify
+    /// operation.
+    ///
+    /// Replicates the prior `configure_pkey_ctx` logic via the raw
+    /// `EVP_PKEY_CTX_set_*` controls: padding mode, then (when a hash is
+    /// configured) the signature digest, and for PSS the salt length and MGF1
+    /// digest. `md` carries the digest fetched from the private libctx and must
+    /// outlive this call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError::RsaSetPropertyError` for any control failure, as
+    /// before.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be a valid `EVP_PKEY_CTX` initialised for the operation and
+    /// `md` (if `Some`) must point to a live `EVP_MD`.
+    #[allow(unsafe_code)]
+    unsafe fn configure_ctx(
+        &self,
+        ctx: *mut openssl_sys::EVP_PKEY_CTX,
+        md: Option<&openssl::md::Md>,
+    ) -> Result<(), CryptoError> {
+        use foreign_types::ForeignType;
+        use openssl_sys as ffi;
 
-            if self.padding == Padding::PKCS1_PSS {
-                pkey_ctx
-                    .set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::custom(self.salt_len as i32))
-                    .map_err(|_| CryptoError::RsaSetPropertyError)?;
-                pkey_ctx
-                    .set_rsa_mgf1_md(hash.md())
-                    .map_err(|_| CryptoError::RsaSetPropertyError)?;
+        // SAFETY: `ctx` is a valid, initialised `EVP_PKEY_CTX` and `md` (if
+        // `Some`) points to a live `EVP_MD`, per this fn's contract.
+        unsafe {
+            if ffi::EVP_PKEY_CTX_set_rsa_padding(ctx, self.padding.as_raw()) != 1 {
+                return Err(CryptoError::RsaSetPropertyError);
+            }
+
+            if let Some(md) = md {
+                if ffi::EVP_PKEY_CTX_set_signature_md(ctx, md.as_ptr()) != 1 {
+                    return Err(CryptoError::RsaSetPropertyError);
+                }
+
+                if self.padding == Padding::PKCS1_PSS {
+                    if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(
+                        ctx,
+                        self.salt_len as std::os::raw::c_int,
+                    ) != 1
+                    {
+                        return Err(CryptoError::RsaSetPropertyError);
+                    }
+                    if ffi::EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, md.as_ptr()) != 1 {
+                        return Err(CryptoError::RsaSetPropertyError);
+                    }
+                }
             }
         }
 

@@ -36,6 +36,12 @@ mod x509;
 mod op;
 mod traits;
 
+/// Crate-private `OSSL_LIB_CTX` (default-provider-only) for the OpenSSL
+/// backends, so the mock SDK's crypto never re-enters the azihsm provider on
+/// OpenSSL 3.5. Linux-only (the Windows backends use CNG).
+#[cfg(target_os = "linux")]
+mod libctx;
+
 pub use aes::*;
 pub use der::*;
 pub use ecc::*;

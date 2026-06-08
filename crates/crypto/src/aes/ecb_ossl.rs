@@ -17,8 +17,8 @@
 //!
 //! Input data must be a multiple of the AES block size (16 bytes). No padding is applied.
 
-use openssl::cipher::*;
-use openssl::cipher_ctx::*;
+use openssl::cipher::Cipher;
+use openssl::cipher_ctx::CipherCtx;
 
 use super::*;
 
@@ -62,13 +62,15 @@ impl OsslAesEcbAlgo {
     /// # Errors
     ///
     /// Returns `CryptoError::AesInvalidKeySize` if the key size is not 16, 24, or 32 bytes.
-    fn cipher(key_size: usize) -> Result<&'static CipherRef, CryptoError> {
-        match key_size {
-            16 => Ok(Cipher::aes_128_ecb()),
-            24 => Ok(Cipher::aes_192_ecb()),
-            32 => Ok(Cipher::aes_256_ecb()),
-            _ => Err(CryptoError::AesInvalidKeySize),
-        }
+    fn cipher(key_size: usize) -> Result<Cipher, CryptoError> {
+        let name = match key_size {
+            16 => "AES-128-ECB",
+            24 => "AES-192-ECB",
+            32 => "AES-256-ECB",
+            _ => return Err(CryptoError::AesInvalidKeySize),
+        };
+        Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
+            .map_err(|_| CryptoError::AesError)
     }
 }
 
@@ -121,7 +123,7 @@ impl EncryptOp for OsslAesEcbAlgo {
             }
             let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesEncryptError)?;
             ctx.set_padding(false);
-            ctx.encrypt_init(Some(cipher), Some(key_bytes), None)
+            ctx.encrypt_init(Some(&cipher), Some(key_bytes), None)
                 .map_err(|_| CryptoError::AesEncryptError)?;
             let mut count = ctx
                 .cipher_update(input, Some(output))
@@ -189,7 +191,7 @@ impl DecryptOp for OsslAesEcbAlgo {
             }
 
             let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesDecryptError)?;
-            ctx.decrypt_init(Some(cipher), Some(key_bytes), None)
+            ctx.decrypt_init(Some(&cipher), Some(key_bytes), None)
                 .map_err(|_| CryptoError::AesDecryptError)?;
             ctx.set_padding(false);
             let mut count = ctx

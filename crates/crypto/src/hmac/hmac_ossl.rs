@@ -10,61 +10,158 @@
 //! # Supported Algorithms
 //!
 //! - **HMAC-SHA1**: Legacy algorithm (20-byte output, use with caution)
-//! - **HMAC-SHA256**: Recommended for most applications (32-byte output)  
+//! - **HMAC-SHA256**: Recommended for most applications (32-byte output)
 //! - **HMAC-SHA384**: High security applications (48-byte output)
 //! - **HMAC-SHA512**: Maximum security applications (64-byte output)
 //!
-//! # Implementation Strategy
+//! # libctx isolation
 //!
-//! The module uses a generic approach with the `OsslHmacKey<Algo>` type that wraps
-//! algorithm-specific implementations. Each algorithm implements the `OsslHmacAlgo`
-//! trait to provide its OpenSSL `MessageDigest` configuration and key size limits.
-//!
-//! # Platform Integration
-//!
-//! - Leverages OpenSSL's optimized HMAC implementations
-//! - Automatically benefits from hardware acceleration when available
-//! - Uses system-provided OpenSSL for security updates
-//! - Provides memory-safe Rust wrappers around OpenSSL APIs
-//!
-//! # Performance
-//!
-//! OpenSSL implementations are highly optimized and include:
-//! - Assembly-optimized code paths for various architectures
-//! - Hardware acceleration when available (AES-NI, etc.)
-//! - Efficient memory management for large data processing
-//! - Vectorized operations for bulk HMAC computations
-//!
-//! # Security Features
-//!
-//! - Constant-time verification to prevent timing attacks
-//! - Secure key material handling with automatic zeroization
-//! - Protection against side-channel attacks through OpenSSL's implementations
-//! - Proper validation of key sizes according to algorithm specifications
+//! The MAC is computed through the `EVP_MAC` API fetched from the crate-private
+//! [`crate::libctx`] (default-provider-only), **not** via `openssl::sign::Signer`
+//! / `PKey::hmac`. `PKey::hmac` has no libctx parameter and binds the key to the
+//! process default libctx; on OpenSSL 3.5 the resulting bare `HMAC` / digest
+//! fetch resolves to the `azihsm` provider and re-enters it during the HSM
+//! session open. Fetching the MAC explicitly from our private libctx keeps both
+//! the MAC and its underlying digest on the default provider. The `openssl`
+//! crate (0.10.x) ships no `EVP_MAC` wrapper, so this is done over `openssl-sys`.
+
+use std::marker::PhantomData;
+use std::os::raw::c_char;
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
+use openssl_sys as ffi;
 
 use super::*;
+use crate::libctx::crypto_libctx;
+
+/// An HMAC computation bound to the crate-private libctx via `EVP_MAC`.
+///
+/// Owns an `EVP_MAC` and its `EVP_MAC_CTX`. The key bytes are copied into the
+/// context by `EVP_MAC_init`, so this type borrows nothing and can outlive the
+/// key it was created from.
+struct IsolatedHmac {
+    /// The fetched `EVP_MAC` ("HMAC"). Kept alive for the whole lifetime of
+    /// `ctx`; freed after `ctx` in `Drop`.
+    mac: *mut ffi::EVP_MAC,
+    /// The MAC context carrying the keyed, digest-configured state.
+    ctx: *mut ffi::EVP_MAC_CTX,
+}
+
+impl IsolatedHmac {
+    /// Fetches `HMAC` from the private libctx, creates a context, and keys it
+    /// with `key` configured for `hash`'s digest.
+    ///
+    /// Uses the `EVP_MAC` C API directly: the `openssl` crate ships no `EVP_MAC`
+    /// wrapper, and (as on the Windows CNG backends) unavoidable crypto-library
+    /// FFI is the only way to bind the MAC to a non-default libctx.
+    #[allow(unsafe_code)]
+    fn new(hash: &HashAlgo, key: &[u8]) -> Result<Self, CryptoError> {
+        // NUL-terminated names for the C API.
+        const HMAC_NAME: &[u8] = b"HMAC\0";
+        // OSSL_MAC_PARAM_DIGEST.
+        const DIGEST_PARAM: &[u8] = b"digest\0";
+
+        let digest_name = hash.md_name(); // canonical name, no trailing NUL
+        let libctx = crypto_libctx().as_ptr();
+
+        // SAFETY: all pointers are checked for NULL before use; `this` owns the
+        // MAC + ctx so any early return after its construction frees them via
+        // `Drop`. The param array is freed before returning.
+        unsafe {
+            let mac = ffi::EVP_MAC_fetch(libctx, HMAC_NAME.as_ptr() as *const c_char, ptr::null());
+            if mac.is_null() {
+                return Err(CryptoError::HmacInitError);
+            }
+            let ctx = ffi::EVP_MAC_CTX_new(mac);
+            if ctx.is_null() {
+                ffi::EVP_MAC_free(mac);
+                return Err(CryptoError::HmacInitError);
+            }
+            // From here, `this` owns both handles; errors free them on drop.
+            let this = IsolatedHmac { mac, ctx };
+
+            let bld = ffi::OSSL_PARAM_BLD_new();
+            if bld.is_null() {
+                return Err(CryptoError::HmacInitError);
+            }
+            let pushed = ffi::OSSL_PARAM_BLD_push_utf8_string(
+                bld,
+                DIGEST_PARAM.as_ptr() as *const c_char,
+                digest_name.as_ptr() as *const c_char,
+                digest_name.len() as _,
+            );
+            if pushed != 1 {
+                ffi::OSSL_PARAM_BLD_free(bld);
+                return Err(CryptoError::HmacInitError);
+            }
+            let params = ffi::OSSL_PARAM_BLD_to_param(bld);
+            ffi::OSSL_PARAM_BLD_free(bld);
+            if params.is_null() {
+                return Err(CryptoError::HmacInitError);
+            }
+            let ok = ffi::EVP_MAC_init(ctx, key.as_ptr(), key.len() as _, params);
+            ffi::OSSL_PARAM_free(params);
+            if ok != 1 {
+                return Err(CryptoError::HmacInitError);
+            }
+            Ok(this)
+        }
+    }
+
+    /// Feeds `data` into the MAC.
+    #[allow(unsafe_code)]
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
+        // SAFETY: `self.ctx` is a valid, initialised EVP_MAC_CTX.
+        let ok = unsafe { ffi::EVP_MAC_update(self.ctx, data.as_ptr(), data.len() as _) };
+        if ok == 1 {
+            Ok(())
+        } else {
+            Err(CryptoError::HmacSignUpdateError)
+        }
+    }
+
+    /// Finalises the MAC into `out` (must be at least the MAC size). Returns the
+    /// number of bytes written.
+    #[allow(unsafe_code)]
+    fn finish(&mut self, out: &mut [u8]) -> Result<usize, CryptoError> {
+        let mut outl: usize = 0;
+        // SAFETY: `out` is valid for `out.len()` bytes; `outl` receives the
+        // number of bytes written.
+        let ok =
+            unsafe { ffi::EVP_MAC_final(self.ctx, out.as_mut_ptr(), &mut outl, out.len() as _) };
+        if ok == 1 {
+            Ok(outl)
+        } else {
+            Err(CryptoError::HmacSignFinishError)
+        }
+    }
+}
+
+impl Drop for IsolatedHmac {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // SAFETY: free the context before the MAC it was created from. Both are
+        // non-NULL once an `IsolatedHmac` exists.
+        unsafe {
+            ffi::EVP_MAC_CTX_free(self.ctx);
+            ffi::EVP_MAC_free(self.mac);
+        }
+    }
+}
+
+/// Extracts the raw HMAC key bytes from an [`HmacKey`].
+fn key_bytes(key: &HmacKey) -> Result<Vec<u8>, CryptoError> {
+    key.pkey()
+        .raw_private_key()
+        .map_err(|_| CryptoError::HmacKeyError)
+}
 
 /// OpenSSL-backed HMAC operation provider.
 ///
-/// This structure configures and executes HMAC (Hash-based Message Authentication Code)
-/// operations using OpenSSL's cryptographic primitives. It supports both single-operation
-/// and streaming interfaces for signing and verification.
-///
-/// # Algorithm Support
-///
-/// Supports SHA-1, SHA-256, SHA-384, and SHA-512 as the underlying hash functions.
-/// The hash algorithm is specified at construction time and determines the output size.
-///
-/// # Thread Safety
-///
-/// This structure is `Send` and `Sync` as it only stores configuration data.
-/// Actual cryptographic operations are performed through OpenSSL APIs.
-///
-/// # Security
-///
-/// - Uses OpenSSL's constant-time verification to prevent timing attacks
-/// - Leverages hardware acceleration when available
-/// - Provides both oneshot and streaming APIs for different use cases
+/// Configures and executes HMAC operations using OpenSSL's `EVP_MAC`, isolated
+/// to the crate-private libctx. Supports both single-shot and streaming
+/// interfaces for signing and verification.
 pub struct OsslHmacAlgo {
     /// The hash algorithm to use for HMAC.
     hash: HashAlgo,
@@ -72,70 +169,33 @@ pub struct OsslHmacAlgo {
 
 impl OsslHmacAlgo {
     /// Creates a new HMAC operation provider from a hash instance.
-    ///
-    /// This constructor configures the HMAC provider but does not perform any
-    /// cryptographic operations. Actual signing or verification occurs when
-    /// calling the trait methods.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - The hash instance specifying the algorithm to use
-    ///
-    /// # Returns
-    ///
-    /// A new `OsslHmac` instance configured for the specified algorithm.
     pub fn new(hash: HashAlgo) -> Self {
         Self { hash }
     }
 }
 
 /// Implements single-operation HMAC signing.
-///
-/// This implementation uses OpenSSL's `Signer` to compute HMAC values in a single call,
-/// suitable for when all data is available at once.
 impl SignOp for OsslHmacAlgo {
     type Key = HmacKey;
 
-    /// Computes an HMAC signature over the provided data.
-    ///
-    /// This method can either query the required buffer size (when `signature` is `None`)
-    /// or compute and write the HMAC to the provided buffer.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The HMAC key to use for signing
-    /// * `data` - The data to authenticate
-    /// * `signature` - Optional output buffer. If `None`, only returns required size.
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes written to the signature buffer, or the required buffer size.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `CryptoError::HmacBufferTooSmall` - Output buffer is too small
-    /// - `CryptoError::HmacSignError` - OpenSSL signing operation fails
+    /// Computes an HMAC over `data`. With `signature == None`, only returns the
+    /// required buffer size.
     fn sign(
         &mut self,
         key: &Self::Key,
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        use openssl::sign::Signer;
-
         let len = self.hash.size();
         if let Some(signature) = signature {
             if signature.len() < len {
                 return Err(CryptoError::HmacBufferTooSmall);
             }
 
-            let mut signer = Signer::new(self.hash.message_digest(), key.pkey())
-                .map_err(|_| CryptoError::HmacSignError)?;
-
-            signer
-                .sign_oneshot(signature, data)
-                .map_err(|_| CryptoError::HmacSignError)?;
+            let key = key_bytes(key)?;
+            let mut mac = IsolatedHmac::new(&self.hash, &key)?;
+            mac.update(data)?;
+            mac.finish(&mut signature[..len])?;
         }
 
         Ok(len)
@@ -143,184 +203,94 @@ impl SignOp for OsslHmacAlgo {
 }
 
 /// Implements streaming HMAC signing.
-///
-/// This implementation allows processing data in multiple chunks, useful for large
-/// files or streaming data sources.
 impl<'a> SignStreamingOp<'a> for OsslHmacAlgo {
     type Key = HmacKey;
     type Context = OsslHmacAlgoSignContext<'a>;
 
     /// Initializes a streaming HMAC signing context.
-    ///
-    /// Creates a new context that can process data incrementally via the
-    /// `update()` method before finalizing with `finish()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The HMAC key to use for signing
-    ///
-    /// # Returns
-    ///
-    /// A streaming context that implements `SignStreamingOpContext`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacSignError` if context initialization fails.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
-        use openssl::sign::Signer;
-
-        let signer = Signer::new(self.hash.message_digest(), key.pkey())
-            .map_err(|_| CryptoError::HmacSignError)?;
-
-        Ok(OsslHmacAlgoSignContext { signer, algo: self })
+        let key = key_bytes(&key)?;
+        let mac = IsolatedHmac::new(&self.hash, &key)?;
+        Ok(OsslHmacAlgoSignContext {
+            mac,
+            algo: self,
+            _marker: PhantomData,
+        })
     }
 }
 
 /// Streaming context for HMAC signing operations.
 ///
-/// This structure maintains the state for incremental HMAC computation,
-/// allowing data to be processed in chunks before producing the final MAC.
-///
-/// # Lifetime
-///
-/// The lifetime parameter ensures the key remains valid for the duration
-/// of the streaming operation.
+/// The `'a` parameter is vestigial — the key is copied into the underlying
+/// `EVP_MAC_CTX`, so nothing is borrowed — but is retained to satisfy the
+/// platform-agnostic trait signature.
 pub struct OsslHmacAlgoSignContext<'a> {
-    /// OpenSSL signer for computing the HMAC
-    signer: openssl::sign::Signer<'a>,
-    /// Expected output size in bytes
+    /// libctx-isolated MAC state.
+    mac: IsolatedHmac,
+    /// Algorithm configuration.
     algo: OsslHmacAlgo,
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> SignStreamingOpContext<'a> for OsslHmacAlgoSignContext<'a> {
     type Algo = OsslHmacAlgo;
+
     /// Processes a chunk of data.
-    ///
-    /// Updates the internal HMAC state with the provided data. Can be called
-    /// multiple times before finalizing.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Data chunk to process
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacSignError` if the update operation fails.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
-        self.signer
-            .update(data)
-            .map_err(|_| CryptoError::HmacSignError)
+        self.mac.update(data)
     }
 
-    /// Finalizes the HMAC computation and produces the signature.
-    ///
-    /// Completes the HMAC operation and writes the result to the provided buffer,
-    /// or returns the required buffer size if `signature` is `None`.
-    ///
-    /// # Arguments
-    ///
-    /// * `signature` - Optional output buffer. If `None`, only returns required size.
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes written or required.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `CryptoError::HmacBufferTooSmall` - Output buffer is too small
-    /// - `CryptoError::HmacSignError` - Finalization fails
+    /// Finalizes the HMAC. With `signature == None`, only returns the size.
     fn finish(&mut self, signature: Option<&mut [u8]>) -> Result<usize, CryptoError> {
         let len = self.algo.hash.size();
         if let Some(signature) = signature {
             if signature.len() < len {
                 return Err(CryptoError::HmacBufferTooSmall);
             }
-
-            self.signer
-                .sign(signature)
-                .map_err(|_| CryptoError::HmacSignError)?;
+            self.mac.finish(&mut signature[..len])?;
         }
         Ok(len)
     }
 
     /// Returns a reference to the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `OsslHash` algorithm instance.
     fn algo(&self) -> &Self::Algo {
         &self.algo
     }
 
     /// Returns a mutable reference to the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `OsslHash` algorithm instance.
     fn algo_mut(&mut self) -> &mut Self::Algo {
         &mut self.algo
     }
 
     /// Consumes the context and returns the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// The `OsslHash` algorithm instance.
     fn into_algo(self) -> Self::Algo {
         self.algo
     }
 }
 
 /// Implements single-operation HMAC verification.
-///
-/// This implementation uses OpenSSL's `Verifier` which performs constant-time
-/// comparison to prevent timing attacks.
 impl VerifyOp for OsslHmacAlgo {
     type Key = HmacKey;
 
-    /// Verifies an HMAC signature over the provided data.
-    ///
-    /// Uses constant-time comparison internally to prevent timing side-channel attacks.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The HMAC key to use for verification
-    /// * `data` - The data that was authenticated
-    /// * `signature` - The signature to verify
-    ///
-    /// # Returns
-    ///
-    /// `Ok(true)` if the signature is valid, `Ok(false)` if invalid.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacVerifyError` if the verification operation fails.
+    /// Verifies an HMAC over `data` by recomputing it and comparing.
     fn verify(
         &mut self,
         key: &Self::Key,
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, CryptoError> {
-        use openssl::sign::Signer;
-
         let mut result = vec![0u8; self.hash.size()];
 
-        let mut verifier = Signer::new(self.hash.message_digest(), key.pkey())
-            .map_err(|_| CryptoError::HmacVerifyError)?;
-
-        verifier
-            .sign_oneshot(&mut result, data)
-            .map_err(|_| CryptoError::HmacVerifyError)?;
+        let key = key_bytes(key)?;
+        let mut mac = IsolatedHmac::new(&self.hash, &key)?;
+        mac.update(data)?;
+        mac.finish(&mut result)?;
 
         Ok(result == signature)
     }
 }
 
 /// Implements streaming HMAC verification.
-///
-/// This implementation allows processing data in multiple chunks before verifying
-/// the signature, useful for large files or streaming data sources.
 impl<'a> VerifyStreamingOp<'a> for OsslHmacAlgo {
     /// The HMAC key type used for this verification operation.
     type Key = HmacKey;
@@ -329,49 +299,28 @@ impl<'a> VerifyStreamingOp<'a> for OsslHmacAlgo {
     type Context = OsslHmacAlgoVerifyContext<'a>;
 
     /// Initializes a streaming HMAC verification context.
-    ///
-    /// Creates a new context that can process data incrementally via the
-    /// `update()` method before verifying with `finish()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The HMAC key to use for verification
-    ///
-    /// # Returns
-    ///
-    /// A streaming context that implements `VerifyStreamingOpContext`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacVerifyError` if context initialization fails.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
-        use openssl::sign::Signer;
-
-        let verifier = Signer::new(self.hash.message_digest(), key.pkey())
-            .map_err(|_| CryptoError::HmacVerifyInitError)?;
-
+        let key = key_bytes(&key)?;
+        let mac =
+            IsolatedHmac::new(&self.hash, &key).map_err(|_| CryptoError::HmacVerifyInitError)?;
         Ok(OsslHmacAlgoVerifyContext {
+            mac,
             algo: self,
-            verifier,
+            _marker: PhantomData,
         })
     }
 }
 
 /// Streaming context for HMAC verification operations.
 ///
-/// This structure maintains the state for incremental HMAC verification,
-/// allowing data to be processed in chunks before verifying the signature.
-///
-/// # Lifetime
-///
-/// The lifetime parameter ensures the key remains valid for the duration
-/// of the streaming operation.
+/// As with the sign context, the `'a` parameter is vestigial (the key is copied
+/// into the `EVP_MAC_CTX`).
 pub struct OsslHmacAlgoVerifyContext<'a> {
-    /// Algorithm configuration
+    /// libctx-isolated MAC state.
+    mac: IsolatedHmac,
+    /// Algorithm configuration.
     algo: OsslHmacAlgo,
-
-    /// OpenSSL verifier for checking the HMAC
-    verifier: openssl::sign::Signer<'a>,
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> VerifyStreamingOpContext<'a> for OsslHmacAlgoVerifyContext<'a> {
@@ -379,72 +328,34 @@ impl<'a> VerifyStreamingOpContext<'a> for OsslHmacAlgoVerifyContext<'a> {
     type Algo = OsslHmacAlgo;
 
     /// Processes a chunk of data.
-    ///
-    /// Updates the internal HMAC state with the provided data. Can be called
-    /// multiple times before finalizing.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Data chunk to process
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacVerifyError` if the update operation fails.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
-        self.verifier
+        self.mac
             .update(data)
             .map_err(|_| CryptoError::HmacVerifyUpdateError)
     }
 
-    /// Finalizes the verification and checks the signature.
-    ///
-    /// Completes the HMAC computation and verifies it against the provided signature
-    /// using constant-time comparison.
-    ///
-    /// # Arguments
-    ///
-    /// * `signature` - The signature to verify
-    ///
-    /// # Returns
-    ///
-    /// `Ok(true)` if the signature is valid, `Ok(false)` if invalid.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HmacVerifyError` if the verification operation fails.
+    /// Finalizes and checks the signature by recomputing the MAC.
     fn finish(&mut self, signature: &[u8]) -> Result<bool, CryptoError> {
         let mut result = vec![0u8; self.algo.hash.size()];
 
-        self.verifier
-            .sign(&mut result)
+        self.mac
+            .finish(&mut result)
             .map_err(|_| CryptoError::HmacVerifyFinishError)?;
 
         Ok(result == signature)
     }
 
     /// Returns a reference to the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `OsslHash` algorithm instance.
     fn algo(&self) -> &Self::Algo {
         &self.algo
     }
 
     /// Returns a mutable reference to the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `OsslHash` algorithm instance.
     fn algo_mut(&mut self) -> &mut Self::Algo {
         &mut self.algo
     }
 
     /// Consumes the context and returns the underlying hash algorithm.
-    ///
-    /// # Returns
-    ///
-    /// The `OsslHash` algorithm instance.
     fn into_algo(self) -> Self::Algo {
         self.algo
     }
