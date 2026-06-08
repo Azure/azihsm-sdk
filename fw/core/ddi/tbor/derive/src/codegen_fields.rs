@@ -414,61 +414,66 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
     // these, an included group's constrained buffer could decode even
     // when its length violates the schema (top-level `validate` skips
     // include fields and delegates entirely to this helper).
-    let len_checks: Vec<_> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
-        if field.include_group.is_some() {
-            return None;
-        }
-        if !matches!(field.wire_type, WireType::Buffer | WireType::SealedKey) {
-            return None;
-        }
-        let has_constraint =
-            field.fixed_len.is_some() || field.min_len > 0 || field.max_len < 8191;
-        if !has_constraint {
-            return None;
-        }
-        let toc_idx = effective_toc_idx(i);
-        let min_l = field.fixed_len.unwrap_or(field.min_len);
-        let max_l = field.fixed_len.unwrap_or(field.max_len);
-        if field.optional {
-            let none_type_id = 8u8;
-            Some(quote! {
-                {
-                    let actual = azihsm_fw_ddi_tbor::toc::raw_toc_entry_type(
-                        azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
-                    );
-                    if actual != #none_type_id {
-                        let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(
-                            azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
+    let len_checks: Vec<_> = schema
+        .fields
+        .iter()
+        .enumerate()
+        .filter_map(|(i, field)| {
+            if field.include_group.is_some() {
+                return None;
+            }
+            if !matches!(field.wire_type, WireType::Buffer | WireType::SealedKey) {
+                return None;
+            }
+            let has_constraint =
+                field.fixed_len.is_some() || field.min_len > 0 || field.max_len < 8191;
+            if !has_constraint {
+                return None;
+            }
+            let toc_idx = effective_toc_idx(i);
+            let min_l = field.fixed_len.unwrap_or(field.min_len);
+            let max_l = field.fixed_len.unwrap_or(field.max_len);
+            if field.optional {
+                let none_type_id = 8u8;
+                Some(quote! {
+                    {
+                        let word = azihsm_fw_ddi_tbor::toc::read_toc_word(
+                            buf, header_len, toc_offset + #toc_idx,
                         );
+                        let actual = azihsm_fw_ddi_tbor::toc::raw_toc_entry_type(word);
+                        if actual != #none_type_id {
+                            let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(word);
+                            if !(#min_l..=#max_l).contains(&len) {
+                                return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
+                                    entry_index: toc_offset + #toc_idx,
+                                    entry_type: actual,
+                                    expected: #min_l,
+                                    actual: len,
+                                });
+                            }
+                        }
+                    }
+                })
+            } else {
+                Some(quote! {
+                    {
+                        let word = azihsm_fw_ddi_tbor::toc::read_toc_word(
+                            buf, header_len, toc_offset + #toc_idx,
+                        );
+                        let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(word);
                         if !(#min_l..=#max_l).contains(&len) {
                             return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
                                 entry_index: toc_offset + #toc_idx,
-                                entry_type: 7,
+                                entry_type: azihsm_fw_ddi_tbor::toc::raw_toc_entry_type(word),
                                 expected: #min_l,
                                 actual: len,
                             });
                         }
                     }
-                }
-            })
-        } else {
-            Some(quote! {
-                {
-                    let len = azihsm_fw_ddi_tbor::toc::raw_toc_length(
-                        azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
-                    );
-                    if !(#min_l..=#max_l).contains(&len) {
-                        return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
-                            entry_index: toc_offset + #toc_idx,
-                            entry_type: 7,
-                            expected: #min_l,
-                            actual: len,
-                        });
-                    }
-                }
-            })
-        }
-    }).collect();
+                })
+            }
+        })
+        .collect();
 
     quote! {
         #vis struct #name;
