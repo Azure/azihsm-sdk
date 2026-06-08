@@ -19,18 +19,19 @@
 //! `azihsm`. This is correct on every OpenSSL version and independent of when
 //! the session is opened (eager or lazy).
 //!
-//! # Scope and extension
+//! # Scope
 //!
-//! Backends opt in by fetching their algorithm from [`crypto_libctx()`] instead
-//! of using the crate's default-libctx APIs (`Hasher`, `Signer`, …). The hash
-//! and HMAC backends — the ones that re-enter during the HSM session open — use
-//! it today; the remaining backends (ec, rsa, hkdf, aes) can adopt the same
-//! accessor incrementally without touching this module.
+//! All of this crate's OpenSSL backends fetch their algorithm from
+//! [`crypto_libctx()`] instead of the crate's default-libctx APIs (`Hasher`,
+//! `Signer`, …): hash, HMAC, HKDF, AES (CBC/GCM/ECB/XTS), ECDH, ECDSA, and RSA
+//! (encrypt/decrypt, sign/verify, digest-sign). New backends adopt the same
+//! accessor without touching this module.
 
 use std::sync::OnceLock;
 
 use foreign_types::ForeignTypeRef;
-use openssl::lib_ctx::{LibCtx, LibCtxRef};
+use openssl::lib_ctx::LibCtx;
+use openssl::lib_ctx::LibCtxRef;
 use openssl::provider::Provider;
 use openssl_sys as ffi;
 

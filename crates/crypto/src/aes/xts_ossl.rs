@@ -23,7 +23,8 @@
 //! - **No Authentication**: XTS mode does not provide authentication; it only provides confidentiality
 //! - **Sector-based**: Designed for disk encryption, not for general-purpose data encryption
 
-use openssl::cipher::{Cipher, CipherRef};
+use openssl::cipher::Cipher;
+use openssl::cipher::CipherRef;
 use openssl::cipher_ctx::CipherCtx;
 
 use super::*;

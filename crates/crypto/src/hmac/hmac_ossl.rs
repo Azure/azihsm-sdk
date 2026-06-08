@@ -31,6 +31,7 @@ use std::ptr;
 
 use foreign_types::ForeignTypeRef;
 use openssl_sys as ffi;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::libctx::crypto_libctx;
@@ -150,10 +151,19 @@ impl Drop for IsolatedHmac {
     }
 }
 
-/// Extracts the raw HMAC key bytes from an [`HmacKey`].
-fn key_bytes(key: &HmacKey) -> Result<Vec<u8>, CryptoError> {
+/// Extracts the raw HMAC key bytes from an [`HmacKey`] into a buffer that is
+/// zeroized on drop.
+///
+/// `EVP_MAC_init` copies the key into the MAC context, so callers can let the
+/// returned buffer drop as soon as the [`IsolatedHmac`] is built. [`Zeroizing`]
+/// wipes the plaintext copy on every path — success or error — keeping key
+/// material in process memory for as short a time as possible. (The old
+/// `Signer`/`PKey` path never materialised a plaintext copy; the `EVP_MAC` FFI
+/// does, so this restores that hygiene.)
+fn key_bytes(key: &HmacKey) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     key.pkey()
         .raw_private_key()
+        .map(Zeroizing::new)
         .map_err(|_| CryptoError::HmacKeyError)
 }
 
