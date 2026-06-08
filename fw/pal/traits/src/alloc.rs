@@ -183,7 +183,7 @@ impl Eq for DmaBuf {}
 impl PartialEq<[u8]> for DmaBuf {
     #[inline(always)]
     fn eq(&self, other: &[u8]) -> bool {
-        self.inner == *other
+        &self.inner == other
     }
 }
 

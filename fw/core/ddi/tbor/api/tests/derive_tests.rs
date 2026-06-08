@@ -1238,3 +1238,41 @@ fn trait_based_dispatch() {
     };
     assert_eq!(result, Ok("get_cert"));
 }
+
+// ── ViewMut with mixed scalar + mutable-buffer fields ──────────────────
+//
+// Regression guard for codegen_view_mut: `Uint32`/`Uint64` are
+// data-section types and participate in the `split_at_mut` chain, but
+// the destructured `ViewMut` field type is `u32`/`u64`. The codegen
+// must convert the split slice to the numeric value at struct-init
+// time, not pass the slice through (which would not type-check).
+#[tbor(opcode = 0x42)]
+pub struct MixedMutableReq<'a> {
+    pub epoch: u32,
+    pub serial: u64,
+    #[tbor(max_len = 32, mutable)]
+    pub payload: &'a [u8],
+}
+
+#[test]
+fn decode_mut_with_uint32_uint64_siblings() {
+    let mut buf = [0u8; 256];
+    let frame = MixedMutableReq::encode(&mut buf)
+        .unwrap()
+        .epoch(0xCAFEBABE)
+        .unwrap()
+        .serial(0x0011_2233_4455_6677)
+        .unwrap()
+        .payload(b"hello-payload")
+        .unwrap()
+        .finish();
+
+    let frame_len = frame.len();
+    // SAFETY: test-only branding of a heap-resident buffer; see
+    // module-level brand() helper.
+    let wire_mut: &mut DmaBuf = unsafe { DmaBuf::from_raw_mut(&mut buf[..frame_len]) };
+    let view = MixedMutableReq::decode_mut(wire_mut).unwrap();
+    assert_eq!(view.epoch, 0xCAFEBABE);
+    assert_eq!(view.serial, 0x0011_2233_4455_6677);
+    assert_eq!(&**view.payload, b"hello-payload");
+}

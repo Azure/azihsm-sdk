@@ -91,7 +91,9 @@ pub struct TborChangePskReq<'a> {
     /// session's `param_key`.  See module docs for AAD layout.
     ///
     /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
-    /// envelope in place — see [`TborChangePskReqViewMut::psk_envelope_mut`].
+    /// envelope in place — the field is exposed as the
+    /// `psk_envelope` member of the generated
+    /// `TborChangePskReqViewMut` destructured view.
     #[tbor(max_len = 160, mutable)]
     pub psk_envelope: &'a [u8],
 }

@@ -117,7 +117,9 @@ pub struct TborPartInitReq<'a> {
     /// [`PART_INIT_MACH_SEED_AAD_LEN`].
     ///
     /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
-    /// envelope in place — see [`TborPartInitReqViewMut::mach_seed_envelope_mut`].
+    /// envelope in place — the field is exposed as the
+    /// `mach_seed_envelope` member of the generated
+    /// `TborPartInitReqViewMut` destructured view.
     #[tbor(max_len = 160, mutable)]
     pub mach_seed_envelope: &'a [u8],
 

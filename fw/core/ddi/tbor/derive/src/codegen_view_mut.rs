@@ -218,13 +218,38 @@ pub fn gen_decode_mut_body(schema: &Schema) -> Option<TokenStream> {
         .map(|field| {
             let fname = &field.name;
             let value = match field.wire_type {
-                WireType::Buffer | WireType::SealedKey | WireType::Uint32 | WireType::Uint64 => {
+                WireType::Buffer | WireType::SealedKey => {
                     let v = format_ident!("__field_{}", field.name);
-                    // Uint32/Uint64 currently fall through to the
-                    // split-chain (they're data-section types). No
-                    // current schema with `mutable` uses them as
-                    // siblings, so emit a compile-time guard.
                     quote! { #v }
+                }
+                // Uint32/Uint64 occupy data-section bytes (so they
+                // participate in the split-chain) but the destructured
+                // `ViewMut` field type is `u32`/`u64`. Convert the
+                // split slice to the numeric value; length was already
+                // validated to be exactly 4/8 bytes during Phase 1a.
+                WireType::Uint32 => {
+                    let v = format_ident!("__field_{}", field.name);
+                    quote! {
+                        {
+                            let __bytes: &[u8] = &**#v;
+                            u32::from_le_bytes(
+                                <[u8; 4]>::try_from(&__bytes[..4])
+                                    .expect("validated length == 4"),
+                            )
+                        }
+                    }
+                }
+                WireType::Uint64 => {
+                    let v = format_ident!("__field_{}", field.name);
+                    quote! {
+                        {
+                            let __bytes: &[u8] = &**#v;
+                            u64::from_le_bytes(
+                                <[u8; 8]>::try_from(&__bytes[..8])
+                                    .expect("validated length == 8"),
+                            )
+                        }
+                    }
                 }
                 _ => {
                     let v = format_ident!("__scalar_{}", field.name);
