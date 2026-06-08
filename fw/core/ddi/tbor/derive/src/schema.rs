@@ -34,6 +34,12 @@ pub struct SchemaField {
     pub max_len: usize,
     /// If this field is a `#[tbor(include)]`, the type name of the group.
     pub include_group: Option<syn::Ident>,
+    /// Field opts into the mutable view (`#[tbor(mutable)]`). Only
+    /// permitted on non-optional `Buffer` / `SealedKey` fields. When
+    /// any field in the schema is `mutable`, the codegen emits a
+    /// parallel `decode_mut` entry point and a `ViewMut` accessor
+    /// type whose mut-marked fields hand out `&mut DmaBuf`.
+    pub mutable: bool,
 }
 
 /// The wire encoding for a field.
@@ -178,6 +184,13 @@ impl Schema {
             }
         }
         size
+    }
+
+    /// Returns `true` iff any field opts into `#[tbor(mutable)]`.
+    /// When `true`, the derive emits a parallel `decode_mut` entry
+    /// point and a `ViewMut` accessor type.
+    pub fn has_mutable_fields(&self) -> bool {
+        self.fields.iter().any(|f| f.mutable)
     }
 
     /// Compute MAX_ENCODED_SIZE (header + TOC + worst-case data).
@@ -326,6 +339,7 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
             min_len: 0,
             max_len: 0,
             include_group: Some(group_name),
+            mutable: false,
         });
     }
 
@@ -377,6 +391,27 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
         ));
     }
 
+    // Parse `#[tbor(mutable)]`. Only allowed on non-optional
+    // Buffer/SealedKey fields: scalar accessors return-by-value (no
+    // mut surface needed) and optional fields would require
+    // generating a fallible mut accessor that has no current
+    // motivating handler.
+    let mutable = parse_mutable_attr(&field.attrs)?;
+    if mutable {
+        if !matches!(wire_type, WireType::Buffer | WireType::SealedKey) {
+            return Err(syn::Error::new(
+                field.ident.as_ref().unwrap().span(),
+                "#[tbor(mutable)] can only be applied to buffer or sealed_key fields",
+            ));
+        }
+        if optional {
+            return Err(syn::Error::new(
+                field.ident.as_ref().unwrap().span(),
+                "#[tbor(mutable)] cannot be applied to optional fields",
+            ));
+        }
+    }
+
     Ok(SchemaField {
         name,
         wire_type,
@@ -387,7 +422,31 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
         min_len,
         max_len,
         include_group: None,
+        mutable,
     })
+}
+
+/// Returns `true` iff the field carries `#[tbor(mutable)]`.
+fn parse_mutable_attr(attrs: &[syn::Attribute]) -> syn::Result<bool> {
+    let mut found = false;
+    for attr in attrs {
+        if attr.path().is_ident("tbor") {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("mutable") {
+                    found = true;
+                } else if meta.path.is_ident("align")
+                    || meta.path.is_ident("min_len")
+                    || meta.path.is_ident("max_len")
+                    || meta.path.is_ident("len")
+                {
+                    let _value = meta.value()?;
+                    let _lit: syn::LitInt = _value.parse()?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+    Ok(found)
 }
 
 /// Parse `opcode = 0x09`, `response`, or `fields` from the attribute token stream.
@@ -463,6 +522,8 @@ fn infer_wire_type(ty: &syn::Type, attrs: &[syn::Attribute]) -> syn::Result<Wire
                 {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
+                } else if meta.path.is_ident("mutable") {
+                    // Consumed by `parse_mutable_attr`.
                 }
                 Ok(())
             })?;
@@ -552,6 +613,8 @@ fn is_include_field(attrs: &[syn::Attribute]) -> bool {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
                 }
+                // `mutable` is a bare keyword; just consume.
+                let _ = meta.path.is_ident("mutable");
                 Ok(())
             });
             if found {
@@ -588,6 +651,8 @@ fn parse_align_attr(attrs: &[syn::Attribute]) -> syn::Result<usize> {
                 {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
+                } else if meta.path.is_ident("mutable") {
+                    // Bare keyword; consumed by `parse_mutable_attr`.
                 }
                 Ok(())
             })?;
@@ -627,6 +692,8 @@ fn parse_len_constraints(attrs: &[syn::Attribute]) -> syn::Result<(usize, usize)
                 } else if meta.path.is_ident("align") {
                     let _value = meta.value()?;
                     let _lit: syn::LitInt = _value.parse()?;
+                } else if meta.path.is_ident("mutable") {
+                    // Bare keyword; consumed by `parse_mutable_attr`.
                 }
                 // Wire type idents (uint8, buffer, etc.) have no value — just consume.
                 Ok(())

@@ -111,9 +111,14 @@ pub struct TborPartInitReq<'a> {
     pub session_id: u16,
 
     /// AEAD-GCM envelope wrapping the 32-byte `mach_seed` plaintext
-    /// under the active session's `param_key`.  See
-    /// [`build_part_init_mach_seed_aad`] for the AAD layout.
-    #[tbor(max_len = 160)]
+    /// under the active session's `param_key`.  AAD layout is pinned
+    /// to `label(17) ‖ session_id(2 LE) ‖ rsv0(13)` —
+    /// see [`PART_INIT_MACH_SEED_AAD_LABEL`] and
+    /// [`PART_INIT_MACH_SEED_AAD_LEN`].
+    ///
+    /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
+    /// envelope in place — see [`TborPartInitReqViewMut::mach_seed_envelope_mut`].
+    #[tbor(max_len = 160, mutable)]
     pub mach_seed_envelope: &'a [u8],
 
     /// Caller-asserted [`PartPolicy`] blob bound into the partition's
@@ -146,24 +151,6 @@ pub struct TborPartInitResp<'a> {
     pub pta_report: &'a [u8],
 }
 
-/// Builds the 32-byte AEAD AAD bound into a `PartInit` `mach_seed`
-/// envelope.
-///
-/// Layout: [`PART_INIT_MACH_SEED_AAD_LABEL`] (17 B) `‖ session_id`
-/// (2 B LE) `‖ rsv0` (13 B).
-///
-/// This is the **single source of truth** for the AAD layout — both
-/// the firmware handler and the host wrapper construct envelopes via
-/// this helper to guarantee they stay byte-for-byte identical.
-#[must_use]
-pub fn build_part_init_mach_seed_aad(session_id: u16) -> [u8; PART_INIT_MACH_SEED_AAD_LEN] {
-    let mut aad = [0u8; PART_INIT_MACH_SEED_AAD_LEN];
-    aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()].copy_from_slice(PART_INIT_MACH_SEED_AAD_LABEL);
-    aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2]
-        .copy_from_slice(&session_id.to_le_bytes());
-    aad
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,20 +169,5 @@ mod tests {
         // TBOR `MAX_DATA_SIZE` is 8191; our two response buffers must
         // sum to comfortably less than that.
         const { assert!(PTA_CSR_MAX_LEN + PTA_REPORT_MAX_LEN < 8191) };
-    }
-
-    #[test]
-    fn mach_seed_aad_layout() {
-        let aad = build_part_init_mach_seed_aad(0x1234);
-        assert_eq!(
-            &aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()],
-            PART_INIT_MACH_SEED_AAD_LABEL
-        );
-        assert_eq!(
-            &aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2],
-            &[0x34, 0x12],
-        );
-        assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
-        assert_eq!(PART_INIT_MACH_SEED_AAD_LEN, 32);
     }
 }

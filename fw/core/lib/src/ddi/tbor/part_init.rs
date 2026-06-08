@@ -58,12 +58,11 @@ use azihsm_fw_core_crypto_key_report::VM_LAUNCH_ID_LEN;
 use azihsm_fw_core_crypto_x509_builder::csr;
 use azihsm_fw_core_crypto_x509_builder::csr_builder;
 use azihsm_fw_core_crypto_x509_builder::padding;
-use azihsm_fw_ddi_tbor::RequestView;
-use azihsm_fw_ddi_tbor_types::build_part_init_mach_seed_aad;
 use azihsm_fw_ddi_tbor_types::TborPartInitReq;
 use azihsm_fw_ddi_tbor_types::TborPartInitResp;
 use azihsm_fw_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_fw_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
 use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
 use azihsm_fw_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_fw_ddi_tbor_types::PTA_CSR_MAX_LEN;
@@ -138,20 +137,24 @@ const UMS_VAULT_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req = parse_request(view)?;
+    let req = parse_request(req_buf)?;
 
     pal.alloc_scoped_async(io, async |alloc| {
-        // Mirror request fields into DmaBufs so they can flow into
-        // PAL crypto primitives (which require DmaBuf inputs) and
-        // the write-once partition setters from a single, validated
-        // source.
-        let policy_dma = dma_copy(alloc, req.policy)?;
+        // `policy` and `pota_thumb` are read-only request fields; the
+        // codec already hands them out as `&DmaBuf` sub-views of the
+        // inbound request buffer, so they can flow directly into PAL
+        // crypto primitives and the write-once partition setters
+        // without an extra copy.  `mach_seed_envelope` is decrypted
+        // **in place** by `aead_open` on the same inbound buffer —
+        // the destructured `&mut DmaBuf` carved by `decode_mut`
+        // replaces the previous scratch-copy step.
+        let policy_dma = req.policy;
         let _ = super::policy::from_bytes(policy_dma)?;
         let mach_seed_dma =
-            open_mach_seed_envelope(pal, io, alloc, req.sess_id, req.mach_seed_envelope).await?;
-        let pota_thumb_dma = dma_copy(alloc, req.pota_thumb)?;
+            open_mach_seed_envelope(pal, io, req.sess_id, req.mach_seed_envelope).await?;
+        let pota_thumb_dma = req.pota_thumb;
 
         // Deterministic key derivation.
         let ums_dma = derive_ums(pal, io, alloc, mach_seed_dma, policy_dma, pota_thumb_dma).await?;
@@ -189,22 +192,23 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 }
 
 /// Parsed-and-validated PartInit request fields, ready to flow into
-/// the cryptographic pipeline.  `mach_seed` is delivered AEAD-wrapped
-/// under the session's `param_key`; the raw bytes are recovered
-/// inside [`handle`] after `parse_request` has rejected obvious
-/// length/role errors.
+/// the cryptographic pipeline.  Variable-length fields are returned
+/// as sub-views of the inbound request buffer so they can be handed
+/// straight to PAL crypto primitives without copying.
+/// `mach_seed_envelope` is held as `&mut DmaBuf` so the FW handler
+/// can AEAD-open it in place; `policy` and `pota_thumb` are shared.
 struct ParsedRequest<'a> {
     sess_id: HsmSessId,
-    mach_seed_envelope: &'a [u8],
-    policy: &'a [u8],
-    pota_thumb: &'a [u8],
+    mach_seed_envelope: &'a mut DmaBuf,
+    policy: &'a DmaBuf,
+    pota_thumb: &'a DmaBuf,
 }
 
 /// Decode the wire request, enforce the CO-only role gate, and
 /// length-check the variable-length fields against the wire schema.
-fn parse_request<'a>(view: &'a RequestView<'_>) -> HsmResult<ParsedRequest<'a>> {
-    let req = TborPartInitReq::decode(view.as_bytes())?;
-    let sess_id = HsmSessId::from(u16::from(req.session_id()));
+fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
+    let req = TborPartInitReq::decode_mut(req_buf)?;
+    let sess_id = HsmSessId::from(u16::from(req.session_id));
 
     // PartInit is CO-only.  The dispatcher's default-PSK gate uses
     // the same `psk_id_for_role` mapping but does not by itself
@@ -213,23 +217,19 @@ fn parse_request<'a>(view: &'a RequestView<'_>) -> HsmResult<ParsedRequest<'a>> 
         return Err(HsmError::InvalidPermissions);
     }
 
-    let mach_seed_envelope = req.mach_seed_envelope();
-    let policy = req.part_policy();
-    let pota_thumb = req.pota_thumbprint();
-
-    if mach_seed_envelope.is_empty()
-        || mach_seed_envelope.len() > MACH_SEED_ENVELOPE_MAX_LEN
-        || policy.len() != PART_POLICY_LEN
-        || pota_thumb.len() != POTA_THUMBPRINT_LEN
+    if req.mach_seed_envelope.is_empty()
+        || req.mach_seed_envelope.len() > MACH_SEED_ENVELOPE_MAX_LEN
+        || req.part_policy.len() != PART_POLICY_LEN
+        || req.pota_thumbprint.len() != POTA_THUMBPRINT_LEN
     {
         return Err(HsmError::InvalidArg);
     }
 
     Ok(ParsedRequest {
         sess_id,
-        mach_seed_envelope,
-        policy,
-        pota_thumb,
+        mach_seed_envelope: req.mach_seed_envelope,
+        policy: req.part_policy,
+        pota_thumb: req.pota_thumbprint,
     })
 }
 
@@ -249,55 +249,54 @@ struct CsrAssets {
 
 // ─── Pipeline stage helpers ──────────────────────────────────────────────────
 
-/// Copy `src` into a fresh scoped DmaBuf of equal length.
-fn dma_copy<'a>(alloc: &'a impl HsmScopedAlloc, src: &[u8]) -> HsmResult<&'a mut DmaBuf> {
-    let buf = alloc.dma_alloc(src.len())?;
-    buf.copy_from_slice(src);
-    Ok(buf)
-}
-
-/// AEAD-open the host-supplied `mach_seed` envelope and return the
-/// raw 32-byte plaintext in a fresh scoped DmaBuf.
+/// AEAD-open the host-supplied `mach_seed` envelope and return a
+/// zero-copy view of the 32-byte plaintext sub-region of the same
+/// envelope buffer.
 ///
 /// Cross-session replay is structurally impossible because
 /// `param_key` is HPKE-derived per session.  AAD binds the envelope
 /// to `(label, session_id)` so an envelope minted for session A
 /// fails authentication on session B even if their `param_key`s
-/// somehow collided.  An auth failure surfaces as
-/// [`HsmError::AeadEnvelopeAuthFailed`]; a wrong-AAD or wrong-payload-
-/// length condition (post-auth) surfaces as [`HsmError::InvalidArg`]
-/// because the bytes are by then trustworthy and the divergence is a
-/// client encoding bug, not an attack.
+/// somehow collided.  AEAD-auth failure and any post-auth wire-shape
+/// mismatch (AAD layout or payload length) both surface as
+/// [`HsmError::AeadEnvelopeAuthFailed`]: once authentication has
+/// succeeded the only way the shape can diverge is a sender that
+/// constructed the envelope against a different protocol contract,
+/// which is operationally indistinguishable from a forgery attempt.
 async fn open_mach_seed_envelope<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    alloc: &'a impl HsmScopedAlloc,
     sess_id: HsmSessId,
-    envelope: &[u8],
-) -> HsmResult<&'a mut DmaBuf> {
+    envelope: &'a mut DmaBuf,
+) -> HsmResult<&'a DmaBuf> {
     let param_key = pal.session_param_key(io, sess_id)?;
 
-    let env_buf = alloc.dma_alloc(envelope.len())?;
-    env_buf.copy_from_slice(envelope);
-    let view = aead_open(pal, io, param_key, env_buf)
+    let view = aead_open(pal, io, param_key, envelope)
         .await
         .map_err(|_| HsmError::AeadEnvelopeAuthFailed)?;
 
-    if view.aad.len() != PART_INIT_MACH_SEED_AAD_LEN {
-        return Err(HsmError::InvalidArg);
-    }
-    let expected_aad = build_part_init_mach_seed_aad(u16::from(sess_id));
-    let aad_bytes: &[u8] = view.aad;
-    if aad_bytes != expected_aad.as_slice() {
-        return Err(HsmError::AeadEnvelopeAuthFailed);
-    }
-    if view.payload.len() != MACH_SEED_LEN {
-        return Err(HsmError::InvalidArg);
+    // Wire-shape check: reconstruct the canonical 32-byte AAD and
+    // byte-compare.  See the function doc for why a post-auth shape
+    // mismatch surfaces as `AeadEnvelopeAuthFailed`.
+    let mut expected_aad = [0u8; PART_INIT_MACH_SEED_AAD_LEN];
+    {
+        fn push<'a>(rest: &'a mut [u8], bytes: &[u8]) -> &'a mut [u8] {
+            let (head, tail) = rest.split_at_mut(bytes.len());
+            head.copy_from_slice(bytes);
+            tail
+        }
+
+        let mut rest: &mut [u8] = &mut expected_aad;
+        rest = push(rest, PART_INIT_MACH_SEED_AAD_LABEL);
+        let _ = push(rest, &u16::from(sess_id).to_le_bytes());
     }
 
-    let mach_seed = alloc.dma_alloc(MACH_SEED_LEN)?;
-    mach_seed.copy_from_slice(view.payload);
-    Ok(mach_seed)
+    let aad: &[u8] = view.aad;
+    if view.payload.len() != MACH_SEED_LEN || aad != expected_aad {
+        return Err(HsmError::AeadEnvelopeAuthFailed);
+    }
+
+    Ok(view.payload)
 }
 
 /// Run the SP 800-108 / RFC 5869 UMS derivation with UDS plus the
@@ -448,7 +447,7 @@ async fn build_pta_report<'a, P: HsmPal>(
         pk_y: &pub_xy[P384_COORD_LEN..],
         flags,
         app_uuid: &app_uuid,
-        report_data: &report_data,
+        report_data: &report_data[..],
         vm_launch_id: &vm_launch_id,
     };
 
@@ -467,34 +466,41 @@ async fn build_pta_report<'a, P: HsmPal>(
 /// Build the 128-byte `report_data` field:
 /// `SHA-384(label || u16_be(|policy|) || policy || u16_be(|thumb|)
 /// || thumb) || zeros[..80]`.
-async fn build_report_data<P: HsmPal>(
+///
+/// The returned DmaBuf is zero-initialised and sized to
+/// [`REPORT_DATA_LEN`]; `pal.hash` only writes the leading
+/// [`SHA384_LEN`] bytes, leaving the trailing 80 bytes as the
+/// required zero pad.
+async fn build_report_data<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    alloc: &impl HsmScopedAlloc,
+    alloc: &'a impl HsmScopedAlloc,
     policy: &DmaBuf,
     thumb: &DmaBuf,
-) -> HsmResult<[u8; REPORT_DATA_LEN]> {
-    let policy_len = policy.len();
-    let thumb_len = thumb.len();
-    let input = alloc.dma_alloc(REPORT_DATA_LABEL.len() + 2 + policy_len + 2 + thumb_len)?;
-    let mut w = 0;
-    input[w..w + REPORT_DATA_LABEL.len()].copy_from_slice(REPORT_DATA_LABEL);
-    w += REPORT_DATA_LABEL.len();
-    input[w..w + 2].copy_from_slice(&(policy_len as u16).to_be_bytes());
-    w += 2;
-    input[w..w + policy_len].copy_from_slice(policy);
-    w += policy_len;
-    input[w..w + 2].copy_from_slice(&(thumb_len as u16).to_be_bytes());
-    w += 2;
-    input[w..w + thumb_len].copy_from_slice(thumb);
+) -> HsmResult<&'a mut DmaBuf> {
+    let input = alloc.dma_alloc(
+        REPORT_DATA_LABEL.len() + size_of::<u16>() + policy.len() + size_of::<u16>() + thumb.len(),
+    )?;
 
-    let digest = alloc.dma_alloc(SHA384_LEN)?;
-    pal.hash(io, HsmHashAlgo::Sha384, input, digest, true)
+    {
+        fn push<'a>(rest: &'a mut [u8], bytes: &[u8]) -> &'a mut [u8] {
+            let (head, tail) = rest.split_at_mut(bytes.len());
+            head.copy_from_slice(bytes);
+            tail
+        }
+
+        let mut rest: &mut [u8] = &mut input[..];
+        rest = push(rest, REPORT_DATA_LABEL);
+        rest = push(rest, &(policy.len() as u16).to_be_bytes());
+        rest = push(rest, policy);
+        rest = push(rest, &(thumb.len() as u16).to_be_bytes());
+        let _ = push(rest, thumb);
+    }
+
+    let report_data = alloc.dma_alloc_zeroed(REPORT_DATA_LEN)?;
+    pal.hash(io, HsmHashAlgo::Sha384, input, report_data, true)
         .await?;
-
-    let mut out = [0u8; REPORT_DATA_LEN];
-    out[..SHA384_LEN].copy_from_slice(digest);
-    Ok(out)
+    Ok(report_data)
 }
 
 /// Vault the PTA and UMS private keys, register the partition

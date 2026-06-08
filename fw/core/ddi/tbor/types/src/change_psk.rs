@@ -89,7 +89,10 @@ pub struct TborChangePskReq<'a> {
 
     /// AEAD envelope wrapping the 32-byte new PSK under the active
     /// session's `param_key`.  See module docs for AAD layout.
-    #[tbor(max_len = 160)]
+    ///
+    /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
+    /// envelope in place — see [`TborChangePskReqViewMut::psk_envelope_mut`].
+    #[tbor(max_len = 160, mutable)]
     pub psk_envelope: &'a [u8],
 }
 

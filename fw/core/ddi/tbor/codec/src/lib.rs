@@ -32,6 +32,8 @@
 
 #![no_std]
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+
 /// Zero-copy decoders for request and response messages.
 pub mod decode;
 /// Fluent encoders for request and response messages.
@@ -79,7 +81,7 @@ pub trait TborRequest {
     ///
     /// Returns `Err` if the buffer is malformed, the opcode doesn't match,
     /// or the TOC structure doesn't match the schema.
-    fn decode(buf: &[u8]) -> Result<Self::View<'_>, DecodeError>;
+    fn decode(buf: &DmaBuf) -> Result<Self::View<'_>, DecodeError>;
 }
 
 /// Trait implemented by all `#[tbor(response)]` response types.
@@ -90,5 +92,5 @@ pub trait TborResponse {
     type View<'a>;
 
     /// Decode and validate a wire buffer into a typed view.
-    fn decode(buf: &[u8]) -> Result<Self::View<'_>, DecodeError>;
+    fn decode(buf: &DmaBuf) -> Result<Self::View<'_>, DecodeError>;
 }

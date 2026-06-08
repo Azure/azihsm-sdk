@@ -26,7 +26,6 @@ use azihsm_fw_core_crypto_aead_envelope::AeadAlg;
 use azihsm_fw_core_crypto_hpke::HpkeSuite;
 use azihsm_fw_core_crypto_key_masking::aead::mask as mask_key;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
-use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
 
@@ -71,13 +70,12 @@ const BMK_SESSION_KEY_LABEL: &[u8] = b"SESSION_BMK";
 struct ParsedRequest<'a> {
     /// Session Id
     sess_id: HsmSessId,
-    /// Borrowed directly from the request buffer; copied into a
-    /// scoped DmaBuf before being handed to the constant-time MAC
-    /// compare.
-    mac_fin: &'a [u8],
-    /// AEAD `seed_envelope` from the wire.  Copied into a scoped
-    /// mutable DmaBuf before [`aead_open`] (which decrypts in place).
-    seed_envelope: &'a [u8],
+    /// Codec-supplied `&DmaBuf` sub-view of the inbound request
+    /// buffer; flows straight into the constant-time MAC compare.
+    mac_fin: &'a DmaBuf,
+    /// Codec-supplied `&mut DmaBuf` sub-view of the inbound request
+    /// buffer.  Decrypted in place by [`aead_open`] — no scratch copy.
+    seed_envelope: &'a mut DmaBuf,
 }
 
 /// Per-session keys derived from the HPKE `exported` secret.
@@ -116,13 +114,13 @@ struct HandshakeState<'a> {
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
     let ParsedRequest {
         sess_id,
         mac_fin,
         seed_envelope,
-    } = parse_request(view)?;
+    } = parse_request(req_buf)?;
     ensure_pending_blob_len(pal, io, sess_id)?;
 
     pal.alloc_scoped_async(io, async |alloc| {
@@ -162,7 +160,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         )
         .await?;
 
-        let seed = open_seed_envelope(pal, io, alloc, sess_id, param_key, seed_envelope).await?;
+        let seed = open_seed_envelope(pal, io, sess_id, param_key, seed_envelope).await?;
 
         // ── Derive remaining per-session keys ─────────────────────
         let derived =
@@ -183,13 +181,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 }
 
 /// Decode and validate the wire request.
-fn parse_request<'a>(view: &'a RequestView<'_>) -> HsmResult<ParsedRequest<'a>> {
-    let req = TborOpenSessionFinishReq::decode(view.as_bytes())?;
-    let id = HsmSessId::from(u16::from(req.session_id()));
+fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
+    let req = TborOpenSessionFinishReq::decode_mut(req_buf)?;
+    let id = HsmSessId::from(u16::from(req.session_id));
     // `mac_fin` length is checked once the negotiated suite is known
     // (see [`handle`]); the schema already pins the wire field to 48 B.
-    let mac_fin: &[u8] = req.mac_fin();
-    let seed_envelope: &[u8] = req.seed_envelope();
+    let mac_fin: &DmaBuf = req.mac_fin;
+    let seed_envelope: &mut DmaBuf = req.seed_envelope;
     if seed_envelope.len() != SEED_ENVELOPE_LEN {
         return Err(HsmError::InvalidArg);
     }
@@ -276,7 +274,7 @@ async fn verify_mac<P: HsmPal>(
     io: &impl HsmIo,
     alloc: &impl HsmScopedAlloc,
     id: HsmSessId,
-    mac_fin: &[u8],
+    mac_fin: &DmaBuf,
     exported: &DmaBuf,
     pk_init: &DmaBuf,
     pk_hsm: &DmaBuf,
@@ -287,8 +285,6 @@ async fn verify_mac<P: HsmPal>(
     let label_sid = alloc.dma_alloc(SESSION_PHASE2_LABEL.len() + 2)?;
     label_sid[..SESSION_PHASE2_LABEL.len()].copy_from_slice(SESSION_PHASE2_LABEL);
     label_sid[SESSION_PHASE2_LABEL.len()..].copy_from_slice(&session_id_be);
-    let tag = alloc.dma_alloc(mac_fin.len())?;
-    tag.copy_from_slice(mac_fin);
 
     let mut hmac_ctx = pal
         .hmac_begin(io, HsmHashAlgo::Sha384, exported, alloc)
@@ -297,7 +293,7 @@ async fn verify_mac<P: HsmPal>(
     pal.hmac_continue(io, &mut hmac_ctx, pk_init).await?;
     pal.hmac_continue(io, &mut hmac_ctx, pk_hsm).await?;
     pal.hmac_continue(io, &mut hmac_ctx, pk_resp).await?;
-    let mac_verified = pal.hmac_finish_verify(io, hmac_ctx, tag).await?;
+    let mac_verified = pal.hmac_finish_verify(io, hmac_ctx, mac_fin).await?;
     if !mac_verified {
         let _ = pal.session_destroy(io, id);
         return Err(HsmError::SessionAuthFailure);
@@ -306,8 +302,8 @@ async fn verify_mac<P: HsmPal>(
 }
 
 /// AEAD-open the host's `seed_envelope` under the freshly-derived
-/// `param_key`.  Returns a scoped DMA buffer holding the 32-byte
-/// plaintext seed.
+/// `param_key`.  Returns the 32-byte plaintext seed as a `&DmaBuf`
+/// sub-view of the envelope buffer (which was decrypted in place).
 ///
 /// Any AEAD failure (bad magic, unsupported alg, tag mismatch) is
 /// treated as a session-establishment authentication failure: the
@@ -316,17 +312,15 @@ async fn verify_mac<P: HsmPal>(
 async fn open_seed_envelope<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    alloc: &'a impl HsmScopedAlloc,
     id: HsmSessId,
     param_key: &DmaBuf,
-    seed_envelope: &[u8],
-) -> HsmResult<&'a mut DmaBuf> {
-    // Stage the wire envelope into a scoped mutable DmaBuf so
-    // aead_open can decrypt in place.
-    let env_buf = alloc.dma_alloc(seed_envelope.len())?;
-    env_buf.copy_from_slice(seed_envelope);
-
-    let result = aead_open(pal, io, param_key, env_buf).await;
+    seed_envelope: &'a mut DmaBuf,
+) -> HsmResult<&'a DmaBuf> {
+    // Decrypt the envelope **in place** on the inbound request
+    // buffer; the destructured `seed_envelope` is a `&mut DmaBuf`
+    // sub-view of the parent `req_buf`, so no scratch copy is
+    // needed.
+    let result = aead_open(pal, io, param_key, seed_envelope).await;
     let view = match result {
         Ok(v) => v,
         Err(_) => {
@@ -341,10 +335,10 @@ async fn open_seed_envelope<'a, P: HsmPal>(
         let _ = pal.session_destroy(io, id);
         return Err(HsmError::SessionAuthFailure);
     }
-    // Copy plaintext out before env_buf goes out of scope below.
-    let seed = alloc.dma_alloc(SEED_LEN)?;
-    seed.copy_from_slice(view.payload);
-    Ok(seed)
+    // Hand the caller the AEAD plaintext view directly: it borrows
+    // from the envelope buffer (the parent `req_buf`), which lives
+    // until the enclosing scope exits.
+    Ok(view.payload)
 }
 
 /// HKDF-derive the remaining per-session keys: `masking_key` (always)
