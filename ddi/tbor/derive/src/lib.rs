@@ -244,11 +244,15 @@ fn gen_response(item: &ItemStruct, fields: &[ParsedField]) -> TokenStream2 {
                         ::azihsm_ddi_tbor_codec::DecodeError::FwError(__raw.status()),
                     );
                 }
-                if __raw.toc_count() != #expected_toc {
+                if __raw.toc_count() < #expected_toc {
                     return ::core::result::Result::Err(
                         ::azihsm_ddi_tbor_codec::DecodeError::MessageTruncated,
                     );
                 }
+                // Forward-compat: trailing TOC entries beyond the
+                // schema we know are ignored so a newer FW can append
+                // fields without breaking host decode of the known
+                // prefix.
                 #decode_steps
                 ::core::result::Result::Ok(#construct)
             }

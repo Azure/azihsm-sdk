@@ -3,7 +3,7 @@
 
 //! Unit tests for the FW-error surfacing path added by the host
 //! `#[tbor]` derive: when the wire response header carries a non-zero
-//! `status` (an `TborStatus` discriminant emitted by the FW dispatcher
+//! `status` (a `TborStatus` discriminant emitted by the FW dispatcher
 //! via `encode_tbor_err`), `decode_response` must short-circuit with
 //! [`codec::DecodeError::FwError`] *before* attempting schema decode.
 //!

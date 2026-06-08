@@ -181,7 +181,7 @@ impl<'a, H: Header> Encoder<'a, H> {
     pub fn finish(self) -> Result<&'a [u8], EncodeError> {
         if self.toc_count == 0 {
             // At least one TOC entry is required by spec.
-            return Err(EncodeError::TooManyTocEntries);
+            return Err(EncodeError::MissingTocEntries);
         }
 
         let data_start = H::LEN + self.toc_count * TOC_ENTRY_LEN;

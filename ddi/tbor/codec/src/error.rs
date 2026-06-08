@@ -40,6 +40,12 @@ pub enum EncodeError {
     BufferTooSmall,
     /// Already at the maximum 32 TOC entries.
     TooManyTocEntries,
+    /// Required TOC entry missing — caller invoked
+    /// [`RequestEncoder::finish`](crate::RequestEncoder::finish) (or
+    /// the response equivalent) without pushing at least one TOC
+    /// entry.  The TBOR wire format requires every message to carry
+    /// ≥ 1 TOC entry.
+    MissingTocEntries,
     /// Variable-length data exceeds the 8191-byte limit.
     DataTooLarge,
     /// Data section total exceeds the 13-bit offset range.
@@ -66,6 +72,7 @@ impl core::fmt::Display for EncodeError {
         match self {
             Self::BufferTooSmall => f.write_str("buffer too small"),
             Self::TooManyTocEntries => f.write_str("too many TOC entries (max 32)"),
+            Self::MissingTocEntries => f.write_str("missing required TOC entries"),
             Self::DataTooLarge => f.write_str("data too large (max 8191 bytes)"),
             Self::DataOffsetOverflow => f.write_str("data offset overflow (max 8191)"),
         }

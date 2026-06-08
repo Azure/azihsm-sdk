@@ -34,6 +34,10 @@ fn encode_error_display_strings_are_distinct_and_descriptive() {
     let cases: &[(EncodeError, &str)] = &[
         (EncodeError::BufferTooSmall, "buffer too small"),
         (EncodeError::TooManyTocEntries, "too many TOC entries"),
+        (
+            EncodeError::MissingTocEntries,
+            "missing required TOC entries",
+        ),
         (EncodeError::DataTooLarge, "data too large"),
         (EncodeError::DataOffsetOverflow, "data offset overflow"),
     ];

@@ -89,6 +89,22 @@ impl StructAttrs {
             ));
         }
 
+        if response.is_some() && opcode.is_some() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "#[tbor(response)] does not accept `opcode = ...` \
+                 (responses do not carry an opcode)",
+            ));
+        }
+
+        if response.is_some() && session_ctrl.is_some() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "#[tbor(response)] does not accept `session_ctrl = ...` \
+                 (session control lives on the request)",
+            ));
+        }
+
         let kind = if response.is_some() {
             StructKind::Response
         } else {

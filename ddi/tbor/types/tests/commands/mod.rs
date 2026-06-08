@@ -8,6 +8,7 @@
 pub mod change_psk;
 pub mod close_session;
 pub mod default_psk_gate;
+pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_api_rev;
 pub mod open_session;

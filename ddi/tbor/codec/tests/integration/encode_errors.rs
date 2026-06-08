@@ -39,7 +39,7 @@ fn encode_rejects_too_many_toc_entries() -> TestResult {
 fn encode_rejects_zero_toc_entries_on_finish() {
     let mut buf = [0u8; 256];
     let result = RequestEncoder::new(&mut buf, PROTOCOL_VERSION, OPCODE).finish();
-    assert!(matches!(result, Err(EncodeError::TooManyTocEntries)));
+    assert!(matches!(result, Err(EncodeError::MissingTocEntries)));
 }
 
 #[test]
