@@ -5,9 +5,9 @@
 # five OpenSSL 3.0.x distributions in parallel.  Each cell is its own job
 # and shows up as its own PR check.
 #
-# The nginx suite is exercised only on distros whose OpenSSL carries the
-# upstream STORE-dispatch fix (issue openssl#18262, fixed in 3.0.4 with
-# follow-ups through ~3.0.13).  Cells on older patchsets set
+# The nginx suite runs only where OpenSSL carries the complete STORE-dispatch
+# fix (issue openssl#18262, fixed in 3.0.4 with follow-ups through ~3.0.11) —
+# the 3.0.11 / 3.0.13 cells.  The 3.0.2 cell and the 3.0.7 RHEL cells set
 # `matrix.nginx: false` and skip the nginx install + test entirely.
 #
 # Each cell's `matrix.openssl_minor` is exported as
