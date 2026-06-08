@@ -58,24 +58,20 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
 
     // Derive the OKM into a DMA scratch slot; `vault_key_create`
     // copies it into vault-owned storage so the scratch can drop
-    // after.  Absent label / context use a zero-length `DmaBuf`
-    // (`split_at_mut(0)` carves an empty slice off the output
-    // allocation).
-    let out_area = pal.dma_alloc(io, target.out_len)?;
-    let (empty, out) = out_area.split_at_mut(0);
+    // after.  Absent label / context are passed as `None`.
+    let out = pal.dma_alloc(io, target.out_len)?;
 
-    let label_buf: &DmaBuf = match body.label.as_deref() {
-        Some(label) => label,
-        None => empty,
-    };
-    let context_buf: &DmaBuf = match body.context.as_deref() {
-        Some(context) => context,
-        None => empty,
-    };
     {
         let kdk = pal.vault_key(io, input_key_id)?;
-        pal.sp800_108_kdf(io, algo, kdk, label_buf, context_buf, out)
-            .await?;
+        pal.sp800_108_kdf(
+            io,
+            algo,
+            kdk,
+            body.label.as_deref(),
+            body.context.as_deref(),
+            out,
+        )
+        .await?;
     }
 
     // RAII vault entry — rolls back if response encoding below fails.

@@ -54,27 +54,26 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
 
     // Derive the OKM into a DMA scratch slot; `vault_key_create`
     // copies it into vault-owned storage so the scratch can drop
-    // after.  HKDF-Extract with an absent salt uses a zero-length
-    // `DmaBuf` (`split_at_mut(0)`), which the std PAL maps to the
-    // RFC 5869 default all-zero salt.
+    // after.  An absent salt (`None`) selects the RFC 5869 default
+    // all-zero salt.
+    //
+    // `out` and `prk` are allocated separately rather than carved
+    // from one buffer: each `dma_alloc` is independently 4-byte
+    // aligned, which the crypto DMA engine requires.  `out_len` is
+    // caller-controlled and need not be 4-aligned (variable-length
+    // HMAC outputs), so splitting a single buffer at `out_len` could
+    // leave `prk` misaligned.
     let out = pal.dma_alloc(io, target.out_len)?;
-    let prk_area = pal.dma_alloc(io, algo.digest_len())?;
-    let (empty, prk) = prk_area.split_at_mut(0);
+    let prk = pal.dma_alloc(io, algo.digest_len())?;
 
-    let salt_buf: &DmaBuf = match body.salt.as_deref() {
-        Some(salt) => salt,
-        None => empty,
-    };
     {
         let ikm = pal.vault_key(io, input_key_id)?;
-        pal.hkdf_extract(io, algo, salt_buf, ikm, prk).await?;
+        pal.hkdf_extract(io, algo, body.salt.as_deref(), ikm, prk)
+            .await?;
     }
 
-    let info_buf: &DmaBuf = match body.info.as_deref() {
-        Some(info) => info,
-        None => empty,
-    };
-    pal.hkdf_expand(io, algo, prk, info_buf, out).await?;
+    pal.hkdf_expand(io, algo, prk, body.info.as_deref(), out)
+        .await?;
 
     // RAII vault entry — rolls back if response encoding below fails.
     // `masked_key` is the host's opaque re-import blob; firmware-side

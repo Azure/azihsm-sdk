@@ -658,8 +658,15 @@ impl HsmPartitionManager for StdHsmPal {
             }
         }
 
-        self.sp800_108_kdf(io, HsmHashAlgo::Sha384, key_dma, label_dma, ctx_dma, output)
-            .await
+        self.sp800_108_kdf(
+            io,
+            HsmHashAlgo::Sha384,
+            key_dma,
+            Some(label_dma),
+            Some(ctx_dma),
+            output,
+        )
+        .await
     }
 
     fn part_verify_nonce(&self, io: &impl HsmIo, nonce: &[u8]) -> HsmResult<()> {

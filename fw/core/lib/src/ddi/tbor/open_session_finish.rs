@@ -416,7 +416,7 @@ async fn hkdf_expand_labeled<'a, P: HsmPal>(
     info[..label.len()].copy_from_slice(label);
     info[label.len()..].copy_from_slice(&(out_len as u16).to_be_bytes());
     let out = alloc.dma_alloc(out_len)?;
-    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, info, out)
+    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, Some(info), out)
         .await?;
     Ok(out)
 }
@@ -501,8 +501,15 @@ async fn derive_bk_session<'a, P: HsmPal>(
     label.copy_from_slice(SESSION_BK_LABEL);
 
     let bk_session = alloc.dma_alloc(SESSION_BK_LEN)?;
-    pal.sp800_108_kdf(io, HsmHashAlgo::Sha384, bk_boot, label, seed, bk_session)
-        .await?;
+    pal.sp800_108_kdf(
+        io,
+        HsmHashAlgo::Sha384,
+        bk_boot,
+        Some(label),
+        Some(seed),
+        bk_session,
+    )
+    .await?;
     Ok(bk_session)
 }
 
