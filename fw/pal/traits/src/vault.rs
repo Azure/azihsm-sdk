@@ -131,6 +131,21 @@ pub enum HsmVaultKeyKind {
     VarLenHmacSha256 = 32,
     VarLenHmacSha384 = 33,
     VarLenHmacSha512 = 34,
+
+    /// Session-establishment-protocol blob for TBOR sessions (both CO
+    /// and CU).
+    ///
+    /// Length-discriminated by session type:
+    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(80) ‖ masking_key(80)]`
+    ///   = 168 B.
+    /// * **Authenticated (CO):** the above ‖ `mac_tx(48) ‖ mac_rx(48)`
+    ///   = 264 B.
+    ///
+    /// Written by
+    /// [`HsmSessionManager::session_promote`](crate::HsmSessionManager::session_promote)
+    /// when any TBOR session completes its handshake; never produced
+    /// by the existing [`Session`](Self::Session) path.
+    SessionCu = 35,
 }
 
 /// Key attribute bitfield for vault-stored keys.

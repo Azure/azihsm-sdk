@@ -554,7 +554,7 @@ pub trait HsmPartitionManager {
     /// [`part_set_masked_bk_boot`](Self::part_set_masked_bk_boot).
     /// Subsequent handlers (e.g. `DdiEstablishCredential`) read this
     /// blob and recover raw `BK_BOOT` via
-    /// `unmask_cbc_in_place` so plaintext `BK_BOOT` never needs to
+    /// `key_masking::cbc::unmask` so plaintext `BK_BOOT` never needs to
     /// be persisted across calls.
     ///
     /// Follows the same query/copy pattern as
@@ -833,6 +833,101 @@ pub trait HsmPartitionManager {
 
     /// Stores the vault key ID of the partition's unwrapping key.
     fn part_set_unwrapping_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Returns the partition's pre-shared key (PSK) for the requested
+    /// role identifier.
+    ///
+    /// PSKs identify the caller role in the session-establishment
+    /// handshake: `psk_id = 0` is the Crypto Officer (CO) PSK,
+    /// `psk_id = 1` is the Crypto User (CU) PSK.  Any other identifier
+    /// returns [`HsmError::InvalidPskId`].
+    ///
+    /// If [`part_psk_set`](Self::part_psk_set) has not been called for
+    /// this `psk_id`, the well-known compiled-in default
+    /// ([`DEFAULT_PSK_CO`](crate::DEFAULT_PSK_CO) or
+    /// [`DEFAULT_PSK_CU`](crate::DEFAULT_PSK_CU)) is returned.  The
+    /// well-known defaults are public; production deployments MUST
+    /// rotate them via [`part_psk_set`](Self::part_psk_set) before
+    /// exposing the partition to untrusted traffic.
+    ///
+    /// Follows the standard query/copy pattern: pass `out = None` to
+    /// learn the size, then `Some(buf)` to copy.  All PSKs are
+    /// [`PSK_LEN`](crate::PSK_LEN) bytes.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `psk_id` — `0` for CO PSK, `1` for CU PSK.
+    /// - `out` — `None` for size query, `Some(buf)` to copy.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(PSK_LEN)` on success.
+    /// - `Err(HsmError::InvalidArg)` — `io.pid()` is out of range, or
+    ///   `out = Some(buf)` and `buf.len() < PSK_LEN`.
+    /// - `Err(HsmError::InvalidPskId)` — `psk_id` is not `0` or `1`.
+    /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
+    ///   currently [`Enabled`](PartState::Enabled).
+    fn part_psk(&self, io: &impl HsmIo, psk_id: u8, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Rotates the partition's pre-shared key (PSK) for the requested
+    /// role identifier, replacing the well-known default (or a prior
+    /// rotated value).
+    ///
+    /// Once called, [`part_psk`](Self::part_psk) returns `psk` for the
+    /// matching `psk_id` until the next rotation or partition
+    /// disable.  No wire command currently exposes this PAL method;
+    /// callers must drive it via privileged provisioning paths only.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context.
+    /// - `psk_id` — `0` for CO PSK, `1` for CU PSK.
+    /// - `psk` — replacement PSK; must be exactly
+    ///   [`PSK_LEN`](crate::PSK_LEN) bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::InvalidArg)` — `io.pid()` is out of range, or
+    ///   `psk.len() != PSK_LEN`.
+    /// - `Err(HsmError::InvalidPskId)` — `psk_id` is not `0` or `1`.
+    /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
+    ///   currently [`Enabled`](PartState::Enabled).
+    fn part_psk_set(&self, io: &impl HsmIo, psk_id: u8, psk: &[u8]) -> HsmResult<()>;
+
+    /// Reports whether the role's effective PSK still equals the
+    /// public, compiled-in default
+    /// ([`DEFAULT_PSK_CO`](crate::DEFAULT_PSK_CO) /
+    /// [`DEFAULT_PSK_CU`](crate::DEFAULT_PSK_CU)).
+    ///
+    /// **Authoritative byte-compare**, not a rotation-history flag:
+    /// even if [`part_psk_set`](Self::part_psk_set) was called with
+    /// the default bytes (e.g. via a malformed/malicious `ChangePsk`),
+    /// this method still reports `true` because the effective PSK is
+    /// still the public default.  This keeps the TBOR dispatcher's
+    /// default-PSK gate strictly tied to the bytes actually in use.
+    ///
+    /// The well-known defaults are public by design so partitions are
+    /// usable at bring-up, but they offer no authentication and MUST
+    /// be rotated before any sensitive operation is permitted.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `psk_id` — role identifier; `0` = Crypto Officer, `1` =
+    ///   Crypto User.  Any other value returns
+    ///   [`HsmError::InvalidPskId`].
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` — the partition's effective PSK for this `psk_id`
+    ///   is byte-identical to the compiled-in default.
+    /// - `Ok(false)` — the effective PSK differs from the default.
+    /// - `Err(HsmError::InvalidPskId)` — `psk_id > 1`.
+    /// - `Err(HsmError::PartitionNotEnabled)` — partition is not
+    ///   currently [`Enabled`](PartState::Enabled).
+    fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool>;
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.

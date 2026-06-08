@@ -12,16 +12,12 @@
 //!
 //! [`exec_op_tbor`]: ../../azihsm_ddi_interface/trait.DdiDev.html#method.exec_op_tbor
 
-use azihsm_ddi_tbor_codec::DecodeError;
-use azihsm_ddi_tbor_codec::EncodeError;
-use azihsm_fw_ddi_tbor_types::TborGetApiRevReq as ReqSchema;
-use azihsm_fw_ddi_tbor_types::TborGetApiRevResp as RespSchema;
 pub use azihsm_fw_ddi_tbor_types::TBOR_OP_GET_API_REV;
 
-use crate::TborOpReq;
-use crate::TborResp;
+use crate::tbor;
 
 /// Host-facing TBOR `GetApiRev` request. Carries no per-call data.
+#[tbor]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TborGetApiRevReq;
 
@@ -37,6 +33,7 @@ impl TborGetApiRevReq {
 ///
 /// Reports the inclusive range of TBOR wire-protocol versions the
 /// firmware understands.
+#[tbor(response)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TborGetApiRevResp {
     /// Lowest TBOR wire-protocol version the firmware speaks.
@@ -46,32 +43,16 @@ pub struct TborGetApiRevResp {
     pub max_protocol_version: u8,
 }
 
-impl TborOpReq for TborGetApiRevReq {
-    const OPCODE: u8 = TBOR_OP_GET_API_REV;
-    type OpResp = TborGetApiRevResp;
-
-    fn encode_request<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], EncodeError> {
-        let frame = ReqSchema::encode(buf)?.finish();
-        Ok(frame.as_bytes())
-    }
-}
-
-impl TborResp for TborGetApiRevResp {
-    fn decode_response(buf: &[u8]) -> Result<Self, DecodeError> {
-        let view = RespSchema::decode(buf)?;
-        Ok(Self {
-            min_protocol_version: view.min_protocol_version(),
-            max_protocol_version: view.max_protocol_version(),
-        })
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use azihsm_ddi_tbor_codec::PROTOCOL_VERSION;
+    use azihsm_fw_ddi_tbor_types::TborGetApiRevReq as ReqSchema;
+    use azihsm_fw_ddi_tbor_types::TborGetApiRevResp as RespSchema;
 
     use super::*;
+    use crate::TborOpReq;
+    use crate::TborResp;
 
     #[test]
     fn round_trip() {

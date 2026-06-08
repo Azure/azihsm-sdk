@@ -2,6 +2,12 @@
 # Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.14)
+
+if(CMAKE_GENERATOR STREQUAL "Visual Studio 18 2026")
+    # VS2026 generator requires 4.2
+    cmake_minimum_required(VERSION 4.2)
+endif()
+
 project(azihsm_api_cpp_tests VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)

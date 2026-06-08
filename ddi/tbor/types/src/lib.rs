@@ -22,11 +22,22 @@
 
 #![no_std]
 
+extern crate alloc;
+extern crate self as azihsm_ddi_tbor_types;
+
 pub use azihsm_ddi_tbor_codec as codec;
 pub use azihsm_ddi_tbor_derive::*;
 
+mod change_psk;
+mod close_session;
 mod get_api_rev;
+mod open_session_finish;
+mod open_session_init;
+pub use change_psk::*;
+pub use close_session::*;
 pub use get_api_rev::*;
+pub use open_session_finish::*;
+pub use open_session_init::*;
 
 /// Trait implemented by host-side TBOR request value types.
 ///

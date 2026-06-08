@@ -13,6 +13,7 @@
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
 
@@ -193,6 +194,14 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
 static void *azihsm_ossl_hkdf_newctx(void *provctx)
 {
     AZIHSM_HKDF_CTX *ctx;
+
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session((AZIHSM_OSSL_PROV_CTX *)provctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        return NULL;
+    }
 
     ctx = OPENSSL_zalloc(sizeof(AZIHSM_HKDF_CTX));
     if (ctx == NULL)
