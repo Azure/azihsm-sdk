@@ -181,10 +181,6 @@ mod linux {
             head_len,
             tail.len()
         );
-        println!(
-            "  PK_X@{}, PK_Y@{} (HEAD); APP_UUID@{}, REPORT_DATA@{}, VM_LAUNCH_ID@{} (TAIL)",
-            pk_x_head, pk_y_head, app_uuid_tail, report_data_tail, vm_launch_id_tail
-        );
     }
 
     fn head_with_sentinels(payload: &[u8], head_len: usize) -> &[u8] {
