@@ -140,7 +140,9 @@ impl OsslAesXtsAlgo {
     ///
     /// # Errors
     ///
-    /// Returns `CryptoError::AesXtsInvalidKeySize` if the key size is not 32 or 64 bytes.
+    /// Returns `CryptoError::AesXtsInvalidKeySize` if the key size is not 32 or 64 bytes,
+    /// or `CryptoError::AesXtsConfigError` if the XTS cipher cannot be fetched (e.g. the
+    /// private libctx's default provider does not offer it).
     fn cipher(key_size: usize) -> Result<Cipher, CryptoError> {
         let name = match key_size {
             32 => "AES-128-XTS",
@@ -148,7 +150,7 @@ impl OsslAesXtsAlgo {
             _ => return Err(CryptoError::AesXtsInvalidKeySize),
         };
         Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
-            .map_err(|_| CryptoError::AesXtsInvalidKeySize)
+            .map_err(|_| CryptoError::AesXtsConfigError)
     }
 
     /// Increments the tweak value for the next data unit.
