@@ -12,6 +12,7 @@ use std::path::Path;
 use clap::Parser;
 use toml_edit::DocumentMut;
 use toml_edit::Value;
+use xshell::cmd;
 
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -25,6 +26,10 @@ pub struct ValidateMembers {
     /// Attempt to fix any missing workspace members
     #[clap(long)]
     pub fix: bool,
+
+    /// Skip taplo (TOML formatting)
+    #[clap(long)]
+    pub skip_taplo: bool,
 }
 
 impl Xtask for ValidateMembers {
@@ -79,6 +84,13 @@ impl Xtask for ValidateMembers {
 
             if updated {
                 fs::write("Cargo.toml", doc.to_string())?;
+
+                // Format the modified Cargo.toml with taplo
+                if !self.skip_taplo {
+                    let sh = xshell::Shell::new()?;
+                    log::trace!("running taplo fmt Cargo.toml");
+                    cmd!(sh, "taplo fmt Cargo.toml").quiet().run()?;
+                }
             }
         } else if !non_member_paths.is_empty() {
             // Error
