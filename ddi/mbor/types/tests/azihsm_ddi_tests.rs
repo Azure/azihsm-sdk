@@ -18,6 +18,7 @@ mod integration {
     pub mod common;
     pub mod ddi_dev_info;
     pub mod delete_key;
+    pub mod delete_key_smoke;
     pub mod device_handle_session;
     pub mod ecc_generate;
     pub mod ecc_generate_smoke;
@@ -41,9 +42,12 @@ mod integration {
     pub mod get_session_encryption_key;
     pub mod get_session_encryption_key_smoke;
     pub mod get_unwrapping_key;
+    pub mod hkdf_smoke;
     pub mod hmac;
+    pub mod hmac_smoke;
     pub mod init_bk3_smoke;
     pub mod invalid_ecc_pub_key_vectors;
+    pub mod kbkdf_smoke;
     pub mod live_migration_expected_errors;
     pub mod live_migration_sim;
     pub mod lm_context;

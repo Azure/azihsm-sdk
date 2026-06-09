@@ -179,7 +179,9 @@ fn test_kbkdf_empty_key() {
 
 /// Test KBKDF with neither label nor context provided.
 ///
-/// Expected: Should return KbkdfSetPropertyError.
+/// SP 800-108 permits an empty Label and Context, so derivation must
+/// succeed — the PRF input reduces to the counter (and the optional
+/// length field).
 #[test]
 fn test_kbkdf_no_label_no_context() {
     let key = GenericSecretKey::from_bytes(&[0x42; 32]).expect("Create key failed");
@@ -189,16 +191,11 @@ fn test_kbkdf_no_label_no_context() {
     let result = kbkdf.derive(&key, 16);
 
     assert!(
-        result.is_err(),
-        "Expected error when both label and context are None"
+        result.is_ok(),
+        "Derivation should succeed when both label and context are None"
     );
-    match result {
-        Err(CryptoError::KbkdfSetPropertyError) => {
-            // Expected error
-        }
-        Err(e) => panic!("Expected KbkdfSetPropertyError, got {:?}", e),
-        Ok(_) => panic!("Expected error but derivation succeeded"),
-    }
+    let derived = result.unwrap().to_vec().expect("extract derived bytes");
+    assert_eq!(derived.len(), 16);
 }
 
 /// Test KBKDF with only label (no context) - should succeed.
