@@ -74,6 +74,9 @@ pub struct Precheck {
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
+    /// Skip cleaning existing llvm-cov artifacts before running coverage
+    #[clap(long)]
+    pub skip_clean: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -248,7 +251,10 @@ impl Xtask for Precheck {
 
         // Run code coverage
         if stage.coverage || stage.all {
-            Coverage {}.run(ctx.clone())?;
+            Coverage {
+                skip_clean: self.skip_clean,
+            }
+            .run(ctx.clone())?;
         }
 
         // Run nextest report
