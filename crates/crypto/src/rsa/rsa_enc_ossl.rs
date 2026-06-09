@@ -430,7 +430,11 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                         return Err(CryptoError::RsaError);
                     }
                 }
-                if let Some(label) = self.label {
+                // An empty label is equivalent to "no label" (OAEP's default),
+                // and `OPENSSL_malloc(0)` returns NULL — so only configure a
+                // label when it is non-empty, keeping `None` and `Some(b"")`
+                // behaviourally identical.
+                if let Some(label) = self.label.filter(|l| !l.is_empty()) {
                     // EVP_PKEY_CTX_set0_rsa_oaep_label takes ownership of the
                     // label buffer and frees it with OPENSSL_free, so the buffer
                     // must be OPENSSL_malloc'd (matching `set_rsa_oaep_label`).

@@ -533,8 +533,11 @@ impl OsslRsaHashSignAlgo {
                     return Err(CryptoError::RsaSetPropertyError);
                 }
                 // Fetch the MGF1 digest from the private libctx so it never
-                // resolves to azihsm. It only needs to live for this control
-                // call.
+                // resolves to azihsm. `pctx` is a provider ctx, so
+                // `EVP_PKEY_CTX_set_rsa_mgf1_md` forwards the digest by *name*
+                // (`EVP_MD_get0_name`): the provider copies that name and
+                // re-fetches its own md synchronously inside this call, so `md`
+                // does not need to outlive it (no dangling pointer at sign time).
                 let md = openssl::md::Md::fetch(
                     Some(crate::libctx::crypto_libctx()),
                     self.hash.md_name(),

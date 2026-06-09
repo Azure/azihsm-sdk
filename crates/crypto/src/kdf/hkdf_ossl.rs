@@ -146,10 +146,17 @@ impl<'a> DeriveOp for OsslHkdfAlgo<'a> {
             HkdfMode::ExtractAndExpand => openssl::kdf::HkdfMode::ExtractAndExpand,
             HkdfMode::Expand => openssl::kdf::HkdfMode::ExpandOnly,
         };
-        // Extract-only yields the PRK (one digest block); the expand modes yield
-        // the requested length.
+        // Extract-only yields the PRK (exactly one digest block); the expand
+        // modes yield the requested length. Reject a mismatched requested
+        // length for Extract so behavior matches the Windows (CNG) backend
+        // instead of silently ignoring `derive_len`.
         let out_len = match self.mode {
-            HkdfMode::Extract => self.md.size(),
+            HkdfMode::Extract => {
+                if derive_len != self.md.size() {
+                    return Err(CryptoError::HmacInvalidDerivedKeyLength);
+                }
+                self.md.size()
+            }
             _ => derive_len,
         };
         let mut out = vec![0u8; out_len];
