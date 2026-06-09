@@ -21,10 +21,27 @@
 use azihsm_fw_ddi_mbor_types::DdiKeyType;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 // ── HsmVaultKeyKind → … ───────────────────────────────────────────
+
+/// Map an HMAC vault kind to the hash algorithm whose digest length
+/// is the MAC tag size.
+///
+/// Accepts both the fixed-length (`_HmacSha*`) and variable-length
+/// (`VarLenHmacSha*`) HMAC kinds — mirroring the reference firmware's
+/// `Hmac` handler.  Any non-HMAC kind returns
+/// [`HsmError::InvalidKeyType`].
+pub(crate) fn hmac_hash(kind: HsmVaultKeyKind) -> HsmResult<HsmHashAlgo> {
+    match kind {
+        HsmVaultKeyKind::_HmacSha256 | HsmVaultKeyKind::VarLenHmacSha256 => Ok(HsmHashAlgo::Sha256),
+        HsmVaultKeyKind::_HmacSha384 | HsmVaultKeyKind::VarLenHmacSha384 => Ok(HsmHashAlgo::Sha384),
+        HsmVaultKeyKind::_HmacSha512 | HsmVaultKeyKind::VarLenHmacSha512 => Ok(HsmHashAlgo::Sha512),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
 
 /// Map an ECC private vault kind to its [`HsmEccCurve`].
 /// Non-ECC kinds return [`HsmError::InvalidKeyType`].

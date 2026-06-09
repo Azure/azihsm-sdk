@@ -323,14 +323,12 @@ async fn derive_credential_keys<P: HsmPal>(
         .await?;
     }
 
-    // HKDF-Extract with empty salt (RFC 5869 §2.2).  `split_at_mut(0)`
-    // yields a zero-length DmaBuf for the salt argument.
-    let prk_area = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
-    let (empty_salt, prk) = prk_area.split_at_mut(0);
-    pal.hkdf_extract(io, HsmHashAlgo::Sha384, empty_salt, secret, prk)
+    // HKDF-Extract with the RFC 5869 §2.2 default (absent) salt.
+    let prk = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
+    pal.hkdf_extract(io, HsmHashAlgo::Sha384, None, secret, prk)
         .await?;
 
-    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, nonce, okm_out)
+    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, Some(nonce), okm_out)
         .await
 }
 
@@ -465,16 +463,12 @@ async fn derive_bk3_session<P: HsmPal>(
     let session_label = pal.dma_alloc(io, SESSION_BK3_LABEL.len())?;
     session_label.copy_from_slice(SESSION_BK3_LABEL);
 
-    // Empty 0-length `&DmaBuf` for `context` — borrowed off `bk3` to
-    // avoid a separate DMA allocation just for an empty buffer.
-    let (empty_context, _) = bk3.split_at(0);
-
     pal.sp800_108_kdf(
         io,
         HsmHashAlgo::Sha384,
         bk3,
-        session_label,
-        empty_context,
+        Some(session_label),
+        None,
         bk3_session_out,
     )
     .await

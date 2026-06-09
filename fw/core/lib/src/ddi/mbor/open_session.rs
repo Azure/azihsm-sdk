@@ -120,8 +120,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         io,
         HsmHashAlgo::Sha384,
         bk_boot,
-        session_bk_label,
-        body.encrypted_credential.encrypted_seed,
+        Some(session_bk_label),
+        Some(body.encrypted_credential.encrypted_seed),
         bk_session,
     )
     .await?;
@@ -228,13 +228,12 @@ async fn derive_session_credential_keys<P: HsmPal>(
         .await?;
     }
 
-    // HKDF-Extract with empty salt (RFC 5869 §2.2).
-    let prk_area = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
-    let (empty_salt, prk) = prk_area.split_at_mut(0);
-    pal.hkdf_extract(io, HsmHashAlgo::Sha384, empty_salt, secret, prk)
+    // HKDF-Extract with the RFC 5869 §2.2 default (absent) salt.
+    let prk = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
+    pal.hkdf_extract(io, HsmHashAlgo::Sha384, None, secret, prk)
         .await?;
 
-    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, nonce, okm_out)
+    pal.hkdf_expand(io, HsmHashAlgo::Sha384, prk, Some(nonce), okm_out)
         .await
 }
 
