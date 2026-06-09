@@ -806,8 +806,8 @@ pub(crate) mod kdf {
             io,
             HsmHashAlgo::Sha384,
             uds,
-            label,
-            context,
+            Some(label),
+            Some(context),
             &mut ums_out[..UMS_LEN],
         )
         .await?;
@@ -894,7 +894,7 @@ pub(crate) mod kdf {
 
         // ── HKDF-Expand → OKM (curve-specific length) ─────────────
         let okm = alloc.dma_alloc(okm_len)?;
-        pal.hkdf_expand(io, HsmHashAlgo::Sha384, ums, info, okm)
+        pal.hkdf_expand(io, HsmHashAlgo::Sha384, ums, Some(info), okm)
             .await?;
 
         // ── §A.2.1 keypair derivation via PAL primitive ────────────

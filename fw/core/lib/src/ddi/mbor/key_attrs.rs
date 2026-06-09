@@ -149,6 +149,49 @@ pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmV
     Ok(attrs)
 }
 
+/// Build vault attrs for a derived variable-length HMAC key.
+///
+/// HMAC keys produced by HKDF / KBKDF can sign / verify MACs or act
+/// as a key-derivation key (`derive`) for a further KDF.  Exactly one
+/// of those two usage groups must be set; `encrypt_decrypt`, `wrap`,
+/// and `unwrap` are rejected with [`HsmError::InvalidPermissions`].
+pub(crate) fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
+    let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
+
+    let sign_verify = metadata.sign() && metadata.verify();
+    let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();
+    let derive = metadata.derive();
+    let wrap = metadata.wrap();
+    let unwrap = metadata.unwrap();
+
+    let usage_count = (sign_verify as u8)
+        + (encrypt_decrypt as u8)
+        + (derive as u8)
+        + (wrap as u8)
+        + (unwrap as u8);
+    if usage_count != 1 {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    if encrypt_decrypt || wrap || unwrap {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    if sign_verify {
+        attrs = attrs.with_sign(true).with_verify(true);
+    }
+    if derive {
+        attrs = attrs.with_derive(true);
+    }
+
+    if metadata.session() {
+        attrs = attrs.with_session(true);
+    }
+
+    Ok(attrs)
+}
+
 /// Reject metadata where one half of a paired usage flag is set
 /// without the other (`sign` without `verify`, or `encrypt`
 /// without `decrypt`).  The host is supposed to encode these as

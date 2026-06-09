@@ -11,6 +11,8 @@
 //! OpenSSL. The remaining hash-based KDF helpers are currently left as
 //! `todo!()` stubs.
 
+use core::ops::Deref;
+
 use azihsm_crypto::HashAlgo;
 
 use super::*;
@@ -29,7 +31,7 @@ impl HsmKdf for StdHsmPal {
         &self,
         _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        salt: &DmaBuf,
+        salt: Option<&DmaBuf>,
         ikm: &DmaBuf,
         prk: &mut DmaBuf,
     ) -> HsmResult<()> {
@@ -38,8 +40,8 @@ impl HsmKdf for StdHsmPal {
                 ikm,
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Extract,
-                salt,
-                &[],
+                salt.map(|s| s.deref()),
+                None,
                 prk,
             )
             .await
@@ -50,7 +52,7 @@ impl HsmKdf for StdHsmPal {
         _io: &impl HsmIo,
         algo: HsmHashAlgo,
         prk: &DmaBuf,
-        info: &DmaBuf,
+        info: Option<&DmaBuf>,
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.kdf
@@ -58,8 +60,8 @@ impl HsmKdf for StdHsmPal {
                 prk,
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Expand,
-                &[],
-                info,
+                None,
+                info.map(|s| s.deref()),
                 output,
             )
             .await
@@ -70,12 +72,18 @@ impl HsmKdf for StdHsmPal {
         _io: &impl HsmIo,
         algo: HsmHashAlgo,
         key: &DmaBuf,
-        label: &DmaBuf,
-        context: &DmaBuf,
+        label: Option<&DmaBuf>,
+        context: Option<&DmaBuf>,
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.kdf
-            .kbkdf(key, to_hash_algo(algo), label, context, output)
+            .kbkdf(
+                key,
+                to_hash_algo(algo),
+                label.map(|s| s.deref()),
+                context.map(|s| s.deref()),
+                output,
+            )
             .await
     }
 

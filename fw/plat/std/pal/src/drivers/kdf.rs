@@ -40,6 +40,16 @@ use azihsm_fw_hsm_pal_traits::*;
 
 use crate::worker::WorkerPool;
 
+/// Copies an optional KDF input into an owned buffer for the worker
+/// closure, treating a present-but-empty slice as absent (`None`).
+///
+/// Salt / info / label / context are all optional; a zero-length
+/// slice is collapsed to `None` so the empty and omitted cases stay
+/// byte-identical and OpenSSL is never handed an explicit empty input.
+fn owned_nonempty(input: Option<&[u8]>) -> Option<Vec<u8>> {
+    input.filter(|s| !s.is_empty()).map(<[u8]>::to_vec)
+}
+
 /// Std KDF driver — software HKDF/KBKDF via OpenSSL with async worker dispatch.
 ///
 /// Created once during PAL initialization and shared across all IO tasks.
@@ -61,10 +71,9 @@ impl StdKdf {
     /// - `hash_algo` — The hash algorithm for the underlying HMAC
     ///   (e.g., `HashAlgo::sha256()`).
     /// - `mode` — Which HKDF phase(s) to perform.
-    /// - `salt` — Optional salt value. Pass an empty slice to use the
-    ///   default salt.
-    /// - `info` — Context and application-specific info. Pass an empty
-    ///   slice if not needed.
+    /// - `salt` — Optional salt value. `None` selects the default
+    ///   salt.
+    /// - `info` — Optional context / application-specific info.
     /// - `output` — Buffer for the derived output key material (OKM).
     ///   The buffer length determines how many bytes are derived.
     ///
@@ -75,13 +84,13 @@ impl StdKdf {
         key: &[u8],
         hash_algo: HashAlgo,
         mode: azihsm_crypto::HkdfMode,
-        salt: &[u8],
-        info: &[u8],
+        salt: Option<&[u8]>,
+        info: Option<&[u8]>,
         output: &mut [u8],
     ) -> HsmResult<()> {
         let key_owned = key.to_vec();
-        let salt_owned = salt.to_vec();
-        let info_owned = info.to_vec();
+        let salt_owned = owned_nonempty(salt);
+        let info_owned = owned_nonempty(info);
         let derive_len = output.len();
 
         let result = self
@@ -89,17 +98,12 @@ impl StdKdf {
             .submit_with_result(async move {
                 let input_key =
                     GenericSecretKey::from_bytes(&key_owned).map_err(|_| HsmError::HkdfError)?;
-                let salt_opt = if salt_owned.is_empty() {
-                    None
-                } else {
-                    Some(salt_owned.as_slice())
-                };
-                let info_opt = if info_owned.is_empty() {
-                    None
-                } else {
-                    Some(info_owned.as_slice())
-                };
-                let algo = HkdfAlgo::new(mode, &hash_algo, salt_opt, info_opt);
+                let algo = HkdfAlgo::new(
+                    mode,
+                    &hash_algo,
+                    salt_owned.as_deref(),
+                    info_owned.as_deref(),
+                );
                 let derived = algo
                     .derive(&input_key, derive_len)
                     .map_err(|_| HsmError::HkdfError)?;
@@ -118,10 +122,10 @@ impl StdKdf {
     /// # Parameters
     /// - `key` — The key-derivation key (KDK).
     /// - `hash_algo` — The HMAC hash algorithm (e.g., `HashAlgo::sha256()`).
-    /// - `label` — A string identifying the purpose of the derived key.
-    ///   Pass an empty slice if not needed.
-    /// - `context` — Context information binding the derived key to a
-    ///   specific use. Pass an empty slice if not needed.
+    /// - `label` — Optional string identifying the purpose of the
+    ///   derived key.
+    /// - `context` — Optional context information binding the derived
+    ///   key to a specific use.
     /// - `output` — Buffer for the derived key material. The buffer
     ///   length determines how many bytes are derived.
     ///
@@ -131,13 +135,13 @@ impl StdKdf {
         &self,
         key: &[u8],
         hash_algo: HashAlgo,
-        label: &[u8],
-        context: &[u8],
+        label: Option<&[u8]>,
+        context: Option<&[u8]>,
         output: &mut [u8],
     ) -> HsmResult<()> {
         let key_owned = key.to_vec();
-        let label_owned = label.to_vec();
-        let context_owned = context.to_vec();
+        let label_owned = owned_nonempty(label);
+        let context_owned = owned_nonempty(context);
         let derive_len = output.len();
 
         let result = self
@@ -145,17 +149,7 @@ impl StdKdf {
             .submit_with_result(async move {
                 let input_key =
                     GenericSecretKey::from_bytes(&key_owned).map_err(|_| HsmError::KbkdfError)?;
-                let label_opt = if label_owned.is_empty() {
-                    None
-                } else {
-                    Some(label_owned)
-                };
-                let context_opt = if context_owned.is_empty() {
-                    None
-                } else {
-                    Some(context_owned)
-                };
-                let algo = KbkdfAlgo::with_len(hash_algo, label_opt, context_opt);
+                let algo = KbkdfAlgo::with_len(hash_algo, label_owned, context_owned);
                 let derived = algo
                     .derive(&input_key, derive_len)
                     .map_err(|_| HsmError::KbkdfError)?;
@@ -193,8 +187,8 @@ mod tests {
                 &key,
                 HashAlgo::sha256(),
                 azihsm_crypto::HkdfMode::ExtractAndExpand,
-                salt,
-                info,
+                Some(salt),
+                Some(info),
                 &mut output,
             )
             .await
@@ -214,8 +208,8 @@ mod tests {
                 &key,
                 HashAlgo::sha384(),
                 azihsm_crypto::HkdfMode::ExtractAndExpand,
-                salt,
-                info,
+                Some(salt),
+                Some(info),
                 &mut output,
             )
             .await
@@ -235,8 +229,8 @@ mod tests {
                 &key,
                 HashAlgo::sha512(),
                 azihsm_crypto::HkdfMode::ExtractAndExpand,
-                salt,
-                info,
+                Some(salt),
+                Some(info),
                 &mut output,
             )
             .await
@@ -255,8 +249,8 @@ mod tests {
                 &key,
                 HashAlgo::sha256(),
                 azihsm_crypto::HkdfMode::Extract,
-                salt,
-                &[],
+                Some(salt),
+                None,
                 &mut prk,
             )
             .await
@@ -277,8 +271,8 @@ mod tests {
                 &key,
                 HashAlgo::sha256(),
                 azihsm_crypto::HkdfMode::Extract,
-                salt,
-                &[],
+                Some(salt),
+                None,
                 &mut prk,
             )
             .await
@@ -291,8 +285,8 @@ mod tests {
                 &prk,
                 HashAlgo::sha256(),
                 azihsm_crypto::HkdfMode::Expand,
-                &[],
-                b"expand-info",
+                None,
+                Some(b"expand-info"),
                 &mut okm,
             )
             .await
@@ -321,8 +315,8 @@ mod tests {
                 &ikm,
                 HashAlgo::sha256(),
                 azihsm_crypto::HkdfMode::ExtractAndExpand,
-                &salt,
-                &info,
+                Some(&salt),
+                Some(&info),
                 &mut okm,
             )
             .await
@@ -344,11 +338,23 @@ mod tests {
         let mut out1 = [0u8; 32];
         let mut out2 = [0u8; 32];
         driver
-            .kbkdf(&key, HashAlgo::sha256(), label, context, &mut out1)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(label),
+                Some(context),
+                &mut out1,
+            )
             .await
             .unwrap();
         driver
-            .kbkdf(&key, HashAlgo::sha256(), label, context, &mut out2)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(label),
+                Some(context),
+                &mut out2,
+            )
             .await
             .unwrap();
         assert_ne!(out1, [0u8; 32]);
@@ -361,7 +367,13 @@ mod tests {
         let key = [0xeeu8; 48];
         let mut output = [0u8; 48];
         driver
-            .kbkdf(&key, HashAlgo::sha384(), b"label", b"ctx", &mut output)
+            .kbkdf(
+                &key,
+                HashAlgo::sha384(),
+                Some(b"label"),
+                Some(b"ctx"),
+                &mut output,
+            )
             .await
             .unwrap();
         assert_ne!(output, [0u8; 48]);
@@ -373,7 +385,13 @@ mod tests {
         let key = [0xffu8; 64];
         let mut output = [0u8; 64];
         driver
-            .kbkdf(&key, HashAlgo::sha512(), b"label", b"ctx", &mut output)
+            .kbkdf(
+                &key,
+                HashAlgo::sha512(),
+                Some(b"label"),
+                Some(b"ctx"),
+                &mut output,
+            )
             .await
             .unwrap();
         assert_ne!(output, [0u8; 64]);
@@ -387,11 +405,23 @@ mod tests {
         let mut out_a = [0u8; 32];
         let mut out_b = [0u8; 32];
         driver
-            .kbkdf(&key, HashAlgo::sha256(), b"label-a", context, &mut out_a)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(b"label-a"),
+                Some(context),
+                &mut out_a,
+            )
             .await
             .unwrap();
         driver
-            .kbkdf(&key, HashAlgo::sha256(), b"label-b", context, &mut out_b)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(b"label-b"),
+                Some(context),
+                &mut out_b,
+            )
             .await
             .unwrap();
         assert_ne!(
@@ -408,11 +438,23 @@ mod tests {
         let mut out_a = [0u8; 32];
         let mut out_b = [0u8; 32];
         driver
-            .kbkdf(&key, HashAlgo::sha256(), label, b"ctx-a", &mut out_a)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(label),
+                Some(b"ctx-a"),
+                &mut out_a,
+            )
             .await
             .unwrap();
         driver
-            .kbkdf(&key, HashAlgo::sha256(), label, b"ctx-b", &mut out_b)
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(label),
+                Some(b"ctx-b"),
+                &mut out_b,
+            )
             .await
             .unwrap();
         assert_ne!(

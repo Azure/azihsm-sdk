@@ -110,7 +110,7 @@ where
     let labeled_ikm = concat_alloc(&[HPKE_V1, suite_id, label, ikm], alloc)?;
     let salt_dma = dma_copy_in(alloc, salt)?;
     let prk_scratch = alloc.dma_alloc(prk_out.len())?;
-    pal.hkdf_extract(io, algo, salt_dma, labeled_ikm, prk_scratch)
+    pal.hkdf_extract(io, algo, Some(salt_dma), labeled_ikm, prk_scratch)
         .await?;
     prk_out.copy_from_slice(prk_scratch);
     Ok(())
@@ -173,7 +173,7 @@ where
     let prk_dma = dma_copy_in(alloc, prk)?;
     let labeled_info = concat_alloc(&[&l_bytes, HPKE_V1, suite_id, label, info], alloc)?;
     let out_scratch = alloc.dma_alloc(out.len())?;
-    pal.hkdf_expand(io, algo, prk_dma, labeled_info, out_scratch)
+    pal.hkdf_expand(io, algo, prk_dma, Some(labeled_info), out_scratch)
         .await?;
     out.copy_from_slice(out_scratch);
     Ok(())
