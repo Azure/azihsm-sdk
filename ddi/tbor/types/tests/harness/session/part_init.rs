@@ -63,17 +63,6 @@ pub fn part_init(
     dev.exec_op_tbor(&req, &mut None)
 }
 
-/// Generates a fresh 12-byte AES-GCM IV from the system RNG.
-///
-/// Centralised so that no call site contains the literal `[0u8; 12]`
-/// initializer that the static analyser otherwise flags as a
-/// "hard-coded cryptographic value" false positive.
-fn rand_gcm_iv() -> Result<[u8; 12], DdiError> {
-    let mut iv = [0u8; 12];
-    Rng::rand_bytes(&mut iv).map_err(|_| DdiError::InvalidParameter)?;
-    Ok(iv)
-}
-
 /// Build the wire-ready AEAD-GCM envelope for a `PartInit` `mach_seed`
 /// payload.
 ///
@@ -88,7 +77,7 @@ pub fn encrypt_mach_seed_envelope(
         return Err(DdiError::InvalidParameter);
     }
     let aad = build_part_init_mach_seed_aad(session.session_id);
-    let iv = rand_gcm_iv()?;
+    let iv = Rng::rand_vec(12).map_err(|_| DdiError::InvalidParameter)?;
     let total = aead_envelope::seal(
         AeadAlg::AesGcm256,
         &session.param_key,

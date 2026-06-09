@@ -55,8 +55,7 @@ const ROTATED_PSK: [u8; PSK_LEN] = [
 /// arms that reject mismatched AAD, wrong-length plaintexts,
 /// envelopes encrypted under a different session's key, etc.
 fn build_envelope(param_key: &AesKey, aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
-    let mut iv = [0u8; 12];
-    Rng::rand_bytes(&mut iv).expect("rng iv");
+    let iv = Rng::rand_vec(12).expect("rng iv");
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, aad, plaintext, None)
         .expect("aead size");
     let mut out = vec![0u8; total];

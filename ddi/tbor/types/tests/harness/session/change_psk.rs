@@ -61,8 +61,7 @@ pub fn encrypt_psk_envelope(
     new_psk: &[u8],
 ) -> Result<Vec<u8>, DdiError> {
     let aad = build_psk_change_aad(session.session_id);
-    let mut iv = [0u8; 12];
-    Rng::rand_bytes(&mut iv).map_err(|_| DdiError::InvalidParameter)?;
+    let iv = Rng::rand_vec(12).map_err(|_| DdiError::InvalidParameter)?;
     let total = aead_envelope::seal(
         AeadAlg::AesGcm256,
         &session.param_key,
