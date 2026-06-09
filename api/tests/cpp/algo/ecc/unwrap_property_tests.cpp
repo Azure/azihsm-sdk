@@ -942,10 +942,7 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_sign_private_derive_pu
 }
 
 // Verifies unwrap rejects session mismatch when private is persistent and public is session.
-TEST_F(
-    azihsm_ecc_keyunwrap_property,
-    unwrap_pair_rejects_reverse_session_mismatch_between_priv_pub
-)
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_reverse_session_mismatch_between_priv_pub)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
@@ -965,10 +962,7 @@ TEST_F(
 }
 
 // Verifies unwrap rejects curve mismatch when private curve differs from public curve.
-TEST_F(
-    azihsm_ecc_keyunwrap_property,
-    unwrap_pair_rejects_reverse_curve_mismatch_between_priv_pub
-)
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_reverse_curve_mismatch_between_priv_pub)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
@@ -1053,37 +1047,67 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_nonzero_public_session_
     });
 }
 
-// Verifies unwrap rejects invalid private SIGN value.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_invalid_private_sign_value)
+// Verifies unwrap treats a non-zero private SIGN value as true.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_nonzero_private_sign_value)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
         ctx.priv_props.can_sign = 2;
 
-        auto result = ctx.try_unwrap_inputs(unwrap_inputs);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+
+        uint8_t private_sign = 0;
+        ASSERT_EQ(
+            get_key_prop(private_key.get(), AZIHSM_KEY_PROP_ID_SIGN, private_sign),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_NE(private_sign, 0);
     });
 }
 
-// Verifies unwrap rejects invalid public VERIFY value.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_invalid_public_verify_value)
+// Verifies unwrap treats a non-zero public VERIFY value as true.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_nonzero_public_verify_value)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
         ctx.pub_props.can_verify = 2;
 
-        auto result = ctx.try_unwrap_inputs(unwrap_inputs);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+
+        uint8_t public_verify = 0;
+        ASSERT_EQ(
+            get_key_prop(public_key.get(), AZIHSM_KEY_PROP_ID_VERIFY, public_verify),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_NE(public_verify, 0);
     });
 }
 
