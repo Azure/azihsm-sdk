@@ -374,22 +374,30 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_public_sign_without_ve
     });
 }
 
-// Verifies unwrap rejects duplicate property IDs in private property list.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_duplicate_private_property_id)
+// Verifies unwrap allows duplicate property IDs in the private property list.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_duplicate_private_property_id)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
         ctx.priv_props.props.push_back({ AZIHSM_KEY_PROP_ID_EC_CURVE,
                                          &ctx.priv_props.ecc_curve,
                                          sizeof(ctx.priv_props.ecc_curve) });
 
-        auto result = ctx.try_unwrap_inputs(unwrap_inputs);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
     });
 }
 
@@ -626,25 +634,6 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_kind_mismatch_between_
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(priv_key_handle, 0);
     ASSERT_EQ(pub_key_handle, 0);
-}
-
-// Verifies unwrap rejects duplicate property IDs in public property list.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_duplicate_public_property_id)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
-
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        ctx.pub_props.props.push_back({ AZIHSM_KEY_PROP_ID_EC_CURVE,
-                                        &ctx.pub_props.ecc_curve,
-                                        sizeof(ctx.pub_props.ecc_curve) });
-
-        auto result = ctx.try_unwrap_inputs(unwrap_inputs);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
-    });
 }
 
 // Verifies unwrap allows duplicate property IDs in the public property list.
@@ -953,96 +942,114 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_sign_private_derive_pu
 }
 
 // Verifies unwrap rejects session mismatch when private is persistent and public is session.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_reverse_session_mismatch_between_priv_pub)
-{
-    RsaAesUnwrapPairInputs unwrap_inputs(0xCC);
-    DefaultEccPrivKeyProps priv_props;
-    DefaultEccPubKeyProps pub_props;
-
-    priv_props.is_session = 0;
-    pub_props.is_session = 1;
-
-    auto priv_prop_list = priv_props.get_prop_list();
-    auto pub_prop_list = pub_props.get_prop_list();
-
-    azihsm_handle priv_key_handle = 0;
-    azihsm_handle pub_key_handle = 0;
-
-    auto err = azihsm_key_unwrap_pair(
-        &unwrap_inputs.unwrap_algo,
-        0,
-        &unwrap_inputs.wrapped_key_buf,
-        &priv_prop_list,
-        &pub_prop_list,
-        &priv_key_handle,
-        &pub_key_handle
-    );
-
-    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_EQ(priv_key_handle, 0);
-    ASSERT_EQ(pub_key_handle, 0);
-}
-
-// Verifies unwrap rejects curve mismatch when private curve differs from public curve.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_reverse_curve_mismatch_between_priv_pub)
-{
-    RsaAesUnwrapPairInputs unwrap_inputs(0xCC);
-    DefaultEccPrivKeyProps priv_props;
-    DefaultEccPubKeyProps pub_props;
-
-    priv_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
-
-    auto priv_prop_list = priv_props.get_prop_list();
-    auto pub_prop_list = pub_props.get_prop_list();
-
-    azihsm_handle priv_key_handle = 0;
-    azihsm_handle pub_key_handle = 0;
-
-    auto err = azihsm_key_unwrap_pair(
-        &unwrap_inputs.unwrap_algo,
-        0,
-        &unwrap_inputs.wrapped_key_buf,
-        &priv_prop_list,
-        &pub_prop_list,
-        &priv_key_handle,
-        &pub_key_handle
-    );
-
-    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_EQ(priv_key_handle, 0);
-    ASSERT_EQ(pub_key_handle, 0);
-}
-// Verifies unwrap rejects invalid private SESSION value.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_invalid_private_session_value)
+TEST_F(
+    azihsm_ecc_keyunwrap_property,
+    unwrap_pair_rejects_reverse_session_mismatch_between_priv_pub
+)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
         ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        ctx.priv_props.is_session = 2;
+        RsaAesUnwrapPairInputs unwrap_inputs(0xCC);
+
+        ctx.priv_props.is_session = 0;
+        ctx.pub_props.is_session = 1;
 
         auto result = ctx.try_unwrap_inputs(unwrap_inputs);
+
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
 }
 
-// Verifies unwrap rejects invalid public SESSION value.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_invalid_public_session_value)
+// Verifies unwrap rejects curve mismatch when private curve differs from public curve.
+TEST_F(
+    azihsm_ecc_keyunwrap_property,
+    unwrap_pair_rejects_reverse_curve_mismatch_between_priv_pub
+)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
         ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        ctx.pub_props.is_session = 2;
+        RsaAesUnwrapPairInputs unwrap_inputs(0xCC);
+
+        ctx.priv_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
+        ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P256;
 
         auto result = ctx.try_unwrap_inputs(unwrap_inputs);
+
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap treats a non-zero private SESSION value as true.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_nonzero_private_session_value)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ctx.priv_props.is_session = 2;
+        ctx.pub_props.is_session = 1;
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+
+        uint8_t private_session = 0;
+        ASSERT_EQ(
+            get_key_prop(private_key.get(), AZIHSM_KEY_PROP_ID_SESSION, private_session),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_NE(private_session, 0);
+    });
+}
+
+// Verifies unwrap treats a non-zero public SESSION value as true.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_nonzero_public_session_value)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ctx.priv_props.is_session = 1;
+        ctx.pub_props.is_session = 2;
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key private_key;
+        auto_key public_key;
+        private_key.handle = result.private_key;
+        public_key.handle = result.public_key;
+
+        uint8_t public_session = 0;
+        ASSERT_EQ(
+            get_key_prop(public_key.get(), AZIHSM_KEY_PROP_ID_SESSION, public_session),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_NE(public_session, 0);
     });
 }
 
