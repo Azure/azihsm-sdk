@@ -30,7 +30,7 @@ pub(crate) async fn hmac<'p, P: HsmPal>(
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
 ) -> HsmResult<&'p DmaBuf> {
-    let body: DdiHmacReq = decoder.decode_data()?;
+    let body: DdiHmacReq<'_> = decoder.decode_data()?;
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
     let key_id = HsmKeyId::from(body.key_id);
 
