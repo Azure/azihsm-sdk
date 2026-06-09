@@ -767,7 +767,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_public_rsa_key_as_unwr
             &pub_prop_list
         );
 
-        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_HANDLE); 
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
