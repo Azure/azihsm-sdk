@@ -1166,3 +1166,59 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_ignores_unknown_public_propert
         public_key.handle = result.public_key;
     });
 }
+
+// Verifies unwrap rejects unsupported private-key usage flags.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unsupported_private_usage_flags)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        const std::vector<azihsm_key_prop_id> unsupported_private_usage_flags = {
+            AZIHSM_KEY_PROP_ID_VERIFY,
+            AZIHSM_KEY_PROP_ID_DERIVE,
+        };
+
+        for (const auto unsupported_flag : unsupported_private_usage_flags)
+        {
+            UnwrapPairContext ctx;
+            ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+            RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+            uint8_t enabled = 1;
+            ctx.priv_props.props.push_back({ unsupported_flag, &enabled, sizeof(enabled) });
+
+            auto result = ctx.try_unwrap_inputs(unwrap_inputs);
+
+            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS)
+                << "expected failure for unsupported private usage flag id=" << unsupported_flag;
+            ASSERT_EQ(result.private_key, 0);
+            ASSERT_EQ(result.public_key, 0);
+        }
+    });
+}
+
+// Verifies unwrap rejects unsupported public-key usage flags.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unsupported_public_usage_flags)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        const std::vector<azihsm_key_prop_id> unsupported_public_usage_flags = {
+            AZIHSM_KEY_PROP_ID_SIGN,
+            AZIHSM_KEY_PROP_ID_DERIVE,
+        };
+
+        for (const auto unsupported_flag : unsupported_public_usage_flags)
+        {
+            UnwrapPairContext ctx;
+            ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+            RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+            uint8_t enabled = 1;
+            ctx.pub_props.props.push_back({ unsupported_flag, &enabled, sizeof(enabled) });
+
+            auto result = ctx.try_unwrap_inputs(unwrap_inputs);
+
+            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS)
+                << "expected failure for unsupported public usage flag id=" << unsupported_flag;
+            ASSERT_EQ(result.private_key, 0);
+            ASSERT_EQ(result.public_key, 0);
+        }
+    });
+}
