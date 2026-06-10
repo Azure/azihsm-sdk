@@ -642,6 +642,8 @@ static azihsm_status sign_with_pota_key(
 {
     azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const unsigned char *der_ptr = priv_key_der;
+    OSSL_LIB_CTX *pota_libctx = NULL;
+    OSSL_PROVIDER *pota_default = NULL;
     EVP_PKEY *pota_pkey = NULL;
     EVP_MD_CTX *md_ctx = NULL;
     unsigned char *der_sig_buf = NULL;
@@ -653,8 +655,26 @@ static azihsm_status sign_with_pota_key(
     sig_out->ptr = NULL;
     sig_out->len = 0;
 
+    /* The POTA key is a software EC key.  Run its decode + sign in a private
+     * library context that has only the default provider, so the operation
+     * can never be routed to the azihsm provider (which the application also
+     * loads in the default libctx, and whose keymgmt carries no private
+     * component — causing intermittent "not a private key" failures). */
+    pota_libctx = OSSL_LIB_CTX_new();
+    if (pota_libctx == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        goto cleanup;
+    }
+    pota_default = OSSL_PROVIDER_load(pota_libctx, "default");
+    if (pota_default == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        goto cleanup;
+    }
+
     /* Decode the POTA private key from its DER representation */
-    pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)priv_key_der_len);
+    pota_pkey = d2i_AutoPrivateKey_ex(NULL, &der_ptr, (long)priv_key_der_len, pota_libctx, NULL);
     if (pota_pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
@@ -668,7 +688,7 @@ static azihsm_status sign_with_pota_key(
         goto cleanup;
     }
 
-    if (EVP_DigestSignInit(md_ctx, NULL, EVP_sha384(), NULL, pota_pkey) != 1)
+    if (EVP_DigestSignInit_ex(md_ctx, NULL, "SHA384", pota_libctx, NULL, pota_pkey, NULL) != 1)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         goto cleanup;
@@ -746,6 +766,12 @@ cleanup:
     OPENSSL_clear_free(der_sig_buf, der_sig_len);
     EVP_MD_CTX_free(md_ctx);
     EVP_PKEY_free(pota_pkey);
+    /* OSSL_PROVIDER_unload is not NULL-safe; OSSL_LIB_CTX_free is. */
+    if (pota_default != NULL)
+    {
+        OSSL_PROVIDER_unload(pota_default);
+    }
+    OSSL_LIB_CTX_free(pota_libctx);
     return status;
 }
 
