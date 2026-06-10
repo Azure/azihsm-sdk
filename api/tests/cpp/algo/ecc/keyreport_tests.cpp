@@ -4,6 +4,7 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 #include "handle/part_handle.hpp"
