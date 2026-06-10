@@ -151,18 +151,31 @@ jobs:
       - name: Show OpenSSL version
         run: openssl version
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.93'
+      # Plain distro containers ship no rustup.  Install it with no default
+      # toolchain so rust-toolchain.toml stays the single source of the
+      # toolchain version (rustup auto-installs it on the first cargo call).
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Cache cargo + target/
-        uses: Swatinem/rust-cache@v2
+      - name: Cache cargo + target
+        uses: actions/cache@v5
         with:
-          shared-key: matrix-${{ matrix.distro }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: matrix-${{ matrix.distro }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: matrix-${{ matrix.distro }}-
 
+      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION); the
+      # binary persists in the ~/.cargo/bin cache above.
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        run: cargo xtask setup --skip-taplo --skip-audit
 
       - name: Build provider
         run: |
