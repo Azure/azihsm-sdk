@@ -94,6 +94,12 @@ pub struct Precheck {
     /// Only used for --setup ignored otherwise.
     #[clap(long)]
     pub config: Option<String>,
+    /// Do not append the default build location of the azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub no_default_native: bool,
+    /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub additional_obj_paths: Vec<String>,
 }
 
 impl Xtask for Precheck {
@@ -231,12 +237,12 @@ impl Xtask for Precheck {
                 }
             } else {
                 Nextest {
-                    features: self.features,
-                    package: self.package,
+                    features: self.features.clone(),
+                    package: self.package.clone(),
                     no_default_features: false,
                     filterset: None,
-                    profile: self.profile,
-                    exclude: self.exclude,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
             }
@@ -244,7 +250,21 @@ impl Xtask for Precheck {
 
         // Run code coverage
         if stage.coverage || stage.all {
-            Coverage {}.run(ctx.clone())?;
+            if self.package.is_none() && self.features.is_none() {
+                // Run default tests with coverage
+                let tests = default_tests(&self.exclude, self.profile.clone());
+                run_tests(tests, true, ctx.clone())?;
+            } else {
+                Coverage {
+                    features: self.features.clone(),
+                    package: self.package.clone(),
+                    no_default_features: false,
+                    filterset: None,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
+                }
+                .run(ctx.clone())?;
+            }
         }
 
         // Run nextest report
@@ -254,10 +274,86 @@ impl Xtask for Precheck {
 
         // Run code coverage report
         if stage.coverage_report || stage.all {
-            CoverageReport {}.run(ctx)?;
+            CoverageReport {
+                no_default_native: self.no_default_native,
+                additional_obj_paths: self.additional_obj_paths.clone(),
+            }
+            .run(ctx.clone())?;
         }
 
         log::trace!("done precheck");
         Ok(())
     }
+}
+
+// Helper function to define default test parameters for --nextest and --coverage
+fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    // SDK Run all mock tests
+    tests.push(Nextest {
+        features: Some("mock".to_string()),
+        package: None,
+        no_default_features: false,
+        filterset: None,
+        profile: profile.clone().or(Some("ci-mock".to_string())),
+        exclude: exclude.to_owned(),
+    });
+
+    // SDK Run resiliency fault-injection tests (requires res-test
+    // feature for the fault-injection DDI device)
+    if !exclude.iter().any(|e| e == "azihsm_api_tests") {
+        tests.push(Nextest {
+            features: Some("mock,res-test".to_string()),
+            package: Some("azihsm_api_tests".to_string()),
+            no_default_features: false,
+            filterset: Some("test(resiliency::fault_injection::)".to_string()),
+            profile: profile.clone().or(Some("ci-mock-res".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
+#[cfg(not(target_os = "windows"))]
+fn ddi_mock_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    if !exclude.iter().any(|e| e == "azihsm_ddi") {
+        // SDK Run azihsm_ddi mock tests table-4
+        tests.push(Nextest {
+            features: Some("mock,table-4".to_string()),
+            package: Some("azihsm_ddi".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
+            exclude: exclude.to_owned(),
+        });
+
+        // SDK Run azihsm_ddi mock tests table-64
+        tests.push(Nextest {
+            features: Some("mock,table-64".to_string()),
+            package: Some("azihsm_ddi".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to run tests defined by other helper functions
+fn run_tests(tests: Vec<Nextest>, coverage: bool, ctx: XtaskCtx) -> anyhow::Result<()> {
+    for test in tests {
+        if coverage {
+            Coverage::from(test).run(ctx.clone())?;
+        } else {
+            test.run(ctx.clone())?;
+        }
+    }
+    Ok(())
 }
