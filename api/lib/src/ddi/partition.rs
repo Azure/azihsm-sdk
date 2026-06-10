@@ -82,9 +82,9 @@ fn get_cert_chain_and_pub_key(
     rev: HsmApiRev,
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
-    let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id)?;
+    let (cert_chain, leaf_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id)?;
 
-    let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
+    let cert = X509Certificate::from_der(&leaf_cert_der).map_hsm_err(HsmError::InternalError)?;
     let pub_key_der = cert
         .get_public_key_der()
         .map_hsm_err(HsmError::InternalError)?;
@@ -718,8 +718,10 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 /// Returns `InternalError` if the certificate count is zero (a partition
 /// must always have a provisioned cert chain).
 ///
-/// Also returns the DER bytes of the last certificate so callers can
-/// extract the public key.
+/// The returned PEM chain is ordered leaf->root (the firmware returns
+/// it root->leaf; this function reverses it to match the documented
+/// contract). Also returns the DER bytes of the leaf certificate so
+/// callers can extract the partition public key.
 fn fetch_cert_chain_checked(
     dev: &HsmDev,
     rev: HsmApiRev,
@@ -731,13 +733,15 @@ fn fetch_cert_chain_checked(
     }
 
     let mut cert_chain = String::new();
-    let mut last_cert_der = Vec::new();
-    for cert_id in 0..count {
+    let mut leaf_cert_der = Vec::new();
+
+    // Firmware returns chain in order root->leaf, but we want leaf->root, so reverse the chain before returning
+    for cert_id in (0..count).rev() {
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);
         if cert_id == count - 1 {
-            last_cert_der = der;
+            leaf_cert_der = der;
         }
     }
 
@@ -746,7 +750,7 @@ fn fetch_cert_chain_checked(
         return Err(HsmError::CertChainChanged);
     }
 
-    Ok((cert_chain, last_cert_der))
+    Ok((cert_chain, leaf_cert_der))
 }
 
 /// Retrieves certificate chain information from the HSM device.
