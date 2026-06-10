@@ -2505,3 +2505,137 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_empty_message)
         ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
     });
 }
+
+// Tests streaming sign init rejects an invalid private key handle.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_init_rejects_invalid_key_handle)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    constexpr azihsm_handle invalid_key = 0xDEADBEEF;
+
+    auto_ctx ctx;
+    ASSERT_EQ(
+        azihsm_crypt_sign_init(&algo, invalid_key, ctx.get_ptr()),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(ctx.get(), 0u);
+}
+
+// Tests streaming verify init rejects an invalid public key handle.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_init_rejects_invalid_key_handle)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    constexpr azihsm_handle invalid_key = 0xDEADBEEF;
+
+    auto_ctx ctx;
+    ASSERT_EQ(
+        azihsm_crypt_verify_init(&algo, invalid_key, ctx.get_ptr()),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(ctx.get(), 0u);
+}
+
+// Tests streaming sign/verify init reject null algorithm pointers.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_null_algo_pointer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(nullptr, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(sign_ctx.get(), 0u);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(nullptr, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(verify_ctx.get(), 0u);
+    });
+}
+
+// Tests streaming sign/verify init reject non-ECC key handles.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_wrong_key_type)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key rsa_priv_key;
+        auto_key rsa_pub_key;
+        auto rsa_err =
+            generate_rsa_unwrapping_keypair(session, rsa_priv_key.get_ptr(), rsa_pub_key.get_ptr());
+        ASSERT_EQ(rsa_err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx ctx;
+
+        ASSERT_NE(
+            azihsm_crypt_sign_init(&algo, rsa_priv_key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+
+        ASSERT_NE(
+            azihsm_crypt_verify_init(&algo, rsa_pub_key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
+// Tests streaming sign/verify init reject null output context pointers.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_null_output_context_pointer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
