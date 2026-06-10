@@ -3,8 +3,14 @@
 
 //! TOC (Table of Contents) entry types and wire-level helpers.
 //!
-//! Each TOC entry is a 32-bit little-endian word. The top 6 bits identify
-//! the entry type; the remaining 26 bits carry a type-specific encoding.
+//! Each TOC entry is a 32-bit word stored on the wire in **big-endian**
+//! byte order (matches the host-side codec at
+//! `ddi/tbor/codec/src/toc.rs`).  The top 6 bits identify the entry
+//! type; the remaining 26 bits carry a type-specific encoding.  All
+//! bit-shift extractions and packs in this module operate on the word
+//! after the BE load (`from_be_bytes`) or before the BE store
+//! (`to_be_bytes`), so the high bits of the in-memory `u32` are the
+//! first bits on the wire.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 
