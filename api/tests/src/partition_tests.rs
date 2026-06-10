@@ -242,17 +242,6 @@ fn test_cert_chain() {
             "Cert chain missing PEM header"
         );
 
-        // Save the retrieved PEM chain to a file for manual inspection /
-        // validation (e.g. `openssl crl2pkcs7 ... | openssl pkcs7 -print_certs`).
-        let out_path = std::env::temp_dir().join("azihsm_cert_chain.pem");
-        std::fs::write(&out_path, cert_chain.as_bytes())
-            .unwrap_or_else(|e| panic!("Failed to write cert chain to {out_path:?}: {e}"));
-        eprintln!(
-            "Saved cert chain ({} bytes) to {}",
-            cert_chain.len(),
-            out_path.display()
-        );
-
         let blocks: Vec<String> = cert_chain
             .split("-----BEGIN CERTIFICATE-----")
             .filter(|part| part.contains("-----END CERTIFICATE-----"))
