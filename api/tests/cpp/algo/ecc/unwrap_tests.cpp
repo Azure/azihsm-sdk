@@ -1098,8 +1098,10 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_repeated_imports_are_independently_dele
         ASSERT_NE(first_private_key.get(), second_private_key.get());
         ASSERT_NE(first_public_key.get(), second_public_key.get());
 
-        ASSERT_EQ(azihsm_key_delete(first_private_key.release()), AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(azihsm_key_delete(first_public_key.release()), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_key_delete(first_private_key.get()), AZIHSM_STATUS_SUCCESS);
+        first_private_key.release();
+        ASSERT_EQ(azihsm_key_delete(first_public_key.get()), AZIHSM_STATUS_SUCCESS);
+        first_public_key.release();
 
         const std::vector<uint8_t> message = { 0x69, 0x6E, 0x64, 0x65, 0x70, 0x65,
                                                0x6E, 0x64, 0x65, 0x6E, 0x74 };
