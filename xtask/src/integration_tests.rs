@@ -55,12 +55,18 @@ impl Xtask for IntegrationTest {
 
         #[cfg(target_os = "linux")]
         {
-            let openssl_dir = crate::host_openssl::check_openssl()?;
-
             // A caller may export these as an empty string (env.sh sets
             // OPENSSL_LIB="" to mean "set but empty"); treat empty as unset.
             let unset_or_empty =
                 |key: &str| std::env::var(key).map(|v| v.is_empty()).unwrap_or(true);
+
+            // check_openssl() respects OPENSSL_DIR first and would treat an
+            // empty value as a (bad) path; drop it so the fallback discovery
+            // (pkg-config, well-known prefixes) kicks in.
+            if std::env::var("OPENSSL_DIR").is_ok_and(|v| v.is_empty()) {
+                std::env::remove_var("OPENSSL_DIR");
+            }
+            let openssl_dir = crate::host_openssl::check_openssl()?;
 
             if unset_or_empty("OPENSSL_BIN") {
                 std::env::set_var("OPENSSL_BIN", openssl_dir.join("bin/openssl"));

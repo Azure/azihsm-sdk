@@ -87,6 +87,7 @@ jobs:
             image:         almalinux:9.2
             family:        rhel
             vault:         https://repo.almalinux.org/vault/9.2
+            gpgkey:        RPM-GPG-KEY-AlmaLinux-9
             lib_dir:       /usr/lib64
             openssl_minor: "3.0"
             nginx:         false
@@ -96,6 +97,7 @@ jobs:
             image:         rockylinux:9.2
             family:        rhel
             vault:         https://dl.rockylinux.org/vault/rocky/9.2
+            gpgkey:        RPM-GPG-KEY-Rocky-9
             lib_dir:       /usr/lib64
             openssl_minor: "3.0"
             nginx:         false
@@ -122,17 +124,21 @@ jobs:
           # The 9.2 vault preserves openssl-devel-3.0.7; the rolling el9
           # repos have been bumped to 3.5.5.
           sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+          # Vault packages are signed with the distro key the image ships in
+          # /etc/pki/rpm-gpg/, so signature verification stays on.
           cat > /etc/yum.repos.d/vault.repo <<EOF
           [vault-baseos]
           name=9.2 vault BaseOS
           baseurl=${{ matrix.vault }}/BaseOS/x86_64/os/
           enabled=1
-          gpgcheck=0
+          gpgcheck=1
+          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
           [vault-appstream]
           name=9.2 vault AppStream
           baseurl=${{ matrix.vault }}/AppStream/x86_64/os/
           enabled=1
-          gpgcheck=0
+          gpgcheck=1
+          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
           EOF
           dnf clean all
           # nodejs is for JS-based actions (see debian bootstrap).
