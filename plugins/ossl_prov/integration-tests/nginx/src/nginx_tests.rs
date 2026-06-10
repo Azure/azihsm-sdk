@@ -70,7 +70,7 @@ mod integration {
         let Ok(ver) = env::var("AZIHSM_TEST_OPENSSL_MAJOR_MINOR") else {
             return false;
         };
-        ver == "3.0" && script_name.contains("_requires_openssl_3_5")
+        ver == "3.0" && script_name.ends_with("_requires_openssl_3_5.sh")
     }
 
     /// Run the full NGINX integration test suite.

@@ -398,7 +398,7 @@ azihsm-api-revision = 1.0
         let Ok(ver) = env::var("AZIHSM_TEST_OPENSSL_MAJOR_MINOR") else {
             return false;
         };
-        ver == "3.0" && test_name.contains("_RequiresOpenssl35")
+        ver == "3.0" && test_name.ends_with("_RequiresOpenssl35")
     }
 
     /// Parses the gtest list output and creates test trials.

@@ -69,7 +69,13 @@ impl Xtask for IntegrationTest {
             let openssl_dir = crate::host_openssl::check_openssl()?;
 
             if unset_or_empty("OPENSSL_BIN") {
-                std::env::set_var("OPENSSL_BIN", openssl_dir.join("bin/openssl"));
+                let bin = openssl_dir.join("bin/openssl");
+                anyhow::ensure!(
+                    bin.is_file(),
+                    "openssl binary not found at {}; install openssl or set OPENSSL_BIN",
+                    bin.display()
+                );
+                std::env::set_var("OPENSSL_BIN", bin);
             }
             if unset_or_empty("OPENSSL_DIR") {
                 std::env::set_var("OPENSSL_DIR", &openssl_dir);
@@ -102,8 +108,17 @@ impl Xtask for IntegrationTest {
             };
             if let Some(ref p) = openssl_lib_dir {
                 let combined = format!("{}:{}", p.display(), cargo_debug.display());
-                if unset_or_empty("OPENSSL_LIB") {
-                    std::env::set_var("OPENSSL_LIB", &combined);
+                // env.sh derives LD_LIBRARY_PATH from OPENSSL_LIB, so a
+                // caller-supplied value must still include target/debug for
+                // libazihsm_api_native.so resolution.
+                let dbg = cargo_debug.display().to_string();
+                match std::env::var("OPENSSL_LIB") {
+                    Ok(v) if !v.is_empty() => {
+                        if !v.split(':').any(|seg| seg == dbg) {
+                            std::env::set_var("OPENSSL_LIB", format!("{v}:{dbg}"));
+                        }
+                    }
+                    _ => std::env::set_var("OPENSSL_LIB", &combined),
                 }
                 // Always prepend to LD_LIBRARY_PATH so the custom openssl
                 // binary's libcrypto resolves to our install, not the system
