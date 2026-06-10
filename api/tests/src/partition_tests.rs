@@ -2,11 +2,12 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::pem_to_der;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 
 use super::*;
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;
-
 /// No-op POTA callback for validation tests that need `pota_callback = Some`
 /// without exercising the actual signing flow.
 struct DummyPotaCallback;
@@ -260,6 +261,47 @@ fn test_cert_chain() {
         for block in blocks {
             pem_to_der(block.as_bytes()).expect("Failed to parse certificate PEM");
         }
+    }
+}
+
+/// Validates that the certificate chain returned by `cert_chain` is in leaf-to-root order
+#[api_test]
+fn test_cert_chain_leaf_to_root_order() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
+            .expect("Failed to open the partition");
+
+        let cert_chain = part.cert_chain(0).expect("Failed to retrieve cert chain");
+        assert!(!cert_chain.is_empty(), "Cert chain is empty");
+
+        // Parse the PEM chain into individual certificates, preserving order.
+        let certs = X509Certificate::from_pem_stack(cert_chain.as_bytes())
+            .expect("Failed to parse cert chain PEM stack");
+        assert!(!certs.is_empty(), "Parsed cert chain is empty");
+
+        // The sim layer returns a single (self-signed) certificate, so there is
+        // no leaf -> root ordering to validate. Only chains with more than one
+        // certificate carry an ordering that can be verified.
+        if certs.len() < 2 {
+            continue;
+        }
+
+        // The chain must be ordered leaf -> ... -> root. `validate_chain`
+        // treats the receiver as the leaf and the slice as the remaining
+        // certificates ending with the root, cryptographically verifying that
+        // each certificate is issued by the next one. This only succeeds when
+        // the chain is in leaf-to-root order; a reversed (root-to-leaf) chain
+        // would fail verification.
+        let (leaf, rest) = certs.split_first().expect("Cert chain is empty");
+        let valid = leaf
+            .validate_chain(rest)
+            .expect("Failed to validate cert chain order");
+        assert!(
+            valid,
+            "Cert chain is not in leaf -> root order or failed chain validation"
+        );
     }
 }
 
