@@ -10,6 +10,11 @@
 
 use core::convert::TryInto;
 
+use azihsm_crypto::AesKey;
+use azihsm_crypto::AesKeyWrapPadAlgo;
+use azihsm_crypto::Decrypter;
+use azihsm_crypto::ImportableKey;
+
 use super::*;
 
 fn aes_op_is_encrypt(op: AesOp) -> bool {
@@ -249,11 +254,6 @@ impl HsmAes for StdHsmPal {
         input: &DmaBuf,
         output: &mut DmaBuf,
     ) -> HsmResult<usize> {
-        use azihsm_crypto::AesKey;
-        use azihsm_crypto::AesKeyWrapPadAlgo;
-        use azihsm_crypto::Decrypter;
-        use azihsm_crypto::ImportableKey;
-
         let kek = AesKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
         let written = Decrypter::decrypt(
             &mut AesKeyWrapPadAlgo::default(),

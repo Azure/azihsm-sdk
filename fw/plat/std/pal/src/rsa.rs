@@ -11,8 +11,13 @@
 //! newer padding-helper entry points are present in the trait but are not
 //! currently used by the standard PAL, so they are left as `todo!()`.
 
+use azihsm_crypto::Decrypter;
 use azihsm_crypto::ExportableHsmKey;
+use azihsm_crypto::HashAlgo;
 use azihsm_crypto::ImportableKey;
+use azihsm_crypto::PrivateKey;
+use azihsm_crypto::RsaEncryptAlgo;
+use azihsm_crypto::RsaKeyOp;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 
@@ -36,8 +41,6 @@ fn write_rsa_pub_wire(
     key_size: HsmRsaKey,
     pub_out: &mut [u8],
 ) -> HsmResult<()> {
-    use azihsm_crypto::RsaKeyOp;
-
     let modulus_len = key_size.modulus_len();
     let exp_len = HsmRsaKey::pub_exp_len();
     let total = modulus_len + exp_len;
@@ -80,6 +83,37 @@ fn write_rsa_pub_wire(
         *dst = *src;
     }
     Ok(())
+}
+
+/// Shared RSA-OAEP decrypt core for
+/// [`HsmRsa::rsa_oaep_decrypt`] and
+/// [`HsmRsa::rsa_oaep_decrypt_in_place`].
+///
+/// `ct_be` is the big-endian ciphertext (already reversed from the
+/// wire-LE form).  OpenSSL's OAEP decrypt requires an output buffer at
+/// least `modulus_len` long even though the recovered plaintext is
+/// much shorter, so it decrypts into a scope-local scratch sized to
+/// the modulus, then copies the recovered bytes into `out[..len]` and
+/// returns `len`.
+fn oaep_decrypt_be(
+    hash: HashAlgo,
+    priv_key: &DmaBuf,
+    ct_be: &DmaBuf,
+    label: Option<&[u8]>,
+    out: &mut DmaBuf,
+    alloc: &impl HsmScopedAlloc,
+) -> HsmResult<usize> {
+    let key = RsaPrivateKey::from_hsm_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
+    let mut algo = RsaEncryptAlgo::with_oaep_padding(hash, label);
+
+    let scratch = alloc.dma_alloc(ct_be.len())?;
+    let written = Decrypter::decrypt(&mut algo, &key, ct_be, Some(&mut scratch[..]))
+        .map_err(|_| HsmError::RsaDecryptFailed)?;
+    if out.len() < written {
+        return Err(HsmError::InvalidArg);
+    }
+    out[..written].copy_from_slice(&scratch[..written]);
+    Ok(written)
 }
 
 impl HsmRsa for StdHsmPal {
@@ -153,7 +187,6 @@ impl HsmRsa for StdHsmPal {
     }
 
     fn rsa_priv_key_size(&self, _io: &impl HsmIo, key: &DmaBuf) -> HsmResult<HsmRsaKey> {
-        use azihsm_crypto::RsaKeyOp;
         let pk = RsaPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
         let modulus_len = pk.n(None).map_err(|_| HsmError::InvalidArg)?;
         match modulus_len {
@@ -170,9 +203,6 @@ impl HsmRsa for StdHsmPal {
         key: &DmaBuf,
         pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize> {
-        use azihsm_crypto::PrivateKey;
-        use azihsm_crypto::RsaKeyOp;
-
         let pk = RsaPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
         let pubk = pk.public_key().map_err(|_| HsmError::InvalidArg)?;
         let modulus_len = pubk.n(None).map_err(|_| HsmError::InvalidArg)?;
@@ -301,7 +331,7 @@ impl HsmRsa for StdHsmPal {
         _algo: HsmHashAlgo,
         _pub_key: &DmaBuf,
         _message: &DmaBuf,
-        _label: &DmaBuf,
+        _label: Option<&DmaBuf>,
         _output: &mut DmaBuf,
         _alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<()>
@@ -318,24 +348,23 @@ impl HsmRsa for StdHsmPal {
         algo: HsmHashAlgo,
         priv_key: &DmaBuf,
         ciphertext: &DmaBuf,
-        label: &DmaBuf,
+        label: Option<&DmaBuf>,
         output: &mut DmaBuf,
         alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<usize>
     where
         Self: 'a,
     {
-        use azihsm_crypto::Decrypter;
-        use azihsm_crypto::HashAlgo;
-        use azihsm_crypto::RsaEncryptAlgo;
-
         let hash = match algo {
             HsmHashAlgo::Sha1 => HashAlgo::sha1(),
             HsmHashAlgo::Sha256 => HashAlgo::sha256(),
             HsmHashAlgo::Sha384 => HashAlgo::sha384(),
             HsmHashAlgo::Sha512 => HashAlgo::sha512(),
         };
-        let label_opt: Option<&[u8]> = if label.is_empty() { None } else { Some(label) };
+        let label_opt: Option<&[u8]> = match label {
+            Some(l) if !l.is_empty() => Some(l),
+            _ => None,
+        };
 
         // Reverse the wire-LE ciphertext to OpenSSL-BE.  The wire
         // contract for RSA integer inputs/outputs is little-endian
@@ -352,22 +381,47 @@ impl HsmRsa for StdHsmPal {
             *dst = *src;
         }
 
-        let key = RsaPrivateKey::from_hsm_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
-        let mut algo = RsaEncryptAlgo::with_oaep_padding(hash, label_opt);
+        oaep_decrypt_be(hash, priv_key, ct_be, label_opt, output, alloc)
+    }
 
-        // OpenSSL's OAEP decrypt requires an output buffer at least
-        // `modulus_len` long even though the recovered plaintext is
-        // much shorter; allocate a scope-local scratch sized to the
-        // modulus, then copy the actual recovered bytes into the
-        // caller's output slot.
-        let scratch = alloc.dma_alloc(modulus_len)?;
-        let written = Decrypter::decrypt(&mut algo, &key, ct_be, Some(&mut scratch[..]))
-            .map_err(|_| HsmError::RsaDecryptFailed)?;
-        if output.len() < written {
+    async fn rsa_oaep_decrypt_in_place<'a>(
+        &self,
+        _io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        priv_key: &DmaBuf,
+        data: &mut DmaBuf,
+        label: Option<&DmaBuf>,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a,
+    {
+        let hash = match algo {
+            HsmHashAlgo::Sha1 => HashAlgo::sha1(),
+            HsmHashAlgo::Sha256 => HashAlgo::sha256(),
+            HsmHashAlgo::Sha384 => HashAlgo::sha384(),
+            HsmHashAlgo::Sha512 => HashAlgo::sha512(),
+        };
+        let label_opt: Option<&[u8]> = match label {
+            Some(l) if !l.is_empty() => Some(l),
+            _ => None,
+        };
+
+        // Reverse the wire-LE ciphertext to OpenSSL-BE into a scratch
+        // buffer — reading `data` in full before it is overwritten —
+        // then decrypt and write the recovered plaintext back into
+        // `data[..len]`.
+        let modulus_len = key_size.modulus_len();
+        if data.len() != modulus_len {
             return Err(HsmError::InvalidArg);
         }
-        output[..written].copy_from_slice(&scratch[..written]);
-        Ok(written)
+        let ct_be = alloc.dma_alloc(modulus_len)?;
+        for (dst, src) in ct_be.iter_mut().zip(data.iter().rev()) {
+            *dst = *src;
+        }
+
+        oaep_decrypt_be(hash, priv_key, ct_be, label_opt, data, alloc)
     }
 
     async fn rsa_pss_sign<'a>(

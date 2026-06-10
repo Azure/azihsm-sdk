@@ -13,7 +13,7 @@ use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapReq;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapResp;
 use azihsm_fw_ddi_mbor_types::DdiKeyType;
 
-use super::super::*;
+use crate::ddi::mbor::*;
 
 pub(super) fn import<'p, P: HsmPal>(
     pal: &'p P,
@@ -29,7 +29,7 @@ pub(super) fn import<'p, P: HsmPal>(
         _ => return Err(HsmError::InvalidArg),
     };
 
-    let attrs = super::super::key_attrs::prepare_aes(
+    let attrs = key_attrs::prepare_aes(
         &body.key_properties.key_metadata,
         body.key_tag,
         /* local = */ false,

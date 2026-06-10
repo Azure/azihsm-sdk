@@ -501,3 +501,57 @@ fn test_rsa_unwrap_no_session_smoke() {
         },
     );
 }
+
+/// A wrapping (OAEP) KEK that is not a 32-byte AES-256 key must be
+/// rejected: `RsaUnwrap` only supports an AES-256 KEK.  Gated off the
+/// `mock` backend, whose sim accepts any AES key length here; the
+/// firmware (emu + real hardware) enforces the 32-byte requirement.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_rsa_unwrap_invalid_kek_smoke() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let unwrap_resp = helper_get_unwrapping_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            )
+            .expect("get_unwrapping_key");
+            let unwrap_key_id = unwrap_resp.data.key_id;
+            let unwrap_pub_key_der = unwrap_resp.data.pub_key.der.as_slice().to_vec();
+
+            // Wrap the target key with a 16-byte (AES-128) KEK instead
+            // of the required 32-byte AES-256 KEK.
+            let wrapped = wrap_data_with_aes_key(
+                unwrap_pub_key_der,
+                TEST_AES_256.as_slice(),
+                TEST_EPHEMERAL_AES_16.as_slice(),
+            );
+
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            let err = helper_rsa_unwrap(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrap_key_id,
+                MborByteArray::from_slice(&wrapped).expect("wrapped blob fits in 3072"),
+                DdiKeyClass::Aes,
+                DdiRsaCryptoPadding::Oaep,
+                DdiHashAlgorithm::Sha256,
+                None,
+                key_props,
+            )
+            .expect_err("a non-32-byte KEK must be rejected");
+
+            assert!(
+                matches!(err, DdiError::DdiStatus(DdiStatus::RsaUnwrapInvalidKek)),
+                "expected RsaUnwrapInvalidKek, got {:?}",
+                err
+            );
+        },
+    );
+}

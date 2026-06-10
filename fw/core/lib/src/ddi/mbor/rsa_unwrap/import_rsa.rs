@@ -26,7 +26,7 @@
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapReq;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapResp;
 
-use super::super::*;
+use crate::ddi::mbor::*;
 
 pub(super) fn import<'p, P: HsmPal>(
     pal: &'p P,
@@ -38,11 +38,11 @@ pub(super) fn import<'p, P: HsmPal>(
     let rsa_key_size = pal.rsa_priv_key_size(io, key_bytes)?;
     // Non-CRT import only — `DdiKeyClass::RsaCrt` is rejected by the
     // dispatcher, so this path always tags the non-CRT vault kind.
-    let vault_kind = super::super::from_pal::rsa_private(rsa_key_size, /* crt = */ false);
-    let key_kind = super::super::from_pal::rsa_private_ddi(rsa_key_size, /* crt = */ false);
-    let pub_kind = super::super::from_pal::rsa_public_ddi(rsa_key_size);
+    let vault_kind = from_pal::rsa_private(rsa_key_size, /* crt = */ false);
+    let key_kind = from_pal::rsa_private_ddi(rsa_key_size, /* crt = */ false);
+    let pub_kind = from_pal::rsa_public_ddi(rsa_key_size);
 
-    let attrs = super::super::key_attrs::prepare_rsa(
+    let attrs = key_attrs::prepare_rsa(
         &body.key_properties.key_metadata,
         body.key_tag,
         /* local = */ false,

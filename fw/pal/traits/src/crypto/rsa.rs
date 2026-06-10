@@ -594,7 +594,7 @@ pub trait HsmRsa {
     /// - `pub_key` — RSA public key.
     /// - `message` — plaintext; must satisfy `message.len() <=
     ///   key_size.max_oaep_message(algo)`.
-    /// - `label` — OAEP label; `&[]` for the default empty label.
+    /// - `label` — OAEP label; `None` for the default empty label.
     /// - `output` — ciphertext destination; must be at least
     ///   `key_size.oaep_work_len(algo)` bytes.
     /// - `alloc` — scoped allocator for RSA scratch.
@@ -614,7 +614,7 @@ pub trait HsmRsa {
         algo: HsmHashAlgo,
         pub_key: &DmaBuf,
         message: &DmaBuf,
-        label: &DmaBuf,
+        label: Option<&DmaBuf>,
         output: &mut DmaBuf,
         alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<()>
@@ -631,8 +631,8 @@ pub trait HsmRsa {
     /// - `priv_key` — RSA private key.
     /// - `ciphertext` — must be exactly
     ///   `key_size.modulus_len()` bytes.
-    /// - `label` — OAEP label; must equal the encryption-time
-    ///   label.
+    /// - `label` — OAEP label (`None` for the default empty label);
+    ///   must equal the encryption-time label.
     /// - `output` — plaintext destination; must be at least
     ///   `key_size.max_oaep_message(algo)` bytes.
     /// - `alloc` — scoped allocator for RSA scratch.
@@ -654,8 +654,53 @@ pub trait HsmRsa {
         algo: HsmHashAlgo,
         priv_key: &DmaBuf,
         ciphertext: &DmaBuf,
-        label: &DmaBuf,
+        label: Option<&DmaBuf>,
         output: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a;
+
+    /// OAEP decrypt in-place (EME-OAEP, RFC 8017 §7.1.2).
+    ///
+    /// Identical to [`rsa_oaep_decrypt`](Self::rsa_oaep_decrypt) but
+    /// the recovered plaintext is written back into the ciphertext
+    /// buffer, avoiding a second allocation.  The recovered plaintext
+    /// is always shorter than the `modulus_len` ciphertext, so it
+    /// fits.  This is the natural shape for hardware engines that
+    /// decrypt directly into DMA buffers.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — OAEP hash.
+    /// - `priv_key` — RSA private key.
+    /// - `data` — exactly `key_size.modulus_len()` bytes of ciphertext
+    ///   on entry; on return `data[..len]` holds the recovered
+    ///   plaintext.
+    /// - `label` — OAEP label (`None` for the default empty label);
+    ///   must equal the encryption-time label.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — length of recovered plaintext; `data[..len]` is
+    ///   valid.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::RsaOaepDecryptFailed)` — OAEP unmasking
+    ///   detected tampering or label mismatch.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — SHA / PKA failure.
+    #[allow(clippy::too_many_arguments)]
+    async fn rsa_oaep_decrypt_in_place<'a>(
+        &self,
+        io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        priv_key: &DmaBuf,
+        data: &mut DmaBuf,
+        label: Option<&DmaBuf>,
         alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<usize>
     where

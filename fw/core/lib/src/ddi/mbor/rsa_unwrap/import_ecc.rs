@@ -10,7 +10,7 @@
 //! via [`HsmEcc::ecc_priv_key_curve`] so a single `DdiKeyClass::Ecc`
 //! request covers all three NIST curves; the matching vault kind and
 //! DDI key-type tags are derived from the curve via
-//! [`from_pal`](super::super::from_pal).
+//! [`from_pal`](crate::ddi::mbor::from_pal).
 //!
 //! Before storing, the DER key is re-encoded into the vault's raw
 //! HSM scalar form via [`HsmEcc::ecc_priv_to_hsm`] so a later
@@ -24,7 +24,7 @@
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapReq;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapResp;
 
-use super::super::*;
+use crate::ddi::mbor::*;
 
 pub(super) fn import<'p, P: HsmPal>(
     pal: &'p P,
@@ -34,11 +34,11 @@ pub(super) fn import<'p, P: HsmPal>(
     key_bytes: &DmaBuf,
 ) -> HsmResult<(<P as HsmVault>::KeyGuard<'p>, DdiRsaUnwrapResp<'p>)> {
     let curve = pal.ecc_priv_key_curve(io, key_bytes)?;
-    let vault_kind = super::super::from_pal::ecc_private(curve);
-    let key_kind = super::super::from_pal::ecc_private_ddi(curve);
-    let pub_kind = super::super::from_pal::ecc_public_ddi(curve);
+    let vault_kind = from_pal::ecc_private(curve);
+    let key_kind = from_pal::ecc_private_ddi(curve);
+    let pub_kind = from_pal::ecc_public_ddi(curve);
 
-    let attrs = super::super::key_attrs::prepare_ecc(
+    let attrs = key_attrs::prepare_ecc(
         curve,
         &body.key_properties.key_metadata,
         body.key_tag,

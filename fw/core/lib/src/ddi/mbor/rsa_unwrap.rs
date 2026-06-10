@@ -19,7 +19,7 @@
 //! always RSA-2048 → 256 B modulus, but the handler derives the
 //! actual modulus size from the vault kind so larger unwrap keys
 //! would Just Work).  The host wraps with that public key using OAEP
-//! over a fresh AES KEK (any of AES-128 / 192 / 256), then
+//! over a fresh AES-256 KEK, then
 //! AES-KWP-wraps the target key with the KEK.
 //!
 //! Once the payload is recovered, the per-key-class import paths
@@ -87,34 +87,31 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     if body.wrapped_blob.len() < modulus_len + 16 {
         return Err(HsmError::RsaUnwrapInvalidRequest);
     }
-    let (oaep_ct, kwp_ct) = body.wrapped_blob.split_at(modulus_len);
+    let (oaep_ct, kwp_ct) = body.wrapped_blob.split_at_mut(modulus_len);
 
-    // Step 1: RSA-OAEP-decrypt the KEK using the unwrap private key.
-    // The output buffer must be at least `max_oaep_message` per the
-    // PAL trait contract (real-HW PALs may decrypt directly into the
-    // caller slot via DMA, so undersizing it would either be
-    // rejected up-front or overflow into adjacent memory).  The
-    // recovered KEK is itself only 16 / 24 / 32 bytes — any other
-    // length is a host contract violation (or corrupted blob).
-    let label_empty = pal.dma_alloc(io, 0)?;
-    let kek_buf = pal.dma_alloc(io, rsa_key_size.max_oaep_message(hash_algo))?;
+    // Step 1: RSA-OAEP-decrypt the KEK in place into the OAEP
+    // ciphertext half of the wrapped blob.  The recovered plaintext
+    // (the KEK) is far shorter than the `modulus_len` ciphertext, so
+    // it fits, and decrypting in place avoids a separate output
+    // allocation (real-HW PALs decrypt directly into the DMA buffer).
+    // The KEK must be a 32-byte AES-256 key — any other length is a
+    // host contract violation (or corrupted blob).
     let kek_len = pal
         .alloc_scoped_async(io, async |a| {
-            pal.rsa_oaep_decrypt(
+            pal.rsa_oaep_decrypt_in_place(
                 io,
                 rsa_key_size,
                 hash_algo,
                 unwrap_priv,
-                oaep_ct,
-                label_empty,
-                &mut *kek_buf,
+                &mut *oaep_ct,
+                None,
                 a,
             )
             .await
         })
         .await
         .map_err(|_| HsmError::RsaUnwrapOaepDecodeFailed)?;
-    if !matches!(kek_len, 16 | 24 | 32) {
+    if kek_len != 32 {
         return Err(HsmError::RsaUnwrapInvalidKek);
     }
 
@@ -123,7 +120,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     // max recovered size equals the wrapped size, so allocate that.
     let payload_buf = pal.dma_alloc(io, kwp_ct.len())?;
     let payload_len = pal
-        .aes_kwp_unwrap(io, &kek_buf[..kek_len], kwp_ct, payload_buf)
+        .aes_kwp_unwrap(io, &oaep_ct[..kek_len], kwp_ct, payload_buf)
         .await
         .map_err(|_| HsmError::RsaUnwrapAesUnwrapFailed)?;
 
