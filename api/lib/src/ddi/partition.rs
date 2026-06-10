@@ -59,7 +59,7 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
 }
 
 /// Fetches the certificate chain and extracts the public key from the
-/// last certificate.
+/// leaf certificate.
 ///
 /// This combines the work of [`get_part_pub_key`] and [`get_cert_chain`]
 /// into one function, avoiding redundant `GetCertChainInfo` and
@@ -75,8 +75,8 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
 ///
 /// # Returns
 ///
-/// Returns a tuple of (PEM cert chain, DER-encoded public key from the
-/// last certificate).
+/// Returns a tuple of (PEM cert chain ordered leaf->root, DER-encoded
+/// public key from the leaf certificate).
 fn get_cert_chain_and_pub_key(
     dev: &HsmDev,
     rev: HsmApiRev,
