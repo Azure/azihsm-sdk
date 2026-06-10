@@ -758,3 +758,240 @@ TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves
         }
     }
 }
+
+/// Verifies that two different ECC private keys produce different key attestation reports.
+TEST_F(azihsm_ecc_keyattest, different_keys_produce_different_key_reports)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key_1;
+        auto_key pub_key_1;
+        auto_key priv_key_2;
+        auto_key pub_key_2;
+
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_1.get_ptr(),
+            pub_key_1.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key_1.get(), 0);
+        ASSERT_NE(pub_key_1.get(), 0);
+
+        err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_2.get_ptr(),
+            pub_key_2.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key_2.get(), 0);
+        ASSERT_NE(pub_key_2.get(), 0);
+        ASSERT_NE(priv_key_1.get(), priv_key_2.get());
+
+        std::vector<uint8_t> report_data(64, 0x42);
+        azihsm_buffer report_data_buf{ report_data.data(),
+                                       static_cast<uint32_t>(report_data.size()) };
+
+        azihsm_buffer report_buf_1{ nullptr, 0 };
+        auto attest_err =
+            azihsm_generate_key_report(priv_key_1.get(), &report_data_buf, &report_buf_1);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(report_buf_1.len, 0);
+
+        std::vector<uint8_t> report_1(report_buf_1.len);
+        report_buf_1.ptr = report_1.data();
+
+        attest_err = azihsm_generate_key_report(priv_key_1.get(), &report_data_buf, &report_buf_1);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(report_buf_1.len, 0);
+
+        azihsm_buffer report_buf_2{ nullptr, 0 };
+        attest_err = azihsm_generate_key_report(priv_key_2.get(), &report_data_buf, &report_buf_2);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(report_buf_2.len, 0);
+
+        std::vector<uint8_t> report_2(report_buf_2.len);
+        report_buf_2.ptr = report_2.data();
+
+        attest_err = azihsm_generate_key_report(priv_key_2.get(), &report_data_buf, &report_buf_2);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(report_buf_2.len, 0);
+
+        report_1.resize(report_buf_1.len);
+        report_2.resize(report_buf_2.len);
+
+        ASSERT_NE(report_1, report_2)
+            << "Different ECC private keys should produce different key reports";
+    });
+}
+
+/// Verifies that different report data produces different key attestation reports for the same key.
+TEST_F(azihsm_ecc_keyattest, different_report_data_produces_different_key_reports)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
+
+        std::vector<uint8_t> report_data_1(64, 0x42);
+        std::vector<uint8_t> report_data_2(64, 0x43);
+
+        azihsm_buffer report_data_buf_1{ report_data_1.data(),
+                                         static_cast<uint32_t>(report_data_1.size()) };
+        azihsm_buffer report_data_buf_2{ report_data_2.data(),
+                                         static_cast<uint32_t>(report_data_2.size()) };
+
+        azihsm_buffer report_buf_1{ nullptr, 0 };
+        auto attest_err =
+            azihsm_generate_key_report(priv_key.get(), &report_data_buf_1, &report_buf_1);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(report_buf_1.len, 0);
+
+        std::vector<uint8_t> report_1(report_buf_1.len);
+        report_buf_1.ptr = report_1.data();
+
+        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf_1, &report_buf_1);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(report_buf_1.len, 0);
+
+        azihsm_buffer report_buf_2{ nullptr, 0 };
+        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf_2, &report_buf_2);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(report_buf_2.len, 0);
+
+        std::vector<uint8_t> report_2(report_buf_2.len);
+        report_buf_2.ptr = report_2.data();
+
+        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf_2, &report_buf_2);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(report_buf_2.len, 0);
+
+        report_1.resize(report_buf_1.len);
+        report_2.resize(report_buf_2.len);
+
+        ASSERT_NE(report_1, report_2)
+            << "Different report data should produce different key reports";
+    });
+}
+
+/// Verifies that repeated reports for the same key and report data have a stable report size.
+TEST_F(azihsm_ecc_keyattest, repeated_attestation_has_stable_report_size)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
+
+        std::vector<uint8_t> report_data(64, 0x42);
+        azihsm_buffer report_data_buf{ report_data.data(),
+                                       static_cast<uint32_t>(report_data.size()) };
+
+        azihsm_buffer first_size_query{ nullptr, 0 };
+        auto attest_err =
+            azihsm_generate_key_report(priv_key.get(), &report_data_buf, &first_size_query);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(first_size_query.len, 0);
+
+        azihsm_buffer second_size_query{ nullptr, 0 };
+        attest_err =
+            azihsm_generate_key_report(priv_key.get(), &report_data_buf, &second_size_query);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(second_size_query.len, 0);
+
+        ASSERT_EQ(first_size_query.len, second_size_query.len);
+    });
+}
+
+/// Verifies that keys from different ECC curves produce different key attestation reports.
+TEST_F(azihsm_ecc_keyattest, different_curves_produce_different_key_reports)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key p256_priv_key;
+        auto_key p256_pub_key;
+        auto_key p384_priv_key;
+        auto_key p384_pub_key;
+
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            p256_priv_key.get_ptr(),
+            p256_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(p256_priv_key.get(), 0);
+        ASSERT_NE(p256_pub_key.get(), 0);
+
+        err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P384,
+            true,
+            p384_priv_key.get_ptr(),
+            p384_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(p384_priv_key.get(), 0);
+        ASSERT_NE(p384_pub_key.get(), 0);
+
+        std::vector<uint8_t> report_data(64, 0x42);
+        azihsm_buffer report_data_buf{ report_data.data(),
+                                       static_cast<uint32_t>(report_data.size()) };
+
+        azihsm_buffer p256_report_buf{ nullptr, 0 };
+        auto attest_err =
+            azihsm_generate_key_report(p256_priv_key.get(), &report_data_buf, &p256_report_buf);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(p256_report_buf.len, 0);
+
+        std::vector<uint8_t> p256_report(p256_report_buf.len);
+        p256_report_buf.ptr = p256_report.data();
+
+        attest_err =
+            azihsm_generate_key_report(p256_priv_key.get(), &report_data_buf, &p256_report_buf);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(p256_report_buf.len, 0);
+
+        azihsm_buffer p384_report_buf{ nullptr, 0 };
+        attest_err =
+            azihsm_generate_key_report(p384_priv_key.get(), &report_data_buf, &p384_report_buf);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(p384_report_buf.len, 0);
+
+        std::vector<uint8_t> p384_report(p384_report_buf.len);
+        p384_report_buf.ptr = p384_report.data();
+
+        attest_err =
+            azihsm_generate_key_report(p384_priv_key.get(), &report_data_buf, &p384_report_buf);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(p384_report_buf.len, 0);
+
+        p256_report.resize(p256_report_buf.len);
+        p384_report.resize(p384_report_buf.len);
+
+        ASSERT_NE(p256_report, p384_report)
+            << "Different ECC curves should produce different key reports";
+    });
+}
