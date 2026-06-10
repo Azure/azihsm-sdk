@@ -10,8 +10,7 @@
 # fix (issue openssl#18262, fixed in 3.0.4 with follow-ups through ~3.0.11) —
 # the 3.0.11 / 3.0.13 cells.  The 3.0.2 cell and the 3.0.7 RHEL cells set
 # `matrix.nginx: false` and skip the nginx install + test entirely.  3.5.x is
-# well past the fix, so the 26.04 cell runs nginx too; that cell is soft-fail
-# (continue-on-error) until 26.04 packaging reliably goes green.
+# well past the fix, so the 26.04 cell runs nginx too.
 #
 # Each cell's `matrix.openssl_minor` is exported as
 # AZIHSM_TEST_OPENSSL_MAJOR_MINOR so the suites' version-gating primitives
@@ -46,9 +45,6 @@ jobs:
     name: ${{ matrix.label }}
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
-    # Soft cells (the brand-new 26.04 / OpenSSL 3.5 cell) report status without
-    # blocking the PR until they are reliably green.
-    continue-on-error: ${{ matrix.soft_fail || false }}
     env:
       OPENSSL_LIB_DIR: ${{ matrix.lib_dir }}
       # Exported so the suites' version-gating primitives can skip tests that
@@ -110,7 +106,6 @@ jobs:
 
           # OpenSSL 3.5.x via system packages on the current LTS.  3.5 is well
           # past the openssl#18262 STORE-dispatch fix, so nginx runs here.
-          # Soft-fail until 26.04 packaging settles and the cell is reliably green.
           - distro:        u2604
             label:         Ubuntu 26.04 (OpenSSL 3.5.5)
             image:         ubuntu:26.04
@@ -118,7 +113,6 @@ jobs:
             lib_dir:       /usr/lib/x86_64-linux-gnu
             openssl_minor: "3.5"
             nginx:         true
-            soft_fail:     true
 
     steps:
       # Containers need git before actions/checkout, and the build deps
