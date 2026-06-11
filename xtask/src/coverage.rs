@@ -4,7 +4,7 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to run code coverage
+//! Xtask to clean & run code coverage
 
 use clap::Parser;
 use xshell::cmd;
@@ -12,7 +12,7 @@ use xshell::cmd;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Xtask to run code coverage
+/// Xtask to clean & run code coverage
 #[derive(Parser)]
 #[clap(about = "Run code coverage using cargo llvm-cov")]
 pub struct Coverage {
@@ -39,6 +39,10 @@ pub struct Coverage {
     /// Crates to exclude from nextest (e.g. crates with heavyweight build scripts)
     #[clap(long)]
     pub exclude: Vec<String>,
+
+    /// Skip cleaning existing llvm-cov artifacts before running coverage
+    #[clap(long)]
+    pub skip_clean: bool,
 }
 
 impl Xtask for Coverage {
@@ -93,6 +97,14 @@ impl Xtask for Coverage {
                     command_args.push(val);
                 }
             }
+        }
+
+        // Clean existing llvm-cov artifacts unless --skip-clean is set
+        if !self.skip_clean {
+            log::info!("Cleaning existing llvm-cov artifacts");
+            cmd!(sh, "cargo llvm-cov clean --workspace").run()?;
+        } else {
+            log::info!("Skipping llvm-cov cleanup");
         }
 
         // Run tests with coverage
