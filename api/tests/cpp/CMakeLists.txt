@@ -91,6 +91,7 @@ set(SOURCE
     algo/hmac/keygen_tests.cpp
     algo/secret/unmask_tests.cpp
     algo/kdf/hkdf_tests.cpp
+    algo/kdf/kbkdf_tests.cpp
     resiliency/init_stress_tests.cpp
     resiliency/aes_stress_tests.cpp
     resiliency/ecc_stress_tests.cpp

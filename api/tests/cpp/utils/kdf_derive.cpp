@@ -403,3 +403,256 @@ void hkdf_derive_fails_common(
     ASSERT_EQ(err, expected_status);
     ASSERT_EQ(derived_handle, 0u);
 }
+
+// Builds an azihsm_algo for SP 800-108 Counter Mode KBKDF with the given HMAC algo ID and
+// optional label/context.
+void build_kbkdf_counter_algo(
+    azihsm_algo_kbkdf_counter_params &kbkdf_params,
+    azihsm_algo &kbkdf_algo,
+    azihsm_algo_id hmac_algo_id,
+    azihsm_buffer *label,
+    azihsm_buffer *context
+)
+{
+    kbkdf_params.hmac_algo_id = hmac_algo_id;
+    kbkdf_params.label = label;
+    kbkdf_params.context = context;
+
+    kbkdf_algo.id = AZIHSM_ALGO_ID_KBKDF_COUNTER_DERIVE;
+    kbkdf_algo.params = &kbkdf_params;
+    kbkdf_algo.len = sizeof(kbkdf_params);
+}
+
+// Runs the full KBKDF (SP 800-108 Counter Mode) matrix test for a given curve:
+//   1. Iterates hash algorithms × AES key sizes using a fixed label.
+//   2. Tests label+context derivation with SHA-256/AES-256.
+//   3. Tests mismatched context between parties (negative).
+// SP 800-108 requires at least one of label/context, so every positive case sets a label.
+void run_kbkdf_counter_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
+{
+    auto_key shared_secret_a;
+    auto_key shared_secret_b;
+    derive_ecdh_shared_secrets(session, curve, shared_secret_a, shared_secret_b);
+
+    const char *label_str = "kbkdf-label";
+    azihsm_buffer label_buf = { .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
+                                .len = static_cast<uint32_t>(std::strlen(label_str)) };
+
+    // Part 1: hash algo × AES key size matrix, label only
+    for (const auto &hash : supported_hkdf_hash_algos())
+    {
+        for (uint32_t bits : AES_KEY_SIZES)
+        {
+            SCOPED_TRACE(
+                std::string("hash=") + get_hmac_algo_name(hash) +
+                " aes_bits=" + std::to_string(bits)
+            );
+
+            azihsm_algo_kbkdf_counter_params kbkdf_params{};
+            azihsm_algo kbkdf_algo{};
+            build_kbkdf_counter_algo(kbkdf_params, kbkdf_algo, hash, &label_buf, nullptr);
+
+            auto_key derived_key_a;
+            derive_aes_key_from_shared_secret(
+                session,
+                &kbkdf_algo,
+                shared_secret_a.get(),
+                bits,
+                derived_key_a
+            );
+
+            auto_key derived_key_b;
+            derive_aes_key_from_shared_secret(
+                session,
+                &kbkdf_algo,
+                shared_secret_b.get(),
+                bits,
+                derived_key_b
+            );
+
+            std::string pt_str = std::string("KBKDF hash=") + get_hmac_algo_name(hash) +
+                                 " aes_bits=" + std::to_string(bits);
+            assert_aes_cbc_roundtrip(
+                derived_key_a.get(),
+                derived_key_b.get(),
+                reinterpret_cast<const uint8_t *>(pt_str.data()),
+                pt_str.size()
+            );
+        }
+    }
+
+    // Part 2: label + context should also work
+    {
+        const char *context_str = "kbkdf-context";
+        azihsm_buffer context_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_str)),
+            .len = static_cast<uint32_t>(std::strlen(context_str))
+        };
+
+        azihsm_algo_kbkdf_counter_params kbkdf_params{};
+        azihsm_algo kbkdf_algo{};
+        build_kbkdf_counter_algo(
+            kbkdf_params,
+            kbkdf_algo,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_buf
+        );
+
+        auto_key derived_key_a;
+        derive_aes_key_from_shared_secret(
+            session,
+            &kbkdf_algo,
+            shared_secret_a.get(),
+            256,
+            derived_key_a
+        );
+
+        auto_key derived_key_b;
+        derive_aes_key_from_shared_secret(
+            session,
+            &kbkdf_algo,
+            shared_secret_b.get(),
+            256,
+            derived_key_b
+        );
+
+        const char *rt_msg = "KBKDF with label+context derived key roundtrip";
+        assert_aes_cbc_roundtrip(
+            derived_key_a.get(),
+            derived_key_b.get(),
+            reinterpret_cast<const uint8_t *>(rt_msg),
+            std::strlen(rt_msg)
+        );
+    }
+
+    // Part 3: different context between parties ⇒ keys should not match
+    {
+        const char *context_a_str = "kbkdf-context-a";
+        const char *context_b_str = "kbkdf-context-b";
+
+        azihsm_buffer context_a_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_a_str)),
+            .len = static_cast<uint32_t>(std::strlen(context_a_str))
+        };
+        azihsm_buffer context_b_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_b_str)),
+            .len = static_cast<uint32_t>(std::strlen(context_b_str))
+        };
+
+        azihsm_algo_kbkdf_counter_params kbkdf_params_a{};
+        azihsm_algo kbkdf_algo_a{};
+        build_kbkdf_counter_algo(
+            kbkdf_params_a,
+            kbkdf_algo_a,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_a_buf
+        );
+
+        azihsm_algo_kbkdf_counter_params kbkdf_params_b{};
+        azihsm_algo kbkdf_algo_b{};
+        build_kbkdf_counter_algo(
+            kbkdf_params_b,
+            kbkdf_algo_b,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_b_buf
+        );
+
+        auto_key derived_key_a;
+        derive_aes_key_from_shared_secret(
+            session,
+            &kbkdf_algo_a,
+            shared_secret_a.get(),
+            256,
+            derived_key_a
+        );
+
+        auto_key derived_key_b;
+        derive_aes_key_from_shared_secret(
+            session,
+            &kbkdf_algo_b,
+            shared_secret_b.get(),
+            256,
+            derived_key_b
+        );
+
+        // Encrypt with key_a, attempt decrypt with key_b; if decryption succeeds the plaintext
+        // must differ.
+        azihsm_algo_aes_cbc_params enc_params{};
+        auto iv = test_iv(sizeof(enc_params.iv));
+        std::memcpy(enc_params.iv, iv.data(), iv.size());
+        azihsm_algo enc_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
+                                 .params = &enc_params,
+                                 .len = sizeof(enc_params) };
+
+        const char *mismatch_msg = "KBKDF context mismatch should fail";
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(
+            single_shot_crypt(
+                CryptOperation::Encrypt,
+                derived_key_a.get(),
+                &enc_algo,
+                reinterpret_cast<const uint8_t *>(mismatch_msg),
+                std::strlen(mismatch_msg),
+                ciphertext
+            ),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        // reuse the same IV for decryption
+        azihsm_algo_aes_cbc_params dec_params{};
+        std::memcpy(dec_params.iv, iv.data(), iv.size());
+        azihsm_algo dec_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
+                                 .params = &dec_params,
+                                 .len = sizeof(dec_params) };
+
+        std::vector<uint8_t> decrypted;
+        auto dec_err = single_shot_crypt(
+            CryptOperation::Decrypt,
+            derived_key_b.get(),
+            &dec_algo,
+            ciphertext.data(),
+            ciphertext.size(),
+            decrypted
+        );
+
+        if (dec_err == AZIHSM_STATUS_SUCCESS)
+        {
+            // If decryption succeeded despite key mismatch, the plaintext must differ.
+            size_t msg_len = std::strlen(mismatch_msg);
+            bool content_matches = (decrypted.size() == msg_len) &&
+                                   (std::memcmp(decrypted.data(), mismatch_msg, msg_len) == 0);
+            ASSERT_FALSE(content_matches)
+                << "Mismatched context should not produce matching plaintext";
+        }
+    }
+}
+
+void kbkdf_derive_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id hmac_algo_id,
+    key_props &props,
+    azihsm_status expected_status
+)
+{
+    auto_key secret_a;
+    auto_key secret_b;
+    derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+    // These negative cases all fail during parameter/property validation, before the device
+    // KDF call, so label/context need not be supplied here.
+    azihsm_algo_kbkdf_counter_params kbkdf_params{};
+    azihsm_algo kbkdf_algo{};
+    build_kbkdf_counter_algo(kbkdf_params, kbkdf_algo, hmac_algo_id, nullptr, nullptr);
+
+    std::vector<azihsm_key_prop> prop_vec;
+
+    azihsm_key_prop_list prop_list = build_key_prop_list(props, prop_vec);
+
+    azihsm_handle derived_handle = 0;
+    auto err = azihsm_key_derive(session, &kbkdf_algo, secret_a.get(), &prop_list, &derived_handle);
+    ASSERT_EQ(err, expected_status);
+    ASSERT_EQ(derived_handle, 0u);
+}
