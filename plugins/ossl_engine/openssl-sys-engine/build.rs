@@ -15,9 +15,11 @@ fn main() {
     println!("cargo::rerun-if-changed=wrapper.h");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
 
+    // pkg-config may report zero or several include/link dirs; zero is valid
+    // (default-prefix installs need no -I / -L).
     struct OpensslPaths {
-        include: PathBuf,
-        lib: PathBuf,
+        include: Vec<PathBuf>,
+        lib: Vec<PathBuf>,
     }
 
     fn find_pkgconfig_openssl() -> OpensslPaths {
@@ -45,27 +47,21 @@ fn main() {
         }
 
         OpensslPaths {
-            include: lib
-                .include_paths
-                .into_iter()
-                .next()
-                .expect("pkg-config returned no include paths for libcrypto"),
-            lib: lib
-                .link_paths
-                .into_iter()
-                .next()
-                .expect("pkg-config returned no link paths for libcrypto"),
+            include: lib.include_paths,
+            lib: lib.link_paths,
         }
     }
 
     let paths = find_pkgconfig_openssl();
 
     println!("cargo::rustc-link-lib=crypto");
-    println!("cargo::rustc-link-search=native={}", paths.lib.display());
+    for p in &paths.lib {
+        println!("cargo::rustc-link-search=native={}", p.display());
+    }
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg(format!("-I{}", paths.include.display()))
+        .clang_args(paths.include.iter().map(|p| format!("-I{}", p.display())))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_function("ENGINE_.*")
         .allowlist_function("EVP_.*")
