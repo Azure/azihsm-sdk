@@ -316,6 +316,9 @@ impl HsmSessId {
 // Session establishment protocol constants
 // =============================================================================
 
+/// Length of the public AppId prefix in a partition PSK.
+pub const APP_ID_LEN: usize = 16;
+
 /// Length in bytes of a partition pre-shared key (PSK).
 ///
 /// Both the CO and CU PSKs are exactly this length.  Mixed into the

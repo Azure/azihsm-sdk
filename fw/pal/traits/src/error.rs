@@ -294,6 +294,27 @@ pub enum HsmError {
     /// produced by `ExportableHsmKey::to_hsm_bytes` (see
     /// `HsmEccCurve::wire_coord_len`).
     EccExportError = 0x087000FB,
+
+    // ── Partition initialization (PartInit) ────────────────────────
+    /// `PartInit` rejected because a Partition Trust Anchor key has
+    /// already been bound to this partition incarnation.  One-shot
+    /// enforcement: the only path to a fresh PTA binding is via a
+    /// full partition free/realloc cycle.
+    PtaKeyAlreadySet = 0x087000FC,
+
+    /// `PartInit` rejected because a Unique Machine Secret (UMS) key
+    /// has already been bound to this partition incarnation.
+    /// One-shot enforcement matching [`Self::PtaKeyAlreadySet`]: the
+    /// only path to a fresh UMS binding is via a full partition
+    /// free/realloc cycle.
+    UmsKeyAlreadySet = 0x087000FD,
+
+    /// A partition operation required the Unique Machine Secret (UMS)
+    /// vault key but `PartInit` has not yet successfully bound one
+    /// for this incarnation.  Returned by
+    /// [`HsmPartitionManager::part_ums_key_id`](crate::HsmPartitionManager::part_ums_key_id)
+    /// when the slot is empty.
+    UmsKeyNotSet = 0x087000FE,
 }
 
 impl core::fmt::Debug for HsmError {

@@ -21,7 +21,6 @@
 //! arrays on the async stack.
 
 use azihsm_fw_core_crypto_hpke::*;
-use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
 
@@ -39,10 +38,10 @@ struct ParsedRequest<'a> {
     /// Cryptographic suite negotiated by the caller.
     suite: SessionSuite,
 
-    /// Borrowed directly from the request buffer (managed by the
-    /// per-IO allocator) so it can flow through to HPKE without an
-    /// intermediate stack copy.
-    pk_init: &'a [u8],
+    /// Sub-view of the inbound request buffer (DMA-branded by the
+    /// codec), so it can flow straight into HPKE / HMAC inputs
+    /// without an intermediate copy.
+    pk_init: &'a DmaBuf,
 }
 
 /// Map a [`SessionSuite`] to the concrete [`HpkeSuite`] used by the
@@ -82,7 +81,7 @@ const _: () = assert!(PENDING_BLOB_LEN <= SESSION_PENDING_BLOB_MAX);
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
     let ParsedRequest {
         role,
@@ -90,7 +89,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         session_type,
         suite,
         pk_init,
-    } = parse_request(view)?;
+    } = parse_request(req_buf)?;
 
     let hpke_suite = hpke_suite_for(suite);
 
@@ -154,8 +153,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 }
 
 /// Decode and validate the wire request.
-fn parse_request<'a>(view: &'a RequestView<'_>) -> HsmResult<ParsedRequest<'a>> {
-    let req = TborOpenSessionInitReq::decode(view.as_bytes())?;
+fn parse_request<'a>(req_buf: &'a DmaBuf) -> HsmResult<ParsedRequest<'a>> {
+    let req = TborOpenSessionInitReq::decode(req_buf)?;
     let psk_id = req.psk_id();
 
     if psk_id > 1 {
@@ -174,7 +173,7 @@ fn parse_request<'a>(view: &'a RequestView<'_>) -> HsmResult<ParsedRequest<'a>> 
     let suite = SessionSuite::from_u8(req.suite_id())?;
     let hpke_suite = hpke_suite_for(suite);
 
-    let pk_init: &[u8] = req.pk_init();
+    let pk_init: &DmaBuf = req.pk_init();
     if pk_init.len() != hpke_suite.npk() {
         return Err(HsmError::InvalidArg);
     }
@@ -259,7 +258,7 @@ async fn hpke_auth_psk_export<'a, P: HsmPal>(
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
     suite: HpkeSuite,
-    pk_init: &[u8],
+    pk_init: &DmaBuf,
     sk_hsm: &DmaBuf,
     pk_hsm: &DmaBuf,
     psk: &DmaBuf,
@@ -306,7 +305,7 @@ fn create_pending_slot<P: HsmPal>(
     suite: SessionSuite,
     hpke_suite: HpkeSuite,
     exported: &DmaBuf,
-    pk_init: &[u8],
+    pk_init: &DmaBuf,
     pk_resp: &DmaBuf,
 ) -> HsmResult<HsmSessId> {
     let nh = hpke_suite.nh();
@@ -330,9 +329,9 @@ fn create_pending_slot<P: HsmPal>(
 ///
 /// The label and the 2-byte big-endian `session_id` share one DMA
 /// buffer so we don't pay for a separate small allocation just to
-/// satisfy the PAL `hmac_continue(&DmaBuf)` contract.  `pk_init`
-/// is copied into a scoped DmaBuf because the wire slice borrows
-/// from the request buffer rather than a DmaBuf.
+/// satisfy the PAL `hmac_continue(&DmaBuf)` contract.  `pk_init` is
+/// passed through as the codec-supplied `&DmaBuf` sub-view of the
+/// inbound request buffer.
 #[allow(clippy::too_many_arguments)]
 async fn compute_phase1_mac<'a, P: HsmPal>(
     pal: &P,
@@ -341,7 +340,7 @@ async fn compute_phase1_mac<'a, P: HsmPal>(
     suite: HpkeSuite,
     exported: &DmaBuf,
     session_id: u16,
-    pk_init: &[u8],
+    pk_init: &DmaBuf,
     pk_hsm: &DmaBuf,
     pk_resp: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
@@ -349,8 +348,6 @@ async fn compute_phase1_mac<'a, P: HsmPal>(
     let label_sid = alloc.dma_alloc(SESSION_PHASE1_LABEL.len() + 2)?;
     label_sid[..SESSION_PHASE1_LABEL.len()].copy_from_slice(SESSION_PHASE1_LABEL);
     label_sid[SESSION_PHASE1_LABEL.len()..].copy_from_slice(&session_id.to_be_bytes());
-    let pk_init_dma = alloc.dma_alloc(suite.npk())?;
-    pk_init_dma.copy_from_slice(pk_init);
 
     let mac_resp = alloc.dma_alloc(suite.nh())?;
     let mut hmac_ctx = pal
@@ -358,7 +355,7 @@ async fn compute_phase1_mac<'a, P: HsmPal>(
         .await?;
 
     pal.hmac_continue(io, &mut hmac_ctx, label_sid).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_init_dma).await?;
+    pal.hmac_continue(io, &mut hmac_ctx, pk_init).await?;
     pal.hmac_continue(io, &mut hmac_ctx, pk_hsm).await?;
     pal.hmac_continue(io, &mut hmac_ctx, pk_resp).await?;
     pal.hmac_finish_into(io, hmac_ctx, mac_resp).await?;

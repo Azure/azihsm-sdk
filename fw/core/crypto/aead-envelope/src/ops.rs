@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Public surface: [`seal`], [`open`], [`inspect`], and the types
-//! they hand to callers.
+//! Public surface: [`seal`], [`open`], and the types they hand to
+//! callers.
 //!
 //! This is the only module re-exported from the crate root. All
 //! other modules are `pub(crate)` implementation detail.
@@ -13,10 +13,6 @@
 //! means adding a new [`AeadAlg`] discriminant, a new `seal_xxx` /
 //! `open_xxx` private impl, and one new arm in each `match` below.
 //! The public signatures never change.
-//!
-//! [`inspect`] is algorithm-agnostic — every supported algorithm
-//! uses the same `[HEADER | IV | AAD | DATA | TAG]` wire layout —
-//! so it lives here for surface symmetry rather than dispatching.
 //!
 //! ```text
 //! seal(alg, ...) ──► match alg {
@@ -31,10 +27,6 @@
 //!                     AesGcm256 => open_gcm(...),
 //!                     // future arms ...
 //!                 }
-//!
-//! inspect(buf) ──► read_header(buf)
-//!               ──► region_offsets(...)
-//!               ──► AeadEnvelope { .. }   // no decrypt, no auth
 //! ```
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -43,11 +35,9 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
 pub use crate::alg::AeadAlg;
-use crate::envelope::region_offsets;
 pub use crate::envelope::AeadEnvelope;
 use crate::error::Error;
 pub use crate::error::Error as AeadError;
-use crate::error::Result;
 use crate::format::is_valid_aad_len;
 use crate::format::read_header;
 pub use crate::format::FORMAT_TAG;
@@ -159,47 +149,4 @@ pub async fn open<'a>(
         AeadAlg::AesGcm256 => open_gcm(crypto, io, key, buf, header).await?,
     };
     Ok(env)
-}
-
-/// Parse an envelope header and return a borrowed [`AeadEnvelope`]
-/// view without decrypting or authenticating.
-///
-/// `payload` references the ciphertext bytes in `buf`. The tag is
-/// **not** verified; use [`open`] when authenticity matters.
-///
-/// Algorithm-agnostic: every supported algorithm shares the
-/// `[HEADER | IV | AAD | DATA | TAG]` wire layout.
-///
-/// # Errors
-/// * [`AeadError::BufferTooSmall`] — `buf.len()` is shorter than
-///   the minimum envelope length implied by the parsed header.
-/// * [`AeadError::InvalidFormat`] — bad magic byte.
-/// * [`AeadError::UnsupportedAlg`] — `alg` byte not supported in
-///   v1.
-/// * [`AeadError::InvalidAadLength`] — encoded `aad_len` violates
-///   the algorithm's AAD granularity.
-pub fn inspect(buf: &[u8]) -> Result<AeadEnvelope<'_>> {
-    let header = read_header(buf)?;
-    let (iv_off, aad_off, payload_off, tag_off) = region_offsets(header, buf.len())?;
-    // All ranges are validated by `region_offsets`; `get` keeps the
-    // accessors panic-free even if invariants are violated.
-    let iv = buf
-        .get(iv_off..aad_off)
-        .ok_or(Error::BufferTooSmall { needed: aad_off })?;
-    let aad = buf.get(aad_off..payload_off).ok_or(Error::BufferTooSmall {
-        needed: payload_off,
-    })?;
-    let payload = buf
-        .get(payload_off..tag_off)
-        .ok_or(Error::BufferTooSmall { needed: tag_off })?;
-    let tag = buf
-        .get(tag_off..)
-        .ok_or(Error::BufferTooSmall { needed: buf.len() })?;
-    Ok(AeadEnvelope {
-        alg: header.alg,
-        iv,
-        aad,
-        payload,
-        tag,
-    })
 }

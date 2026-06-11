@@ -3,7 +3,9 @@
 
 //! Attribute and field parsing for the host `#[tbor]` macro.
 
+use proc_macro2::Span;
 use proc_macro2::TokenStream as TokenStream2;
+use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
 use syn::Attribute;
 use syn::Field;
@@ -12,6 +14,12 @@ use syn::Ident;
 use syn::Path;
 use syn::PathArguments;
 use syn::Type;
+
+/// Allowed struct-level option names, for error messages.
+const STRUCT_OPTS: &str = "`response`, `resp = T`, `opcode = N`, `session_ctrl = variant`";
+
+/// Allowed field-level option names, for error messages.
+const FIELD_OPTS: &str = "`session_id`, `min_len = N`, `max_len = N`";
 
 /// Whether the annotated struct is a request or a response.
 pub enum StructKind {
@@ -25,66 +33,104 @@ pub struct StructAttrs {
     /// Explicit response type for a request struct (`#[tbor(resp = T)]`).
     /// Ignored on response structs.
     pub resp: Option<Path>,
-    /// Explicit FW schema path (`#[tbor(schema = path::T)]`).  Defaults
-    /// to `::azihsm_fw_ddi_tbor_types::<SameStructName>` when omitted.
-    pub schema: Option<Path>,
+    /// Required opcode for a request struct (`#[tbor(opcode = 0xNN)]`).
+    /// Ignored on response structs.
+    pub opcode: Option<syn::Expr>,
+    /// Required `session_ctrl()` value.  Mandatory on request
+    /// structs (no default — explicit only).  Accepts the
+    /// lower-case identifier of a [`SessionControlKind`] variant:
+    /// `no_session`, `open`, `close`, or `in_session`.  Stored as
+    /// the matching CamelCase ident for code generation.
+    pub session_ctrl: Option<Ident>,
 }
 
 impl StructAttrs {
     pub fn parse(attr: TokenStream2) -> syn::Result<Self> {
-        let mut kind = StructKind::Request;
-        let mut resp: Option<Path> = None;
-        let mut schema: Option<Path> = None;
-        let mut saw_response = false;
-        let mut saw_resp = false;
-        let mut saw_schema = false;
-
-        if !attr.is_empty() {
-            let parser = syn::meta::parser(|m| {
-                if m.path.is_ident("response") {
-                    if saw_response {
-                        return Err(m.error("duplicate `response`"));
-                    }
-                    saw_response = true;
-                    kind = StructKind::Response;
-                    Ok(())
-                } else if m.path.is_ident("resp") {
-                    if saw_resp {
-                        return Err(m.error("duplicate `resp`"));
-                    }
-                    saw_resp = true;
-                    resp = Some(m.value()?.parse()?);
-                    Ok(())
-                } else if m.path.is_ident("schema") {
-                    if saw_schema {
-                        return Err(m.error("duplicate `schema`"));
-                    }
-                    saw_schema = true;
-                    schema = Some(m.value()?.parse()?);
-                    Ok(())
-                } else {
-                    Err(m.error(format!(
-                        "unknown #[tbor] option `{}` — expected one of: \
-                         `response`, `resp = T`, `schema = path::T`",
-                        m.path
-                            .get_ident()
-                            .map(|i| i.to_string())
-                            .unwrap_or_else(|| "<path>".to_string()),
-                    )))
-                }
-            });
-            syn::parse::Parser::parse2(parser, attr)?;
+        if attr.is_empty() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!("#[tbor] requires at least one option — expected one of: {STRUCT_OPTS}"),
+            ));
         }
 
-        if saw_response && saw_resp {
+        let mut response: Option<()> = None;
+        let mut resp: Option<Path> = None;
+        let mut opcode: Option<syn::Expr> = None;
+        let mut session_ctrl: Option<Ident> = None;
+
+        let parser = syn::meta::parser(|m| {
+            if m.path.is_ident("response") {
+                set_once(&mut response, &m, "response", ())
+            } else if m.path.is_ident("resp") {
+                let v = m.value()?.parse()?;
+                set_once(&mut resp, &m, "resp", v)
+            } else if m.path.is_ident("opcode") {
+                let v = m.value()?.parse()?;
+                set_once(&mut opcode, &m, "opcode", v)
+            } else if m.path.is_ident("session_ctrl") {
+                let raw: Ident = m.value()?.parse()?;
+                let variant = session_ctrl_variant(&raw).ok_or_else(|| {
+                    m.error(
+                        "session_ctrl must be one of: \
+                         no_session, open, close, in_session",
+                    )
+                })?;
+                set_once(&mut session_ctrl, &m, "session_ctrl", variant)
+            } else {
+                Err(unknown_option(&m, "#[tbor]", STRUCT_OPTS))
+            }
+        });
+        syn::parse::Parser::parse2(parser, attr)?;
+
+        if response.is_some() && resp.is_some() {
             return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
+                Span::call_site(),
                 "#[tbor(response)] is mutually exclusive with `resp = ...`",
             ));
         }
 
-        Ok(Self { kind, resp, schema })
+        if response.is_some() && opcode.is_some() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "#[tbor(response)] does not accept `opcode = ...` \
+                 (responses do not carry an opcode)",
+            ));
+        }
+
+        if response.is_some() && session_ctrl.is_some() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "#[tbor(response)] does not accept `session_ctrl = ...` \
+                 (session control lives on the request)",
+            ));
+        }
+
+        let kind = if response.is_some() {
+            StructKind::Response
+        } else {
+            StructKind::Request
+        };
+
+        Ok(Self {
+            kind,
+            resp,
+            opcode,
+            session_ctrl,
+        })
     }
+}
+
+/// Map a lower-case `session_ctrl` identifier to its `SessionControlKind`
+/// CamelCase variant ident, preserving the source span for diagnostics.
+fn session_ctrl_variant(ident: &Ident) -> Option<Ident> {
+    let camel = match ident.to_string().as_str() {
+        "no_session" => "NoSession",
+        "open" => "Open",
+        "close" => "Close",
+        "in_session" => "InSession",
+        _ => return None,
+    };
+    Some(Ident::new(camel, ident.span()))
 }
 
 /// Wire shape of a field, inferred from the Rust type plus any
@@ -120,42 +166,7 @@ impl ParsedField {
             .clone()
             .ok_or_else(|| syn::Error::new(f.span(), "expected a named field"))?;
         let flags = FieldFlags::collect(&f.attrs)?;
-
-        let base = classify_type(&f.ty).ok_or_else(|| {
-            syn::Error::new(
-                f.ty.span(),
-                "#[tbor] field type must be one of: u8, u16, u32, u64, \
-                 [u8; N], Vec<u8>, Option<Vec<u8>>",
-            )
-        })?;
-
-        // Promote `u16 + #[tbor(session_id)]` to SessionId.  The flag is
-        // invalid on any other type.
-        let shape = if flags.session_id {
-            match base {
-                FieldShape::U16 => FieldShape::SessionId,
-                _ => {
-                    return Err(syn::Error::new(
-                        f.span(),
-                        "#[tbor(session_id)] requires a `u16` field",
-                    ))
-                }
-            }
-        } else {
-            base
-        };
-
-        // `min_len` / `max_len` are documentation parity only; reject
-        // if put on a non-variable field.
-        if (flags.has_max_len || flags.has_min_len)
-            && !matches!(shape, FieldShape::VarBuf | FieldShape::OptVarBuf)
-        {
-            return Err(syn::Error::new(
-                f.span(),
-                "#[tbor(min_len = N)] / #[tbor(max_len = N)] are only valid \
-                 on `Vec<u8>` / `Option<Vec<u8>>` fields",
-            ));
-        }
+        let shape = resolve_shape(f, &flags)?;
 
         Ok(Self {
             name,
@@ -163,6 +174,47 @@ impl ParsedField {
             shape,
         })
     }
+}
+
+/// Combine the Rust type and the parsed field-level flags into a final
+/// [`FieldShape`], rejecting flag/type combinations that are invalid.
+fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
+    let base = classify_type(&f.ty).ok_or_else(|| {
+        syn::Error::new(
+            f.ty.span(),
+            "#[tbor] field type must be one of: u8, u16, u32, u64, \
+             [u8; N], Vec<u8>, Option<Vec<u8>>",
+        )
+    })?;
+
+    // Promote `u16 + #[tbor(session_id)]` to SessionId.  The flag is
+    // invalid on any other type.
+    let shape = if flags.session_id {
+        if matches!(base, FieldShape::U16) {
+            FieldShape::SessionId
+        } else {
+            return Err(syn::Error::new(
+                f.span(),
+                "#[tbor(session_id)] requires a `u16` field",
+            ));
+        }
+    } else {
+        base
+    };
+
+    // `min_len` / `max_len` are documentation parity only; reject
+    // if put on a non-variable field.
+    if (flags.has_max_len || flags.has_min_len)
+        && !matches!(shape, FieldShape::VarBuf | FieldShape::OptVarBuf)
+    {
+        return Err(syn::Error::new(
+            f.span(),
+            "#[tbor(min_len = N)] / #[tbor(max_len = N)] are only valid \
+             on `Vec<u8>` / `Option<Vec<u8>>` fields",
+        ));
+    }
+
+    Ok(shape)
 }
 
 #[derive(Default)]
@@ -185,12 +237,10 @@ impl FieldFlags {
                     Ok(())
                 } else if m.path.is_ident("max_len") {
                     out.has_max_len = true;
-                    let _ = m.value()?.parse::<syn::LitInt>()?;
-                    Ok(())
+                    m.value()?.parse::<syn::LitInt>().map(|_| ())
                 } else if m.path.is_ident("min_len") {
                     out.has_min_len = true;
-                    let _ = m.value()?.parse::<syn::LitInt>()?;
-                    Ok(())
+                    m.value()?.parse::<syn::LitInt>().map(|_| ())
                 } else if m.path.is_ident("len") {
                     Err(m.error(
                         "#[tbor(len = N)] is redundant on host — \
@@ -198,14 +248,7 @@ impl FieldFlags {
                          length; the FW codec is the length authority",
                     ))
                 } else {
-                    Err(m.error(format!(
-                        "unknown #[tbor] field option `{}` — expected one of: \
-                         `session_id`, `min_len = N`, `max_len = N`",
-                        m.path
-                            .get_ident()
-                            .map(|i| i.to_string())
-                            .unwrap_or_else(|| "<path>".to_string()),
-                    )))
+                    Err(unknown_option(&m, "#[tbor] field", FIELD_OPTS))
                 }
             })?;
         }
@@ -213,42 +256,60 @@ impl FieldFlags {
     }
 }
 
+/// Set `slot` to `value`, erroring at the meta's span if it was already set.
+fn set_once<T>(
+    slot: &mut Option<T>,
+    m: &ParseNestedMeta<'_>,
+    name: &str,
+    value: T,
+) -> syn::Result<()> {
+    if slot.is_some() {
+        return Err(m.error(format!("duplicate `{name}`")));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+/// Format a consistent "unknown option" diagnostic for a `#[tbor(...)]` meta.
+fn unknown_option(m: &ParseNestedMeta<'_>, scope: &str, allowed: &str) -> syn::Error {
+    let opt = m
+        .path
+        .get_ident()
+        .map(|i| i.to_string())
+        .unwrap_or_else(|| "<path>".to_string());
+    m.error(format!(
+        "unknown {scope} option `{opt}` — expected one of: {allowed}"
+    ))
+}
+
 fn classify_type(ty: &Type) -> Option<FieldShape> {
     // Fixed buffer: `[u8; N]` (any N).
     if let Type::Array(arr) = ty {
-        if is_u8(&arr.elem) {
-            return Some(FieldShape::FixedBuf);
-        }
-        return None;
+        return is_u8(&arr.elem).then_some(FieldShape::FixedBuf);
     }
 
-    let path = match ty {
-        Type::Path(p) if p.qself.is_none() => &p.path,
-        _ => return None,
+    let Type::Path(p) = ty else {
+        return None;
     };
-    let last = path.segments.last()?;
-    let name = last.ident.to_string();
+    if p.qself.is_some() {
+        return None;
+    }
+    let last = p.path.segments.last()?;
+    let no_args = matches!(last.arguments, PathArguments::None);
 
-    match name.as_str() {
-        "u8" if matches!(last.arguments, PathArguments::None) => Some(FieldShape::U8),
-        "u16" if matches!(last.arguments, PathArguments::None) => Some(FieldShape::U16),
-        "u32" if matches!(last.arguments, PathArguments::None) => Some(FieldShape::U32),
-        "u64" if matches!(last.arguments, PathArguments::None) => Some(FieldShape::U64),
+    match last.ident.to_string().as_str() {
+        "u8" if no_args => Some(FieldShape::U8),
+        "u16" if no_args => Some(FieldShape::U16),
+        "u32" if no_args => Some(FieldShape::U32),
+        "u64" if no_args => Some(FieldShape::U64),
         "Vec" => {
             let inner = single_generic_type(&last.arguments)?;
-            if is_u8(inner) {
-                Some(FieldShape::VarBuf)
-            } else {
-                None
-            }
+            is_u8(inner).then_some(FieldShape::VarBuf)
         }
         "Option" => {
             let inner = single_generic_type(&last.arguments)?;
-            if let Some(FieldShape::VarBuf) = classify_type(inner) {
-                Some(FieldShape::OptVarBuf)
-            } else {
-                None
-            }
+            matches!(classify_type(inner), Some(FieldShape::VarBuf))
+                .then_some(FieldShape::OptVarBuf)
         }
         _ => None,
     }
@@ -259,9 +320,8 @@ fn is_u8(ty: &Type) -> bool {
 }
 
 fn single_generic_type(args: &PathArguments) -> Option<&Type> {
-    let bracketed = match args {
-        PathArguments::AngleBracketed(b) => b,
-        _ => return None,
+    let PathArguments::AngleBracketed(bracketed) = args else {
+        return None;
     };
     if bracketed.args.len() != 1 {
         return None;

@@ -277,6 +277,7 @@ impl DdiDev for DdiEmuDev {
         // ── 2. Build SQE with OP_TBOR ──────────────────────────────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let req_session_id = req.get_session_id();
+        let session_ctrl = req.session_ctrl();
         let sqe = Sqe::new()
             .cmd(CmdDword::new().with_op(OP_TBOR).with_id(cmd_id))
             .buf_lens(req_len as u32, SCRATCH_LEN as u32)
@@ -284,7 +285,7 @@ impl DdiDev for DdiEmuDev {
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .session_flags(
                 SessionFlags::new()
-                    .with_ctrl(0) // NoSession — TBOR has no sessioned commands yet.
+                    .with_ctrl(u8::from(session_ctrl))
                     .with_id_valid(req_session_id.is_some()),
             )
             .session_id(req_session_id.unwrap_or(0))

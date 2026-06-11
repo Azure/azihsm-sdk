@@ -27,7 +27,6 @@
 //! in place** — track the gating issue in the PR description for
 //! #425.
 
-use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor_types::TborCloseSessionReq;
 use azihsm_fw_ddi_tbor_types::TborCloseSessionResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -43,9 +42,9 @@ use azihsm_fw_hsm_pal_traits::HsmSessId;
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req = TborCloseSessionReq::decode(view.as_bytes())?;
+    let req = TborCloseSessionReq::decode(req_buf)?;
     let session_id: u16 = req.session_id().into();
     let id = HsmSessId::from(session_id);
     // SECURITY: This is a destructive operation gated only by

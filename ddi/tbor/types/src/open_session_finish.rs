@@ -19,6 +19,47 @@ pub const MAC_FIN_LEN: usize = 48;
 /// produces `BK_SESSION`.
 pub const SEED_LEN: usize = 32;
 
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_SEED_LEN` — alias of
+/// [`SEED_LEN`].  Provided so host helpers can mirror the FW spec
+/// constant name verbatim.
+pub const SESSION_SEED_LEN: usize = SEED_LEN;
+
+/// HMAC label binding the Phase-2 (client-auth) confirm signature.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_PHASE2_LABEL`.
+pub const SESSION_PHASE2_LABEL: &[u8] = b"phase2-confirm";
+
+/// HKDF-Expand label producing the per-session **param key** — a raw
+/// 32-byte AES-256 key consumed by the AEAD-envelope crate to
+/// AEAD-seal/open the `seed_envelope` and per-parameter envelopes
+/// carried by in-session commands such as `ChangePsk` / `PartInit`.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LABEL`.
+pub const SESSION_PARAM_KEY_LABEL: &[u8] = b"azihsm-session-param-v1";
+
+/// Length in bytes of the per-session `param_key`
+/// (TBOR per-parameter confidentiality).
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN`.
+pub const SESSION_PARAM_KEY_LEN: usize = 32;
+
+/// HKDF-Expand label producing the **VM→HSM** message-MAC key.
+/// Derived only for Authenticated sessions.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_MAC_TX_LABEL`.
+pub const SESSION_MAC_TX_LABEL: &[u8] = b"azihsm-session-mac-tx-v1";
+
+/// HKDF-Expand label producing the **HSM→VM** message-MAC key.
+/// Derived only for Authenticated sessions.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_MAC_RX_LABEL`.
+pub const SESSION_MAC_RX_LABEL: &[u8] = b"azihsm-session-mac-rx-v1";
+
+/// Length in bytes of each directional message-MAC key (HMAC-SHA-384).
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_MAC_DIR_KEY_LEN`.
+pub const SESSION_MAC_DIR_KEY_LEN: usize = 48;
+
 /// Length of the AEAD `seed_envelope` on the wire.
 ///
 /// `"AEAD"(4) ‖ alg=AesGcm256(1) ‖ rsv=0(1) ‖ aad_len_be=0(2) ‖
@@ -26,7 +67,7 @@ pub const SEED_LEN: usize = 32;
 pub const SEED_ENVELOPE_LEN: usize = 8 + 12 + SEED_LEN + 16;
 
 /// Host-facing TBOR `OpenSessionFinish` request.
-#[tbor]
+#[tbor(opcode = TBOR_OP_OPEN_SESSION_FINISH, session_ctrl = in_session)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborOpenSessionFinishReq {
     /// Pending session identifier reserved in Phase 1.

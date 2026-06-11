@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   pull_request:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   merge_group:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:

@@ -91,12 +91,12 @@ impl<P: HsmPal> Hsm<P> {
         }
     }
 
-    /// Returns `true` if the partition for this IO is enabled.
+    /// Returns `true` if the partition for this IO can accept host traffic.
     #[inline]
     fn partition_enabled(&self, io: &P::Io) -> bool {
         self.pal()
             .part_state(io)
-            .is_ok_and(|s| s == PartState::Enabled)
+            .is_ok_and(|s| matches!(s, PartState::Enabled | PartState::Initializing))
     }
 
     /// Parses the SQE once, populates the CQE header, and returns the
@@ -238,12 +238,20 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Phase 2: parse TBOR header, validate session, dispatch ─
         let (resp, session_ctrl) = {
-            let req_bytes = &req_buf[..params.src_len];
-            let req_view = TborRequestView::parse(req_bytes).op_err(
-                "core",
-                HsmError::DdiDecodeFailed,
-                HostStatus::REQ_HDR_DECODE_ERR,
-            )?;
+            // Capture `opcode` via a short-lived shared reborrow so
+            // the parsed `RequestView` is dropped before `dispatch`
+            // takes a mutable borrow of the same buffer.  AEAD-path
+            // handlers (`OpenSessionFinish` / `ChangePsk` / `PartInit`)
+            // open envelope sub-views in place via `decode_mut`,
+            // which requires `&mut DmaBuf` end-to-end.
+            let opcode = {
+                let req_view = TborRequestView::parse(&req_buf[..params.src_len]).op_err(
+                    "core",
+                    HsmError::DdiDecodeFailed,
+                    HostStatus::REQ_HDR_DECODE_ERR,
+                )?;
+                req_view.opcode()
+            };
 
             // Per-opcode session-flag validation: GetApiRev /
             // OpenSessionInit must be sessionless; OpenSessionFinish /
@@ -251,7 +259,6 @@ impl<P: HsmPal> Hsm<P> {
             // for the targeted slot.  Unknown opcodes are classified as
             // NoSession here so dispatch reaches the handler layer and
             // surfaces `UnsupportedCmd` via a typed TBOR response.
-            let opcode = req_view.opcode();
             let session_ctrl = SessionCtrl::from_tbor_opcode(opcode);
             if let Err(_e) = Self::validate_tbor_session_flags(session_ctrl, params.session_flags) {
                 let resp: &DmaBuf = self
@@ -262,9 +269,14 @@ impl<P: HsmPal> Hsm<P> {
                     .op_status(HostStatus::INTERNAL_ERROR)?;
                 (resp, session_ctrl)
             } else {
-                let dispatch_result =
-                    ddi::tbor::dispatch(self.pal(), io, &req_view, opcode, params.sqe_session_id)
-                        .await;
+                let dispatch_result = ddi::tbor::dispatch(
+                    self.pal(),
+                    io,
+                    &mut req_buf[..params.src_len],
+                    opcode,
+                    params.sqe_session_id,
+                )
+                .await;
                 let resp: &DmaBuf = dispatch_result.or_else(|err| {
                     self.pal()
                         .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))

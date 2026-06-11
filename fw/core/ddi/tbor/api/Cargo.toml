@@ -17,6 +17,7 @@ azihsm_fw_ddi_tbor.workspace = true
 azihsm_fw_ddi_tbor_derive = { optional = true, workspace = true }
 
 [dev-dependencies]
+azihsm_fw_hsm_pal_traits.workspace = true
 trybuild.workspace = true
 
 [lints]

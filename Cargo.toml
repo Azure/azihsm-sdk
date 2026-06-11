@@ -30,7 +30,6 @@ members = [
   "ddi/res_test_dev",
   "ddi/tbor/codec",
   "ddi/tbor/derive",
-  "ddi/tbor/test_helpers",
   "ddi/tbor/types",
   "ddi/win",
   "fw/core/crypto/aead-envelope",
@@ -38,6 +37,10 @@ members = [
   "fw/core/crypto/gcm-buf",
   "fw/core/crypto/hpke",
   "fw/core/crypto/key-masking",
+  "fw/core/crypto/key-report",
+  "fw/core/crypto/key-report/gen",
+  "fw/core/crypto/x509-builder",
+  "fw/core/crypto/x509-builder/gen",
   "fw/core/crypto/x509-chain",
   "fw/core/ddi/mbor/api",
   "fw/core/ddi/mbor/codec",
@@ -87,7 +90,6 @@ azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
-azihsm_ddi_tbor_test_helpers = { path = "ddi/tbor/test_helpers" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
@@ -116,6 +118,9 @@ azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
 azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
+azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
+azihsm_fw_core_crypto_x509_builder = { path = "fw/core/crypto/x509-builder" }
+azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/gen" }
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common

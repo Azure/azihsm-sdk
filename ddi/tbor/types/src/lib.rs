@@ -28,16 +28,51 @@ extern crate self as azihsm_ddi_tbor_types;
 pub use azihsm_ddi_tbor_codec as codec;
 pub use azihsm_ddi_tbor_derive::*;
 
+/// Session-control kind carried in the SQE `session_flags.ctrl` byte
+/// for a TBOR request.  The four variants encode as `u8` 0-3.
+///
+/// Defined locally in this crate (rather than re-using the MBOR
+/// equivalent) so the host TBOR surface has no transport-layer
+/// dependency on MBOR types.  The on-the-wire `u8` encoding matches
+/// the MBOR enum, so both transports populate the same SQE field
+/// with the same byte values.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SessionControlKind {
+    /// Sessionless request (e.g. bootstrap commands).
+    NoSession,
+    /// Request that opens a new session.
+    Open,
+    /// Request that closes the bound session.
+    Close,
+    /// Request that operates within an already-open session.
+    InSession,
+}
+
+impl From<SessionControlKind> for u8 {
+    fn from(kind: SessionControlKind) -> u8 {
+        match kind {
+            SessionControlKind::NoSession => 0,
+            SessionControlKind::Open => 1,
+            SessionControlKind::Close => 2,
+            SessionControlKind::InSession => 3,
+        }
+    }
+}
+
 mod change_psk;
 mod close_session;
 mod get_api_rev;
 mod open_session_finish;
 mod open_session_init;
+mod part_init;
+mod status;
 pub use change_psk::*;
 pub use close_session::*;
 pub use get_api_rev::*;
 pub use open_session_finish::*;
 pub use open_session_init::*;
+pub use part_init::*;
+pub use status::*;
 
 /// Trait implemented by host-side TBOR request value types.
 ///
@@ -57,6 +92,15 @@ pub trait TborOpReq: Sized {
     /// sessionless.
     fn get_session_id(&self) -> Option<u16> {
         None
+    }
+
+    /// SQE session-control kind for this request.  Mirrors the MBOR
+    /// pattern (`From<DdiOp> for SessionControlKind`): each request
+    /// type declares its own kind so the transport layer doesn't
+    /// need a central opcode→ctrl table.  Default is `NoSession`
+    /// to match the sessionless bootstrap commands.
+    fn session_ctrl(&self) -> SessionControlKind {
+        SessionControlKind::NoSession
     }
 
     /// Encode this request into `buf` and return the encoded message

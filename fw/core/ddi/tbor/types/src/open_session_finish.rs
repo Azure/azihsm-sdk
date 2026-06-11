@@ -47,7 +47,12 @@ pub struct TborOpenSessionFinishReq<'a> {
     /// [`SEED_ENVELOPE_LEN`] for the exact layout.  The FW recovers
     /// the seed and uses it as the KBKDF context that produces
     /// `BK_SESSION` (the wrap key for the response `bmk_session`).
-    #[tbor(len = 68)]
+    ///
+    /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
+    /// envelope in place — the field is exposed as the
+    /// `seed_envelope` member of the generated
+    /// `TborOpenSessionFinishReqViewMut` destructured view.
+    #[tbor(len = 68, mutable)]
     pub seed_envelope: &'a [u8],
 }
 

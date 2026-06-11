@@ -46,6 +46,7 @@
 //! [`part_free_internal`]: StdHsmPal::part_free_internal
 
 use azihsm_crypto::*;
+use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
@@ -66,6 +67,15 @@ const SEALED_BK3_SIZE: usize = 512;
 
 /// Length of a partition's random identity blob in bytes.
 const PART_ID_LEN: usize = 16;
+
+/// Length of the per-partition Unique Device Secret in bytes.
+const UDS_LEN: usize = 32;
+
+/// Length of an uncompressed SEC1 P-384 public key.
+const P384_PUB_SEC1_LEN: usize = 1 + P384_PUB_KEY_LEN;
+
+/// Length of a POTA SHA-384 thumbprint in bytes.
+const POTA_THUMBPRINT_LEN: usize = 48;
 
 /// Size of a single P-384 coordinate (x or y) in bytes.
 const P384_COORD_SIZE: usize = 48;
@@ -294,6 +304,27 @@ pub(crate) struct PartitionEntry {
     /// Crypto User PSK.  `None` while the well-known default applies;
     /// set to `Some` once `part_psk_set(psk_id=1, ..)` is invoked.
     psk_cu: Option<[u8; PSK_LEN]>,
+
+    /// Vault key ID of the Partition Trust Anchor private key.
+    pta_key_id: Option<HsmKeyId>,
+
+    /// Vault key ID of the Partition Unique Machine Secret (UMS),
+    /// bound by `PartInit`.  `None` until the one-shot
+    /// [`HsmPartitionManager::part_set_ums_key`] succeeds; cleared on
+    /// `part_disable`.
+    ums_key_id: Option<HsmKeyId>,
+
+    /// SEC1 uncompressed P-384 public key for the Partition Trust Anchor.
+    pta_pub_sec1: Option<[u8; P384_PUB_SEC1_LEN]>,
+
+    /// Raw partition policy bytes bound by PartInit.
+    part_policy_buf: Option<[u8; PART_POLICY_LEN]>,
+
+    /// POTA SHA-384 thumbprint bound by PartInit.
+    pota_thumbprint: Option<[u8; POTA_THUMBPRINT_LEN]>,
+
+    /// Per-incarnation Unique Device Secret used by PartInit KDFs.
+    uds: [u8; UDS_LEN],
 }
 
 impl Default for PartitionEntry {
@@ -330,6 +361,12 @@ impl Default for PartitionEntry {
             unwrapping_key_id: None,
             psk_co: None,
             psk_cu: None,
+            pta_key_id: None,
+            ums_key_id: None,
+            pta_pub_sec1: None,
+            part_policy_buf: None,
+            pota_thumbprint: None,
+            uds: [0u8; UDS_LEN],
         }
     }
 }
@@ -547,26 +584,26 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     fn part_vm_launch_guid(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.enabled_part(u8::from(io.pid()))?;
+        let entry = self.active_part(io.pid())?;
         copy_out(&entry.vm_launch_guid, out)
     }
 
     fn part_svn(&self, io: &impl HsmIo) -> HsmResult<u64> {
         // Validate enabled state but discard the borrow; the value is a
         // platform constant on the std PAL.
-        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        let _entry = self.active_part(io.pid())?;
         Ok(STD_SVN)
     }
 
     fn part_bks2_id(&self, io: &impl HsmIo) -> HsmResult<u16> {
         // No BKS2 selector modelled in the emulator; return slot 0 for
         // wire-format compatibility.
-        let _entry = self.enabled_part(u8::from(io.pid()))?;
+        let _entry = self.active_part(io.pid())?;
         Ok(0)
     }
 
     fn part_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.enabled_part(u8::from(io.pid()))?;
+        let entry = self.active_part(io.pid())?;
         if let Some(buf) = out {
             if buf.len() < BK_BOOT_LEN {
                 return Err(HsmError::InvalidArg);
@@ -620,7 +657,7 @@ impl HsmPartitionManager for StdHsmPal {
         bks2_index: u16,
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
-        self.enabled_part(u8::from(io.pid()))?;
+        self.active_part(io.pid())?;
 
         // Std PAL models a single SVN + single BKS2 lineage; reject any
         // out-of-range selector.
@@ -761,7 +798,7 @@ impl HsmPartitionManager for StdHsmPal {
         if psk_id > 1 {
             return Err(HsmError::InvalidPskId);
         }
-        let part = self.enabled_part(u8::from(io.pid()))?;
+        let part = self.serving_part(io.pid())?;
         let stored: Option<&[u8; PSK_LEN]> = match psk_id {
             0 => part.psk_co.as_ref(),
             _ => part.psk_cu.as_ref(),
@@ -790,7 +827,7 @@ impl HsmPartitionManager for StdHsmPal {
         if psk.len() != PSK_LEN {
             return Err(HsmError::InvalidArg);
         }
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        let part = self.serving_part_mut(io.pid())?;
         let mut buf = [0u8; PSK_LEN];
         buf.copy_from_slice(psk);
         if psk_id == 0 {
@@ -801,11 +838,99 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(())
     }
 
+    fn part_uds(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.serving_part(io.pid())?.uds, out)
+    }
+
+    fn part_set_pta_key(
+        &self,
+        io: &impl HsmIo,
+        key_id: HsmKeyId,
+        pub_sec1: &[u8],
+    ) -> HsmResult<()> {
+        let part = self.active_part_mut(io.pid())?;
+        if pub_sec1.len() != P384_PUB_SEC1_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        if part.pta_key_id.is_some() {
+            return Err(HsmError::PtaKeyAlreadySet);
+        }
+        if part.state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let mut buf = [0u8; P384_PUB_SEC1_LEN];
+        buf.copy_from_slice(pub_sec1);
+        part.pta_key_id = Some(key_id);
+        part.pta_pub_sec1 = Some(buf);
+        Ok(())
+    }
+
+    fn part_set_policy(&self, io: &impl HsmIo, policy: &[u8]) -> HsmResult<()> {
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        if policy.len() != PART_POLICY_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        if part.part_policy_buf.is_some() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let mut buf = [0u8; PART_POLICY_LEN];
+        buf.copy_from_slice(policy);
+        part.part_policy_buf = Some(buf);
+        Ok(())
+    }
+
+    fn part_set_pota_thumbprint(&self, io: &impl HsmIo, thumb: &[u8]) -> HsmResult<()> {
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        if thumb.len() != POTA_THUMBPRINT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        if part.pota_thumbprint.is_some() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let mut buf = [0u8; POTA_THUMBPRINT_LEN];
+        buf.copy_from_slice(thumb);
+        part.pota_thumbprint = Some(buf);
+        Ok(())
+    }
+
+    fn part_set_ums_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let part = self.active_part_mut(io.pid())?;
+        if part.ums_key_id.is_some() {
+            return Err(HsmError::UmsKeyAlreadySet);
+        }
+        if part.state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+        part.ums_key_id = Some(key_id);
+        Ok(())
+    }
+
+    fn part_ums_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        let part = self.active_part(io.pid())?;
+        part.ums_key_id.ok_or(HsmError::UmsKeyNotSet)
+    }
+
+    fn part_mark_initializing(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let part = self.enabled_part_mut(u8::from(io.pid()))?;
+        if part.pta_key_id.is_none()
+            || part.ums_key_id.is_none()
+            || part.part_policy_buf.is_none()
+            || part.pota_thumbprint.is_none()
+        {
+            return Err(HsmError::InvalidArg);
+        }
+        part.state = PartState::Initializing;
+        Ok(())
+    }
+
     fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool> {
         if psk_id > 1 {
             return Err(HsmError::InvalidPskId);
         }
-        let part = self.enabled_part(u8::from(io.pid()))?;
+        let part = self.active_part(io.pid())?;
         // Authoritative byte-compare against the compiled-in default,
         // not just `Option::is_some()`.  This way the gate cannot be
         // bypassed by a (malformed/malicious) `ChangePsk` that writes
@@ -866,6 +991,48 @@ impl StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut table.entries[idx])
+    }
+
+    /// Borrow a partition that is actively serving host traffic.
+    ///
+    /// "Serving" means [`PartState::Enabled`] or
+    /// [`PartState::Initializing`] — i.e. the partition is bound to a
+    /// caller's incarnation and may legitimately expose per-incarnation
+    /// secrets (PSK, UDS).  Stricter than [`Self::active_part`] (which
+    /// permits Allocated and Disabled too) so that PSK/UDS reads cannot
+    /// leak across the allocate/enable boundary, and looser than
+    /// [`Self::enabled_part`] so that PartInit handlers running in
+    /// `Initializing` still observe the rotated PSKs and UDS.
+    fn serving_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if !matches!(
+            table.entries[idx].state,
+            PartState::Enabled | PartState::Initializing
+        ) {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&table.entries[idx])
+    }
+
+    /// Mutable counterpart to [`Self::serving_part`].
+    #[allow(clippy::mut_from_ref)]
+    fn serving_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if !matches!(
+            table.entries[idx].state,
+            PartState::Enabled | PartState::Initializing
+        ) {
             return Err(HsmError::InvalidArg);
         }
         Ok(&mut table.entries[idx])
@@ -1133,6 +1300,7 @@ impl StdHsmPal {
 
         entry.vm_launch_guid = STD_VM_LAUNCH_GUID;
         entry.bk3_initialized = false;
+        entry.uds = derive_sim_uds(pid);
 
         entry.state = PartState::Enabled;
         Ok(())
@@ -1147,7 +1315,10 @@ impl StdHsmPal {
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
-        if table.entries[idx].state != PartState::Enabled {
+        if !matches!(
+            table.entries[idx].state,
+            PartState::Enabled | PartState::Initializing
+        ) {
             return Err(HsmError::InvalidArg);
         }
 
@@ -1177,7 +1348,7 @@ impl StdHsmPal {
         entry.gen = entry.gen.wrapping_add(1);
 
         // If enabled, clear internal keys/nonce/vault/sessions first.
-        if entry.state == PartState::Enabled {
+        if matches!(entry.state, PartState::Enabled | PartState::Initializing) {
             Self::clear_enabled_state(entry);
         }
 
@@ -1305,6 +1476,25 @@ impl StdHsmPal {
             let _ = entry.vault.delete(kid);
         }
 
+        if let Some(kid) = entry.pta_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        if let Some(kid) = entry.ums_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        if let Some(pub_sec1) = entry.pta_pub_sec1.as_mut() {
+            pub_sec1.fill(0);
+        }
+        entry.pta_pub_sec1 = None;
+        if let Some(policy) = entry.part_policy_buf.as_mut() {
+            policy.fill(0);
+        }
+        entry.part_policy_buf = None;
+        if let Some(thumb) = entry.pota_thumbprint.as_mut() {
+            thumb.fill(0);
+        }
+        entry.pota_thumbprint = None;
+
         // Wipe rotated PSK material in place before dropping the
         // `Option`.  Using `as_mut().fill(0)` ensures the bytes that
         // live inside `entry`'s `Option<[u8; PSK_LEN]>` payload are
@@ -1322,4 +1512,20 @@ impl StdHsmPal {
         }
         entry.psk_cu = None;
     }
+}
+
+/// Derive a deterministic emulator UDS keyed on the partition slot id.
+///
+/// The std PAL has no fused per-device secret, so we synthesise a UDS
+/// from `pid` alone.  Because the derivation depends only on the slot
+/// id (not on an incarnation counter or wall-clock time), the value is
+/// **stable across enable/disable cycles for the same slot** — which
+/// matches the spec's expectation that UDS is a per-device root
+/// secret, not a per-incarnation one.
+fn derive_sim_uds(pid: u8) -> [u8; UDS_LEN] {
+    let mut uds = [0u8; UDS_LEN];
+    for (i, b) in uds.iter_mut().enumerate() {
+        *b = pid ^ 0x55 ^ (i as u8).wrapping_mul(0x3d);
+    }
+    uds
 }

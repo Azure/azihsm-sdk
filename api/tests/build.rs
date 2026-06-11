@@ -17,6 +17,8 @@ const VS2026_GEN_NAME: &str = "Visual Studio 18 2026";
 const VS2022_GEN_NAME: &str = "Visual Studio 17 2022";
 
 fn main() {
+    // Scan the entire package directory for changes
+    println!("cargo:rerun-if-changed=.");
     // Instruct Cargo to re-run this build script if any of the following env
     // vars changed since they impact the CMake configuration.
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MOCK");
