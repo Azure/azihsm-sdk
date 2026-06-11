@@ -196,7 +196,7 @@ impl Xtask for Precheck {
                     features: self.features.clone(),
                     package: self.package.clone(),
                     no_default_features: false,
-                    filterset: None,
+                    filterset: self.filterset.clone(),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
                 }
@@ -215,7 +215,7 @@ impl Xtask for Precheck {
                     features: self.features.clone(),
                     package: self.package.clone(),
                     no_default_features: false,
-                    filterset: None,
+                    filterset: self.filterset.clone(),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
                     skip_clean: self.skip_clean,
