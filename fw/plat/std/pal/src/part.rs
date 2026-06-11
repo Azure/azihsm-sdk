@@ -1414,6 +1414,13 @@ impl PartitionEntry {
                 Ok(())
             }
             PartPropId::SEALED_BK3 => {
+                // Write-once per power cycle: a second SetSealedBk3
+                // without an intervening clear (free / NSSR /
+                // explicit `prop_clear`) returns `SealedBk3AlreadySet`
+                // to preserve the wire-visible legacy behaviour.
+                if self.sealed_bk3_len != 0 {
+                    return Err(HsmError::SealedBk3AlreadySet);
+                }
                 self.sealed_bk3.fill(0);
                 self.sealed_bk3[..data.len()].copy_from_slice(data);
                 self.sealed_bk3_len = data.len() as u32;

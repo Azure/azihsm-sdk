@@ -211,9 +211,6 @@ impl PartState {
 ///   Unreachable for `RequiredPresent` slots; reachable for
 ///   `AbsentUntilSet` slots until the first successful setter or
 ///   after the most recent [`Self::part_prop_clear`].
-/// - [`HsmError::UnsupportedCmd`] — the default body.  PAL impls
-///   override only the methods they back; existing impls compile
-///   unchanged until they opt in to additional kinds.
 /// - Other [`HsmError`] variants — PAL-level failures (for example
 ///   [`HsmError::InternalError`] on backing-store corruption,
 ///   [`HsmError::Bk3AlreadyInitialized`] on the one-shot
@@ -527,7 +524,7 @@ pub const BK_BOOT_LEN: usize = 80;
 /// `SEALED_BK3_SIZE` so blobs stay bit-compatible with host-side
 /// tooling.  PAL implementations size their backing storage to at
 /// least this many bytes.
-pub const SEALED_BK3_MAX_LEN: u16 = 96;
+pub const SEALED_BK3_MAX_LEN: u16 = 512;
 
 /// Maximum size of the `Masked_BK_BOOT` envelope in bytes.
 ///
@@ -900,7 +897,7 @@ impl PartPropId {
     /// from caller perspective.
     pub const RES_COUNT: PartPropId = PartPropId(0x0006);
 
-    /// Firmware-supplied per-partition seed (32 B).  Read-only;
+    /// Firmware-supplied per-partition seed (48 B).  Read-only;
     /// PAL-owned input to partition-bound derivations.
     pub const FW_SEED: PartPropId = PartPropId(0x0007);
 
@@ -1009,8 +1006,8 @@ impl PartPropId {
 
     // ── Boot / launch-time bound material (0x0030..) ──────────────
 
-    /// Sealed BK3 blob (≤ 96 B).  Sensitive.  Absent-until-set;
-    /// set once per power cycle.
+    /// Sealed BK3 blob (≤ [`SEALED_BK3_MAX_LEN`](crate::SEALED_BK3_MAX_LEN) B).
+    /// Sensitive.  Absent-until-set; set once per power cycle.
     pub const SEALED_BK3: PartPropId = PartPropId(0x0030);
 
     /// Masked BK_BOOT blob (variable, ≤ [`MASKED_BK_BOOT_LEN`](crate::MASKED_BK_BOOT_LEN)).
@@ -1030,7 +1027,7 @@ impl PartPropId {
     /// Set by `PartInit`.
     pub const POLICY: PartPropId = PartPropId(0x0034);
 
-    /// POTA thumbprint (32 B).  Set by `PartInit`.
+    /// POTA thumbprint (48 B).  Set by `PartInit`.
     pub const POTA_THUMBPRINT: PartPropId = PartPropId(0x0035);
 
     /// BK3 session key (48 B).  Sensitive.  Set by EstablishCredential

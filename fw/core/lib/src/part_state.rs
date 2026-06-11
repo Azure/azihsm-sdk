@@ -56,12 +56,14 @@
 //!
 //! ## Cardinality
 //!
-//! All currently-catalogued properties are single-valued
-//! (`cardinality = 1` in their [`PartPropMeta`]).  The `idx` argument
-//! to the underlying property API is therefore hard-wired to `0` in
-//! every wrapper.  When the first indexed property is added the
-//! affected wrappers will grow an `idx: u16` parameter; the rest will
-//! not.
+//! Most catalogued properties are single-valued
+//! (`cardinality = 1` in their [`PartPropMeta`]); their wrappers
+//! hard-wire the underlying property API's `idx` argument to `0`.
+//! Indexed properties (currently [`PartPropId::MFGR_SEED`] and
+//! [`PartPropId::DEV_OWNER_SEED`], both `cardinality = 64`) expose
+//! the row index as an `idx: u16` parameter on their wrappers
+//! (see [`part_mfgr_seed`] / [`part_dev_owner_seed`]); the rest
+//! still take no index.
 //!
 //! ## Byte-valued properties use [`DmaBuf`]
 //!
@@ -116,9 +118,7 @@
 //! - **Vault key references** (the `*_KEY_ID` ids) are stored as
 //!   `U16` and exposed here as [`HsmKeyId`] (a `u16` newtype) via the
 //!   `key_id_get` / `key_id_set` helpers below.  Conversion is
-//!   loss-less because vault key ids are always `u16`; a stored
-//!   value out of `u16` range is treated as PAL corruption and
-//!   surfaces as [`HsmError::InternalError`].
+//!   loss-less because both representations are `u16`.
 //!
 //! ## Naming
 //!
@@ -253,9 +253,9 @@ pub const fn part_uds_prop_id() -> PartPropId {
     PartPropId::UDS
 }
 
-/// Firmware-supplied per-partition seed (32 B).  **Sensitive.**
+/// Firmware-supplied per-partition seed (48 B).  **Sensitive.**
 ///
-/// Wraps [`PartPropId::FW_SEED`] (`FixedBytes { len: 32 }`,
+/// Wraps [`PartPropId::FW_SEED`] (`FixedBytes { len: 48 }`,
 /// `RequiredPresent`, read-only).  Owned by the PAL; never set
 /// from core.  Used as a PAL-controlled tweak input to partition-bound
 /// derivations so that material from a forged or replayed UDS cannot
@@ -275,21 +275,19 @@ pub const fn part_fw_seed_prop_id() -> PartPropId {
 
 // ─── Vault references ─────────────────────────────────────────────────────
 //
-// All vault-ref properties are stored in the property table as `U32`
-// for forward compatibility with vault namespaces wider than `u16`,
-// but the typed core view here exposes them as [`HsmKeyId`] (a `u16`
-// newtype) because every currently-defined vault id fits in `u16`.
-// Conversion is loss-less in both directions; a stored value out of
-// `u16` range is treated as PAL-side corruption and surfaces as
-// [`HsmError::InternalError`].
+// All vault-ref properties are stored in the property table as `U16`
+// (matching today's [`HsmKeyId`] width).  The typed core view here
+// re-exposes them as [`HsmKeyId`] (a `u16` newtype) for call-site
+// ergonomics; conversion is loss-less.  If the catalogue ever grows
+// to a wider scalar kind, the `key_id_get` helper is the single
+// point at which narrowing happens, and an out-of-range stored value
+// will surface as [`HsmError::InternalError`].
 
-/// Read a vault key reference and narrow `U16 → HsmKeyId` (`u16`).
+/// Read a vault key reference as an [`HsmKeyId`] (`u16`).
 ///
-/// Returns [`HsmError::InternalError`] if the stored value does not
-/// fit in `u16` — that signals storage corruption or a PAL bug, not
-/// caller error.  Returns [`HsmError::PartPropNotFound`] if the slot
-/// is absent; callers handle the absence/error split per the
-/// presence semantics in the module docs.
+/// Returns [`HsmError::PartPropNotFound`] if the slot is absent;
+/// callers handle the absence/error split per the presence
+/// semantics in the module docs.
 #[inline]
 fn key_id_get(
     pal: &impl HsmPartitionManager,
@@ -516,7 +514,7 @@ pub const fn part_establish_cred_key_id_prop_id() -> PartPropId {
 /// | `0`      | Crypto Officer PSK | [`PartPropId::PSK_CO`]   |
 /// | `1`      | Crypto User PSK    | [`PartPropId::PSK_CU`]   |
 ///
-/// Any other value returns [`HsmError::InvalidArg`].  Both slots are
+/// Any other value returns [`HsmError::InvalidPskId`].  Both slots are
 /// `RequiredPresent` (default-baked at allocation time from
 /// [`DEFAULT_PSK_CO`] / [`DEFAULT_PSK_CU`]) so a successful call
 /// always yields exactly [`PSK_LEN`] bytes.
@@ -543,7 +541,7 @@ pub fn part_set_psk(
 }
 
 /// Translate the `0/1` PSK selector into the backing
-/// [`PartPropId`].  Returns [`HsmError::InvalidArg`] for any other
+/// [`PartPropId`].  Returns [`HsmError::InvalidPskId`] for any other
 /// selector.
 ///
 /// Exposed so upper-layer undo-log emitters can name the slot they
@@ -553,7 +551,7 @@ pub fn part_psk_prop_id(psk_id: u8) -> HsmResult<PartPropId> {
     match psk_id {
         0 => Ok(PartPropId::PSK_CO),
         1 => Ok(PartPropId::PSK_CU),
-        _ => Err(HsmError::InvalidArg),
+        _ => Err(HsmError::InvalidPskId),
     }
 }
 
@@ -590,12 +588,19 @@ pub fn part_set_credential(
 /// Constant-time-compare the supplied `id` and `pin` (16 B each)
 /// against the partition's stored credential.
 ///
-/// Returns `Ok(())` on match.  Returns
-/// [`HsmError::InvalidAppCredentials`] when the credential has not
-/// been set yet, the lengths do not match (16 each), or either half
-/// differs.  The comparison runs over the full 32-byte width so a
-/// timing side-channel cannot distinguish "wrong id" from "wrong
-/// pin".
+/// Returns `Ok(())` on match.  Returns:
+///
+/// - [`HsmError::InvalidArg`] if `id` or `pin` is not exactly 16 B
+///   (caller bug — the wire shape is fixed).
+/// - [`HsmError::InvalidAppCredentials`] when the credential has not
+///   been set yet, or when either half differs from the stored
+///   value.  The comparison runs over the full 32-byte width so a
+///   timing side-channel cannot distinguish "wrong id" from "wrong
+///   pin".
+/// - [`HsmError::InternalError`] if the stored credential blob has
+///   a length other than 32 bytes — that signals a property
+///   catalogue / PAL storage corruption bug, not an authentication
+///   failure, and must not be masked as one.
 pub fn part_verify_credential(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
@@ -603,7 +608,7 @@ pub fn part_verify_credential(
     pin: &[u8],
 ) -> HsmResult<()> {
     if id.len() != 16 || pin.len() != 16 {
-        return Err(HsmError::InvalidAppCredentials);
+        return Err(HsmError::InvalidArg);
     }
     let stored = match part_credential(pal, io) {
         Ok(buf) => buf,
@@ -611,7 +616,7 @@ pub fn part_verify_credential(
         Err(e) => return Err(e),
     };
     if stored.len() != 32 {
-        return Err(HsmError::InvalidAppCredentials);
+        return Err(HsmError::InternalError);
     }
     let mut diff = 0u8;
     for i in 0..16 {
@@ -742,10 +747,11 @@ pub fn part_dev_owner_seed<'a>(
 
 /// Sealed BK3 blob.  **Sensitive.**
 ///
-/// Wraps [`PartPropId::SEALED_BK3`] (`VarBytes { max: 96 }`,
-/// `AbsentUntilSet`, sensitive).  Returns
-/// [`HsmError::PartPropNotFound`] before the host has supplied it this
-/// power cycle.  Set at most once per power cycle.
+/// Wraps [`PartPropId::SEALED_BK3`]
+/// (`VarBytes { max: SEALED_BK3_MAX_LEN }`, `AbsentUntilSet`,
+/// sensitive).  Returns [`HsmError::PartPropNotFound`] before the
+/// host has supplied it this power cycle.  Set at most once per
+/// power cycle.
 pub fn part_sealed_bk3<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
@@ -755,7 +761,10 @@ pub fn part_sealed_bk3<'a>(
 
 /// Write the sealed BK3 blob.  **Sensitive.**
 ///
-/// `data` must be ≤ 96 bytes.
+/// `data` must be ≤ [`SEALED_BK3_MAX_LEN`] bytes; the PAL setter
+/// is write-once per power cycle and returns
+/// [`HsmError::SealedBk3AlreadySet`] if invoked a second time
+/// without an intervening clear (free / NSSR).
 pub fn part_set_sealed_bk3(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
@@ -869,9 +878,9 @@ pub const fn part_policy_prop_id() -> PartPropId {
     PartPropId::POLICY
 }
 
-/// POTA thumbprint (32 B).  Set by `PartInit`.
+/// POTA thumbprint (48 B).  Set by `PartInit`.
 ///
-/// Wraps [`PartPropId::POTA_THUMBPRINT`] (`FixedBytes { len: 32 }`,
+/// Wraps [`PartPropId::POTA_THUMBPRINT`] (`FixedBytes { len: 48 }`,
 /// `AbsentUntilSet`).
 pub fn part_pota_thumbprint<'a>(
     pal: &'a impl HsmPartitionManager,
@@ -882,7 +891,7 @@ pub fn part_pota_thumbprint<'a>(
 
 /// Write the POTA thumbprint.
 ///
-/// `data` must be exactly 32 bytes.
+/// `data` must be exactly 48 bytes.
 pub fn part_set_pota_thumbprint(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
@@ -913,7 +922,10 @@ pub fn part_psk_is_default(
     let default = match psk_id {
         0 => DEFAULT_PSK_CO.as_slice(),
         1 => DEFAULT_PSK_CU.as_slice(),
-        _ => return Err(HsmError::InvalidArg),
+        // Unreachable: `part_psk` above already rejected any other
+        // selector with `InvalidPskId`.  Returned here for defence in
+        // depth so the match stays exhaustive.
+        _ => return Err(HsmError::InvalidPskId),
     };
     if stored.len() != default.len() {
         return Ok(false);
