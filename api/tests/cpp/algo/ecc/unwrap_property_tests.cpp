@@ -663,8 +663,8 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_allows_duplicate_public_proper
     });
 }
 
-// Verifies unwrap rejects private EC_CURVE that does not match the wrapped ECC key.
-TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_private_curve_mismatch_with_wrapped_key)
+// Verifies unwrap rejects requested EC_CURVE that does not match the wrapped ECC key.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_requested_curve_mismatch_with_wrapped_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         UnwrapPairContext ctx;
@@ -1173,7 +1173,7 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unsupported_private_us
     part_list_.for_each_session([](azihsm_handle session) {
         const std::vector<azihsm_key_prop_id> unsupported_private_usage_flags = {
             AZIHSM_KEY_PROP_ID_VERIFY,
-            AZIHSM_KEY_PROP_ID_DERIVE,
+            AZIHSM_KEY_PROP_ID_ENCRYPT
         };
 
         for (const auto unsupported_flag : unsupported_private_usage_flags)
@@ -1201,7 +1201,7 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unsupported_public_usa
     part_list_.for_each_session([](azihsm_handle session) {
         const std::vector<azihsm_key_prop_id> unsupported_public_usage_flags = {
             AZIHSM_KEY_PROP_ID_SIGN,
-            AZIHSM_KEY_PROP_ID_DERIVE,
+            AZIHSM_KEY_PROP_ID_ENCRYPT,
         };
 
         for (const auto unsupported_flag : unsupported_public_usage_flags)
