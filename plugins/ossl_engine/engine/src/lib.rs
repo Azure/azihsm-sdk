@@ -15,9 +15,9 @@ mod engine_impl {
     use std::ffi::CStr;
     use std::ffi::c_int;
     use std::ffi::c_ulong;
-    use std::ptr::NonNull;
 
     use openssl_engine::engine::Engine;
+    use openssl_engine::engine::bind_entry;
     use openssl_engine::ffi;
 
     const ENGINE_ID: &CStr = c"azihsm";
@@ -33,6 +33,9 @@ mod engine_impl {
         }
     }
 
+    // `#[allow(unsafe_code)]` covers only the `#[unsafe(no_mangle)]` export
+    // attribute; the body is safe — pointer validation and the unsafe FFI
+    // glue live in openssl_engine::engine::bind_entry.
     #[unsafe(no_mangle)]
     #[allow(unsafe_code)]
     pub extern "C" fn bind_engine(
@@ -40,16 +43,7 @@ mod engine_impl {
         id: *const std::ffi::c_char,
         fns: *mut ffi::dynamic_fns,
     ) -> c_int {
-        let Some(engine_ptr) = NonNull::new(engine_ptr) else {
-            return 0;
-        };
-        let Some(fns) = NonNull::new(fns) else {
-            return 0;
-        };
-
-        // SAFETY: engine_ptr and fns are non-null (checked above) and valid
-        // for this call (provided by OpenSSL's dynamic loader).
-        unsafe { Engine::from_ptr(engine_ptr).bind(id, fns, bind_helper) }
+        bind_entry(engine_ptr, id, fns, bind_helper)
     }
 
     fn bind_helper(engine: &Engine, id: &CStr) -> c_int {

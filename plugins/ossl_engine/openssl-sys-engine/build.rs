@@ -3,12 +3,9 @@
 
 //! Build script for openssl-sys-engine.
 //!
-//! Discovers OpenSSL 1.1.x and runs bindgen to generate Rust FFI bindings
+//! Discovers a system OpenSSL 1.1.x via pkg-config (honoring an externally
+//! set `PKG_CONFIG_PATH`) and runs bindgen to generate Rust FFI bindings
 //! from `wrapper.h`.
-//!
-//! Discovery order:
-//! 1. `PKG_CONFIG_PATH` (if set externally, use pkg-config as-is)
-//! 2. `target/openssl-1.1.1w/` at the workspace root (installed by `cargo xtask setup`)
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -18,35 +15,9 @@ fn main() {
     println!("cargo::rerun-if-changed=wrapper.h");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
 
-    const OPENSSL_1_1_VERSION: &str = "1.1.1w";
-
     struct OpensslPaths {
         include: PathBuf,
         lib: PathBuf,
-    }
-
-    /// Finds the workspace root by walking up from CARGO_MANIFEST_DIR.
-    fn workspace_root() -> PathBuf {
-        let manifest_dir =
-            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-        manifest_dir
-            .ancestors()
-            .find(|p| p.join("Cargo.lock").exists())
-            .expect("could not find workspace root")
-            .to_path_buf()
-    }
-
-    fn find_xtask_openssl() -> Option<OpensslPaths> {
-        let dir = workspace_root()
-            .join("target")
-            .join(format!("openssl-{OPENSSL_1_1_VERSION}"));
-        let include = dir.join("include");
-        let lib = dir.join("lib");
-        if include.is_dir() && lib.is_dir() {
-            Some(OpensslPaths { include, lib })
-        } else {
-            None
-        }
     }
 
     fn find_pkgconfig_openssl() -> OpensslPaths {
@@ -55,7 +26,7 @@ fn main() {
             .probe("libcrypto")
             .expect(
                 "Could not find libcrypto. \
-                 Run 'cargo xtask setup' or set PKG_CONFIG_PATH to an OpenSSL 1.1.x installation.",
+                 Set PKG_CONFIG_PATH to an OpenSSL 1.1.x installation.",
             );
 
         let major: u32 = lib
@@ -87,11 +58,7 @@ fn main() {
         }
     }
 
-    let paths = if env::var_os("PKG_CONFIG_PATH").is_some() {
-        find_pkgconfig_openssl()
-    } else {
-        find_xtask_openssl().unwrap_or_else(find_pkgconfig_openssl)
-    };
+    let paths = find_pkgconfig_openssl();
 
     println!("cargo::rustc-link-lib=crypto");
     println!("cargo::rustc-link-search=native={}", paths.lib.display());

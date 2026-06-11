@@ -41,18 +41,23 @@ jobs:
       # clang/libclang-dev are for bindgen (openssl-sys-engine build.rs).
       # DEBIAN_FRONTEND: 20.04's tzdata otherwise blocks on an interactive
       # timezone prompt during install.
-      # Node 20 via NodeSource: 20.04's apt nodejs is Node 10, too old for
-      # the JS actions when run under `act` (GHA injects its own node).
+      # Node 20 via the NodeSource apt repo (signature-verified against its
+      # keyring): 20.04's apt nodejs is Node 10, too old for the JS actions
+      # when run under `act` (GHA injects its own node).
       - name: Bootstrap
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl git \
+            ca-certificates curl git gnupg \
             build-essential pkg-config clang libclang-dev \
             openssl libssl-dev
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update
           apt-get install -y --no-install-recommends nodejs
 
       - uses: actions/checkout@v6
@@ -83,6 +88,15 @@ jobs:
 
       - name: Build engine
         run: cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine
+
+      # The engine crates are excluded from the workspace-wide clippy in
+      # rust.yml (their build script needs OpenSSL 1.1.x), so lint them here.
+      # The minimal-profile toolchain ships without clippy; add it first.
+      - name: Clippy engine
+        run: |
+          cargo xtask rustup-component-add --component clippy
+          cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+            --all-targets -- -D warnings
 
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"

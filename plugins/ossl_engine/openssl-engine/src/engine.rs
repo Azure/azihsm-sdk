@@ -15,6 +15,29 @@ pub struct Engine {
     ptr: *mut ffi::ENGINE,
 }
 
+/// Safe entry-point glue for a dynamic engine's `bind_engine` export.
+///
+/// Validates the raw pointers OpenSSL's dynamic loader passes to
+/// `bind_engine` and dispatches to `f` with a safe [`Engine`].
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn bind_entry(
+    engine: *mut ffi::ENGINE,
+    id: *const c_char,
+    fns: *mut ffi::dynamic_fns,
+    f: fn(&Engine, &CStr) -> c_int,
+) -> c_int {
+    let Some(engine) = NonNull::new(engine) else {
+        return 0;
+    };
+    let Some(fns) = NonNull::new(fns) else {
+        return 0;
+    };
+    // SAFETY: engine and fns are non-null (checked above) and valid for this
+    // call (provided by OpenSSL's dynamic loader).
+    unsafe { Engine::from_ptr(engine).bind(id, fns, f) }
+}
+
 // SAFETY: ENGINE access is serialized by OpenSSL's CRYPTO_LOCK_ENGINE.
 #[allow(unsafe_code)]
 unsafe impl Send for Engine {}
