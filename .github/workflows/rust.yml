@@ -191,6 +191,42 @@ jobs:
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
 
+  test_windows_misc:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      run: cargo xtask setup
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --package azihsm_api_tests --features mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   test_windows_mock_coverage:
 
     runs-on: windows-2025-vs2026
@@ -216,7 +252,7 @@ jobs:
       run: cargo xtask precheck --setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage
+      run: cargo xtask precheck --coverage --features mock --profile ci-mock
       continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
