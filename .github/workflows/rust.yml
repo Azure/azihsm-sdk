@@ -94,11 +94,15 @@ jobs:
       id: test-tbor-emu
       run: cargo xtask precheck --nextest --package azihsm_ddi_tbor_types --features emu --profile ci-tbor-emu
       continue-on-error: true
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --package azihsm_api_tests --features mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-table-4.outcome == 'failure' ||steps.test-mock-table-64.outcome == 'failure' }}
+      if: ${{ steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' || steps.test-tbor-emu.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -132,7 +136,7 @@ jobs:
       run: cargo xtask setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage
+      run: cargo xtask precheck --coverage --features mock --profile ci-mock
       continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v7

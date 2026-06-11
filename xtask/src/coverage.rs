@@ -129,6 +129,7 @@ impl From<crate::nextest::Nextest> for Coverage {
             filterset: nextest.filterset,
             profile: nextest.profile,
             exclude: nextest.exclude,
+            skip_clean: false,
         }
     }
 }

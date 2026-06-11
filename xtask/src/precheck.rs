@@ -89,6 +89,9 @@ pub struct Precheck {
     /// Features to enable when running tests
     #[clap(long)]
     features: Option<String>,
+    /// Test filterset (see https://nexte.st/docs/filtersets)
+    #[clap(long, short = 'E')]
+    filterset: Option<String>,
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
