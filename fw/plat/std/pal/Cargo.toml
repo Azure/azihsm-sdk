@@ -8,6 +8,7 @@ version = "0.1.0"
 [dependencies]
 async-channel.workspace = true
 azihsm_crypto.workspace = true
+
 azihsm_fw_hsm_core_tracing.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
 azihsm_fw_hsm_std_x509.workspace = true

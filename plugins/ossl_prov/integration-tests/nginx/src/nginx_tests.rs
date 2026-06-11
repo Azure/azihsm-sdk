@@ -57,6 +57,22 @@ mod integration {
         "negative_provider_required.sh",
     ];
 
+    /// Returns true if an assertion script should be skipped because the
+    /// current OpenSSL ABI cannot run it.
+    ///
+    /// Read from `AZIHSM_TEST_OPENSSL_MAJOR_MINOR` (set by
+    /// `provider-matrix.yml` per job).  When unset, no skips happen.
+    ///
+    /// Convention: name a script `*_requires_openssl_3_5.sh` to mark it
+    /// as 3.5-only.  When running against OpenSSL 3.0, such scripts are
+    /// reported as `[SKIP]` instead of executed.
+    fn should_skip_script_for_current_openssl(script_name: &str) -> bool {
+        let Ok(ver) = env::var("AZIHSM_TEST_OPENSSL_MAJOR_MINOR") else {
+            return false;
+        };
+        ver == "3.0" && script_name.ends_with("_requires_openssl_3_5.sh")
+    }
+
     /// Run the full NGINX integration test suite.
     pub fn run(args: Arguments) {
         let testfiles_dir = get_testfiles_dir();
@@ -94,6 +110,10 @@ mod integration {
 
         let mut first_failure: Option<Failed> = None;
         for script in ASSERTION_SCRIPTS {
+            if should_skip_script_for_current_openssl(script) {
+                println!("[SKIP] {script} (requires OpenSSL >= 3.5)");
+                continue;
+            }
             let script_path = testfiles_dir.join(script);
             match run_test_script(&script_path, &keymat_dir, &provider_so, &nginx_conf) {
                 Ok(()) => println!("[PASS] {script}"),

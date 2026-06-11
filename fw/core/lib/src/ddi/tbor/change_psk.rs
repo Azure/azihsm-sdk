@@ -22,7 +22,6 @@
 //! with `InvalidPermissions`.
 
 use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
-use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor_types::build_psk_change_aad;
 use azihsm_fw_ddi_tbor_types::TborChangePskReq;
 use azihsm_fw_ddi_tbor_types::TborChangePskResp;
@@ -33,11 +32,9 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
-use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_pal_traits::PSK_LEN;
-use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
 
 /// PSK slot id written when the active session is the Crypto Officer.
 const PSK_ID_CO: u8 = 0;
@@ -48,17 +45,20 @@ const PSK_ID_CU: u8 = 1;
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req = TborChangePskReq::decode(view.as_bytes())?;
-    let sess_id = HsmSessId::from(u16::from(req.session_id()));
-    let envelope = req.psk_envelope();
+    // `decode_mut` validates the wire frame and hands back a
+    // destructured view: scalar `session_id` by value, plus
+    // `psk_envelope` as `&mut DmaBuf` so `aead_open` can decrypt the
+    // envelope in place — no scratch copy.
+    let req = TborChangePskReq::decode_mut(req_buf)?;
+    let sess_id = HsmSessId::from(u16::from(req.session_id));
 
     // Target slot is implicit in the session role; no cross-role
     // rotation is permitted.
     let target_psk_id = target_psk_for_role(sess_id.role());
 
-    if envelope.is_empty() || envelope.len() > PSK_CHANGE_ENVELOPE_MAX_LEN {
+    if req.psk_envelope.is_empty() || req.psk_envelope.len() > PSK_CHANGE_ENVELOPE_MAX_LEN {
         return Err(HsmError::InvalidArg);
     }
 
@@ -71,16 +71,16 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // structurally impossible (HPKE-derived per-session `param_key`).
     pal.session_try_consume_psk_change(io, sess_id)?;
 
-    pal.alloc_scoped_async(io, async |alloc| {
+    pal.alloc_scoped_async(io, async |_alloc| {
         // Fetch the session's `param_key` schedule (the PAL hides the
         // session-blob layout from us).
-        let param_key = alloc.dma_alloc(SESSION_PARAM_KEY_LEN)?;
-        pal.session_param_key(io, sess_id, param_key)?;
+        let param_key = pal.session_param_key(io, sess_id)?;
 
-        // AEAD-open the envelope in place.
-        let env_buf = alloc.dma_alloc(envelope.len())?;
-        env_buf.copy_from_slice(envelope);
-        let view = aead_open(pal, io, param_key, env_buf)
+        // AEAD-open the envelope **in place** on the inbound request
+        // buffer.  The destructured `req.psk_envelope` is a
+        // `&mut DmaBuf` carved by `decode_mut` from the same parent
+        // `req_buf`; no copy into a scratch buffer is needed.
+        let aead_view = aead_open(pal, io, param_key, req.psk_envelope)
             .await
             .map_err(|_| HsmError::AeadEnvelopeAuthFailed)?;
 
@@ -90,23 +90,23 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // `!=` is safe (no timing oracle on a secret).  A length
         // mismatch is a client encoding bug, not an auth failure, so
         // it surfaces as `InvalidArg`.
-        if view.aad.len() != PSK_CHANGE_AAD_LEN {
+        if aead_view.aad.len() != PSK_CHANGE_AAD_LEN {
             return Err(HsmError::InvalidArg);
         }
         let expected_aad = build_psk_change_aad(u16::from(sess_id));
-        if view.aad != expected_aad.as_slice() {
+        let aad_bytes: &[u8] = aead_view.aad;
+        if aad_bytes != expected_aad.as_slice() {
             return Err(HsmError::AeadEnvelopeAuthFailed);
         }
-        if view.payload.len() != PSK_LEN {
+        if aead_view.payload.len() != PSK_LEN {
             return Err(HsmError::InvalidArg);
         }
 
         // Persist the new PSK directly from the in-place envelope
         // view.  `part_psk_set` is synchronous and takes `&[u8]`, so
         // the borrow ends with the call — no need for a separate
-        // scratch buffer.  The envelope DmaBuf is zeroized by the
-        // scoped allocator on scope exit.
-        pal.part_psk_set(io, target_psk_id, view.payload)?;
+        // scratch buffer.
+        pal.part_psk_set(io, target_psk_id, aead_view.payload)?;
 
         encode_response(pal, io)
     })

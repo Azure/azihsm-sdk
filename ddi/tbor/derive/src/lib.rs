@@ -8,17 +8,15 @@
 //! firmware `#[tbor]` macro
 //! ([`azihsm_fw_ddi_tbor_derive`](../azihsm_fw_ddi_tbor_derive/index.html))
 //! but emits **owned** wrappers — `Default` (opt-in via field types)
-//! plus the [`TborOpReq`] / [`TborResp`] trait impls — that delegate
-//! to the firmware-side zero-copy typestate encoder/decoder.
+//! plus the [`TborOpReq`] / [`TborResp`] trait impls — that drive the
+//! host-side [`azihsm_ddi_tbor_codec`](../azihsm_ddi_tbor_codec/index.html)
+//! encoder/decoder directly.  Host-side codegen has no compile-time
+//! or runtime dependency on any firmware crate.
 //!
 //! This is a pure proc-macro crate: it has no Cargo dependency on any
 //! firmware crate (it just transforms tokens).  The **generated** code
-//! references the shared no_std crates
-//! [`azihsm_fw_ddi_tbor_types`](../azihsm_fw_ddi_tbor_types/index.html)
-//! (for the wire schema) and
-//! [`azihsm_ddi_tbor_codec`](../azihsm_ddi_tbor_codec/index.html)
-//! (for `EncodeError`/`DecodeError`/`TborRequest`), which the host
-//! types crate already depends on.
+//! references only [`azihsm_ddi_tbor_codec`] and
+//! [`azihsm_ddi_tbor_types`](../azihsm_ddi_tbor_types/index.html).
 //!
 //! # Surface
 //!
@@ -26,10 +24,13 @@
 //!
 //! | Form | Meaning |
 //! |---|---|
-//! | `#[tbor]` | request; opcode pulled from the FW schema's `TborRequest::OPCODE` impl; `OpResp` defaults to `Req → Resp` name swap |
-//! | `#[tbor(resp = TborFooResp)]` | request with explicit response type |
-//! | `#[tbor(schema = path::Type)]` | request/response with explicit FW schema path |
-//! | `#[tbor(response)]` | response |
+//! | `#[tbor(opcode = N, session_ctrl = <v>)]` | **request — both required.** Sets the wire opcode and the SQE `session_flags.ctrl` byte; `session_ctrl` is one of `no_session`, `open`, `close`, `in_session` |
+//! | `#[tbor(opcode = N, session_ctrl = <v>, resp = TborFooResp)]` | request with explicit response type |
+//! | `#[tbor(response)]` | response (no `session_ctrl`, no `opcode`) |
+//!
+//! `OpResp` defaults to a `Req → Resp` name swap when `resp` is
+//! omitted.  A request struct without `session_ctrl` or `opcode` is
+//! a compile error.
 //!
 //! ## Field-level attributes
 //!
@@ -62,7 +63,6 @@ use syn::Fields;
 use syn::FieldsNamed;
 use syn::Ident;
 use syn::ItemStruct;
-use syn::Path;
 use syn::Type;
 
 mod parse;
@@ -95,7 +95,7 @@ fn expand(attr: TokenStream2, item: &ItemStruct) -> syn::Result<TokenStream2> {
 
     let body = match struct_attrs.kind {
         StructKind::Request => gen_request(&struct_attrs, item, &fields)?,
-        StructKind::Response => gen_response(&struct_attrs, item, &fields)?,
+        StructKind::Response => gen_response(item, &fields),
     };
 
     Ok(quote! {
@@ -125,11 +125,6 @@ fn strip_field_tbor_attrs(item: &ItemStruct) -> ItemStruct {
     clone
 }
 
-/// Default FW schema path: `azihsm_fw_ddi_tbor_types::<SameName>`.
-fn default_schema_path(name: &Ident) -> Path {
-    syn::parse_quote!(::azihsm_fw_ddi_tbor_types::#name)
-}
-
 /// Default response type: replace a trailing `Req` with `Resp` in the
 /// struct name; fall back to appending `Resp` if no trailing `Req`.
 fn default_resp_type(name: &Ident) -> Ident {
@@ -144,10 +139,13 @@ fn gen_request(
     fields: &[ParsedField],
 ) -> syn::Result<TokenStream2> {
     let name = &item.ident;
-    let schema = attrs
-        .schema
-        .clone()
-        .unwrap_or_else(|| default_schema_path(name));
+    let opcode = attrs.opcode.as_ref().ok_or_else(|| {
+        syn::Error::new(
+            name.span(),
+            "missing required `opcode` attribute on request struct.\n\
+             example: #[tbor(opcode = 0x30, session_ctrl = in_session)]",
+        )
+    })?;
     let resp_ty: Type = match &attrs.resp {
         Some(p) => syn::parse_quote!(#p),
         None => {
@@ -156,65 +154,86 @@ fn gen_request(
         }
     };
 
-    let encode_chain = fields
+    let encode_chain: TokenStream2 = if fields.is_empty() {
+        // Codec requires `toc_count >= 1`; emit a synthetic None
+        // placeholder so empty-body requests can still encode.
+        quote! { let __enc = __enc.none()?; }
+    } else {
+        fields.iter().map(gen_encode_step).collect()
+    };
+
+    let session_id_field = fields
         .iter()
-        .map(gen_encode_call)
-        .collect::<syn::Result<TokenStream2>>()?;
+        .find(|f| matches!(f.shape, crate::parse::FieldShape::SessionId))
+        .map(|f| f.name.clone());
+
+    let get_session_id_impl = match &session_id_field {
+        Some(name) => quote! {
+            fn get_session_id(&self) -> ::core::option::Option<u16> {
+                ::core::option::Option::Some(self.#name)
+            }
+        },
+        None => quote! {},
+    };
+
+    let ctrl_variant = attrs.session_ctrl.as_ref().ok_or_else(|| {
+        syn::Error::new(
+            name.span(),
+            "missing required `session_ctrl` attribute on request struct.\n\
+             example: #[tbor(opcode = 0x30, session_ctrl = no_session)]\n\
+             allowed variants: no_session, open, close, in_session",
+        )
+    })?;
+    let session_ctrl_impl = quote! {
+        fn session_ctrl(&self) -> ::azihsm_ddi_tbor_types::SessionControlKind {
+            ::azihsm_ddi_tbor_types::SessionControlKind::#ctrl_variant
+        }
+    };
 
     Ok(quote! {
         impl ::azihsm_ddi_tbor_types::TborOpReq for #name {
-            const OPCODE: u8 = <#schema as ::azihsm_ddi_tbor_codec::TborRequest>::OPCODE;
+            const OPCODE: u8 = #opcode;
             type OpResp = #resp_ty;
+
+            #get_session_id_impl
+            #session_ctrl_impl
 
             fn encode_request<'__b>(
                 &self,
                 __buf: &'__b mut [u8],
             ) -> ::core::result::Result<&'__b [u8], ::azihsm_ddi_tbor_codec::EncodeError> {
-                let __frame = #schema::encode(__buf)?
-                    #encode_chain
-                    .finish();
-                ::core::result::Result::Ok(__frame.as_bytes())
+                let __enc = ::azihsm_ddi_tbor_codec::RequestEncoder::new(
+                    __buf,
+                    ::azihsm_ddi_tbor_codec::PROTOCOL_VERSION,
+                    <Self as ::azihsm_ddi_tbor_types::TborOpReq>::OPCODE,
+                );
+                #encode_chain
+                __enc.finish()
             }
         }
     })
 }
-
-fn gen_response(
-    attrs: &StructAttrs,
-    item: &ItemStruct,
-    fields: &[ParsedField],
-) -> syn::Result<TokenStream2> {
+fn gen_response(item: &ItemStruct, fields: &[ParsedField]) -> TokenStream2 {
     let name = &item.ident;
-    let schema = attrs
-        .schema
-        .clone()
-        .unwrap_or_else(|| default_schema_path(name));
 
-    if fields.is_empty() {
-        return Ok(quote! {
-            impl ::azihsm_ddi_tbor_types::TborResp for #name {
-                fn decode_response(
-                    __buf: &[u8],
-                ) -> ::core::result::Result<Self, ::azihsm_ddi_tbor_codec::DecodeError> {
-                    let __raw = ::azihsm_ddi_tbor_codec::ResponseView::parse(__buf)?;
-                    if __raw.status() != 0 {
-                        return ::core::result::Result::Err(
-                            ::azihsm_ddi_tbor_codec::DecodeError::FwError(__raw.status()),
-                        );
-                    }
-                    let _ = #schema::decode(__buf)?;
-                    ::core::result::Result::Ok(Self)
-                }
-            }
-        });
-    }
+    // Empty bodies still carry one synthetic `None` TOC entry (see
+    // `gen_request` encode chain), so toc_count is always `>= 1`.
+    let expected_toc = fields.len().max(1);
 
-    let init = fields
+    let decode_steps: TokenStream2 = fields
         .iter()
-        .map(gen_decode_field)
-        .collect::<syn::Result<TokenStream2>>()?;
+        .enumerate()
+        .map(|(i, f)| gen_decode_step(i, f))
+        .collect();
 
-    Ok(quote! {
+    let construct = if fields.is_empty() {
+        quote! { Self }
+    } else {
+        let names = fields.iter().map(|f| &f.name);
+        quote! { Self { #(#names,)* } }
+    };
+
+    quote! {
         impl ::azihsm_ddi_tbor_types::TborResp for #name {
             fn decode_response(
                 __buf: &[u8],
@@ -225,63 +244,109 @@ fn gen_response(
                         ::azihsm_ddi_tbor_codec::DecodeError::FwError(__raw.status()),
                     );
                 }
-                let __view = #schema::decode(__buf)?;
-                ::core::result::Result::Ok(Self { #init })
+                if __raw.toc_count() < #expected_toc {
+                    return ::core::result::Result::Err(
+                        ::azihsm_ddi_tbor_codec::DecodeError::MessageTruncated,
+                    );
+                }
+                // Forward-compat: trailing TOC entries beyond the
+                // schema we know are ignored so a newer FW can append
+                // fields without breaking host decode of the known
+                // prefix.
+                #decode_steps
+                ::core::result::Result::Ok(#construct)
             }
         }
-    })
+    }
 }
 
-/// Emit one `.field(arg)?` link of the encoder chain for a field.
-fn gen_encode_call(f: &ParsedField) -> syn::Result<TokenStream2> {
+/// Emit one statement that rebinds `__enc` by applying a single codec
+/// primitive call for the field.
+fn gen_encode_step(f: &ParsedField) -> TokenStream2 {
     let name = &f.name;
-    Ok(match &f.shape {
-        FieldShape::U8 | FieldShape::U16 | FieldShape::U32 | FieldShape::U64 => quote! {
-            .#name(self.#name)?
+    match &f.shape {
+        FieldShape::U8 => quote! {
+            let __enc = __enc.uint8(self.#name)?;
+        },
+        FieldShape::U16 => quote! {
+            let __enc = __enc.uint16(self.#name)?;
+        },
+        FieldShape::U32 => quote! {
+            let __enc = __enc.uint32(self.#name)?;
+        },
+        FieldShape::U64 => quote! {
+            let __enc = __enc.uint64(self.#name)?;
         },
         FieldShape::SessionId => quote! {
-            .#name(self.#name.into())?
+            let __enc = __enc.session_id(self.#name)?;
         },
-        FieldShape::FixedBuf => quote! {
-            .#name(&self.#name)?
-        },
-        FieldShape::VarBuf => quote! {
-            .#name(&self.#name)?
+        FieldShape::FixedBuf | FieldShape::VarBuf => quote! {
+            let __enc = __enc.buffer(&self.#name)?;
         },
         FieldShape::OptVarBuf => quote! {
-            .#name(self.#name.as_deref())?
+            let __enc = match self.#name.as_deref() {
+                ::core::option::Option::Some(__b) => __enc.buffer(__b)?,
+                ::core::option::Option::None => __enc.none()?,
+            };
         },
-    })
+    }
 }
 
-/// Emit one `field: <expr>,` initializer for the struct literal that
-/// rebuilds the decoded response value.
-fn gen_decode_field(f: &ParsedField) -> syn::Result<TokenStream2> {
+/// Emit one statement that binds a local with the field's name by
+/// matching the expected `TocEntry` variant at TOC index `idx`.
+fn gen_decode_step(idx: usize, f: &ParsedField) -> TokenStream2 {
     let name = &f.name;
     let ty = &f.ty;
-    let value = match &f.shape {
-        FieldShape::U8 | FieldShape::U16 | FieldShape::U32 | FieldShape::U64 => quote! {
-            __view.#name()
-        },
-        FieldShape::SessionId => quote! {
-            __view.#name().into()
-        },
+
+    let unexpected = quote! {
+        _ => return ::core::result::Result::Err(
+            ::azihsm_ddi_tbor_codec::DecodeError::UnexpectedTocType,
+        ),
+    };
+
+    // Shared shape for the 5 inline-primitive variants: pull the value
+    // straight out of the matching `TocEntry` arm, or bail out.
+    let primitive = |variant: Ident| {
+        quote! {
+            match __raw.toc_entry(#idx) {
+                ::azihsm_ddi_tbor_codec::TocEntry::#variant(__v) => __v,
+                #unexpected
+            }
+        }
+    };
+
+    let body = match &f.shape {
+        FieldShape::SessionId => primitive(format_ident!("SessionId")),
+        FieldShape::U8 => primitive(format_ident!("Uint8")),
+        FieldShape::U16 => primitive(format_ident!("Uint16")),
+        FieldShape::U32 => primitive(format_ident!("Uint32")),
+        FieldShape::U64 => primitive(format_ident!("Uint64")),
         FieldShape::FixedBuf => quote! {
-            // FW codec validated the length on decode; the slice is
-            // guaranteed to be exactly the declared size.  The struct
-            // field's `[u8; N]` annotation drives the array size.
-            {
-                let __slice: &[u8] = __view.#name();
-                <#ty as ::core::convert::TryFrom<&[u8]>>::try_from(__slice)
-                    .expect("FW codec validated #[tbor(len = N)]")
+            match __raw.toc_entry(#idx) {
+                ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => {
+                    <#ty as ::core::convert::TryFrom<&[u8]>>::try_from(__b)
+                        .map_err(|_| ::azihsm_ddi_tbor_codec::DecodeError::InvalidFixedLength)?
+                }
+                #unexpected
             }
         },
         FieldShape::VarBuf => quote! {
-            ::alloc::vec::Vec::from(__view.#name())
+            match __raw.toc_entry(#idx) {
+                ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => ::alloc::vec::Vec::from(__b),
+                #unexpected
+            }
         },
         FieldShape::OptVarBuf => quote! {
-            __view.#name().map(::alloc::vec::Vec::from)
+            match __raw.toc_entry(#idx) {
+                ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) =>
+                    ::core::option::Option::Some(::alloc::vec::Vec::from(__b)),
+                ::azihsm_ddi_tbor_codec::TocEntry::None =>
+                    ::core::option::Option::None,
+                #unexpected
+            }
         },
     };
-    Ok(quote! { #name: #value, })
+    quote! {
+        let #name = #body;
+    }
 }

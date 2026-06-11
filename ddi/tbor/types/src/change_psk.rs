@@ -7,25 +7,72 @@
 //! responsibility: pass the wire-ready envelope bytes (already wrapped
 //! under the active session's `param_key`, with the
 //! `"psk-change-v1" ‖ session_id` AAD) in `psk_envelope`.  See the FW
-//! schema docs at [`azihsm_fw_ddi_tbor_types::change_psk`] for the
+//! schema docs at `azihsm_fw_ddi_tbor_types::change_psk` for the
 //! AAD layout and the implicit (session-role-driven) target selection.
 
 use alloc::vec::Vec;
 
-pub use azihsm_fw_ddi_tbor_types::build_psk_change_aad;
-pub use azihsm_fw_ddi_tbor_types::PSK_CHANGE_AAD_LABEL;
-pub use azihsm_fw_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
-pub use azihsm_fw_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
-pub use azihsm_fw_ddi_tbor_types::TBOR_OP_CHANGE_PSK;
-
 use crate::tbor;
+
+/// TBOR opcode for `ChangePsk`.
+pub const TBOR_OP_CHANGE_PSK: u8 = 0x20;
+
+/// Length in bytes of a partition pre-shared key (PSK).
+///
+/// Both the CO and CU PSKs are exactly this length.  Mirror of the
+/// FW-side `azihsm_fw_hsm_pal_traits::PSK_LEN`.
+pub const PSK_LEN: usize = 32;
+
+/// Well-known default Crypto Officer (CO) PSK.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CO`.  Returned by
+/// the FW for `psk_id = 0` until rotated via `ChangePsk`.  Public by
+/// design so partitions are usable immediately at bring-up.
+pub const DEFAULT_PSK_CO: [u8; PSK_LEN] = [
+    0x41, 0x5a, 0x49, 0x48, 0x53, 0x4d, 0x2d, 0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0x2d, 0x43,
+    0x4f, 0x2d, 0x50, 0x53, 0x4b, 0x2d, 0x76, 0x31, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d,
+];
+
+/// Well-known default Crypto User (CU) PSK.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CU`.
+pub const DEFAULT_PSK_CU: [u8; PSK_LEN] = [
+    0x41, 0x5a, 0x49, 0x48, 0x53, 0x4d, 0x2d, 0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0x2d, 0x43,
+    0x55, 0x2d, 0x50, 0x53, 0x4b, 0x2d, 0x76, 0x31, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d, 0x2d,
+];
+
+/// AAD label prefix bound into the `psk_envelope` AAD.
+pub const PSK_CHANGE_AAD_LABEL: &[u8; 13] = b"psk-change-v1";
+
+/// Total AAD length bound into the `psk_envelope` (label + session_id LE + zero-padding).
+pub const PSK_CHANGE_AAD_LEN: usize = 32;
+
+/// Maximum on-the-wire length of the `psk_envelope`.
+pub const PSK_CHANGE_ENVELOPE_MAX_LEN: usize = 160;
+
+/// Builds the 32-byte AEAD AAD bound into a `ChangePsk` envelope.
+///
+/// Layout: [`PSK_CHANGE_AAD_LABEL`] (13 B) `‖ session_id` (2 B LE)
+/// `‖ rsv0` (17 B).
+///
+/// This is the **single source of truth** for the host-side AAD
+/// layout; the FW handler builds the identical layout via its own
+/// helper of the same name, and a host test cross-validates the two.
+#[must_use]
+pub fn build_psk_change_aad(session_id: u16) -> [u8; PSK_CHANGE_AAD_LEN] {
+    let mut aad = [0u8; PSK_CHANGE_AAD_LEN];
+    aad[..PSK_CHANGE_AAD_LABEL.len()].copy_from_slice(PSK_CHANGE_AAD_LABEL);
+    aad[PSK_CHANGE_AAD_LABEL.len()..PSK_CHANGE_AAD_LABEL.len() + 2]
+        .copy_from_slice(&session_id.to_le_bytes());
+    aad
+}
 
 /// Host-facing TBOR `ChangePsk` request.
 ///
 /// The target PSK slot is derived HSM-side from the session role
 /// (CO session → CO slot, CU session → CU slot); the request does
 /// not carry a slot-selection field.
-#[tbor]
+#[tbor(opcode = TBOR_OP_CHANGE_PSK, session_ctrl = in_session)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborChangePskReq {
     /// Logical session id the request is bound to.  Same value must
@@ -44,38 +91,3 @@ pub struct TborChangePskReq {
 #[tbor(response)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TborChangePskResp;
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use azihsm_fw_ddi_tbor_types::TborChangePskReq as ReqSchema;
-
-    use super::*;
-    use crate::TborOpReq;
-
-    #[test]
-    fn aad_layout_matches_spec() {
-        let aad = build_psk_change_aad(0x1234);
-        assert_eq!(&aad[..13], PSK_CHANGE_AAD_LABEL);
-        assert_eq!(&aad[13..15], &[0x34, 0x12]); // little-endian
-        assert_eq!(aad.len(), PSK_CHANGE_AAD_LEN);
-    }
-
-    #[test]
-    fn encode_decode_round_trip() {
-        let req = TborChangePskReq {
-            session_id: 0x0042,
-            psk_envelope: (0u8..128).collect(),
-        };
-        let mut buf = [0u8; 256];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(u16::from(view.session_id()), 0x0042);
-        assert_eq!(view.psk_envelope(), req.psk_envelope.as_slice());
-    }
-
-    #[test]
-    fn opcode_matches_schema() {
-        assert_eq!(<TborChangePskReq as TborOpReq>::OPCODE, TBOR_OP_CHANGE_PSK,);
-    }
-}

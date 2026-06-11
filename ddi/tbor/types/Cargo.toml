@@ -9,15 +9,18 @@ version = "0.1.0"
 [dependencies]
 azihsm_ddi_tbor_codec.workspace = true
 azihsm_ddi_tbor_derive.workspace = true
-azihsm_fw_ddi_tbor_types.workspace = true
+open-enum.workspace = true
 
 [dev-dependencies]
 azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_interface.workspace = true
-azihsm_ddi_tbor_test_helpers.workspace = true
-azihsm_fw_hsm_pal_traits.workspace = true
-serial_test.workspace = true
+azihsm_ddi_mbor_sim.workspace = true
+azihsm_ddi_mbor_test_helpers.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+minicbor = { features = ["derive"], workspace = true }
+parking_lot.workspace = true
+x509.workspace = true
 
 [lib]
 doctest = false

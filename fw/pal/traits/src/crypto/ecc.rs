@@ -127,6 +127,12 @@ impl HsmEccCurve {
         }
     }
 
+    /// Return the OKM byte length required for FIPS 186-5 §A.2.1
+    /// extra-random-bits deterministic key generation.
+    pub fn a2_1_okm_len(&self) -> usize {
+        self.wire_coord_len() + 8
+    }
+
     /// Return the wire-format public-key byte length (two padded
     /// coordinates: `X || Y`).  See [`HsmEccCurve::wire_coord_len`].
     pub fn wire_pub_key_len(&self) -> usize {
@@ -227,6 +233,20 @@ pub trait HsmEcc {
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
 
+    /// Derive an ECC keypair deterministically from `okm` (output
+    /// keying material from a KDF), per FIPS 186-5 §A.2.1 / SP
+    /// 800-133r2 §6.2.3. `okm.len()` must be
+    /// `curve.wire_coord_len() + 8` bytes.
+    async fn ecc_gen_keypair_from_okm(
+        &self,
+        io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
+        curve: HsmEccCurve,
+        okm: &DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
+        pct: HsmEccPct,
+    ) -> HsmResult<(usize, usize)>;
+
     /// Raw EC sign over a pre-computed message digest.
     ///
     /// The caller is responsible for hashing the message; this method
@@ -296,10 +316,8 @@ pub trait HsmEcc {
     ///
     /// - `Ok(true)` — signature is valid.
     /// - `Ok(false)` — signature is invalid (not an error).
-    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
-    /// - `Err(HsmError::EccPublicKeyValidationFailed)` — `pub_key`
-    ///   does not parse as a valid point on `curve` (out-of-range
-    ///   coordinate, malformed encoding, etc.).
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or
+    ///   malformed public key.
     /// - `Err(HsmError)` — propagated from the PKA driver.
     async fn ecc_verify(
         &self,
@@ -335,10 +353,8 @@ pub trait HsmEcc {
     /// # Returns
     ///
     /// - `Ok(())` — `secret[..secret_len]` populated.
-    /// - `Err(HsmError::InvalidArg)` — buffer mismatch.
-    /// - `Err(HsmError::EccPublicKeyValidationFailed)` — `pub_key`
-    ///   does not parse as a valid point on `curve` (out-of-range
-    ///   coordinate, malformed encoding, etc.).
+    /// - `Err(HsmError::InvalidArg)` — buffer mismatch or invalid
+    ///   public-key point.
     /// - `Err(HsmError)` — PKA driver failure.
     async fn ecdh_derive(
         &self,

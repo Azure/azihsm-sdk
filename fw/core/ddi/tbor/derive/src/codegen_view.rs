@@ -65,13 +65,13 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
         #[doc = concat!("[`", stringify!(#name), "::decode()`].")]
         #[derive(Debug)]
         #vis struct #view_name #view_lifetime {
-            buf: &'a [u8],
+            buf: &'a azihsm_fw_hsm_pal_traits::DmaBuf,
         }
 
         impl<'a> #view_name<'a> {
             /// Construct from a validated buffer. Not public — use
             #[doc = concat!("[`", stringify!(#name), "::decode()`] instead.")]
-            fn from_validated(buf: &'a [u8]) -> Self {
+            fn from_validated(buf: &'a azihsm_fw_hsm_pal_traits::DmaBuf) -> Self {
                 Self { buf }
             }
 
@@ -85,7 +85,7 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
 
             /// The raw message bytes.
             #[inline]
-            pub fn as_bytes(&self) -> &'a [u8] { self.buf }
+            pub fn as_bytes(&self) -> &'a azihsm_fw_hsm_pal_traits::DmaBuf { self.buf }
 
             #response_accessors
 
@@ -140,32 +140,8 @@ fn gen_accessor(
         WireType::SessionId => quote! { azihsm_fw_ddi_tbor_api::SessionId },
         WireType::KeyId => quote! { azihsm_fw_ddi_tbor_api::KeyId },
         WireType::Buffer | WireType::SealedKey => {
-            if let Some(n) = field.fixed_len {
-                quote! { &'a [u8; #n] }
-            } else {
-                quote! { &'a [u8] }
-            }
+            quote! { &'a azihsm_fw_hsm_pal_traits::DmaBuf }
         }
-    };
-
-    // For fixed arrays, convert the slice to an array ref.
-    let body = if let Some(n) = field.fixed_len {
-        let base_body = body;
-        quote! {
-            {
-                let slice = #base_body;
-                // Length was validated during decode; this branch is unreachable.
-                match <&[u8; #n]>::try_from(slice) {
-                    Ok(arr) => arr,
-                    Err(_) => {
-                        static ZERO: [u8; #n] = [0u8; #n];
-                        &ZERO
-                    }
-                }
-            }
-        }
-    } else {
-        body
     };
 
     if field.optional {

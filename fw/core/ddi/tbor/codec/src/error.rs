@@ -49,6 +49,15 @@ pub enum DecodeError {
     /// specific FW error instead of silently accepting the placeholder
     /// error envelope or failing with a generic `UnexpectedTocType`.
     FwError(u32),
+    /// Data-section TOC offsets are not monotonically non-decreasing
+    /// across consecutive fields. Raised only by the `decode_mut`
+    /// fast path, which performs a single forward `split_at_mut`
+    /// pass and therefore requires field regions to be ordered by
+    /// offset (the canonical encoder always produces this layout).
+    NonMonotonicTocOffsets {
+        prev_entry: usize,
+        curr_entry: usize,
+    },
 }
 
 /// Wire-level encode errors.
@@ -159,6 +168,16 @@ impl core::fmt::Display for DecodeError {
             }
             Self::FwError(status) => {
                 write!(f, "firmware returned error status 0x{:08X}", status)
+            }
+            Self::NonMonotonicTocOffsets {
+                prev_entry,
+                curr_entry,
+            } => {
+                write!(
+                    f,
+                    "non-monotonic TOC offsets between entries {} and {}",
+                    prev_entry, curr_entry
+                )
             }
         }
     }

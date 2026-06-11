@@ -51,6 +51,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x11` | `OpenSessionFinish` | NoSession | [`commands/open_session_finish.md`](./commands/open_session_finish.md) |
 | `0x12` | `CloseSession` | InSession | [`commands/close_session.md`](./commands/close_session.md) |
 | `0x20` | `ChangePsk` | InSession | [`commands/change_psk.md`](./commands/change_psk.md) |
+| `0x30` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
 
 ## Default-PSK gate
 

@@ -4,6 +4,7 @@
 //! Comprehensive example of TBOR encode/decode with the #[tbor] derive macro.
 
 #![allow(clippy::unwrap_used)]
+#![allow(unsafe_code)]
 //!
 //! Demonstrates:
 //!   - Required and optional fields
@@ -17,6 +18,14 @@
 use std::println;
 
 use azihsm_fw_ddi_tbor_api::tbor;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+
+// SAFETY: example-only branding. Host-side examples have no real DMA
+// engine, so the DMA-reachability contract is moot.
+fn brand(b: &[u8]) -> &DmaBuf {
+    // SAFETY: see fn-level doc comment.
+    unsafe { DmaBuf::from_raw(b) }
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // 1. ENUM TYPES — used as field values
@@ -127,12 +136,12 @@ fn example_aes_gcm_full() {
     );
 
     // Decode: zero-copy, borrows the wire bytes.
-    let view = EncryptReq::decode(frame.as_bytes()).unwrap();
+    let view = EncryptReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.session_id(), azihsm_fw_ddi_tbor_api::SessionId(7));
     assert_eq!(view.key_id(), azihsm_fw_ddi_tbor_api::KeyId(42));
     assert_eq!(view.algorithm(), 3);
-    assert_eq!(view.iv(), Some(iv.as_slice()));
-    assert_eq!(view.aad(), Some(aad.as_slice()));
+    assert!(view.iv().is_some_and(|d| &**d == iv.as_slice()));
+    assert!(view.aad().is_some_and(|d| &**d == aad.as_slice()));
     assert_eq!(view.plaintext(), plaintext);
 
     // Pretty-print via generated Display impl.
@@ -162,7 +171,7 @@ fn example_aes_ecb_minimal() {
 
     println!("  Encoded: {} bytes (no IV/AAD overhead)", frame.len());
 
-    let view = EncryptReq::decode(frame.as_bytes()).unwrap();
+    let view = EncryptReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.iv(), None);
     assert_eq!(view.aad(), None);
     assert_eq!(view.plaintext(), b"ECB-data-here!!!");
@@ -198,8 +207,8 @@ fn example_skip_intermediate() {
         .unwrap()
         .finish();
 
-    let view = EncryptReq::decode(frame.as_bytes()).unwrap();
-    assert_eq!(view.iv(), Some(iv.as_slice()));
+    let view = EncryptReq::decode(brand(frame.as_bytes())).unwrap();
+    assert!(view.iv().is_some_and(|d| &**d == iv.as_slice()));
     assert_eq!(view.aad(), None); // auto-filled as None
     assert_eq!(view.plaintext(), b"CBC-block-data!!");
 
@@ -222,11 +231,11 @@ fn example_response() {
         .unwrap()
         .finish();
 
-    let view = EncryptResp::decode(frame.as_bytes()).unwrap();
+    let view = EncryptResp::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.status(), 0);
     assert!(view.fips_approved());
     assert_eq!(view.ciphertext(), b"<ciphertext-bytes>");
-    assert_eq!(view.tag(), Some(b"\xDE\xAD\xBE\xEF".as_slice()));
+    assert!(view.tag().is_some_and(|d| &**d == b"\xDE\xAD\xBE\xEF"));
     println!(
         "  GCM: status=0, FIPS=true, tag={:?}",
         view.tag().map(|t| t.len())
@@ -240,7 +249,7 @@ fn example_response() {
         .unwrap()
         .finish(); // tag is trailing optional → auto-filled as None
 
-    let view2 = EncryptResp::decode(frame2.as_bytes()).unwrap();
+    let view2 = EncryptResp::decode(brand(frame2.as_bytes())).unwrap();
     assert_eq!(view2.tag(), None);
     println!("  ECB: status=0, FIPS=false, tag=None\n");
 }
@@ -268,7 +277,7 @@ fn example_raw_decode() {
     println!("  Wire bytes: {} bytes", wire_bytes.len());
 
     // Decode — this is zero-copy: the view borrows wire_bytes.
-    let view = EncryptReq::decode(wire_bytes).unwrap();
+    let view = EncryptReq::decode(brand(wire_bytes)).unwrap();
     println!("  Decoded successfully:");
     println!("    session = {}", view.session_id());
     println!("    key     = {}", view.key_id());
@@ -281,7 +290,7 @@ fn example_raw_decode() {
     );
 
     // You can also use the generic core decoder for untyped access:
-    let raw = azihsm_fw_ddi_tbor::RequestView::parse(wire_bytes).unwrap();
+    let raw = azihsm_fw_ddi_tbor::RequestView::parse(brand(wire_bytes)).unwrap();
     println!(
         "\n  Raw view: opcode=0x{:02X}, {} TOC entries",
         raw.opcode(),

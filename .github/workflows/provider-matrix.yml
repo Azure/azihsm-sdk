@@ -1,0 +1,226 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Runs the OpenSSL provider integration suites (cli + capi + nginx) across
+# five OpenSSL 3.0.x distributions in parallel.  Each cell is its own job
+# and shows up as its own PR check.
+#
+# The nginx suite runs only where OpenSSL carries the complete STORE-dispatch
+# fix (issue openssl#18262, fixed in 3.0.4 with follow-ups through ~3.0.11) —
+# the 3.0.11 / 3.0.13 cells.  The 3.0.2 cell and the 3.0.7 RHEL cells set
+# `matrix.nginx: false` and skip the nginx install + test entirely.
+#
+# Each cell's `matrix.openssl_minor` is exported as
+# AZIHSM_TEST_OPENSSL_MAJOR_MINOR so the suites' version-gating primitives
+# can skip tests that require a newer OpenSSL than the cell provides.
+
+name: Provider matrix
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The capi integration tests' build.rs (and openssl-sys) need
+  # OPENSSL_DIR + OPENSSL_INCLUDE_DIR to find the system OpenSSL.
+  # OPENSSL_LIB_DIR varies between Debian's multiarch layout and RHEL's
+  # /usr/lib64, so it's set per-cell from `matrix.lib_dir`.
+  OPENSSL_DIR: /usr
+  OPENSSL_INCLUDE_DIR: /usr/include
+
+defaults:
+  run:
+    # Explicit bash for `run:` steps so the workflow behaves the same on
+    # GHA (where bash is the Linux default anyway) and under `act` (which
+    # falls back to /bin/sh).  Several steps use bash arrays.
+    shell: bash
+
+jobs:
+  matrix:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    env:
+      OPENSSL_LIB_DIR: ${{ matrix.lib_dir }}
+      # Exported so the suites' version-gating primitives can skip tests that
+      # require a newer OpenSSL than this cell provides.
+      AZIHSM_TEST_OPENSSL_MAJOR_MINOR: ${{ matrix.openssl_minor }}
+      # Test-runtime config consumed by the cli scripts' env.sh and the
+      # capi / nginx test harnesses.
+      OPENSSL_BIN: /usr/bin/openssl
+      OPENSSL_LIB: ${{ github.workspace }}/target/debug
+      PROVIDER_PATH: ${{ github.workspace }}/target/debug
+      PROPQUERY: '?provider=azihsm'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro:        u2204
+            label:         Ubuntu 22.04 (OpenSSL 3.0.2)
+            image:         ubuntu:22.04
+            family:        debian
+            lib_dir:       /usr/lib/x86_64-linux-gnu
+            openssl_minor: "3.0"
+            nginx:         false
+
+          - distro:        u2404
+            label:         Ubuntu 24.04 (OpenSSL 3.0.13)
+            image:         ubuntu:24.04
+            family:        debian
+            lib_dir:       /usr/lib/x86_64-linux-gnu
+            openssl_minor: "3.0"
+            nginx:         true
+
+          - distro:        debian12
+            label:         Debian 12 (OpenSSL 3.0.11)
+            image:         debian:12
+            family:        debian
+            lib_dir:       /usr/lib/x86_64-linux-gnu
+            openssl_minor: "3.0"
+            nginx:         true
+
+          - distro:        alma9
+            label:         AlmaLinux 9.2 (OpenSSL 3.0.7)
+            image:         almalinux:9.2
+            family:        rhel
+            vault:         https://repo.almalinux.org/vault/9.2
+            gpgkey:        RPM-GPG-KEY-AlmaLinux-9
+            lib_dir:       /usr/lib64
+            openssl_minor: "3.0"
+            nginx:         false
+
+          - distro:        rocky9
+            label:         Rocky 9.2 (OpenSSL 3.0.7)
+            image:         rockylinux:9.2
+            family:        rhel
+            vault:         https://dl.rockylinux.org/vault/rocky/9.2
+            gpgkey:        RPM-GPG-KEY-Rocky-9
+            lib_dir:       /usr/lib64
+            openssl_minor: "3.0"
+            nginx:         false
+
+    steps:
+      # Containers need git before actions/checkout, and the build deps
+      # before cargo can compile.  Both go in a single bootstrap step.
+      - name: Bootstrap (debian)
+        if: matrix.family == 'debian'
+        run: |
+          apt-get update
+          # nodejs is for JS-based actions (rust-cache, checkout, etc.) —
+          # GHA auto-injects node in container jobs but `act` does not.
+          # xxd (used by the import_wrapped_key cli test scripts) lives in
+          # its own package on Debian/Ubuntu.
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git nodejs \
+            build-essential cmake pkg-config perl \
+            openssl libssl-dev libbsd-dev xxd
+
+      - name: Bootstrap (rhel)
+        if: matrix.family == 'rhel'
+        run: |
+          # The 9.2 vault preserves openssl-devel-3.0.7; the rolling el9
+          # repos have been bumped to 3.5.5.
+          sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+          # Vault packages are signed with the distro key the image ships in
+          # /etc/pki/rpm-gpg/, so signature verification stays on.
+          cat > /etc/yum.repos.d/vault.repo <<EOF
+          [vault-baseos]
+          name=9.2 vault BaseOS
+          baseurl=${{ matrix.vault }}/BaseOS/x86_64/os/
+          enabled=1
+          gpgcheck=1
+          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
+          [vault-appstream]
+          name=9.2 vault AppStream
+          baseurl=${{ matrix.vault }}/AppStream/x86_64/os/
+          enabled=1
+          gpgcheck=1
+          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
+          EOF
+          dnf clean all
+          # nodejs is for JS-based actions (see debian bootstrap).
+          # vim-common provides /usr/bin/xxd (used by the import_wrapped_key
+          # cli test scripts); el9 has no standalone xxd package.
+          dnf install -y --setopt=install_weak_deps=False \
+            gcc gcc-c++ make perl perl-core git nodejs \
+            pkgconf openssl openssl-devel \
+            findutils diffutils python3-pip vim-common
+          # Vault's cmake is 3.20.2; corrosion needs >= 3.22.
+          pip3 install --no-warn-script-location cmake
+          echo /usr/local/bin >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v6
+
+      - name: Show OpenSSL version
+        run: openssl version
+
+      # Plain distro containers ship no rustup.  Install it with no default
+      # toolchain so rust-toolchain.toml stays the single source of the
+      # toolchain version (rustup auto-installs it on the first cargo call).
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: matrix-${{ matrix.distro }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: matrix-${{ matrix.distro }}-
+
+      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION); the
+      # binary persists in the ~/.cargo/bin cache above.
+      - name: Install cargo-nextest
+        run: cargo xtask setup --skip-taplo --skip-audit
+
+      - name: Build provider
+        run: |
+          cargo build -p azihsm_api_native --features mock
+          cargo build -p azihsm_ossl_provider --features mock
+
+      # nginx 1.29.0 is the last mainline release linked only against
+      # OPENSSL_3.0.0 symbols (1.29.1+ requires 3.2.0+), so it is compatible
+      # with all the 3.0.x cells.  The mainline apt index only advertises the
+      # current release, so pin the archived .deb from the pool (which keeps
+      # every past version) directly.
+      - name: Install nginx 1.29.0
+        if: matrix.nginx
+        run: |
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          host=$(. /etc/os-release && echo "$ID")
+          curl -fsSL -o /tmp/nginx.deb \
+            "https://nginx.org/packages/mainline/${host}/pool/nginx/n/nginx/nginx_1.29.0-1~${codename}_amd64.deb"
+          apt-get install -y --no-install-recommends /tmp/nginx.deb
+
+      # Each suite is its own GHA step.  `!cancelled()` lets capi + nginx
+      # run even when cli fails, so the cell's PR check list shows three
+      # independent pass/fail indicators instead of one.
+      - name: Run cli suite
+        run: |
+          cargo nextest run --features integration \
+            -p provider-integration-tests-cli \
+            --profile ci-provider-integration --no-fail-fast
+
+      - name: Run capi suite
+        if: ${{ !cancelled() }}
+        run: |
+          cargo nextest run --features integration \
+            -p provider-integration-tests-capi \
+            --profile ci-provider-integration --no-fail-fast
+
+      - name: Run nginx suite
+        if: ${{ !cancelled() && matrix.nginx }}
+        run: |
+          cargo nextest run --features integration \
+            -p provider-integration-tests-nginx \
+            --profile ci-provider-integration --no-fail-fast

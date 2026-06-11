@@ -25,6 +25,8 @@ pub(crate) mod close_session;
 pub(crate) mod get_api_rev;
 pub(crate) mod open_session_finish;
 pub(crate) mod open_session_init;
+pub mod part_init;
+pub mod policy;
 
 use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor::ResponseEncoder;
@@ -72,6 +74,9 @@ pub(crate) mod opcode {
     /// [`super::change_psk`] for the authorization matrix and
     /// AAD layout.
     pub(crate) const CHANGE_PSK: u8 = 0x20;
+
+    /// `PartInit` — bind PTA, policy, and POTA thumbprint.
+    pub(crate) const PART_INIT: u8 = 0x30;
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -99,7 +104,7 @@ pub(crate) mod opcode {
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    view: &RequestView<'_>,
+    req_buf: &mut DmaBuf,
     opcode: u8,
     sqe_session_id: u16,
 ) -> HsmResult<&'p DmaBuf> {
@@ -110,48 +115,57 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         return Err(HsmError::UnsupportedCmd);
     }
 
-    // SQE/body session-id cross-check: for every opcode whose
-    // `SessionCtrl` requires `id_valid = true` (close + in-session),
-    // the SQE-carried `session_id` MUST match the inline body
-    // `session_id` TOC entry.  Out-of-session opcodes do not carry a
-    // body session id, and `validate_tbor_session_flags` has already
-    // rejected the `id_valid = true` case for them upstream.
-    //
-    // This matches MBOR's `validate_session` (Rule 3): the audit
-    // trail / CQE always reflects the same slot the handler mutates.
-    if needs_session_id_cross_check(opcode) {
-        let body_sess_id = extract_session_id(view)?;
-        if u16::from(body_sess_id) != sqe_session_id {
-            return Err(HsmError::InvalidArg);
-        }
-    }
+    // Pre-dispatch gating work (session-id cross-check, default-PSK
+    // gate) runs against a short-lived shared reborrow of the parent
+    // mutable buffer. The reborrow drops at the end of this block,
+    // freeing `req_buf` for handlers that need `&mut DmaBuf`.
+    {
+        let view = RequestView::parse(&*req_buf)?;
 
-    // Default-PSK gate: applies only to in-session commands that are
-    // not on the allow-list.  Skipped for out-of-session opcodes.
-    //
-    // The role used for the gate is derived from the request's
-    // `session_id` TOC field (via [`HsmSessId::role`]).  This is the
-    // same source of truth each handler ultimately uses to fetch the
-    // session's `param_key`, so a client that forges a `session_id`
-    // they do not own gains nothing — the handler's crypto-layer
-    // authentication still rejects them.  When an outer
-    // authenticated-framing layer lands, the role source should
-    // switch to it; the gate's invariant ("the requested role's PSK
-    // must be rotated") remains the same.
-    if is_in_session(opcode) && !allowed_with_default_psk(opcode) {
-        let sess_id = extract_session_id(view)?;
-        let psk_id = psk_id_for_role(sess_id.role());
-        if pal.part_psk_is_default(io, psk_id)? {
-            return Err(HsmError::DefaultPskMustRotate);
+        // SQE/body session-id cross-check: for every opcode whose
+        // `SessionCtrl` requires `id_valid = true` (close + in-session),
+        // the SQE-carried `session_id` MUST match the inline body
+        // `session_id` TOC entry.  Out-of-session opcodes do not carry a
+        // body session id, and `validate_tbor_session_flags` has already
+        // rejected the `id_valid = true` case for them upstream.
+        //
+        // This matches MBOR's `validate_session` (Rule 3): the audit
+        // trail / CQE always reflects the same slot the handler mutates.
+        if needs_session_id_cross_check(opcode) {
+            let body_sess_id = extract_session_id(&view)?;
+            if u16::from(body_sess_id) != sqe_session_id {
+                return Err(HsmError::InvalidArg);
+            }
+        }
+
+        // Default-PSK gate: applies only to in-session commands that are
+        // not on the allow-list.  Skipped for out-of-session opcodes.
+        //
+        // The role used for the gate is derived from the request's
+        // `session_id` TOC field (via [`HsmSessId::role`]).  This is the
+        // same source of truth each handler ultimately uses to fetch the
+        // session's `param_key`, so a client that forges a `session_id`
+        // they do not own gains nothing — the handler's crypto-layer
+        // authentication still rejects them.  When an outer
+        // authenticated-framing layer lands, the role source should
+        // switch to it; the gate's invariant ("the requested role's PSK
+        // must be rotated") remains the same.
+        if is_in_session(opcode) && !allowed_with_default_psk(opcode) {
+            let sess_id = extract_session_id(&view)?;
+            let psk_id = psk_id_for_role(sess_id.role());
+            if pal.part_psk_is_default(io, psk_id)? {
+                return Err(HsmError::DefaultPskMustRotate);
+            }
         }
     }
 
     match opcode {
-        opcode::GET_API_REV => get_api_rev::handle(pal, io, view),
-        opcode::OPEN_SESSION_INIT => open_session_init::handle(pal, io, view).await,
-        opcode::OPEN_SESSION_FINISH => open_session_finish::handle(pal, io, view).await,
-        opcode::CLOSE_SESSION => close_session::handle(pal, io, view).await,
-        opcode::CHANGE_PSK => change_psk::handle(pal, io, view).await,
+        opcode::GET_API_REV => get_api_rev::handle(pal, io, req_buf),
+        opcode::OPEN_SESSION_INIT => open_session_init::handle(pal, io, req_buf).await,
+        opcode::OPEN_SESSION_FINISH => open_session_finish::handle(pal, io, req_buf).await,
+        opcode::CLOSE_SESSION => close_session::handle(pal, io, req_buf).await,
+        opcode::CHANGE_PSK => change_psk::handle(pal, io, req_buf).await,
+        opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -168,6 +182,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::OPEN_SESSION_FINISH
             | opcode::CLOSE_SESSION
             | opcode::CHANGE_PSK
+            | opcode::PART_INIT
     )
 }
 
@@ -187,7 +202,7 @@ fn is_known_opcode(opcode: u8) -> bool {
 fn is_in_session(opcode: u8) -> bool {
     match opcode {
         opcode::GET_API_REV | opcode::OPEN_SESSION_INIT | opcode::OPEN_SESSION_FINISH => false,
-        opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
+        opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -217,7 +232,10 @@ fn is_in_session(opcode: u8) -> bool {
 fn needs_session_id_cross_check(opcode: u8) -> bool {
     match opcode {
         opcode::GET_API_REV | opcode::OPEN_SESSION_INIT => false,
-        opcode::OPEN_SESSION_FINISH | opcode::CLOSE_SESSION | opcode::CHANGE_PSK => true,
+        opcode::OPEN_SESSION_FINISH
+        | opcode::CLOSE_SESSION
+        | opcode::CHANGE_PSK
+        | opcode::PART_INIT => true,
         _ => true,
     }
 }

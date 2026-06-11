@@ -15,14 +15,18 @@
 
 pub use azihsm_fw_ddi_tbor_api::*;
 
-mod change_psk;
-mod close_session;
-mod get_api_rev;
-mod open_session_finish;
-mod open_session_init;
+pub mod change_psk;
+pub mod close_session;
+pub mod get_api_rev;
+pub mod open_session_finish;
+pub mod open_session_init;
+pub mod part_init;
+pub mod policy;
 
 pub use change_psk::*;
 pub use close_session::*;
 pub use get_api_rev::*;
 pub use open_session_finish::*;
 pub use open_session_init::*;
+pub use part_init::*;
+pub use policy::*;

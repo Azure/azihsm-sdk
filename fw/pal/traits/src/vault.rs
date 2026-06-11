@@ -146,6 +146,28 @@ pub enum HsmVaultKeyKind {
     /// when any TBOR session completes its handshake; never produced
     /// by the existing [`Session`](Self::Session) path.
     SessionCu = 35,
+
+    /// Partition Trust Anchor (PTA) ECC-P384 private key.
+    ///
+    /// Written by the TBOR `PartInit` handler when binding the
+    /// per-incarnation PTA identity.  One per partition incarnation;
+    /// rebinding is rejected with [`HsmError::PtaKeyAlreadySet`].
+    ///
+    /// [`HsmError::PtaKeyAlreadySet`]: crate::HsmError::PtaKeyAlreadySet
+    PartitionTrustAnchor = 36,
+
+    /// Partition Unique Machine Secret (UMS) — 48 B HMAC-SHA-384-sized
+    /// secret derived in `PartInit` from `UDS` plus the request-side
+    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`) inputs.
+    ///
+    /// Persisted in the partition key vault for the lifetime of the
+    /// partition incarnation so that later phases (e.g. FinalizePart)
+    /// can derive secondary partition secrets without re-supplying
+    /// `MachineSeed`.  One per partition incarnation; rebinding is
+    /// rejected with [`HsmError::UmsKeyAlreadySet`].
+    ///
+    /// [`HsmError::UmsKeyAlreadySet`]: crate::HsmError::UmsKeyAlreadySet
+    PartitionUniqueMachineSecret = 37,
 }
 
 /// Key attribute bitfield for vault-stored keys.

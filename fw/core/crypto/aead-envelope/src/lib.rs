@@ -46,8 +46,8 @@
 //! hardware-DMA roles simultaneously.
 //!
 //! The constraint is enforced at [`seal`] (rejected with
-//! [`AeadError::InvalidAadLength`]) and at [`open`] / [`inspect`]
-//! (rejected with [`AeadError::InvalidAadLength`] when parsing).
+//! [`AeadError::InvalidAadLength`]) and at [`open`] (rejected with
+//! [`AeadError::InvalidAadLength`] when parsing).
 //!
 //! # Interop
 //!
@@ -86,7 +86,6 @@ mod format;
 mod gcm;
 mod ops;
 
-pub use ops::inspect;
 pub use ops::open;
 pub use ops::seal;
 pub use ops::AeadAlg;

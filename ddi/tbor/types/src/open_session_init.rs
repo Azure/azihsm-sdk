@@ -22,10 +22,58 @@ pub const MAC_RESP_LEN: usize = 48;
 /// Wire identifier for the only `SessionSuite` currently implemented
 /// — HPKE `DHKEM(P-384, HKDF-SHA-384) + HKDF-SHA-384 + AES-256-GCM`.
 ///
-/// Mirrors `azihsm_fw_hsm_pal_traits::SessionSuite::P384HkdfSha384AesGcm256`
-/// — kept here as a plain `u8` constant so this host crate does not
-/// have to pull in the firmware PAL traits.
+/// Mirrors the FW-side `SessionSuite::P384HkdfSha384AesGcm256`
+/// discriminant.
 pub const SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256: u8 = 0x01;
+
+/// HPKE `info` string for the session-establishment handshake.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_HPKE_INFO`.  Mixed
+/// into the HPKE key schedule on both sides; ensures the derived
+/// `exported` value is domain-separated from any other HPKE usage.
+pub const SESSION_HPKE_INFO: &[u8] = b"azihsm-session-v2";
+
+/// HPKE exporter context for the session-establishment handshake.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_HPKE_EXPORTER_CONTEXT`.
+pub const SESSION_HPKE_EXPORTER_CONTEXT: &[u8] = b"session-exporter";
+
+/// HMAC label binding the Phase-1 (server-auth) confirm signature.
+///
+/// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_PHASE1_LABEL`.
+pub const SESSION_PHASE1_LABEL: &[u8] = b"phase1-confirm";
+
+/// Channel-level integrity profile for a TBOR session.
+///
+/// Host-side mirror of `azihsm_fw_hsm_pal_traits::SessionType` —
+/// kept here as an independent definition so the host crate does not
+/// have to pull in the firmware PAL traits.  The on-wire `u8`
+/// encoding matches the FW enum so both sides populate the same SQE
+/// field with the same byte values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SessionType {
+    /// Channel transports MBOR bodies without per-message MAC.
+    PlainText = 0,
+
+    /// Channel transports MBOR bodies wrapped in an outer per-message
+    /// HMAC envelope.
+    Authenticated = 1,
+}
+
+impl SessionType {
+    /// Wire-encode this `SessionType` to its `u8` discriminant.
+    #[inline]
+    pub const fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// `true` for [`Authenticated`](Self::Authenticated).
+    #[inline]
+    pub const fn is_authenticated(self) -> bool {
+        matches!(self, Self::Authenticated)
+    }
+}
 
 /// Host-facing TBOR `OpenSessionInit` request.
 ///
@@ -34,7 +82,7 @@ pub const SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256: u8 = 0x01;
 /// [`TborOpenSessionFinishReq`](crate::TborOpenSessionFinishReq) and
 /// shipped AEAD-encrypted in Phase 2.  Resume is handled by the MBOR
 /// `ReopenSession` command, not by this opcode.
-#[tbor]
+#[tbor(opcode = TBOR_OP_OPEN_SESSION_INIT, session_ctrl = open)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborOpenSessionInitReq {
     /// PSK identifier asserting the caller role.
@@ -85,77 +133,4 @@ pub struct TborOpenSessionInitResp {
     pub pk_resp: [u8; PK_RESP_LEN],
     /// Phase-1 confirmation MAC.
     pub mac_resp: [u8; MAC_RESP_LEN],
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use azihsm_fw_ddi_tbor_types::TborOpenSessionInitReq as ReqSchema;
-
-    use super::*;
-    use crate::TborOpReq;
-
-    fn sample_req(psk_id: u8, session_type: u8) -> TborOpenSessionInitReq {
-        let mut pk_init = [0u8; PK_INIT_LEN];
-        for (i, b) in pk_init.iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(7);
-        }
-        TborOpenSessionInitReq {
-            psk_id,
-            session_type,
-            suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
-            pk_init,
-        }
-    }
-
-    #[test]
-    fn encode_decode_round_trip_plaintext() {
-        let req = sample_req(1, 0);
-        let mut buf = [0u8; 512];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(view.psk_id(), 1);
-        assert_eq!(view.session_type(), 0);
-        assert_eq!(view.suite_id(), SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256);
-        assert_eq!(view.pk_init(), &req.pk_init);
-    }
-
-    #[test]
-    fn encode_decode_round_trip_authenticated() {
-        let req = sample_req(0, 1);
-        let mut buf = [0u8; 512];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(view.psk_id(), 0);
-        assert_eq!(view.session_type(), 1);
-        assert_eq!(view.suite_id(), SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256);
-        assert_eq!(view.pk_init(), &req.pk_init);
-    }
-
-    #[test]
-    fn default_uses_authenticated_session_type_for_co() {
-        let req = TborOpenSessionInitReq::default();
-        assert_eq!(req.psk_id, 0);
-        assert_eq!(req.session_type, 1);
-        assert_eq!(req.suite_id, SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256);
-    }
-
-    #[test]
-    fn session_type_byte_persists_unknown_values_on_the_wire() {
-        let req = sample_req(0, 0xff);
-        let mut buf = [0u8; 512];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(view.session_type(), 0xff);
-    }
-
-    #[test]
-    fn suite_id_byte_persists_unknown_values_on_the_wire() {
-        let mut req = sample_req(0, 1);
-        req.suite_id = 0xab;
-        let mut buf = [0u8; 512];
-        let wire = req.encode_request(&mut buf).expect("encode");
-        let view = ReqSchema::decode(wire).expect("schema decode");
-        assert_eq!(view.suite_id(), 0xab);
-    }
 }

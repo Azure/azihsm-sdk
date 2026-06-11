@@ -9,7 +9,7 @@ use crate::tbor;
 pub const TBOR_OP_CLOSE_SESSION: u8 = 0x12;
 
 /// Host-facing TBOR `CloseSession` request.
-#[tbor]
+#[tbor(opcode = TBOR_OP_CLOSE_SESSION, session_ctrl = close)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TborCloseSessionReq {
     /// Session identifier to tear down.
