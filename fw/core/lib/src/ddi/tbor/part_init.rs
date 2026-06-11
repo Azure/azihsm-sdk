@@ -72,6 +72,7 @@ use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
+use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_pal_traits::VaultKeyGuard;
 use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
@@ -311,9 +312,12 @@ async fn derive_ums<'a, P: HsmPal>(
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let uds_len = pal.part_uds(io, None)?;
+    let uds_len = crate::part_state::part_uds(pal, io)?.len();
     let uds = alloc.dma_alloc(uds_len)?;
-    pal.part_uds(io, Some(uds))?;
+    {
+        let src = crate::part_state::part_uds(pal, io)?;
+        uds.copy_from_slice(&src[..uds_len]);
+    }
 
     let ums = alloc.dma_alloc(kdf::UMS_LEN)?;
     let _ = kdf::derive_ums(
@@ -426,13 +430,16 @@ async fn build_pta_report<'a, P: HsmPal>(
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
-    let pid_priv = pal.vault_key(io, pal.part_id_key_id(io)?)?;
+    let pid_priv = pal.vault_key(io, crate::part_state::part_id_key_id(pal, io)?)?;
     let app_uuid = super::super::super::session::session_app_id(pal, io, sess_id)?;
 
     let mut vm_launch_id = [0u8; VM_LAUNCH_ID_LEN];
-    let vm_len = pal.part_vm_launch_guid(io, Some(&mut vm_launch_id))?;
-    if vm_len != VM_LAUNCH_ID_LEN {
-        return Err(HsmError::InternalError);
+    {
+        let guid = crate::part_state::part_vm_launch_guid(pal, io)?;
+        if guid.len() != VM_LAUNCH_ID_LEN {
+            return Err(HsmError::InternalError);
+        }
+        vm_launch_id.copy_from_slice(&guid[..VM_LAUNCH_ID_LEN]);
     }
 
     let report_data = build_report_data(pal, io, alloc, policy, pota_thumb).await?;
@@ -545,11 +552,11 @@ fn commit_partition_state<P: HsmPal>(
     )?;
     let pta_key_id = pta_guard.key_id();
 
-    pal.part_set_pta_key(io, pta_key_id, pta_pub_sec1)?;
-    pal.part_set_ums_key(io, ums_key_id)?;
-    pal.part_set_policy(io, policy)?;
-    pal.part_set_pota_thumbprint(io, pota_thumb)?;
-    pal.part_mark_initializing(io)?;
+    crate::part_state::part_set_pta_key(pal, io, pta_key_id, pta_pub_sec1)?;
+    crate::part_state::part_set_ups_key_id(pal, io, ums_key_id)?;
+    crate::part_state::part_set_policy(pal, io, policy)?;
+    crate::part_state::part_set_pota_thumbprint(pal, io, pota_thumb)?;
+    crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
     let _ = pta_guard.dismiss();
     let _ = ums_guard.dismiss();
     Ok(())

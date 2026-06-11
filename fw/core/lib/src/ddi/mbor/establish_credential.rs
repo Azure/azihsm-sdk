@@ -107,12 +107,16 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // Reset the partition nonce *before* decrypting / committing the
     // credential so the nonce that authenticated this request cannot
     // be replayed if a later step fails partway through.
-    pal.part_nonce_refresh(io)?;
+    {
+        let nonce = pal.dma_alloc(io, crate::part_state::NONCE_LEN)?;
+        pal.rng_fill_bytes(io, nonce)?;
+        crate::part_state::part_set_nonce(pal, io, nonce)?;
+    }
     decrypt_credential(pal, io, &mut body.encrypted_credential, aes_key).await?;
 
     // Fail-fast on null id or pin before doing the rest of the
-    // provisioning work.  `part_set_credential` (called at the final
-    // commit) also rejects null credentials; this early check
+    // provisioning work.  The CREDENTIAL prop setter (called at the
+    // final commit) also rejects null halves; this early check
     // preserves the historical error ordering and avoids wasting
     // BK3 / MK / BMK derivation effort on requests we know will be
     // rejected.
@@ -122,7 +126,7 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
         return Err(HsmError::InvalidAppCredentials);
     }
 
-    // Credential commit (`part_set_credential` / `part_clear_establish_cred_key`)
+    // Credential commit (CREDENTIAL prop write / `part_clear_establish_cred_key`)
     // and BK3 session commit (`part_set_bk3_session`) are intentionally
     // deferred to the final atomic-commit block at the end of this
     // handler.  Deferring lets a failure in steps 8-13 (e.g. tampered
@@ -143,8 +147,8 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // `bk3_session_set` flag unchanged.
 
     // ── Step 10: Derive partition BK ─────────────────────────────────
-    let svn = pal.part_svn(io)?;
-    let bks2_id = pal.part_bks2_id(io)?;
+    let svn = crate::part_state::part_svn(pal, io)?;
+    let bks2_id = crate::part_state::part_bks2_id(pal, io)?;
     let bk = pal.dma_alloc(io, BK_LEN)?;
     derive_partition_bk(pal, io, bk3, body.pota_pub_key.raw, svn, bks2_id, bk).await?;
 
@@ -173,23 +177,31 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     //
     // Under the partition lock, every call below is effectively
     // infallible:
-    // - `part_set_credential` validates length and non-zero id/pin;
-    //   both are pre-checked above so this cannot fail here.
+    // - CREDENTIAL prop write validates length, write-once, and
+    //   non-zero id/pin; both halves are pre-checked above so this
+    //   cannot fail here.
     // - `part_set_bk3_session` validates length (48 B); `bk3_session`
     //   is allocated with `BK3_LEN = 48`.
     // - `part_clear_establish_cred_key` and `part_set_mk_key_id` only
     //   fail if the partition is disabled, which is prevented by the
     //   partition-enabled check at the start of `handle_io`.
     //
-    // `part_set_credential` is committed first so a (theoretical)
+    // The CREDENTIAL prop write is committed first so a (theoretical)
     // failure here triggers `mk_guard`'s Drop, which removes the
     // provisional MK vault entry. The establish-cred encryption key
     // is cleared only after the credential commit succeeds, so the
     // host can always retry on failure.
-    pal.part_set_credential(io, id, pin)?;
-    pal.part_set_bk3_session(io, bk3_session)?;
-    pal.part_clear_establish_cred_key(io)?;
-    pal.part_set_mk_key_id(io, mk_key_id)?;
+    // Compose `id ‖ pin` into a 32 B DmaBuf for the property setter.
+    // The CREDENTIAL prop setter enforces the write-once invariant and
+    // the all-zero half rejection (the latter is also pre-checked
+    // above to preserve the historical error ordering).
+    let cred = pal.dma_alloc(io, 2 * CRED_FIELD_LEN)?;
+    cred[..CRED_FIELD_LEN].copy_from_slice(id);
+    cred[CRED_FIELD_LEN..].copy_from_slice(pin);
+    crate::part_state::part_set_credential(pal, io, cred)?;
+    crate::part_state::part_set_bk3_session(pal, io, bk3_session)?;
+    crate::part_state::part_clear_establish_cred_key(pal, io)?;
+    crate::part_state::part_set_mk_key_id(pal, io, mk_key_id)?;
     mk_guard.dismiss();
 
     Ok(resp)
@@ -220,12 +232,12 @@ fn check_fail_fast<P: HsmPal>(
     io: &impl HsmIo,
     body: &DdiEstablishCredentialReq<'_>,
 ) -> HsmResult<()> {
-    pal.part_verify_nonce(io, body.encrypted_credential.nonce)?;
+    crate::part_state::part_verify_nonce(pal, io, body.encrypted_credential.nonce)?;
 
-    if pal.part_is_credential_set(io)? {
+    if crate::part_state::part_is_credential_set(pal, io)? {
         return Err(HsmError::VaultAppLimitReached);
     }
-    if pal.part_is_provisioned(io)? {
+    if crate::part_state::part_is_provisioned(pal, io)? {
         return Err(HsmError::PartitionAlreadyProvisioned);
     }
 
@@ -265,10 +277,13 @@ async fn verify_pota_signature<P: HsmPal>(
 ) -> HsmResult<()> {
     // `part_id_pub_key` returns the raw `x ‖ y` form (96 B); prepend
     // the SEC1 `0x04` uncompressed-point tag in a fresh DMA buffer.
-    let id_pub_key_len = pal.part_id_pub_key(io, None)?;
+    let id_pub_key_len = crate::part_state::part_id_pub_key(pal, io)?.len();
     let id_uncompressed = pal.dma_alloc(io, id_pub_key_len + 1)?;
     id_uncompressed[0] = 0x04;
-    pal.part_id_pub_key(io, Some(&mut id_uncompressed[1..]))?;
+    {
+        let pk = crate::part_state::part_id_pub_key(pal, io)?;
+        id_uncompressed[1..].copy_from_slice(&pk[..id_pub_key_len]);
+    }
 
     let digest = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
     pal.hash(io, HsmHashAlgo::Sha384, id_uncompressed, digest, true)
@@ -306,9 +321,11 @@ async fn derive_credential_keys<P: HsmPal>(
     nonce: &DmaBuf,
     okm_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    let est_cred_key_id = pal
-        .part_establish_cred_key_id(io)?
-        .ok_or(HsmError::KeyNotFound)?;
+    let est_cred_key_id = match crate::part_state::part_establish_cred_key_id(pal, io) {
+        Ok(id) => id,
+        Err(HsmError::PartPropNotFound) => return Err(HsmError::KeyNotFound),
+        Err(e) => return Err(e),
+    };
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
@@ -435,9 +452,12 @@ async fn unmask_partition_bk3<P: HsmPal>(
     masked_bk3: &mut DmaBuf,
     bk3_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    let bk_boot_len = pal.part_bk_boot(io, None)?;
+    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
     let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    pal.part_bk_boot(io, Some(bk_boot))?;
+    {
+        let src = crate::part_state::part_bk_boot(pal, io)?;
+        bk_boot.copy_from_slice(&src[..bk_boot_len]);
+    }
 
     let layout = unmask(pal, io, bk_boot, masked_bk3).await?;
     if layout.plaintext_max_len < BK3_LEN {
@@ -478,12 +498,11 @@ async fn derive_bk3_session<P: HsmPal>(
 ///
 /// SP 800-108 KBKDF-HMAC-SHA-384 keyed on `bk3` with
 /// `label = "PARTITION_BK" ‖ signer_pub_key` and
-/// `context = BKS1 ‖ BKS2` (contributed by the PAL via
-/// [`HsmPart::derive_masking_key`]).
+/// `context = MFGR_SEED[svn] ‖ DEV_OWNER_SEED[bks2_id]` (read from
+/// the PAL via [`derive_masking_key`]).
 ///
-/// [`HsmPart::derive_masking_key`] takes `label: &[u8]` (not
-/// `&DmaBuf`), so the label is built on the stack — no DMA alloc
-/// needed for it.
+/// [`derive_masking_key`] takes `label: &[u8]` (not `&DmaBuf`), so
+/// the label is built on the stack — no DMA alloc needed for it.
 ///
 /// `signer_pub_key` must be exactly 96 bytes (P-384 raw `x ‖ y`).
 /// `bk_out` must be exactly [`BK_LEN`] (80) bytes.
@@ -500,8 +519,85 @@ async fn derive_partition_bk<P: HsmPal>(
     bk_label[..PARTITION_BK_LABEL.len()].copy_from_slice(PARTITION_BK_LABEL);
     bk_label[PARTITION_BK_LABEL.len()..].copy_from_slice(signer_pub_key);
 
-    pal.derive_masking_key(io, bk3, &bk_label, &[], svn, bks2_id, bk_out)
-        .await
+    derive_masking_key(pal, io, bk3, &bk_label, &[], svn, bks2_id, bk_out).await
+}
+
+/// Derives a masking key via SP 800-108 KBKDF-HMAC-SHA-384.
+///
+/// The effective KDF context is
+/// `MFGR_SEED[svn] ‖ DEV_OWNER_SEED[bks2_id] ‖ extra_context`.  The
+/// two seed rows are PAL-private root-of-trust material exposed
+/// through [`PartPropId::MFGR_SEED`] / [`PartPropId::DEV_OWNER_SEED`]
+/// (sensitive, indexed, read-only); the KDK is caller-supplied so the
+/// same primitive can derive multiple flavours of masking key:
+///
+/// | Derivation | KDK | `label` | `extra_context` |
+/// |---|---|---|---|
+/// | `BKx` for `Masked_BK_BOOT` | `fw_seed` | `b"BK_BOOT_MK_DEFAULT"` | `&[]` |
+/// | Partition `BK` | partition `BK3` | `b"PARTITION_BK" ‖ pota_pub_key` | `&[]` |
+///
+/// # Parameters
+///
+/// - `kdk` — KBKDF key-derivation key, already DMA-resident.
+/// - `label` — KBKDF purpose label; `&[]` permitted (no label).
+/// - `extra_context` — caller-supplied context suffix appended after
+///   the seed rows.  `&[]` permitted.
+/// - `svn` — selects the [`PartPropId::MFGR_SEED`] row (`0..64`).
+/// - `bks2_id` — selects the [`PartPropId::DEV_OWNER_SEED`] row
+///   (`0..64`).
+/// - `output` — DMA-accessible destination; `output.len()` bytes are
+///   written.
+///
+/// # Errors
+///
+/// - [`HsmError::InvalidArg`] — `svn` ≥ 64, or PAL-layer validation
+///   failure (e.g. partition not in a serving state).
+/// - [`HsmError::PartPropNotFound`] — PAL has not provisioned a row
+///   for the requested `(svn, bks2_id)`.
+/// - [`HsmError::NotEnoughSpace`] — DMA arena exhausted.
+/// - Errors propagated from the underlying SP 800-108 driver.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn derive_masking_key<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    kdk: &DmaBuf,
+    label: &[u8],
+    extra_context: &[u8],
+    svn: u64,
+    bks2_id: u16,
+    output: &mut DmaBuf,
+) -> HsmResult<()> {
+    let mfgr = crate::part_state::part_mfgr_seed(pal, io, svn)?;
+    let dev_owner = crate::part_state::part_dev_owner_seed(pal, io, bks2_id)?;
+
+    let mfgr_len = mfgr.len();
+    let dev_owner_len = dev_owner.len();
+    let ctx_len = mfgr_len + dev_owner_len + extra_context.len();
+    let ctx = pal.dma_alloc(io, ctx_len)?;
+    {
+        let (mfgr_slot, rest) = ctx.split_at_mut(mfgr_len);
+        let (dev_slot, extra_slot) = rest.split_at_mut(dev_owner_len);
+        mfgr_slot.copy_from_slice(mfgr);
+        dev_slot.copy_from_slice(dev_owner);
+        if !extra_context.is_empty() {
+            extra_slot.copy_from_slice(extra_context);
+        }
+    }
+
+    let label_dma = pal.dma_alloc(io, label.len())?;
+    if !label.is_empty() {
+        label_dma.copy_from_slice(label);
+    }
+
+    pal.sp800_108_kdf(
+        io,
+        HsmHashAlgo::Sha384,
+        kdk,
+        Some(label_dma),
+        Some(ctx),
+        output,
+    )
+    .await
 }
 
 /// Provisions the partition masking key (MK) in the vault.

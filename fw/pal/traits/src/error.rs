@@ -307,7 +307,7 @@ pub enum HsmError {
     /// One-shot enforcement matching [`Self::PtaKeyAlreadySet`]: the
     /// only path to a fresh UMS binding is via a full partition
     /// free/realloc cycle.
-    UmsKeyAlreadySet = 0x087000FD,
+    UpsKeyAlreadySet = 0x087000FD,
 
     /// A partition operation required the Unique Machine Secret (UMS)
     /// vault key but `PartInit` has not yet successfully bound one
@@ -315,6 +315,16 @@ pub enum HsmError {
     /// [`HsmPartitionManager::part_ums_key_id`](crate::HsmPartitionManager::part_ums_key_id)
     /// when the slot is empty.
     UmsKeyNotSet = 0x087000FE,
+
+    /// Returned by the property-based getters on
+    /// [`HsmPartitionManager`](crate::HsmPartitionManager)
+    /// (`part_prop_get_*` / `part_prop_get_bytes`) when the addressed
+    /// `(PartPropId, idx)` slot is absent (i.e. has not been
+    /// populated, or was last
+    /// [`part_prop_clear`](crate::HsmPartitionManager::part_prop_clear)ed).
+    /// Distinct from [`HsmError::InvalidArg`], which signals a
+    /// caller bug (unknown id, out-of-range idx, kind mismatch, etc.).
+    PartPropNotFound = 0x087000FF,
 }
 
 impl core::fmt::Debug for HsmError {

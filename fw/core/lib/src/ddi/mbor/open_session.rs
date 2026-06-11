@@ -18,7 +18,7 @@
 //!    split into a 32-byte AES key and a 48-byte HMAC key.
 //! 4. HMAC-SHA-384 verify the encrypted credential tag over
 //!    `enc_id ‖ enc_pin ‖ enc_seed ‖ iv ‖ nonce`.
-//! 5. `part_nonce_refresh` — consume the nonce so a replayed request
+//! 5. `part_set_nonce` — consume the nonce so a replayed request
 //!    cannot survive any later failure.
 //! 6. AES-CBC-256 decrypt id (16 B) → pin (16 B) → seed (48 B) in
 //!    place, chaining IVs across blocks just like the host wrap.
@@ -94,7 +94,11 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     // Reset the partition nonce *before* decrypting / verifying the
     // credential so the nonce that authenticated this request cannot
     // be replayed if a later step fails partway through.
-    pal.part_nonce_refresh(io)?;
+    {
+        let nonce = pal.dma_alloc(io, crate::part_state::NONCE_LEN)?;
+        pal.rng_fill_bytes(io, nonce)?;
+        crate::part_state::part_set_nonce(pal, io, nonce)?;
+    }
     decrypt_session_credential(pal, io, &mut body.encrypted_credential, aes_key).await?;
 
     // ── Step 6: Verify decrypted credential matches persisted ────────
@@ -103,15 +107,18 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     if id == [0u8; CRED_FIELD_LEN] || pin == [0u8; CRED_FIELD_LEN] {
         return Err(HsmError::InvalidAppCredentials);
     }
-    pal.part_verify_credential(io, id, pin)?;
+    crate::part_state::part_verify_credential(pal, io, id, pin)?;
 
     // ── Step 7: Fresh MK_SESSION + derived BK_SESSION ────────────────
     let mk_session = pal.dma_alloc(io, BK_LEN)?;
     pal.rng_fill_bytes(io, mk_session)?;
 
-    let bk_boot_len = pal.part_bk_boot(io, None)?;
+    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
     let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    pal.part_bk_boot(io, Some(bk_boot))?;
+    {
+        let src = crate::part_state::part_bk_boot(pal, io)?;
+        bk_boot.copy_from_slice(&src[..bk_boot_len]);
+    }
 
     let bk_session = pal.dma_alloc(io, BK_LEN)?;
     let session_bk_label = pal.dma_alloc(io, SESSION_BK_LABEL.len())?;
@@ -139,8 +146,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         sess_id,
         bk_session,
         mk_session,
-        pal.part_svn(io)?,
-        pal.part_bks2_id(io)?,
+        crate::part_state::part_svn(pal, io)?,
+        crate::part_state::part_bks2_id(pal, io)?,
     )
     .await?;
 
@@ -176,17 +183,17 @@ fn check_fail_fast<P: HsmPal>(
     // partition: NonceMismatch could be hit by any random replay,
     // whereas CredentialsNotEstablished tells the host it must
     // EstablishCredential first.
-    if !pal.part_is_credential_set(io)? {
+    if !crate::part_state::part_is_credential_set(pal, io)? {
         return Err(HsmError::CredentialsNotEstablished);
     }
-    if !pal.part_is_provisioned(io)? {
+    if !crate::part_state::part_is_provisioned(pal, io)? {
         return Err(HsmError::PartitionNotProvisioned);
     }
     if pal.session_limit_reached(io) {
         return Err(HsmError::VaultSessionLimitReached);
     }
 
-    pal.part_verify_nonce(io, body.encrypted_credential.nonce)?;
+    crate::part_state::part_verify_nonce(pal, io, body.encrypted_credential.nonce)?;
 
     if body.pub_key.key_kind != DdiKeyType::Ecc384Public {
         return Err(HsmError::InvalidKeyType);
@@ -213,7 +220,7 @@ async fn derive_session_credential_keys<P: HsmPal>(
     nonce: &DmaBuf,
     okm_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    let sess_enc_key_id = pal.part_session_enc_key_id(io)?;
+    let sess_enc_key_id = crate::part_state::part_session_enc_key_id(pal, io)?;
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {

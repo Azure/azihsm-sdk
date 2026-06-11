@@ -29,7 +29,7 @@ pub(crate) fn set_sealed_bk3<'p, P: HsmPal>(
     hdr: &DdiReqHdr,
 ) -> HsmResult<&'p DmaBuf> {
     let body: DdiSetSealedBk3Req<'_> = decoder.decode_data()?;
-    pal.part_set_sealed_bk3(io, body.sealed_bk3)?;
+    crate::part_state::part_set_sealed_bk3(pal, io, body.sealed_bk3)?;
 
     let resp_hdr = super::success_hdr(hdr, DdiOp::SetSealedBk3);
     let resp_data = DdiSetSealedBk3Resp {};

@@ -13,7 +13,6 @@ use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::APP_ID_LEN;
-use azihsm_fw_hsm_pal_traits::PSK_LEN;
 
 /// Returns the public AppId bound to `sess_id`'s partition PSK slot.
 ///
@@ -51,13 +50,10 @@ pub fn session_app_id<P: HsmPal>(
 ) -> HsmResult<[u8; APP_ID_LEN]> {
     let psk_id = u8::from(sess_id.role() == azihsm_fw_hsm_pal_traits::SessionRole::CryptoUser);
 
-    let mut psk = [0u8; PSK_LEN];
-    let res = pal.part_psk(io, psk_id, Some(&mut psk[..]));
-
     let mut app_id = [0u8; APP_ID_LEN];
-    if res.is_ok() {
-        app_id.copy_from_slice(&psk[..APP_ID_LEN]);
+    let res = crate::part_state::part_psk(pal, io, psk_id);
+    if let Ok(psk_buf) = res.as_ref() {
+        app_id.copy_from_slice(&psk_buf[..APP_ID_LEN]);
     }
-    psk.fill(0);
     res.map(|_| app_id)
 }

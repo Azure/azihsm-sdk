@@ -106,7 +106,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // view.  `part_psk_set` is synchronous and takes `&[u8]`, so
         // the borrow ends with the call — no need for a separate
         // scratch buffer.
-        pal.part_psk_set(io, target_psk_id, aead_view.payload)?;
+        crate::part_state::part_set_psk(pal, io, target_psk_id, aead_view.payload)?;
 
         encode_response(pal, io)
     })

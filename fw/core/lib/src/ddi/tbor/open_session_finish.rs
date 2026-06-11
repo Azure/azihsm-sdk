@@ -256,10 +256,13 @@ fn load_pk_hsm<'a, P: HsmPal>(
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let xy_len = pal.part_id_pub_key(io, None)?;
+    let xy_len = crate::part_state::part_id_pub_key(pal, io)?.len();
     let pk_hsm = alloc.dma_alloc(xy_len + 1)?;
     pk_hsm[0] = 0x04;
-    pal.part_id_pub_key(io, Some(&mut pk_hsm[1..1 + xy_len]))?;
+    {
+        let pk = crate::part_state::part_id_pub_key(pal, io)?;
+        pk_hsm[1..1 + xy_len].copy_from_slice(&pk[..xy_len]);
+    }
     Ok(pk_hsm)
 }
 
@@ -436,8 +439,8 @@ async fn build_bmk_session<'a, P: HsmPal>(
 ) -> HsmResult<&'a mut DmaBuf> {
     let bk_session = derive_bk_session(pal, io, alloc, seed).await?;
 
-    let svn = pal.part_svn(io)?;
-    let owner_seed_id = pal.part_bks2_id(io)?;
+    let svn = crate::part_state::part_svn(pal, io)?;
+    let owner_seed_id = crate::part_state::part_bks2_id(pal, io)?;
 
     // `key_label` must be a DmaBuf per the masking-lib API; stage
     // the constant label into one.
@@ -487,9 +490,12 @@ async fn derive_bk_session<'a, P: HsmPal>(
     alloc: &'a impl HsmScopedAlloc,
     seed: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let bk_boot_len = pal.part_bk_boot(io, None)?;
+    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
     let bk_boot = alloc.dma_alloc(bk_boot_len)?;
-    pal.part_bk_boot(io, Some(&mut bk_boot[..]))?;
+    {
+        let src = crate::part_state::part_bk_boot(pal, io)?;
+        bk_boot.copy_from_slice(&src[..bk_boot_len]);
+    }
 
     let label = alloc.dma_alloc(SESSION_BK_LABEL.len())?;
     label.copy_from_slice(SESSION_BK_LABEL);

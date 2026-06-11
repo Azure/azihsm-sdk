@@ -14,6 +14,7 @@ mod error;
 mod hsm;
 mod io;
 mod op;
+pub mod part_state;
 mod session;
 
 use azihsm_fw_hsm_core_tracing::*;

@@ -153,7 +153,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         if is_in_session(opcode) && !allowed_with_default_psk(opcode) {
             let sess_id = extract_session_id(&view)?;
             let psk_id = psk_id_for_role(sess_id.role());
-            if pal.part_psk_is_default(io, psk_id)? {
+            if crate::part_state::part_psk_is_default(pal, io, psk_id)? {
                 return Err(HsmError::DefaultPskMustRotate);
             }
         }

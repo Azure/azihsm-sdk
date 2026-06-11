@@ -141,12 +141,12 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
     let _lock = pal.partition_lock(io).await?;
 
     // Fail-fast; the authoritative commit below re-checks atomically.
-    if pal.part_is_bk3_initialized(io)? {
+    if crate::part_state::part_is_bk3_initialized(pal, io)? {
         return Err(HsmError::Bk3AlreadyInitialized);
     }
 
-    let svn = pal.part_svn(io)?;
-    let bks2_id = pal.part_bks2_id(io)?;
+    let svn = crate::part_state::part_svn(pal, io)?;
+    let bks2_id = crate::part_state::part_bks2_id(pal, io)?;
     let metadata = DdiMaskedKeyMetadata {
         svn,
         key_type: DdiKeyType::AesCbc256Hmac384,
@@ -160,17 +160,19 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
     };
 
     // Single combined alloc for BK_BOOT + BKx (both live simultaneously
-    // during the second mask call below).  `part_bk_boot(None)` queries
-    // the canonical BK_BOOT length without copying any bytes.
-    let bk_boot_len = pal.part_bk_boot(io, None)?;
+    // during the second mask call below).
+    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
     let keys_dma = pal.dma_alloc(io, 2 * bk_boot_len)?;
     let (bk_boot_dma, bkx_dma) = keys_dma.split_at_mut(bk_boot_len);
-    pal.part_bk_boot(io, Some(bk_boot_dma))?;
+    {
+        let bk = crate::part_state::part_bk_boot(pal, io)?;
+        bk_boot_dma.copy_from_slice(&bk[..bk_boot_len]);
+    }
 
     // Size-only query (no crypto).
     let masked_bk3_len = mask(pal, io, bk_boot_dma, body.bk3, &metadata, None).await?;
 
-    let vm_launch_guid_len = pal.part_vm_launch_guid(io, None)?;
+    let vm_launch_guid_len = crate::part_state::part_vm_launch_guid(pal, io)?.len();
 
     // Reserve the response buffer (encoder-frame-then-fill).  The async
     // mask call below operates on the buffer materialized via
@@ -211,10 +213,15 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
 
     // Derive BKx per-call from the PAL's fw_seed bound to (svn,
     // bks2_id).  The key materializes only inside `bkx_dma`; no BKx
-    // value crosses the trait boundary.
-    pal.derive_masking_key(
+    // value crosses the trait boundary.  `derive_masking_key` lives
+    // in `super::establish_credential` because that handler is the
+    // primary user; it reads the MFGR_SEED / DEV_OWNER_SEED rows
+    // from the PAL via the property API.
+    let fw_seed = crate::part_state::part_fw_seed(pal, io)?;
+    super::derive_masking_key(
+        pal,
         io,
-        pal.fw_seed(),
+        fw_seed,
         BK_BOOT_MK_LABEL,
         &[],
         svn,
@@ -238,14 +245,19 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
     )
     .await?;
 
-    pal.part_set_masked_bk_boot(io, masked_bk_boot_dma)?;
+    crate::part_state::part_set_masked_bk_boot(pal, io, masked_bk_boot_dma)?;
 
-    pal.part_vm_launch_guid(io, Some(frame.vm_launch_guid))?;
+    {
+        let guid = crate::part_state::part_vm_launch_guid(pal, io)?;
+        frame
+            .vm_launch_guid
+            .copy_from_slice(&guid[..vm_launch_guid_len]);
+    }
 
     // Authoritative one-shot commit; must be the last fallible op so a
     // failure here cannot leave the partition in `Initialized` state
     // without the host having received the masked BK3.
-    pal.part_mark_bk3_initialized(io)?;
+    crate::part_state::part_mark_bk3_initialized(pal, io)?;
 
     Ok(resp)
 }
