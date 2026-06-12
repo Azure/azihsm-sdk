@@ -113,6 +113,7 @@ pub(crate) fn init_trace_file() {
         let subscriber = tracing_subscriber::registry().with(filter).with(
             fmt::layer()
                 .with_writer(writer)
+                .with_ansi(false)
                 .with_timer(fmt::time::SystemTime)
                 .with_thread_ids(true)
                 .with_target(true)
@@ -147,11 +148,14 @@ mod tests {
 
         // Re-invoke *this* test binary running only the helper test, with
         // the trace env vars set.  The helper emits a known marker event.
+        // The helper is #[ignore]d so it doesn't run as a no-op during
+        // normal test execution; --include-ignored allows us to invoke it.
         let exe = std::env::current_exe().expect("current_exe should be available");
         let status = std::process::Command::new(&exe)
             .arg("--exact")
-            .arg("tracing_subscriber::tests::trace_output_helper")
+            .arg("trace_file::tests::trace_output_helper")
             .arg("--nocapture")
+            .arg("--include-ignored")
             .env(TRACE_FILE_ENV_VAR, &trace_path)
             .env("RUST_LOG", "trace")
             .status()
@@ -167,11 +171,15 @@ mod tests {
             "trace file should contain the marker event, but got:\n{contents}"
         );
 
-        // Verify timestamps are UTC (end with 'Z').
+        // Verify the first line starts with an RFC 3339 UTC timestamp
+        // (e.g. "2026-06-12T17:13:42.223204Z").
         let first_line = contents.lines().next().unwrap_or("");
         assert!(
-            first_line.contains('Z'),
-            "timestamps should be UTC, but first line was:\n{first_line}"
+            first_line.len() > 30
+                && first_line.as_bytes()[4] == b'-'
+                && first_line.as_bytes()[10] == b'T'
+                && first_line.contains("Z "),
+            "first line should start with an RFC 3339 UTC timestamp, but was:\n{first_line}"
         );
 
         let _ = std::fs::remove_file(&trace_path);
@@ -180,6 +188,7 @@ mod tests {
     /// Helper test invoked as a subprocess by `trace_output_written_to_file`.
     /// Not meant to be run directly — it requires the trace env vars to be
     /// set by the parent process.
+    #[ignore]
     #[test]
     fn trace_output_helper() {
         init_trace_file();
