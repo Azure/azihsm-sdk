@@ -1,15 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! File-based tracing initialization for the native C API.
+//! File-based tracing initialization for the native API.
 //!
 //! When the environment variable `AZIHSM_API_NATIVE_TRACE_FILE` is set to a file
-//! path, this module installs a [`tracing_subscriber`] that writes all trace
-//! output to that file.  Initialization is idempotent and thread-safe thanks
-//! to [`std::sync::Once`].
+//! path, this module installs a `tracing_subscriber` that writes all trace
+//! output to that file. Initialization is idempotent and thread-safe thanks
+//! to `std::sync::Once`.
 //!
-//! By default the file is truncated on each run.  Set
-//! `AZIHSM_API_NATIVE_TRACE_FILE_APPEND=1` to append instead.
+//! By default, the file is truncated on each run.
+//! Set `AZIHSM_API_NATIVE_TRACE_FILE_APPEND=1` to append instead.
 //!
 //! If the environment variable is not set, or if any step of the
 //! initialization fails (file open, filter parse, subscriber install), the
