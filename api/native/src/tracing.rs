@@ -8,6 +8,9 @@
 //! output to that file.  Initialization is idempotent and thread-safe thanks
 //! to [`std::sync::Once`].
 //!
+//! By default the file is truncated on each run.  Set
+//! `AZIHSM_API_NATIVE_TRACE_FILE_APPEND=1` to append instead.
+//!
 //! If the environment variable is not set, or if any step of the
 //! initialization fails (file open, filter parse, subscriber install), the
 //! function silently returns without installing a subscriber.
@@ -21,6 +24,12 @@ use tracing_subscriber::prelude::*;
 
 /// Name of the environment variable that controls file-based tracing.
 const TRACE_FILE_ENV_VAR: &str = "AZIHSM_API_NATIVE_TRACE_FILE";
+
+/// Name of the environment variable that controls append mode.
+/// When set to `"1"`, the trace file is opened in append mode so that
+/// output from successive runs accumulates.  Any other value (or unset)
+/// causes the file to be truncated on each run.
+const TRACE_FILE_APPEND_ENV_VAR: &str = "AZIHSM_API_NATIVE_TRACE_FILE_APPEND";
 
 /// Ensures file-based tracing is initialized exactly once.
 ///
@@ -44,12 +53,18 @@ pub(crate) fn init_trace_file() {
             _ => return,
         };
 
+        // Check whether append mode is requested.
+        let append = matches!(std::env::var(TRACE_FILE_APPEND_ENV_VAR).as_deref(), Ok("1"));
+
         // Attempt to open/create the trace file.
-        let file = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&trace_path)
-        {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true);
+        if append {
+            opts.append(true);
+        } else {
+            opts.write(true).truncate(true);
+        }
+        let file = match opts.open(&trace_path) {
             Ok(f) => f,
             Err(_) => return,
         };
