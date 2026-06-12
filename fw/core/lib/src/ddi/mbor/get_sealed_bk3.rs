@@ -30,17 +30,19 @@ pub(crate) fn get_sealed_bk3<'p, P: HsmPal>(
 ) -> HsmResult<&'p DmaBuf> {
     let _body: DdiGetSealedBk3Req = decoder.decode_data()?;
 
-    let sealed_len = pal.part_sealed_bk3(io, None)?;
-    if sealed_len == 0 {
-        return Err(HsmError::SealedBk3NotPresent);
-    }
+    let sealed_len = match crate::part_state::part_sealed_bk3(pal, io) {
+        Ok(bytes) => bytes.len(),
+        Err(HsmError::PartPropNotFound) => return Err(HsmError::SealedBk3NotPresent),
+        Err(e) => return Err(e),
+    };
 
     let resp = pal.dma_alloc_var(io, |buf| {
         let mut encoder =
             super::encode_resp_hdr(&super::success_hdr(hdr, DdiOp::GetSealedBk3), buf)?;
         let frame = DdiGetSealedBk3Resp::frame(&mut encoder, sealed_len)?;
         let total = encoder.position();
-        pal.part_sealed_bk3(io, Some(frame.sealed_bk3))?;
+        let bytes = crate::part_state::part_sealed_bk3(pal, io)?;
+        frame.sealed_bk3.copy_from_slice(&bytes[..sealed_len]);
         Ok(total)
     })?;
 

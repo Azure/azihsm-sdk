@@ -27,7 +27,7 @@ pub(crate) fn get_device_info<'p, P: HsmPal>(
 
     let resp_data = DdiGetDeviceInfoResp {
         kind: DdiDeviceKind::Physical,
-        tables: pal.part_res_count(io).unwrap_or(0),
+        tables: crate::part_state::part_res_count(pal, io).unwrap_or(0),
         fips_approved: false,
     };
 

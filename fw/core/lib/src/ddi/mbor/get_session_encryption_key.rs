@@ -38,16 +38,16 @@ pub(crate) async fn get_session_encryption_key<'p, P: HsmPal>(
 ) -> HsmResult<&'p DmaBuf> {
     let _body: DdiGetSessionEncryptionKeyReq = decoder.decode_data()?;
 
-    if !pal.part_is_credential_set(io)? {
+    if !crate::part_state::part_is_credential_set(pal, io)? {
         return Err(HsmError::CredentialsNotEstablished);
     }
 
     // Query sizes, then encode header + frame with reserved slots.
-    let pub_key_len = pal.part_session_enc_pub_key(io, None)?;
-    let nonce_len = pal.part_nonce(io, None)?;
+    let pub_key_len = crate::part_state::part_session_enc_pub_key(pal, io)?.len();
+    let nonce_len = crate::part_state::part_nonce(pal, io)?.len();
 
     let digest = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
-    let id_priv_key = pal.vault_key(io, pal.part_id_key_id(io)?)?;
+    let id_priv_key = pal.vault_key(io, crate::part_state::part_id_key_id(pal, io)?)?;
 
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
         let mut encoder = super::encode_resp_hdr(
@@ -68,8 +68,14 @@ pub(crate) async fn get_session_encryption_key<'p, P: HsmPal>(
     let frame = DdiGetSessionEncryptionKeyResp::from_layout(resp, &layout);
 
     // Fill public key and nonce in-place.
-    pal.part_session_enc_pub_key(io, Some(frame.pub_key.raw))?;
-    pal.part_nonce(io, Some(frame.nonce))?;
+    {
+        let pk = crate::part_state::part_session_enc_pub_key(pal, io)?;
+        frame.pub_key.raw.copy_from_slice(&pk[..pub_key_len]);
+    }
+    {
+        let n = crate::part_state::part_nonce(pal, io)?;
+        frame.nonce.copy_from_slice(&n[..nonce_len]);
+    }
 
     // Hash pub key directly in wire-LE (PAL's `ecc_sign` digest
     // contract), then sign into the signature slot.

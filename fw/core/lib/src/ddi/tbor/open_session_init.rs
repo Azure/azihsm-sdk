@@ -96,7 +96,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal.alloc_scoped_async(io, async |alloc| {
         // ── Identity + PSK material (all on the scoped allocator) ──
         let psk = load_psk(pal, io, alloc, psk_id)?;
-        let key_id = pal.part_id_key_id(io)?;
+        let key_id = crate::part_state::part_id_key_id(pal, io)?;
         let sk_hsm = pal.vault_key(io, key_id)?;
         let pk_hsm = load_pk_hsm_sec1(pal, io, alloc)?;
 
@@ -195,7 +195,8 @@ fn load_psk<'a, P: HsmPal>(
     psk_id: u8,
 ) -> HsmResult<&'a mut DmaBuf> {
     let psk = alloc.dma_alloc(PSK_LEN)?;
-    pal.part_psk(io, psk_id, Some(&mut psk[..]))?;
+    let src = crate::part_state::part_psk(pal, io, psk_id)?;
+    psk.copy_from_slice(&src[..PSK_LEN]);
     Ok(psk)
 }
 
@@ -217,10 +218,13 @@ fn load_pk_hsm_sec1<'a, P: HsmPal>(
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let xy_len = pal.part_id_pub_key(io, None)?;
+    let xy_len = crate::part_state::part_id_pub_key(pal, io)?.len();
     let pk_hsm = alloc.dma_alloc(xy_len + 1)?;
     pk_hsm[0] = 0x04;
-    pal.part_id_pub_key(io, Some(&mut pk_hsm[1..1 + xy_len]))?;
+    {
+        let pk = crate::part_state::part_id_pub_key(pal, io)?;
+        pk_hsm[1..1 + xy_len].copy_from_slice(&pk[..xy_len]);
+    }
     Ok(pk_hsm)
 }
 

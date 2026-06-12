@@ -98,6 +98,9 @@ jobs:
       id: test-res-fault
       run: cargo xtask precheck --coverage --package azihsm_api_tests --features mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
       continue-on-error: true
+    - name: Free target/ before coverage build
+      # Freeing target/ directory to ensure disk space for coverage report generation
+      run: rm -rf target/debug target/tmp
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report

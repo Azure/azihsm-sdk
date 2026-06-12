@@ -87,7 +87,7 @@ pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 ///
 /// Matches the prior reference firmware's `VmLaunchGuid` size
 /// (16 bytes).
-pub(crate) const VM_LAUNCH_GUID_LEN: usize = 16;
+const VM_LAUNCH_GUID_LEN: usize = 16;
 
 /// Hardcoded std PAL VM launch GUID returned by
 /// [`HsmPartitionManager::part_vm_launch_guid`].
@@ -101,41 +101,32 @@ const STD_VM_LAUNCH_GUID: [u8; VM_LAUNCH_GUID_LEN] = [
 /// Hardcoded std PAL SVN returned by [`HsmPartitionManager::part_svn`].
 const STD_SVN: u64 = 0;
 
-/// Length of a single backup-key seed (`BKS1`, `BKS2`) row used by
-/// [`HsmPartitionManager::derive_masking_key`] in bytes.
+/// Length of a single backup-key seed (`MFGR_SEED`, `DEV_OWNER_SEED`)
+/// row in bytes.
 const BK_SEED_LEN: usize = 32;
 
-/// Hardcoded std PAL firmware boot seed used as the KDK input to
-/// [`HsmPartitionManager::derive_masking_key`].
+/// Hardcoded std PAL `MFGR_SEED` row 0 — manufacturer-provisioned
+/// 32 B seed exposed through [`PartPropId::MFGR_SEED`] at `idx = 0`.
 ///
-/// Real hardware reads this from a one-time-programmed, device-bound
-/// hardware register that is not visible outside the secure-world
-/// firmware.  The std PAL emulator uses a fixed pattern so tests are
-/// deterministic.  The seed never crosses the trait boundary; callers
-/// only see derived masking keys.
-const STD_FW_SEED: [u8; 48] = [0x42u8; 48];
-
-/// Hardcoded std PAL `BKS1` seed row used as the first half of the
-/// KDF context in [`HsmPartitionManager::derive_masking_key`].
-///
-/// Real hardware selects this row from a `BKS1` table indexed by SVN;
-/// the std PAL emulator has a single row because the simulator models
-/// a single SVN.  The bytes are taken from the prior reference
-/// firmware so derived masking keys are bit-compatible with persisted
+/// Real hardware exposes a 64-row table indexed by SVN; the std PAL
+/// emulator provisions only row 0 because the simulator models a
+/// single SVN.  The bytes are taken from the prior reference firmware
+/// so derived masking keys are bit-compatible with persisted
 /// `Masked_BK_BOOT` blobs across emulator and real hardware.
-const STD_BKS1: [u8; BK_SEED_LEN] = [
+const STD_MFGR_SEED_ROW0: [u8; BK_SEED_LEN] = [
     0x9b, 0x4e, 0x4e, 0xb7, 0xad, 0xab, 0xdc, 0xd6, 0xb4, 0xd5, 0x07, 0xeb, 0x68, 0xeb, 0x26, 0x99,
     0x2a, 0xbb, 0xca, 0xb5, 0x5c, 0xfb, 0x77, 0x3b, 0xc4, 0xd0, 0xa8, 0x8c, 0x21, 0x02, 0xb0, 0xac,
 ];
 
-/// Hardcoded std PAL `BKS2` seed row used as the second half of the
-/// KDF context in [`HsmPartitionManager::derive_masking_key`].
+/// Hardcoded std PAL `DEV_OWNER_SEED` row 0 — device-owner-provisioned
+/// 32 B seed exposed through [`PartPropId::DEV_OWNER_SEED`] at
+/// `idx = 0`.
 ///
-/// Real hardware selects this row from a `BKS2` table indexed by
-/// `bks2_index`; the std PAL emulator has a single row because the
-/// simulator models a single partition lineage.  The bytes are taken
-/// from the prior reference firmware for bit-compatibility.
-const STD_BKS2: [u8; BK_SEED_LEN] = [
+/// Real hardware exposes a 64-row table indexed by `bks2_index`; the
+/// std PAL emulator provisions only row 0 because the simulator
+/// models a single partition lineage.  The bytes are taken from the
+/// prior reference firmware for bit-compatibility.
+const STD_DEV_OWNER_SEED_ROW0: [u8; BK_SEED_LEN] = [
     0xad, 0x1a, 0x17, 0xe9, 0xed, 0x38, 0x27, 0x5e, 0x8b, 0x30, 0x5d, 0xb8, 0x19, 0x0f, 0x82, 0xb6,
     0x2d, 0xa2, 0x5a, 0xc6, 0xf0, 0x70, 0xa3, 0xe1, 0x75, 0x9c, 0x61, 0x92, 0xcc, 0xf4, 0x19, 0xa3,
 ];
@@ -212,20 +203,20 @@ pub(crate) struct PartitionEntry {
 
     /// Vault key ID for the establish-credential encryption ECC-384 key.
     /// `None` before enable or after one-time clear.
-    pub(crate) establish_cred_key_id: Option<HsmKeyId>,
+    establish_cred_key_id: Option<HsmKeyId>,
 
     /// DER-encoded public key for establish-credential encryption.
     establish_cred_pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// Vault key ID for the session encryption ECC-384 key.
     /// `None` before enable.
-    pub(crate) session_enc_key_id: Option<HsmKeyId>,
+    session_enc_key_id: Option<HsmKeyId>,
 
     /// Raw public key coordinates (x ∥ y) for session encryption.
     session_enc_pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// 32-byte random nonce, generated on enable and refreshable.
-    pub(crate) nonce: [u8; NONCE_LEN],
+    nonce: [u8; NONCE_LEN],
 
     /// Sealed BK3 blob — up to 512 bytes of opaque data.
     sealed_bk3: [u8; SEALED_BK3_SIZE],
@@ -273,13 +264,9 @@ pub(crate) struct PartitionEntry {
     /// one-shot gate for `InitBk3`.
     bk3_initialized: bool,
 
-    /// User credential ID (16 bytes).  Zeroed until set by
-    /// `part_set_credential`.
-    credential_id: [u8; 16],
-
-    /// User credential PIN (16 bytes).  Zeroed until set by
-    /// `part_set_credential`.
-    credential_pin: [u8; 16],
+    /// User credential blob (`id ‖ pin`, 16 + 16 = 32 bytes).  Zeroed
+    /// until set via the `CREDENTIAL` property.
+    credential: [u8; 32],
 
     /// Whether the user credential has been set for this incarnation.
     credential_set: bool,
@@ -312,7 +299,7 @@ pub(crate) struct PartitionEntry {
     /// bound by `PartInit`.  `None` until the one-shot
     /// [`HsmPartitionManager::part_set_ums_key`] succeeds; cleared on
     /// `part_disable`.
-    ums_key_id: Option<HsmKeyId>,
+    ups_key_id: Option<HsmKeyId>,
 
     /// SEC1 uncompressed P-384 public key for the Partition Trust Anchor.
     pta_pub_sec1: Option<[u8; P384_PUB_SEC1_LEN]>,
@@ -352,8 +339,7 @@ impl Default for PartitionEntry {
             masked_bk_boot_len: 0,
             vm_launch_guid: [0u8; VM_LAUNCH_GUID_LEN],
             bk3_initialized: false,
-            credential_id: [0u8; 16],
-            credential_pin: [0u8; 16],
+            credential: [0u8; 32],
             credential_set: false,
             bk3_session: [0u8; 48],
             bk3_session_set: false,
@@ -362,7 +348,7 @@ impl Default for PartitionEntry {
             psk_co: None,
             psk_cu: None,
             pta_key_id: None,
-            ums_key_id: None,
+            ups_key_id: None,
             pta_pub_sec1: None,
             part_policy_buf: None,
             pota_thumbprint: None,
@@ -454,498 +440,105 @@ pub enum PartCommand {
 // ---------------------------------------------------------------------------
 
 impl HsmPartitionManager for StdHsmPal {
-    /// Returns the current state of the calling partition (`io.pid()`).
-    fn part_state(&self, io: &impl HsmIo) -> HsmResult<PartState> {
-        // SAFETY: Embassy is single-threaded. This synchronous method
-        // completes without yielding, so no concurrent mutation occurs.
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(io.pid()) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(table.entries[idx].state)
+    // ─── Property API ──────────────────────────────────────────────────
+    //
+    // Forwarding shims to the inherent `prop_*` implementations on
+    // [`StdHsmPal`] declared in [`crate::part_prop`].  All validation,
+    // lifecycle gating, and dispatch into [`PartitionEntry`] lives in
+    // that module; the methods below exist solely to attach the
+    // implementation to the trait.
+
+    fn part_prop_get_u8(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u8> {
+        self.prop_get_u8(io, id, idx)
     }
 
-    /// Returns the resource count allocated to the calling partition.
-    fn part_res_count(&self, io: &impl HsmIo) -> HsmResult<u8> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(io.pid()) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        let entry = &table.entries[idx];
-        if entry.state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(entry.res_mask.count_ones() as u8)
-    }
-
-    /// Returns the 16-byte identity blob for the calling partition.
-    fn part_id(&self, io: &impl HsmIo) -> HsmResult<PartId<'_>> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(io.pid()) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        let entry = &table.entries[idx];
-        if entry.state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&entry.id)
-    }
-
-    fn part_id_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-        self.active_part(io.pid())?
-            .id_key_id
-            .ok_or(HsmError::InternalError)
-    }
-
-    fn part_id_pub_key(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.active_part(io.pid())?.id_pub_key, out)
-    }
-
-    fn part_establish_cred_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
-        Ok(self.enabled_part(u8::from(io.pid()))?.establish_cred_key_id)
-    }
-
-    fn part_establish_cred_pub_key(
+    fn part_prop_set_u8(
         &self,
         io: &impl HsmIo,
-        out: Option<&mut [u8]>,
-    ) -> HsmResult<usize> {
-        // Stored internally as big-endian `x ∥ y` (OpenSSL convention).
-        // The wire contract — matching real PKA hardware — is
-        // little-endian, and the host-side `post_decode_fn` on
-        // `DdiDerPublicKey` reverses each coord back to big-endian
-        // before DER-encoding.  Reverse each coord here so the wire
-        // bytes are LE.
-        let raw = &self
-            .enabled_part(u8::from(io.pid()))?
-            .establish_cred_pub_key;
-        copy_out_pub_key_le(raw, out)
-    }
-
-    fn part_session_enc_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-        self.enabled_part(u8::from(io.pid()))?
-            .session_enc_key_id
-            .ok_or(HsmError::InternalError)
-    }
-
-    fn part_session_enc_pub_key(
-        &self,
-        io: &impl HsmIo,
-        out: Option<&mut [u8]>,
-    ) -> HsmResult<usize> {
-        // Stored internally as big-endian `x ∥ y` (OpenSSL convention).
-        // The wire contract — matching real PKA hardware — is
-        // little-endian, and the host-side `post_decode_fn` on
-        // `DdiDerPublicKey` reverses each coord back to big-endian
-        // before DER-encoding.  Reverse each coord here so the wire
-        // bytes are LE.
-        let raw = &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key;
-        copy_out_pub_key_le(raw, out)
-    }
-
-    fn part_clear_establish_cred_key(&self, io: &impl HsmIo) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
-        if let Some(kid) = entry.establish_cred_key_id.take() {
-            let _ = entry.vault.delete(kid);
-        }
-        entry.establish_cred_pub_key.fill(0);
-        Ok(())
-    }
-
-    fn part_nonce(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.enabled_part(u8::from(io.pid()))?.nonce, out)
-    }
-
-    fn part_nonce_refresh(&self, io: &impl HsmIo) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
-        Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
-    }
-
-    fn part_sealed_bk3(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.active_part(io.pid())?;
-        let len = entry.sealed_bk3_len as usize;
-        copy_out(&entry.sealed_bk3[..len], out)
-    }
-
-    fn part_set_sealed_bk3(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
-        let entry = self.active_part_mut(io.pid())?;
-        if entry.sealed_bk3_len != 0 {
-            return Err(HsmError::SealedBk3AlreadySet);
-        }
-        if data.len() > SEALED_BK3_SIZE {
-            return Err(HsmError::SealedBk3TooLarge);
-        }
-        entry.sealed_bk3[..data.len()].copy_from_slice(data);
-        entry.sealed_bk3_len = data.len() as u32;
-        Ok(())
-    }
-
-    fn part_vm_launch_guid(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.active_part(io.pid())?;
-        copy_out(&entry.vm_launch_guid, out)
-    }
-
-    fn part_svn(&self, io: &impl HsmIo) -> HsmResult<u64> {
-        // Validate enabled state but discard the borrow; the value is a
-        // platform constant on the std PAL.
-        let _entry = self.active_part(io.pid())?;
-        Ok(STD_SVN)
-    }
-
-    fn part_bks2_id(&self, io: &impl HsmIo) -> HsmResult<u16> {
-        // No BKS2 selector modelled in the emulator; return slot 0 for
-        // wire-format compatibility.
-        let _entry = self.active_part(io.pid())?;
-        Ok(0)
-    }
-
-    fn part_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.active_part(io.pid())?;
-        if let Some(buf) = out {
-            if buf.len() < BK_BOOT_LEN {
-                return Err(HsmError::InvalidArg);
-            }
-            buf[..BK_BOOT_LEN].copy_from_slice(&entry.bk_boot);
-        }
-        Ok(BK_BOOT_LEN)
-    }
-
-    fn part_is_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<bool> {
-        let entry = self.enabled_part(u8::from(io.pid()))?;
-        Ok(entry.bk3_initialized)
-    }
-
-    fn part_mark_bk3_initialized(&self, io: &impl HsmIo) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
-        if entry.bk3_initialized {
-            return Err(HsmError::Bk3AlreadyInitialized);
-        }
-        entry.bk3_initialized = true;
-        Ok(())
-    }
-
-    fn part_masked_bk_boot(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.enabled_part(u8::from(io.pid()))?;
-        let len = entry.masked_bk_boot_len as usize;
-        copy_out(&entry.masked_bk_boot[..len], out)
-    }
-
-    fn part_set_masked_bk_boot(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
-        if data.len() > MASKED_BK_BOOT_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
-        entry.masked_bk_boot[..data.len()].copy_from_slice(data);
-        entry.masked_bk_boot_len = data.len() as u32;
-        Ok(())
-    }
-
-    fn fw_seed(&self) -> &[u8] {
-        &STD_FW_SEED
-    }
-
-    async fn derive_masking_key(
-        &self,
-        io: &impl HsmIo,
-        kdk: &[u8],
-        label: &[u8],
-        extra_context: &[u8],
-        svn: u64,
-        bks2_index: u16,
-        output: &mut DmaBuf,
+        id: PartPropId,
+        idx: u16,
+        value: u8,
     ) -> HsmResult<()> {
-        self.active_part(io.pid())?;
-
-        // Std PAL models a single SVN + single BKS2 lineage; reject any
-        // out-of-range selector.
-        if svn != 0 || bks2_index != 0 {
-            return Err(HsmError::InvalidArg);
-        }
-
-        // Co-locate all KDF inputs (KDK, label, context) in one DMA
-        // alloc; pad each region to 4-byte alignment so DMA-driven
-        // engines on real hardware see the same layout as
-        // per-allocation arrangements.
-        let kdk_area_len = kdk.len().next_multiple_of(4);
-        let label_area_len = label.len().next_multiple_of(4);
-        let ctx_len = STD_BKS1.len() + STD_BKS2.len() + extra_context.len();
-
-        let arena = self.dma_alloc(io, kdk_area_len + label_area_len + ctx_len)?;
-        let (kdk_area, rest) = arena.split_at_mut(kdk_area_len);
-        let (key_dma, _kdk_pad) = kdk_area.split_at_mut(kdk.len());
-        let (label_area, ctx_dma) = rest.split_at_mut(label_area_len);
-        let (label_dma, _label_pad) = label_area.split_at_mut(label.len());
-
-        if !kdk.is_empty() {
-            key_dma.copy_from_slice(kdk);
-        }
-        if !label.is_empty() {
-            label_dma.copy_from_slice(label);
-        }
-        {
-            let (bks1_slot, ctx_rest) = ctx_dma.split_at_mut(STD_BKS1.len());
-            let (bks2_slot, extra_slot) = ctx_rest.split_at_mut(STD_BKS2.len());
-            bks1_slot.copy_from_slice(&STD_BKS1);
-            bks2_slot.copy_from_slice(&STD_BKS2);
-            if !extra_context.is_empty() {
-                extra_slot.copy_from_slice(extra_context);
-            }
-        }
-
-        self.sp800_108_kdf(
-            io,
-            HsmHashAlgo::Sha384,
-            key_dma,
-            Some(label_dma),
-            Some(ctx_dma),
-            output,
-        )
-        .await
+        self.prop_set_u8(io, id, idx, value)
     }
 
-    fn part_verify_nonce(&self, io: &impl HsmIo, nonce: &[u8]) -> HsmResult<()> {
-        let part = self.enabled_part(u8::from(io.pid()))?;
-        if part.nonce != nonce {
-            return Err(HsmError::NonceMismatch);
-        }
-        Ok(())
+    fn part_prop_get_u16(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u16> {
+        self.prop_get_u16(io, id, idx)
     }
 
-    fn part_set_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()> {
-        if id.len() != 16 || pin.len() != 16 {
-            return Err(HsmError::InvalidArg);
-        }
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        if part.credential_set {
-            return Err(HsmError::VaultAppLimitReached);
-        }
-        // Reject all-zero ID or PIN — matches the reference firmware's
-        // `cred_mgr::change_user_cred` invariant and is also what
-        // `verify_user_cred_is_set` uses as the sentinel for "unset".
-        if id == [0u8; 16].as_slice() || pin == [0u8; 16].as_slice() {
-            return Err(HsmError::InvalidAppCredentials);
-        }
-        part.credential_id.copy_from_slice(id);
-        part.credential_pin.copy_from_slice(pin);
-        part.credential_set = true;
-        Ok(())
-    }
-
-    fn part_is_credential_set(&self, io: &impl HsmIo) -> HsmResult<bool> {
-        Ok(self.enabled_part(u8::from(io.pid()))?.credential_set)
-    }
-
-    fn part_verify_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()> {
-        if id.len() != 16 || pin.len() != 16 {
-            return Err(HsmError::InvalidArg);
-        }
-        let part = self.enabled_part(u8::from(io.pid()))?;
-        if !part.credential_set {
-            return Err(HsmError::InvalidAppCredentials);
-        }
-        // Constant-time compare both fields fully regardless of any
-        // mismatch in either, so we don't leak which one was wrong via
-        // timing.
-        let mut diff = 0u8;
-        for i in 0..16 {
-            diff |= part.credential_id[i] ^ id[i];
-            diff |= part.credential_pin[i] ^ pin[i];
-        }
-        if diff != 0 {
-            return Err(HsmError::InvalidAppCredentials);
-        }
-        Ok(())
-    }
-
-    fn part_is_provisioned(&self, io: &impl HsmIo) -> HsmResult<bool> {
-        Ok(self.enabled_part(u8::from(io.pid()))?.mk_key_id.is_some())
-    }
-
-    fn part_set_bk3_session(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
-        if data.len() != 48 {
-            return Err(HsmError::InvalidArg);
-        }
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        part.bk3_session.copy_from_slice(data);
-        part.bk3_session_set = true;
-        Ok(())
-    }
-
-    fn part_mk_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
-        Ok(self.enabled_part(u8::from(io.pid()))?.mk_key_id)
-    }
-
-    fn part_set_mk_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        part.mk_key_id = Some(key_id);
-        Ok(())
-    }
-
-    fn part_unwrapping_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
-        Ok(self.enabled_part(u8::from(io.pid()))?.unwrapping_key_id)
-    }
-
-    fn part_set_unwrapping_key_id(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        part.unwrapping_key_id = Some(key_id);
-        Ok(())
-    }
-
-    fn part_psk(&self, io: &impl HsmIo, psk_id: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        if psk_id > 1 {
-            return Err(HsmError::InvalidPskId);
-        }
-        let part = self.serving_part(io.pid())?;
-        let stored: Option<&[u8; PSK_LEN]> = match psk_id {
-            0 => part.psk_co.as_ref(),
-            _ => part.psk_cu.as_ref(),
-        };
-        let src: &[u8] = match stored {
-            Some(rotated) => rotated.as_slice(),
-            None if psk_id == 0 => DEFAULT_PSK_CO.as_slice(),
-            None => DEFAULT_PSK_CU.as_slice(),
-        };
-        match out {
-            None => Ok(PSK_LEN),
-            Some(buf) => {
-                if buf.len() < PSK_LEN {
-                    return Err(HsmError::InvalidArg);
-                }
-                buf[..PSK_LEN].copy_from_slice(src);
-                Ok(PSK_LEN)
-            }
-        }
-    }
-
-    fn part_psk_set(&self, io: &impl HsmIo, psk_id: u8, psk: &[u8]) -> HsmResult<()> {
-        if psk_id > 1 {
-            return Err(HsmError::InvalidPskId);
-        }
-        if psk.len() != PSK_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        let part = self.serving_part_mut(io.pid())?;
-        let mut buf = [0u8; PSK_LEN];
-        buf.copy_from_slice(psk);
-        if psk_id == 0 {
-            part.psk_co = Some(buf);
-        } else {
-            part.psk_cu = Some(buf);
-        }
-        Ok(())
-    }
-
-    fn part_uds(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.serving_part(io.pid())?.uds, out)
-    }
-
-    fn part_set_pta_key(
+    fn part_prop_set_u16(
         &self,
         io: &impl HsmIo,
-        key_id: HsmKeyId,
-        pub_sec1: &[u8],
+        id: PartPropId,
+        idx: u16,
+        value: u16,
     ) -> HsmResult<()> {
-        let part = self.active_part_mut(io.pid())?;
-        if pub_sec1.len() != P384_PUB_SEC1_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        if part.pta_key_id.is_some() {
-            return Err(HsmError::PtaKeyAlreadySet);
-        }
-        if part.state != PartState::Enabled {
-            return Err(HsmError::InvalidArg);
-        }
-
-        let mut buf = [0u8; P384_PUB_SEC1_LEN];
-        buf.copy_from_slice(pub_sec1);
-        part.pta_key_id = Some(key_id);
-        part.pta_pub_sec1 = Some(buf);
-        Ok(())
+        self.prop_set_u16(io, id, idx, value)
     }
 
-    fn part_set_policy(&self, io: &impl HsmIo, policy: &[u8]) -> HsmResult<()> {
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        if policy.len() != PART_POLICY_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        if part.part_policy_buf.is_some() {
-            return Err(HsmError::InvalidArg);
-        }
-
-        let mut buf = [0u8; PART_POLICY_LEN];
-        buf.copy_from_slice(policy);
-        part.part_policy_buf = Some(buf);
-        Ok(())
+    fn part_prop_get_u32(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u32> {
+        self.prop_get_u32(io, id, idx)
     }
 
-    fn part_set_pota_thumbprint(&self, io: &impl HsmIo, thumb: &[u8]) -> HsmResult<()> {
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        if thumb.len() != POTA_THUMBPRINT_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        if part.pota_thumbprint.is_some() {
-            return Err(HsmError::InvalidArg);
-        }
-
-        let mut buf = [0u8; POTA_THUMBPRINT_LEN];
-        buf.copy_from_slice(thumb);
-        part.pota_thumbprint = Some(buf);
-        Ok(())
+    fn part_prop_set_u32(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u32,
+    ) -> HsmResult<()> {
+        self.prop_set_u32(io, id, idx, value)
     }
 
-    fn part_set_ums_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        let part = self.active_part_mut(io.pid())?;
-        if part.ums_key_id.is_some() {
-            return Err(HsmError::UmsKeyAlreadySet);
-        }
-        if part.state != PartState::Enabled {
-            return Err(HsmError::InvalidArg);
-        }
-        part.ums_key_id = Some(key_id);
-        Ok(())
+    fn part_prop_get_u64(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u64> {
+        self.prop_get_u64(io, id, idx)
     }
 
-    fn part_ums_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-        let part = self.active_part(io.pid())?;
-        part.ums_key_id.ok_or(HsmError::UmsKeyNotSet)
+    fn part_prop_set_u64(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u64,
+    ) -> HsmResult<()> {
+        self.prop_set_u64(io, id, idx, value)
     }
 
-    fn part_mark_initializing(&self, io: &impl HsmIo) -> HsmResult<()> {
-        let part = self.enabled_part_mut(u8::from(io.pid()))?;
-        if part.pta_key_id.is_none()
-            || part.ums_key_id.is_none()
-            || part.part_policy_buf.is_none()
-            || part.pota_thumbprint.is_none()
-        {
-            return Err(HsmError::InvalidArg);
-        }
-        part.state = PartState::Initializing;
-        Ok(())
+    fn part_prop_get_bool(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<bool> {
+        self.prop_get_bool(io, id, idx)
     }
 
-    fn part_psk_is_default(&self, io: &impl HsmIo, psk_id: u8) -> HsmResult<bool> {
-        if psk_id > 1 {
-            return Err(HsmError::InvalidPskId);
-        }
-        let part = self.active_part(io.pid())?;
-        // Authoritative byte-compare against the compiled-in default,
-        // not just `Option::is_some()`.  This way the gate cannot be
-        // bypassed by a (malformed/malicious) `ChangePsk` that writes
-        // the public default bytes back into the slot — the slot then
-        // shows up as `Some(default)`, but `is_default` still reports
-        // `true` because the effective PSK is still the public one.
-        let stored: &[u8] = match psk_id {
-            0 => part.psk_co.as_ref().map_or(&DEFAULT_PSK_CO[..], |k| &k[..]),
-            _ => part.psk_cu.as_ref().map_or(&DEFAULT_PSK_CU[..], |k| &k[..]),
-        };
-        let default: &[u8] = match psk_id {
-            0 => &DEFAULT_PSK_CO[..],
-            _ => &DEFAULT_PSK_CU[..],
-        };
-        Ok(stored == default)
+    fn part_prop_set_bool(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: bool,
+    ) -> HsmResult<()> {
+        self.prop_set_bool(io, id, idx, value)
+    }
+
+    fn part_prop_get_bytes<'a>(
+        &'a self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+    ) -> HsmResult<&'a DmaBuf> {
+        self.prop_get_bytes(io, id, idx)
+    }
+
+    fn part_prop_set_bytes(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        data: &DmaBuf,
+    ) -> HsmResult<()> {
+        self.prop_set_bytes(io, id, idx, data)
+    }
+
+    fn part_prop_clear(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<()> {
+        self.prop_clear(io, id, idx)
     }
 }
 
@@ -954,6 +547,59 @@ impl HsmPartitionManager for StdHsmPal {
 // ---------------------------------------------------------------------------
 
 impl StdHsmPal {
+    /// Borrow the `PartitionTable` through the `UnsafeCell`.  Safe
+    /// because the std PAL runs on a single-threaded Embassy executor
+    /// (see the module-level architecture note).
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    fn table_mut(&self) -> &mut PartitionTable {
+        unsafe { &mut *self.part_table.get() }
+    }
+
+    #[inline]
+    fn table(&self) -> &PartitionTable {
+        unsafe { &*self.part_table.get() }
+    }
+
+    /// Validate `pid` and return its array index, or `InvalidArg`.
+    #[inline]
+    fn part_idx(pid: HsmPartId) -> HsmResult<usize> {
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(idx)
+    }
+
+    /// Borrow a partition whose state passes `accept`.
+    fn part_if(
+        &self,
+        pid: HsmPartId,
+        accept: impl FnOnce(PartState) -> bool,
+    ) -> HsmResult<&PartitionEntry> {
+        let idx = Self::part_idx(pid)?;
+        let entry = &self.table().entries[idx];
+        if !accept(entry.state) {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(entry)
+    }
+
+    /// Mutable counterpart to [`Self::part_if`].
+    #[allow(clippy::mut_from_ref)]
+    fn part_if_mut(
+        &self,
+        pid: HsmPartId,
+        accept: impl FnOnce(PartState) -> bool,
+    ) -> HsmResult<&mut PartitionEntry> {
+        let idx = Self::part_idx(pid)?;
+        let entry = &mut self.table_mut().entries[idx];
+        if !accept(entry.state) {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(entry)
+    }
+
     /// Returns the partition incarnation counter.
     ///
     /// Captured by RAII guards (`StdVaultKeyGuard`, `StdSessionGuard`)
@@ -961,39 +607,21 @@ impl StdHsmPal {
     /// has outlived its partition incarnation and skips rollback to
     /// avoid corrupting a re-allocated partition.
     pub(crate) fn partition_gen(&self, pid: HsmPartId) -> u32 {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
+        let Ok(idx) = Self::part_idx(pid) else {
             return 0;
-        }
-        table.entries[idx].gen
+        };
+        self.table().entries[idx].gen
     }
 
     /// Borrow a partition entry that is not Unallocated.
     pub(crate) fn active_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if table.entries[idx].state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&table.entries[idx])
+        self.part_if(pid, |s| s != PartState::Unallocated)
     }
 
     /// Borrow a partition entry that is not Unallocated (mutable).
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn active_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if table.entries[idx].state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&mut table.entries[idx])
+        self.part_if_mut(pid, |s| s != PartState::Unallocated)
     }
 
     /// Borrow a partition that is actively serving host traffic.
@@ -1003,112 +631,20 @@ impl StdHsmPal {
     /// caller's incarnation and may legitimately expose per-incarnation
     /// secrets (PSK, UDS).  Stricter than [`Self::active_part`] (which
     /// permits Allocated and Disabled too) so that PSK/UDS reads cannot
-    /// leak across the allocate/enable boundary, and looser than
-    /// [`Self::enabled_part`] so that PartInit handlers running in
-    /// `Initializing` still observe the rotated PSKs and UDS.
+    /// leak across the allocate/enable boundary.
     fn serving_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if !matches!(
-            table.entries[idx].state,
-            PartState::Enabled | PartState::Initializing
-        ) {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&table.entries[idx])
+        self.part_if(pid, |s| {
+            matches!(s, PartState::Enabled | PartState::Initializing)
+        })
     }
 
     /// Mutable counterpart to [`Self::serving_part`].
     #[allow(clippy::mut_from_ref)]
     fn serving_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if !matches!(
-            table.entries[idx].state,
-            PartState::Enabled | PartState::Initializing
-        ) {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&mut table.entries[idx])
+        self.part_if_mut(pid, |s| {
+            matches!(s, PartState::Enabled | PartState::Initializing)
+        })
     }
-
-    /// Borrow a partition that is in Enabled state.
-    fn enabled_part(&self, pid: u8) -> HsmResult<&PartitionEntry> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = pid as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if table.entries[idx].state != PartState::Enabled {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&table.entries[idx])
-    }
-
-    /// Borrow a partition that is in Enabled state (mutable).
-    #[allow(clippy::mut_from_ref)]
-    fn enabled_part_mut(&self, pid: u8) -> HsmResult<&mut PartitionEntry> {
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = pid as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        if table.entries[idx].state != PartState::Enabled {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(&mut table.entries[idx])
-    }
-}
-
-/// Copy `data` into `out` if provided, return length.
-///
-/// Returns [`HsmError::InvalidArg`] (per the new partition trait
-/// docs) when the caller-supplied buffer is too small.
-fn copy_out(data: &[u8], out: Option<&mut [u8]>) -> HsmResult<usize> {
-    if let Some(buf) = out {
-        if buf.len() < data.len() {
-            return Err(HsmError::InvalidArg);
-        }
-        buf[..data.len()].copy_from_slice(data);
-    }
-    Ok(data.len())
-}
-
-/// Copy a raw P-384 public key (`x ∥ y`, big-endian) into `out`,
-/// reversing each coord so the bytes on the wire are little-endian.
-///
-/// This is the byte-order pivot point between the firmware's internal
-/// big-endian representation (matches OpenSSL conventions and is used
-/// by cert generation and other crypto consumers) and the wire contract
-/// expected by the host-side `post_decode_fn` on
-/// [`DdiDerPublicKey`](azihsm_ddi_types::DdiDerPublicKey), which expects
-/// little-endian raw coords (matching real PKA hardware) and reverses
-/// them back to big-endian before DER-encoding.
-///
-/// `data` must be exactly `P384_PUB_KEY_LEN` bytes; returns
-/// [`HsmError::InvalidArg`] when `out` is too small.
-fn copy_out_pub_key_le(data: &[u8; P384_PUB_KEY_LEN], out: Option<&mut [u8]>) -> HsmResult<usize> {
-    if let Some(buf) = out {
-        if buf.len() < P384_PUB_KEY_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        let half = P384_PUB_KEY_LEN / 2;
-        let (x_be, y_be) = data.split_at(half);
-        let (x_out, y_out) = buf.split_at_mut(half);
-        for (dst, src) in x_out.iter_mut().zip(x_be.iter().rev()) {
-            *dst = *src;
-        }
-        for (dst, src) in y_out[..half].iter_mut().zip(y_be.iter().rev()) {
-            *dst = *src;
-        }
-    }
-    Ok(P384_PUB_KEY_LEN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,7 +656,7 @@ impl StdHsmPal {
     ///
     /// Transitions `Unallocated → Allocated`.
     pub async fn part_alloc_internal(&self, pid: u8, res_mask: u128) -> HsmResult<()> {
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
@@ -1168,7 +704,7 @@ impl StdHsmPal {
             .await;
 
         // Commit or rollback.
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let entry = &mut table.entries[idx];
         match id_result {
             Ok(id_kid) => {
@@ -1193,7 +729,7 @@ impl StdHsmPal {
     ///
     /// Transitions `Allocated | Disabled → Enabled`.
     pub async fn part_enable_internal(&self, pid: u8) -> HsmResult<()> {
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
@@ -1228,7 +764,7 @@ impl StdHsmPal {
                     &mut id_pub,
                 )
                 .await?;
-            let table = unsafe { &mut *self.part_table.get() };
+            let table = self.table_mut();
             let entry = &mut table.entries[idx];
             entry.id_key_id = Some(id_kid);
             entry.id_pub_key = id_pub;
@@ -1252,7 +788,7 @@ impl StdHsmPal {
             )
             .await?;
 
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let entry = &mut table.entries[idx];
         entry.establish_cred_key_id = Some(ec_kid);
         entry.establish_cred_pub_key = ec_pub;
@@ -1269,7 +805,7 @@ impl StdHsmPal {
             )
             .await;
 
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let entry = &mut table.entries[idx];
         match se_result {
             Ok(se_kid) => {
@@ -1310,7 +846,7 @@ impl StdHsmPal {
     ///
     /// Transitions `Enabled → Disabled`.
     pub fn part_disable_internal(&self, pid: u8) -> HsmResult<()> {
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
@@ -1332,7 +868,7 @@ impl StdHsmPal {
     /// Accepts `Allocated | Enabled | Disabled → Unallocated`.
     /// If `Enabled`, implicitly clears internal keys first.
     pub fn part_free_internal(&self, pid: u8) -> HsmResult<()> {
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
@@ -1412,7 +948,7 @@ impl StdHsmPal {
             .map_err(|_| HsmError::EccExportError)?;
 
         // Store raw HSM private-key bytes in vault.
-        let table = unsafe { &mut *self.part_table.get() };
+        let table = self.table_mut();
         let entry = &mut table.entries[pid as usize];
         entry
             .vault
@@ -1430,87 +966,79 @@ impl StdHsmPal {
     /// state are all zeroized together whenever the partition's
     /// enabled lifecycle ends.
     fn clear_enabled_state(entry: &mut PartitionEntry) {
-        if let Some(kid) = entry.establish_cred_key_id.take() {
-            let _ = entry.vault.delete(kid);
+        // Drop a vault-backed key if present and best-effort delete its
+        // backing slot.  Vault errors are ignored: the slot is about
+        // to be overwritten or released wholesale.
+        fn drop_key(vault: &mut KeyVault, kid: &mut Option<HsmKeyId>) {
+            if let Some(k) = kid.take() {
+                let _ = vault.delete(k);
+            }
         }
-        entry.establish_cred_pub_key.fill(0);
 
-        if let Some(kid) = entry.session_enc_key_id.take() {
-            let _ = entry.vault.delete(kid);
+        // Zeroize an `Option<[u8; N]>` payload in place before
+        // dropping the `Some`, so the bytes that live inside the
+        // entry struct are overwritten (not just the discriminant —
+        // `Option<[u8; N]>` has no niche, so payload storage is
+        // stable).
+        fn drop_secret<const N: usize>(slot: &mut Option<[u8; N]>) {
+            if let Some(buf) = slot.as_mut() {
+                buf.fill(0);
+            }
+            *slot = None;
         }
-        entry.session_enc_pub_key.fill(0);
 
-        entry.nonce.fill(0);
-
-        // Take id_key_id BEFORE vault.clear() so part_enable_internal
-        // knows the identity key was wiped and needs to be regenerated.
-        // The cached leaf cert is keyed off the old id_pub_key so it
-        // must also be invalidated.
+        // Vault-backed keys whose ids live in this entry.  `id_key_id`
+        // is taken (rather than vault-deleted) so `part_enable_internal`
+        // knows to regenerate the identity key on the next enable; the
+        // vault itself is cleared wholesale below.
+        drop_key(&mut entry.vault, &mut entry.establish_cred_key_id);
+        drop_key(&mut entry.vault, &mut entry.session_enc_key_id);
+        drop_key(&mut entry.vault, &mut entry.mk_key_id);
+        drop_key(&mut entry.vault, &mut entry.unwrapping_key_id);
+        drop_key(&mut entry.vault, &mut entry.pta_key_id);
+        drop_key(&mut entry.vault, &mut entry.ups_key_id);
         entry.id_key_id = None;
+
+        // Public-key mirrors and other non-secret fixed buffers.
+        entry.establish_cred_pub_key.fill(0);
+        entry.session_enc_pub_key.fill(0);
+        entry.nonce.fill(0);
         entry.leaf_cert[..entry.leaf_cert_len].fill(0);
         entry.leaf_cert_len = 0;
 
+        // Drop the vault and per-partition session table.
         entry.vault.clear();
         entry.session_table = SessionTable::new();
+
+        // Variable-length opaque blobs — zeroize only the valid
+        // prefix to keep `clear_enabled_state` proportional to
+        // touched bytes.
         entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);
         entry.sealed_bk3_len = 0;
+        entry.masked_bk_boot[..entry.masked_bk_boot_len as usize].fill(0);
+        entry.masked_bk_boot_len = 0;
 
         // Boot-key + BK3-incarnation state — mirrors the prior
         // reference firmware's `clear_partition_info` zeroize
         // grouping.
         entry.bk_boot.fill(0);
-        entry.masked_bk_boot[..entry.masked_bk_boot_len as usize].fill(0);
-        entry.masked_bk_boot_len = 0;
         entry.vm_launch_guid.fill(0);
         entry.bk3_initialized = false;
 
-        entry.credential_id.fill(0);
-        entry.credential_pin.fill(0);
+        // Caller-presented secrets and per-session derived material.
+        entry.credential.fill(0);
         entry.credential_set = false;
         entry.bk3_session.fill(0);
         entry.bk3_session_set = false;
-        if let Some(kid) = entry.mk_key_id.take() {
-            let _ = entry.vault.delete(kid);
-        }
-        if let Some(kid) = entry.unwrapping_key_id.take() {
-            let _ = entry.vault.delete(kid);
-        }
 
-        if let Some(kid) = entry.pta_key_id.take() {
-            let _ = entry.vault.delete(kid);
-        }
-        if let Some(kid) = entry.ums_key_id.take() {
-            let _ = entry.vault.delete(kid);
-        }
-        if let Some(pub_sec1) = entry.pta_pub_sec1.as_mut() {
-            pub_sec1.fill(0);
-        }
-        entry.pta_pub_sec1 = None;
-        if let Some(policy) = entry.part_policy_buf.as_mut() {
-            policy.fill(0);
-        }
-        entry.part_policy_buf = None;
-        if let Some(thumb) = entry.pota_thumbprint.as_mut() {
-            thumb.fill(0);
-        }
-        entry.pota_thumbprint = None;
+        // Provisioning material (write-once fields bound by PartInit).
+        drop_secret(&mut entry.pta_pub_sec1);
+        drop_secret(&mut entry.part_policy_buf);
+        drop_secret(&mut entry.pota_thumbprint);
 
-        // Wipe rotated PSK material in place before dropping the
-        // `Option`.  Using `as_mut().fill(0)` ensures the bytes that
-        // live inside `entry`'s `Option<[u8; PSK_LEN]>` payload are
-        // overwritten on the struct itself; the subsequent
-        // `= None` write only changes the discriminant and leaves
-        // those zeros in place (an `Option<[u8; N]>` has no niche so
-        // the payload bytes are stable storage, not a reused
-        // tagged-union slot).
-        if let Some(psk) = entry.psk_co.as_mut() {
-            psk.fill(0);
-        }
-        entry.psk_co = None;
-        if let Some(psk) = entry.psk_cu.as_mut() {
-            psk.fill(0);
-        }
-        entry.psk_cu = None;
+        // Rotated PSK material.
+        drop_secret(&mut entry.psk_co);
+        drop_secret(&mut entry.psk_cu);
     }
 }
 
@@ -1528,4 +1056,1139 @@ fn derive_sim_uds(pid: u8) -> [u8; UDS_LEN] {
         *b = pid ^ 0x55 ^ (i as u8).wrapping_mul(0x3d);
     }
     uds
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Property-API routing layer (formerly part_prop.rs)
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Validation helpers ──────────────────────────────────────────────────
+
+/// Resolve the meta for an id, validate idx, and validate that the
+/// expected wire-kind matches the one declared by the property.
+fn validate_meta(id: PartPropId, idx: u16, expected: ExpectedKind) -> HsmResult<PartPropMeta> {
+    let meta = id.meta().ok_or(HsmError::InvalidArg)?;
+    if idx >= meta.cardinality {
+        return Err(HsmError::InvalidArg);
+    }
+    if !expected.matches(meta.kind) {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(meta)
+}
+
+fn validate_set(
+    id: PartPropId,
+    idx: u16,
+    expected: ExpectedKind,
+    bytes_len: Option<usize>,
+) -> HsmResult<PartPropMeta> {
+    let meta = validate_meta(id, idx, expected)?;
+    if meta.access != PartPropAccess::Rw {
+        return Err(HsmError::InvalidArg);
+    }
+    if let Some(n) = bytes_len {
+        match meta.kind {
+            PartPropKind::FixedBytes { len } if n == usize::from(len) => {}
+            PartPropKind::VarBytes { max } if n <= usize::from(max) => {}
+            _ => return Err(HsmError::InvalidArg),
+        }
+    }
+    Ok(meta)
+}
+
+fn validate_clear(id: PartPropId, idx: u16) -> HsmResult<PartPropMeta> {
+    let meta = id.meta().ok_or(HsmError::InvalidArg)?;
+    if idx >= meta.cardinality {
+        return Err(HsmError::InvalidArg);
+    }
+    if meta.access != PartPropAccess::Rw {
+        return Err(HsmError::InvalidArg);
+    }
+    if meta.default != PartPropDefault::AbsentUntilSet {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(meta)
+}
+
+/// Caller-side expectation of the wire-kind for a typed accessor.
+#[derive(Clone, Copy)]
+enum ExpectedKind {
+    U8,
+    U16,
+    U32,
+    U64,
+    Bool,
+    Bytes,
+}
+
+impl ExpectedKind {
+    fn matches(self, kind: PartPropKind) -> bool {
+        matches!(
+            (self, kind),
+            (ExpectedKind::U8, PartPropKind::U8)
+                | (ExpectedKind::U16, PartPropKind::U16)
+                | (ExpectedKind::U32, PartPropKind::U32)
+                | (ExpectedKind::U64, PartPropKind::U64)
+                | (ExpectedKind::Bool, PartPropKind::Bool)
+                | (
+                    ExpectedKind::Bytes,
+                    PartPropKind::FixedBytes { .. } | PartPropKind::VarBytes { .. }
+                )
+        )
+    }
+}
+
+// ─── std PAL constants mirrored by RO props ──────────────────────────────
+
+/// `FW_SEED` returned via [`PartPropId::FW_SEED`].  Length matches
+/// the property's `FixedBytes { len: 48 }` (the SHA-384-sized seed
+/// used by std-PAL masking-key derivation).
+const STD_FW_SEED48: [u8; 48] = [0x42u8; 48];
+
+// ─── DmaBuf branding ─────────────────────────────────────────────────────
+
+/// Brand a borrowed byte slice from the partition table as a
+/// `&DmaBuf`.  Safe on the std PAL because the partition table is
+/// host-heap-resident; no real DMA constraints apply.
+#[inline(always)]
+fn dma(buf: &[u8]) -> &DmaBuf {
+    // SAFETY: std PAL has no DMA-region constraint.
+    unsafe { DmaBuf::from_raw(buf) }
+}
+
+/// Resolve a row of an indexed PAL-global seed table
+/// ([`PartPropId::MFGR_SEED`] / [`PartPropId::DEV_OWNER_SEED`]).
+///
+/// The std PAL emulator provisions only row 0 of each table; other
+/// `idx` values (still within `0..cardinality`) return
+/// [`HsmError::PartPropNotFound`] to signal "no row provisioned for
+/// this PAL".
+fn std_indexed_seed_row(id: PartPropId, idx: u16) -> HsmResult<&'static [u8]> {
+    match (id, idx) {
+        (PartPropId::MFGR_SEED, 0) => Ok(&STD_MFGR_SEED_ROW0),
+        (PartPropId::DEV_OWNER_SEED, 0) => Ok(&STD_DEV_OWNER_SEED_ROW0),
+        (PartPropId::MFGR_SEED | PartPropId::DEV_OWNER_SEED, _) => Err(HsmError::PartPropNotFound),
+        _ => Err(HsmError::InternalError),
+    }
+}
+
+// ─── PartitionEntry property dispatch ────────────────────────────────────
+
+impl PartitionEntry {
+    /// Apply a caller-driven STATE transition through the property API.
+    ///
+    /// The internal device-command lifecycle (`part_alloc_internal`,
+    /// `part_enable_internal`, `part_disable_internal`,
+    /// `part_free_internal`) drives all other transitions; the prop
+    /// API only exposes the single caller-facing one:
+    /// `Enabled → Initializing`, which additionally requires the four
+    /// write-once provisioning fields (PTA key, UMS key, policy,
+    /// POTA thumbprint) to be present.  Any other source/target pair
+    /// is rejected with [`HsmError::InvalidArg`].
+    fn transition_state_via_prop(&mut self, target: PartState) -> HsmResult<()> {
+        match (self.state, target) {
+            (PartState::Enabled, PartState::Initializing) => {
+                if self.pta_key_id.is_none()
+                    || self.ups_key_id.is_none()
+                    || self.part_policy_buf.is_none()
+                    || self.pota_thumbprint.is_none()
+                {
+                    return Err(HsmError::InvalidArg);
+                }
+                self.state = PartState::Initializing;
+                Ok(())
+            }
+            // No-op writes (same state) are accepted as a convenience.
+            (cur, tgt) if cur == tgt => Ok(()),
+            // All other transitions are PAL-internal — reject from the
+            // prop API.
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Translate `id` to the matching scalar field on this entry.
+    /// All values are widened to `u32` for a uniform return type;
+    /// the trait wrapper narrows back to the requested kind.
+    fn prop_get_scalar(&self, id: PartPropId) -> HsmResult<u32> {
+        match id {
+            PartPropId::STATE => Ok(u32::from(self.state as u8)),
+            PartPropId::GEN => Ok(self.gen),
+            PartPropId::RES_COUNT => Ok(self.res_mask.count_ones()),
+            PartPropId::BK3_INITIALIZED => Ok(u32::from(self.bk3_initialized)),
+            PartPropId::BKS2_ID => Ok(0),
+            PartPropId::ID_KEY_ID => key_id_to_u32(self.id_key_id),
+            PartPropId::MK_KEY_ID => key_id_to_u32(self.mk_key_id),
+            PartPropId::UPS_KEY_ID => key_id_to_u32(self.ups_key_id),
+            PartPropId::PTA_KEY_ID => key_id_to_u32(self.pta_key_id),
+            PartPropId::RSA_UNWRAPPING_KEY_ID => key_id_to_u32(self.unwrapping_key_id),
+            PartPropId::SESSION_ENC_KEY_ID => key_id_to_u32(self.session_enc_key_id),
+            PartPropId::ESTABLISH_CRED_KEY_ID => key_id_to_u32(self.establish_cred_key_id),
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Write a scalar property; `value` is in the property's native
+    /// width, already validated by the trait wrapper.
+    fn prop_set_scalar(&mut self, id: PartPropId, value: u32) -> HsmResult<()> {
+        match id {
+            PartPropId::STATE => {
+                let target = PartState::from_u8(value as u8).ok_or(HsmError::InvalidArg)?;
+                self.transition_state_via_prop(target)
+            }
+            PartPropId::MK_KEY_ID => {
+                self.mk_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::UPS_KEY_ID => {
+                if self.ups_key_id.is_some() {
+                    return Err(HsmError::UpsKeyAlreadySet);
+                }
+                self.ups_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::PTA_KEY_ID => {
+                if self.pta_key_id.is_some() {
+                    return Err(HsmError::PtaKeyAlreadySet);
+                }
+                self.pta_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::SESSION_ENC_KEY_ID => {
+                self.session_enc_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::ESTABLISH_CRED_KEY_ID => {
+                self.establish_cred_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::BK3_INITIALIZED => {
+                // One-shot gate: false→true is the only legal
+                // transition.  Re-asserting true returns
+                // Bk3AlreadyInitialized; clearing back to false is
+                // rejected (reset happens PAL-internally on free /
+                // NSSR).
+                let want = value != 0;
+                if !want {
+                    return Err(HsmError::InvalidArg);
+                }
+                if self.bk3_initialized {
+                    return Err(HsmError::Bk3AlreadyInitialized);
+                }
+                self.bk3_initialized = true;
+                Ok(())
+            }
+            // GEN/SVN/RES_COUNT/ID_KEY_ID/RSA_UNWRAPPING_KEY_ID are Ro
+            // — rejected by validate_set.  Non-scalar ids — rejected
+            // by the kind check.
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Read a u64-scalar property.
+    fn prop_get_scalar_u64(&self, id: PartPropId) -> HsmResult<u64> {
+        match id {
+            PartPropId::SVN => Ok(STD_SVN),
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Write a u64-scalar property.
+    fn prop_set_scalar_u64(&mut self, _id: PartPropId, _value: u64) -> HsmResult<()> {
+        // SVN is Ro — rejected by validate_set.
+        Err(HsmError::InvalidArg)
+    }
+
+    /// Borrow the bytes of a present byte property, or
+    /// `Err(PartPropNotFound)` if the slot is absent.
+    fn prop_get_bytes(&self, id: PartPropId) -> HsmResult<&[u8]> {
+        match id {
+            PartPropId::ID => Ok(&self.id),
+            PartPropId::UDS => Ok(&self.uds),
+            PartPropId::FW_SEED => Ok(&STD_FW_SEED48),
+            PartPropId::PSK_CO => Ok(self
+                .psk_co
+                .as_ref()
+                .map(|a| a.as_slice())
+                .unwrap_or(DEFAULT_PSK_CO.as_slice())),
+            PartPropId::PSK_CU => Ok(self
+                .psk_cu
+                .as_ref()
+                .map(|a| a.as_slice())
+                .unwrap_or(DEFAULT_PSK_CU.as_slice())),
+            PartPropId::CREDENTIAL => {
+                if !self.credential_set {
+                    return Err(HsmError::PartPropNotFound);
+                }
+                // CREDENTIAL is 32 B: id (16) ‖ pin (16) — returned as
+                // the full blob.  Consumers in `fw/core/lib` (e.g.
+                // `part_verify_credential`) compare both halves in
+                // constant time.
+                Ok(&self.credential)
+            }
+            PartPropId::NONCE => Ok(&self.nonce),
+            PartPropId::SEALED_BK3 => {
+                let n = self.sealed_bk3_len as usize;
+                if n == 0 {
+                    return Err(HsmError::PartPropNotFound);
+                }
+                Ok(&self.sealed_bk3[..n])
+            }
+            PartPropId::MASKED_BK_BOOT => {
+                let n = self.masked_bk_boot_len as usize;
+                if n == 0 {
+                    return Err(HsmError::PartPropNotFound);
+                }
+                Ok(&self.masked_bk_boot[..n])
+            }
+            PartPropId::BK_BOOT => Ok(&self.bk_boot),
+            PartPropId::VM_LAUNCH_GUID => Ok(&self.vm_launch_guid),
+            PartPropId::ID_PUB_KEY => Ok(&self.id_pub_key),
+            PartPropId::SESSION_ENC_PUB_KEY => Ok(&self.session_enc_pub_key),
+            PartPropId::ESTABLISH_CRED_PUB_KEY => Ok(&self.establish_cred_pub_key),
+            PartPropId::PTA_PUB_SEC1 => self
+                .pta_pub_sec1
+                .as_ref()
+                .map(|a| a.as_slice())
+                .ok_or(HsmError::PartPropNotFound),
+            PartPropId::BK3_SESSION => {
+                if !self.bk3_session_set {
+                    return Err(HsmError::PartPropNotFound);
+                }
+                Ok(&self.bk3_session)
+            }
+            PartPropId::POLICY => self
+                .part_policy_buf
+                .as_ref()
+                .map(|a| a.as_slice())
+                .ok_or(HsmError::PartPropNotFound),
+            PartPropId::POTA_THUMBPRINT => self
+                .pota_thumbprint
+                .as_ref()
+                .map(|a| a.as_slice())
+                .ok_or(HsmError::PartPropNotFound),
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Write a byte property; `data` length already validated.
+    fn prop_set_bytes(&mut self, id: PartPropId, data: &[u8]) -> HsmResult<()> {
+        match id {
+            PartPropId::PSK_CO => {
+                if let Some(prev) = self.psk_co.as_mut() {
+                    prev.fill(0);
+                }
+                let mut buf = [0u8; PSK_LEN];
+                buf.copy_from_slice(data);
+                self.psk_co = Some(buf);
+                Ok(())
+            }
+            PartPropId::PSK_CU => {
+                if let Some(prev) = self.psk_cu.as_mut() {
+                    prev.fill(0);
+                }
+                let mut buf = [0u8; PSK_LEN];
+                buf.copy_from_slice(data);
+                self.psk_cu = Some(buf);
+                Ok(())
+            }
+            PartPropId::CREDENTIAL => {
+                // Write-once per credential lifecycle: production
+                // re-set is rejected with `VaultAppLimitReached`,
+                // matching the reference firmware's
+                // `verify_cred_is_not_set` invariant.  Internal reset
+                // (partition free / NSSR) goes through `prop_clear` /
+                // direct field zeroing, not this path.
+                if self.credential_set {
+                    return Err(HsmError::VaultAppLimitReached);
+                }
+                // Reject all-zero id or pin halves — that value is the
+                // sentinel `verify_user_cred_is_set` uses for "unset",
+                // so accepting it would corrupt the lifecycle.
+                if data[..16] == [0u8; 16] || data[16..32] == [0u8; 16] {
+                    return Err(HsmError::InvalidAppCredentials);
+                }
+                self.credential.fill(0);
+                self.credential.copy_from_slice(&data[..32]);
+                self.credential_set = true;
+                Ok(())
+            }
+            PartPropId::SEALED_BK3 => {
+                // Write-once per power cycle: a second SetSealedBk3
+                // without an intervening clear (free / NSSR /
+                // explicit `prop_clear`) returns `SealedBk3AlreadySet`
+                // to preserve the wire-visible legacy behaviour.
+                if self.sealed_bk3_len != 0 {
+                    return Err(HsmError::SealedBk3AlreadySet);
+                }
+                self.sealed_bk3.fill(0);
+                self.sealed_bk3[..data.len()].copy_from_slice(data);
+                self.sealed_bk3_len = data.len() as u32;
+                Ok(())
+            }
+            PartPropId::MASKED_BK_BOOT => {
+                self.masked_bk_boot.fill(0);
+                self.masked_bk_boot[..data.len()].copy_from_slice(data);
+                self.masked_bk_boot_len = data.len() as u32;
+                Ok(())
+            }
+            PartPropId::POLICY => {
+                if self.part_policy_buf.is_some() {
+                    return Err(HsmError::InvalidArg);
+                }
+                let mut buf = [0u8; PART_POLICY_LEN];
+                buf.copy_from_slice(data);
+                self.part_policy_buf = Some(buf);
+                Ok(())
+            }
+            PartPropId::POTA_THUMBPRINT => {
+                if self.pota_thumbprint.is_some() {
+                    return Err(HsmError::InvalidArg);
+                }
+                let mut buf = [0u8; 48];
+                buf.copy_from_slice(data);
+                self.pota_thumbprint = Some(buf);
+                Ok(())
+            }
+            PartPropId::PTA_PUB_SEC1 => {
+                if self.pta_pub_sec1.is_some() {
+                    return Err(HsmError::InvalidArg);
+                }
+                let mut buf = [0u8; P384_PUB_SEC1_LEN];
+                buf.copy_from_slice(data);
+                self.pta_pub_sec1 = Some(buf);
+                Ok(())
+            }
+            PartPropId::BK3_SESSION => {
+                self.bk3_session.fill(0);
+                self.bk3_session.copy_from_slice(data);
+                self.bk3_session_set = true;
+                Ok(())
+            }
+            PartPropId::NONCE => {
+                self.nonce.copy_from_slice(data);
+                Ok(())
+            }
+            // ID/UDS/FW_SEED/BK_BOOT/VM_LAUNCH_GUID are Ro —
+            // rejected by validate_set.  Others are non-byte kinds.
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Reset a property to its absent state.  Only `AbsentUntilSet`
+    /// props reach here (enforced by validate_clear).
+    fn prop_clear(&mut self, id: PartPropId) -> HsmResult<()> {
+        match id {
+            // Scalar Rw + Abs.
+            PartPropId::MK_KEY_ID => {
+                self.mk_key_id = None;
+                Ok(())
+            }
+            PartPropId::UPS_KEY_ID => {
+                self.ups_key_id = None;
+                Ok(())
+            }
+            PartPropId::PTA_KEY_ID => {
+                self.pta_key_id = None;
+                Ok(())
+            }
+            PartPropId::SESSION_ENC_KEY_ID => {
+                self.session_enc_key_id = None;
+                Ok(())
+            }
+            PartPropId::ESTABLISH_CRED_KEY_ID => {
+                self.establish_cred_key_id = None;
+                Ok(())
+            }
+            // Byte Rw + Abs.
+            PartPropId::PSK_CO => {
+                if let Some(prev) = self.psk_co.as_mut() {
+                    prev.fill(0);
+                }
+                self.psk_co = None;
+                Ok(())
+            }
+            PartPropId::PSK_CU => {
+                if let Some(prev) = self.psk_cu.as_mut() {
+                    prev.fill(0);
+                }
+                self.psk_cu = None;
+                Ok(())
+            }
+            PartPropId::CREDENTIAL => {
+                self.credential.fill(0);
+                self.credential_set = false;
+                Ok(())
+            }
+            PartPropId::SEALED_BK3 => {
+                self.sealed_bk3.fill(0);
+                self.sealed_bk3_len = 0;
+                Ok(())
+            }
+            PartPropId::MASKED_BK_BOOT => {
+                self.masked_bk_boot.fill(0);
+                self.masked_bk_boot_len = 0;
+                Ok(())
+            }
+            PartPropId::POLICY => {
+                self.part_policy_buf = None;
+                Ok(())
+            }
+            PartPropId::POTA_THUMBPRINT => {
+                self.pota_thumbprint = None;
+                Ok(())
+            }
+            PartPropId::PTA_PUB_SEC1 => {
+                self.pta_pub_sec1 = None;
+                Ok(())
+            }
+            PartPropId::BK3_SESSION => {
+                self.bk3_session.fill(0);
+                self.bk3_session_set = false;
+                Ok(())
+            }
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+}
+
+fn key_id_to_u32(opt: Option<HsmKeyId>) -> HsmResult<u32> {
+    opt.map(|k| u32::from(u16::from(k)))
+        .ok_or(HsmError::PartPropNotFound)
+}
+
+// ─── StdHsmPal inherent property impls ───────────────────────────────────
+
+impl StdHsmPal {
+    /// Borrow `&PartitionEntry` for the calling partition with the
+    /// lifecycle gate appropriate for reading the property.
+    ///
+    /// - STATE: any state (including Unallocated) — direct array access.
+    /// - sensitive: Enabled | Initializing (via `serving_part`).
+    /// - other:    Allocated | Initializing | Enabled | Disabled
+    ///   (via `active_part`).
+    fn prop_borrow_get(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        meta: &PartPropMeta,
+    ) -> HsmResult<&PartitionEntry> {
+        if id == PartPropId::STATE {
+            let idx = Self::part_idx(io.pid())?;
+            return Ok(&self.table().entries[idx]);
+        }
+        if meta.sensitive {
+            self.serving_part(io.pid())
+        } else {
+            self.active_part(io.pid())
+        }
+    }
+
+    /// Mutable counterpart of [`Self::prop_borrow_get`].  Writes use
+    /// the same gating but always need at least Allocated.
+    #[allow(clippy::mut_from_ref)]
+    fn prop_borrow_set(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        meta: &PartPropMeta,
+    ) -> HsmResult<&mut PartitionEntry> {
+        if id == PartPropId::STATE {
+            let idx = Self::part_idx(io.pid())?;
+            return Ok(&mut self.table_mut().entries[idx]);
+        }
+        if meta.sensitive {
+            self.serving_part_mut(io.pid())
+        } else {
+            self.active_part_mut(io.pid())
+        }
+    }
+
+    pub(crate) fn prop_get_u8(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u8> {
+        let meta = validate_meta(id, idx, ExpectedKind::U8)?;
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        Ok(entry.prop_get_scalar(id)? as u8)
+    }
+
+    pub(crate) fn prop_set_u8(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u8,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::U8, None)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_scalar(id, u32::from(value))
+    }
+
+    pub(crate) fn prop_get_u16(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u16> {
+        let meta = validate_meta(id, idx, ExpectedKind::U16)?;
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        Ok(entry.prop_get_scalar(id)? as u16)
+    }
+
+    pub(crate) fn prop_set_u16(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u16,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::U16, None)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_scalar(id, u32::from(value))
+    }
+
+    pub(crate) fn prop_get_u32(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u32> {
+        let meta = validate_meta(id, idx, ExpectedKind::U32)?;
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        entry.prop_get_scalar(id)
+    }
+
+    pub(crate) fn prop_set_u32(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u32,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::U32, None)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_scalar(id, value)
+    }
+
+    pub(crate) fn prop_get_u64(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<u64> {
+        let meta = validate_meta(id, idx, ExpectedKind::U64)?;
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        entry.prop_get_scalar_u64(id)
+    }
+
+    pub(crate) fn prop_set_u64(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: u64,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::U64, None)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_scalar_u64(id, value)
+    }
+
+    pub(crate) fn prop_get_bool(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+    ) -> HsmResult<bool> {
+        let meta = validate_meta(id, idx, ExpectedKind::Bool)?;
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        Ok(entry.prop_get_scalar(id)? != 0)
+    }
+
+    pub(crate) fn prop_set_bool(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        value: bool,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::Bool, None)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_scalar(id, u32::from(value))
+    }
+
+    pub(crate) fn prop_get_bytes<'a>(
+        &'a self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+    ) -> HsmResult<&'a DmaBuf> {
+        let meta = validate_meta(id, idx, ExpectedKind::Bytes)?;
+        // Sensitive PAL-global indexed seeds (MFGR_SEED / DEV_OWNER_SEED)
+        // are not held per-partition: gate via the standard
+        // `prop_borrow_get` (so the sensitive-prop serving-partition
+        // check still runs) and then dispatch to the global row table.
+        if matches!(id, PartPropId::MFGR_SEED | PartPropId::DEV_OWNER_SEED) {
+            let _ = self.prop_borrow_get(io, id, &meta)?;
+            let bytes = std_indexed_seed_row(id, idx)?;
+            return Ok(dma(bytes));
+        }
+        let entry = self.prop_borrow_get(io, id, &meta)?;
+        let bytes = entry.prop_get_bytes(id)?;
+        if let PartPropKind::FixedBytes { len } = meta.kind {
+            if bytes.len() != usize::from(len) {
+                return Err(HsmError::InternalError);
+            }
+        }
+        Ok(dma(bytes))
+    }
+
+    pub(crate) fn prop_set_bytes(
+        &self,
+        io: &impl HsmIo,
+        id: PartPropId,
+        idx: u16,
+        data: &DmaBuf,
+    ) -> HsmResult<()> {
+        let meta = validate_set(id, idx, ExpectedKind::Bytes, Some(data.len()))?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_set_bytes(id, data)
+    }
+
+    pub(crate) fn prop_clear(&self, io: &impl HsmIo, id: PartPropId, idx: u16) -> HsmResult<()> {
+        let meta = validate_clear(id, idx)?;
+        let entry = self.prop_borrow_set(io, id, &meta)?;
+        entry.prop_clear(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_entry() -> PartitionEntry {
+        PartitionEntry::default()
+    }
+
+    #[test]
+    fn validate_meta_rejects_unknown_id() {
+        let bad = PartPropId::from(0xFFFFu16);
+        assert!(matches!(
+            validate_meta(bad, 0, ExpectedKind::U8),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn validate_meta_rejects_idx_out_of_range() {
+        assert!(matches!(
+            validate_meta(PartPropId::STATE, 1, ExpectedKind::U8),
+            Err(HsmError::InvalidArg)
+        ));
+        // Indexed seed props have cardinality 64; idx == 64 is OOB.
+        assert!(matches!(
+            validate_meta(PartPropId::MFGR_SEED, 64, ExpectedKind::Bytes),
+            Err(HsmError::InvalidArg)
+        ));
+        assert!(matches!(
+            validate_meta(PartPropId::DEV_OWNER_SEED, 64, ExpectedKind::Bytes),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn indexed_seed_row0_returns_provisioned_bytes() {
+        // Row 0 is the only provisioned row in the std PAL.
+        let row = std_indexed_seed_row(PartPropId::MFGR_SEED, 0).unwrap();
+        assert_eq!(row, &STD_MFGR_SEED_ROW0[..]);
+        let row = std_indexed_seed_row(PartPropId::DEV_OWNER_SEED, 0).unwrap();
+        assert_eq!(row, &STD_DEV_OWNER_SEED_ROW0[..]);
+    }
+
+    #[test]
+    fn indexed_seed_unprovisioned_rows_return_not_found() {
+        for idx in [1u16, 5, 63] {
+            assert!(matches!(
+                std_indexed_seed_row(PartPropId::MFGR_SEED, idx),
+                Err(HsmError::PartPropNotFound)
+            ));
+            assert!(matches!(
+                std_indexed_seed_row(PartPropId::DEV_OWNER_SEED, idx),
+                Err(HsmError::PartPropNotFound)
+            ));
+        }
+    }
+
+    #[test]
+    fn validate_meta_rejects_kind_mismatch() {
+        // STATE is U8; asking via U32 must fail.
+        assert!(matches!(
+            validate_meta(PartPropId::STATE, 0, ExpectedKind::U32),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn validate_set_rejects_ro_props() {
+        // GEN is Ro.
+        assert!(matches!(
+            validate_set(PartPropId::GEN, 0, ExpectedKind::U32, None),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn validate_set_rejects_bad_bytes_len() {
+        // POLICY is FixedBytes{PART_POLICY_LEN}; wrong len rejected.
+        assert!(matches!(
+            validate_set(
+                PartPropId::POLICY,
+                0,
+                ExpectedKind::Bytes,
+                Some(PART_POLICY_LEN + 1)
+            ),
+            Err(HsmError::InvalidArg)
+        ));
+        // SEALED_BK3 is VarBytes{SEALED_BK3_MAX_LEN}; over max rejected.
+        assert!(matches!(
+            validate_set(
+                PartPropId::SEALED_BK3,
+                0,
+                ExpectedKind::Bytes,
+                Some(usize::from(SEALED_BK3_MAX_LEN) + 1)
+            ),
+            Err(HsmError::InvalidArg)
+        ));
+        // SEALED_BK3 accepts <= max (including zero).
+        assert!(validate_set(PartPropId::SEALED_BK3, 0, ExpectedKind::Bytes, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn validate_clear_rejects_required_present() {
+        // NONCE is Required + Ro.
+        assert!(matches!(
+            validate_clear(PartPropId::NONCE, 0),
+            Err(HsmError::InvalidArg)
+        ));
+        // PSK_CO is Required + Rw; clear still rejected.
+        assert!(matches!(
+            validate_clear(PartPropId::PSK_CO, 0),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn scalar_round_trip_mk_key_id() {
+        let mut e = fresh_entry();
+        // Absent until set.
+        assert!(matches!(
+            e.prop_get_scalar(PartPropId::MK_KEY_ID),
+            Err(HsmError::PartPropNotFound)
+        ));
+        e.prop_set_scalar(PartPropId::MK_KEY_ID, 0x4242).unwrap();
+        assert_eq!(e.prop_get_scalar(PartPropId::MK_KEY_ID).unwrap(), 0x4242u32);
+        e.prop_clear(PartPropId::MK_KEY_ID).unwrap();
+        assert!(matches!(
+            e.prop_get_scalar(PartPropId::MK_KEY_ID),
+            Err(HsmError::PartPropNotFound)
+        ));
+    }
+
+    #[test]
+    fn scalar_state_round_trip() {
+        let mut e = fresh_entry();
+        assert_eq!(e.prop_get_scalar(PartPropId::STATE).unwrap(), 0); // Unallocated
+                                                                      // No-op writes (same → same) are accepted.
+        e.prop_set_scalar(PartPropId::STATE, PartState::Unallocated as u32)
+            .unwrap();
+        // Invalid state byte rejected.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::STATE, 250),
+            Err(HsmError::InvalidArg)
+        ));
+        // Caller-facing transition Unallocated → Enabled is rejected
+        // (must go through PAL-internal lifecycle methods).
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::STATE, PartState::Enabled as u32),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn scalar_state_enabled_to_initializing_requires_provisioning_fields() {
+        let mut e = fresh_entry();
+        e.state = PartState::Enabled;
+        // Missing all four write-once fields → reject.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::STATE, PartState::Initializing as u32),
+            Err(HsmError::InvalidArg)
+        ));
+        // Set the four required fields then transition.
+        e.pta_key_id = Some(HsmKeyId::from(1u16));
+        e.ups_key_id = Some(HsmKeyId::from(2u16));
+        e.part_policy_buf = Some([0u8; PART_POLICY_LEN]);
+        e.pota_thumbprint = Some([0u8; 48]);
+        e.prop_set_scalar(PartPropId::STATE, PartState::Initializing as u32)
+            .unwrap();
+        assert_eq!(
+            e.prop_get_scalar(PartPropId::STATE).unwrap(),
+            PartState::Initializing as u32
+        );
+    }
+
+    #[test]
+    fn scalar_state_other_transitions_rejected_via_prop() {
+        let mut e = fresh_entry();
+        e.state = PartState::Enabled;
+        // Enabled → Disabled must go through part_disable_internal.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::STATE, PartState::Disabled as u32),
+            Err(HsmError::InvalidArg)
+        ));
+        // Enabled → Allocated is nonsense.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::STATE, PartState::Allocated as u32),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn bytes_round_trip_policy() {
+        let mut e = fresh_entry();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::POLICY),
+            Err(HsmError::PartPropNotFound)
+        ));
+        let payload = [0xABu8; PART_POLICY_LEN];
+        e.prop_set_bytes(PartPropId::POLICY, &payload).unwrap();
+        assert_eq!(e.prop_get_bytes(PartPropId::POLICY).unwrap(), &payload[..]);
+        e.prop_clear(PartPropId::POLICY).unwrap();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::POLICY),
+            Err(HsmError::PartPropNotFound)
+        ));
+    }
+
+    #[test]
+    fn bytes_round_trip_sealed_bk3_var() {
+        let mut e = fresh_entry();
+        let payload = [0x12u8; 40];
+        e.prop_set_bytes(PartPropId::SEALED_BK3, &payload).unwrap();
+        assert_eq!(
+            e.prop_get_bytes(PartPropId::SEALED_BK3).unwrap(),
+            &payload[..]
+        );
+        e.prop_clear(PartPropId::SEALED_BK3).unwrap();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::SEALED_BK3),
+            Err(HsmError::PartPropNotFound)
+        ));
+    }
+
+    #[test]
+    fn sensitive_set_zeroizes_prior() {
+        let mut e = fresh_entry();
+        // Prime CREDENTIAL with payload A, clear, then set payload B,
+        // confirming the entire id/pin region is rewritten cleanly.
+        // `prop_set_bytes` is now write-once, so reuse requires an
+        // explicit `prop_clear` between sets.
+        let payload_a = [0xAAu8; 32];
+        let mut payload_b = [0u8; 32];
+        for (i, b) in payload_b.iter_mut().enumerate() {
+            *b = (i as u8) | 0x80;
+        }
+        e.prop_set_bytes(PartPropId::CREDENTIAL, &payload_a)
+            .unwrap();
+        e.prop_clear(PartPropId::CREDENTIAL).unwrap();
+        e.prop_set_bytes(PartPropId::CREDENTIAL, &payload_b)
+            .unwrap();
+        let stored = e.prop_get_bytes(PartPropId::CREDENTIAL).unwrap();
+        assert_eq!(stored, &payload_b[..]);
+        // Clear zeroes the full 32 B blob.
+        e.prop_clear(PartPropId::CREDENTIAL).unwrap();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::CREDENTIAL),
+            Err(HsmError::PartPropNotFound)
+        ));
+        assert_eq!(&e.credential[..], &[0u8; 32]);
+    }
+
+    #[test]
+    fn credential_prop_set_is_write_once() {
+        let mut e = fresh_entry();
+        let payload = [0x5Au8; 32];
+        e.prop_set_bytes(PartPropId::CREDENTIAL, &payload).unwrap();
+        // Second set without an intervening clear is rejected.
+        assert!(matches!(
+            e.prop_set_bytes(PartPropId::CREDENTIAL, &payload),
+            Err(HsmError::VaultAppLimitReached)
+        ));
+    }
+
+    #[test]
+    fn credential_prop_set_rejects_zero_halves() {
+        let mut e = fresh_entry();
+        // Zero id half.
+        let mut payload = [0u8; 32];
+        payload[16..].copy_from_slice(&[0x33u8; 16]);
+        assert!(matches!(
+            e.prop_set_bytes(PartPropId::CREDENTIAL, &payload),
+            Err(HsmError::InvalidAppCredentials)
+        ));
+        // Zero pin half.
+        let mut payload = [0u8; 32];
+        payload[..16].copy_from_slice(&[0x33u8; 16]);
+        assert!(matches!(
+            e.prop_set_bytes(PartPropId::CREDENTIAL, &payload),
+            Err(HsmError::InvalidAppCredentials)
+        ));
+        // Both zero.
+        assert!(matches!(
+            e.prop_set_bytes(PartPropId::CREDENTIAL, &[0u8; 32]),
+            Err(HsmError::InvalidAppCredentials)
+        ));
+    }
+
+    #[test]
+    fn psk_get_returns_default_when_absent() {
+        let e = fresh_entry();
+        assert_eq!(
+            e.prop_get_bytes(PartPropId::PSK_CO).unwrap(),
+            DEFAULT_PSK_CO.as_slice()
+        );
+        assert_eq!(
+            e.prop_get_bytes(PartPropId::PSK_CU).unwrap(),
+            DEFAULT_PSK_CU.as_slice()
+        );
+    }
+
+    // ── Phase A new-id coverage ────────────────────────────────────
+
+    #[test]
+    fn bk3_initialized_one_shot_transition() {
+        let mut e = fresh_entry();
+        // Reads via scalar widening (Bool maps to 0/1 in prop_get_scalar).
+        assert_eq!(e.prop_get_scalar(PartPropId::BK3_INITIALIZED).unwrap(), 0);
+        // First true write succeeds.
+        e.prop_set_scalar(PartPropId::BK3_INITIALIZED, 1).unwrap();
+        assert_eq!(e.prop_get_scalar(PartPropId::BK3_INITIALIZED).unwrap(), 1);
+        assert!(e.bk3_initialized);
+        // Re-asserting true returns Bk3AlreadyInitialized.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::BK3_INITIALIZED, 1),
+            Err(HsmError::Bk3AlreadyInitialized)
+        ));
+        // Clearing back to false is rejected.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::BK3_INITIALIZED, 0),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn bk3_initialized_accepts_bool_writes() {
+        // The trait-level Bool setter (validate_set with ExpectedKind::Bool)
+        // is now accepted because BK3_INITIALIZED is Rw.
+        assert!(validate_set(PartPropId::BK3_INITIALIZED, 0, ExpectedKind::Bool, None).is_ok());
+        // U8-kind requests are rejected by the kind mismatch.
+        assert!(matches!(
+            validate_set(PartPropId::BK3_INITIALIZED, 0, ExpectedKind::U8, None),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn bks2_id_returns_constant_zero() {
+        let e = fresh_entry();
+        assert_eq!(e.prop_get_scalar(PartPropId::BKS2_ID).unwrap(), 0);
+    }
+
+    #[test]
+    fn bks2_id_is_read_only() {
+        assert!(matches!(
+            validate_set(PartPropId::BKS2_ID, 0, ExpectedKind::U16, None),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn id_pub_key_returns_fixed_size_buffer() {
+        let mut e = fresh_entry();
+        e.id_pub_key[0] = 0xAA;
+        let got = e.prop_get_bytes(PartPropId::ID_PUB_KEY).unwrap();
+        assert_eq!(got.len(), 96);
+        assert_eq!(got[0], 0xAA);
+    }
+
+    #[test]
+    fn id_pub_key_is_read_only() {
+        assert!(matches!(
+            validate_set(PartPropId::ID_PUB_KEY, 0, ExpectedKind::Bytes, Some(96)),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn session_enc_pub_key_returns_field() {
+        let mut e = fresh_entry();
+        e.session_enc_pub_key[1] = 0x5A;
+        let got = e.prop_get_bytes(PartPropId::SESSION_ENC_PUB_KEY).unwrap();
+        assert_eq!(got.len(), 96);
+        assert_eq!(got[1], 0x5A);
+    }
+
+    #[test]
+    fn establish_cred_pub_key_returns_field() {
+        let mut e = fresh_entry();
+        e.establish_cred_pub_key[95] = 0x77;
+        let got = e
+            .prop_get_bytes(PartPropId::ESTABLISH_CRED_PUB_KEY)
+            .unwrap();
+        assert_eq!(got.len(), 96);
+        assert_eq!(got[95], 0x77);
+    }
+
+    #[test]
+    fn pta_pub_sec1_round_trip() {
+        let mut e = fresh_entry();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::PTA_PUB_SEC1),
+            Err(HsmError::PartPropNotFound)
+        ));
+        let payload = [0x33u8; P384_PUB_SEC1_LEN];
+        e.prop_set_bytes(PartPropId::PTA_PUB_SEC1, &payload)
+            .unwrap();
+        assert_eq!(
+            e.prop_get_bytes(PartPropId::PTA_PUB_SEC1).unwrap(),
+            &payload[..]
+        );
+        e.prop_clear(PartPropId::PTA_PUB_SEC1).unwrap();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::PTA_PUB_SEC1),
+            Err(HsmError::PartPropNotFound)
+        ));
+    }
+
+    #[test]
+    fn pta_pub_sec1_wrong_size_rejected() {
+        assert!(matches!(
+            validate_set(
+                PartPropId::PTA_PUB_SEC1,
+                0,
+                ExpectedKind::Bytes,
+                Some(P384_PUB_SEC1_LEN - 1)
+            ),
+            Err(HsmError::InvalidArg)
+        ));
+    }
+
+    #[test]
+    fn bk3_session_round_trip_and_zeroize() {
+        let mut e = fresh_entry();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::BK3_SESSION),
+            Err(HsmError::PartPropNotFound)
+        ));
+        let payload = [0x9Eu8; 48];
+        e.prop_set_bytes(PartPropId::BK3_SESSION, &payload).unwrap();
+        assert_eq!(
+            e.prop_get_bytes(PartPropId::BK3_SESSION).unwrap(),
+            &payload[..]
+        );
+        e.prop_clear(PartPropId::BK3_SESSION).unwrap();
+        assert!(matches!(
+            e.prop_get_bytes(PartPropId::BK3_SESSION),
+            Err(HsmError::PartPropNotFound)
+        ));
+        // Clear must zeroize the backing field.
+        assert_eq!(&e.bk3_session[..], &[0u8; 48]);
+    }
+
+    #[test]
+    fn bk3_session_marked_sensitive_in_catalogue() {
+        let meta = PartPropId::BK3_SESSION.meta().unwrap();
+        assert!(meta.sensitive);
+    }
 }
