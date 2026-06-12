@@ -81,16 +81,14 @@ pub(crate) fn init_trace_file() {
 
         // Build and install the subscriber.  If `set_global_default` fails
         // (e.g. another subscriber was already installed), silently ignore.
-        let subscriber = tracing_subscriber::registry()
-            .with(filter)
-            .with(
-                fmt::layer()
-                    .with_writer(writer)
-                    .with_ansi(false)
-                    .with_thread_ids(true)
-                    .with_target(true)
-                    .with_span_events(fmt::format::FmtSpan::FULL),
-            );
+        let subscriber = tracing_subscriber::registry().with(filter).with(
+            fmt::layer()
+                .with_writer(writer)
+                .with_ansi(false)
+                .with_thread_ids(true)
+                .with_target(true)
+                .with_span_events(fmt::format::FmtSpan::FULL),
+        );
 
         let _ = tracing::subscriber::set_global_default(subscriber);
     });
