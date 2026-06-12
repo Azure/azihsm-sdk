@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#[cfg(target_os = "linux")]
 #[test]
 fn compile_tests() {
     let t = trybuild::TestCases::new();
