@@ -3,7 +3,7 @@
 
 //! File-based tracing initialization for the native C API.
 //!
-//! When the environment variable `AZIHSM_SDK_TRACE_FILE` is set to a file
+//! When the environment variable `AZIHSM_API_NATIVE_TRACE_FILE` is set to a file
 //! path, this module installs a [`tracing_subscriber`] that writes all trace
 //! output to that file.  Initialization is idempotent and thread-safe thanks
 //! to [`std::sync::Once`].
@@ -20,12 +20,12 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
 /// Name of the environment variable that controls file-based tracing.
-const TRACE_FILE_ENV_VAR: &str = "AZIHSM_SDK_TRACE_FILE";
+const TRACE_FILE_ENV_VAR: &str = "AZIHSM_API_NATIVE_TRACE_FILE";
 
 /// Ensures file-based tracing is initialized exactly once.
 ///
 /// This function is safe to call from any thread and any number of times.
-/// On the first call it checks `AZIHSM_SDK_TRACE_FILE`:
+/// On the first call it checks `AZIHSM_API_NATIVE_TRACE_FILE`:
 ///
 /// * If the variable is **not set**, no subscriber is installed.
 /// * If it **is set**, the file is opened and a `tracing_subscriber::fmt`
@@ -34,7 +34,7 @@ const TRACE_FILE_ENV_VAR: &str = "AZIHSM_SDK_TRACE_FILE";
 ///
 /// All errors are silently ignored so that tracing failures never affect
 /// normal library operation.
-pub(crate) fn ensure_tracing() {
+pub(crate) fn init_trace_file() {
     static ONCE: Once = Once::new();
 
     ONCE.call_once(|| {
@@ -85,14 +85,13 @@ pub(crate) fn ensure_tracing() {
 mod tests {
     use super::*;
 
-    /// Calling `ensure_tracing` multiple times must never panic, regardless
+    /// Calling `init_trace_file` multiple times must never panic, regardless
     /// of whether the env var is set.
     #[test]
-    fn ensure_tracing_is_idempotent() {
-        // Call several times — the Once guard ensures only the first call
-        // does any real work, and subsequent calls are no-ops.
-        ensure_tracing();
-        ensure_tracing();
-        ensure_tracing();
+    fn init_trace_file_is_idempotent() {
+        // Without the env var set, these are all no-ops.
+        init_trace_file();
+        init_trace_file();
+        init_trace_file();
     }
 }
