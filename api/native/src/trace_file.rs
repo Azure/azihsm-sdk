@@ -143,7 +143,16 @@ mod tests {
     /// `Once` guard and global subscriber don't interfere with other tests.
     #[test]
     fn trace_output_written_to_file() {
-        let trace_path = std::env::temp_dir().join("azihsm_nativeapi_trace_test.log");
+        // Use a unique filename to avoid collisions when tests run in
+        // parallel or multiple jobs share the same temp directory.
+        let filename = format!(
+            "azihsm_nativeapi_trace_test_{}_{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        );
+        let trace_path = std::env::temp_dir().join(filename);
         let _ = std::fs::remove_file(&trace_path);
 
         // Re-invoke *this* test binary running only the helper test, with
