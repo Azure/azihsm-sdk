@@ -35,6 +35,7 @@ mod session_props;
 #[path = "../../lib/src/shared_types.rs"]
 mod shared_types;
 mod str;
+mod tracing_init;
 mod utils;
 
 use std::ffi::c_void;
@@ -200,6 +201,7 @@ static HANDLE_TABLE: LazyLock<HandleTable> = LazyLock::new(HandleTable::default)
 pub(crate) fn abi_boundary<F: FnOnce() -> Result<(), AzihsmStatus> + UnwindSafe>(
     f: F,
 ) -> AzihsmStatus {
+    tracing_init::ensure_tracing();
     match catch_unwind(f) {
         Ok(hr) => match hr {
             Ok(_) => AzihsmStatus::Success,

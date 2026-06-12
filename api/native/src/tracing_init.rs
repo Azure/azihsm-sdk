@@ -1,0 +1,98 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! File-based tracing initialization for the native C API.
+//!
+//! When the environment variable `AZIHSM_SDK_TRACE_FILE` is set to a file
+//! path, this module installs a [`tracing_subscriber`] that writes all trace
+//! output to that file.  Initialization is idempotent and thread-safe thanks
+//! to [`std::sync::Once`].
+//!
+//! If the environment variable is not set, or if any step of the
+//! initialization fails (file open, filter parse, subscriber install), the
+//! function silently returns without installing a subscriber.
+
+use std::sync::Mutex;
+use std::sync::Once;
+
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt;
+use tracing_subscriber::prelude::*;
+
+/// Name of the environment variable that controls file-based tracing.
+const TRACE_FILE_ENV_VAR: &str = "AZIHSM_SDK_TRACE_FILE";
+
+/// Ensures file-based tracing is initialized exactly once.
+///
+/// This function is safe to call from any thread and any number of times.
+/// On the first call it checks `AZIHSM_SDK_TRACE_FILE`:
+///
+/// * If the variable is **not set**, no subscriber is installed.
+/// * If it **is set**, the file is opened and a `tracing_subscriber::fmt`
+///   subscriber is installed that writes timestamped, structured trace events
+///   to the file.
+///
+/// All errors are silently ignored so that tracing failures never affect
+/// normal library operation.
+pub(crate) fn ensure_tracing() {
+    static ONCE: Once = Once::new();
+
+    ONCE.call_once(|| {
+        // If the env var is not set, do nothing.
+        let trace_path = match std::env::var(TRACE_FILE_ENV_VAR) {
+            Ok(p) if !p.is_empty() => p,
+            _ => return,
+        };
+
+        // Attempt to open/create the trace file.
+        let file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&trace_path)
+        {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let writer = Mutex::new(file);
+
+        // Build an EnvFilter from RUST_LOG, defaulting to `info`.
+        let filter = match EnvFilter::try_from_default_env() {
+            Ok(f) => f,
+            Err(_) => match EnvFilter::try_new("info") {
+                Ok(f) => f,
+                Err(_) => return,
+            },
+        };
+
+        // Build and install the subscriber.  If `set_global_default` fails
+        // (e.g. another subscriber was already installed), silently ignore.
+        let subscriber = tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                fmt::layer()
+                    .with_writer(writer)
+                    .with_ansi(false)
+                    .with_thread_ids(true)
+                    .with_target(true)
+                    .with_span_events(fmt::format::FmtSpan::FULL),
+            );
+
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Calling `ensure_tracing` multiple times must never panic, regardless
+    /// of whether the env var is set.
+    #[test]
+    fn ensure_tracing_is_idempotent() {
+        // Call several times — the Once guard ensures only the first call
+        // does any real work, and subsequent calls are no-ops.
+        ensure_tracing();
+        ensure_tracing();
+        ensure_tracing();
+    }
+}

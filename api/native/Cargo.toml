@@ -14,6 +14,7 @@ azihsm_api.workspace = true
 open-enum.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
+tracing-subscriber = { features = ["env-filter", "fmt", "ansi"], workspace = true }
 zerocopy = { features = ["derive"], workspace = true }
 
 [features]
