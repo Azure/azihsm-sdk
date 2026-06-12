@@ -3,13 +3,13 @@
 
 //! File-based tracing initialization for the native API.
 //!
-//! When the environment variable `AZIHSM_API_NATIVE_TRACE_FILE` is set to a file
+//! When the environment variable `AZIHSM_NATIVEAPI_TRACE_FILE` is set to a file
 //! path, this module installs a `tracing_subscriber` that writes all trace
 //! output to that file. Initialization is idempotent and thread-safe thanks
 //! to `std::sync::Once`.
 //!
 //! By default, the file is truncated on each run.
-//! Set `AZIHSM_API_NATIVE_TRACE_FILE_APPEND=1` to append instead.
+//! Set `AZIHSM_NATIVEAPI_TRACE_FILE_APPEND=1` to append instead.
 //!
 //! If the environment variable is not set, or if any step of the
 //! initialization fails (file open, filter parse, subscriber install), the
@@ -23,18 +23,18 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
 /// Name of the environment variable that controls file-based tracing.
-const TRACE_FILE_ENV_VAR: &str = "AZIHSM_API_NATIVE_TRACE_FILE";
+const TRACE_FILE_ENV_VAR: &str = "AZIHSM_NATIVEAPI_TRACE_FILE";
 
 /// Name of the environment variable that controls append mode.
 /// When set to `"1"`, the trace file is opened in append mode so that
 /// output from successive runs accumulates.  Any other value (or unset)
 /// causes the file to be truncated on each run.
-const TRACE_FILE_APPEND_ENV_VAR: &str = "AZIHSM_API_NATIVE_TRACE_FILE_APPEND";
+const TRACE_FILE_APPEND_ENV_VAR: &str = "AZIHSM_NATIVEAPI_TRACE_FILE_APPEND";
 
 /// Ensures file-based tracing is initialized exactly once.
 ///
 /// This function is safe to call from any thread and any number of times.
-/// On the first call it checks `AZIHSM_API_NATIVE_TRACE_FILE`:
+/// On the first call it checks `AZIHSM_NATIVEAPI_TRACE_FILE`:
 ///
 /// * If the variable is **not set**, no subscriber is installed.
 /// * If it **is set**, the file is opened and a `tracing_subscriber::fmt`
