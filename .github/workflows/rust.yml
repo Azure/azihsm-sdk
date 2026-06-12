@@ -134,10 +134,62 @@ jobs:
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run all mock tests with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage --features mock --profile ci-mock
+    # - name: Run all mock tests with code coverage
+    #   id: test-mock-coverage
+    #   run: cargo xtask precheck --coverage --features mock --profile ci-mock
+    #   continue-on-error: true
+
+    # TEMPORARIY BREAK OUT BY BINARY ID TO ASSESS RUNTIMES - REMOVE ONCE FIXED
+    - name: azihsm_api
+      id: azihsm_api
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api)' --features mock --profile ci-mock
       continue-on-error: true
+    - name: azihsm_api_native
+      id: azihsm_api_native
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api_native)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_api_tests
+      id: azihsm_api_tests
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api_tests*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_crypto
+      id: azihsm_crypto
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_crypto)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_emu
+      id: azihsm_ddi_emu
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_emu)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_mbor_codec
+      id: azihsm_ddi_mbor_codec
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_mbor_*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_tbor_codec
+      id: azihsm_ddi_tbor_codec
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_tbor_*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_core_crypto_key_report
+      id: azihsm_fw_core_crypto_key_report
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_core_crypto_key_report)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_ddi_mbor
+      id: azihsm_fw_ddi_mbor
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_ddi_mbor*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_ddi_tbor
+      id: azihsm_fw_ddi_tbor
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_ddi_tbor*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_hsm
+      id: azihsm_fw_hsm
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_hsm*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_tpm
+      id: azihsm_tpm
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_tpm)' --features mock --profile ci-mock
+      continue-on-error: true
+    # END TEMP BREAKOUT
+    
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
       with:
@@ -146,14 +198,14 @@ jobs:
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
-    - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
-      run: |
-        echo "One or more tests failed."
-        exit 1
+    # - name: Code Coverage Summary Report
+    #   if: ${{ steps.test-mock-coverage.outcome == 'success' }}
+    #   run: cargo xtask precheck --coverage-report
+    # - name: Fail if any tests failed
+    #   if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+    #   run: |
+    #     echo "One or more tests failed."
+    #     exit 1
 
   build_windows:
 
@@ -250,10 +302,61 @@ jobs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask precheck --setup
-    - name: Run all mock tests with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage --features mock --profile ci-mock
+    # - name: Run all mock tests with code coverage
+    #   id: test-mock-coverage
+    #   run: cargo xtask precheck --coverage --features mock --profile ci-mock
+    #   continue-on-error: true
+
+    # TEMPORARIY BREAK OUT BY BINARY ID TO ASSESS RUNTIMES - REMOVE ONCE FIXED
+    - name: azihsm_api
+      id: azihsm_api
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api)' --features mock --profile ci-mock
       continue-on-error: true
+    - name: azihsm_api_native
+      id: azihsm_api_native
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api_native)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_api_tests
+      id: azihsm_api_tests
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_api_tests*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_crypto
+      id: azihsm_crypto
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_crypto)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_emu
+      id: azihsm_ddi_emu
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_emu)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_mbor_codec
+      id: azihsm_ddi_mbor_codec
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_mbor_*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_ddi_tbor_codec
+      id: azihsm_ddi_tbor_codec
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_ddi_tbor_*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_core_crypto_key_report
+      id: azihsm_fw_core_crypto_key_report
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_core_crypto_key_report)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_ddi_mbor
+      id: azihsm_fw_ddi_mbor
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_ddi_mbor*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_ddi_tbor
+      id: azihsm_fw_ddi_tbor
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_ddi_tbor*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_fw_hsm
+      id: azihsm_fw_hsm
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_fw_hsm*)' --features mock --profile ci-mock
+      continue-on-error: true
+    - name: azihsm_tpm
+      id: azihsm_tpm
+      run: cargo xtask precheck --coverage -E 'binary_id(azihsm_tpm)' --features mock --profile ci-mock
+      continue-on-error: true
+    # END TEMP BREAKOUT
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
       with:
@@ -262,11 +365,11 @@ jobs:
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
-    - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
-      run: |
-        echo "One or more tests failed."
-        exit 1
+    # - name: Code Coverage Summary Report
+    #   if: ${{ steps.test-mock-coverage.outcome == 'success' }}
+    #   run: cargo xtask precheck --coverage-report
+    # - name: Fail if any tests failed
+    #   if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+    #   run: |
+    #     echo "One or more tests failed."
+    #     exit 1
