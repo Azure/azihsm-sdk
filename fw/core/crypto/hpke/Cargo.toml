@@ -11,7 +11,11 @@ bench = false
 doctest = false
 test = false
 
+[features]
+cbc = ["dep:azihsm_fw_core_crypto_aes_cbc_pad"]
+default = ["cbc"]
+
 [dependencies]
-azihsm_fw_core_crypto_aes_cbc_pad = { path = "../aes-cbc-pad" }
+azihsm_fw_core_crypto_aes_cbc_pad = { optional = true, path = "../aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "../gcm-buf" }
 azihsm_fw_hsm_pal_traits = { workspace = true }

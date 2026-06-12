@@ -163,9 +163,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
         // PTACSR + PTAReport: build everything before any partition-
         // state mutation so failures roll back cleanly.
-        let csr_assets = build_csr_assets(pal, io, alloc, pta.pub_sec1).await?;
         let (csr_dma, csr_len) =
-            build_signed_csr(pal, io, alloc, pta.pub_sec1, pta.priv_scalar, &csr_assets).await?;
+            build_signed_csr(pal, io, alloc, pta.pub_sec1, pta.priv_scalar).await?;
         let (report_dma, report_len) = build_pta_report(
             pal,
             io,
@@ -240,12 +239,6 @@ fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
 struct PtaKeypair<'a> {
     priv_scalar: &'a mut DmaBuf,
     pub_sec1: &'a mut DmaBuf,
-}
-
-/// PTACSR assets used to seed both `build_tbs` and `build_csr` calls.
-struct CsrAssets {
-    cn: [u8; csr::SUBJECT_CN_LEN],
-    sn: [u8; csr::SUBJECT_SN_LEN],
 }
 
 // ─── Pipeline stage helpers ──────────────────────────────────────────────────
@@ -363,12 +356,16 @@ async fn derive_pta_keypair<'a, P: HsmPal>(
 }
 
 /// Compute the PTACSR subject `commonName` and `serialNumber` slots.
-async fn build_csr_assets<P: HsmPal>(
+/// Build the CSR subject fields, then sign with the PTA private key
+/// and emit the full DER-encoded CSR.  The `cn`/`sn` arrays are local
+/// to this function so they never cross an await boundary in `handle`.
+async fn build_signed_csr<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    alloc: &impl HsmScopedAlloc,
+    alloc: &'a impl HsmScopedAlloc,
     pub_sec1: &DmaBuf,
-) -> HsmResult<CsrAssets> {
+    pta_priv: &DmaBuf,
+) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let mut cn = [0u8; csr::SUBJECT_CN_LEN];
     padding::pad_cn_to(PTA_SUBJECT_CN, &mut cn).ok_or(HsmError::InternalError)?;
 
@@ -387,32 +384,16 @@ async fn build_csr_assets<P: HsmPal>(
     let ptaid_hex_str = core::str::from_utf8(&ptaid_hex).map_err(|_| HsmError::InternalError)?;
     padding::pad_sn_to(ptaid_hex_str, &mut sn).ok_or(HsmError::InternalError)?;
 
-    Ok(CsrAssets { cn, sn })
-}
-
-/// Build the unsigned TBS, sign it with the PTA private key, then
-/// emit the full DER-encoded CSR.
-async fn build_signed_csr<'a, P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    alloc: &'a impl HsmScopedAlloc,
-    pub_sec1: &DmaBuf,
-    pta_priv: &DmaBuf,
-    assets: &CsrAssets,
-) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let input = csr_builder::CsrInput {
         tbs_template: &csr::TBS_TEMPLATE,
         public_key_offset: csr::PUBLIC_KEY_OFFSET,
         public_key: pub_sec1,
         subject_cn_offset: csr::SUBJECT_CN_OFFSET,
-        subject_cn: &assets.cn,
+        subject_cn: &cn,
         subject_sn_offset: csr::SUBJECT_SN_OFFSET,
-        subject_sn: &assets.sn,
+        subject_sn: &sn,
     };
 
-    // Single-shot async build: patches TBS, hashes, signs via PAL,
-    // emits the full DER-encoded CSR.  See `csr_builder::build_csr`
-    // for the unified pal/io/alloc + DmaBuf priv_key API.
     let csr = alloc.dma_alloc(PTA_CSR_MAX_LEN)?;
     let csr_len = csr_builder::build_csr(pal, io, alloc, &input, pta_priv, Some(csr)).await?;
     Ok((csr, csr_len))
@@ -458,13 +439,11 @@ async fn build_pta_report<'a, P: HsmPal>(
         vm_launch_id: &vm_launch_id,
     };
 
-    let report_len = key_report(pal, io, alloc, &params, pid_priv, None).await?;
+    // Allocate at max size and build in a single pass — avoids the
+    // size-query await that would add an extra state machine variant.
+    let report = alloc.dma_alloc(COSE_SIGN1_MAX_LEN)?;
+    let report_len = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
     if report_len > PTA_REPORT_MAX_LEN {
-        return Err(HsmError::InternalError);
-    }
-    let report = alloc.dma_alloc(report_len)?;
-    let written = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
-    if written != report_len {
         return Err(HsmError::InternalError);
     }
     Ok((report, report_len))
