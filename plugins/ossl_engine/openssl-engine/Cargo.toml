@@ -7,6 +7,10 @@ name = "openssl-engine"
 publish = false
 version = "0.1.0"
 
+[features]
+default = []
+engine = ["openssl-sys-engine/engine"]
+
 [dependencies]
 openssl-sys-engine.workspace = true
 

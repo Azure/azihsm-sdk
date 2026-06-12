@@ -34,21 +34,13 @@ impl Xtask for Clippy {
             .quiet()
             .run()?;
 
-        // The engine crates require a system OpenSSL 1.1.x at build-script
-        // time, which standard runners/hosts don't have.  They are linted
-        // in the Engine matrix workflow instead.
-        const DEFAULT_EXCLUDES: &[&str] =
-            &["azihsm_engine", "openssl-engine", "openssl-sys-engine"];
-
         let mut exclude_args: Vec<String> = Vec::new();
 
-        for crate_name in DEFAULT_EXCLUDES
-            .iter()
-            .map(|s| s.to_string())
-            .chain(self.exclude.iter().cloned())
-        {
-            exclude_args.push("--exclude".to_string());
-            exclude_args.push(crate_name);
+        if !self.exclude.is_empty() {
+            for crate_name in &self.exclude {
+                exclude_args.push("--exclude".to_string());
+                exclude_args.push(crate_name.clone());
+            }
         }
 
         cmd!(

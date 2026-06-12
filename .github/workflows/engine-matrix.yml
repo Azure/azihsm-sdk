@@ -87,16 +87,18 @@ jobs:
           restore-keys: engine-${{ matrix.distro }}-
 
       - name: Build engine
-        run: cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine
+        run: |
+          cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+            --features engine
 
-      # The engine crates are excluded from the workspace-wide clippy in
-      # rust.yml (their build script needs OpenSSL 1.1.x), so lint them here.
-      # The minimal-profile toolchain ships without clippy; add it first.
+      # Without the `engine` feature the crates are empty stubs (that's what
+      # the workspace-wide clippy in rust.yml lints), so lint the real thing
+      # here.  The minimal-profile toolchain ships without clippy; add it first.
       - name: Clippy engine
         run: |
           cargo xtask rustup-component-add --component clippy
           cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
-            --all-targets -- -D warnings
+            --features engine --all-targets -- -D warnings
 
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"

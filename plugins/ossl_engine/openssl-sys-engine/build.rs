@@ -15,6 +15,15 @@ fn main() {
     println!("cargo::rerun-if-changed=wrapper.h");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
 
+    // Without the `engine` feature this crate is an empty stub: skip the
+    // OpenSSL probe and bindgen so plain workspace builds work on hosts
+    // without OpenSSL 1.1.x.
+    if env::var_os("CARGO_FEATURE_ENGINE").is_none() {
+        let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+        std::fs::write(out.join("bindings.rs"), "").expect("failed to write bindings.rs");
+        return;
+    }
+
     // pkg-config may report zero or several include/link dirs; zero is valid
     // (default-prefix installs need no -I / -L).
     struct OpensslPaths {

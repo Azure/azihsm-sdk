@@ -7,6 +7,10 @@ name = "openssl-sys-engine"
 publish = false
 version = "0.1.0"
 
+[features]
+default = []
+engine = []
+
 [target.'cfg(target_os = "linux")'.build-dependencies]
 bindgen.workspace = true
 pkg-config.workspace = true

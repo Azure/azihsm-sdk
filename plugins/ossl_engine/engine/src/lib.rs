@@ -10,7 +10,7 @@
 
 //! Azure Integrated HSM -- OpenSSL 1.1.x Engine. Linux only.
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod engine_impl {
     use std::ffi::CStr;
     use std::ffi::c_int;
