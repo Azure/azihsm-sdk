@@ -212,6 +212,7 @@ pub(crate) fn resiliency_config_from_ptr(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
+        crate::tracing_init::ensure_init();
         validate_ptr(handle)?;
 
         let part_list = Box::new(api::HsmPartitionManager::partition_info_list());

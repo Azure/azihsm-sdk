@@ -35,6 +35,7 @@ mod session_props;
 #[path = "../../lib/src/shared_types.rs"]
 mod shared_types;
 mod str;
+mod tracing_init;
 mod utils;
 
 use std::ffi::c_void;

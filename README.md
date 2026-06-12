@@ -98,6 +98,87 @@ cargo xtask precheck --all
 
 It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
 
+## Tracing
+
+The SDK emits structured traces through the `Microsoft.Azure.IHSM` provider
+with keyword `1`. On Windows, traces are emitted through ETW. On Linux, traces
+are emitted through the
+[user_events](https://docs.kernel.org/trace/user_events.html) subsystem.
+
+When native tracing is initialized, the SDK emits an `INFO` event confirming the
+native tracing provider was registered, followed by one sample event at each
+`tracing` level: `ERROR`, `WARN`, `INFO`, `DEBUG`, and `TRACE`. The sample
+events have `sample=true` and are intended only for testing. The SDK also emits
+an `INFO` sample named `AZIHSM sample parameterized event` with structured
+fields such as `operation`, `request_id`, `partition_count`, `duration_ms`, and
+`success`.
+
+### Windows ETW
+
+Run the following from an elevated PowerShell or command prompt:
+
+```powershell
+# Start an ETW session for all AZIHSM events at keyword 1 and verbose level.
+logman start AZIHSMTrace -ets -p Microsoft.Azure.IHSM 0x1 0x5 -o azihsm.etl
+
+# Run your application.
+<your-application>
+
+# Stop the ETW session.
+logman stop AZIHSMTrace -ets
+```
+
+Open `azihsm.etl` with Windows Performance Analyzer or PerfView to inspect the
+recorded events.
+
+### Linux user_events prerequisites
+
+`user_events` requires kernel >= 6.4, or a back-ported build that enables
+`CONFIG_USER_EVENTS`. Verify support:
+
+```bash
+ls /sys/kernel/tracing/user_events_data   # should exist
+```
+
+### Collecting Linux traces with `perf`
+
+```bash
+# 1. List available user_events tracepoints registered by the SDK.
+sudo perf list 'user_events:*'
+
+# 2. Record all events from the Microsoft.Azure.IHSM provider.
+sudo perf record -e 'user_events:*' -a -- <your-application>
+
+# 3. View the recorded trace.
+sudo perf script
+```
+
+### Collecting Linux traces with `trace-cmd`
+
+```bash
+# Record.
+sudo trace-cmd record -e 'user_events' <your-application>
+
+# View.
+trace-cmd report
+```
+
+### Collecting Linux traces via tracefs manually
+
+```bash
+# Enable the events.
+echo 1 | sudo tee /sys/kernel/tracing/events/user_events/enable
+
+# Start reading.
+sudo cat /sys/kernel/tracing/trace_pipe &
+
+# Run your application.
+<your-application>
+
+# Disable when done.
+echo 0 | sudo tee /sys/kernel/tracing/events/user_events/enable
+```
+
 ## License
 
 See [LICENSE](./LICENSE) for details.
