@@ -87,7 +87,7 @@ pub struct Precheck {
     #[clap(long, short = 'p')]
     package: Option<String>,
     /// Features to enable when running tests
-    #[clap(long)]
+    #[clap(long, short = 'F')]
     features: Option<String>,
     /// Test filterset (see https://nexte.st/docs/filtersets)
     #[clap(long, short = 'E')]
