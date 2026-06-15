@@ -132,7 +132,7 @@ jobs:
       run: cargo xtask setup
     - name: Run azihsm_api_tests with code coverage
       id: test-api-coverage
-      run: cargo xtask precheck --coverage -p azihsm_api_tests --profile ci-azihsm-api-tests
+      run: cargo xtask precheck --coverage -p azihsm_api_tests --profile ci-api
       continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
@@ -311,7 +311,7 @@ jobs:
       run: cargo xtask setup
     - name: Run azihsm_api_tests with code coverage
       id: test-api-coverage
-      run: cargo xtask precheck --coverage -p azihsm_api_tests --profile ci-azihsm-api-tests
+      run: cargo xtask precheck --coverage -p azihsm_api_tests --profile ci-api
       continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
