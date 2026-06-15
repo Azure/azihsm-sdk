@@ -325,7 +325,7 @@ fn test_root_cert_extensions() {
 
     let subject = cert.subject_name();
     let cn_entry = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
-    let cn_str = cn_entry.data().to_string().unwrap();
+    let cn_str = cn_entry.data().as_utf8().unwrap().to_string();
     assert!(
         cn_str.starts_with(ROOT_CN),
         "CN should start with expected name"
@@ -478,7 +478,7 @@ fn test_csr_subject() {
     let csr = X509Req::from_der(&csr_der).unwrap();
     let subject = csr.subject_name();
     let cn_entry = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
-    let cn_str = cn_entry.data().to_string().unwrap();
+    let cn_str = cn_entry.data().as_utf8().unwrap().to_string();
     assert!(
         cn_str.starts_with(DEVICE_CN),
         "CSR CN should start with expected device name"
@@ -658,7 +658,7 @@ fn test_subject_sn_patched() {
     let cert = X509::from_der(&cert_der).unwrap();
     let subject = cert.subject_name();
     let sn_entry = subject.entries_by_nid(Nid::SERIALNUMBER).next().unwrap();
-    let sn_str = sn_entry.data().to_string().unwrap();
+    let sn_str = sn_entry.data().as_utf8().unwrap().to_string();
     let binding = pad_sn("ROOTCA01");
     let expected = std::str::from_utf8(&binding).unwrap();
     assert_eq!(sn_str, expected, "Subject serialNumber should match");
@@ -676,7 +676,7 @@ fn test_issuer_sn_patched() {
     let cert = X509::from_der(&cert_der).unwrap();
     let issuer = cert.issuer_name();
     let sn_entry = issuer.entries_by_nid(Nid::SERIALNUMBER).next().unwrap();
-    let sn_str = sn_entry.data().to_string().unwrap();
+    let sn_str = sn_entry.data().as_utf8().unwrap().to_string();
     let binding = pad_sn("ROOTCA01");
     let expected = std::str::from_utf8(&binding).unwrap();
     assert_eq!(sn_str, expected, "Issuer serialNumber should match");
