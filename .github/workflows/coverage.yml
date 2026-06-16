@@ -43,7 +43,7 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
