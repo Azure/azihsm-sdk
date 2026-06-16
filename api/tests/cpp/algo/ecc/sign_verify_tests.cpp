@@ -1543,6 +1543,9 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_truncated_signature)
             pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64);
