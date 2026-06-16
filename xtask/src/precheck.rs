@@ -181,7 +181,7 @@ impl Xtask for Precheck {
 
         if stage.nextest || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // Run default tests with coverage
+                // Run default tests
                 let tests = default_tests(&self.exclude, self.profile.clone());
                 run_tests(tests, false, ctx.clone())?;
 
@@ -278,21 +278,21 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
-    if !exclude.iter().any(|e| e == "azihsm_ddi") {
-        // SDK Run azihsm_ddi mock tests table-4
+    if !exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
+        // SDK Run azihsm_ddi_mbor_types mock tests table-4
         tests.push(Nextest {
             features: Some("mock,table-4".to_string()),
-            package: Some("azihsm_ddi".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
             exclude: exclude.to_owned(),
         });
 
-        // SDK Run azihsm_ddi mock tests table-64
+        // SDK Run azihsm_ddi_mbor_types mock tests table-64
         tests.push(Nextest {
             features: Some("mock,table-64".to_string()),
-            package: Some("azihsm_ddi".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
