@@ -1416,6 +1416,8 @@ TEST_F(azihsm_ecc_sign_verify, sign_with_public_key_fails)
             pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64);
@@ -1447,6 +1449,8 @@ TEST_F(azihsm_ecc_sign_verify, verify_with_private_key_fails)
             pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64);
@@ -1483,6 +1487,8 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_ecc_public_key)
             signer_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(signer_priv_key.get(), 0u);
+        ASSERT_NE(signer_pub_key.get(), 0u);
 
         auto_key wrong_priv_key;
         auto_key wrong_pub_key;
@@ -1494,6 +1500,8 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_ecc_public_key)
             wrong_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(wrong_priv_key.get(), 0u);
+        ASSERT_NE(wrong_pub_key.get(), 0u);
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64);
