@@ -220,7 +220,13 @@ impl EncryptOp for OsslAesCbcAlgo {
             count += ctx
                 .cipher_final(&mut output[count..])
                 .map_err(|_| CryptoError::AesEncryptError)?;
-            iv.copy_from_slice(&output[count - iv.len()..count]);
+            // Advance the IV to the last ciphertext block for CBC chaining, but
+            // only when a full block was produced: an empty input with padding
+            // disabled yields count == 0, where `count - iv.len()` would
+            // underflow and panic. (Matches the streaming path's guard.)
+            if count >= iv.len() {
+                iv.copy_from_slice(&output[count - iv.len()..count]);
+            }
         } else {
             // The required output buffer size for OpenSSL's `update` is
             // `input.len() + block_size` regardless of whether padding is enabled.
@@ -478,7 +484,13 @@ impl DecryptOp for OsslAesCbcAlgo {
             count += ctx
                 .cipher_final(&mut output[count..])
                 .map_err(|_| CryptoError::AesDecryptError)?;
-            iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            // Advance the IV to the last ciphertext block for CBC chaining, but
+            // only when there is a full block: an empty ciphertext (a valid
+            // zero-block input with padding disabled) would underflow
+            // `input.len() - iv.len()` and panic. (Matches the streaming path.)
+            if input.len() >= iv.len() {
+                iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            }
         } else {
             count = input.len() + cipher.block_size();
         }
