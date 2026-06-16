@@ -156,8 +156,8 @@ static void run_ecc_sign_verify_message_parity(
     auto_key pub_key;
     auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(priv_key.get(), 0);
-    ASSERT_NE(pub_key.get(), 0);
+    ASSERT_NE(priv_key.get(), 0u);
+    ASSERT_NE(pub_key.get(), 0u);
 
     azihsm_algo algo{};
     algo.id = algo_id;
@@ -167,13 +167,27 @@ static void run_ecc_sign_verify_message_parity(
     azihsm_buffer msg_buf{ const_cast<uint8_t *>(message.data()),
                            static_cast<uint32_t>(message.size()) };
 
-    std::vector<uint8_t> signature(signature_len);
-    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
-
-    ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    azihsm_buffer sig_buf{ nullptr, 0 };
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf),
+        AZIHSM_STATUS_BUFFER_TOO_SMALL
+    );
+    ASSERT_GT(sig_buf.len, 0u);
     ASSERT_EQ(sig_buf.len, signature_len);
 
-    ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    std::vector<uint8_t> signature(sig_buf.len);
+    sig_buf.ptr = signature.data();
+
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    ASSERT_EQ(
+        azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
 }
 
 // Helper function to verify ECDSA rejects a signature when the digest is modified.
