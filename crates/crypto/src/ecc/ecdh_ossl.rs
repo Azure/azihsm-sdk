@@ -21,7 +21,14 @@
 //! - Ephemeral keys (ECDHE) provide forward secrecy
 //! - Public keys should be authenticated to prevent man-in-the-middle attacks
 
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
+use openssl_sys as ffi;
+
 use super::*;
+use crate::libctx::OSSL_SUCCESS;
+use crate::libctx::PkeyCtx;
 
 /// OpenSSL-backed ECDH key derivation operation.
 ///
@@ -110,62 +117,40 @@ impl<'a> DeriveOp for OsslEcdhAlgo<'a> {
     /// - Never use the raw shared secret directly for encryption
     #[allow(unsafe_code)]
     fn derive(&self, key: &Self::Key, derived_len: usize) -> Result<Self::DerivedKey, CryptoError> {
-        use std::os::raw::c_char;
-        use std::ptr;
-
-        use foreign_types::ForeignTypeRef;
-        use openssl_sys as ffi;
-
-        // The openssl crate's `Deriver` uses the legacy `EVP_PKEY_CTX_new`, which
-        // fetches the ECDH keyexch from the *process default* libctx regardless
-        // of the key's libctx — on OpenSSL 3.5 that resolves to the azihsm
-        // provider and re-enters it during the HSM session open. Build the derive
-        // ctx explicitly in the crate-private libctx (default-provider only) so
-        // the keyexch fetch never lands on azihsm. `EVP_PKEY_CTX_new_from_pkey`
-        // exists in OpenSSL 3.0+ libcrypto but is not bound by openssl-sys 0.9.x,
-        // so it is declared here. See [`crate::libctx`].
-        unsafe extern "C" {
-            fn EVP_PKEY_CTX_new_from_pkey(
-                libctx: *mut ffi::OSSL_LIB_CTX,
-                pkey: *mut ffi::EVP_PKEY,
-                propquery: *const c_char,
-            ) -> *mut ffi::EVP_PKEY_CTX;
-        }
-
-        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
-        // path; the output buffer is sized from the first `EVP_PKEY_derive`.
+        // The openssl crate's `Deriver` uses the legacy `EVP_PKEY_CTX_new`,
+        // which fetches the ECDH keyexch from the *process default* libctx
+        // regardless of the key's libctx — on OpenSSL 3.5 that resolves to the
+        // azihsm provider and re-enters it during the HSM session open. Build
+        // the derive ctx explicitly in the crate-private libctx
+        // (default-provider only) via `PkeyCtx` so the keyexch fetch never lands
+        // on azihsm. See [`crate::libctx`].
+        //
+        // SAFETY: the key's `EVP_PKEY*` and the peer key outlive `ctx` (the
+        // `PkeyCtx` guard frees it on drop on every path); the output buffer is
+        // sized from the first `EVP_PKEY_derive`.
         let secret = unsafe {
-            let ctx = EVP_PKEY_CTX_new_from_pkey(
-                crate::libctx::crypto_libctx_ptr(),
-                key.pkey().as_ptr(),
-                ptr::null(),
-            );
-            if ctx.is_null() {
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EcdhError)?;
+            if ffi::EVP_PKEY_derive_init(ctx.as_ptr()) != OSSL_SUCCESS {
                 return Err(CryptoError::EcdhError);
             }
-            let result = (|| {
-                if ffi::EVP_PKEY_derive_init(ctx) != 1 {
-                    return Err(CryptoError::EcdhError);
-                }
-                if ffi::EVP_PKEY_derive_set_peer(ctx, self.peer_key.pkey().as_ptr()) != 1 {
-                    return Err(CryptoError::EcdhSetPropertyError);
-                }
-                let mut len: usize = 0;
-                if ffi::EVP_PKEY_derive(ctx, ptr::null_mut(), &mut len) != 1 {
-                    return Err(CryptoError::EcdhError);
-                }
-                if derived_len != len {
-                    return Err(CryptoError::EcdhInvalidDerivedKeyLength);
-                }
-                let mut secret = vec![0u8; len];
-                if ffi::EVP_PKEY_derive(ctx, secret.as_mut_ptr(), &mut len) != 1 {
-                    return Err(CryptoError::EcdhDeriveError);
-                }
-                secret.truncate(len);
-                Ok(secret)
-            })();
-            ffi::EVP_PKEY_CTX_free(ctx);
-            result?
+            if ffi::EVP_PKEY_derive_set_peer(ctx.as_ptr(), self.peer_key.pkey().as_ptr())
+                != OSSL_SUCCESS
+            {
+                return Err(CryptoError::EcdhSetPropertyError);
+            }
+            let mut len: usize = 0;
+            if ffi::EVP_PKEY_derive(ctx.as_ptr(), ptr::null_mut(), &mut len) != OSSL_SUCCESS {
+                return Err(CryptoError::EcdhError);
+            }
+            if derived_len != len {
+                return Err(CryptoError::EcdhInvalidDerivedKeyLength);
+            }
+            let mut secret = vec![0u8; len];
+            if ffi::EVP_PKEY_derive(ctx.as_ptr(), secret.as_mut_ptr(), &mut len) != OSSL_SUCCESS {
+                return Err(CryptoError::EcdhDeriveError);
+            }
+            secret.truncate(len);
+            secret
         };
 
         GenericSecretKey::from_bytes(&secret)

@@ -30,7 +30,14 @@
 //! - Each signature uses a unique random value (nonce) generated securely
 //! - Verify signatures before trusting signed data
 
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
+use openssl_sys as ffi;
+
 use super::*;
+use crate::libctx::OSSL_SUCCESS;
+use crate::libctx::PkeyCtx;
 
 /// OpenSSL ECDSA signature and verification operations.
 ///
@@ -86,78 +93,52 @@ impl SignOp for OsslEccAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        use std::os::raw::c_char;
-        use std::ptr;
-
-        use foreign_types::ForeignTypeRef;
-        use openssl_sys as ffi;
-
-        // The openssl crate's `PkeyCtx` uses the legacy `EVP_PKEY_CTX_new`, which
-        // fetches the ECDSA signature op from the *process default* libctx
-        // regardless of the key's libctx — on OpenSSL 3.5 that resolves to the
-        // azihsm provider and re-enters it during the HSM session open (its
-        // ECDSA op is wrong/unavailable, so verify fails). Build the sign ctx
-        // explicitly in the crate-private libctx (default-provider only) so the
-        // signature fetch never lands on azihsm. `EVP_PKEY_CTX_new_from_pkey`
-        // exists in OpenSSL 3.0+ libcrypto but is not bound by openssl-sys 0.9.x,
-        // so it is declared here. See [`crate::libctx`].
-        unsafe extern "C" {
-            fn EVP_PKEY_CTX_new_from_pkey(
-                libctx: *mut ffi::OSSL_LIB_CTX,
-                pkey: *mut ffi::EVP_PKEY,
-                propquery: *const c_char,
-            ) -> *mut ffi::EVP_PKEY_CTX;
-        }
-
         let len = key.curve().point_size() * 2;
         if let Some(signature) = signature {
             if signature.len() < len {
                 return Err(CryptoError::EccSignError);
             }
 
-            // SAFETY: pointers are NULL-checked before use; `ctx` is freed on
-            // every path; the output buffer is sized from the first
-            // `EVP_PKEY_sign` (sig=NULL) query.
+            // The openssl crate's `PkeyCtx` uses the legacy `EVP_PKEY_CTX_new`,
+            // which fetches the ECDSA signature op from the *process default*
+            // libctx regardless of the key's libctx — on OpenSSL 3.5 that
+            // resolves to the azihsm provider and re-enters it during the HSM
+            // session open. Build the sign ctx explicitly in the crate-private
+            // libctx (default-provider only) via `PkeyCtx` so the fetch never
+            // lands on azihsm. See [`crate::libctx`].
+            //
+            // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+            // frees it on drop on every path); the output buffer is sized from
+            // the first `EVP_PKEY_sign` (sig=NULL) query.
             let vec = unsafe {
-                let ctx = EVP_PKEY_CTX_new_from_pkey(
-                    crate::libctx::crypto_libctx_ptr(),
-                    key.pkey().as_ptr(),
-                    ptr::null(),
-                );
-                if ctx.is_null() {
-                    return Err(CryptoError::EccError);
+                let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EccError)?;
+                if ffi::EVP_PKEY_sign_init(ctx.as_ptr()) != OSSL_SUCCESS {
+                    return Err(CryptoError::EccSignError);
                 }
-                let result = (|| {
-                    if ffi::EVP_PKEY_sign_init(ctx) != 1 {
-                        return Err(CryptoError::EccSignError);
-                    }
-                    let mut siglen: usize = 0;
-                    if ffi::EVP_PKEY_sign(
-                        ctx,
-                        ptr::null_mut(),
-                        &mut siglen,
-                        data.as_ptr(),
-                        data.len() as _,
-                    ) != 1
-                    {
-                        return Err(CryptoError::EccSignError);
-                    }
-                    let mut vec = vec![0u8; siglen];
-                    if ffi::EVP_PKEY_sign(
-                        ctx,
-                        vec.as_mut_ptr(),
-                        &mut siglen,
-                        data.as_ptr(),
-                        data.len() as _,
-                    ) != 1
-                    {
-                        return Err(CryptoError::EccSignError);
-                    }
-                    vec.truncate(siglen);
-                    Ok(vec)
-                })();
-                ffi::EVP_PKEY_CTX_free(ctx);
-                result?
+                let mut siglen: usize = 0;
+                if ffi::EVP_PKEY_sign(
+                    ctx.as_ptr(),
+                    ptr::null_mut(),
+                    &mut siglen,
+                    data.as_ptr(),
+                    data.len(),
+                ) != OSSL_SUCCESS
+                {
+                    return Err(CryptoError::EccSignError);
+                }
+                let mut vec = vec![0u8; siglen];
+                if ffi::EVP_PKEY_sign(
+                    ctx.as_ptr(),
+                    vec.as_mut_ptr(),
+                    &mut siglen,
+                    data.as_ptr(),
+                    data.len(),
+                ) != OSSL_SUCCESS
+                {
+                    return Err(CryptoError::EccSignError);
+                }
+                vec.truncate(siglen);
+                vec
             };
 
             let der = DerEccSignature::from_der(key.curve(), &vec)?;
@@ -208,30 +189,6 @@ impl VerifyOp for OsslEccAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, CryptoError> {
-        use std::os::raw::c_char;
-        use std::ptr;
-
-        use foreign_types::ForeignTypeRef;
-        use openssl_sys as ffi;
-
-        // The openssl crate's `PkeyCtx` uses the legacy `EVP_PKEY_CTX_new`, which
-        // fetches the ECDSA signature op from the *process default* libctx
-        // regardless of the key's libctx — on OpenSSL 3.5 that resolves to the
-        // azihsm provider and re-enters it during the HSM session open (its
-        // ECDSA op is wrong/unavailable, so verify fails with EccVerifyFailed).
-        // Build the verify ctx explicitly in the crate-private libctx
-        // (default-provider only) so the signature fetch never lands on azihsm.
-        // `EVP_PKEY_CTX_new_from_pkey` exists in OpenSSL 3.0+ libcrypto but is
-        // not bound by openssl-sys 0.9.x, so it is declared here. See
-        // [`crate::libctx`].
-        unsafe extern "C" {
-            fn EVP_PKEY_CTX_new_from_pkey(
-                libctx: *mut ffi::OSSL_LIB_CTX,
-                pkey: *mut ffi::EVP_PKEY,
-                propquery: *const c_char,
-            ) -> *mut ffi::EVP_PKEY_CTX;
-        }
-
         let len = key.curve().point_size() * 2;
         if signature.len() != len {
             Err(CryptoError::EccVerifyError)?
@@ -247,37 +204,29 @@ impl VerifyOp for OsslEccAlgo {
         let mut der = vec![0u8; der_len];
         let der_len = der_sig.to_der(Some(&mut der))?;
 
-        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
-        // path; the DER signature slice and `data` are valid for the call.
+        // Build the verify ctx in the crate-private libctx (default-provider
+        // only) via `PkeyCtx` so the ECDSA op fetch never resolves to azihsm on
+        // OpenSSL 3.5 (which would re-enter it during the HSM session open). See
+        // [`crate::libctx`].
+        //
+        // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+        // frees it on drop on every path); the DER signature slice and `data`
+        // are valid for the call.
         let valid = unsafe {
-            let ctx = EVP_PKEY_CTX_new_from_pkey(
-                crate::libctx::crypto_libctx_ptr(),
-                key.pkey().as_ptr(),
-                ptr::null(),
-            );
-            if ctx.is_null() {
-                return Err(CryptoError::EccError);
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EccError)?;
+            if ffi::EVP_PKEY_verify_init(ctx.as_ptr()) != OSSL_SUCCESS {
+                return Err(CryptoError::EccVerifyError);
             }
-            let result = (|| {
-                if ffi::EVP_PKEY_verify_init(ctx) != 1 {
-                    return Err(CryptoError::EccVerifyError);
-                }
-                // Returns true for valid signatures, false for invalid ones.
-                //
-                // EVP_PKEY_verify returns 1 for a valid signature, 0 for an
-                // invalid one, and a negative value on error (e.g. malformed
-                // signatures or corrupt data). We treat anything other than 1
-                // as an invalid signature and return false.
-                Ok(ffi::EVP_PKEY_verify(
-                    ctx,
-                    der[..der_len].as_ptr(),
-                    der_len as _,
-                    data.as_ptr(),
-                    data.len() as _,
-                ) == 1)
-            })();
-            ffi::EVP_PKEY_CTX_free(ctx);
-            result?
+            // EVP_PKEY_verify returns 1 for a valid signature, 0 for an invalid
+            // one, and a negative value on error (e.g. malformed signatures or
+            // corrupt data). We treat anything other than 1 as invalid.
+            ffi::EVP_PKEY_verify(
+                ctx.as_ptr(),
+                der[..der_len].as_ptr(),
+                der_len,
+                data.as_ptr(),
+                data.len(),
+            ) == OSSL_SUCCESS
         };
 
         Ok(valid)

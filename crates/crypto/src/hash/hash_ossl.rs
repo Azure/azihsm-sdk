@@ -155,15 +155,19 @@ impl OsslHashAlgo {
     }
 
     /// Canonical OpenSSL name used to fetch this digest from a libctx.
-    pub(crate) fn md_name(&self) -> &'static str {
+    ///
+    /// Returns `CryptoError::HashUnsupportedAlgorithm` for any digest outside
+    /// the supported set (SHA-1/256/384/512). A `HashAlgo` is only ever
+    /// constructed for those, so this is defensive rather than expected — but it
+    /// returns an error instead of panicking in production code.
+    pub(crate) fn md_name(&self) -> Result<&'static str, CryptoError> {
         use openssl::nid::Nid;
-        #[allow(clippy::panic)]
         match self.md.type_() {
-            Nid::SHA1 => "SHA1",
-            Nid::SHA256 => "SHA256",
-            Nid::SHA384 => "SHA384",
-            Nid::SHA512 => "SHA512",
-            _ => panic!("unsupported hash algorithm for libctx fetch"),
+            Nid::SHA1 => Ok("SHA1"),
+            Nid::SHA256 => Ok("SHA256"),
+            Nid::SHA384 => Ok("SHA384"),
+            Nid::SHA512 => Ok("SHA512"),
+            _ => Err(CryptoError::HashUnsupportedAlgorithm),
         }
     }
 
@@ -171,7 +175,7 @@ impl OsslHashAlgo {
     /// so it never resolves to a provider (e.g. azihsm) in the process default
     /// libctx. See [`crate::libctx`].
     fn fetch_md(&self) -> Result<Md, CryptoError> {
-        Md::fetch(Some(crypto_libctx()), self.md_name(), None)
+        Md::fetch(Some(crypto_libctx()), self.md_name()?, None)
             .map_err(|_| CryptoError::HashInitError)
     }
 

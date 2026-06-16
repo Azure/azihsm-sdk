@@ -19,27 +19,16 @@
 //! - Choose appropriate hash algorithms (SHA-256 or stronger recommended)
 //! - RSA encryption is typically used for small data (e.g., symmetric key wrapping)
 
+use std::os::raw::c_int;
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
 use openssl::rsa::*;
+use openssl_sys as ffi;
 
 use super::*;
-
-// `EVP_PKEY_CTX_new_from_pkey` builds an operation context in an explicit
-// `OSSL_LIB_CTX`. The `openssl` crate's `Encrypter`/`Decrypter` use the legacy
-// `EVP_PKEY_CTX_new`, which fetches the RSA encrypt/decrypt op from the
-// *process default* libctx regardless of the key — on OpenSSL 3.5 that
-// resolves to the azihsm provider and re-enters it during the HSM session
-// open. Building the ctx in the crate-private libctx (default-provider only)
-// keeps the op fetch off azihsm. This symbol exists in OpenSSL 3.0+ libcrypto
-// but is not bound by openssl-sys 0.9.x, so it is declared here. See
-// [`crate::libctx`].
-#[allow(unsafe_code)]
-unsafe extern "C" {
-    fn EVP_PKEY_CTX_new_from_pkey(
-        libctx: *mut openssl_sys::OSSL_LIB_CTX,
-        pkey: *mut openssl_sys::EVP_PKEY,
-        propquery: *const std::os::raw::c_char,
-    ) -> *mut openssl_sys::EVP_PKEY_CTX;
-}
+use crate::libctx::OSSL_SUCCESS;
+use crate::libctx::PkeyCtx;
 
 /// OpenSSL-backed RSA encryption and decryption implementation.
 ///
@@ -113,11 +102,6 @@ impl EncryptOp for OsslRsaEncryptAlgo<'_> {
         input: &[u8],
         output: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        use std::ptr;
-
-        use foreign_types::ForeignTypeRef;
-        use openssl_sys as ffi;
-
         // Fetch the OAEP digest from the crate-private libctx so it never
         // resolves to azihsm; kept alive for the whole op via `oaep_md`.
         let oaep_md = if self.padding == Padding::PKCS1_OAEP {
@@ -125,7 +109,7 @@ impl EncryptOp for OsslRsaEncryptAlgo<'_> {
                 Some(hash) => Some(
                     openssl::md::Md::fetch(
                         Some(crate::libctx::crypto_libctx()),
-                        hash.md_name(),
+                        hash.md_name()?,
                         None,
                     )
                     .map_err(|_| CryptoError::RsaSetPropertyError)?,
@@ -136,53 +120,46 @@ impl EncryptOp for OsslRsaEncryptAlgo<'_> {
             None
         };
 
-        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
-        // path; the output buffer is sized from the first `EVP_PKEY_encrypt`
-        // (out=NULL) query. `oaep_md` outlives the call.
+        // Build the encrypt ctx in the crate-private libctx (default-provider
+        // only) via `PkeyCtx` so the RSA op fetch never resolves to azihsm on
+        // OpenSSL 3.5. See [`crate::libctx`].
+        //
+        // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+        // frees it on drop on every path); the output buffer is sized from the
+        // first `EVP_PKEY_encrypt` (out=NULL) query; `oaep_md` outlives the call.
         let len = unsafe {
-            let ctx = EVP_PKEY_CTX_new_from_pkey(
-                crate::libctx::crypto_libctx_ptr(),
-                key.pkey().as_ptr(),
-                ptr::null(),
-            );
-            if ctx.is_null() {
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::RsaError)?;
+            if ffi::EVP_PKEY_encrypt_init(ctx.as_ptr()) != OSSL_SUCCESS {
                 return Err(CryptoError::RsaError);
             }
-            let result = (|| {
-                if ffi::EVP_PKEY_encrypt_init(ctx) != 1 {
-                    return Err(CryptoError::RsaError);
+            self.configure_ctx(ctx.as_ptr(), oaep_md.as_ref())?;
+            let mut len: usize = 0;
+            if ffi::EVP_PKEY_encrypt(
+                ctx.as_ptr(),
+                ptr::null_mut(),
+                &mut len,
+                input.as_ptr(),
+                input.len(),
+            ) != OSSL_SUCCESS
+            {
+                return Err(CryptoError::RsaError);
+            }
+            if let Some(output) = output {
+                if output.len() < len {
+                    return Err(CryptoError::RsaBufferTooSmall);
                 }
-                self.configure_ctx(ctx, oaep_md.as_ref())?;
-                let mut len: usize = 0;
                 if ffi::EVP_PKEY_encrypt(
-                    ctx,
-                    ptr::null_mut(),
+                    ctx.as_ptr(),
+                    output.as_mut_ptr(),
                     &mut len,
                     input.as_ptr(),
-                    input.len() as _,
-                ) != 1
+                    input.len(),
+                ) != OSSL_SUCCESS
                 {
-                    return Err(CryptoError::RsaError);
+                    return Err(CryptoError::RsaEncryptError);
                 }
-                if let Some(output) = output {
-                    if output.len() < len {
-                        return Err(CryptoError::RsaBufferTooSmall);
-                    }
-                    if ffi::EVP_PKEY_encrypt(
-                        ctx,
-                        output.as_mut_ptr(),
-                        &mut len,
-                        input.as_ptr(),
-                        input.len() as _,
-                    ) != 1
-                    {
-                        return Err(CryptoError::RsaEncryptError);
-                    }
-                }
-                Ok(len)
-            })();
-            ffi::EVP_PKEY_CTX_free(ctx);
-            result?
+            }
+            len
         };
 
         Ok(len)
@@ -233,11 +210,6 @@ impl DecryptOp for OsslRsaEncryptAlgo<'_> {
         input: &[u8],
         output: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
-        use std::ptr;
-
-        use foreign_types::ForeignTypeRef;
-        use openssl_sys as ffi;
-
         // Fetch the OAEP digest from the crate-private libctx so it never
         // resolves to azihsm; kept alive for the whole op via `oaep_md`. The
         // MGF1 configuration failure maps to `RsaError` to match the prior
@@ -247,7 +219,7 @@ impl DecryptOp for OsslRsaEncryptAlgo<'_> {
                 Some(hash) => Some(
                     openssl::md::Md::fetch(
                         Some(crate::libctx::crypto_libctx()),
-                        hash.md_name(),
+                        hash.md_name()?,
                         None,
                     )
                     .map_err(|_| CryptoError::RsaSetPropertyError)?,
@@ -258,53 +230,46 @@ impl DecryptOp for OsslRsaEncryptAlgo<'_> {
             None
         };
 
-        // SAFETY: pointers are NULL-checked before use; `ctx` is freed on every
-        // path; the output buffer is sized from the first `EVP_PKEY_decrypt`
-        // (out=NULL) query. `oaep_md` outlives the call.
+        // Build the decrypt ctx in the crate-private libctx (default-provider
+        // only) via `PkeyCtx` so the RSA op fetch never resolves to azihsm on
+        // OpenSSL 3.5. See [`crate::libctx`].
+        //
+        // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+        // frees it on drop on every path); the output buffer is sized from the
+        // first `EVP_PKEY_decrypt` (out=NULL) query; `oaep_md` outlives the call.
         let len = unsafe {
-            let ctx = EVP_PKEY_CTX_new_from_pkey(
-                crate::libctx::crypto_libctx_ptr(),
-                key.pkey().as_ptr(),
-                ptr::null(),
-            );
-            if ctx.is_null() {
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::RsaError)?;
+            if ffi::EVP_PKEY_decrypt_init(ctx.as_ptr()) != OSSL_SUCCESS {
                 return Err(CryptoError::RsaError);
             }
-            let result = (|| {
-                if ffi::EVP_PKEY_decrypt_init(ctx) != 1 {
-                    return Err(CryptoError::RsaError);
+            self.configure_ctx(ctx.as_ptr(), oaep_md.as_ref())?;
+            let mut len: usize = 0;
+            if ffi::EVP_PKEY_decrypt(
+                ctx.as_ptr(),
+                ptr::null_mut(),
+                &mut len,
+                input.as_ptr(),
+                input.len(),
+            ) != OSSL_SUCCESS
+            {
+                return Err(CryptoError::RsaError);
+            }
+            if let Some(output) = output {
+                if output.len() < len {
+                    return Err(CryptoError::RsaBufferTooSmall);
                 }
-                self.configure_ctx(ctx, oaep_md.as_ref())?;
-                let mut len: usize = 0;
                 if ffi::EVP_PKEY_decrypt(
-                    ctx,
-                    ptr::null_mut(),
+                    ctx.as_ptr(),
+                    output.as_mut_ptr(),
                     &mut len,
                     input.as_ptr(),
-                    input.len() as _,
-                ) != 1
+                    input.len(),
+                ) != OSSL_SUCCESS
                 {
-                    return Err(CryptoError::RsaError);
+                    return Err(CryptoError::RsaDecryptError);
                 }
-                if let Some(output) = output {
-                    if output.len() < len {
-                        return Err(CryptoError::RsaBufferTooSmall);
-                    }
-                    if ffi::EVP_PKEY_decrypt(
-                        ctx,
-                        output.as_mut_ptr(),
-                        &mut len,
-                        input.as_ptr(),
-                        input.len() as _,
-                    ) != 1
-                    {
-                        return Err(CryptoError::RsaDecryptError);
-                    }
-                }
-                Ok(len)
-            })();
-            ffi::EVP_PKEY_CTX_free(ctx);
-            result?
+            }
+            len
         };
 
         Ok(len)
@@ -410,23 +375,20 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
         ctx: *mut openssl_sys::EVP_PKEY_CTX,
         oaep_md: Option<&openssl::md::Md>,
     ) -> Result<(), CryptoError> {
-        use foreign_types::ForeignType;
-        use openssl_sys as ffi;
-
         // SAFETY: `ctx` is a valid, initialised `EVP_PKEY_CTX` and `oaep_md`
         // (if `Some`) points to a live `EVP_MD`, per this fn's contract.
         unsafe {
             // Set the padding mode first, OAEP or NONE.
-            if ffi::EVP_PKEY_CTX_set_rsa_padding(ctx, self.padding.as_raw()) != 1 {
+            if ffi::EVP_PKEY_CTX_set_rsa_padding(ctx, self.padding.as_raw()) != OSSL_SUCCESS {
                 return Err(CryptoError::RsaSetPropertyError);
             }
 
             if self.padding == Padding::PKCS1_OAEP {
                 if let Some(md) = oaep_md {
-                    if ffi::EVP_PKEY_CTX_set_rsa_oaep_md(ctx, md.as_ptr()) != 1 {
+                    if ffi::EVP_PKEY_CTX_set_rsa_oaep_md(ctx, md.as_ptr()) != OSSL_SUCCESS {
                         return Err(CryptoError::RsaSetPropertyError);
                     }
-                    if ffi::EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, md.as_ptr()) != 1 {
+                    if ffi::EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, md.as_ptr()) != OSSL_SUCCESS {
                         return Err(CryptoError::RsaError);
                     }
                 }
@@ -438,12 +400,14 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                     // EVP_PKEY_CTX_set0_rsa_oaep_label takes ownership of the
                     // label buffer and frees it with OPENSSL_free, so the buffer
                     // must be OPENSSL_malloc'd (matching `set_rsa_oaep_label`).
-                    let p = ffi::OPENSSL_malloc(label.len() as _);
+                    let p = ffi::OPENSSL_malloc(label.len());
                     if p.is_null() {
                         return Err(CryptoError::RsaSetPropertyError);
                     }
                     std::ptr::copy_nonoverlapping(label.as_ptr(), p as *mut u8, label.len());
-                    if ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, p, label.len() as _) != 1 {
+                    if ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, p, label.len() as c_int)
+                        != OSSL_SUCCESS
+                    {
                         // On failure ownership is not transferred; free the copy.
                         ffi::OPENSSL_free(p);
                         return Err(CryptoError::RsaSetPropertyError);

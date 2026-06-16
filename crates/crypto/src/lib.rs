@@ -167,6 +167,9 @@ pub enum CryptoError {
     /// Failed to retrieve hash property.
     #[error("Hash get property failed")]
     HashGetPropertyError,
+    /// Hash algorithm is not supported by this backend.
+    #[error("Unsupported hash algorithm")]
+    HashUnsupportedAlgorithm,
 
     // HMAC-related errors
     /// HMAC context initialization failed.

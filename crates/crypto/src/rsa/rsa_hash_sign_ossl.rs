@@ -446,7 +446,7 @@ impl OsslRsaHashSignAlgo {
         use openssl_sys as ffi;
 
         let mdname =
-            std::ffi::CString::new(self.hash.md_name()).map_err(|_| CryptoError::RsaError)?;
+            std::ffi::CString::new(self.hash.md_name()?).map_err(|_| CryptoError::RsaError)?;
 
         // SAFETY: `ctx` and the key pkey are valid; `pctx` is owned by `ctx`
         // and must not be freed here. `mdname` outlives the call.
@@ -482,7 +482,7 @@ impl OsslRsaHashSignAlgo {
         use openssl_sys as ffi;
 
         let mdname =
-            std::ffi::CString::new(self.hash.md_name()).map_err(|_| CryptoError::RsaError)?;
+            std::ffi::CString::new(self.hash.md_name()?).map_err(|_| CryptoError::RsaError)?;
 
         // SAFETY: `ctx` and the key pkey are valid; `pctx` is owned by `ctx`
         // and must not be freed here. `mdname` outlives the call.
@@ -540,7 +540,7 @@ impl OsslRsaHashSignAlgo {
                 // does not need to outlive it (no dangling pointer at sign time).
                 let md = openssl::md::Md::fetch(
                     Some(crate::libctx::crypto_libctx()),
-                    self.hash.md_name(),
+                    self.hash.md_name()?,
                     None,
                 )
                 .map_err(|_| CryptoError::RsaSetPropertyError)?;

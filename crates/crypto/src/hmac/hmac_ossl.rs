@@ -34,6 +34,7 @@ use openssl_sys as ffi;
 use zeroize::Zeroizing;
 
 use super::*;
+use crate::libctx::OSSL_SUCCESS;
 use crate::libctx::crypto_libctx;
 
 /// An HMAC computation bound to the crate-private libctx via `EVP_MAC`.
@@ -63,7 +64,7 @@ impl IsolatedHmac {
         // OSSL_MAC_PARAM_DIGEST.
         const DIGEST_PARAM: &[u8] = b"digest\0";
 
-        let digest_name = hash.md_name(); // canonical name, no trailing NUL
+        let digest_name = hash.md_name()?; // canonical name, no trailing NUL
         let libctx = crypto_libctx().as_ptr();
 
         // SAFETY: all pointers are checked for NULL before use; `this` owns the
@@ -90,9 +91,9 @@ impl IsolatedHmac {
                 bld,
                 DIGEST_PARAM.as_ptr() as *const c_char,
                 digest_name.as_ptr() as *const c_char,
-                digest_name.len() as _,
+                digest_name.len(),
             );
-            if pushed != 1 {
+            if pushed != OSSL_SUCCESS {
                 ffi::OSSL_PARAM_BLD_free(bld);
                 return Err(CryptoError::HmacInitError);
             }
@@ -101,9 +102,9 @@ impl IsolatedHmac {
             if params.is_null() {
                 return Err(CryptoError::HmacInitError);
             }
-            let ok = ffi::EVP_MAC_init(ctx, key.as_ptr(), key.len() as _, params);
+            let ok = ffi::EVP_MAC_init(ctx, key.as_ptr(), key.len(), params);
             ffi::OSSL_PARAM_free(params);
-            if ok != 1 {
+            if ok != OSSL_SUCCESS {
                 return Err(CryptoError::HmacInitError);
             }
             Ok(this)
@@ -114,8 +115,8 @@ impl IsolatedHmac {
     #[allow(unsafe_code)]
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         // SAFETY: `self.ctx` is a valid, initialised EVP_MAC_CTX.
-        let ok = unsafe { ffi::EVP_MAC_update(self.ctx, data.as_ptr(), data.len() as _) };
-        if ok == 1 {
+        let ok = unsafe { ffi::EVP_MAC_update(self.ctx, data.as_ptr(), data.len()) };
+        if ok == OSSL_SUCCESS {
             Ok(())
         } else {
             Err(CryptoError::HmacSignUpdateError)
@@ -132,15 +133,9 @@ impl IsolatedHmac {
         let mut outl = std::mem::MaybeUninit::<usize>::uninit();
         // SAFETY: `out` is valid for `out.len()` bytes; `outl` is a valid
         // `*mut size_t` that receives the number of bytes written.
-        let ok = unsafe {
-            ffi::EVP_MAC_final(
-                self.ctx,
-                out.as_mut_ptr(),
-                outl.as_mut_ptr(),
-                out.len() as _,
-            )
-        };
-        if ok == 1 {
+        let ok =
+            unsafe { ffi::EVP_MAC_final(self.ctx, out.as_mut_ptr(), outl.as_mut_ptr(), out.len()) };
+        if ok == OSSL_SUCCESS {
             // SAFETY: a successful `EVP_MAC_final` initialised `outl`.
             Ok(unsafe { outl.assume_init() })
         } else {
@@ -189,6 +184,17 @@ pub struct OsslHmacAlgo {
 
 impl OsslHmacAlgo {
     /// Creates a new HMAC operation provider from a hash instance.
+    ///
+    /// This only stores the algorithm configuration; no `EVP_MAC` context is
+    /// created until a signing or verification operation runs.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash instance specifying the digest used by the HMAC PRF.
+    ///
+    /// # Returns
+    ///
+    /// A new `OsslHmacAlgo` configured for the specified hash algorithm.
     pub fn new(hash: HashAlgo) -> Self {
         Self { hash }
     }
@@ -198,8 +204,30 @@ impl OsslHmacAlgo {
 impl SignOp for OsslHmacAlgo {
     type Key = HmacKey;
 
-    /// Computes an HMAC over `data`. With `signature == None`, only returns the
-    /// required buffer size.
+    /// Computes an HMAC over `data` in a single call.
+    ///
+    /// When `signature` is `None`, no MAC is computed and only the required
+    /// buffer size (the digest output length) is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The HMAC key.
+    /// * `data` - The data to authenticate.
+    /// * `signature` - Optional output buffer. If `None`, only the required size
+    ///   is returned.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes written to `signature` (the MAC length), or the
+    /// required buffer size when `signature` is `None`.
+    ///
+    /// # Errors
+    ///
+    /// - `CryptoError::HmacBufferTooSmall` - the output buffer is smaller than
+    ///   the MAC length.
+    /// - `CryptoError::HmacKeyError` - the key bytes could not be extracted.
+    /// - `CryptoError::HmacInitError` / `CryptoError::HmacSignFinishError` - the
+    ///   `EVP_MAC` operation failed.
     fn sign(
         &mut self,
         key: &Self::Key,
@@ -228,6 +256,23 @@ impl<'a> SignStreamingOp<'a> for OsslHmacAlgo {
     type Context = OsslHmacAlgoSignContext<'a>;
 
     /// Initializes a streaming HMAC signing context.
+    ///
+    /// Keys an `EVP_MAC` context up front so data can be fed incrementally via
+    /// `update()` and finalized with `finish()`. The key is copied into the
+    /// context, so the returned context borrows nothing from `key`.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The HMAC key.
+    ///
+    /// # Returns
+    ///
+    /// A streaming context implementing `SignStreamingOpContext`.
+    ///
+    /// # Errors
+    ///
+    /// - `CryptoError::HmacKeyError` - the key bytes could not be extracted.
+    /// - `CryptoError::HmacInitError` - the `EVP_MAC` context could not be keyed.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let key = key_bytes(&key)?;
         let mac = IsolatedHmac::new(&self.hash, &key)?;
@@ -255,12 +300,38 @@ pub struct OsslHmacAlgoSignContext<'a> {
 impl<'a> SignStreamingOpContext<'a> for OsslHmacAlgoSignContext<'a> {
     type Algo = OsslHmacAlgo;
 
-    /// Processes a chunk of data.
+    /// Feeds a chunk of data into the running HMAC.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The next chunk of data to authenticate.
+    ///
+    /// # Errors
+    ///
+    /// `CryptoError::HmacUpdateError` if the `EVP_MAC` update fails.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         self.mac.update(data)
     }
 
-    /// Finalizes the HMAC. With `signature == None`, only returns the size.
+    /// Finalizes the HMAC over all data fed via `update()`.
+    ///
+    /// When `signature` is `None`, nothing is finalized and only the required
+    /// buffer size (the MAC length) is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - Optional output buffer. If `None`, only the required size
+    ///   is returned.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes written to `signature`, or the required buffer size
+    /// when `signature` is `None`.
+    ///
+    /// # Errors
+    ///
+    /// - `CryptoError::HmacBufferTooSmall` - the output buffer is too small.
+    /// - `CryptoError::HmacSignFinishError` - the `EVP_MAC` finalization failed.
     fn finish(&mut self, signature: Option<&mut [u8]>) -> Result<usize, CryptoError> {
         let len = self.algo.hash.size();
         if let Some(signature) = signature {
@@ -292,7 +363,24 @@ impl<'a> SignStreamingOpContext<'a> for OsslHmacAlgoSignContext<'a> {
 impl VerifyOp for OsslHmacAlgo {
     type Key = HmacKey;
 
-    /// Verifies an HMAC over `data` by recomputing it and comparing.
+    /// Verifies an HMAC by recomputing it over `data` and comparing.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The HMAC key.
+    /// * `data` - The data that was authenticated.
+    /// * `signature` - The expected MAC to check against.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the recomputed MAC matches `signature`, `Ok(false)`
+    /// otherwise.
+    ///
+    /// # Errors
+    ///
+    /// - `CryptoError::HmacKeyError` - the key bytes could not be extracted.
+    /// - `CryptoError::HmacInitError` / `CryptoError::HmacSignFinishError` - the
+    ///   `EVP_MAC` recomputation failed.
     fn verify(
         &mut self,
         key: &Self::Key,
@@ -319,6 +407,24 @@ impl<'a> VerifyStreamingOp<'a> for OsslHmacAlgo {
     type Context = OsslHmacAlgoVerifyContext<'a>;
 
     /// Initializes a streaming HMAC verification context.
+    ///
+    /// Keys an `EVP_MAC` context up front so data can be fed incrementally via
+    /// `update()` and checked with `finish()`. The key is copied into the
+    /// context.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The HMAC key.
+    ///
+    /// # Returns
+    ///
+    /// A streaming context implementing `VerifyStreamingOpContext`.
+    ///
+    /// # Errors
+    ///
+    /// - `CryptoError::HmacKeyError` - the key bytes could not be extracted.
+    /// - `CryptoError::HmacVerifyInitError` - the `EVP_MAC` context could not be
+    ///   keyed.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let key = key_bytes(&key)?;
         let mac =
@@ -347,14 +453,35 @@ impl<'a> VerifyStreamingOpContext<'a> for OsslHmacAlgoVerifyContext<'a> {
     /// The signature algorithm type associated with this context.
     type Algo = OsslHmacAlgo;
 
-    /// Processes a chunk of data.
+    /// Feeds a chunk of data into the running HMAC.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The next chunk of data to authenticate.
+    ///
+    /// # Errors
+    ///
+    /// `CryptoError::HmacVerifyUpdateError` if the `EVP_MAC` update fails.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         self.mac
             .update(data)
             .map_err(|_| CryptoError::HmacVerifyUpdateError)
     }
 
-    /// Finalizes and checks the signature by recomputing the MAC.
+    /// Finalizes and checks the signature by recomputing the MAC over all data
+    /// fed via `update()` and comparing it to `signature`.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The expected MAC to check against.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the recomputed MAC matches, `Ok(false)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// `CryptoError::HmacVerifyFinishError` if the `EVP_MAC` finalization fails.
     fn finish(&mut self, signature: &[u8]) -> Result<bool, CryptoError> {
         let mut result = vec![0u8; self.algo.hash.size()];
 
