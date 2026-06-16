@@ -178,16 +178,10 @@ static void run_ecc_sign_verify_message_parity(
     std::vector<uint8_t> signature(sig_buf.len);
     sig_buf.ptr = signature.data();
 
-    ASSERT_EQ(
-        azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf),
-        AZIHSM_STATUS_SUCCESS
-    );
+    ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(sig_buf.len, signature_len);
 
-    ASSERT_EQ(
-        azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf),
-        AZIHSM_STATUS_SUCCESS
-    );
+    ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
 }
 
 // Helper function to verify ECDSA rejects a signature when the digest is modified.
