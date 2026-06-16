@@ -55,7 +55,7 @@ jobs:
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
 
-  test_ubuntu_mock_coverage:
+  test_ubuntu_mock:
 
     runs-on: ubuntu-24.04
 
@@ -82,28 +82,20 @@ jobs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run all mock tests (except azihsm_api_tests) with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage --exclude azihsm_api_tests -F mock --profile ci-mock
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-ubuntu
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+      if: ${{ steps.test-mock.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
 
-  test_ubuntu_api_coverage:
+  test_ubuntu_api:
 
     runs-on: ubuntu-24.04
 
@@ -130,23 +122,15 @@ jobs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run azihsm_api_tests with code coverage
-      id: test-api-coverage
-      run: cargo xtask precheck --coverage -p azihsm_api_tests -F mock --profile ci-api
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-ubuntu
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-api-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-api-coverage.outcome == 'failure' }}
+      if: ${{ steps.test-api.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -190,13 +174,10 @@ jobs:
       id: test-tbor-emu
       run: cargo xtask precheck --nextest -p azihsm_ddi_tbor_types -F emu --profile ci-tbor-emu
       continue-on-error: true
-    - name: Run resiliency fault injection tests with code coverage
+    - name: Run resiliency fault injection tests
       id: test-res-fault
-      run: cargo xtask precheck --coverage -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
       continue-on-error: true
-    - name: Free target/ before coverage build
-      # Freeing target/ directory to ensure disk space for coverage report generation
-      run: rm -rf target/debug target/tmp
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
@@ -242,7 +223,7 @@ jobs:
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
 
-  test_windows_mock_coverage:
+  test_windows_mock:
 
     runs-on: windows-2025-vs2026
 
@@ -265,28 +246,20 @@ jobs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask precheck --setup
-    - name: Run all mock tests (except azihsm_api_tests) with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage --exclude azihsm_api_tests -F mock --profile ci-mock
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-windows
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+      if: ${{ steps.test-mock.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
 
-  test_windows_api_coverage:
+  test_windows_api:
 
     runs-on: windows-2025-vs2026
 
@@ -309,23 +282,15 @@ jobs:
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run azihsm_api_tests with code coverage
-      id: test-api-coverage
-      run: cargo xtask precheck --coverage -p azihsm_api_tests -F mock --profile ci-api
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-windows
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-api-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-api-coverage.outcome == 'failure' }}
+      if: ${{ steps.test-api.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -355,7 +320,7 @@ jobs:
       run: cargo xtask setup
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
-      run: cargo xtask precheck --coverage -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
