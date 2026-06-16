@@ -176,7 +176,7 @@ jobs:
       continue-on-error: true
     - name: Run resiliency fault injection tests
       id: test-res-fault
-      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
@@ -320,7 +320,7 @@ jobs:
       run: cargo xtask setup
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
-      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report

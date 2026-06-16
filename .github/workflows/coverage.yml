@@ -18,7 +18,7 @@ env:
 
 jobs:
 
-  test_ubuntu_coverage:
+  coverage_ubuntu:
 
     runs-on: ubuntu-24.04
 
@@ -51,7 +51,7 @@ jobs:
       continue-on-error: true
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
-      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
@@ -71,7 +71,7 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
-  test_windows_coverage:
+  coverage_windows:
 
     runs-on: windows-2025-vs2026
 
@@ -100,7 +100,7 @@ jobs:
       continue-on-error: true
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
-      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
