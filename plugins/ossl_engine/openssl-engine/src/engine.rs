@@ -15,13 +15,17 @@ pub struct Engine {
     ptr: *mut ffi::ENGINE,
 }
 
-/// Safe entry-point glue for a dynamic engine's `bind_engine` export.
+/// Entry-point glue for a dynamic engine's `bind_engine` export.
 ///
 /// Validates the raw pointers OpenSSL's dynamic loader passes to
 /// `bind_engine` and dispatches to `f` with a safe [`Engine`].
+///
+/// # Safety
+/// `engine`, `id`, and `fns` must be the pointers supplied by OpenSSL's
+/// dynamic engine loader: `engine` and `fns`, if non-null, valid for this
+/// call, and `id`, if non-null, a valid C string.
 #[allow(unsafe_code)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bind_entry(
+pub unsafe fn bind_entry(
     engine: *mut ffi::ENGINE,
     id: *const c_char,
     fns: *mut ffi::dynamic_fns,

@@ -33,9 +33,9 @@ mod engine_impl {
         }
     }
 
-    // `#[allow(unsafe_code)]` covers only the `#[unsafe(no_mangle)]` export
-    // attribute; the body is safe — pointer validation and the unsafe FFI
-    // glue live in openssl_engine::engine::bind_entry.
+    // `#[allow(unsafe_code)]` covers the `#[unsafe(no_mangle)]` export
+    // attribute and the single `unsafe` call below; pointer validation and
+    // the unsafe FFI glue live in openssl_engine::engine::bind_entry.
     #[unsafe(no_mangle)]
     #[allow(unsafe_code)]
     pub extern "C" fn bind_engine(
@@ -43,7 +43,10 @@ mod engine_impl {
         id: *const std::ffi::c_char,
         fns: *mut ffi::dynamic_fns,
     ) -> c_int {
-        bind_entry(engine_ptr, id, fns, bind_helper)
+        // SAFETY: engine_ptr, id, and fns are supplied by OpenSSL's dynamic
+        // engine loader, which guarantees they are valid for the duration of
+        // this call per the bind_engine/v_check ABI contract.
+        unsafe { bind_entry(engine_ptr, id, fns, bind_helper) }
     }
 
     fn bind_helper(engine: &Engine, id: &CStr) -> c_int {
