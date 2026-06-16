@@ -393,6 +393,9 @@ pub enum CryptoError {
     /// AES-GCM invalid key size.
     #[error("AES-GCM invalid key size")]
     GcmInvalidKeySize,
+    /// AES-GCM config error (cipher could not be fetched from the libctx).
+    #[error("AES-GCM config error")]
+    GcmConfigError,
     /// AES-GCM encryption operation failed.
     #[error("AES-GCM encryption failed")]
     GcmEncryptionFailed,

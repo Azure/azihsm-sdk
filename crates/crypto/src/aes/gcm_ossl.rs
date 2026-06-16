@@ -78,8 +78,12 @@ impl OsslAesGcmAlgo {
             32 => "AES-256-GCM",
             _ => return Err(CryptoError::GcmInvalidKeySize),
         };
+        // The key size is already validated above, so a `Cipher::fetch` failure
+        // is a cipher-availability/config problem (e.g. the private libctx's
+        // default provider does not offer this AES-GCM variant), not a key-size
+        // error. Map it to `GcmConfigError` so the diagnostic isn't misleading.
         Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
-            .map_err(|_| CryptoError::GcmInvalidKeySize)
+            .map_err(|_| CryptoError::GcmConfigError)
     }
 }
 

@@ -536,3 +536,34 @@ fn test_hkdf_zero_length_output() {
         length,
     );
 }
+
+/// In Extract-only mode the output is the PRK, whose length is fixed at the
+/// digest size. A `derive_len` that doesn't match must be rejected with
+/// `HmacInvalidDerivedKeyLength` — the same error the Windows (CNG) backend
+/// returns for this case (see `hkdf_cng.rs`), so the behavior stays consistent
+/// across backends. The matching length still succeeds.
+#[test]
+fn test_hkdf_extract_length_mismatch_is_rejected() {
+    let hash = HashAlgo::sha256();
+    let ikm = &[0x0b; 22];
+    let salt = &[0x00, 0x01, 0x02, 0x03];
+    let key = GenericSecretKey::from_bytes(ikm).expect("Create key failed");
+
+    // SHA-256 PRK is 32 bytes; a mismatched requested length is rejected.
+    // (`GenericSecretKey` deliberately has no `Debug`, so match on the Result
+    // rather than using `expect_err`.)
+    let hkdf = HkdfAlgo::new(HkdfMode::Extract, &hash, Some(salt), None);
+    assert!(
+        matches!(
+            hkdf.derive(&key, hash.size() + 1),
+            Err(crate::CryptoError::HmacInvalidDerivedKeyLength)
+        ),
+        "expected HmacInvalidDerivedKeyLength for a mismatched Extract derive_len"
+    );
+
+    // derive_len == digest size succeeds and yields a PRK of that size.
+    let prk = hkdf
+        .derive(&key, hash.size())
+        .expect("Extract with derive_len == digest size must succeed");
+    assert_eq!(extract_key_bytes(&prk, "prk").len(), hash.size());
+}
