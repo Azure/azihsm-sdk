@@ -283,6 +283,8 @@ static void run_ecc_wrong_public_key_fails_parity(
         signer_pub_key.get_ptr()
     );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(signer_priv_key.get(), 0u);
+    ASSERT_NE(signer_pub_key.get(), 0u);
 
     auto_key wrong_priv_key;
     auto_key wrong_pub_key;
@@ -294,6 +296,8 @@ static void run_ecc_wrong_public_key_fails_parity(
         wrong_pub_key.get_ptr()
     );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(wrong_priv_key.get(), 0u);
+    ASSERT_NE(wrong_pub_key.get(), 0u);
 
     azihsm_algo algo{};
     algo.id = AZIHSM_ALGO_ID_ECDSA;
