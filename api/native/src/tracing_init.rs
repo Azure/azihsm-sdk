@@ -6,7 +6,7 @@ use std::sync::Once;
 use tracing_subscriber::prelude::*;
 
 const DEFAULT_KEYWORD: u64 = 1;
-const PROVIDER_NAME: &str = "Microsoft.Azure.IHSM";
+const PROVIDER_NAME: &str = "Microsoft_Azure_IHSM";
 
 static INIT: Once = Once::new();
 
