@@ -143,6 +143,196 @@ struct EcdsaTestParams
     const char *test_name;
 };
 
+// Helper function to sign and verify one ECC message for parity coverage.
+static void run_ecc_sign_verify_message_parity(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    azihsm_algo_id algo_id,
+    uint32_t signature_len,
+    const std::vector<uint8_t> &message
+)
+{
+    auto_key priv_key;
+    auto_key pub_key;
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(priv_key.get(), 0u);
+    ASSERT_NE(pub_key.get(), 0u);
+
+    azihsm_algo algo{};
+    algo.id = algo_id;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    azihsm_buffer msg_buf{ const_cast<uint8_t *>(message.data()),
+                           static_cast<uint32_t>(message.size()) };
+
+    azihsm_buffer sig_buf{ nullptr, 0 };
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf),
+        AZIHSM_STATUS_BUFFER_TOO_SMALL
+    );
+    ASSERT_GT(sig_buf.len, 0u);
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    std::vector<uint8_t> signature(sig_buf.len);
+    sig_buf.ptr = signature.data();
+
+    ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+}
+
+// Helper function to verify ECDSA rejects a signature when the digest is modified.
+static void run_ecc_modified_digest_fails_parity(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    uint32_t digest_len,
+    uint32_t signature_len
+)
+{
+    auto_key priv_key;
+    auto_key pub_key;
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(priv_key.get(), 0);
+    ASSERT_NE(pub_key.get(), 0);
+
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    std::vector<uint8_t> digest(digest_len, 0x42);
+    azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+    std::vector<uint8_t> signature(signature_len);
+    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, priv_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    ASSERT_EQ(
+        azihsm_crypt_verify(&algo, pub_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+
+    std::vector<uint8_t> modified_digest = digest;
+    modified_digest[0] ^= 0x01;
+    azihsm_buffer modified_digest_buf{ modified_digest.data(),
+                                       static_cast<uint32_t>(modified_digest.size()) };
+
+    auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &modified_digest_buf, &sig_buf);
+    ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+}
+
+// Helper function to verify ECDSA rejects a tampered signature.
+static void run_ecc_tampered_signature_fails_parity(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    uint32_t digest_len,
+    uint32_t signature_len
+)
+{
+    auto_key priv_key;
+    auto_key pub_key;
+    auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(priv_key.get(), 0);
+    ASSERT_NE(pub_key.get(), 0);
+
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    std::vector<uint8_t> digest(digest_len, 0x42);
+    azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+    std::vector<uint8_t> signature(signature_len);
+    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, priv_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    ASSERT_EQ(
+        azihsm_crypt_verify(&algo, pub_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+
+    signature[0] ^= 0xFF;
+
+    auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &digest_buf, &sig_buf);
+    ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+}
+
+// Helper function to verify ECDSA rejects verification with the wrong public key.
+static void run_ecc_wrong_public_key_fails_parity(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    uint32_t digest_len,
+    uint32_t signature_len
+)
+{
+    auto_key signer_priv_key;
+    auto_key signer_pub_key;
+    auto err = generate_ecc_keypair(
+        session,
+        curve,
+        true,
+        signer_priv_key.get_ptr(),
+        signer_pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(signer_priv_key.get(), 0u);
+    ASSERT_NE(signer_pub_key.get(), 0u);
+
+    auto_key wrong_priv_key;
+    auto_key wrong_pub_key;
+    err = generate_ecc_keypair(
+        session,
+        curve,
+        true,
+        wrong_priv_key.get_ptr(),
+        wrong_pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(wrong_priv_key.get(), 0u);
+    ASSERT_NE(wrong_pub_key.get(), 0u);
+
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    std::vector<uint8_t> digest(digest_len, 0x42);
+    azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+    std::vector<uint8_t> signature(signature_len);
+    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+    ASSERT_EQ(
+        azihsm_crypt_sign(&algo, signer_priv_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+    ASSERT_EQ(sig_buf.len, signature_len);
+
+    ASSERT_EQ(
+        azihsm_crypt_verify(&algo, signer_pub_key.get(), &digest_buf, &sig_buf),
+        AZIHSM_STATUS_SUCCESS
+    );
+
+    auto verify_err = azihsm_crypt_verify(&algo, wrong_pub_key.get(), &digest_buf, &sig_buf);
+    ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+}
+
 // ECDSA Pre-hashed Sign/Verify Tests (Pre-hashed Message)
 TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_prehashed_all_curves)
 {
@@ -259,6 +449,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_all_hash_algorithms)
     }
 }
 
+// Tests ECDSA verification fails when the signature bytes are corrupted.
 TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -294,6 +485,7 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
     });
 }
 
+// Tests ECDSA verification fails when the signed data does not match.
 TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -330,6 +522,7 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
     });
 }
 
+// Tests ECDSA signing reports buffer-too-small for an undersized signature buffer.
 TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -359,6 +552,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
     });
 }
 
+// Tests ECDSA signing rejects a null algorithm pointer.
 TEST_F(azihsm_ecc_sign_verify, sign_null_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -383,6 +577,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_null_algorithm)
     });
 }
 
+// Tests ECDSA signing rejects an invalid key handle.
 TEST_F(azihsm_ecc_sign_verify, sign_invalid_key_handle)
 {
     std::vector<uint8_t> hash(32, 0x42);
@@ -400,6 +595,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_invalid_key_handle)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
+// Tests ECDSA signing rejects an unsupported algorithm identifier.
 TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -429,6 +625,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
     });
 }
 
+// Tests ECDSA sign and verify APIs reject a non-ECDSA algorithm.
 TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_unsupported_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -476,6 +673,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_unsupported_algorithm)
     });
 }
 
+// Tests streaming ECDSA initialization rejects the precomputed-digest ECDSA algorithm.
 TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_precomputed_ecdsa)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -509,6 +707,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_precomputed_ecdsa)
     });
 }
 
+// Tests streaming ECDSA update and finish reject key handles used as contexts.
 TEST_F(azihsm_ecc_sign_verify, streaming_operations_reject_key_handles_as_contexts)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -536,6 +735,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_operations_reject_key_handles_as_contex
     });
 }
 
+// Tests ECDSA signing fails when the key is not an ECC private key.
 TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -561,6 +761,7 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
     });
 }
 
+// Tests ECDSA verification fails when the key is not an ECC public key.
 TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -600,6 +801,7 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
     });
 }
 
+// Tests streaming ECDSA verification fails for a corrupted signature.
 TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -650,6 +852,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
     });
 }
 
+// Tests streaming ECDSA verification fails when updated with different data.
 TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -703,6 +906,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
     });
 }
 
+// Tests streaming ECDSA sign finish reports buffer-too-small for a short signature buffer.
 TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_buffer_too_small)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -740,6 +944,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_buffer_too_small)
     });
 }
 
+// Tests streaming and single-shot ECDSA signatures both verify successfully.
 TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -865,6 +1070,7 @@ static bool write_persistence_file(
     return file.good();
 }
 
+// Helper function to read persisted ECC key, signature, and message data from disk.
 static bool read_persistence_file(
     const std::string &path,
     std::vector<uint8_t> &bmk,
@@ -876,44 +1082,70 @@ static bool read_persistence_file(
 {
     std::ifstream file(path, std::ios::binary);
     if (!file)
+    {
         return false;
+    }
 
-    auto read_blob = [&file](std::vector<uint8_t> &data) -> bool {
-        uint32_t len = 0;
-        file.read(reinterpret_cast<char *>(&len), sizeof(len));
-        if (!file)
-            return false;
-        data.resize(len);
-        if (len > 0)
+    auto read_exact = [&file](char *dst, std::streamsize len) -> bool {
+        if (len == 0)
         {
-            file.read(reinterpret_cast<char *>(data.data()), len);
+            return true;
         }
-        return file.good() || file.eof();
+
+        file.read(dst, len);
+        return file.good();
+    };
+
+    auto read_blob = [&read_exact](std::vector<uint8_t> &data) -> bool {
+        uint32_t len = 0;
+        if (!read_exact(reinterpret_cast<char *>(&len), sizeof(len)))
+        {
+            return false;
+        }
+
+        data.resize(len);
+        if (len == 0)
+        {
+            return true;
+        }
+
+        return read_exact(reinterpret_cast<char *>(data.data()), len);
     };
 
     if (!read_blob(bmk))
-        return false;
-    if (!read_blob(mobk))
-        return false;
-    if (!read_blob(masked_key))
-        return false;
-    if (!read_blob(signature))
-        return false;
-
-    // Read message
-    uint32_t msg_len = 0;
-    file.read(reinterpret_cast<char *>(&msg_len), sizeof(msg_len));
-    if (!file)
-        return false;
-    message.resize(msg_len);
-    if (msg_len > 0)
     {
-        file.read(&message[0], msg_len);
+        return false;
     }
 
-    return true;
-}
+    if (!read_blob(mobk))
+    {
+        return false;
+    }
 
+    if (!read_blob(masked_key))
+    {
+        return false;
+    }
+
+    if (!read_blob(signature))
+    {
+        return false;
+    }
+
+    uint32_t msg_len = 0;
+    if (!read_exact(reinterpret_cast<char *>(&msg_len), sizeof(msg_len)))
+    {
+        return false;
+    }
+
+    message.resize(msg_len);
+    if (msg_len == 0)
+    {
+        return true;
+    }
+
+    return read_exact(message.data(), static_cast<std::streamsize>(msg_len));
+}
 // Helper to get first partition path from list
 static std::vector<azihsm_char> get_first_partition_path()
 {
@@ -1168,4 +1400,1290 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
 
     std::cout << std::endl;
     std::cout << "=== All verifications passed! ===" << std::endl;
+}
+
+// Tests ECDSA signing fails when using a public key handle.
+TEST_F(azihsm_ecc_sign_verify, sign_with_public_key_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto sign_err = azihsm_crypt_sign(&algo, pub_key.get(), &hash_buf, &sig_buf);
+        ASSERT_NE(sign_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails when using a private key handle.
+TEST_F(azihsm_ecc_sign_verify, verify_with_private_key_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(&algo, priv_key.get(), &hash_buf, &sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails with a different ECC public key.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_ecc_public_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key signer_priv_key;
+        auto_key signer_pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            signer_priv_key.get_ptr(),
+            signer_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(signer_priv_key.get(), 0u);
+        ASSERT_NE(signer_pub_key.get(), 0u);
+
+        auto_key wrong_priv_key;
+        auto_key wrong_pub_key;
+        err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            wrong_priv_key.get_ptr(),
+            wrong_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(wrong_priv_key.get(), 0u);
+        ASSERT_NE(wrong_pub_key.get(), 0u);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, signer_priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, signer_pub_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(&algo, wrong_pub_key.get(), &hash_buf, &sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails when the signature length is truncated.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_truncated_signature)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_GT(sig_buf.len, 0u);
+        azihsm_buffer truncated_sig_buf{ signature.data(), sig_buf.len - 1 };
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &truncated_sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA signing rejects a null input buffer.
+TEST_F(azihsm_ecc_sign_verify, sign_rejects_null_input_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto sign_err = azihsm_crypt_sign(&algo, priv_key.get(), nullptr, &sig_buf);
+        ASSERT_EQ(sign_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests ECDSA signing rejects a null signature buffer.
+TEST_F(azihsm_ecc_sign_verify, sign_rejects_null_signature_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto sign_err = azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, nullptr);
+        ASSERT_EQ(sign_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests ECDSA verification rejects a null algorithm pointer.
+TEST_F(azihsm_ecc_sign_verify, verify_rejects_null_algorithm)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(nullptr, pub_key.get(), &hash_buf, &sig_buf);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests ECDSA verification rejects a null input buffer.
+TEST_F(azihsm_ecc_sign_verify, verify_rejects_null_input_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), nullptr, &sig_buf);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests ECDSA verification rejects a null signature buffer.
+TEST_F(azihsm_ecc_sign_verify, verify_rejects_null_signature_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, nullptr);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests ECDSA verification rejects an invalid key handle.
+TEST_F(azihsm_ecc_sign_verify, verify_invalid_key_handle)
+{
+    std::vector<uint8_t> hash(32, 0x42);
+    std::vector<uint8_t> signature(64, 0x24);
+
+    azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    auto err = azihsm_crypt_verify(&algo, 0xDEADBEEF, &hash_buf, &sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+}
+
+// Tests streaming ECDSA sign update rejects a null input buffer.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_update_rejects_null_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests streaming ECDSA verify update rejects a null input buffer.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_update_rejects_null_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests streaming ECDSA sign finish rejects a null signature buffer.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_rejects_null_signature_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "message for null finish signature buffer";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests streaming ECDSA verify finish rejects a null signature buffer.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_finish_rejects_null_signature_buffer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "message for null verify finish signature buffer";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Tests streaming ECDSA verification fails with a different ECC public key.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_ecc_public_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key signer_priv_key;
+        auto_key signer_pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            signer_priv_key.get_ptr(),
+            signer_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        auto_key wrong_priv_key;
+        auto_key wrong_pub_key;
+        err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            wrong_priv_key.get_ptr(),
+            wrong_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "streaming wrong public key verification";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, signer_priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, signer_pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx wrong_verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, wrong_pub_key.get(), wrong_verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_verify_update(wrong_verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto verify_err = azihsm_crypt_verify_finish(wrong_verify_ctx, &sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests P-256 ECDSA SHA-256 sign and verify for multiple messages.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p256_sign_verify_multiple_messages)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            AZIHSM_ALGO_ID_ECDSA_SHA256,
+            64,
+            std::vector<uint8_t>{ 'P', '2', '5', '6', ' ', 'm', 's', 'g', ' ', '0' }
+        );
+
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            AZIHSM_ALGO_ID_ECDSA_SHA256,
+            64,
+            std::vector<uint8_t>{ 'P', '2', '5', '6', ' ', 'm', 's', 'g', ' ', '1' }
+        );
+    });
+}
+
+// Tests P-384 ECDSA SHA-384 sign and verify for multiple messages.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p384_sign_verify_multiple_messages)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P384,
+            AZIHSM_ALGO_ID_ECDSA_SHA384,
+            96,
+            std::vector<uint8_t>{ 'P', '3', '8', '4', ' ', 'm', 's', 'g', ' ', '0' }
+        );
+
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P384,
+            AZIHSM_ALGO_ID_ECDSA_SHA384,
+            96,
+            std::vector<uint8_t>{ 'P', '3', '8', '4', ' ', 'm', 's', 'g', ' ', '1' }
+        );
+    });
+}
+
+// Tests P-521 ECDSA SHA-512 sign and verify for multiple messages.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p521_sign_verify_multiple_messages)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P521,
+            AZIHSM_ALGO_ID_ECDSA_SHA512,
+            132,
+            std::vector<uint8_t>{ 'P', '5', '2', '1', ' ', 'm', 's', 'g', ' ', '0' }
+        );
+
+        run_ecc_sign_verify_message_parity(
+            session,
+            AZIHSM_ECC_CURVE_P521,
+            AZIHSM_ALGO_ID_ECDSA_SHA512,
+            132,
+            std::vector<uint8_t>{ 'P', '5', '2', '1', ' ', 'm', 's', 'g', ' ', '1' }
+        );
+    });
+}
+
+// Tests P-256 pre-hashed ECDSA verification fails after digest modification.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p256_modified_digest_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_modified_digest_fails_parity(session, AZIHSM_ECC_CURVE_P256, 32, 64);
+    });
+}
+
+// Tests P-384 pre-hashed ECDSA verification fails after digest modification.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p384_modified_digest_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_modified_digest_fails_parity(session, AZIHSM_ECC_CURVE_P384, 48, 96);
+    });
+}
+
+// Tests P-521 pre-hashed ECDSA verification fails after digest modification.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p521_modified_digest_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_modified_digest_fails_parity(session, AZIHSM_ECC_CURVE_P521, 64, 132);
+    });
+}
+
+// Tests P-256 ECDSA verification fails after signature tampering.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p256_tampered_signature_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_tampered_signature_fails_parity(session, AZIHSM_ECC_CURVE_P256, 32, 64);
+    });
+}
+
+// Tests P-384 ECDSA verification fails after signature tampering.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p384_tampered_signature_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_tampered_signature_fails_parity(session, AZIHSM_ECC_CURVE_P384, 48, 96);
+    });
+}
+
+// Tests P-521 ECDSA verification fails after signature tampering.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p521_tampered_signature_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_tampered_signature_fails_parity(session, AZIHSM_ECC_CURVE_P521, 64, 132);
+    });
+}
+
+// Tests P-256 ECDSA verification fails with the wrong public key.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p256_wrong_public_key_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_wrong_public_key_fails_parity(session, AZIHSM_ECC_CURVE_P256, 32, 64);
+    });
+}
+
+// Tests P-384 ECDSA verification fails with the wrong public key.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p384_wrong_public_key_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_wrong_public_key_fails_parity(session, AZIHSM_ECC_CURVE_P384, 48, 96);
+    });
+}
+
+// Tests P-521 ECDSA verification fails with the wrong public key.
+TEST_F(azihsm_ecc_sign_verify, api_ecdsa_p521_wrong_public_key_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        run_ecc_wrong_public_key_fails_parity(session, AZIHSM_ECC_CURVE_P521, 64, 132);
+    });
+}
+
+// Tests ECDSA verification fails when verify uses a different hash algorithm than sign.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_mismatched_hash_algorithm)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P384,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "message for mismatched hash algorithm";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo sign_algo{};
+        sign_algo.id = AZIHSM_ALGO_ID_ECDSA_SHA384;
+        sign_algo.params = nullptr;
+        sign_algo.len = 0;
+
+        azihsm_algo verify_algo{};
+        verify_algo.id = AZIHSM_ALGO_ID_ECDSA_SHA512;
+        verify_algo.params = nullptr;
+        verify_algo.len = 0;
+
+        std::vector<uint8_t> signature(96);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&sign_algo, priv_key.get(), &msg_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(&verify_algo, pub_key.get(), &msg_buf, &sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails when the signature buffer is longer than expected.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_oversized_signature)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(sig_buf.len, 64u);
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> oversized_signature(
+            signature.begin(),
+            signature.begin() + sig_buf.len
+        );
+        oversized_signature.push_back(0x00);
+        azihsm_buffer oversized_sig_buf{ oversized_signature.data(),
+                                         static_cast<uint32_t>(oversized_signature.size()) };
+
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &oversized_sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails when the signature buffer length is zero.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_zero_length_signature)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> empty_signature_storage(1, 0x00);
+        azihsm_buffer empty_sig_buf{ empty_signature_storage.data(), 0 };
+
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key.get(), &hash_buf, &empty_sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA APIs reject buffers whose inner pointer is null while length is nonzero.
+TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_buffers_with_null_ptr_and_nonzero_len)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_buffer good_hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer good_sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_buffer bad_hash_buf{ nullptr, static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer bad_sig_buf{ nullptr, static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &bad_hash_buf, &good_sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &good_hash_buf, &bad_sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &good_hash_buf, &good_sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key.get(), &bad_hash_buf, &good_sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key.get(), &good_hash_buf, &bad_sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Tests streaming ECDSA update APIs reject buffers with null pointers and nonzero lengths.
+TEST_F(azihsm_ecc_sign_verify, streaming_update_rejects_buffer_with_null_ptr_and_nonzero_len)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_buffer bad_data_buf{ nullptr, 32 };
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign_update(sign_ctx, &bad_data_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_update(verify_ctx, &bad_data_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Tests streaming ECDSA APIs reject invalid context handles.
+TEST_F(azihsm_ecc_sign_verify, streaming_operations_reject_invalid_context_handle)
+{
+    std::vector<uint8_t> data(32, 0x42);
+    std::vector<uint8_t> signature(64, 0x24);
+
+    azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
+    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+    constexpr azihsm_handle invalid_ctx = 0xDEADBEEF;
+
+    ASSERT_EQ(azihsm_crypt_sign_update(invalid_ctx, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+    ASSERT_EQ(azihsm_crypt_sign_finish(invalid_ctx, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+    ASSERT_EQ(azihsm_crypt_verify_update(invalid_ctx, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+    ASSERT_EQ(azihsm_crypt_verify_finish(invalid_ctx, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+}
+
+// Tests streaming ECDSA sign context cannot be reused after finish.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_context_rejects_reuse_after_finish)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "message for sign context reuse";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_NE(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests streaming ECDSA verify context cannot be reused after finish.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_context_rejects_reuse_after_finish)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "message for verify context reuse";
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_NE(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA verification fails when the public key is from a different ECC curve.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_cross_curve_public_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key signer_priv_key;
+        auto_key signer_pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            signer_priv_key.get_ptr(),
+            signer_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        auto_key wrong_priv_key;
+        auto_key wrong_pub_key;
+        err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P384,
+            true,
+            wrong_priv_key.get_ptr(),
+            wrong_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, signer_priv_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, signer_pub_key.get(), &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto verify_err = azihsm_crypt_verify(&algo, wrong_pub_key.get(), &hash_buf, &sig_buf);
+        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests ECDSA SHA-256 single-shot signing and verification support an empty message.
+TEST_F(azihsm_ecc_sign_verify, sign_verify_empty_message_single_shot)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> empty_storage(1, 0x00);
+        azihsm_buffer msg_buf{ empty_storage.data(), 0 };
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key.get(), &msg_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key.get(), &msg_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+    });
+}
+
+// Tests ECDSA SHA-256 streaming signing and verification support no update data.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_empty_message)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Tests streaming sign init rejects an invalid private key handle.
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_init_rejects_invalid_key_handle)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    constexpr azihsm_handle invalid_key = 0xDEADBEEF;
+
+    auto_ctx ctx;
+    ASSERT_EQ(
+        azihsm_crypt_sign_init(&algo, invalid_key, ctx.get_ptr()),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(ctx.get(), 0u);
+}
+
+// Tests streaming verify init rejects an invalid public key handle.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_init_rejects_invalid_key_handle)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    constexpr azihsm_handle invalid_key = 0xDEADBEEF;
+
+    auto_ctx ctx;
+    ASSERT_EQ(
+        azihsm_crypt_verify_init(&algo, invalid_key, ctx.get_ptr()),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(ctx.get(), 0u);
+}
+
+// Tests streaming sign/verify init reject null algorithm pointers.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_null_algo_pointer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(nullptr, priv_key.get(), sign_ctx.get_ptr()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(sign_ctx.get(), 0u);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(nullptr, pub_key.get(), verify_ctx.get_ptr()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(verify_ctx.get(), 0u);
+    });
+}
+
+// Tests streaming sign/verify init reject non-ECC key handles.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_wrong_key_type)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key rsa_priv_key;
+        auto_key rsa_pub_key;
+        auto rsa_err =
+            generate_rsa_unwrapping_keypair(session, rsa_priv_key.get_ptr(), rsa_pub_key.get_ptr());
+        ASSERT_EQ(rsa_err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx ctx;
+
+        ASSERT_NE(
+            azihsm_crypt_sign_init(&algo, rsa_priv_key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+
+        ASSERT_NE(
+            azihsm_crypt_verify_init(&algo, rsa_pub_key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
+// Tests streaming sign/verify init reject null output context pointers.
+TEST_F(azihsm_ecc_sign_verify, streaming_init_rejects_null_output_context_pointer)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0u);
+        ASSERT_NE(pub_key.get(), 0u);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key.get(), nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key.get(), nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
 }
