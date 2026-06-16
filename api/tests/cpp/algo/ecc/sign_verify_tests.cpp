@@ -1082,44 +1082,70 @@ static bool read_persistence_file(
 {
     std::ifstream file(path, std::ios::binary);
     if (!file)
+    {
         return false;
+    }
 
-    auto read_blob = [&file](std::vector<uint8_t> &data) -> bool {
-        uint32_t len = 0;
-        file.read(reinterpret_cast<char *>(&len), sizeof(len));
-        if (!file)
-            return false;
-        data.resize(len);
-        if (len > 0)
+    auto read_exact = [&file](char *dst, std::streamsize len) -> bool {
+        if (len == 0)
         {
-            file.read(reinterpret_cast<char *>(data.data()), len);
+            return true;
         }
-        return file.good() || file.eof();
+
+        file.read(dst, len);
+        return file.good();
+    };
+
+    auto read_blob = [&read_exact](std::vector<uint8_t> &data) -> bool {
+        uint32_t len = 0;
+        if (!read_exact(reinterpret_cast<char *>(&len), sizeof(len)))
+        {
+            return false;
+        }
+
+        data.resize(len);
+        if (len == 0)
+        {
+            return true;
+        }
+
+        return read_exact(reinterpret_cast<char *>(data.data()), len);
     };
 
     if (!read_blob(bmk))
-        return false;
-    if (!read_blob(mobk))
-        return false;
-    if (!read_blob(masked_key))
-        return false;
-    if (!read_blob(signature))
-        return false;
-
-    // Read message
-    uint32_t msg_len = 0;
-    file.read(reinterpret_cast<char *>(&msg_len), sizeof(msg_len));
-    if (!file)
-        return false;
-    message.resize(msg_len);
-    if (msg_len > 0)
     {
-        file.read(&message[0], msg_len);
+        return false;
     }
 
-    return true;
-}
+    if (!read_blob(mobk))
+    {
+        return false;
+    }
 
+    if (!read_blob(masked_key))
+    {
+        return false;
+    }
+
+    if (!read_blob(signature))
+    {
+        return false;
+    }
+
+    uint32_t msg_len = 0;
+    if (!read_exact(reinterpret_cast<char *>(&msg_len), sizeof(msg_len)))
+    {
+        return false;
+    }
+
+    message.resize(msg_len);
+    if (msg_len == 0)
+    {
+        return true;
+    }
+
+    return read_exact(message.data(), static_cast<std::streamsize>(msg_len));
+}
 // Helper to get first partition path from list
 static std::vector<azihsm_char> get_first_partition_path()
 {
