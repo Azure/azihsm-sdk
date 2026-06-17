@@ -1056,3 +1056,84 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_private_prop_list_zero
         ASSERT_EQ(public_key, 0);
     });
 }
+
+
+// Verifies unwrap rejects when the OAEP hash used for wrapping does not match
+// the OAEP hash requested for unwrapping.
+TEST_F(
+    azihsm_ecc_keyunwrap_semantic,
+    unwrap_pair_rejects_wrap_oaep_sha256_unwrap_oaep_sha384
+)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesWrapConfig wrap_config{};
+        wrap_config.hash_algo = AZIHSM_ALGO_ID_SHA256;
+        wrap_config.mgf1_hash_algo = AZIHSM_MGF1_ID_SHA256;
+
+        RsaAesWrapConfig unwrap_config{};
+        unwrap_config.hash_algo = AZIHSM_ALGO_ID_SHA384;
+        unwrap_config.mgf1_hash_algo = AZIHSM_MGF1_ID_SHA384;
+
+        UnwrapPairResult result{};
+        auto err = unwrap_wrapped_ecc_pair_with_configs(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            wrap_config,
+            unwrap_config,
+            result
+        );
+
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap rejects when the AES key size in the unwrap algorithm does not
+// match the AES key size used when wrapping.
+TEST_F(
+    azihsm_ecc_keyunwrap_semantic,
+    unwrap_pair_rejects_mismatched_wrapping_and_unwrapping_aes_key_bits
+)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+        RsaAesWrapConfig wrap_config{};
+        wrap_config.aes_key_bits = 128;
+
+        std::vector<uint8_t> wrapped_blob;
+        auto err = make_wrapped_ecc_pkcs8_blob(
+            ctx.rsa_pub_key.get(),
+            AZIHSM_ECC_CURVE_P256,
+            wrap_config,
+            wrapped_blob
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_FALSE(wrapped_blob.empty());
+
+        RsaAesUnwrapAlgo unwrap_algo{};
+        unwrap_algo.aes_key_bits = 256;
+
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = wrapped_blob.data();
+        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
+
+        auto priv_prop_list = ctx.priv_props.get_prop_list();
+        auto pub_prop_list = ctx.pub_props.get_prop_list();
+
+        auto result = try_unwrap_pair(
+            &unwrap_algo.algo,
+            ctx.rsa_priv_key.get(),
+            &wrapped_key_buf,
+            &priv_prop_list,
+            &pub_prop_list
+        );
+
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
