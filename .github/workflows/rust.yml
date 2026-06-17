@@ -145,6 +145,9 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
+    - name: Print repo size
+      shell: pwsh
+      run: "{0:N2} GB" -f ((Get-ChildItem "." -Recurse -File | Measure-Object -Property Length -Sum).Sum/1GB)
 
   test_windows_mock:
 
@@ -169,6 +172,9 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
+    - name: Print repo size
+      shell: pwsh
+      run: "{0:N2} GB" -f ((Get-ChildItem "." -Recurse -File | Measure-Object -Property Length -Sum).Sum/1GB)
 
   test_windows_api:
 
@@ -193,6 +199,9 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
+    - name: Print repo size
+      shell: pwsh
+      run: "{0:N2} GB" -f ((Get-ChildItem "." -Recurse -File | Measure-Object -Property Length -Sum).Sum/1GB)
 
   test_windows_misc:
 
@@ -217,3 +226,6 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
+    - name: Print repo size
+      shell: pwsh
+      run: "{0:N2} GB" -f ((Get-ChildItem "." -Recurse -File | Measure-Object -Property Length -Sum).Sum/1GB)
