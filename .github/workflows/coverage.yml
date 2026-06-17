@@ -1,4 +1,4 @@
-name: Rust
+name: Coverage
 
 on:
   # remove push, pull_request, and merge_group triggers once validated

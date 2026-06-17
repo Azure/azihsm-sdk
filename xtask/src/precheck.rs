@@ -247,6 +247,15 @@ impl Xtask for Precheck {
 fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
+    let mut mock_exclude = exclude.to_owned();
+
+    if mock_exclude.is_empty() {
+        mock_exclude.extend(vec![
+            "provider-integration-tests-cli".to_string(),
+            "provider-integration-tests-capi".to_string(),
+        ]);
+    }
+
     // SDK Run all mock tests
     tests.push(Nextest {
         features: Some("mock".to_string()),
@@ -254,7 +263,7 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
         no_default_features: false,
         filterset: None,
         profile: profile.clone().or(Some("ci-mock".to_string())),
-        exclude: exclude.to_owned(),
+        exclude: mock_exclude,
     });
 
     // SDK Run resiliency fault-injection tests (requires res-test

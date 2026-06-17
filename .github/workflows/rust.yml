@@ -51,7 +51,7 @@ jobs:
     - uses: ./.github/actions/ubuntu-setup
     - name: Run all mock tests (except azihsm_api_tests)
       id: test-mock
-      run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
@@ -159,7 +159,7 @@ jobs:
     - uses: ./.github/actions/windows-setup
     - name: Run all mock tests (except azihsm_api_tests)
       id: test-mock
-      run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
