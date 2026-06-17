@@ -249,12 +249,10 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 
     let mut mock_exclude = exclude.to_owned();
 
-    if mock_exclude.is_empty() {
-        mock_exclude.extend(vec![
-            "provider-integration-tests-cli".to_string(),
-            "provider-integration-tests-capi".to_string(),
-        ]);
-    }
+    mock_exclude.extend(vec![
+        "provider-integration-tests-cli".to_string(),
+        "provider-integration-tests-capi".to_string(),
+    ]);
 
     // SDK Run all mock tests
     tests.push(Nextest {
