@@ -1,6 +1,5 @@
 name: Ubuntu Setup
-description: Checkout, install apt packages, restore Cargo cache, and run setup on cache miss
-
+description: Install apt packages, restore Cargo cache, and run setup on cache miss
 runs:
   using: composite
   steps:
