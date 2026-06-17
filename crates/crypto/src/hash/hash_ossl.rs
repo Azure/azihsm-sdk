@@ -203,15 +203,17 @@ impl OsslHashAlgo {
 impl HashOp for OsslHashAlgo {
     /// Computes a hash using OpenSSL's optimized implementation.
     ///
-    /// This method leverages OpenSSL's `hash::hash` function for one-shot
-    /// hash computation. It handles both size queries and actual hash
-    /// computation based on whether an output buffer is provided.
+    /// This method computes the digest with an `MdCtx` over an `Md` fetched from
+    /// the crate-private libctx (default-provider only), so it never resolves to
+    /// the azihsm provider on OpenSSL 3.5 (see [`crate::libctx`]). It handles
+    /// both size queries and actual hash computation based on whether an output
+    /// buffer is provided.
     ///
     /// # Implementation Details
     ///
-    /// - Uses OpenSSL's optimized one-shot hash function
+    /// - Fetches the digest from the crate-private libctx (`fetch_md`)
     /// - Validates output buffer size before computation
-    /// - Copies result to user-provided buffer
+    /// - Runs `digest_init` / `digest_update` / `digest_final` on an `MdCtx`
     /// - Returns actual hash size regardless of operation mode
     ///
     /// # Buffer Management
@@ -243,14 +245,16 @@ impl HashStreamingOp for OsslHashAlgo {
 
     /// Initializes a new OpenSSL hash context for streaming operations.
     ///
-    /// Creates a new OpenSSL `Hasher` instance configured with the
-    /// appropriate `MessageDigest` for the algorithm. The context
-    /// maintains internal state for incremental hash computation.
+    /// Fetches an `Md` for the algorithm from the crate-private libctx
+    /// (default-provider only; see [`crate::libctx`]) and initialises an
+    /// `MdCtx` for incremental hashing. The fetched `Md` is stored in the
+    /// context (`_md`) so it stays alive for the lifetime of the `MdCtx`.
     ///
     /// # Context Initialization
     ///
-    /// - Creates OpenSSL `Hasher` with algorithm-specific configuration
-    /// - Stores the `MessageDigest` for later size queries
+    /// - Fetches the digest from the crate-private libctx (`fetch_md`)
+    /// - Initialises an `MdCtx` via `digest_init`
+    /// - Keeps the `Md` alive alongside the context
     /// - Handles OpenSSL initialization errors gracefully
     ///
     /// # Error Handling
@@ -359,7 +363,7 @@ impl HashOpContext for OsslHashAlgoContext {
     /// # Error Handling
     ///
     /// - `CryptoError::HashBufferTooSmall`: Output buffer insufficient
-    /// - `CryptoError::HashFinalizeError`: OpenSSL finalization failed
+    /// - `CryptoError::HashFinishError`: OpenSSL finalization failed
     fn finish(&mut self, hash: Option<&mut [u8]>) -> Result<usize, CryptoError> {
         let len = self.algo.md.size();
         if let Some(hash) = hash {

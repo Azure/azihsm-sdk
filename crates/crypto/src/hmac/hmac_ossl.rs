@@ -308,7 +308,7 @@ impl<'a> SignStreamingOpContext<'a> for OsslHmacAlgoSignContext<'a> {
     ///
     /// # Errors
     ///
-    /// `CryptoError::HmacUpdateError` if the `EVP_MAC` update fails.
+    /// `CryptoError::HmacSignUpdateError` if the `EVP_MAC` update fails.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         self.mac.update(data)
     }
