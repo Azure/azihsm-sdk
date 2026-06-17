@@ -318,7 +318,7 @@ jobs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask setup
-    - name: Run resiliency fault injection tests with code coverage
+    - name: Run resiliency fault injection tests
       id: test-res-fault
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
       continue-on-error: true

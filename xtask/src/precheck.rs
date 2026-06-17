@@ -318,9 +318,15 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 
 // Helper function to run tests defined by other helper functions
 fn run_tests(tests: Vec<Nextest>, coverage: bool, ctx: XtaskCtx) -> anyhow::Result<()> {
+    let mut first_run = true;
     for test in tests {
         if coverage {
-            Coverage::from(test).run(ctx.clone())?;
+            let mut cov = Coverage::from(test);
+            if !first_run {
+                cov.skip_clean = true;
+            }
+            first_run = false;
+            cov.run(ctx.clone())?;
         } else {
             test.run(ctx.clone())?;
         }

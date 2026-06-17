@@ -14,7 +14,7 @@ use crate::XtaskCtx;
 
 /// Xtask to clean & run code coverage
 #[derive(Parser)]
-#[clap(about = "Run code coverage using cargo llvm-cov")]
+#[clap(about = "Clean & run code coverage using cargo llvm-cov")]
 pub struct Coverage {
     /// Features to include in nextest run
     #[clap(long)]
