@@ -191,9 +191,20 @@ static std::vector<uint8_t> hmac_streaming_sign_vec(
     const std::vector<size_t> &chunk_sizes
 )
 {
+    if (!msg.empty() && chunk_sizes.empty())
+    {
+        ADD_FAILURE() << "chunk_sizes must not be empty when msg is non-empty";
+        return {};
+    }
+
     auto_ctx sign_ctx;
 
-    EXPECT_EQ(azihsm_crypt_sign_init(&algo, hmac_key, sign_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+    auto init_err = azihsm_crypt_sign_init(&algo, hmac_key, sign_ctx.get_ptr());
+    if (init_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign_init failed: " << init_err;
+        return {};
+    }
 
     size_t offset = 0;
     size_t chunk_index = 0;
@@ -208,21 +219,46 @@ static std::vector<uint8_t> hmac_streaming_sign_vec(
             .len = static_cast<uint32_t>(end - offset),
         };
 
-        EXPECT_EQ(azihsm_crypt_sign_update(sign_ctx, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+        auto update_err = azihsm_crypt_sign_update(sign_ctx, &chunk_buf);
+        if (update_err != AZIHSM_STATUS_SUCCESS)
+        {
+            ADD_FAILURE() << "azihsm_crypt_sign_update failed: " << update_err;
+            return {};
+        }
 
         offset = end;
     }
 
     azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
 
-    EXPECT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
-    EXPECT_GT(sig_buf.len, 0);
+    auto size_err = azihsm_crypt_sign_finish(sign_ctx, &sig_buf);
+    if (size_err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign_finish size query failed: " << size_err;
+        return {};
+    }
+
+    if (sig_buf.len == 0)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign_finish size query returned zero length";
+        return {};
+    }
 
     std::vector<uint8_t> signature(sig_buf.len);
     sig_buf.ptr = signature.data();
 
-    EXPECT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
-    EXPECT_GT(sig_buf.len, 0);
+    auto finish_err = azihsm_crypt_sign_finish(sign_ctx, &sig_buf);
+    if (finish_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign_finish failed: " << finish_err;
+        return {};
+    }
+
+    if (sig_buf.len == 0)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign_finish returned zero length";
+        return {};
+    }
 
     signature.resize(sig_buf.len);
     return signature;
@@ -236,12 +272,20 @@ static azihsm_status hmac_streaming_verify(
     const std::vector<uint8_t> &tag
 )
 {
+    if (!msg.empty() && chunk_sizes.empty())
+    {
+        ADD_FAILURE() << "chunk_sizes must not be empty when msg is non-empty";
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
     auto_ctx verify_ctx;
 
-    EXPECT_EQ(
-        azihsm_crypt_verify_init(&algo, hmac_key, verify_ctx.get_ptr()),
-        AZIHSM_STATUS_SUCCESS
-    );
+    auto init_err = azihsm_crypt_verify_init(&algo, hmac_key, verify_ctx.get_ptr());
+    if (init_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "azihsm_crypt_verify_init failed: " << init_err;
+        return init_err;
+    }
 
     size_t offset = 0;
     size_t chunk_index = 0;
@@ -256,7 +300,12 @@ static azihsm_status hmac_streaming_verify(
             .len = static_cast<uint32_t>(end - offset),
         };
 
-        EXPECT_EQ(azihsm_crypt_verify_update(verify_ctx, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+        auto update_err = azihsm_crypt_verify_update(verify_ctx, &chunk_buf);
+        if (update_err != AZIHSM_STATUS_SUCCESS)
+        {
+            ADD_FAILURE() << "azihsm_crypt_verify_update failed: " << update_err;
+            return update_err;
+        }
 
         offset = end;
     }
@@ -269,30 +318,13 @@ static azihsm_status hmac_streaming_verify(
     return azihsm_crypt_verify_finish(verify_ctx, &sig_buf);
 }
 
-// HMAC Single-Shot Sign/Verify Tests
 TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_all_algorithms)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing HMAC with " + std::string(test_case.test_name));
 
         part_list_.for_each_session([&](azihsm_handle session) {
-            // Generate EC key pairs and derive HMAC key
             EcdhKeyPairSet key_pairs;
             auto_key hmac_key;
 
@@ -305,7 +337,6 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_all_algorithms)
             );
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-            // Prepare test data
             std::string message =
                 std::string("Hello, HMAC-") + test_case.test_name + " authentication with HSM!";
             std::vector<uint8_t> data(message.begin(), message.end());
@@ -320,22 +351,7 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_all_algorithms)
 // HMAC Streaming Sign/Verify Tests
 TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_streaming_all_algorithms)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing HMAC streaming with " + std::string(test_case.test_name));
 
@@ -354,36 +370,26 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_streaming_all_algorithms)
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
             // Prepare test data in chunks
-            const std::vector<const char *> chunks = { "Hello, ",
-                                                       "HMAC streaming ",
-                                                       "authentication!" };
+            const std::vector<const char *> chunks = {
+                "Hello, ",
+                "HMAC streaming ",
+                "authentication!",
+            };
 
-            azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
 
             test_streaming_hmac_sign_verify(hmac_key.get(), algo, chunks);
         });
     }
 }
 
-// Verifies that HMAC verification rejects a modified signature.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing tampered HMAC signature with " + std::string(test_case.test_name));
 
@@ -406,8 +412,11 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
                 std::string("Message authenticated with HMAC-") + test_case.test_name;
             std::vector<uint8_t> data(message.begin(), message.end());
 
-            azihsm_buffer data_buf = { .ptr = data.data(),
-                                       .len = static_cast<uint32_t>(data.size()) };
+            azihsm_buffer data_buf = {
+                .ptr = data.data(),
+                .len = static_cast<uint32_t>(data.size()),
+            };
+
             azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
 
             azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
@@ -436,25 +445,9 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
     }
 }
 
-// Verifies that HMAC verification rejects modified input data.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing tampered HMAC data with " + std::string(test_case.test_name));
 
@@ -476,8 +469,11 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
             std::string message = std::string("Original HMAC message for ") + test_case.test_name;
             std::vector<uint8_t> data(message.begin(), message.end());
 
-            azihsm_buffer data_buf = { .ptr = data.data(),
-                                       .len = static_cast<uint32_t>(data.size()) };
+            azihsm_buffer data_buf = {
+                .ptr = data.data(),
+                .len = static_cast<uint32_t>(data.size()),
+            };
+
             azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
 
             azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
@@ -509,25 +505,9 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
     }
 }
 
-// Verifies that an HMAC signature cannot be verified with a different derived HMAC key.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing HMAC wrong-key rejection with " + std::string(test_case.test_name));
 
@@ -563,8 +543,11 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key
                 std::string("HMAC wrong-key verification test for ") + test_case.test_name;
             std::vector<uint8_t> data(message.begin(), message.end());
 
-            azihsm_buffer data_buf = { .ptr = data.data(),
-                                       .len = static_cast<uint32_t>(data.size()) };
+            azihsm_buffer data_buf = {
+                .ptr = data.data(),
+                .len = static_cast<uint32_t>(data.size()),
+            };
+
             azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
 
             azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
@@ -592,22 +575,7 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key
 // Verifies that HMAC supports empty messages in single-shot mode.
 TEST_F(azihsm_hmac_sign_verify, sign_verify_empty_hmac_message)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing empty HMAC message with " + std::string(test_case.test_name));
 
@@ -627,7 +595,12 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_empty_hmac_message)
             );
 
             std::vector<uint8_t> empty_data;
-            azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
+
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
 
             test_single_shot_hmac_sign_verify(hmac_key.get(), algo, empty_data);
         });
@@ -637,22 +610,7 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_empty_hmac_message)
 // Verifies that streaming HMAC supports zero update calls before finish.
 TEST_F(azihsm_hmac_sign_verify, streaming_sign_verify_empty_hmac_message)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE(
             "Testing empty streaming HMAC message with " + std::string(test_case.test_name)
@@ -673,7 +631,11 @@ TEST_F(azihsm_hmac_sign_verify, streaming_sign_verify_empty_hmac_message)
                 AZIHSM_STATUS_SUCCESS
             );
 
-            azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
 
             const std::vector<const char *> empty_chunks = {};
             test_streaming_hmac_sign_verify(hmac_key.get(), algo, empty_chunks);
@@ -684,22 +646,7 @@ TEST_F(azihsm_hmac_sign_verify, streaming_sign_verify_empty_hmac_message)
 // Verifies that verify rejects a truncated HMAC signature.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_truncated_hmac_signature)
 {
-    std::vector<HmacTestParams> test_cases = {
-        { AZIHSM_KEY_KIND_HMAC_SHA256,
-          AZIHSM_ALGO_ID_HMAC_SHA256,
-          AZIHSM_ECC_CURVE_P256,
-          "SHA256" },
-        { AZIHSM_KEY_KIND_HMAC_SHA384,
-          AZIHSM_ALGO_ID_HMAC_SHA384,
-          AZIHSM_ECC_CURVE_P384,
-          "SHA384" },
-        { AZIHSM_KEY_KIND_HMAC_SHA512,
-          AZIHSM_ALGO_ID_HMAC_SHA512,
-          AZIHSM_ECC_CURVE_P521,
-          "SHA512" },
-    };
-
-    for (const auto &test_case : test_cases)
+    for (const auto &test_case : hmac_test_cases())
     {
         SCOPED_TRACE("Testing truncated HMAC signature with " + std::string(test_case.test_name));
 
@@ -722,9 +669,16 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_truncated_hmac_signature)
                 std::string("HMAC truncated signature test for ") + test_case.test_name;
             std::vector<uint8_t> data(message.begin(), message.end());
 
-            azihsm_buffer data_buf = { .ptr = data.data(),
-                                       .len = static_cast<uint32_t>(data.size()) };
-            azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
+            azihsm_buffer data_buf = {
+                .ptr = data.data(),
+                .len = static_cast<uint32_t>(data.size()),
+            };
+
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
 
             azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
             ASSERT_EQ(
