@@ -4,7 +4,6 @@ description: Checkout, install apt packages, restore Cargo cache, and run setup 
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@v6
     - name: Install apt packages
       shell: bash
       run: |
