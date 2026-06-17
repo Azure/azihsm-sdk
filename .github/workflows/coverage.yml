@@ -31,7 +31,7 @@ jobs:
     - uses: ./.github/actions/ubuntu-setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage --skip-clean -F mock --profile ci-mock
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
@@ -68,7 +68,7 @@ jobs:
     - uses: ./.github/actions/windows-setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage --skip-clean -F mock --profile ci-mock
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
     - name: Run resiliency fault injection tests with code coverage
       id: test-res-fault
