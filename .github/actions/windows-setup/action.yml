@@ -1,6 +1,5 @@
 name: Windows Setup
-description: Checkout, restore Cargo cache, and run setup on cache miss
-
+description: Restore Cargo cache and run setup on cache miss
 runs:
   using: composite
   steps:
