@@ -23,25 +23,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' 
-      run: cargo xtask setup
+    - uses: ./.github/actions/ubuntu-setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -64,24 +46,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask setup
+    - uses: ./.github/actions/ubuntu-setup
     - name: Run all mock tests (except azihsm_api_tests)
       id: test-mock
       run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
@@ -104,24 +69,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask setup
+    - uses: ./.github/actions/ubuntu-setup
     - name: Run azihsm_api_tests
       id: test-api
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
@@ -144,24 +92,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask setup
+    - uses: ./.github/actions/ubuntu-setup
     - name: SDK Run all mock tests table-4
       id: test-mock-table-4
       run: cargo xtask precheck --nextest -p azihsm_ddi_mbor_types -F mock,table-4 --profile ci-mock-table-4
@@ -196,20 +127,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - uses: ./.github/actions/windows-setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -232,20 +150,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - uses: ./.github/actions/windows-setup
     - name: Run all mock tests (except azihsm_api_tests)
       id: test-mock
       run: cargo xtask precheck --nextest --exclude azihsm_api_tests -F mock --profile ci-mock
@@ -268,20 +173,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask setup
+    - uses: ./.github/actions/windows-setup
     - name: Run azihsm_api_tests
       id: test-api
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
@@ -304,20 +196,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask setup
+    - uses: ./.github/actions/windows-setup
     - name: Run resiliency fault injection tests
       id: test-res-fault
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
