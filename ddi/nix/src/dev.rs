@@ -24,6 +24,8 @@ use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
+use azihsm_ddi_tbor_types::TborOpReq;
+use azihsm_ddi_tbor_types::TborResp;
 use bitfield_struct::bitfield;
 use nix::ioctl_readwrite;
 use parking_lot::RwLock;
@@ -845,6 +847,101 @@ impl DdiDev for DdiNixDev {
         let resp = <T::OpResp>::mbor_decode(&mut decoder)
             .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
         Ok(resp)
+    }
+
+    /// Execute a DDI command whose body is TBOR-encoded.
+    ///
+    /// Mirrors [`Self::exec_op_mbor`] but:
+    ///   * encodes the request via [`TborOpReq::encode_request`];
+    ///   * sets the SQE opcode to `OP_TBOR` (= 2) so that the firmware
+    ///     dispatches the request through its TBOR handler instead of
+    ///     the legacy MBOR handler;
+    ///   * decodes the response via [`TborResp::decode_response`],
+    ///     which already maps embedded fw-error status into
+    ///     [`DdiError::DdiError`] / [`DdiError::TborDecodeError`].
+    ///
+    /// The Linux kernel driver is wire-agnostic — it forwards the
+    /// `opc` and `cmdset` ioctl fields verbatim into the SQE — so
+    /// no driver change is required to route TBOR.
+    fn exec_op_tbor<T: TborOpReq>(
+        &self,
+        req: &T,
+        _cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        /// SQE opcode that routes the command through the firmware's
+        /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
+        const OP_TBOR: u16 = 2;
+
+        const REQ_BUF_LEN: usize = 8192;
+        const RESP_BUF_LEN: usize = 8192;
+
+        // ── 1. Encode the TBOR request ───────────────────────────
+        let mut req_buf = [0u8; REQ_BUF_LEN];
+        let req_bytes = req.encode_request(&mut req_buf)?;
+        let req_len = req_bytes.len();
+
+        tracing::debug!(
+            opcode = T::OPCODE,
+            "TBOR Request Buffer (in hex): {:02x?}",
+            &req_buf[..req_len]
+        );
+
+        let mut resp_buf = Box::<[u8; RESP_BUF_LEN]>::new([0u8; RESP_BUF_LEN]);
+
+        // ── 2. Build the ioctl command ───────────────────────────
+        let mut cmd = McrCpGenericCmd::default();
+        cmd.hdr.ioctl_data_size = mem::size_of::<McrCpGenericCmd>() as u32;
+        cmd.hdr.app_cmd_id = 0xCD1DDEAD;
+        cmd.hdr.timeout = 100; // ms
+
+        // The Rust field `rsvd1` aliases the C UAPI `__u16 opc` field
+        // (see drivers/linux/drvsrc/azihsm_hsm_dev_ioctl.h). Writing
+        // OP_TBOR here is THE flag the firmware uses to route the
+        // request through `handle_tbor_op` instead of `handle_mbor_op`.
+        cmd.in_data.rsvd1 = OP_TBOR;
+        cmd.in_data.command_set = McrCpCmdSet::Generic;
+
+        // Session control flags come from the TBOR request type.
+        let session_ctrl = req.session_ctrl();
+        cmd.in_data
+            .session_control_flags
+            .set_kind(u8::from(session_ctrl));
+        if let Some(sid) = req.get_session_id() {
+            cmd.in_data.session_id = sid;
+            cmd.in_data
+                .session_control_flags
+                .set_session_id_is_valid(true);
+        }
+
+        cmd.in_data.src_length = req_len as u32;
+        cmd.in_data.src_buf = req_buf.as_ptr();
+        cmd.in_data.dst_length = resp_buf.len() as u32;
+        cmd.in_data.dst_buf = resp_buf.as_mut_ptr();
+
+        // ── 3. Issue the ioctl ───────────────────────────────────
+        // SAFETY: src/dst pointers above are valid for the duration
+        // of the ioctl call; the buffers outlive `cmd`.
+        let res = unsafe {
+            mcr_ctrl_cmd_generic_ioctl(self.file.read().as_raw_fd(), &mut cmd)
+        };
+        if res.is_err() {
+            self.map_ioctl_status(cmd.out_data.ioctl_status)?;
+            res.map_err(DdiError::NixError)?;
+        }
+        if cmd.out_data.status != 0 {
+            return Err(DdiError::DdiError(cmd.out_data.status));
+        }
+
+        // ── 4. Decode the typed response ─────────────────────────
+        let resp_len = cmd.out_data.byte_count as usize;
+        let resp_bytes = &resp_buf[..resp_len];
+        tracing::debug!(
+            opcode = T::OPCODE,
+            "TBOR Response Buffer (in hex): {:02x?}",
+            resp_bytes
+        );
+
+        Ok(<T::OpResp>::decode_response(resp_bytes)?)
     }
 
     /// Execute AES GCM operation (encryption/decryption) with slice-based buffers
