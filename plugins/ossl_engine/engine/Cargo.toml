@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_engine"
+publish = false
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+engine = ["openssl-engine/engine"]
+
+[dependencies]
+openssl-engine.workspace = true
+
+[lints]
+workspace = true
