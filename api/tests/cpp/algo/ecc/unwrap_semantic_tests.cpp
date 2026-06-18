@@ -59,7 +59,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_nonnull_pt
         wrapped_key_buf.len = 0;
 
         auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -79,7 +79,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_minimal_one_byte_blob)
         wrapped_key_buf.len = 1;
 
         auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -237,7 +237,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_blob_wrapped_by_differ
         &priv_prop_list,
         &pub_prop_list
     );
-    ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
     ASSERT_EQ(result.private_key, 0);
     ASSERT_EQ(result.public_key, 0);
 }
@@ -258,7 +258,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_input_wrapped_blob_o
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
         ASSERT_EQ(wrapped_data, before);
@@ -279,7 +279,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_curve_mismat
         ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -298,7 +298,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_capability_m
         ctx.priv_props.can_sign = 0;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -329,7 +329,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_m
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -349,7 +349,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_curve_
         ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P521;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -376,7 +376,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_first_
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(corrupted_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -403,7 +403,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_middle
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(corrupted_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -430,7 +430,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_last_b
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(corrupted_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -455,7 +455,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_truncated_valid_wrappe
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(truncated_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -478,7 +478,7 @@ TEST_F(
         ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -501,7 +501,7 @@ TEST_F(
         ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P256;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -524,7 +524,7 @@ TEST_F(
         ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -543,7 +543,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_public_verify_capabili
         ctx.pub_props.can_verify = 0;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -563,7 +563,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_sign_and_verify_capabi
         ctx.pub_props.can_verify = 0;
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -592,7 +592,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_corrupted_valid_blob
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(corrupted_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
         ASSERT_EQ(corrupted_blob, before);
@@ -622,7 +622,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_null_ptr_z
             &pub_prop_list
         );
 
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -650,7 +650,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_extra_
 
         auto result = ctx.try_unwrap();
 
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -679,7 +679,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_many_e
 
         auto result = ctx.try_unwrap();
 
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -1080,7 +1080,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrap_oaep_sha256_unwra
         );
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
