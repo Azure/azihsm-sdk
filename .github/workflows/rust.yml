@@ -89,6 +89,11 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
+    - name: Show disk usage
+      if: ${{ always() }}
+      continue-on-error: true
+      run: |
+        df -h
 
   build_windows:
 
@@ -145,7 +150,8 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
-    - name: Print repo size
+    - name: Show disk usage
+      if: ${{ always() }}
+      continue-on-error: true
       shell: pwsh
-      run: |
-        "{0:N2} GB" -f ((Get-ChildItem "." -Recurse -File | Measure-Object -Property Length -Sum).Sum/1GB)
+      run: Get-PSDrive -PSProvider FileSystem
