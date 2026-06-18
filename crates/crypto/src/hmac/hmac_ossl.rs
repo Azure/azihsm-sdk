@@ -394,7 +394,10 @@ impl VerifyOp for OsslHmacAlgo {
         mac.update(data)?;
         mac.finish(&mut result)?;
 
-        Ok(result == signature)
+        // Constant-time MAC comparison so verification doesn't leak how many
+        // leading bytes match via timing. The length check compares public MAC
+        // sizes (not secret); `memcmp::eq` requires equal lengths.
+        Ok(result.len() == signature.len() && openssl::memcmp::eq(&result, signature))
     }
 }
 
@@ -489,7 +492,8 @@ impl<'a> VerifyStreamingOpContext<'a> for OsslHmacAlgoVerifyContext<'a> {
             .finish(&mut result)
             .map_err(|_| CryptoError::HmacVerifyFinishError)?;
 
-        Ok(result == signature)
+        // Constant-time comparison (see the one-shot `verify`).
+        Ok(result.len() == signature.len() && openssl::memcmp::eq(&result, signature))
     }
 
     /// Returns a reference to the underlying hash algorithm.

@@ -397,6 +397,12 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                 // label when it is non-empty, keeping `None` and `Some(b"")`
                 // behaviourally identical.
                 if let Some(label) = self.label.filter(|l| !l.is_empty()) {
+                    // `EVP_PKEY_CTX_set0_rsa_oaep_label` takes the length as a
+                    // `c_int`; reject labels that don't fit before allocating so
+                    // the cast can't overflow/truncate. (OAEP labels are tiny in
+                    // practice; this is purely defensive.)
+                    let llen = c_int::try_from(label.len())
+                        .map_err(|_| CryptoError::RsaSetPropertyError)?;
                     // EVP_PKEY_CTX_set0_rsa_oaep_label takes ownership of the
                     // label buffer and frees it with OPENSSL_free, so the buffer
                     // must be OPENSSL_malloc'd (matching `set_rsa_oaep_label`).
@@ -405,9 +411,7 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                         return Err(CryptoError::RsaSetPropertyError);
                     }
                     std::ptr::copy_nonoverlapping(label.as_ptr(), p as *mut u8, label.len());
-                    if ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, p, label.len() as c_int)
-                        != OSSL_SUCCESS
-                    {
+                    if ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, p, llen) != OSSL_SUCCESS {
                         // On failure ownership is not transferred; free the copy.
                         ffi::OPENSSL_free(p);
                         return Err(CryptoError::RsaSetPropertyError);
