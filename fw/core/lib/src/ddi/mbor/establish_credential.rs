@@ -289,16 +289,19 @@ async fn verify_pota_signature<P: HsmPal>(
     pal.hash(io, HsmHashAlgo::Sha384, id_uncompressed, digest, true)
         .await?;
 
-    if !pal
-        .ecc_verify(
-            io,
-            HsmEccCurve::P384,
-            signer_pub_key_raw,
-            digest,
-            signature_raw,
-        )
-        .await?
-    {
+    let verify_result = pal.dma_alloc(io, 4)?;
+
+    pal.ecc_verify(
+        io,
+        HsmEccCurve::P384,
+        signer_pub_key_raw,
+        digest,
+        signature_raw,
+        verify_result,
+    )
+    .await?;
+
+    if (verify_result[0] & 1) != 0 {
         return Err(HsmError::EccVerifyFailed);
     }
     Ok(())

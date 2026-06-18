@@ -1,0 +1,128 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// HSM DTCM status and crashdump region.
+//
+// Defines the hsm_dtcm_status address map for boot-time crashdump
+// staging and runtime liveliness monitoring in HSM (CP1) local DTCM.
+
+// This region holds per-core liveliness indicators and crashdump
+// metadata in HSM (CP1) local DTCM. The SP (HSP) health monitor
+// polls these words via the global address (0x6063_F400) to detect
+// core hangs and trigger crashdump collection.
+//
+// Layout (offsets from base 0x2003_F400, local DTCM):
+//   0x000 - 0x3FF   CRASHDUMP_BASE     (1024 B crashdump staging area)
+//   0x400 - 0x403   CORE_RUN_STATUS    (4 B, liveliness heartbeat)
+//
+// Base address 0x2003_F400 (local DTCM) chosen so that:
+//   - CRASHDUMP_BASE @ 0x2003_F400 (matches V1 CRASHDUMP_BASE_OFFSET)
+//   - CORE_RUN_STATUS @ 0x2003_F800 (matches V1 CORE_RUN_STATUS_OFFSET)
+//
+// The global addresses visible to SP via DMB are:
+//   - CRASHDUMP_BASE: 0x6063_F400 = CP_GLOBAL_ADDRESS(1, 0x2003_F400)
+//   - CORE_RUN_STATUS: 0x6063_F800 = CP_GLOBAL_ADDRESS(1, 0x2003_F800)
+//
+// SP polling pattern (in src/crashdump/soc_crashdump_handler.c):
+//
+//   uint32_t core_status[NUM_CORES];
+//   get_all_core_status(api, &failed_core_id, core_status);  // Read CP1 @ 0x6063F800
+//   if (core_status[CP1_ID]) {
+//       clear_core_status(api, CP1_ID);  // Zero the word
+//   } else {
+//       crash_count++;
+//       printf("Crash count = %d. Cores (status not updated): CP1\n", crash_count);
+//   }
+//
+// HSM-side write pattern (in app/src/main.rs::core_liveliness task):
+//
+//   const CORE_RUN_STATUS_ADDR: *mut u32 = 0x2003_F800 as *mut u32;
+//   loop {
+//       unsafe { write_volatile(CORE_RUN_STATUS_ADDR, 1) };
+//       Timer::after(Duration::from_millis(100)).await;
+//   }
+//
+// Reference: V1 cp/hsm/mem-map/src/dtcm_hsm.rs (core_run_status @ 0x2003F800,
+//                                                 crashdump_base @ 0x2003F400).
+//
+// NOTE: This RDL defines the LOCAL DTCM view (0x2003_F400). The reggen
+//       tool may emit a global base address constant for cross-core access;
+//       HSM firmware should use the local address, SP uses global.
+
+
+reg core_run_status_t {
+    name = "Core Run Status";
+    desc = "Per-core liveliness heartbeat. HSM firmware writes 1 to this
+            word periodically (~250ms interval) to signal 'alive' status
+            to the SP health monitor. SP reads this word via the global
+            address (0x6063_F800), then zeroes it. If SP's next poll
+            finds the word still zero, SP flags the core as hung and
+            triggers crashdump collection.
+
+            Protocol:
+              1. HSM writes 1 every 100ms (Embassy task: core_liveliness)
+              2. SP reads value via DMB global address
+              3. If value != 0: SP writes 0, core is healthy
+              4. If value == 0: SP increments crash_count, prints
+                 'Cores (status not updated): CP1', collects crashdump
+
+            V1 equivalent: HsmDtcmMemMap::core_run_status().set(1u32)
+                           called from hsm/src/handler.rs::on_timer_elapsed.
+
+            IMPORTANT: Both HSM write and SP read/write must use volatile
+            access. HSM must write non-zero; SP zeroes after each poll.";
+
+    field {
+        sw = rw;
+        hw = na;
+        desc = "Liveliness indicator (HSM writes 1, SP reads then zeroes). Non-zero = alive.";
+    } ALIVE[31:0] = 0x0;  // Reset to 0 (SP will flag hung until first heartbeat)
+};
+
+
+mem crashdump_base_t {
+    desc = "Crashdump staging buffer (1024 B). When SP detects a hang or
+            the core takes an exception, the exception handler stages
+            register state + stack trace here. SP then copies this via
+            the global address (0x6063_F400) into its persistent debug log.
+
+            V1 equivalent: HsmDtcmMemMap::crashdump_base (1024 B array).
+
+            Out of v1 scope: crashdump format struct definition (currently
+            opaque byte array; V1 uses a C struct with r0-r15, PSR, etc.).";
+
+    mementries = 256;   // 256 × 32 bits = 1024 B
+    memwidth   = 32;
+};
+
+
+addrmap hsm_dtcm_status {
+    name = "HSM DTCM Status";
+    desc = "Per-core status and crashdump region in HSM (CP1) local DTCM.
+             Holds the crashdump staging buffer and the liveliness
+             heartbeat word polled by SP to detect hangs.
+
+             Base address 0x2003_F400 (local DTCM, as seen by HSM firmware)
+             is pinned to match V1 mem-map/src/dtcm_hsm.rs layout:
+               - CRASHDUMP_BASE @ 0x2003_F400 (V1 CRASHDUMP_BASE_OFFSET)
+               - CORE_RUN_STATUS @ 0x2003_F800 (V1 CORE_RUN_STATUS_OFFSET)
+
+             SP accesses these via global addresses:
+               - CRASHDUMP_BASE: 0x6063_F400 = CP_GLOBAL_ADDRESS(1, 0x2003_F400)
+               - CORE_RUN_STATUS: 0x6063_F800 = CP_GLOBAL_ADDRESS(1, 0x2003_F800)
+
+             The reggen tool should emit a `*_BASE` constant of 0x6063_F400
+             (global address) so both HSM (via local alias) and SP (via DMB)
+             can access. HSM firmware code will add the local base 0x2000_0000
+             offset if needed, or use direct local addressing.
+
+             Total region: 1028 B (0x404), laid out as:
+               0x000-0x3FF: CRASHDUMP_BASE (1024 B)
+               0x400-0x403: CORE_RUN_STATUS (4 B)";
+
+    default hw = na;
+    default sw = rw;
+
+    crashdump_base_t  CRASHDUMP_BASE  @ 0x000;
+    core_run_status_t CORE_RUN_STATUS @ 0x400;
+};

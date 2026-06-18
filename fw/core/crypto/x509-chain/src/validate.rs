@@ -339,11 +339,12 @@ impl ChainValidator {
         pk_dma[hw_len + pad..hw_len + pad + coord_len]
             .copy_from_slice(&verify_key.point[coord_len..coord_len * 2]);
 
-        let valid = pal
-            .ecc_verify(io, curve, pk_dma, digest_dma, sig_dma)
+        let result_dma = alloc.dma_alloc(4)?;
+
+        pal.ecc_verify(io, curve, pk_dma, digest_dma, sig_dma, result_dma)
             .await?;
 
-        if valid {
+        if (result_dma[0] & 1) == 0 {
             Ok(())
         } else {
             Err(HsmError::X509SignatureInvalid)

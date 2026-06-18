@@ -203,20 +203,26 @@ impl HsmEcc for StdHsmPal {
         pub_key: &DmaBuf,
         hash: &DmaBuf,
         signature: &DmaBuf,
-    ) -> HsmResult<bool> {
+        result: &mut DmaBuf,
+    ) -> HsmResult<()> {
         let wire_pub_len = curve.wire_pub_key_len();
         let wire_sig_len = curve.wire_sig_len();
-        if pub_key.len() < wire_pub_len || signature.len() < wire_sig_len {
+        if pub_key.len() < wire_pub_len || signature.len() < wire_sig_len || result.len() < 4 {
             return Err(HsmError::InvalidArg);
         }
-        self.ecc
+        let valid = self
+            .ecc
             .ecc_verify_le(
                 to_ecc_curve(curve),
                 &pub_key[..wire_pub_len],
                 hash,
                 &signature[..wire_sig_len],
             )
-            .await
+            .await?;
+
+        result.fill(0);
+        result[0] = if valid { 0 } else { 1 };
+        Ok(())
     }
 
     /// ECDH key agreement — derives a shared secret.

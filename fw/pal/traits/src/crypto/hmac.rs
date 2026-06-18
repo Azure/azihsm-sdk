@@ -78,7 +78,7 @@ pub trait HsmHmac {
         &self,
         io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &mut [u8],
+        key: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// Compute an HMAC tag (sign) in a single call.

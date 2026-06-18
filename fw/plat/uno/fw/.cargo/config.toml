@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[alias]
+xtask = "run --manifest-path ../xtask/Cargo.toml --target x86_64-unknown-linux-gnu --release --quiet --"
+
+[build]
+target = "thumbv7em-none-eabi"
+
+[target.thumbv7em-none-eabi]
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "target-cpu=cortex-m7"]
+
+[unstable]
+build-std = ["compiler_builtins", "core"]
+
+[future-incompat-report]
+frequency = "never"

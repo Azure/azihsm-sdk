@@ -1,0 +1,47 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2024"
+name = "azihsm_fw_uno_pal"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+azihsm_fw_hsm_pal_traits = { workspace = true }
+azihsm_fw_single_cell = { workspace = true }
+azihsm_fw_static_init = { workspace = true }
+azihsm_fw_static_ref = { workspace = true }
+azihsm_fw_uno_drivers_aes = { workspace = true }
+azihsm_fw_uno_drivers_gdma = { workspace = true }
+azihsm_fw_uno_drivers_iic = { workspace = true }
+azihsm_fw_uno_drivers_ipc = { workspace = true }
+azihsm_fw_uno_drivers_nvic = { workspace = true }
+azihsm_fw_uno_drivers_oic = { workspace = true }
+azihsm_fw_uno_drivers_rng = { workspace = true }
+azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
+azihsm_fw_uno_drivers_sha = { workspace = true }
+azihsm_fw_uno_drivers_systick = { workspace = true }
+azihsm_fw_uno_drivers_upka = { workspace = true }
+azihsm_fw_uno_error = { workspace = true }
+azihsm_fw_uno_pac = { workspace = true }
+azihsm_fw_uno_reg_soc = { workspace = true }
+azihsm_fw_uno_trace = { workspace = true }
+
+embassy-futures = { workspace = true }
+tock-registers = { workspace = true }
+
+bitfield-struct = { workspace = true }
+open-enum = { workspace = true }
+zerocopy = { workspace = true }
+
+[features]
+default = ["semihosting"]
+# Optional host-poll path: also signal SYS_READY via ARM semihosting in
+# addition to the silicon boot_handshake::set_boot_status(Run). Hosts
+# that cannot snoop semihosting (e.g. production) should disable this
+# feature — boot_handshake alone is sufficient.
+semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]

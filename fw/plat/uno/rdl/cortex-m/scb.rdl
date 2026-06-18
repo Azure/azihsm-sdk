@@ -1,0 +1,378 @@
+// Copyright (c) Microsoft Corporation.
+//
+// SCB — ARMv7-M System Control Block
+//
+// Reference: DDI0403E §B3.2
+// Base address: 0xE000_ED00 (PPB)
+
+reg cpuid_t {
+    name = "CPUID Base Register";
+    desc = "Read-only. Contains processor identification.";
+
+    field {} REVISION[3:0] = 0x0;
+    REVISION->desc = "Implementation-defined revision number.";
+    REVISION->sw = r;
+
+    field {} PARTNO[15:4] = 0x0;
+    PARTNO->desc = "Implementation-defined part number.";
+    PARTNO->sw = r;
+
+    field {} ARCHITECTURE[19:16] = 0x0;
+    ARCHITECTURE->desc = "0xF = ARMv7-M.";
+    ARCHITECTURE->sw = r;
+
+    field {} VARIANT[23:20] = 0x0;
+    VARIANT->desc = "Implementation-defined variant number.";
+    VARIANT->sw = r;
+
+    field {} IMPLEMENTER[31:24] = 0x0;
+    IMPLEMENTER->desc = "Implementer code. 0x41 = Arm.";
+    IMPLEMENTER->sw = r;
+};
+
+reg icsr_t {
+    name = "Interrupt Control and State Register";
+    desc = "Provides NMI, PendSV, SysTick control and pending/active status.";
+
+    field {} VECTACTIVE[8:0] = 0x0;
+    VECTACTIVE->desc = "Exception number of currently executing exception. 0 = Thread mode.";
+    VECTACTIVE->sw = r;
+
+    field {} RETTOBASE[11:11] = 0x0;
+    RETTOBASE->desc = "In Handler mode, 1 if only one active exception.";
+    RETTOBASE->sw = r;
+
+    field {} VECTPENDING[20:12] = 0x0;
+    VECTPENDING->desc = "Exception number of highest priority pending enabled exception.";
+    VECTPENDING->sw = r;
+
+    field {} ISRPENDING[22:22] = 0x0;
+    ISRPENDING->desc = "1 = external interrupt pending.";
+    ISRPENDING->sw = r;
+
+    field {} PENDSTCLR[25:25] = 0x0;
+    PENDSTCLR->desc = "Write 1 to clear SysTick pending. Always reads 0.";
+
+    field {} PENDSTSET[26:26] = 0x0;
+    PENDSTSET->desc = "SysTick pending. Write 1 to set, read returns state.";
+
+    field {} PENDSVCLR[27:27] = 0x0;
+    PENDSVCLR->desc = "Write 1 to clear PendSV pending. Always reads 0.";
+
+    field {} PENDSVSET[28:28] = 0x0;
+    PENDSVSET->desc = "PendSV pending. Write 1 to set, read returns state.";
+
+    field {} NMIPENDSET[31:31] = 0x0;
+    NMIPENDSET->desc = "NMI pending. Write 1 to set, read returns state.";
+};
+
+reg vtor_t {
+    name = "Vector Table Offset Register";
+    desc = "Holds the vector table base address.";
+
+    field {} TBLOFF[31:7] = 0x0;
+    TBLOFF->desc = "Vector table base offset bits[31:7]. Bits[6:0] are reserved (RAZ).";
+};
+
+reg aircr_t {
+    name = "Application Interrupt and Reset Control Register";
+    desc = "Controls reset behavior, endianness, and priority grouping.
+             Writes require VECTKEY = 0x05FA in bits[31:16].";
+
+    field {} VECTRESET[0:0] = 0x0;
+    VECTRESET->desc = "Local system reset. Self-clearing.";
+
+    field {} VECTCLRACTIVE[1:1] = 0x0;
+    VECTCLRACTIVE->desc = "Clear all active exception state. Debug state only.";
+
+    field {} SYSRESETREQ[2:2] = 0x0;
+    SYSRESETREQ->desc = "Request local system reset.";
+
+    field {} PRIGROUP[10:8] = 0x0;
+    PRIGROUP->desc = "Priority grouping. Determines split of group/sub priority.";
+
+    field {} ENDIANNESS[15:15] = 0x0;
+    ENDIANNESS->desc = "Memory system endianness. 0 = little-endian.";
+    ENDIANNESS->sw = r;
+
+    field {} VECTKEY[31:16] = 0x0;
+    VECTKEY->desc = "Write: must be 0x05FA. Read: returns 0xFA05 (VECTKEYSTAT).";
+};
+
+reg scr_t {
+    name = "System Control Register";
+    desc = "Controls sleep behavior.";
+
+    field {} SLEEPONEXIT[1:1] = 0x0;
+    SLEEPONEXIT->desc = "1 = enter sleep on return from ISR to Thread mode.";
+
+    field {} SLEEPDEEP[2:2] = 0x0;
+    SLEEPDEEP->desc = "1 = deep sleep hint for WFI/WFE.";
+
+    field {} SEVONPEND[4:4] = 0x0;
+    SEVONPEND->desc = "1 = new pending interrupt generates event (wakes WFE).";
+};
+
+reg ccr_t {
+    name = "Configuration and Control Register";
+    desc = "Controls trap behavior, stack alignment, and caches.";
+
+    field {} NONBASETHRDENA[0:0] = 0x0;
+    NONBASETHRDENA->desc = "Allow Thread mode with active exceptions.";
+
+    field {} USERSETMPEND[1:1] = 0x0;
+    USERSETMPEND->desc = "Allow unprivileged STIR access.";
+
+    field {} UNALIGN_TRP[3:3] = 0x0;
+    UNALIGN_TRP->desc = "1 = trap on unaligned halfword/word access.";
+
+    field {} DIV_0_TRP[4:4] = 0x0;
+    DIV_0_TRP->desc = "1 = trap on integer divide by zero.";
+
+    field {} BFHFNMIGN[8:8] = 0x0;
+    BFHFNMIGN->desc = "1 = ignore precise data faults during NMI/HardFault handlers.";
+
+    field {} STKALIGN[9:9] = 0x0;
+    STKALIGN->desc = "Stack alignment on exception entry. 1 = 8-byte aligned.";
+    STKALIGN->sw = r;
+
+    field {} DC[16:16] = 0x0;
+    DC->desc = "Data cache enable.";
+
+    field {} IC[17:17] = 0x0;
+    IC->desc = "Instruction cache enable.";
+
+    field {} BP[18:18] = 0x0;
+    BP->desc = "Branch prediction enable.";
+};
+
+reg shpr_t {
+    name = "System Handler Priority Register";
+    desc = "Configures priority of system handlers. Contains 4 packed
+             8-bit priority fields. Only upper 4 bits of each are used.";
+
+    field {} PRI_0[7:0] = 0x0;
+    PRI_0->desc = "Priority of handler at position (4n+0).";
+
+    field {} PRI_1[15:8] = 0x0;
+    PRI_1->desc = "Priority of handler at position (4n+1).";
+
+    field {} PRI_2[23:16] = 0x0;
+    PRI_2->desc = "Priority of handler at position (4n+2).";
+
+    field {} PRI_3[31:24] = 0x0;
+    PRI_3->desc = "Priority of handler at position (4n+3).";
+};
+
+reg shcsr_t {
+    name = "System Handler Control and State Register";
+    desc = "Controls fault handler enable and active/pending status.";
+
+    field {} MEMFAULTACT[0:0] = 0x0;
+    MEMFAULTACT->desc = "MemManage exception active.";
+
+    field {} BUSFAULTACT[1:1] = 0x0;
+    BUSFAULTACT->desc = "BusFault exception active.";
+
+    field {} USGFAULTACT[3:3] = 0x0;
+    USGFAULTACT->desc = "UsageFault exception active.";
+
+    field {} SVCALLACT[7:7] = 0x0;
+    SVCALLACT->desc = "SVCall exception active.";
+
+    field {} MONITORACT[8:8] = 0x0;
+    MONITORACT->desc = "DebugMonitor exception active.";
+
+    field {} PENDSVACT[10:10] = 0x0;
+    PENDSVACT->desc = "PendSV exception active.";
+
+    field {} SYSTICKACT[11:11] = 0x0;
+    SYSTICKACT->desc = "SysTick exception active.";
+
+    field {} USGFAULTPENDED[12:12] = 0x0;
+    USGFAULTPENDED->desc = "UsageFault exception pending.";
+
+    field {} MEMFAULTPENDED[13:13] = 0x0;
+    MEMFAULTPENDED->desc = "MemManage exception pending.";
+
+    field {} BUSFAULTPENDED[14:14] = 0x0;
+    BUSFAULTPENDED->desc = "BusFault exception pending.";
+
+    field {} SVCALLPENDED[15:15] = 0x0;
+    SVCALLPENDED->desc = "SVCall exception pending.";
+
+    field {} MEMFAULTENA[16:16] = 0x0;
+    MEMFAULTENA->desc = "Enable MemManage fault handler.";
+
+    field {} BUSFAULTENA[17:17] = 0x0;
+    BUSFAULTENA->desc = "Enable BusFault handler.";
+
+    field {} USGFAULTENA[18:18] = 0x0;
+    USGFAULTENA->desc = "Enable UsageFault handler.";
+};
+
+reg cfsr_t {
+    name = "Configurable Fault Status Register";
+    desc = "Combined MMFSR[7:0] + BFSR[15:8] + UFSR[31:16]. Write-1-to-clear.";
+
+    // MMFSR — MemManage Fault Status (bits 7:0)
+    field {} IACCVIOL[0:0] = 0x0;
+    IACCVIOL->desc = "Instruction access violation.";
+    IACCVIOL->woclr;
+
+    field {} DACCVIOL[1:1] = 0x0;
+    DACCVIOL->desc = "Data access violation.";
+    DACCVIOL->woclr;
+
+    field {} MUNSTKERR[3:3] = 0x0;
+    MUNSTKERR->desc = "MemManage fault on exception return unstacking.";
+    MUNSTKERR->woclr;
+
+    field {} MSTKERR[4:4] = 0x0;
+    MSTKERR->desc = "MemManage fault on exception entry stacking.";
+    MSTKERR->woclr;
+
+    field {} MLSPERR[5:5] = 0x0;
+    MLSPERR->desc = "MemManage fault during FP lazy state preservation.";
+    MLSPERR->woclr;
+
+    field {} MMARVALID[7:7] = 0x0;
+    MMARVALID->desc = "MMFAR holds valid address.";
+    MMARVALID->sw = r;
+
+    // BFSR — BusFault Status (bits 15:8)
+    field {} IBUSERR[8:8] = 0x0;
+    IBUSERR->desc = "Instruction bus error on prefetch.";
+    IBUSERR->woclr;
+
+    field {} PRECISERR[9:9] = 0x0;
+    PRECISERR->desc = "Precise data bus error.";
+    PRECISERR->woclr;
+
+    field {} IMPRECISERR[10:10] = 0x0;
+    IMPRECISERR->desc = "Imprecise data bus error.";
+    IMPRECISERR->woclr;
+
+    field {} UNSTKERR[11:11] = 0x0;
+    UNSTKERR->desc = "BusFault on exception return unstacking.";
+    UNSTKERR->woclr;
+
+    field {} STKERR[12:12] = 0x0;
+    STKERR->desc = "BusFault on exception entry stacking.";
+    STKERR->woclr;
+
+    field {} LSPERR[13:13] = 0x0;
+    LSPERR->desc = "BusFault during FP lazy state preservation.";
+    LSPERR->woclr;
+
+    field {} BFARVALID[15:15] = 0x0;
+    BFARVALID->desc = "BFAR holds valid address.";
+    BFARVALID->sw = r;
+
+    // UFSR — UsageFault Status (bits 31:16)
+    field {} UNDEFINSTR[16:16] = 0x0;
+    UNDEFINSTR->desc = "Undefined instruction.";
+    UNDEFINSTR->woclr;
+
+    field {} INVSTATE[17:17] = 0x0;
+    INVSTATE->desc = "Invalid EPSR.T or EPSR.IT.";
+    INVSTATE->woclr;
+
+    field {} INVPC[18:18] = 0x0;
+    INVPC->desc = "Invalid EXC_RETURN value.";
+    INVPC->woclr;
+
+    field {} NOCP[19:19] = 0x0;
+    NOCP->desc = "Coprocessor access with coprocessor disabled or absent.";
+    NOCP->woclr;
+
+    field {} UNALIGNED[24:24] = 0x0;
+    UNALIGNED->desc = "Unaligned access UsageFault.";
+    UNALIGNED->woclr;
+
+    field {} DIVBYZERO[25:25] = 0x0;
+    DIVBYZERO->desc = "Divide by zero UsageFault.";
+    DIVBYZERO->woclr;
+};
+
+reg hfsr_t {
+    name = "HardFault Status Register";
+    desc = "Indicates cause of HardFault. Write-1-to-clear.";
+
+    field {} VECTTBL[1:1] = 0x0;
+    VECTTBL->desc = "Vector table read error on exception processing.";
+    VECTTBL->woclr;
+
+    field {} FORCED[30:30] = 0x0;
+    FORCED->desc = "Configurable fault escalated to HardFault.";
+    FORCED->woclr;
+
+    field {} DEBUGEVT[31:31] = 0x0;
+    DEBUGEVT->desc = "Debug event occurred.";
+    DEBUGEVT->woclr;
+};
+
+reg dfsr_t {
+    name = "Debug Fault Status Register";
+    desc = "Indicates cause of debug event. Write-1-to-clear.";
+
+    field {} HALTED[0:0] = 0x0;
+    HALTED->desc = "Processor has halted.";
+    HALTED->woclr;
+
+    field {} BKPT[1:1] = 0x0;
+    BKPT->desc = "BKPT instruction or breakpoint match.";
+    BKPT->woclr;
+
+    field {} DWTTRAP[2:2] = 0x0;
+    DWTTRAP->desc = "Data Watchpoint and Trace match.";
+    DWTTRAP->woclr;
+
+    field {} VCATCH[3:3] = 0x0;
+    VCATCH->desc = "Vector catch triggered.";
+    VCATCH->woclr;
+
+    field {} EXTERNAL[4:4] = 0x0;
+    EXTERNAL->desc = "External debug request.";
+    EXTERNAL->woclr;
+};
+
+reg addr32_t {
+    name = "Fault Address Register";
+    desc = "Holds 32-bit fault address.";
+
+    field {} ADDRESS[31:0] = 0x0;
+};
+
+reg afsr_t {
+    name = "Auxiliary Fault Status Register";
+    desc = "Implementation-defined auxiliary fault information.";
+
+    field {} AUXFAULT[31:0] = 0x0;
+};
+
+addrmap scb {
+    name = "SCB";
+    desc = "ARMv7-M System Control Block. Provides system-level configuration
+             including interrupt control, fault status, and reset management.";
+
+    default hw = na;
+    default sw = rw;
+
+    cpuid_t  CPUID @ 0x00;
+    icsr_t   ICSR  @ 0x04;
+    vtor_t   VTOR  @ 0x08;
+    aircr_t  AIRCR @ 0x0C;
+    scr_t    SCR   @ 0x10;
+    ccr_t    CCR   @ 0x14;
+    shpr_t   SHPR1 @ 0x18;
+    shpr_t   SHPR2 @ 0x1C;
+    shpr_t   SHPR3 @ 0x20;
+    shcsr_t  SHCSR @ 0x24;
+    cfsr_t   CFSR  @ 0x28;
+    hfsr_t   HFSR  @ 0x2C;
+    dfsr_t   DFSR  @ 0x30;
+    addr32_t MMFAR @ 0x34;
+    addr32_t BFAR  @ 0x38;
+    afsr_t   AFSR  @ 0x3C;
+};

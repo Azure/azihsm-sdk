@@ -7,7 +7,7 @@
 //! This crate is the **central contract** between the platform-agnostic
 //! HSM core (`azihsm_fw_hsm_core`) and platform-specific implementations
 //! (e.g. `azihsm_fw_hsm_pal_std` for host-native simulation,
-//! `azihsm_fw_hsm_pal_ocelot` for hardware).  It is `#![no_std]` and
+//! `azihsm_fw_uno_pal` for hardware).  It is `#![no_std]` and
 //! has no external dependencies beyond `open_enum`, so it compiles on
 //! bare-metal targets.
 //!
