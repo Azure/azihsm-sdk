@@ -36,6 +36,12 @@ mod x509;
 mod op;
 mod traits;
 
+/// Crate-private `OSSL_LIB_CTX` (default-provider-only) for the OpenSSL
+/// backends, so the mock SDK's crypto never re-enters the azihsm provider on
+/// OpenSSL 3.5. Linux-only (the Windows backends use CNG).
+#[cfg(target_os = "linux")]
+mod libctx;
+
 pub use aes::*;
 pub use der::*;
 pub use ecc::*;
@@ -161,6 +167,9 @@ pub enum CryptoError {
     /// Failed to retrieve hash property.
     #[error("Hash get property failed")]
     HashGetPropertyError,
+    /// Hash algorithm is not supported by this backend.
+    #[error("Unsupported hash algorithm")]
+    HashUnsupportedAlgorithm,
 
     // HMAC-related errors
     /// HMAC context initialization failed.
@@ -387,6 +396,9 @@ pub enum CryptoError {
     /// AES-GCM invalid key size.
     #[error("AES-GCM invalid key size")]
     GcmInvalidKeySize,
+    /// AES-GCM config error (cipher could not be fetched from the libctx).
+    #[error("AES-GCM config error")]
+    GcmConfigError,
     /// AES-GCM encryption operation failed.
     #[error("AES-GCM encryption failed")]
     GcmEncryptionFailed,

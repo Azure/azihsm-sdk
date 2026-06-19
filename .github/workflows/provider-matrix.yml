@@ -2,13 +2,15 @@
 # Licensed under the MIT License.
 #
 # Runs the OpenSSL provider integration suites (cli + capi + nginx) across
-# five OpenSSL 3.0.x distributions in parallel.  Each cell is its own job
-# and shows up as its own PR check.
+# six distributions in parallel: five on OpenSSL 3.0.x and one on 3.5.x
+# (Ubuntu 26.04, system OpenSSL).  Each cell is its own job and shows up as
+# its own PR check.
 #
 # The nginx suite runs only where OpenSSL carries the complete STORE-dispatch
 # fix (issue openssl#18262, fixed in 3.0.4 with follow-ups through ~3.0.11) —
 # the 3.0.11 / 3.0.13 cells.  The 3.0.2 cell and the 3.0.7 RHEL cells set
-# `matrix.nginx: false` and skip the nginx install + test entirely.
+# `matrix.nginx: false` and skip the nginx install + test entirely.  3.5.x is
+# well past the fix, so the 26.04 cell runs nginx too.
 #
 # Each cell's `matrix.openssl_minor` is exported as
 # AZIHSM_TEST_OPENSSL_MAJOR_MINOR so the suites' version-gating primitives
@@ -102,6 +104,16 @@ jobs:
             openssl_minor: "3.0"
             nginx:         false
 
+          # OpenSSL 3.5.x via system packages on the current LTS.  3.5 is well
+          # past the openssl#18262 STORE-dispatch fix, so nginx runs here.
+          - distro:        u2604
+            label:         Ubuntu 26.04 (OpenSSL 3.5.5)
+            image:         ubuntu:26.04
+            family:        debian
+            lib_dir:       /usr/lib/x86_64-linux-gnu
+            openssl_minor: "3.5"
+            nginx:         true
+
     steps:
       # Containers need git before actions/checkout, and the build deps
       # before cargo can compile.  Both go in a single bootstrap step.
@@ -193,13 +205,28 @@ jobs:
       # with all the 3.0.x cells.  The mainline apt index only advertises the
       # current release, so pin the archived .deb from the pool (which keeps
       # every past version) directly.
-      - name: Install nginx 1.29.0
-        if: matrix.nginx
+      - name: Install nginx 1.29.0 (OpenSSL 3.0)
+        if: matrix.nginx && matrix.openssl_minor == '3.0'
         run: |
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           host=$(. /etc/os-release && echo "$ID")
           curl -fsSL -o /tmp/nginx.deb \
             "https://nginx.org/packages/mainline/${host}/pool/nginx/n/nginx/nginx_1.29.0-1~${codename}_amd64.deb"
+          apt-get install -y --no-install-recommends /tmp/nginx.deb
+
+      # On 3.5.x cells we need nginx >= 1.29.0 for the `store:` cert-key scheme
+      # (added in mainline 1.29.0; the distro's stable 1.28.x lacks it and would
+      # treat `store:azihsm://...` as a filename).  nginx.org now publishes a
+      # mainline build for the 26.04 codename (resolute), and 1.29.1+ linking
+      # against OPENSSL_3.2.0+ is fine here since system OpenSSL is 3.5.x.
+      - name: Install nginx 1.29.8 (OpenSSL 3.5)
+        if: matrix.nginx && matrix.openssl_minor == '3.5'
+        run: |
+          apt-get update
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          host=$(. /etc/os-release && echo "$ID")
+          curl -fsSL -o /tmp/nginx.deb \
+            "https://nginx.org/packages/mainline/${host}/pool/nginx/n/nginx/nginx_1.29.8-1~${codename}_amd64.deb"
           apt-get install -y --no-install-recommends /tmp/nginx.deb
 
       # Each suite is its own GHA step.  `!cancelled()` lets capi + nginx
