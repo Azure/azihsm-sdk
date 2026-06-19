@@ -755,8 +755,7 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
 
         azihsm_buffer salt_buf = { .ptr = salt.data(), .len = static_cast<uint32_t>(salt.size()) };
 
-        azihsm_buffer info_buf = { .ptr = info.data(),
-                                   .len = static_cast<uint32_t>(sizeof(info.size())) };
+        azihsm_buffer info_buf = { .ptr = info.data(), .len = static_cast<uint32_t>(info.size()) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
@@ -775,5 +774,5 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
             reinterpret_cast<const uint8_t *>(msg),
             std::strlen(msg)
         );
-    });
+});
 }
