@@ -216,6 +216,16 @@ openssl_conf = openssl_init
 
 [openssl_init]
 providers = provider_sect
+alg_section = algorithm_sect
+
+# nginx performs its own bare (no-propquery) crypto fetches — notably the
+# QUIC av_token HKDF its http_v3 module derives at `nginx -t`.  On OpenSSL
+# 3.5.x a bare fetch with azihsm loaded can resolve to azihsm (whose HKDF is
+# extract-and-expand only), failing the derivation.  Prefer the default
+# provider for nginx's own crypto; the azihsm key is still loaded explicitly
+# via the `store:azihsm://` URI, which is unaffected by this preference.
+[algorithm_sect]
+default_properties = ?provider=default
 
 [provider_sect]
 default = default_sect
@@ -466,7 +476,13 @@ http {{
             .status()
             .expect("Failed to run nginx -t");
         if !status.success() {
-            return Err("nginx config validation failed (nginx -t)".into());
+            // nginx writes `nginx -t` diagnostics to the `-e` error_log rather
+            // than stderr; fold it into the failure so a bad config test is
+            // actionable instead of an opaque "validation failed".
+            let log = std::fs::read_to_string(&error_log).unwrap_or_default();
+            return Err(
+                format!("nginx config validation failed (nginx -t):\n{}", log.trim()).into(),
+            );
         }
 
         let status = Command::new("env")
