@@ -27,9 +27,8 @@ mod access {
 
 pub use access::*;
 pub mod aes;
-pub mod boot_handshake;
 pub mod gdma;
-pub mod hsm_dtcm_status;
+pub mod hsm_dtcm;
 pub mod iic;
 pub mod intc;
 pub mod io_gsram;

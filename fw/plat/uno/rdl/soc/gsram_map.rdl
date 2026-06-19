@@ -1,157 +1,87 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Unified IO buffer and queue structures.
+// GSRAM address map (io_gsram).
 //
-// This file defines one address map (io_gsram) at base 0x6100_0000,
-// matching azihsm's GSRAM base. The 2 MiB region holds queues,
-// peripheral command descriptors, per-slot DMA buffers,
-// and per-slot CPU-only scratch buffers. DTCM is reserved purely
-// for stack/.bss.
+// Single unified address map at base 0x6100_0000 (2 MiB). Holds all
+// shared-memory queues, DMA buffers, persistent stores, and the key
+// vault. DTCM_IO_BUF is NOT here — it lives in dtcm_map.rdl.
 //
-// io_gsram layout (base 0x6100_0000):
-//   0x00000 - 0x00BFF  IIC queues + shadows
-//   0x00E00 - 0x014FF  OIC queues + shadows
-//   0x01500 - 0x01EFF  GDMA queues + shadow
-//   0x01F04 - 0x02103  AES_CMD descriptors
-//   0x02204+           SHA_CMD, PKA queues + results
-//   0x03000 - 0x03FFF  Reserved / unused
-//   0x04000 - 0x93FFF  SRAM_IO_BUF (32 × 18KB DMA buffer)
-//   0x100000 - 0x10FFFF DTCM_IO_BUF (32 × 2KB CPU-only scratch)
+// Region layout:
+//   0x07000            BOOT_STATUS (4 B)
+//   0x0E440 - 0x0F580  IIC / OIC queues
+//   0x12840 - 0x15064  GDMA queues
+//   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
+//   0x20C58 - 0xB8C58  Heap (IO_META + SRAM_IO_BUF)
+//   0xBB000 - 0xEBC00  Partition store
+//   0xEBC00 - 0x200000 Key vault
 //
-// Queue semantics: NVMe-aligned (Head/Tail, wrap-at-depth, one reserved slot)
-// All queues are 32 entries deep (QUEUE_DEPTH = 32).
+// Hardware alignment: UCD and GDMA hardware expect queue base
+// addresses to be 32-byte (0x20) aligned.
+
 
 // ══════════════════════════════════════════════════════════════
-// Shared register types
+// Boot Status
 // ══════════════════════════════════════════════════════════════
 
-reg addr_lo_t {
-    name = "Address Low";
-    desc = "Lower 32 bits of a physical address.";
-    field {} ADDR[31:0] = 0x0;
+reg boot_status_t {
+    name = "Boot Status";
+    desc = "HSM boot phase indicator. Written by HSM firmware, polled
+            by Admin. Values: 0=NotStarted, 1=Done, 2=Run.";
+    field { sw = rw; hw = r; } STATE[31:0] = 0x0;
 };
 
-reg addr_hi_t {
-    name = "Address High";
-    desc = "Upper 32 bits of a physical address. Must be 0 on 32-bit SoC.";
-    field {} ADDR[31:0] = 0x0;
-};
-
-reg dword_rsvd_t {
-    name = "Reserved DWORD";
-    desc = "Reserved. Must be zero.";
-    field {} RSVD0[31:0] = 0x0;
-    RSVD0->sw = r;
-};
-
-reg queue_shadow_t {
-    name = "Queue Index Shadow";
-    desc = "Memory location where hardware publishes a queue index.";
-    field {} INDEX[31:0] = 0x0;
-};
 
 // ══════════════════════════════════════════════════════════════
-// IO Buffer (mem regions)
-// ══════════════════════════════════════════════════════════════
-
-mem dtcm_io_buf_t {
-    desc = "2KB per-slot IO buffer in DTCM, indexed 1:1 with IO_SQ.";
-    mementries = 512;
-    memwidth = 32;
-};
-
-mem sram_io_buf_t {
-    desc = "18KB per-slot IO buffer in SRAM, indexed 1:1 with IO_SQ.";
-    mementries = 4608;
-    memwidth = 32;
-};
-
-// ══════════════════════════════════════════════════════════════
-// IIC queues
+// IIC / OIC queue structures
 // ══════════════════════════════════════════════════════════════
 
 // -- ISQ Entry - 8 bytes (2 DWORDs) --
 
+reg isq_addr_lo_t {
+    name = "ISQ Address Low";
+    desc = "Low 32 bits of the host SQE address.";
+    field { sw = rw; hw = r; } ADDR[31:0] = 0x0;
+};
+
+reg isq_addr_hi_t {
+    name = "ISQ Address High";
+    desc = "High 32 bits of the host SQE address.";
+    field { sw = rw; hw = r; } ADDR[31:0] = 0x0;
+};
+
 regfile isq_entry_t {
     name = "ISQ Entry";
-    desc = "Inbound Submission Queue entry. Firmware posts the address
-             of a receive buffer for hardware to DMA inbound data into.";
-
-    addr_lo_t ADDR_LO @ 0x0;
-    addr_hi_t ADDR_HI @ 0x4;
+    desc = "Inbound Submission Queue entry — 8 bytes. Points to the
+             host-side SQE that the DMA engine fetches into IO_SQ.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
 };
 
 // -- ICQ Entry - 16 bytes (4 DWORDs) --
 
 reg icq_info_t {
-    name = "ICQ Info (DW2)";
-    desc = "Source controller, status, and queue identifier.";
-
-    field {} CONTROLLER_ID[7:0] = 0x0;
-    CONTROLLER_ID->desc = "Source controller identifier.";
-
-    field {} STATUS[15:8] = 0x0;
-    STATUS->desc = "Completion status. 0 = success.";
-
-    field {} QUEUE_ID[31:16] = 0x0;
-    QUEUE_ID->desc = "Source queue identifier.";
+    name = "ICQ Info";
+    desc = "Inbound Completion Queue info: status and interface select.";
+    field { sw = rw; hw = r; } STATUS[7:0] = 0x0;
+    field { sw = rw; hw = r; } IFC_SLCT[15:8] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:16] = 0x0;
 };
 
 reg icq_index_t {
-    name = "ICQ Index (DW3)";
-    desc = "Queue index and reserved.";
-
-    field {} QUEUE_INDEX[15:0] = 0x0;
-    QUEUE_INDEX->desc = "Index within the source queue.";
-
-    field {} RSVD0[31:16] = 0x0;
-    RSVD0->sw = r;
+    name = "ICQ Index";
+    desc = "ISQ slot index being completed.";
+    field { sw = rw; hw = r; } INDEX[15:0] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:16] = 0x0;
 };
 
 regfile icq_entry_t {
     name = "ICQ Entry";
-    desc = "Inbound Completion Queue entry. Hardware writes this after
-             completing an inbound DMA transfer into a receive buffer.";
-
-    addr_lo_t  ADDR_LO @ 0x0;
-    addr_hi_t  ADDR_HI @ 0x4;
+    desc = "Inbound Completion Queue entry — 16 bytes.";
+    isq_addr_lo_t  ADDR_LO @ 0x0;
+    isq_addr_hi_t  ADDR_HI @ 0x4;
     icq_info_t INFO    @ 0x8;
     icq_index_t INDEX  @ 0xC;
-};
-
-// -- IO Meta Entry - 8 bytes (2 DWORDs) --
-
-reg io_meta_ctlr_t {
-    name = "IO Meta Controller (DW0)";
-    desc = "Source controller identifier.";
-
-    field {} CONTROLLER_ID[7:0] = 0x0;
-    CONTROLLER_ID->desc = "Source controller identifier.";
-
-    field {} RSVD0[31:8] = 0x0;
-    RSVD0->sw = r;
-};
-
-reg io_meta_queue_t {
-    name = "IO Meta Queue (DW1)";
-    desc = "Source queue identifier and index.";
-
-    field {} QUEUE_ID[15:0] = 0x0;
-    QUEUE_ID->desc = "Source queue identifier.";
-
-    field {} QUEUE_INDEX[31:16] = 0x0;
-    QUEUE_INDEX->desc = "Index within the source queue.";
-};
-
-regfile io_meta_entry_t {
-    name = "IO Meta Entry";
-    desc = "Firmware-managed IO metadata. One per IO_SQ slot,
-             indexed identically. Written at recv time, read during
-             IO processing, freed via free_work().";
-
-    io_meta_ctlr_t  CTLR  @ 0x0;
-    io_meta_queue_t QUEUE  @ 0x4;
 };
 
 // -- IO SQ Entry - 64 bytes (16 DWORDs) --
@@ -164,8 +94,7 @@ reg io_sq_dw_t {
 
 regfile io_sq_entry_t {
     name = "IO SQ Entry";
-    desc = "IO Submission Queue Entry - 64-byte (16 DWORD) command descriptor.";
-
+    desc = "64-byte command descriptor DMA'd from host.";
     io_sq_dw_t DW0  @ 0x00;
     io_sq_dw_t DW1  @ 0x04;
     io_sq_dw_t DW2  @ 0x08;
@@ -184,91 +113,88 @@ regfile io_sq_entry_t {
     io_sq_dw_t DW15 @ 0x3C;
 };
 
-// ══════════════════════════════════════════════════════════════
-// OIC queues
-// ══════════════════════════════════════════════════════════════
+// -- Queue shadow (single DWORD) --
+
+reg queue_shadow_t {
+    name = "Queue Shadow";
+    desc = "DMA shadow of a queue producer/consumer index.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+// -- IO Meta Entry - 8 bytes (2 DWORDs) --
+
+reg io_meta_ctlr_t {
+    name = "IO Meta Controller";
+    desc = "Controller ID for this IO slot.";
+    field { sw = rw; hw = na; } CONTROLLER_ID[15:0] = 0x0;
+    field { sw = rw; hw = na; } RSVD[31:16] = 0x0;
+};
+
+reg io_meta_queue_t {
+    name = "IO Meta Queue";
+    desc = "Queue ID and index for this IO slot.";
+    field { sw = rw; hw = na; } QUEUE_ID[15:0] = 0x0;
+    field { sw = rw; hw = na; } QUEUE_INDEX[31:16] = 0x0;
+};
+
+regfile io_meta_entry_t {
+    name = "IO Meta Entry";
+    desc = "Per-slot metadata written at recv time. One per IO_SQ slot.";
+    io_meta_ctlr_t  CTLR  @ 0x0;
+    io_meta_queue_t QUEUE  @ 0x4;
+};
 
 // -- OSQ Entry - 16 bytes (4 DWORDs) --
 
 reg osq_desc_t {
-    name = "OSQ Descriptor (DW2)";
-    desc = "Routing info: rx_queue_id, rx_credit, tx_queue_id, axi_id.";
-
-    field {} RX_QUEUE_ID[7:0] = 0x0;
-    RX_QUEUE_ID->desc = "Source receive queue identifier.";
-
-    field {} RX_CREDIT[15:8] = 0x0;
-    RX_CREDIT->desc = "RX queue credit increment value.";
-
-    field {} TX_QUEUE_ID[23:16] = 0x0;
-    TX_QUEUE_ID->desc = "Destination transmit queue identifier.";
-
-    field {} AXI_ID[31:24] = 0x0;
-    AXI_ID->desc = "AXI bus ID of the destination.";
+    name = "OSQ Descriptor";
+    desc = "Outbound descriptor: queue IDs and credits.";
+    field { sw = rw; hw = r; } RX_QUEUE_ID[7:0] = 0x0;
+    field { sw = rw; hw = r; } RX_CREDIT[15:8] = 0x0;
+    field { sw = rw; hw = r; } TX_QUEUE_ID[23:16] = 0x0;
+    field { sw = rw; hw = r; } AXI_ID[31:24] = 0x0;
 };
 
 reg osq_tag_t {
-    name = "OSQ Tag (DW3)";
-    desc = "User tag and control bits.";
-
-    field {} TAG[15:0] = 0x0;
-    TAG->desc = "16-bit user tag for correlating completion.";
-
-    field {} RSVD0[23:16] = 0x0;
-    RSVD0->sw = r;
-
-    field {} CONTROL[31:24] = 0x0;
-    CONTROL->desc = "Control bits for transmit entry.";
+    name = "OSQ Tag";
+    desc = "16-bit tag + control field.";
+    field { sw = rw; hw = r; } TAG[15:0] = 0x0;
+    field { sw = rw; hw = r; } CONTROL[31:16] = 0x0;
 };
 
 regfile osq_entry_t {
     name = "OSQ Entry";
-    desc = "Outbound Submission Queue entry — 16-byte transmit descriptor.";
-
-    addr_lo_t  ADDR_LO @ 0x0;
-    addr_hi_t  ADDR_HI @ 0x4;
-    osq_desc_t DESC    @ 0x8;
-    osq_tag_t  TAG     @ 0xC;
+    desc = "Outbound Submission Queue entry — 16 bytes.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
+    osq_desc_t    DESC    @ 0x8;
+    osq_tag_t     TAG     @ 0xC;
 };
 
 // -- OCQ Entry - 16 bytes (4 DWORDs) --
 
 reg ocq_info_t {
-    name = "OCQ Info (DW2)";
-    desc = "Routing info: queue_index, queue_id, axi_id.";
-
-    field {} QUEUE_INDEX[15:0] = 0x0;
-    QUEUE_INDEX->desc = "Index within the source queue.";
-
-    field {} QUEUE_ID[23:16] = 0x0;
-    QUEUE_ID->desc = "Source queue identifier.";
-
-    field {} AXI_ID[31:24] = 0x0;
-    AXI_ID->desc = "AXI bus ID.";
+    name = "OCQ Info";
+    desc = "Outbound Completion Queue info.";
+    field { sw = rw; hw = r; } STATUS[7:0] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:8] = 0x0;
 };
 
 reg ocq_tag_t {
-    name = "OCQ Tag (DW3)";
-    desc = "Tag and completion status.";
-
-    field {} TAG[15:0] = 0x0;
-    TAG->desc = "16-bit tag echoed from the OSQ entry.";
-
-    field {} RSVD0[23:16] = 0x0;
-    RSVD0->sw = r;
-
-    field {} STATUS[31:24] = 0x0;
-    STATUS->desc = "Transmit status. 0 = success, nonzero = error.";
+    name = "OCQ Tag";
+    desc = "16-bit tag + status echoed from the OSQ entry.";
+    field { sw = rw; hw = r; } TAG[15:0] = 0x0;
+    field { sw = rw; hw = r; } STATUS[23:16] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:24] = 0x0;
 };
 
 regfile ocq_entry_t {
     name = "OCQ Entry";
-    desc = "Outbound Completion Queue entry — 16-byte transmit completion.";
-
-    addr_lo_t  ADDR_LO @ 0x0;
-    addr_hi_t  ADDR_HI @ 0x4;
-    ocq_info_t INFO    @ 0x8;
-    ocq_tag_t  TAG     @ 0xC;
+    desc = "Outbound Completion Queue entry — 16 bytes.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
+    ocq_info_t    INFO    @ 0x8;
+    ocq_tag_t     TAG     @ 0xC;
 };
 
 // -- IO CQ Entry - 16 bytes (4 DWORDs) --
@@ -281,131 +207,78 @@ reg io_cq_dw_t {
 
 regfile io_cq_entry_t {
     name = "IO CQ Entry";
-    desc = "IO Completion Queue Entry - 16-byte (4 DWORD) completion descriptor.";
-
+    desc = "16-byte completion status written by firmware.";
     io_cq_dw_t DW0 @ 0x0;
     io_cq_dw_t DW1 @ 0x4;
     io_cq_dw_t DW2 @ 0x8;
     io_cq_dw_t DW3 @ 0xC;
 };
 
+
 // ══════════════════════════════════════════════════════════════
-// GDMA queues
+// GDMA queue structures
 // ══════════════════════════════════════════════════════════════
 
-// -- GDMA SQ Entry DW0 — TAG, opcode, and format selectors --
-
-reg gdma_sq_dw0_t {
-    name = "SQ Control (DW0)";
-    desc = "TAG, opcode, and address format selectors.";
-
-    field {} RSVD0[10:0] = 0x0;
-    RSVD0->sw = r;
-
-    field {} SRC_FMT[11:11] = 0x0;
-    SRC_FMT->desc = "Source address format. 0: PRP, 1: SGL.";
-
-    field {} DST_FMT[12:12] = 0x0;
-    DST_FMT->desc = "Destination address format. 0: PRP, 1: SGL.";
-
-    field {} OP_CODE[13:13] = 0x0;
-    OP_CODE->desc = "Opcode. 0: Read SRC, write DST. 1: Reserved.";
-
-    field {} RSVD1[15:14] = 0x0;
-    RSVD1->sw = r;
-
-    field {} TAG[31:16] = 0x0;
-    TAG->desc = "16-bit tag. Hardware copies to CQ entry.";
+reg gdma_sq_dw_t {
+    name = "GDMA SQ DWORD";
+    desc = "One DWORD of a GDMA Submission Queue entry.";
+    field {} VAL[31:0] = 0x0;
 };
-
-// -- GDMA SQ Entry DW1 — Interface selectors --
-
-reg gdma_sq_dw1_t {
-    name = "SQ Interface Select (DW1)";
-    desc = "Source and destination data/descriptor memory interface selectors.";
-
-    field {} SRC_DATA[7:0] = 0x0;
-    SRC_DATA->desc = "AXI port for source data buffer. 0: SoC memory.";
-
-    field {} DST_DATA[15:8] = 0x0;
-    DST_DATA->desc = "AXI port for destination data buffer. 0: SoC memory.";
-
-    field {} SRC_DESC[23:16] = 0x0;
-    SRC_DESC->desc = "AXI port for source PRP/SGL list. 0: SoC memory.";
-
-    field {} DST_DESC[31:24] = 0x0;
-    DST_DESC->desc = "AXI port for destination PRP/SGL list. 0: SoC memory.";
-};
-
-// -- GDMA SQ Entry DW4/DW5 — Transfer lengths --
-
-reg gdma_sq_len_t {
-    name = "SQ Transfer Length";
-    desc = "Number of bytes to transfer.";
-    field {} LEN[31:0] = 0x0;
-};
-
-// -- GDMA SQ Entry — 64 bytes (16 DWORDs) --
 
 regfile gdma_sq_entry_t {
     name = "GDMA SQ Entry";
-    desc = "Submission Queue entry — 64-byte DMA descriptor.";
-
-    gdma_sq_dw0_t CTRL     @ 0x00;
-    gdma_sq_dw1_t  IFC      @ 0x04;
-    dword_rsvd_t   RSVD0    @ 0x08;
-    dword_rsvd_t   RSVD1    @ 0x0C;
-    gdma_sq_len_t  SRC_LEN  @ 0x10;
-    gdma_sq_len_t  DST_LEN  @ 0x14;
-    dword_rsvd_t   RSVD2    @ 0x18;
-    dword_rsvd_t   RSVD3    @ 0x1C;
-    addr_lo_t      SRC_FST_LO @ 0x20;
-    addr_hi_t      SRC_FST_HI @ 0x24;
-    addr_lo_t      SRC_SND_LO @ 0x28;
-    addr_hi_t      SRC_SND_HI @ 0x2C;
-    addr_lo_t      DST_FST_LO @ 0x30;
-    addr_hi_t      DST_FST_HI @ 0x34;
-    addr_lo_t      DST_SND_LO @ 0x38;
-    addr_hi_t      DST_SND_HI @ 0x3C;
+    desc = "64-byte GDMA submission descriptor.";
+    gdma_sq_dw_t DW0  @ 0x00;
+    gdma_sq_dw_t DW1  @ 0x04;
+    gdma_sq_dw_t DW2  @ 0x08;
+    gdma_sq_dw_t DW3  @ 0x0C;
+    gdma_sq_dw_t DW4  @ 0x10;
+    gdma_sq_dw_t DW5  @ 0x14;
+    gdma_sq_dw_t DW6  @ 0x18;
+    gdma_sq_dw_t DW7  @ 0x1C;
+    gdma_sq_dw_t DW8  @ 0x20;
+    gdma_sq_dw_t DW9  @ 0x24;
+    gdma_sq_dw_t DW10 @ 0x28;
+    gdma_sq_dw_t DW11 @ 0x2C;
+    gdma_sq_dw_t DW12 @ 0x30;
+    gdma_sq_dw_t DW13 @ 0x34;
+    gdma_sq_dw_t DW14 @ 0x38;
+    gdma_sq_dw_t DW15 @ 0x3C;
 };
-
-// -- GDMA CQ Entry DW0 — Status and TAG --
 
 reg gdma_cq_status_t {
-    name = "CQ Status (DW0)";
-    desc = "Completion status and TAG echoed from SQ entry.";
-
-    field {} SUCCESS[0:0] = 0x0;
-    SUCCESS->desc = "Success flag. 1 = success, 0 = failure.";
-
-    field {} RSVD0[15:1] = 0x0;
-    RSVD0->sw = r;
-
-    field {} TAG[31:16] = 0x0;
-    TAG->desc = "16-bit tag echoed from SQ entry.";
+    name = "GDMA CQ Status";
+    desc = "GDMA completion status and tag.";
+    field { sw = rw; hw = rw; } TAG[15:0] = 0x0;
+    field { sw = rw; hw = rw; } SUCCESS[16:16] = 0x0;
+    field { sw = rw; hw = rw; } RSVD[31:17] = 0x0;
 };
 
-// -- GDMA CQ Entry — 16 bytes (4 DWORDs) --
+reg gdma_cq_rsvd_t {
+    name = "GDMA CQ Reserved";
+    desc = "Reserved DWORD in GDMA CQ entry.";
+    field {} VAL[31:0] = 0x0;
+};
 
 regfile gdma_cq_entry_t {
     name = "GDMA CQ Entry";
-    desc = "Completion Queue entry — 16-byte completion descriptor.";
-
+    desc = "16-byte GDMA completion entry.";
     gdma_cq_status_t STATUS @ 0x0;
-    dword_rsvd_t     RSVD0  @ 0x4;
-    dword_rsvd_t     RSVD1  @ 0x8;
-    dword_rsvd_t     RSVD2  @ 0xC;
+    gdma_cq_rsvd_t   RSVD0 @ 0x4;
+    gdma_cq_rsvd_t   RSVD1 @ 0x8;
+    gdma_cq_rsvd_t   RSVD2 @ 0xC;
 };
 
+
 // ══════════════════════════════════════════════════════════════
-// AES command staging
+// Crypto command descriptors (AES, UPKA, SHA)
 // ══════════════════════════════════════════════════════════════
+
+// -- AES Command Entry - 24 bytes (6 DWORDs) --
 
 regfile aes_cmd_entry_t {
     name = "AES Command Entry";
-    desc = "AES command descriptor — 24-byte (6 DWORD) staging area.
-             Firmware writes here before setting AES_CMD_PTR.";
-
+    desc = "24-byte AES command descriptor.";
     io_sq_dw_t CMD_CODE   @ 0x00;
     io_sq_dw_t RESULT     @ 0x04;
     io_sq_dw_t BYTE_COUNT @ 0x08;
@@ -414,207 +287,105 @@ regfile aes_cmd_entry_t {
     io_sq_dw_t IV         @ 0x14;
 };
 
-// ══════════════════════════════════════════════════════════════
-// DTCM Address Map
-// ══════════════════════════════════════════════════════════════
+// -- UPKA Command Entry - 20 bytes (5 DWORDs) --
 
-// ── Optional crypto peripherals (not part of azihsm) ─────────────────
-
-regfile aes_cmd_entry_t {
-    name = "AES Command Entry";
-    desc = "AES command descriptor — 24-byte (6 DWORD) staging area.
-             Firmware writes here before setting AES_CMD_PTR.";
-
-    io_sq_dw_t CMD_CODE   @ 0x00;
-    io_sq_dw_t RESULT     @ 0x04;
-    io_sq_dw_t BYTE_COUNT @ 0x08;
-    io_sq_dw_t MESSAGE    @ 0x0C;
-    io_sq_dw_t KEY        @ 0x10;
-    io_sq_dw_t IV         @ 0x14;
+regfile upka_cmd_entry_t {
+    name = "UPKA Command Entry";
+    desc = "20-byte PKA command descriptor (per-engine slot).";
+    io_sq_dw_t COMMAND_CODE @ 0x00;
+    io_sq_dw_t RESULT_ADDR  @ 0x04;
+    io_sq_dw_t ARG1_ADDR    @ 0x08;
+    io_sq_dw_t ARG2_ADDR    @ 0x0C;
+    io_sq_dw_t ARG3_ADDR    @ 0x10;
 };
 
-// ══════════════════════════════════════════════════════════════
-// SHA command staging
-// ══════════════════════════════════════════════════════════════
+// -- SHA Command Entry - 32 bytes (8 DWORDs) --
 
 regfile sha_cmd_entry_t {
     name = "SHA Command Entry";
-    desc = "SHA command descriptor — 32-byte (8 DWORD) staging area.
-             Firmware writes here before setting SHA_CMD.";
-
+    desc = "32-byte SHA command descriptor.";
     io_sq_dw_t SHA_COMMAND     @ 0x00;
-    io_sq_dw_t DIGEST          @ 0x04;
-    io_sq_dw_t BYTE_COUNT      @ 0x08;
-    io_sq_dw_t MESSAGE_BYTES   @ 0x0C;
-    io_sq_dw_t MESSAGE_BUFF    @ 0x10;
-    io_sq_dw_t INITIAL_DIGEST  @ 0x14;
+    io_sq_dw_t SHA_RESULT      @ 0x04;
+    io_sq_dw_t SHA_MSG_ADDR    @ 0x08;
+    io_sq_dw_t SHA_MSG_LEN     @ 0x0C;
+    io_sq_dw_t SHA_INIT_DIGEST @ 0x10;
+    io_sq_dw_t SHA_KEY_ADDR    @ 0x14;
     io_sq_dw_t PASS_MSG_BUFF   @ 0x18;
-    io_sq_dw_t REF_DIGEST      @ 0x1C;
+    io_sq_dw_t SHA_KEY_LEN     @ 0x1C;
 };
 
+
 // ══════════════════════════════════════════════════════════════
-// PKA command staging
+// Heap structures (IO_META + SRAM_IO_BUF)
 // ══════════════════════════════════════════════════════════════
 
-regfile upka_cmd_entry_t {
-    name = "PKA Command Entry";
-    desc = "PKA command descriptor — 20-byte (5 DWORD) staging area.
-             Firmware writes here before setting PKA_COMMAND.";
-
-    io_sq_dw_t COMMAND_CODE  @ 0x00;
-    io_sq_dw_t RESULT_ADDR   @ 0x04;
-    io_sq_dw_t ARG1_ADDR     @ 0x08;
-    io_sq_dw_t ARG2_ADDR     @ 0x0C;
-    io_sq_dw_t ARG3_ADDR     @ 0x10;
+mem sram_io_buf_t {
+    desc = "18KB per-slot DMA buffer for the bump allocator.";
+    mementries = 4608;
+    memwidth = 32;
 };
 
+
 // ══════════════════════════════════════════════════════════════
-// io_gsram — unified address map for all IO buffers + queues
+// Partition Store + Key Vault
+// ══════════════════════════════════════════════════════════════
+
+mem part_store_t {
+    desc = "Partition persistent storage (195 KB).";
+    mementries = 49920;  // 199680 / 4
+    memwidth = 32;
+};
+
+mem key_vault_t {
+    desc = "Cryptographic key vault (1105 KB).";
+    mementries = 282880;  // 1131520 / 4
+    memwidth = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
 // ══════════════════════════════════════════════════════════════
 
 addrmap io_gsram {
     name = "IO GSRAM";
-    desc = "Unified IO buffer and queue region. Holds all IIC/OIC/GDMA
-             queues, AES/SHA/PKA command descriptors, per-slot DMA
-             buffers, and per-slot CPU-only scratch buffers. All queues
-             are 32 entries deep.
-             Base address: 0x6100_0000 (matches azihsm GSRAM base).";
+    desc = "Unified GSRAM address map (2 MiB at 0x6100_0000).";
 
     default hw = na;
     default sw = rw;
 
-    // IIC queues
-    isq_entry_t      ISQ[32]            @ 0x00000 += 0x08;
-    icq_entry_t      ICQ[32]            @ 0x00100 += 0x10;
-    io_sq_entry_t    IO_SQ[32]          @ 0x00400 += 0x40;
-    io_meta_entry_t  IO_META[32]        @ 0x00C00 += 0x08;
-    queue_shadow_t   ICQ_TAIL_SHADOW    @ 0x00D00;
-    queue_shadow_t   ISQ_HEAD_SHADOW    @ 0x00D04;
+    // ─── Boot ───
+    boot_status_t    BOOT_STATUS        @ 0x07000;
 
-    // OIC queues
-    osq_entry_t      OSQ[32]            @ 0x00E00 += 0x10;
-    ocq_entry_t      OCQ[32]            @ 0x01000 += 0x10;
-    io_cq_entry_t    IO_CQ[32]          @ 0x01200 += 0x10;
-    queue_shadow_t   OCQ_TAIL_SHADOW    @ 0x01400;
-    queue_shadow_t   OSQ_HEAD_SHADOW    @ 0x01404;
+    // ─── IIC (Inbound IO) — 0x20-aligned ───
+    isq_entry_t      ISQ[32]            @ 0x0E440 += 0x08;
+    icq_entry_t      ICQ[32]            @ 0x0E540 += 0x10;
+    io_sq_entry_t    IO_SQ[32]          @ 0x0E740 += 0x40;
+    queue_shadow_t   ICQ_TAIL_SHADOW    @ 0x0EF40;
 
-    // GDMA queues
-    gdma_sq_entry_t  GDMA_SQ[32]        @ 0x01500 += 0x40;
-    gdma_cq_entry_t  GDMA_CQ[32]        @ 0x01D00 += 0x10;
-    queue_shadow_t   GDMA_CQ_TAIL_SHADOW @ 0x01F00;
+    // ─── OIC (Outbound IO) — 0x20-aligned ───
+    osq_entry_t      OSQ[32]            @ 0x0EF60 += 0x10;
+    ocq_entry_t      OCQ[32]            @ 0x0F160 += 0x10;
+    io_cq_entry_t    IO_CQ[32]          @ 0x0F360 += 0x10;
+    queue_shadow_t   OCQ_TAIL_SHADOW    @ 0x0F560;
 
-    // AES/SHA/PKA command descriptors
-    aes_cmd_entry_t  AES_CMD[32]         @ 0x01F04 += 0x18;
-    sha_cmd_entry_t  SHA_CMD[32]         @ 0x02204 += 0x20;
-    upka_cmd_entry_t  UPKA_ENGINE_CMD[16]  @ 0x02604 += 0x14;
-    upka_cmd_entry_t  UPKA_QUEUE_CMD[32]   @ 0x02744 += 0x14;
+    // ─── GDMA — 0x20-aligned ───
+    gdma_sq_entry_t  GDMA_SQ[32]        @ 0x12840 += 0x40;
+    gdma_cq_entry_t  GDMA_CQ[32]        @ 0x13040 += 0x10;
+    queue_shadow_t   GDMA_CQ_TAIL_SHADOW @ 0x13240;
 
-    // 0x03000 - 0x03FFF reserved / unused.
+    // ─── Crypto ───
+    aes_cmd_entry_t  AES_CMD[32]         @ 0x15064 += 0x18;
+    upka_cmd_entry_t UPKA_ENGINE_CMD[16] @ 0x15364 += 0x14;
+    sha_cmd_entry_t  SHA_CMD[32]         @ 0x154A4 += 0x20;
 
-    // DMA IO buffers: 32 × 18KB = 576 KB
-    sram_io_buf_t    SRAM_IO_BUF[32]    @ 0x04000 += 0x4800;
+    // ─── Heap (per-IO buffers) ───
+    io_meta_entry_t  IO_META[32]         @ 0x20C58 += 0x08;
+    sram_io_buf_t    SRAM_IO_BUF[32]     @ 0x20D58 += 0x4800;
 
-    // Per-slot CPU-only scratch buffers: 32 × 2KB = 64 KB
-    // Placed at 0x100000 to avoid overlap with SRAM_IO_BUF (ends at 0x94000).
-    dtcm_io_buf_t    DTCM_IO_BUF[32]    @ 0x100000 += 0x800;
+    // ─── Partition store ───
+    part_store_t     PART_STORE          @ 0xBB000;
+
+    // ─── Key vault ───
+    key_vault_t      KEY_VAULT           @ 0xEBC00;
 };
-
-
-// ══════════════════════════════════════════════════════════════
-// Boot Handshake (GSRAM @ 0x6100_7000)
-// ══════════════════════════════════════════════════════════════
-//
-// Admin polls BOOT_STATUS to detect when HSM has completed its
-// initialization phases (Done, Run); HSM writes BOOT_STATUS to signal
-// progress. This region also reserves space for IPC message queues
-// (Admin ↔ HSM boot handshake protocol), which are currently hardcoded
-// in `pal/src/pal.rs` but should migrate here in a future commit.
-//
-// Layout (offsets from base 0x6100_7000):
-//   0x000 - 0x003   BOOT_STATUS        (4 B, IoProcessorBootState enum)
-//   0x004 - 0x3FF   (reserved for IPC queue indices + ring buffers,
-//                     ~1 KB total; to be added when IPC moves to RDL)
-//
-// Base address 0x6100_7000 (28 KB into the 2 MB GSRAM region) matches
-// the V1 admin/hsm `mem-map/src/gsram.rs::boot_status` offset. This
-// address must remain stable across firmware versions since admin
-// hardcodes it in its boot sequence (`wait_for_hsm_run_state` polls
-// this location).
-//
-// Admin-side polling pattern (in admin/src/env.rs):
-//
-//   const BOOT_STATUS_ADDR: u32 = 0x6100_7000;
-//   loop {
-//       let status = unsafe { read_volatile(BOOT_STATUS_ADDR as *const u32) };
-//       if status == IoProcessorBootState::Run as u32 {
-//           break;
-//       }
-//   }
-//
-// HSM-side write pattern (in app/src/main.rs):
-//
-//   const BOOT_STATUS_ADDR: *mut u32 = 0x6100_7000 as *mut u32;
-//   unsafe { write_volatile(BOOT_STATUS_ADDR, IoProcessorBootState::Run as u32) };
-//
-// Reference: V1 cp/hsm/mem-map/src/gsram.rs (boot_status field @ 0x61007000).
-
-
-reg boot_status_t {
-    name = "Boot Status";
-    desc = "HSM boot phase indicator. Written by HSM firmware to signal
-            progress through the boot sequence. Polled by Admin firmware
-            to gate post-handshake operations (host IO enable, NormalBoot
-            to FP cores).
-
-            Values correspond to IoProcessorBootState enum discriminants:
-              0 = NotStarted (initial/reset state)
-              1 = Done       (PAL init complete, handshake ready)
-              2 = Run        (handshake complete, deferred init done)
-
-            Admin's `wait_for_hsm_run_state` blocks until this field
-            reads Run (2), with a timeout of Tcon::tsc_freq_hz() / 2
-            cycles (~0.5s if TSC runs at expected frequency, or near-zero
-            if TSC is misconfigured).
-
-            IMPORTANT: This field is volatile; both HSM write and Admin
-            read must use volatile access to prevent compiler reordering
-            or caching.";
-
-    field {
-        sw = rw;
-        hw = r;
-        desc = "Boot status value (IoProcessorBootState discriminant: 0=NotStarted, 1=Done, 2=Run).";
-    } STATE[31:0] = 0x0;  // Reset to NotStarted
-};
-
-
-addrmap boot_handshake {
-    name = "Boot Handshake";
-    desc = "Boot-time coordination region in GSRAM. Holds the HSM boot
-             status word polled by Admin, and reserves space for the
-             Admin ↔ HSM IPC queue indices and ring buffers (to be
-             migrated from hardcoded constants in pal.rs).
-
-             Base address 0x6100_7000 is pinned to match V1
-             admin/hsm/mem-map layout and must not change (Admin
-             hardcodes this offset in wait_for_hsm_run_state).
-
-             Reserved space (0x004..0x3FF) will hold:
-               - IPC pair 0 RX_PI, RX_CI, TX_PI, TX_CI (4 × 4 B = 16 B)
-               - IPC pair 0 RX_RING[2], TX_RING[2] (2 × 64 B = 128 B)
-               - Additional pairs for FP/HSP if needed (~1 KB total)
-
-             Out of v1 scope (additive, not breaking):
-               * IPC queue index/ring layout (currently hardcoded).
-               * FP/HSP boot status words (if multi-core boot needs it).";
-
-    default hw = na;
-    default sw = rw;
-
-    boot_status_t BOOT_STATUS @ 0x000;
-};
-
-
-// ══════════════════════════════════════════════════════════════
-// HSM DTCM Status (DTCM @ 0x2003_F400, global @ 0x6063_F400)
-// ══════════════════════════════════════════════════════════════

@@ -19,12 +19,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
-use azihsm_fw_uno_reg_soc::io_gsram::DTCM_IO_BUF_COUNT;
-use azihsm_fw_uno_reg_soc::io_gsram::DTCM_IO_BUF_SIZE;
-use azihsm_fw_uno_reg_soc::io_gsram::DTCM_IO_BUF_STRIDE;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
+use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_COUNT;
 use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_OFFSET;
-use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_SIZE;
 use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_STRIDE;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 
@@ -36,8 +33,15 @@ const NONDMA: usize = 0;
 const DMA: usize = 1;
 const HEAPS: usize = 2;
 
-pub(crate) const IO_SLOTS: usize = DTCM_IO_BUF_COUNT as usize;
-const _: () = assert!(DTCM_IO_BUF_COUNT == azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_COUNT);
+pub(crate) const IO_SLOTS: usize = SRAM_IO_BUF_COUNT as usize;
+
+// DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.
+// See dtcm_map.rdl: DTCM_IO_BUF[32] @ offset 0x2F400 from DTCM base.
+const DTCM_IO_BUF_BASE: u32 =
+    azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE
+    + azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_OFFSET;
+const DTCM_IO_BUF_STRIDE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_STRIDE;
+const DTCM_IO_BUF_SIZE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_SIZE;
 
 /// Typed overlay of the IO GSRAM region.
 const IO_Q: StaticRef<IoGsramRegs> = unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
@@ -66,22 +70,21 @@ pub(crate) fn reset_io_alloc(pal: &UnoHsmPal, index: u16) {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
+/// Returns the base pointer and capacity for a given heap region.
+/// Uses raw pointers to avoid creating aliasing `&mut` references.
 #[inline(always)]
-fn heap_region(io_index: u16, heap: usize) -> (&'static mut [u8], usize) {
+fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     let index = io_index as usize;
-    let (ptr, cap) = if heap == NONDMA {
-        let offset = index * DTCM_IO_BUF_STRIDE as usize;
-        // SAFETY: offset is within the DTCM IO buffer array.
-        let p = unsafe { IO_Q.dtcm_io_buf.as_ptr().add(offset) as *mut u8 };
-        (p, DTCM_IO_BUF_SIZE as usize)
+    if heap == NONDMA {
+        let addr = DTCM_IO_BUF_BASE as usize
+            + index * DTCM_IO_BUF_STRIDE as usize;
+        (addr as *mut u8, DTCM_IO_BUF_SIZE as usize)
     } else {
         let addr = IO_GSRAM_BASE as usize
             + SRAM_IO_BUF_OFFSET as usize
             + index * SRAM_IO_BUF_STRIDE as usize;
-        (addr as *mut u8, SRAM_IO_BUF_SIZE as usize)
-    };
-    // SAFETY: Each IO slot exclusively owns its heap region.
-    (unsafe { core::slice::from_raw_parts_mut(ptr, cap) }, cap)
+        (addr as *mut u8, SRAM_IO_BUF_STRIDE as usize)
+    }
 }
 
 #[inline(always)]
@@ -98,11 +101,11 @@ fn bump(
     size: usize,
     align: usize,
 ) -> HsmResult<(usize, &'static mut [u8])> {
-    let (buf, cap) = heap_region(io_index, heap);
+    let (base_ptr, cap) = heap_base_cap(io_index, heap);
     let w = wm(pal, io_index, heap);
     let mark = w.with(|v| *v).min(cap);
 
-    let base = buf.as_ptr() as usize;
+    let base = base_ptr as usize;
     let aligned = (base + mark + align - 1) & !(align - 1);
     let start = aligned - base;
     let end = start.checked_add(size).ok_or(HsmError::NotEnoughSpace)?;
@@ -112,9 +115,10 @@ fn bump(
     }
 
     w.with(|v| *v = end);
-    // SAFETY: start..end is within bounds, no overlap (offset only advances).
+    // SAFETY: start..end is within bounds and does not overlap any prior
+    // live allocation (the watermark only advances within a scope).
     Ok((start, unsafe {
-        core::slice::from_raw_parts_mut(buf.as_mut_ptr().add(start), size)
+        core::slice::from_raw_parts_mut(base_ptr.add(start), size)
     }))
 }
 
@@ -223,7 +227,7 @@ impl HsmAlloc for UnoHsmPal {
         F: FnOnce(&mut [u8]) -> HsmResult<usize>,
     {
         let io_index = io.index();
-        let (_, cap) = heap_region(io_index, DMA);
+        let (_, cap) = heap_base_cap(io_index, DMA);
         let w = wm(self, io_index, DMA);
         let mark = w.with(|v| *v).min(cap);
         let aligned = (mark + 3) & !3;
@@ -249,7 +253,7 @@ impl HsmAlloc for UnoHsmPal {
         F: FnOnce(&mut [u8]) -> HsmResult<(usize, T)>,
     {
         let io_index = io.index();
-        let (_, cap) = heap_region(io_index, DMA);
+        let (_, cap) = heap_base_cap(io_index, DMA);
         let w = wm(self, io_index, DMA);
         let mark = w.with(|v| *v).min(cap);
         let aligned = (mark + 3) & !3;

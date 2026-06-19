@@ -4,150 +4,128 @@
 
 //! Register definitions for io_gsram.
 //!
-//! 'Unified IO buffer and queue region. Holds all IIC/OIC/GDMA queues, AES/SHA/PKA command descriptors, per-slot DMA buffers, and per-slot CPU-only scratch buffers. All queues are 32 entries deep. Base address: 0x6100_0000 (matches azihsm GSRAM base).'
+//! 'Unified GSRAM address map (2 MiB at 0x6100_0000).'
 
 pub const IO_GSRAM_BASE: u32 = 0x61000000;
-pub const ICQ_TAIL_SHADOW_OFFSET: u32 = 0xD00;
-pub const ISQ_HEAD_SHADOW_OFFSET: u32 = 0xD04;
-pub const OCQ_TAIL_SHADOW_OFFSET: u32 = 0x1400;
-pub const OSQ_HEAD_SHADOW_OFFSET: u32 = 0x1404;
-pub const GDMA_CQ_TAIL_SHADOW_OFFSET: u32 = 0x1F00;
-pub const ISQ_OFFSET: u32 = 0x00;
+pub const BOOT_STATUS_OFFSET: u32 = 0x7000;
+pub const ICQ_TAIL_SHADOW_OFFSET: u32 = 0xEF40;
+pub const OCQ_TAIL_SHADOW_OFFSET: u32 = 0xF560;
+pub const GDMA_CQ_TAIL_SHADOW_OFFSET: u32 = 0x13240;
+pub const ISQ_OFFSET: u32 = 0xE440;
 pub const ISQ_COUNT: u32 = 32;
 pub const ISQ_STRIDE: u32 = 0x08;
-pub const ICQ_OFFSET: u32 = 0x100;
+pub const ICQ_OFFSET: u32 = 0xE540;
 pub const ICQ_COUNT: u32 = 32;
 pub const ICQ_STRIDE: u32 = 0x10;
-pub const IO_SQ_OFFSET: u32 = 0x400;
+pub const IO_SQ_OFFSET: u32 = 0xE740;
 pub const IO_SQ_COUNT: u32 = 32;
 pub const IO_SQ_STRIDE: u32 = 0x40;
-pub const IO_META_OFFSET: u32 = 0xC00;
-pub const IO_META_COUNT: u32 = 32;
-pub const IO_META_STRIDE: u32 = 0x08;
-pub const OSQ_OFFSET: u32 = 0xE00;
+pub const OSQ_OFFSET: u32 = 0xEF60;
 pub const OSQ_COUNT: u32 = 32;
 pub const OSQ_STRIDE: u32 = 0x10;
-pub const OCQ_OFFSET: u32 = 0x1000;
+pub const OCQ_OFFSET: u32 = 0xF160;
 pub const OCQ_COUNT: u32 = 32;
 pub const OCQ_STRIDE: u32 = 0x10;
-pub const IO_CQ_OFFSET: u32 = 0x1200;
+pub const IO_CQ_OFFSET: u32 = 0xF360;
 pub const IO_CQ_COUNT: u32 = 32;
 pub const IO_CQ_STRIDE: u32 = 0x10;
-pub const GDMA_SQ_OFFSET: u32 = 0x1500;
+pub const GDMA_SQ_OFFSET: u32 = 0x12840;
 pub const GDMA_SQ_COUNT: u32 = 32;
 pub const GDMA_SQ_STRIDE: u32 = 0x40;
-pub const GDMA_CQ_OFFSET: u32 = 0x1D00;
+pub const GDMA_CQ_OFFSET: u32 = 0x13040;
 pub const GDMA_CQ_COUNT: u32 = 32;
 pub const GDMA_CQ_STRIDE: u32 = 0x10;
-pub const AES_CMD_OFFSET: u32 = 0x1F04;
+pub const AES_CMD_OFFSET: u32 = 0x15064;
 pub const AES_CMD_COUNT: u32 = 32;
 pub const AES_CMD_STRIDE: u32 = 0x18;
-pub const SHA_CMD_OFFSET: u32 = 0x2204;
-pub const SHA_CMD_COUNT: u32 = 32;
-pub const SHA_CMD_STRIDE: u32 = 0x20;
-pub const UPKA_ENGINE_CMD_OFFSET: u32 = 0x2604;
+pub const UPKA_ENGINE_CMD_OFFSET: u32 = 0x15364;
 pub const UPKA_ENGINE_CMD_COUNT: u32 = 16;
 pub const UPKA_ENGINE_CMD_STRIDE: u32 = 0x14;
-pub const UPKA_QUEUE_CMD_OFFSET: u32 = 0x2744;
-pub const UPKA_QUEUE_CMD_COUNT: u32 = 32;
-pub const UPKA_QUEUE_CMD_STRIDE: u32 = 0x14;
-pub const SRAM_IO_BUF_OFFSET: u32 = 0x4000;
+pub const SHA_CMD_OFFSET: u32 = 0x154A4;
+pub const SHA_CMD_COUNT: u32 = 32;
+pub const SHA_CMD_STRIDE: u32 = 0x20;
+pub const IO_META_OFFSET: u32 = 0x20C58;
+pub const IO_META_COUNT: u32 = 32;
+pub const IO_META_STRIDE: u32 = 0x08;
+pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D58;
 pub const SRAM_IO_BUF_COUNT: u32 = 32;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4800;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4800;
-pub const DTCM_IO_BUF_OFFSET: u32 = 0x100000;
-pub const DTCM_IO_BUF_COUNT: u32 = 32;
-pub const DTCM_IO_BUF_STRIDE: u32 = 0x800;
-pub const DTCM_IO_BUF_SIZE: u32 = 0x800;
+pub const PART_STORE_OFFSET: u32 = 0xBB000;
+pub const PART_STORE_COUNT: u32 = 1;
+pub const PART_STORE_STRIDE: u32 = 0x30C00;
+pub const PART_STORE_SIZE: u32 = 0x30C00;
+pub const KEY_VAULT_OFFSET: u32 = 0xEBC00;
+pub const KEY_VAULT_COUNT: u32 = 1;
+pub const KEY_VAULT_STRIDE: u32 = 0x114400;
+pub const KEY_VAULT_SIZE: u32 = 0x114400;
 
 tock_registers::register_bitfields! [u32,
-    /// 'Memory location where hardware publishes a queue index.'
+    /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
+    pub BOOT_STATUS [
+        STATE OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'DMA shadow of a queue producer/consumer index.'
     pub ICQ_TAIL_SHADOW [
-        INDEX OFFSET(0) NUMBITS(32) [],
+        VAL OFFSET(0) NUMBITS(32) [],
     ],
-    /// 'Memory location where hardware publishes a queue index.'
-    pub ISQ_HEAD_SHADOW [
-        INDEX OFFSET(0) NUMBITS(32) [],
-    ],
-    /// 'Memory location where hardware publishes a queue index.'
+    /// 'DMA shadow of a queue producer/consumer index.'
     pub OCQ_TAIL_SHADOW [
-        INDEX OFFSET(0) NUMBITS(32) [],
+        VAL OFFSET(0) NUMBITS(32) [],
     ],
-    /// 'Memory location where hardware publishes a queue index.'
-    pub OSQ_HEAD_SHADOW [
-        INDEX OFFSET(0) NUMBITS(32) [],
-    ],
-    /// 'Memory location where hardware publishes a queue index.'
+    /// 'DMA shadow of a queue producer/consumer index.'
     pub GDMA_CQ_TAIL_SHADOW [
-        INDEX OFFSET(0) NUMBITS(32) [],
+        VAL OFFSET(0) NUMBITS(32) [],
     ],
-    /// 'Source controller, status, and queue identifier.'
+    /// 'Inbound Completion Queue info: status and interface select.'
     pub ICQ_INFO [
-        CONTROLLER_ID OFFSET(0) NUMBITS(8) [],
-        STATUS OFFSET(8) NUMBITS(8) [],
-        QUEUE_ID OFFSET(16) NUMBITS(16) [],
+        STATUS OFFSET(0) NUMBITS(8) [],
+        IFC_SLCT OFFSET(8) NUMBITS(8) [],
+        RSVD OFFSET(16) NUMBITS(16) [],
     ],
-    /// 'Queue index and reserved.'
+    /// 'ISQ slot index being completed.'
     pub ICQ_INDEX [
-        QUEUE_INDEX OFFSET(0) NUMBITS(16) [],
-        RSVD0 OFFSET(16) NUMBITS(16) [],
+        INDEX OFFSET(0) NUMBITS(16) [],
+        RSVD OFFSET(16) NUMBITS(16) [],
     ],
-    /// 'Source controller identifier.'
-    pub IO_META_CTLR [
-        CONTROLLER_ID OFFSET(0) NUMBITS(8) [],
-        RSVD0 OFFSET(8) NUMBITS(24) [],
-    ],
-    /// 'Source queue identifier and index.'
-    pub IO_META_QUEUE [
-        QUEUE_ID OFFSET(0) NUMBITS(16) [],
-        QUEUE_INDEX OFFSET(16) NUMBITS(16) [],
-    ],
-    /// 'Routing info: rx_queue_id, rx_credit, tx_queue_id, axi_id.'
+    /// 'Outbound descriptor: queue IDs and credits.'
     pub OSQ_DESC [
         RX_QUEUE_ID OFFSET(0) NUMBITS(8) [],
         RX_CREDIT OFFSET(8) NUMBITS(8) [],
         TX_QUEUE_ID OFFSET(16) NUMBITS(8) [],
         AXI_ID OFFSET(24) NUMBITS(8) [],
     ],
-    /// 'User tag and control bits.'
+    /// '16-bit tag + control field.'
     pub OSQ_TAG [
         TAG OFFSET(0) NUMBITS(16) [],
-        RSVD0 OFFSET(16) NUMBITS(8) [],
-        CONTROL OFFSET(24) NUMBITS(8) [],
+        CONTROL OFFSET(16) NUMBITS(16) [],
     ],
-    /// 'Routing info: queue_index, queue_id, axi_id.'
+    /// 'Outbound Completion Queue info.'
     pub OCQ_INFO [
-        QUEUE_INDEX OFFSET(0) NUMBITS(16) [],
-        QUEUE_ID OFFSET(16) NUMBITS(8) [],
-        AXI_ID OFFSET(24) NUMBITS(8) [],
+        STATUS OFFSET(0) NUMBITS(8) [],
+        RSVD OFFSET(8) NUMBITS(24) [],
     ],
-    /// 'Tag and completion status.'
+    /// '16-bit tag + status echoed from the OSQ entry.'
     pub OCQ_TAG [
         TAG OFFSET(0) NUMBITS(16) [],
-        RSVD0 OFFSET(16) NUMBITS(8) [],
-        STATUS OFFSET(24) NUMBITS(8) [],
+        STATUS OFFSET(16) NUMBITS(8) [],
+        RSVD OFFSET(24) NUMBITS(8) [],
     ],
-    /// 'TAG, opcode, and address format selectors.'
-    pub GDMA_SQ_CTRL [
-        RSVD0 OFFSET(0) NUMBITS(11) [],
-        SRC_FMT OFFSET(11) NUMBITS(1) [],
-        DST_FMT OFFSET(12) NUMBITS(1) [],
-        OP_CODE OFFSET(13) NUMBITS(1) [],
-        RSVD1 OFFSET(14) NUMBITS(2) [],
-        TAG OFFSET(16) NUMBITS(16) [],
-    ],
-    /// 'Source and destination data/descriptor memory interface selectors.'
-    pub GDMA_SQ_IFC [
-        SRC_DATA OFFSET(0) NUMBITS(8) [],
-        DST_DATA OFFSET(8) NUMBITS(8) [],
-        SRC_DESC OFFSET(16) NUMBITS(8) [],
-        DST_DESC OFFSET(24) NUMBITS(8) [],
-    ],
-    /// 'Completion status and TAG echoed from SQ entry.'
+    /// 'GDMA completion status and tag.'
     pub GDMA_CQ_STATUS [
-        SUCCESS OFFSET(0) NUMBITS(1) [],
-        RSVD0 OFFSET(1) NUMBITS(15) [],
-        TAG OFFSET(16) NUMBITS(16) [],
+        TAG OFFSET(0) NUMBITS(16) [],
+        SUCCESS OFFSET(16) NUMBITS(1) [],
+        RSVD OFFSET(17) NUMBITS(15) [],
+    ],
+    /// 'Controller ID for this IO slot.'
+    pub IO_META_CTLR [
+        CONTROLLER_ID OFFSET(0) NUMBITS(16) [],
+        RSVD OFFSET(16) NUMBITS(16) [],
+    ],
+    /// 'Queue ID and index for this IO slot.'
+    pub IO_META_QUEUE [
+        QUEUE_ID OFFSET(0) NUMBITS(16) [],
+        QUEUE_INDEX OFFSET(16) NUMBITS(16) [],
     ]
 ];
 
@@ -188,13 +166,6 @@ pub struct IoSqEntry {
     pub dw15: crate::RW<u32>,
 }
 
-/// Regfile entry struct for `io_meta_entry`.
-#[repr(C)]
-pub struct IoMetaEntry {
-    pub ctlr: crate::RW<u32, IO_META_CTLR::Register>,
-    pub queue: crate::RW<u32, IO_META_QUEUE::Register>,
-}
-
 /// Regfile entry struct for `osq_entry`.
 #[repr(C)]
 pub struct OsqEntry {
@@ -225,31 +196,31 @@ pub struct IoCqEntry {
 /// Regfile entry struct for `gdma_sq_entry`.
 #[repr(C)]
 pub struct GdmaSqEntry {
-    pub ctrl: crate::RW<u32, GDMA_SQ_CTRL::Register>,
-    pub ifc: crate::RW<u32, GDMA_SQ_IFC::Register>,
-    pub rsvd0: crate::RO<u32>,
-    pub rsvd1: crate::RO<u32>,
-    pub src_len: crate::RW<u32>,
-    pub dst_len: crate::RW<u32>,
-    pub rsvd2: crate::RO<u32>,
-    pub rsvd3: crate::RO<u32>,
-    pub src_fst_lo: crate::RW<u32>,
-    pub src_fst_hi: crate::RW<u32>,
-    pub src_snd_lo: crate::RW<u32>,
-    pub src_snd_hi: crate::RW<u32>,
-    pub dst_fst_lo: crate::RW<u32>,
-    pub dst_fst_hi: crate::RW<u32>,
-    pub dst_snd_lo: crate::RW<u32>,
-    pub dst_snd_hi: crate::RW<u32>,
+    pub dw0: crate::RW<u32>,
+    pub dw1: crate::RW<u32>,
+    pub dw2: crate::RW<u32>,
+    pub dw3: crate::RW<u32>,
+    pub dw4: crate::RW<u32>,
+    pub dw5: crate::RW<u32>,
+    pub dw6: crate::RW<u32>,
+    pub dw7: crate::RW<u32>,
+    pub dw8: crate::RW<u32>,
+    pub dw9: crate::RW<u32>,
+    pub dw10: crate::RW<u32>,
+    pub dw11: crate::RW<u32>,
+    pub dw12: crate::RW<u32>,
+    pub dw13: crate::RW<u32>,
+    pub dw14: crate::RW<u32>,
+    pub dw15: crate::RW<u32>,
 }
 
 /// Regfile entry struct for `gdma_cq_entry`.
 #[repr(C)]
 pub struct GdmaCqEntry {
     pub status: crate::RW<u32, GDMA_CQ_STATUS::Register>,
-    pub rsvd0: crate::RO<u32>,
-    pub rsvd1: crate::RO<u32>,
-    pub rsvd2: crate::RO<u32>,
+    pub rsvd0: crate::RW<u32>,
+    pub rsvd1: crate::RW<u32>,
+    pub rsvd2: crate::RW<u32>,
 }
 
 /// Regfile entry struct for `aes_cmd_entry`.
@@ -263,19 +234,6 @@ pub struct AesCmdEntry {
     pub iv: crate::RW<u32>,
 }
 
-/// Regfile entry struct for `sha_cmd_entry`.
-#[repr(C)]
-pub struct ShaCmdEntry {
-    pub sha_command: crate::RW<u32>,
-    pub digest: crate::RW<u32>,
-    pub byte_count: crate::RW<u32>,
-    pub message_bytes: crate::RW<u32>,
-    pub message_buff: crate::RW<u32>,
-    pub initial_digest: crate::RW<u32>,
-    pub pass_msg_buff: crate::RW<u32>,
-    pub ref_digest: crate::RW<u32>,
-}
-
 /// Regfile entry struct for `upka_cmd_entry`.
 #[repr(C)]
 pub struct UpkaCmdEntry {
@@ -286,36 +244,57 @@ pub struct UpkaCmdEntry {
     pub arg3_addr: crate::RW<u32>,
 }
 
+/// Regfile entry struct for `sha_cmd_entry`.
+#[repr(C)]
+pub struct ShaCmdEntry {
+    pub sha_command: crate::RW<u32>,
+    pub sha_result: crate::RW<u32>,
+    pub sha_msg_addr: crate::RW<u32>,
+    pub sha_msg_len: crate::RW<u32>,
+    pub sha_init_digest: crate::RW<u32>,
+    pub sha_key_addr: crate::RW<u32>,
+    pub pass_msg_buff: crate::RW<u32>,
+    pub sha_key_len: crate::RW<u32>,
+}
+
+/// Regfile entry struct for `io_meta_entry`.
+#[repr(C)]
+pub struct IoMetaEntry {
+    pub ctlr: crate::RW<u32, IO_META_CTLR::Register>,
+    pub queue: crate::RW<u32, IO_META_QUEUE::Register>,
+}
+
 pub mod regs {
     //! MMIO register struct for firmware use.
     tock_registers::register_structs! {
         pub IoGsramRegs {
-            (0x0 => pub isq: [super::IsqEntry; 32]),
-            (0x100 => pub icq: [super::IcqEntry; 32]),
-            (0x300 => _reserved0),
-            (0x400 => pub io_sq: [super::IoSqEntry; 32]),
-            (0xc00 => pub io_meta: [super::IoMetaEntry; 32]),
-            (0xd00 => pub icq_tail_shadow: crate::RW<u32, super::ICQ_TAIL_SHADOW::Register>),
-            (0xd04 => pub isq_head_shadow: crate::RW<u32, super::ISQ_HEAD_SHADOW::Register>),
-            (0xd08 => _reserved1),
-            (0xe00 => pub osq: [super::OsqEntry; 32]),
-            (0x1000 => pub ocq: [super::OcqEntry; 32]),
-            (0x1200 => pub io_cq: [super::IoCqEntry; 32]),
-            (0x1400 => pub ocq_tail_shadow: crate::RW<u32, super::OCQ_TAIL_SHADOW::Register>),
-            (0x1404 => pub osq_head_shadow: crate::RW<u32, super::OSQ_HEAD_SHADOW::Register>),
-            (0x1408 => _reserved2),
-            (0x1500 => pub gdma_sq: [super::GdmaSqEntry; 32]),
-            (0x1d00 => pub gdma_cq: [super::GdmaCqEntry; 32]),
-            (0x1f00 => pub gdma_cq_tail_shadow: crate::RW<u32, super::GDMA_CQ_TAIL_SHADOW::Register>),
-            (0x1f04 => pub aes_cmd: [super::AesCmdEntry; 32]),
-            (0x2204 => pub sha_cmd: [super::ShaCmdEntry; 32]),
-            (0x2604 => pub upka_engine_cmd: [super::UpkaCmdEntry; 16]),
-            (0x2744 => pub upka_queue_cmd: [super::UpkaCmdEntry; 32]),
-            (0x29c4 => _reserved3),
-            (0x4000 => pub sram_io_buf: [u8; 589824]),
-            (0x94000 => _reserved4),
-            (0x100000 => pub dtcm_io_buf: [u8; 65536]),
-            (0x110000 => @END),
+            (0x0 => _reserved0),
+            (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
+            (0x7004 => _reserved1),
+            (0xe440 => pub isq: [super::IsqEntry; 32]),
+            (0xe540 => pub icq: [super::IcqEntry; 32]),
+            (0xe740 => pub io_sq: [super::IoSqEntry; 32]),
+            (0xef40 => pub icq_tail_shadow: crate::RW<u32, super::ICQ_TAIL_SHADOW::Register>),
+            (0xef44 => _reserved2),
+            (0xef60 => pub osq: [super::OsqEntry; 32]),
+            (0xf160 => pub ocq: [super::OcqEntry; 32]),
+            (0xf360 => pub io_cq: [super::IoCqEntry; 32]),
+            (0xf560 => pub ocq_tail_shadow: crate::RW<u32, super::OCQ_TAIL_SHADOW::Register>),
+            (0xf564 => _reserved3),
+            (0x12840 => pub gdma_sq: [super::GdmaSqEntry; 32]),
+            (0x13040 => pub gdma_cq: [super::GdmaCqEntry; 32]),
+            (0x13240 => pub gdma_cq_tail_shadow: crate::RW<u32, super::GDMA_CQ_TAIL_SHADOW::Register>),
+            (0x13244 => _reserved4),
+            (0x15064 => pub aes_cmd: [super::AesCmdEntry; 32]),
+            (0x15364 => pub upka_engine_cmd: [super::UpkaCmdEntry; 16]),
+            (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
+            (0x158a4 => _reserved5),
+            (0x20c58 => pub io_meta: [super::IoMetaEntry; 32]),
+            (0x20d58 => pub sram_io_buf: [u8; 589824]),
+            (0xb0d58 => _reserved6),
+            (0xbb000 => pub part_store: [u8; 199680]),
+            (0xebc00 => pub key_vault: [u8; 1131520]),
+            (0x200000 => @END),
         }
     }
 }
