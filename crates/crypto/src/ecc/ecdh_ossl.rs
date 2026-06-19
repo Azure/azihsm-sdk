@@ -21,7 +21,14 @@
 //! - Ephemeral keys (ECDHE) provide forward secrecy
 //! - Public keys should be authenticated to prevent man-in-the-middle attacks
 
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
+use openssl_sys as ffi;
+
 use super::*;
+use crate::libctx::OSSL_SUCCESS;
+use crate::libctx::PkeyCtx;
 
 /// OpenSSL-backed ECDH key derivation operation.
 ///
@@ -108,24 +115,43 @@ impl<'a> DeriveOp for OsslEcdhAlgo<'a> {
     /// - Include context information to prevent key reuse
     /// - Consider adding a salt for additional security
     /// - Never use the raw shared secret directly for encryption
+    #[allow(unsafe_code)]
     fn derive(&self, key: &Self::Key, derived_len: usize) -> Result<Self::DerivedKey, CryptoError> {
-        use openssl::derive::Deriver;
-
-        let mut deriver = Deriver::new(key.pkey()).map_err(|_| CryptoError::EcdhError)?;
-
-        deriver
-            .set_peer(self.peer_key.pkey())
-            .map_err(|_| CryptoError::EcdhSetPropertyError)?;
-
-        let len = deriver.len().map_err(|_| CryptoError::EcdhError)?;
-
-        if derived_len != len {
-            return Err(CryptoError::EcdhInvalidDerivedKeyLength);
-        }
-
-        let secret = deriver
-            .derive_to_vec()
-            .map_err(|_| CryptoError::EcdhDeriveError)?;
+        // The openssl crate's `Deriver` uses the legacy `EVP_PKEY_CTX_new`,
+        // which fetches the ECDH keyexch from the *process default* libctx
+        // regardless of the key's libctx — on OpenSSL 3.5 that resolves to the
+        // azihsm provider and re-enters it during the HSM session open. Build
+        // the derive ctx explicitly in the crate-private libctx
+        // (default-provider only) via `PkeyCtx` so the keyexch fetch never lands
+        // on azihsm. See [`crate::libctx`].
+        //
+        // SAFETY: the key's `EVP_PKEY*` and the peer key outlive `ctx` (the
+        // `PkeyCtx` guard frees it on drop on every path); the output buffer is
+        // sized from the first `EVP_PKEY_derive`.
+        let secret = unsafe {
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EcdhError)?;
+            if ffi::EVP_PKEY_derive_init(ctx.as_ptr()) != OSSL_SUCCESS {
+                return Err(CryptoError::EcdhError);
+            }
+            if ffi::EVP_PKEY_derive_set_peer(ctx.as_ptr(), self.peer_key.pkey().as_ptr())
+                != OSSL_SUCCESS
+            {
+                return Err(CryptoError::EcdhSetPropertyError);
+            }
+            let mut len: usize = 0;
+            if ffi::EVP_PKEY_derive(ctx.as_ptr(), ptr::null_mut(), &mut len) != OSSL_SUCCESS {
+                return Err(CryptoError::EcdhError);
+            }
+            if derived_len != len {
+                return Err(CryptoError::EcdhInvalidDerivedKeyLength);
+            }
+            let mut secret = vec![0u8; len];
+            if ffi::EVP_PKEY_derive(ctx.as_ptr(), secret.as_mut_ptr(), &mut len) != OSSL_SUCCESS {
+                return Err(CryptoError::EcdhDeriveError);
+            }
+            secret.truncate(len);
+            secret
+        };
 
         GenericSecretKey::from_bytes(&secret)
     }
