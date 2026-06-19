@@ -1,0 +1,396 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Security-domain session establishment at the DDI layer.
+//!
+//! This module hosts the host-side dispatch for opening a session on an
+//! HSM partition. Two transports coexist:
+//!
+//! * **MBOR** — the established single-round-trip `OpenSession` command
+//!   implemented in [`super::session`]. This remains the default for
+//!   API revisions below [`SD_TBOR_MIN_REV`].
+//! * **TBOR** — the two-phase HPKE handshake mirroring the firmware
+//!   handlers `open_session_init` (opcode `0x10`) and
+//!   `open_session_finish` (opcode `0x11`). Selected for revisions at
+//!   or above [`SD_TBOR_MIN_REV`].
+//!
+//! The [`open_session_ex`] entry point gates on the negotiated API
+//! revision via [`use_tbor`] and, when TBOR applies, runs
+//! [`open_session_ex_init`] (Phase 1) followed by
+//! [`open_session_ex_finish`] (Phase 2). Revisions below the cutoff
+//! continue to use the MBOR `OpenSession` path in [`super::session`].
+//!
+//! Both phases are wired. Their HPKE handshake crypto (VM ephemeral
+//! generation, `receive_export`, the confirm MACs, `param_key`
+//! derivation, and the `seed_envelope` AEAD seal) lives in the sibling
+//! [`super::session_crypto`] module — an intentional copy of the TBOR
+//! test harness's pure crypto helpers (which are test-only and cannot
+//! be imported here). `pk_hsm` retrieval reuses the production cert
+//! chain via [`fetch_pk_hsm`].
+
+#![allow(dead_code)]
+
+use azihsm_crypto::*;
+use azihsm_ddi_tbor_types::*;
+use zeroize::Zeroizing;
+
+use super::session_crypto;
+use super::*;
+
+/// Minimum [`HsmApiRev`] at which the host dispatches `OpenSession`
+/// over the TBOR opcode plane. Older revisions continue to use the
+/// MBOR encoder in [`super::session`]. The value is a placeholder
+/// until the firmware TBOR handlers are pinned to a shipped revision.
+// TODO: pin to the real cutoff revision once the FW handlers land.
+const SD_TBOR_MIN_REV: HsmApiRev = HsmApiRev { major: 2, minor: 0 };
+
+#[derive(Debug)]
+struct PendingHandshake {
+    /// Reserved session identifier returned by the FW.
+    pub session_id: u16,
+    /// Caller-selected PSK id (0 = CO, 1 = CU).
+    pub psk_id: u8,
+    /// Caller-selected channel integrity profile.
+    pub session_type: SessionType,
+    /// HPKE export secret (`Nh = 48`) derived by HPKE
+    /// `receive_export` after Phase 1 completes.
+    pub exported: Vec<u8>,
+    /// Wire `pk_init` (SEC1 uncompressed, 97 B).
+    pub pk_init: [u8; PK_INIT_LEN],
+    /// Wire `pk_resp` (SEC1 uncompressed, 97 B).
+    pub pk_resp: [u8; PK_INIT_LEN],
+    /// Wire `pk_hsm` (SEC1 uncompressed, 97 B) — partition identity
+    /// public key fetched out-of-band via the MBOR cert chain.
+    pub pk_hsm: [u8; PK_INIT_LEN],
+}
+
+pub struct OpenSessionExResult {
+    /// Active session identifier.
+    pub session_id: u16,
+    /// PSK id used for the handshake (0 = CO, 1 = CU).
+    pub psk_id: u8,
+    /// Channel integrity profile pinned at handshake time.
+    pub session_type: SessionType,
+    /// HPKE exported secret (`Nh = 48`) used to derive `param_key`
+    /// and (for authenticated sessions) the MAC keys. Retained so
+    /// tests can re-derive labelled material on demand.
+    pub exported: Vec<u8>,
+    /// Per-session AES-256 wrap key derived from the HPKE export.
+    pub param_key: AesKey,
+    /// FW-emitted wrapped masking-key blob — opaque to the host.
+    pub bmk_session: Vec<u8>,
+}
+
+/// `true` when `rev` is at or above the TBOR cutoff for security-domain
+/// session establishment.
+#[inline]
+fn use_tbor(rev: HsmApiRev) -> bool {
+    rev >= SD_TBOR_MIN_REV
+}
+
+/// Look up the partition identity public key (`pk_hsm`) via the
+/// production cert chain. Reuses [`get_part_pub_key`], whose leaf
+/// cert is the partition-ID cert; its SubjectPublicKeyInfo carries
+/// the P-384 key the FW uses as `pk_s` in HPKE `auth_psk`.
+pub(super) fn fetch_pk_hsm(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
+    let pk_der = get_part_pub_key(dev, rev)?;
+    let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| HsmError::InternalError)?;
+    let sec1 = session_crypto::ec_pub_to_sec1(&pk)?;
+    Ok((pk, sec1))
+}
+
+/// Opens a session on an HSM partition over the TBOR transport.
+///
+/// Runs the two-phase handshake — [`open_session_ex_init`] (Phase 1)
+/// followed by [`open_session_ex_finish`] (Phase 2) — when the
+/// negotiated `rev` is at or above [`SD_TBOR_MIN_REV`].
+///
+/// # Arguments
+///
+/// * `partition` - The HSM partition handle.
+/// * `rev` - The negotiated API revision.
+/// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
+///   1 = CU).
+/// * `session_type` - Channel integrity profile to pin for the session.
+///
+/// # Returns
+///
+/// Returns an [`OpenSessionExResult`] with the session identifier and
+/// the per-session key material derived by the handshake.
+///
+/// # Errors
+///
+/// Propagates transport-specific failures. Returns
+/// [`HsmError::UnsupportedApiRevision`] when `rev` is below
+/// [`SD_TBOR_MIN_REV`].
+fn open_session_ex(
+    partition: &HsmPartition,
+    rev: HsmApiRev,
+    psk_id: u8,
+    session_type: SessionType,
+) -> HsmResult<OpenSessionExResult> {
+    // check if the negotiated API revision supports TBOR for session establishment;
+    if !use_tbor(rev) {
+        return Err(HsmError::UnsupportedApiRevision);
+    }
+    let pending = open_session_ex_init(partition, psk_id, session_type)?;
+    open_session_ex_finish(partition, pending)
+}
+
+/// Phase 1 of the TBOR handshake — `OpenSessionInit` (opcode `0x10`).
+///
+/// Generates the VM per-handshake ephemeral keypair, fetches the
+/// partition identity key (`pk_hsm`) from the production cert chain,
+/// ships the request, runs HPKE `auth_psk receive_export` on the FW
+/// response, and verifies the Phase-1 confirm MAC. Returns a
+/// [`PendingHandshake`] for [`open_session_ex_finish`] to consume.
+///
+/// Uses the partition default PSK for `psk_id` (CO = 0, CU = 1); PSK
+/// rotation is out of scope for now.
+///
+/// # Errors
+///
+/// Propagates DDI failures from the round-trip and
+/// [`HsmError::InternalError`] from the handshake crypto (e.g. a
+/// Phase-1 confirm MAC mismatch).
+fn open_session_ex_init(
+    partition: &HsmPartition,
+    psk_id: u8,
+    session_type: SessionType,
+) -> HsmResult<PendingHandshake> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let rev = inner.api_rev();
+
+    // VM per-handshake ephemeral keypair (recipient side of the HPKE
+    // auth_psk handshake).
+    let eph = session_crypto::generate_vm_ephemeral()?;
+
+    // Partition identity key (`pk_hsm`, HPKE sender) from the leaf
+    // cert in the production cert chain.
+    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev, rev)?;
+
+    let suite_id = SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
+    let req = TborOpenSessionInitReq {
+        psk_id,
+        session_type: session_type.to_u8(),
+        suite_id,
+        pk_init: eph.pk_sec1,
+    };
+
+    let mut cookie = None;
+    let resp = dev
+        .exec_op_tbor(&req, &mut cookie)
+        .map_err(HsmError::from)?;
+
+    // Derive the 48-byte HPKE `exported` secret, then verify the FW's
+    // Phase-1 confirm MAC binds the negotiated role/type/suite.
+    let info = session_crypto::build_hpke_info(psk_id, session_type.to_u8(), suite_id);
+    let psk = session_crypto::default_psk(psk_id)?;
+    let exported = session_crypto::receive_exported(
+        &eph.sk,
+        &eph.pk,
+        &pk_hsm_key,
+        &resp.pk_resp,
+        &info,
+        psk,
+        &[psk_id],
+    )?;
+
+    session_crypto::verify_phase1_mac(
+        &exported,
+        resp.session_id,
+        &eph.pk_sec1,
+        &pk_hsm_sec1,
+        &resp.pk_resp,
+        &resp.mac_resp,
+    )?;
+
+    Ok(PendingHandshake {
+        session_id: resp.session_id,
+        psk_id,
+        session_type,
+        exported,
+        pk_init: eph.pk_sec1,
+        pk_resp: resp.pk_resp,
+        pk_hsm: pk_hsm_sec1,
+    })
+}
+
+/// Phase 2 of the TBOR handshake — `OpenSessionFinish` (opcode `0x11`).
+///
+/// Derives the per-session `param_key` from the HPKE export, generates
+/// a fresh 32-byte session seed and AEAD-seals it into `seed_envelope`,
+/// computes the Phase-2 confirm MAC, ships `OpenSessionFinish`, and
+/// folds the FW's `bmk_session` into an [`OpenSessionExResult`].
+///
+/// Consumes the [`PendingHandshake`] so stale Phase-1 state cannot be
+/// reused for a second finish against the same session slot.
+///
+/// # Errors
+///
+/// Propagates DDI failures from the round-trip (including a Phase-2
+/// confirm-MAC rejection by the FW) and [`HsmError::InternalError`]
+/// from the handshake crypto.
+fn open_session_ex_finish(
+    partition: &HsmPartition,
+    pending: PendingHandshake,
+) -> HsmResult<OpenSessionExResult> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+
+    // Derive the per-session wrap key, generate a fresh seed, and seal
+    // it under `param_key` as the `seed_envelope` wire blob.
+    let param_key = session_crypto::derive_param_key(&pending.exported)?;
+    let mut seed = Zeroizing::new([0u8; SESSION_SEED_LEN]);
+    Rng::rand_bytes(seed.as_mut_slice()).map_err(|_| HsmError::InternalError)?;
+    let envelope = session_crypto::seal_seed_envelope(&param_key, seed.as_slice())?;
+    let seed_envelope: [u8; SEED_ENVELOPE_LEN] = envelope
+        .as_slice()
+        .try_into()
+        .map_err(|_| HsmError::InternalError)?;
+
+    // Phase-2 confirm MAC binds the same transcript as Phase 1 under
+    // the Phase-2 label.
+    let mac_fin = session_crypto::build_phase2_mac(
+        &pending.exported,
+        pending.session_id,
+        &pending.pk_init,
+        &pending.pk_hsm,
+        &pending.pk_resp,
+    )?;
+
+    let req = TborOpenSessionFinishReq {
+        session_id: pending.session_id,
+        mac_fin,
+        seed_envelope,
+    };
+    let mut cookie = None;
+    let resp = dev
+        .exec_op_tbor(&req, &mut cookie)
+        .map_err(HsmError::from)?;
+
+    Ok(OpenSessionExResult {
+        session_id: pending.session_id,
+        psk_id: pending.psk_id,
+        session_type: pending.session_type,
+        exported: pending.exported,
+        param_key,
+        bmk_session: resp.bmk_session,
+    })
+}
+
+#[cfg(all(test, feature = "emu"))]
+mod tests {
+    use parking_lot::Mutex;
+
+    use super::*;
+    use crate::partition::HsmPartitionManager;
+
+    /// PSK id for the Crypto Officer role.
+    const CO: u8 = 0;
+    /// PSK id for the Crypto User role.
+    const CU: u8 = 1;
+
+    /// Serialises tests against the process-global FW emulator
+    /// singleton. `cargo-nextest` already runs each test in its own
+    /// process, but this keeps a plain `cargo test` (single process,
+    /// multi-threaded) correct too. `parking_lot::Mutex` per the
+    /// workspace convention (std's variant is disallowed by
+    /// `clippy.toml`) and never poisons, so a panicking test cannot
+    /// wedge the others.
+    static EMU_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Open the emu-backed partition at its maximum supported revision
+    /// and factory-reset it, so every test starts from byte-identical
+    /// state (no inherited session slots or PSK rotations).
+    fn fresh_emu_partition() -> HsmPartition {
+        let info = HsmPartitionManager::partition_info_list()
+            .into_iter()
+            .next()
+            .expect("emu backend should advertise a partition");
+        let max_rev = info
+            .api_rev_range
+            .expect("emu partition should report an api-rev range")
+            .max();
+        let part =
+            HsmPartitionManager::open_partition(&info.path, max_rev).expect("open emu partition");
+        part.reset().expect("factory-reset emu partition");
+        part
+    }
+
+    /// Drive a full Phase-1 + Phase-2 handshake against the FW
+    /// emulator and return the finished session material.
+    ///
+    /// This exercises [`open_session_ex_init`] / [`open_session_ex_finish`]
+    /// directly rather than the [`open_session_ex`] dispatcher. The
+    /// dispatcher gates on `use_tbor(rev)` with the placeholder
+    /// [`SD_TBOR_MIN_REV`] (`2.0`), but the emulator advertises an
+    /// MBOR max revision of `1.0`, so that gate cannot be satisfied
+    /// until the real cutoff is pinned. The handshake mechanics under
+    /// test here are independent of that gate.
+    fn run_handshake(psk_id: u8, session_type: SessionType) -> OpenSessionExResult {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+
+        let pending = open_session_ex_init(&part, psk_id, session_type)
+            .expect("phase 1 (open_session_ex_init) should succeed against emu");
+        assert_eq!(
+            pending.psk_id, psk_id,
+            "pending must echo the requested psk_id"
+        );
+        assert_eq!(
+            pending.session_type, session_type,
+            "pending must echo the requested session_type"
+        );
+        assert_eq!(
+            pending.exported.len(),
+            48,
+            "HPKE export secret must be Nh = 48 bytes"
+        );
+
+        open_session_ex_finish(&part, pending)
+            .expect("phase 2 (open_session_ex_finish) should succeed against emu")
+    }
+
+    /// Happy path: CO must pair with an Authenticated session.
+    #[test]
+    fn open_session_ex_co_authenticated_happy_emu() {
+        let result = run_handshake(CO, SessionType::Authenticated);
+        assert_eq!(result.psk_id, CO);
+        assert!(result.session_type.is_authenticated());
+        assert_eq!(result.exported.len(), 48);
+        assert!(
+            !result.bmk_session.is_empty(),
+            "FW must return a non-empty bmk_session envelope"
+        );
+    }
+
+    /// Happy path: CU must pair with a PlainText session.
+    #[test]
+    fn open_session_ex_cu_plaintext_happy_emu() {
+        let result = run_handshake(CU, SessionType::PlainText);
+        assert_eq!(result.psk_id, CU);
+        assert!(!result.session_type.is_authenticated());
+        assert!(
+            !result.bmk_session.is_empty(),
+            "FW must return a non-empty bmk_session envelope"
+        );
+    }
+
+    /// Negative path: an unknown `psk_id` (neither CO nor CU) must not
+    /// yield a pending handshake — the FW rejects it during Phase 1.
+    #[test]
+    fn open_session_ex_init_rejects_unknown_psk_id_emu() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let result = open_session_ex_init(&part, 2, SessionType::Authenticated);
+        assert!(
+            result.is_err(),
+            "unknown psk_id must not produce a pending handshake"
+        );
+    }
+}
