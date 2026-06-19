@@ -1,0 +1,174 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Env-var-driven `tracing_subscriber` install.
+//!
+//! Two env vars gate logging:
+//!
+//! | Var                       | Effect                                              |
+//! |---------------------------|-----------------------------------------------------|
+//! | `AZIHSM_ENGINE_LOG_STDERR`| presence → emit formatted events to stderr          |
+//! | `AZIHSM_ENGINE_LOG_FILE`  | path → append formatted events to that file         |
+//!
+//! Level filtering comes from `RUST_LOG`; an unset or malformed value falls
+//! back to `info`.
+//!
+//! Both env vars unset → no subscriber is installed and engine code emits
+//! into the void (the current behavior).
+//!
+//! The subscriber is process-global: `set_global_default` is one-shot, so
+//! [`install_from_env`] uses `try_init` and yields to any subscriber the host
+//! (`openssl`, NGINX, …) already installed. The file sink's `WorkerGuard`
+//! (whose Drop stops the writer thread) therefore also lives in a process
+//! static, not per-engine `EngineData` — else the first `ENGINE_free` would
+//! stop logging for everyone.
+
+use std::env;
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+use openssl_engine::error::EngineError;
+use openssl_engine::error::EngineResult;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+const ENV_LOG_STDERR: &str = "AZIHSM_ENGINE_LOG_STDERR";
+const ENV_LOG_FILE: &str = "AZIHSM_ENGINE_LOG_FILE";
+
+/// Owns the non-blocking writer's worker thread for the lifetime of the process.
+static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+
+/// Parsed view of the logging env vars.
+#[derive(Default)]
+pub struct LogSettings {
+    pub stderr: bool,
+    pub file: Option<PathBuf>,
+}
+
+impl LogSettings {
+    pub fn from_env() -> Self {
+        Self {
+            stderr: env::var_os(ENV_LOG_STDERR).is_some(),
+            file: env::var_os(ENV_LOG_FILE).map(PathBuf::from),
+        }
+    }
+}
+
+/// Best-effort: install a global tracing subscriber based on env vars.
+///
+/// Returns Ok even when a subscriber is already installed (idempotent
+/// across re-loads); only file-system or argument errors surface.
+pub fn install_from_env() -> EngineResult<()> {
+    install(LogSettings::from_env())
+}
+
+fn install(settings: LogSettings) -> EngineResult<()> {
+    if !settings.stderr && settings.file.is_none() {
+        return Ok(());
+    }
+
+    // RUST_LOG controls verbosity; default to `info` when it is unset
+    // or malformed (an empty EnvFilter would suppress every event).
+    let filter = std::env::var("RUST_LOG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| EnvFilter::try_new(s).ok())
+        .unwrap_or_else(|| EnvFilter::new("info"));
+
+    let mut layers: Vec<Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync + 'static>> =
+        Vec::new();
+
+    if settings.stderr {
+        layers.push(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(true)
+                .boxed(),
+        );
+    }
+    let mut file_guard = None;
+    if let Some(path) = settings.file.as_deref() {
+        let (layer, guard) = open_file_layer(path)?;
+        layers.push(layer);
+        file_guard = Some(guard);
+    }
+
+    // EnvFilter goes last so it sits at the top of the layer stack and
+    // filters events before they propagate into the fmt layers.
+    let installed = tracing_subscriber::registry()
+        .with(layers)
+        .with(filter)
+        .try_init()
+        .is_ok();
+
+    // Park the appender's worker guard only when we actually installed the
+    // subscriber; if a host already had one, try_init fails and dropping the
+    // guard here stops the otherwise-orphaned worker thread.
+    if installed {
+        if let Some(guard) = file_guard {
+            let _ = LOG_GUARD.set(guard);
+        }
+    }
+    Ok(())
+}
+
+/// Open `path` (mode 0600 on creation) for append, wrap it in a non-blocking
+/// writer, and return the layer plus its `WorkerGuard`. The caller parks the
+/// guard only if the subscriber is actually installed, so a dropped layer stops
+/// its worker.
+fn open_file_layer(
+    path: &Path,
+) -> EngineResult<(
+    Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync + 'static>,
+    WorkerGuard,
+)> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|e| EngineError::wrap(format!("AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
+    let (writer, guard) = tracing_appender::non_blocking(file);
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(writer)
+        .with_target(true)
+        .boxed();
+    Ok((layer, guard))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn settings_default_is_off() {
+        let s = LogSettings::default();
+        assert!(!s.stderr);
+        assert!(s.file.is_none());
+    }
+
+    #[test]
+    fn install_noop_when_both_disabled() {
+        // With no layers there's nothing to fail on; this must not panic
+        // even if a subscriber is already installed in the test process.
+        install(LogSettings::default()).unwrap();
+    }
+
+    #[test]
+    fn install_rejects_unwritable_file_path() {
+        let s = LogSettings {
+            stderr: false,
+            file: Some(PathBuf::from("/no/such/directory/engine.log")),
+        };
+        assert!(install(s).is_err());
+    }
+}
