@@ -11,7 +11,7 @@ pub struct DdiAttestKeyReq<'a> {
     #[ddi(id = 1)]
     pub key_id: u16,
     #[ddi(id = 2, max_len = 128)]
-    pub report_data: &'a DmaBuf,
+    pub report_data: &'a mut DmaBuf,
 }
 
 impl DdiAttestKeyReq<'_> {

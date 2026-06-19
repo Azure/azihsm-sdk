@@ -813,6 +813,10 @@ pub enum DdiStatus {
 
     /// Partition ID Key Generation PCT failed
     PartitionIdKeyGenerationPctFailed = 141557976,
+
+    /// AES Key Wrap unwrap operation failed (IV/AIV mismatch or
+    /// underlying AES failure)
+    AesUnwrapFailed = 141557977,
 }
 
 /// DDI Key Class

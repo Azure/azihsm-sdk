@@ -378,6 +378,29 @@ azihsm-api-revision = 1.0
         stdout
     }
 
+    /// Returns true if a discovered gtest case should be skipped because
+    /// the current OpenSSL ABI cannot run it.
+    ///
+    /// Read from `AZIHSM_TEST_OPENSSL_MAJOR_MINOR` (set by
+    /// `provider-matrix.yml` per job).  When unset, no skips happen — so a plain
+    /// `cargo xtask integration-tests` run against a single OpenSSL version
+    /// still runs the full suite.
+    ///
+    /// Convention: tag a C++ gtest case with the `_RequiresOpenssl35`
+    /// suffix to mark it as 3.5-only.  When running against OpenSSL 3.0,
+    /// such cases are reported as `ignored` instead of executed.
+    ///
+    /// Example C++ definition:
+    /// ```cpp
+    /// TEST(EcKeys, GenerateMlDsa_RequiresOpenssl35) { ... }
+    /// ```
+    fn should_skip_for_current_openssl(test_name: &str) -> bool {
+        let Ok(ver) = env::var("AZIHSM_TEST_OPENSSL_MAJOR_MINOR") else {
+            return false;
+        };
+        ver == "3.0" && test_name.ends_with("_RequiresOpenssl35")
+    }
+
     /// Parses the gtest list output and creates test trials.
     fn parse_gtest_list(
         output: &str,
@@ -395,6 +418,10 @@ azihsm-api-revision = 1.0
                 current_suite = line.trim_end_matches('.').to_string();
             } else if !line.trim().is_empty() {
                 let test_name = format!("{}::{}", current_suite, line.trim());
+                if should_skip_for_current_openssl(&test_name) {
+                    tests.push(Trial::test(test_name, || Ok(())).with_ignored_flag(true));
+                    continue;
+                }
                 let path = path.clone();
                 let ld_path = ld_library_path.clone();
                 let creds = credentials.clone();

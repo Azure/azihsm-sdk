@@ -574,6 +574,15 @@ static AIHSM_EC_GEN_CTX *azihsm_ossl_keymgmt_gen_init(
         return NULL;
     }
 
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session(provctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(genctx);
+        return NULL;
+    }
+
     genctx->session = provctx->session;
     genctx->provctx = provctx;
 

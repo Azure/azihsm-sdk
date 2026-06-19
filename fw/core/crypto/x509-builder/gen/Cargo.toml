@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_core_crypto_x509_builder_gen"
+version = "0.1.0"
+
+[[bin]]
+name = "x509-builder-gen"
+path = "src/main.rs"
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl.workspace = true
+
+[lints]
+workspace = true

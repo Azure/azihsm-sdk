@@ -1229,15 +1229,36 @@ async fn get_establish_cred_encryption_key_verify_signature() {
     let pub_key_raw = data.pub_key.der.as_slice();
     let signature_raw = data.pub_key_signature.as_slice();
 
-    // 4. Hash the public key with SHA-384
+    // 4. Hash the public key with SHA-384.  Fw hashed the same
+    // wire-LE coordinate bytes (raw output of pub_key.der without
+    // post-decode), so we hash the same bytes the test reads.
     let digest = Hasher::hash_vec(&mut HashAlgo::sha384(), pub_key_raw).expect("sha384");
 
-    // 5. Verify signature: raw EC verify (digest, signature) with leaf key
+    // 5. Convert the wire-LE signature (r_le || s_le, P-384 → 48 +
+    // 48) into OpenSSL's BE `r || s`.  The DDI decoder is invoked
+    // with `post_decode = false`, so we re-do the LE→BE flip
+    // (equivalent of `ecc_signature_post_decode`) inline here.
+    assert_eq!(signature_raw.len(), 96, "P-384 wire signature length");
+    let mut signature_be = [0u8; 96];
+    for (dst, src) in signature_be[..48]
+        .iter_mut()
+        .zip(signature_raw[..48].iter().rev())
+    {
+        *dst = *src;
+    }
+    for (dst, src) in signature_be[48..96]
+        .iter_mut()
+        .zip(signature_raw[48..96].iter().rev())
+    {
+        *dst = *src;
+    }
+
+    // 6. Verify signature: raw EC verify (digest, signature) with leaf key.
     let result = Verifier::verify(
         &mut EccAlgo::default(),
         &verifier_key,
         &digest,
-        signature_raw,
+        &signature_be,
     );
     assert!(
         result.is_ok(),

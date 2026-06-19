@@ -3,8 +3,16 @@
 
 //! TOC (Table of Contents) entry types and wire-level helpers.
 //!
-//! Each TOC entry is a 32-bit little-endian word. The top 6 bits identify
-//! the entry type; the remaining 26 bits carry a type-specific encoding.
+//! Each TOC entry is a 32-bit word stored on the wire in **big-endian**
+//! byte order (matches the host-side codec at
+//! `ddi/tbor/codec/src/toc.rs`).  The top 6 bits identify the entry
+//! type; the remaining 26 bits carry a type-specific encoding.  All
+//! bit-shift extractions and packs in this module operate on the word
+//! after the BE load (`from_be_bytes`) or before the BE store
+//! (`to_be_bytes`), so the high bits of the in-memory `u32` are the
+//! first bits on the wire.
+
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 
 /// Maximum number of TOC entries per message.
 pub const MAX_TOC_ENTRIES: usize = 32;
@@ -79,7 +87,7 @@ pub enum TocEntry<'a> {
     /// Key identifier (type 1, inline 16-bit).
     KeyId(u16),
     /// Sealed key blob (type 2, offset/length).
-    SealedKey(&'a [u8]),
+    SealedKey(&'a DmaBuf),
     /// 8-bit unsigned integer (type 3, inline 8-bit).
     Uint8(u8),
     /// 16-bit unsigned integer (type 4, inline 16-bit).
@@ -89,11 +97,11 @@ pub enum TocEntry<'a> {
     /// 64-bit unsigned integer (type 6, offset/length, len must be 8).
     Uint64(u64),
     /// Variable-length byte buffer (type 7, offset/length).
-    Buffer(&'a [u8]),
+    Buffer(&'a DmaBuf),
     /// Absent value (type 8). Used as a placeholder for optional fields.
     None,
     /// Alignment padding (type 9, offset/length). Data bytes are ignored.
-    Padding(&'a [u8]),
+    Padding(&'a DmaBuf),
     /// Unrecognized entry type (10–63). Preserved for forward compatibility.
     Unknown { entry_type: u8, raw_bits: u32 },
 }
@@ -160,14 +168,17 @@ pub fn read_toc_inline_u16(buf: &[u8], header_len: usize, toc_index: usize) -> u
     raw_toc_inline_u16(read_toc_word(buf, header_len, toc_index))
 }
 
-/// Read a buffer slice from the data section via an offset/length TOC entry.
+/// Read a DMA-branded buffer slice from the data section via an
+/// offset/length TOC entry.  Sub-slicing a `&DmaBuf` preserves the
+/// brand so handlers can hand the result directly to PAL crypto
+/// primitives without copying.
 #[inline(always)]
 pub fn read_toc_buffer(
-    buf: &[u8],
+    buf: &DmaBuf,
     header_len: usize,
     toc_index: usize,
     data_start: usize,
-) -> &[u8] {
+) -> &DmaBuf {
     let word = read_toc_word(buf, header_len, toc_index);
     let length = raw_toc_length(word);
     let offset = raw_toc_offset(word);
@@ -177,16 +188,27 @@ pub fn read_toc_buffer(
 /// Read a uint32 from the data section via an offset/length TOC entry.
 #[inline(always)]
 pub fn read_toc_uint32(buf: &[u8], header_len: usize, toc_index: usize, data_start: usize) -> u32 {
-    let slice = read_toc_buffer(buf, header_len, toc_index, data_start);
-    u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
+    let word = read_toc_word(buf, header_len, toc_index);
+    let offset = raw_toc_offset(word);
+    let base = data_start + offset;
+    u32::from_le_bytes([buf[base], buf[base + 1], buf[base + 2], buf[base + 3]])
 }
 
 /// Read a uint64 from the data section via an offset/length TOC entry.
 #[inline(always)]
 pub fn read_toc_uint64(buf: &[u8], header_len: usize, toc_index: usize, data_start: usize) -> u64 {
-    let slice = read_toc_buffer(buf, header_len, toc_index, data_start);
+    let word = read_toc_word(buf, header_len, toc_index);
+    let offset = raw_toc_offset(word);
+    let base = data_start + offset;
     u64::from_le_bytes([
-        slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
+        buf[base],
+        buf[base + 1],
+        buf[base + 2],
+        buf[base + 3],
+        buf[base + 4],
+        buf[base + 5],
+        buf[base + 6],
+        buf[base + 7],
     ])
 }
 
@@ -234,7 +256,7 @@ pub fn write_toc_word(buf: &mut [u8], header_len: usize, toc_index: usize, word:
 /// (header, TOC count, offset/length bounds). It is used by `RequestView`
 /// and `ResponseView` iterators.
 pub fn decode_toc_entry<'a>(
-    buf: &'a [u8],
+    buf: &'a DmaBuf,
     header_len: usize,
     toc_index: usize,
     data_start: usize,

@@ -11,6 +11,7 @@
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_hsm.h"
 
 typedef struct
 {
@@ -45,6 +46,15 @@ static AIHSM_ENCODER_CTX *azihsm_ossl_encoder_newctx(AZIHSM_OSSL_PROV_CTX *provc
 
     if ((ectx = OPENSSL_zalloc(sizeof(AIHSM_ENCODER_CTX))) == NULL)
     {
+        return NULL;
+    }
+
+    /* Lazy HSM session open is deferred from query_operation to here so
+     * libcrypto can finish its own initialisation (e.g. DRBG bootstrap)
+     * without us re-entering it. */
+    if (azihsm_ensure_session(provctx) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(ectx);
         return NULL;
     }
 

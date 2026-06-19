@@ -13,6 +13,8 @@ use openssl::stack::Stack;
 #[cfg(target_os = "linux")]
 use openssl::x509::X509;
 #[cfg(target_os = "linux")]
+use openssl::x509::X509Req;
+#[cfg(target_os = "linux")]
 use openssl::x509::X509StoreContext;
 #[cfg(target_os = "linux")]
 use openssl::x509::store::X509StoreBuilder;
@@ -47,6 +49,12 @@ pub enum X509CertificateError {
 
     #[error("Failed to extract public key blob from certificate")]
     PublicKeyToDerError,
+
+    #[error("Failed to parse DER-encoded CSR")]
+    CsrDerParseError,
+
+    #[error("CSR self-signature verification failed")]
+    CsrVerifyError,
 }
 
 /// A trait defining common functions for `X509Certificate` objects that are
@@ -499,6 +507,292 @@ impl X509CertificateOp for X509Certificate {
     }
 }
 
+// ============================== X509Csr =================================== //
+
+/// A trait defining common functions for [`X509Csr`] objects.
+///
+/// Mirrors [`X509CertificateOp`] for PKCS#10 CertificationRequests
+/// (CSRs).  The Linux backend uses OpenSSL's `X509Req`; the Windows
+/// backend uses CNG's `CryptDecodeObjectEx` /
+/// `CryptVerifyCertificateSignatureEx`.
+pub trait X509CsrOp {
+    /// Parse a DER-encoded PKCS#10 CSR.
+    fn from_der(der_bytes: &[u8]) -> Result<X509Csr, X509CertificateError>;
+
+    /// Return the SubjectPublicKeyInfo of the CSR in DER form.
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError>;
+
+    /// Verify the CSR's self-signature against the embedded
+    /// SubjectPublicKeyInfo.  Returns `Ok(true)` only when the
+    /// signature is valid.
+    fn verify(&self) -> Result<bool, X509CertificateError>;
+}
+
+/// A struct representing a PKCS#10 CertificationRequest (CSR).
+pub struct X509Csr {
+    /// DER-encoded bytes of the CSR.
+    der: Vec<u8>,
+
+    /// OpenSSL `X509Req` handle (Linux only).
+    #[cfg(target_os = "linux")]
+    req: X509Req,
+}
+
+impl core::fmt::Debug for X509Csr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("X509Csr")
+            .field("der_len", &self.der.len())
+            .finish()
+    }
+}
+
+impl X509Csr {
+    /// Return the DER-encoded CSR as a byte slice.
+    pub fn as_der(&self) -> &[u8] {
+        &self.der
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl X509CsrOp for X509Csr {
+    /// Create a new [`X509Csr`] from a DER encoding via OpenSSL.
+    fn from_der(der_bytes: &[u8]) -> Result<Self, X509CertificateError> {
+        let req = X509Req::from_der(der_bytes).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::CsrDerParseError
+        })?;
+        Ok(Self {
+            der: der_bytes.to_vec(),
+            req,
+        })
+    }
+
+    /// Return the SubjectPublicKeyInfo of the CSR in DER form.
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError> {
+        let public_key = self.req.public_key().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::OSSLGetPublicKeyError
+        })?;
+        public_key
+            .public_key_to_der()
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                X509CertificateError::PublicKeyToDerError
+            })
+    }
+
+    /// Verify the CSR's self-signature against its embedded
+    /// SubjectPublicKeyInfo.
+    ///
+    /// Returns `Ok(true)` for a valid self-signature, `Ok(false)` for
+    /// a syntactically-well-formed CSR whose signature does not match
+    /// the embedded pubkey, and [`X509CertificateError::CsrVerifyError`]
+    /// when the OpenSSL verify call itself fails to run.
+    fn verify(&self) -> Result<bool, X509CertificateError> {
+        let public_key = self.req.public_key().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::OSSLGetPublicKeyError
+        })?;
+        self.req.verify(&public_key).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            X509CertificateError::CsrVerifyError
+        })
+    }
+}
+
+/// RAII wrapper around a `LocalAlloc`-backed pointer returned by
+/// `CryptDecodeObjectEx` when `CRYPT_DECODE_ALLOC_FLAG` is set; frees
+/// the buffer with `LocalFree` on drop.
+#[cfg(target_os = "windows")]
+struct LocalAllocBuf {
+    ptr: *mut core::ffi::c_void,
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for LocalAllocBuf {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe {
+                let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
+                    self.ptr,
+                ));
+            }
+        }
+    }
+}
+
+/// Decode `der` as the given CNG structure type using
+/// `CryptDecodeObjectEx` with `CRYPT_DECODE_ALLOC_FLAG`; on success
+/// returns the owning buffer plus a typed pointer into it (valid
+/// until the buffer is dropped).
+#[cfg(target_os = "windows")]
+fn decode_alloc<T>(
+    struct_type: windows::core::PCSTR,
+    der: &[u8],
+    map_err: X509CertificateError,
+) -> Result<(LocalAllocBuf, *const T), X509CertificateError> {
+    let mut out_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+    let mut out_len: u32 = 0;
+    let res = unsafe {
+        CryptDecodeObjectEx(
+            X509_ASN_ENCODING,
+            struct_type,
+            der,
+            CRYPT_DECODE_ALLOC_FLAG,
+            None,
+            Some(std::ptr::addr_of_mut!(out_ptr) as *mut core::ffi::c_void),
+            std::ptr::addr_of_mut!(out_len),
+        )
+    };
+    if res.is_err() || out_ptr.is_null() {
+        let err = unsafe { GetLastError() };
+        tracing::error!("CryptDecodeObjectEx failed: {:?}", err);
+        return Err(map_err);
+    }
+    let typed = out_ptr as *const T;
+    Ok((LocalAllocBuf { ptr: out_ptr }, typed))
+}
+
+#[cfg(target_os = "windows")]
+impl X509CsrOp for X509Csr {
+    /// Create a new [`X509Csr`] from a DER encoding via CNG.
+    ///
+    /// Validates the outer `CertificationRequest ::= SEQUENCE { TBS,
+    /// signatureAlgorithm, signature }` envelope and the inner
+    /// `CertificationRequestInfo` (CNG's `X509_CERT` +
+    /// `X509_CERT_REQUEST_TO_BE_SIGNED` structure types); the decoded
+    /// blobs are freed before returning and re-decoded lazily by the
+    /// other methods.
+    fn from_der(der_bytes: &[u8]) -> Result<Self, X509CertificateError> {
+        let (signed_buf, signed_ptr) = decode_alloc::<CERT_SIGNED_CONTENT_INFO>(
+            X509_CERT,
+            der_bytes,
+            X509CertificateError::CsrDerParseError,
+        )?;
+        let tbs_blob: CRYPT_INTEGER_BLOB = unsafe { (*signed_ptr).ToBeSigned };
+        let tbs_slice: &[u8] =
+            unsafe { std::slice::from_raw_parts(tbs_blob.pbData, tbs_blob.cbData as usize) };
+        let (_tbs_buf, _tbs_ptr) = decode_alloc::<CERT_REQUEST_INFO>(
+            X509_CERT_REQUEST_TO_BE_SIGNED,
+            tbs_slice,
+            X509CertificateError::CsrDerParseError,
+        )?;
+        drop(signed_buf);
+        Ok(Self {
+            der: der_bytes.to_vec(),
+        })
+    }
+
+    /// Return the SubjectPublicKeyInfo of the CSR in DER form.
+    fn get_public_key_der(&self) -> Result<Vec<u8>, X509CertificateError> {
+        let (signed_buf, signed_ptr) = decode_alloc::<CERT_SIGNED_CONTENT_INFO>(
+            X509_CERT,
+            &self.der,
+            X509CertificateError::CsrDerParseError,
+        )?;
+        let tbs_blob: CRYPT_INTEGER_BLOB = unsafe { (*signed_ptr).ToBeSigned };
+        let tbs_slice: &[u8] =
+            unsafe { std::slice::from_raw_parts(tbs_blob.pbData, tbs_blob.cbData as usize) };
+        let (tbs_buf, tbs_ptr) = decode_alloc::<CERT_REQUEST_INFO>(
+            X509_CERT_REQUEST_TO_BE_SIGNED,
+            tbs_slice,
+            X509CertificateError::CsrDerParseError,
+        )?;
+
+        let spki: CERT_PUBLIC_KEY_INFO = unsafe { (*tbs_ptr).SubjectPublicKeyInfo };
+
+        // Two-pass CryptEncodeObjectEx — same idiom as
+        // X509Certificate::get_public_key_der above.
+        let mut out_len: u32 = 0;
+        let res = unsafe {
+            CryptEncodeObjectEx(
+                X509_ASN_ENCODING,
+                X509_PUBLIC_KEY_INFO,
+                std::ptr::addr_of!(spki) as *const core::ffi::c_void,
+                CRYPT_ENCODE_OBJECT_FLAGS(0),
+                None,
+                None,
+                std::ptr::addr_of_mut!(out_len),
+            )
+        };
+        if res.is_err() {
+            tracing::error!("CryptEncodeObjectEx (sizing) failed: {:?}", res);
+            return Err(X509CertificateError::PublicKeyToDerError);
+        }
+        let mut spki_der: Vec<u8> = vec![0u8; out_len as usize];
+        let res = unsafe {
+            CryptEncodeObjectEx(
+                X509_ASN_ENCODING,
+                X509_PUBLIC_KEY_INFO,
+                std::ptr::addr_of!(spki) as *const core::ffi::c_void,
+                CRYPT_ENCODE_OBJECT_FLAGS(0),
+                None,
+                Some(spki_der.as_mut_ptr() as *mut core::ffi::c_void),
+                std::ptr::addr_of_mut!(out_len),
+            )
+        };
+        if res.is_err() {
+            tracing::error!("CryptEncodeObjectEx (encode) failed: {:?}", res);
+            return Err(X509CertificateError::PublicKeyToDerError);
+        }
+        spki_der.truncate(out_len as usize);
+
+        drop(tbs_buf);
+        drop(signed_buf);
+        Ok(spki_der)
+    }
+
+    /// Verify the CSR's self-signature against its embedded
+    /// SubjectPublicKeyInfo via `CryptVerifyCertificateSignatureEx`.
+    ///
+    /// Returns `Ok(true)` for a valid self-signature, `Ok(false)`
+    /// when CNG reports `NTE_BAD_SIGNATURE`, and
+    /// [`X509CertificateError::CsrVerifyError`] for any other failure.
+    fn verify(&self) -> Result<bool, X509CertificateError> {
+        let (signed_buf, signed_ptr) = decode_alloc::<CERT_SIGNED_CONTENT_INFO>(
+            X509_CERT,
+            &self.der,
+            X509CertificateError::CsrDerParseError,
+        )?;
+        let tbs_blob: CRYPT_INTEGER_BLOB = unsafe { (*signed_ptr).ToBeSigned };
+        let tbs_slice: &[u8] =
+            unsafe { std::slice::from_raw_parts(tbs_blob.pbData, tbs_blob.cbData as usize) };
+        let (tbs_buf, tbs_ptr) = decode_alloc::<CERT_REQUEST_INFO>(
+            X509_CERT_REQUEST_TO_BE_SIGNED,
+            tbs_slice,
+            X509CertificateError::CsrDerParseError,
+        )?;
+        let mut spki: CERT_PUBLIC_KEY_INFO = unsafe { (*tbs_ptr).SubjectPublicKeyInfo };
+
+        let mut der_blob = CRYPT_INTEGER_BLOB {
+            cbData: self.der.len() as u32,
+            pbData: self.der.as_ptr() as *mut u8,
+        };
+        let res = unsafe {
+            CryptVerifyCertificateSignatureEx(
+                HCRYPTPROV_LEGACY::default(),
+                X509_ASN_ENCODING,
+                CRYPT_VERIFY_CERT_SIGN_SUBJECT_BLOB,
+                std::ptr::addr_of_mut!(der_blob) as *const core::ffi::c_void,
+                CRYPT_VERIFY_CERT_SIGN_ISSUER_PUBKEY,
+                Some(std::ptr::addr_of_mut!(spki) as *const core::ffi::c_void),
+                CRYPT_VERIFY_CERT_FLAGS(0),
+                None,
+            )
+        };
+        drop(tbs_buf);
+        drop(signed_buf);
+
+        match res {
+            Ok(()) => Ok(true),
+            Err(e) if e.code() == windows::Win32::Foundation::NTE_BAD_SIGNATURE => Ok(false),
+            Err(e) => {
+                tracing::error!("CryptVerifyCertificateSignatureEx failed: {:?}", e);
+                Err(X509CertificateError::CsrVerifyError)
+            }
+        }
+    }
+}
 // ================================= Tests ================================== //
 /// Tests to exercise the x509 certificate functionality implemented above.
 #[cfg(test)]
@@ -958,5 +1252,72 @@ qUzzk3pb
         // parsed from its DER format into a usable key. The
         // `EccPublicKey::from_der` function would have thrown an error if
         // parsing failed.
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod csr_tests {
+    use openssl::ec::EcGroup;
+    use openssl::ec::EcKey;
+    use openssl::hash::MessageDigest;
+    use openssl::nid::Nid;
+    use openssl::pkey::PKey;
+    use openssl::x509::X509Name;
+    use openssl::x509::X509ReqBuilder;
+
+    use super::*;
+
+    /// Build a self-signed ECDSA-P384 CSR for testing.
+    fn build_p384_csr() -> Vec<u8> {
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let ec_key = EcKey::generate(&group).unwrap();
+        let pkey = PKey::from_ec_key(ec_key).unwrap();
+
+        let mut name = X509Name::builder().unwrap();
+        name.append_entry_by_text("CN", "test-csr").unwrap();
+        let name = name.build();
+
+        let mut builder = X509ReqBuilder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder.sign(&pkey, MessageDigest::sha384()).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
+    #[test]
+    fn x509csr_parses_and_self_verifies() {
+        let der = build_p384_csr();
+        let csr = X509Csr::from_der(&der).expect("CSR parses");
+        assert_eq!(csr.as_der(), der.as_slice());
+        assert!(csr.verify().expect("verify runs"), "self-signature valid");
+        let spki = csr.get_public_key_der().expect("SPKI extracts");
+        assert!(!spki.is_empty(), "SPKI non-empty");
+    }
+
+    #[test]
+    fn x509csr_rejects_garbage_der() {
+        let err = X509Csr::from_der(&[0u8; 16]).expect_err("garbage rejected");
+        assert_eq!(err, X509CertificateError::CsrDerParseError);
+    }
+
+    #[test]
+    fn x509csr_rejects_tampered_signature() {
+        let mut der = build_p384_csr();
+        // Flip a byte in the BIT STRING signature tail.
+        let last = der.len() - 1;
+        der[last] ^= 0x01;
+        // The CSR may still parse (signature isn't validated at parse
+        // time) but `verify` must return Ok(false) or
+        // CsrVerifyError — both signal "not valid".
+        match X509Csr::from_der(&der) {
+            Ok(csr) => {
+                let v = csr.verify();
+                assert!(
+                    matches!(v, Ok(false) | Err(X509CertificateError::CsrVerifyError)),
+                    "tampered CSR must not verify: {v:?}",
+                );
+            }
+            Err(e) => assert_eq!(e, X509CertificateError::CsrDerParseError),
+        }
     }
 }

@@ -97,6 +97,12 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::_HmacSha384 => 48,
         HsmVaultKeyKind::_HmacSha512 => 64,
         HsmVaultKeyKind::MaskingKey => 80,
+        HsmVaultKeyKind::PartitionTrustAnchor => 48,
+        HsmVaultKeyKind::PartitionUniqueMachineSecret => 48,
+        // SessionCu is length-discriminated by session type
+        // (PlainText=168, Authenticated=264); reported as variable
+        // length, same handling as VarLenHmac*.
+        HsmVaultKeyKind::SessionCu => return None,
         // Variable-length HMAC — size depends on actual key.
         HsmVaultKeyKind::VarLenHmacSha256
         | HsmVaultKeyKind::VarLenHmacSha384
@@ -121,6 +127,7 @@ fn fw_storage_cost(kind: HsmVaultKeyKind, actual_len: usize) -> Option<usize> {
             HsmVaultKeyKind::VarLenHmacSha256
                 | HsmVaultKeyKind::VarLenHmacSha384
                 | HsmVaultKeyKind::VarLenHmacSha512
+                | HsmVaultKeyKind::SessionCu
         ) =>
         {
             actual_len
@@ -604,6 +611,8 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha384, 48),
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
+            (HsmVaultKeyKind::PartitionTrustAnchor, 48),
+            (HsmVaultKeyKind::PartitionUniqueMachineSecret, 48),
         ];
         for &(kind, expected) in cases {
             assert_eq!(

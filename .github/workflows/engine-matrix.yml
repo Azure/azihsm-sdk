@@ -1,0 +1,104 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Builds the OpenSSL 1.1.x ENGINE (plugins/ossl_engine) against each cell's
+# system OpenSSL and verifies it loads via `openssl engine -t`.  Each cell is
+# its own job and shows up as its own PR check.
+#
+# The engine targets the legacy 1.1 ABI the provider can't serve; only
+# Ubuntu 20.04 (OpenSSL 1.1.1f) for now, further 1.1.x distros can be added
+# as cells.
+
+name: Engine matrix
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+defaults:
+  run:
+    # Explicit bash for `run:` steps so the workflow behaves the same on
+    # GHA (where bash is the Linux default anyway) and under `act` (which
+    # falls back to /bin/sh).
+    shell: bash
+
+jobs:
+  matrix:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: u2004
+            label:  Ubuntu 20.04 (OpenSSL 1.1.1f)
+            image:  ubuntu:20.04
+
+    steps:
+      # clang/libclang-dev are for bindgen (openssl-sys-engine build.rs).
+      # DEBIAN_FRONTEND: 20.04's tzdata otherwise blocks on an interactive
+      # timezone prompt during install.
+      # Node 20 via the NodeSource apt repo (signature-verified against its
+      # keyring): 20.04's apt nodejs is Node 10, too old for the JS actions
+      # when run under `act` (GHA injects its own node).
+      - name: Bootstrap
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git gnupg \
+            build-essential pkg-config clang libclang-dev \
+            openssl libssl-dev
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update
+          apt-get install -y --no-install-recommends nodejs
+
+      - uses: actions/checkout@v6
+
+      - name: Show OpenSSL version
+        run: openssl version
+
+      # Plain distro containers ship no rustup.  Install it with no default
+      # toolchain so rust-toolchain.toml stays the single source of the
+      # toolchain version (rustup auto-installs it on the first cargo call).
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: engine-${{ matrix.distro }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: engine-${{ matrix.distro }}-
+
+      - name: Build engine
+        run: |
+          cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+            --features engine
+
+      # Without the `engine` feature the crates are empty stubs (that's what
+      # the workspace-wide clippy in rust.yml lints), so lint the real thing
+      # here.  The minimal-profile toolchain ships without clippy; add it first.
+      - name: Clippy engine
+        run: |
+          cargo xtask rustup-component-add --component clippy
+          cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+            --features engine --all-targets -- -D warnings
+
+      - name: Load engine
+        run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"

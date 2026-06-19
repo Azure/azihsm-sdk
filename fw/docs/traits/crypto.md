@@ -53,7 +53,6 @@ impl HsmEccCurve {
     pub fn pub_key_len(&self) -> usize;      // priv_key_len * 2
     pub fn sig_len(&self) -> usize;          // priv_key_len * 2 (r∥s)
     pub fn secret_len(&self) -> usize;       // priv_key_len
-    pub fn priv_key_der_max(&self) -> usize; // PKCS#8 DER max size
 }
 
 pub enum HsmEccPct { None, SignVerify, KeyAgreement }
@@ -81,7 +80,7 @@ pub trait HsmEcc {
 }
 ```
 
-Key parameters are `&[u8]` byte slices: PKCS#8 DER for private keys, raw x∥y coordinates for public keys, raw r∥s for signatures.
+Key parameters are `&[u8]` byte slices: raw HSM-format scalar `d` for private keys (32/48/68 bytes, P-521 4-byte aligned), raw x∥y little-endian coordinates for public keys, raw r∥s for signatures.
 
 **PCT (Pairwise Consistency Test):** After key generation, a self-test is performed:
 - `SignVerify` — sign + verify a test message

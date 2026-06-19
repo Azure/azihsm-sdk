@@ -13,9 +13,9 @@ pub struct DdiKbkdfCounterHmacDeriveReq<'a> {
     #[ddi(id = 2)]
     pub hash_algorithm: DdiHashAlgorithm,
     #[ddi(id = 3, max_len = 256)]
-    pub label: Option<&'a DmaBuf>,
+    pub label: Option<&'a mut DmaBuf>,
     #[ddi(id = 4, max_len = 256)]
-    pub context: Option<&'a DmaBuf>,
+    pub context: Option<&'a mut DmaBuf>,
     #[ddi(id = 5)]
     pub key_type: DdiKeyType,
     #[ddi(id = 6)]

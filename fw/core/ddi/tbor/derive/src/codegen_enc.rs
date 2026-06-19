@@ -822,7 +822,19 @@ fn gen_frame_accessor(field: &SchemaField, toc_index: usize, schema: &Schema) ->
                     quote! { azihsm_fw_ddi_tbor::toc::read_toc_uint64(self.buf, #header_len, #toc_index, #ds) }
                 }
                 _ => {
-                    quote! { azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, #header_len, #toc_index, #ds) }
+                    // Frame.buf is `&[u8]` (the encoder's raw backing
+                    // buffer is not DMA-branded), so inline the slice
+                    // extraction rather than calling the codec's
+                    // `&DmaBuf`-typed `read_toc_buffer`.
+                    quote! {
+                        {
+                            let word = azihsm_fw_ddi_tbor::toc::read_toc_word(self.buf, #header_len, #toc_index);
+                            let length = azihsm_fw_ddi_tbor::toc::raw_toc_length(word);
+                            let offset = azihsm_fw_ddi_tbor::toc::raw_toc_offset(word);
+                            let ds = #ds;
+                            &self.buf[ds + offset..ds + offset + length]
+                        }
+                    }
                 }
             }
         }

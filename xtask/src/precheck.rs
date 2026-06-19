@@ -74,6 +74,9 @@ pub struct Precheck {
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
+    /// Skip cleaning existing llvm-cov artifacts before running coverage
+    #[clap(long)]
+    pub skip_clean: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -141,7 +144,11 @@ impl Xtask for Precheck {
 
         // Run ValidateMembers
         if stage.validate_members || stage.all {
-            ValidateMembers { fix: false }.run(ctx.clone())?;
+            ValidateMembers {
+                fix: false,
+                skip_taplo: self.skip_taplo,
+            }
+            .run(ctx.clone())?;
         }
 
         // Run Audit
@@ -181,7 +188,6 @@ impl Xtask for Precheck {
 
                 #[cfg(not(target_os = "windows"))]
                 {
-<<<<<<< HEAD
                     // Run azihsm_ddi mock tests
                     let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
                     run_tests(ddi_tests, false, ctx.clone())?;
@@ -191,44 +197,6 @@ impl Xtask for Precheck {
                     if !self.skip_integration {
                         integration_tests::IntegrationTest { coverage: false }.run(ctx.clone())?;
                     }
-=======
-                    // SDK Run azihsm_ddi_mbor_types mock tests table-4
-                    Nextest {
-                        features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi_mbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi_mbor_types mock tests table-64
-                    Nextest {
-                        features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi_mbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self
-                            .profile
-                            .clone()
-                            .or(Some("ci-mock-table-64".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi_tbor_types tests through the emu
-                    // backend (in-process firmware).
-                    Nextest {
-                        features: Some("emu".to_string()),
-                        package: Some("azihsm_ddi_tbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
->>>>>>> main
                 }
             } else {
                 Nextest {
@@ -265,6 +233,7 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
+                    skip_clean: self.skip_clean,
                 }
                 .run(ctx.clone())?;
             }

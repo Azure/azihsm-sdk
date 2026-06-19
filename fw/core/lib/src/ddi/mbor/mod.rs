@@ -1,32 +1,102 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub(crate) mod aes_encrypt_decrypt;
+pub(crate) mod aes_generate_key;
+pub(crate) mod close_session;
+pub(crate) mod delete_key;
+pub(crate) mod ecc_generate_key_pair;
+pub(crate) mod ecc_sign;
+pub(crate) mod ecdh_key_exchange;
+pub(crate) mod establish_credential;
+pub(crate) mod from_ddi;
+pub(crate) mod from_pal;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
 pub(crate) mod get_device_info;
 pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod get_sealed_bk3;
+pub(crate) mod get_session_encryption_key;
+pub(crate) mod hkdf_derive;
+pub(crate) mod hmac;
 pub(crate) mod init_bk3;
+pub(crate) mod kbkdf_derive;
+pub(crate) mod kdf;
+pub(crate) mod key_attrs;
+pub(crate) mod open_session;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
+pub(crate) use aes_encrypt_decrypt::*;
+pub(crate) use aes_generate_key::*;
 use azihsm_fw_ddi_mbor::*;
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
+pub(crate) use close_session::*;
+pub(crate) use delete_key::*;
+pub(crate) use ecc_generate_key_pair::*;
+pub(crate) use ecc_sign::*;
+pub(crate) use ecdh_key_exchange::*;
+pub(crate) use establish_credential::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;
 pub(crate) use get_device_info::*;
 pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use get_sealed_bk3::*;
+pub(crate) use get_session_encryption_key::*;
+pub(crate) use hkdf_derive::*;
+pub(crate) use hmac::*;
 pub(crate) use init_bk3::*;
+pub(crate) use kbkdf_derive::*;
+pub(crate) use open_session::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
 
 use super::*;
+
+/// Minimum DDI API revision accepted by this firmware.
+pub(crate) const DDI_API_REV_MIN: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+
+/// Maximum DDI API revision accepted by this firmware.
+pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+
+/// User credential field length (user ID or PIN) — one AES block.
+///
+/// Shared by [`establish_credential`] and [`open_session`] for the
+/// all-zero sentinel check on decrypted credential plaintext.
+pub(crate) const CRED_FIELD_LEN: usize = 16;
+
+/// Partition / session `BK` and `MK` length — 80 bytes = 32-byte
+/// AES-256 key ‖ 48-byte HMAC-SHA-384 key.  Matches the HKDF-Expand
+/// OKM length used for the credential keys and the masked-key
+/// envelope plaintext size used to wrap MK / MK_SESSION.
+pub(crate) const BK_LEN: usize =
+    azihsm_fw_core_crypto_key_masking::cbc::MASKING_KEY_AES_CBC_256_HMAC_384_LEN;
+
+/// Central DDI API revision check.
+///
+/// All commands except [`DdiOp::GetApiRev`] must carry `hdr.rev` set to a
+/// supported revision. `GetApiRev` is the bootstrap command — the host
+/// does not yet know the supported revision, so its `hdr.rev` must be
+/// `None` (enforced inside its handler).
+///
+/// Returns [`HsmError::UnsupportedRevision`] if `hdr.rev` is missing or
+/// outside the supported range.
+#[inline]
+fn check_api_rev(hdr: &DdiReqHdr) -> HsmResult<()> {
+    if hdr.op == DdiOp::GetApiRev {
+        return Ok(());
+    }
+    let rev = hdr.rev.ok_or(HsmError::UnsupportedRevision)?;
+    if rev < DDI_API_REV_MIN || rev > DDI_API_REV_MAX {
+        return Err(HsmError::UnsupportedRevision);
+    }
+    Ok(())
+}
 
 /// Dispatch a DDI command to its handler.
 ///
@@ -42,6 +112,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
 ) -> HsmResult<&'p DmaBuf> {
+    check_api_rev(hdr)?;
+
     match hdr.op {
         DdiOp::GetApiRev => get_api_rev(pal, io, decoder, hdr),
         DdiOp::GetDeviceInfo => get_device_info(pal, io, decoder, hdr),
@@ -51,9 +123,22 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetEstablishCredEncryptionKey => {
             get_establish_cred_encryption_key(pal, io, decoder, hdr).await
         }
+        DdiOp::GetSessionEncryptionKey => get_session_encryption_key(pal, io, decoder, hdr).await,
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
+        DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
+        DdiOp::OpenSession => open_session(pal, io, decoder, hdr).await,
+        DdiOp::CloseSession => close_session(pal, io, decoder, hdr),
+        DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr),
+        DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
+        DdiOp::AesEncryptDecrypt => aes_encrypt_decrypt(pal, io, decoder, hdr).await,
+        DdiOp::EccGenerateKeyPair => ecc_generate_key_pair(pal, io, decoder, hdr).await,
+        DdiOp::EccSign => ecc_sign(pal, io, decoder, hdr).await,
+        DdiOp::EcdhKeyExchange => ecdh_key_exchange(pal, io, decoder, hdr).await,
+        DdiOp::HkdfDerive => hkdf_derive(pal, io, decoder, hdr).await,
+        DdiOp::KbkdfCounterHmacDerive => kbkdf_counter_hmac_derive(pal, io, decoder, hdr).await,
+        DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -101,6 +186,21 @@ pub(crate) fn success_hdr(req: &DdiReqHdr, op: DdiOp) -> DdiRespHdr {
         rev: req.rev,
         op,
         sess_id: None,
+        status: 0, // DDI Success
+        fips_approved: false,
+    }
+}
+
+/// Build a success [`DdiRespHdr`] for a session-bearing command.
+///
+/// Use this for handlers whose response header must carry the session
+/// id the command opened or closed (e.g. `OpenSession` returns the
+/// freshly-allocated id; `CloseSession` echoes the closed id back).
+pub(crate) fn success_hdr_sess(req: &DdiReqHdr, op: DdiOp, sess_id: u16) -> DdiRespHdr {
+    DdiRespHdr {
+        rev: req.rev,
+        op,
+        sess_id: Some(sess_id),
         status: 0, // DDI Success
         fips_approved: false,
     }

@@ -2,9 +2,9 @@ name: "CodeQL Advanced"
 
 on:
   push:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   pull_request:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
@@ -69,6 +69,7 @@ jobs:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
         queries: security-extended,security-and-quality
+        config-file: ./.github/codeql/codeql-config.yml
       env:
         CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test"
         CODEQL_ACTION_FILE_COVERAGE_ON_PRS: "true"

@@ -42,6 +42,22 @@ pub enum DecodeError {
     InvalidNonePayload { entry_index: usize, raw_bits: u32 },
     /// Invalid enum discriminant value.
     InvalidEnumValue { field: &'static str, value: u32 },
+    /// Response carries a non-zero firmware status code (a typed
+    /// [`HsmError`](azihsm_fw_hsm_pal_traits::HsmError) discriminant
+    /// emitted by the FW dispatcher via `encode_tbor_err`). Surfaced
+    /// by typed `decode_response` so that host callers can recover the
+    /// specific FW error instead of silently accepting the placeholder
+    /// error envelope or failing with a generic `UnexpectedTocType`.
+    FwError(u32),
+    /// Data-section TOC offsets are not monotonically non-decreasing
+    /// across consecutive fields. Raised only by the `decode_mut`
+    /// fast path, which performs a single forward `split_at_mut`
+    /// pass and therefore requires field regions to be ordered by
+    /// offset (the canonical encoder always produces this layout).
+    NonMonotonicTocOffsets {
+        prev_entry: usize,
+        curr_entry: usize,
+    },
 }
 
 /// Wire-level encode errors.
@@ -149,6 +165,19 @@ impl core::fmt::Display for DecodeError {
             }
             Self::InvalidEnumValue { field, value } => {
                 write!(f, "invalid enum value for '{}': {}", field, value)
+            }
+            Self::FwError(status) => {
+                write!(f, "firmware returned error status 0x{:08X}", status)
+            }
+            Self::NonMonotonicTocOffsets {
+                prev_entry,
+                curr_entry,
+            } => {
+                write!(
+                    f,
+                    "non-monotonic TOC offsets between entries {} and {}",
+                    prev_entry, curr_entry
+                )
             }
         }
     }

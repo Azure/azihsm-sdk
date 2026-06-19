@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   pull_request:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   merge_group:
-    branches: [ main, dev, fw ]
+    branches: [ main, dev, fw, tbor-hsm ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
@@ -66,6 +66,9 @@ jobs:
       id: test-tbor-emu
       run: cargo xtask precheck --nextest --package azihsm_ddi_tbor_types --features emu --profile ci-tbor-emu
       continue-on-error: true
+    - name: Free target/ before coverage build
+      # Freeing target/ directory to ensure disk space for coverage report generation
+      run: rm -rf target/debug target/tmp
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
       run: cargo xtask precheck --coverage --skip-integration
@@ -219,7 +222,7 @@ jobs:
 
   build_windows:
 
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:

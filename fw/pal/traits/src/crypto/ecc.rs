@@ -43,7 +43,25 @@ pub enum HsmEccCurve {
 }
 
 impl HsmEccCurve {
-    /// Return the size in bytes of the private key for this curve.
+    /// Return the **raw cryptographic** scalar / coordinate length in
+    /// bytes for this curve (i.e. `ceil(bit_size / 8)`).
+    ///
+    /// This is the natural mathematical size of a single field element
+    /// (private scalar, X coordinate, Y coordinate, or ECDSA `r`/`s`
+    /// component) before any hardware alignment padding is applied.
+    ///
+    /// | Curve  | Raw |
+    /// |--------|-----|
+    /// | P-256  | 32  |
+    /// | P-384  | 48  |
+    /// | P-521  | 66  |
+    ///
+    /// **This is _not_ the on-wire/HSM serialized size.**  Use
+    /// [`HsmEccCurve::wire_coord_len`] /
+    /// [`HsmEccCurve::wire_priv_key_len`] /
+    /// [`HsmEccCurve::wire_pub_key_len`] /
+    /// [`HsmEccCurve::wire_sig_len`] to size buffers exchanged with
+    /// the driver, the PAL, or any HSM-format consumer.
     pub fn priv_key_len(&self) -> usize {
         match self {
             HsmEccCurve::P256 => 32,
@@ -52,42 +70,86 @@ impl HsmEccCurve {
         }
     }
 
-    /// Return the public key size in bytes (X + Y coordinates).
+    /// Return the **raw cryptographic** public-key length in bytes
+    /// (`X || Y`, each [`HsmEccCurve::priv_key_len`] bytes).
     ///
-    /// Public keys are represented as the concatenation of the X and Y
-    /// coordinates, each of which is `priv_key_len()` bytes.
+    /// **This is _not_ the on-wire/HSM size.**  See
+    /// [`HsmEccCurve::wire_pub_key_len`].
     pub fn pub_key_len(&self) -> usize {
         self.priv_key_len() * 2
     }
 
-    /// Return the ECDSA signature size in bytes (R + S values).
+    /// Return the **wire-format / HSM-serialized** private-key length
+    /// in bytes — the size of an HSM-format private scalar buffer.
     ///
-    /// ECDSA signatures are represented as the concatenation of the R and S
-    /// values, each of which is `priv_key_len()` bytes.
+    /// Alias of [`HsmEccCurve::wire_coord_len`] kept for caller-site
+    /// clarity (private keys are a single padded scalar; this name
+    /// makes intent explicit at allocation sites).  Matches
+    /// `azihsm_crypto`'s `ExportableHsmKey::hsm_bytes_len` /
+    /// `to_hsm_bytes` output for an ECC private key.
+    ///
+    /// Per-curve sizes (P-256 → 32, P-384 → 48, P-521 → 68).
+    pub fn wire_priv_key_len(&self) -> usize {
+        self.wire_coord_len()
+    }
+
+    /// Raw cryptographic signature length.  See
+    /// [`HsmEccCurve::wire_sig_len`] for the HSM/wire-format size.
     pub fn sig_len(&self) -> usize {
         self.priv_key_len() * 2
     }
 
-    /// Return the ECDH shared secret size in bytes.
+    /// Return the **wire-format / HSM-serialized** coordinate or
+    /// signature-component length in bytes.
     ///
-    /// The shared secret derived from ECDH is the same length as the private
-    /// key for the selected curve.
-    pub fn secret_len(&self) -> usize {
-        self.priv_key_len()
+    /// The HSM serializes every scalar / coordinate / signature
+    /// component padded up to a 4-byte (32-bit) PKA word boundary so
+    /// that DMA transfers from the PKA engine are word-aligned.
+    /// P-256 and P-384 are already word-aligned, so their wire size
+    /// equals [`HsmEccCurve::priv_key_len`].  P-521's 66-byte raw
+    /// component is zero-padded to 68 bytes on the wire.
+    ///
+    /// | Curve  | Raw | Wire |
+    /// |--------|-----|------|
+    /// | P-256  | 32  | 32   |
+    /// | P-384  | 48  | 48   |
+    /// | P-521  | 66  | 68   |
+    ///
+    /// This is the single source of truth for sizing any buffer that
+    /// crosses the PAL boundary — private-key scratch, public-key
+    /// scratch, signature scratch — and matches
+    /// `azihsm_crypto`'s `ExportableHsmKey::hsm_bytes_len` /
+    /// `to_hsm_bytes` output.
+    pub fn wire_coord_len(&self) -> usize {
+        match self {
+            HsmEccCurve::P521 => 68,
+            _ => self.priv_key_len(),
+        }
     }
 
-    /// Maximum PKCS#8 DER size for a private key on this curve.
-    ///
-    /// Callers use this to allocate buffers for
-    /// [`ecc_gen_keypair`](HsmEcc::ecc_gen_keypair).
-    ///
-    /// TODO: Remove this
-    pub fn priv_key_der_max(&self) -> usize {
-        match self {
-            HsmEccCurve::P256 => 138,
-            HsmEccCurve::P384 => 185,
-            HsmEccCurve::P521 => 241,
-        }
+    /// Return the OKM byte length required for FIPS 186-5 §A.2.1
+    /// extra-random-bits deterministic key generation.
+    pub fn a2_1_okm_len(&self) -> usize {
+        self.wire_coord_len() + 8
+    }
+
+    /// Return the wire-format public-key byte length (two padded
+    /// coordinates: `X || Y`).  See [`HsmEccCurve::wire_coord_len`].
+    pub fn wire_pub_key_len(&self) -> usize {
+        self.wire_coord_len() * 2
+    }
+
+    /// Return the wire-format ECDSA signature byte length (two padded
+    /// components: `r || s`).  See [`HsmEccCurve::wire_coord_len`].
+    pub fn wire_sig_len(&self) -> usize {
+        self.wire_coord_len() * 2
+    }
+
+    /// Return the ECDH shared-secret length in bytes (raw X
+    /// coordinate, no padding — this matches the cryptographic
+    /// definition, not the HSM wire format).
+    pub fn secret_len(&self) -> usize {
+        self.priv_key_len()
     }
 }
 
@@ -118,32 +180,72 @@ pub enum HsmEccPct {
 /// format — not DER — sized per [`HsmEccCurve::priv_key_len`] /
 /// [`HsmEccCurve::pub_key_len`].
 pub trait HsmEcc {
-    /// Generates an ECC key pair on the chosen curve and writes
-    /// `priv_key || pub_key` contiguously into `key_out`.
+    /// Generates an ECC key pair on the chosen curve, optionally
+    /// writing the keys into caller-provided buffers.
+    ///
+    /// Uses the canonical query-alloc-use workflow:
+    ///
+    /// 1. **Query** — call with `out = None`.  No key generation
+    ///    happens; the method returns `(priv_len, pub_len)` byte
+    ///    counts the caller must allocate.  Both are deterministic
+    ///    per-curve: `priv_len = HsmEccCurve::wire_coord_len(curve)`
+    ///    (raw HSM scalar — 32 / 48 / 68 bytes) and
+    ///    `pub_len = HsmEccCurve::wire_pub_key_len(curve)`.
+    /// 2. **Alloc** — caller allocates two DMA buffers of those
+    ///    sizes.
+    /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.
+    ///    The method generates a fresh keypair (using `alloc` for
+    ///    any internal contiguous PKA scratch), writes the raw
+    ///    HSM-format private scalar into `priv_out[..priv_len]` and
+    ///    the wire-format LE public key into `pub_out[..pub_len]`,
+    ///    and returns the same lengths reported by the query call.
     ///
     /// # Parameters
     ///
     /// - `io` — caller's I/O context (per-IO scope).
+    /// - `alloc` — scoped allocator used by the implementation for
+    ///   any internal scratch (e.g. the contiguous `priv || pub`
+    ///   buffer real PKA hardware emits before the bytes are split
+    ///   into the caller's two output slots).  Unused in query
+    ///   mode.
     /// - `curve` — NIST curve selector.
-    /// - `key_out` — output buffer; must be at least
-    ///   `curve.priv_key_len() + curve.pub_key_len()` bytes.  On
-    ///   success, `key_out[..nsk]` holds the private scalar and
-    ///   `key_out[nsk..nsk+npk]` holds the uncompressed public point
-    ///   (`x || y`).
+    /// - `out` — `None` to query buffer sizes; `Some((priv_out,
+    ///   pub_out))` to actually generate.  Each output buffer must
+    ///   be at least as large as the corresponding length returned
+    ///   by an earlier query call.
     /// - `pct` — pairwise consistency test selector.
     ///
     /// # Returns
     ///
-    /// - `Ok((priv_key, pub_key))` — borrowed views into `key_out`.
-    /// - `Err(HsmError::InvalidArg)` — `key_out` too small.
-    /// - `Err(HsmError)` — PKA / RNG / PCT failure.
-    async fn ecc_gen_keypair<'a>(
+    /// - `Ok((priv_len, pub_len))` — in query mode, the upper-bound
+    ///   sizes the caller must allocate; in use mode, the actual
+    ///   bytes written into `priv_out` / `pub_out` (always `≤` the
+    ///   query bounds).
+    /// - `Err(HsmError::InvalidArg)` — `out` is `Some` and one of
+    ///   the buffers is shorter than the required length.
+    /// - `Err(HsmError)` — PKA / RNG / PCT / DMA failure.
+    async fn ecc_gen_keypair(
         &self,
         io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
-        key_out: &'a mut DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         pct: HsmEccPct,
-    ) -> HsmResult<(&'a DmaBuf, &'a DmaBuf)>;
+    ) -> HsmResult<(usize, usize)>;
+
+    /// Derive an ECC keypair deterministically from `okm` (output
+    /// keying material from a KDF), per FIPS 186-5 §A.2.1 / SP
+    /// 800-133r2 §6.2.3. `okm.len()` must be
+    /// `curve.wire_coord_len() + 8` bytes.
+    async fn ecc_gen_keypair_from_okm(
+        &self,
+        io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
+        curve: HsmEccCurve,
+        okm: &DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
+        pct: HsmEccPct,
+    ) -> HsmResult<(usize, usize)>;
 
     /// Raw EC sign over a pre-computed message digest.
     ///
@@ -154,16 +256,26 @@ pub trait HsmEcc {
     ///
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `curve` — NIST curve the private key is on.
-    /// - `priv_key` — signing key; must be exactly
-    ///   `curve.priv_key_len()` bytes.
-    /// - `hash` — message digest to sign.  Truncated or zero-padded
-    ///   internally if shorter/longer than the curve's order.
-    /// - `signature` — output buffer; must be at least
-    ///   `curve.sig_len()` bytes (`r || s`).
+    /// - `priv_key` — signing key in raw HSM-format scalar bytes
+    ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
+    /// - `hash` — message digest to sign, in **little-endian** byte
+    ///   order to match the wire-native format produced by real PKA
+    ///   hardware.  Must contain exactly the digest's native length
+    ///   (e.g. 32 bytes for SHA-256, 64 bytes for SHA-512); ECDSA
+    ///   truncates internally if longer than the curve's order.
+    ///   Implementations that delegate to a big-endian-native
+    ///   primitive (e.g. OpenSSL) must reverse the bytes internally.
+    /// - `signature` — output buffer.  On return, holds `r || s`
+    ///   with **each component in little-endian** byte order — the
+    ///   wire-native format produced by real PKA hardware.  P-521
+    ///   components occupy 68 bytes each (66 real + 2-byte trailing
+    ///   zero pad) for 32-bit word alignment.  Required length is
+    ///   `HsmEccCurve::wire_sig_len(curve)`: 64 for P-256, 96 for
+    ///   P-384, 136 for P-521.
     ///
     /// # Returns
     ///
-    /// - `Ok(())` — `signature[..sig_len]` populated.
+    /// - `Ok(())` — `signature[..wire_sig_len]` populated in LE.
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError)` — PKA / RNG failure.
     async fn ecc_sign(
@@ -184,10 +296,21 @@ pub trait HsmEcc {
     /// - `curve` — NIST curve the public key is on; determines the
     ///   expected signature length.
     /// - `pub_key` — verification key; uncompressed `x || y`,
-    ///   `curve.pub_key_len()` bytes.
-    /// - `hash` — message digest that was signed.
+    ///   exactly `curve.wire_pub_key_len()` bytes.  **Each coordinate
+    ///   is in little-endian byte order** with P-521 coordinates
+    ///   padded to 68 bytes (66 real + 2-byte trailing zero pad) for
+    ///   32-bit word alignment — matches the on-wire DDI
+    ///   representation and real PKA hardware.  Implementations that
+    ///   delegate to a big-endian-native primitive (e.g. OpenSSL)
+    ///   must strip the per-coordinate padding and reverse each
+    ///   coordinate internally.
+    /// - `hash` — message digest that was signed.  Raw digest bytes;
+    ///   no endianness conversion is applied.
     /// - `signature` — signature to verify; must be exactly
-    ///   `curve.sig_len()` bytes.
+    ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
+    ///   is in little-endian byte order** with P-521 components
+    ///   padded to 68 bytes — matches the on-wire DDI representation
+    ///   and real PKA hardware.
     ///
     /// # Returns
     ///
@@ -212,10 +335,17 @@ pub trait HsmEcc {
     ///
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `curve` — NIST curve both keys are on.
-    /// - `priv_key` — local private scalar; must be exactly
-    ///   `curve.priv_key_len()` bytes.
+    /// - `priv_key` — local private key in raw HSM-format scalar bytes
+    ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
     /// - `pub_key` — remote uncompressed point; must be exactly
-    ///   `curve.pub_key_len()` bytes.
+    ///   `curve.wire_pub_key_len()` bytes (`x || y`).  **Each
+    ///   coordinate is in little-endian byte order** with P-521
+    ///   coordinates padded to 68 bytes (66 real + 2-byte trailing
+    ///   zero pad) for 32-bit word alignment — matches the on-wire
+    ///   DDI representation and real PKA hardware.  Implementations
+    ///   that delegate to a big-endian-native primitive (e.g.
+    ///   OpenSSL) must strip the per-coordinate padding and reverse
+    ///   each coordinate internally.
     /// - `secret` — output buffer; must be at least
     ///   `curve.secret_len()` bytes.  On success, holds the
     ///   x-coordinate of the shared point.
