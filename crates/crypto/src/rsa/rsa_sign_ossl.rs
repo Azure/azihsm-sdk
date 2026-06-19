@@ -405,9 +405,11 @@ impl OsslRsaSignAlgo {
                 }
 
                 if self.padding == Padding::PKCS1_PSS {
-                    if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, self.salt_len as c_int)
-                        != OSSL_SUCCESS
-                    {
+                    // `set_rsa_pss_saltlen` takes a `c_int`; reject salt lengths
+                    // that don't fit rather than letting `as` truncate.
+                    let saltlen = c_int::try_from(self.salt_len)
+                        .map_err(|_| CryptoError::RsaSetPropertyError)?;
+                    if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, saltlen) != OSSL_SUCCESS {
                         return Err(CryptoError::RsaSetPropertyError);
                     }
                     if ffi::EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, md.as_ptr()) != OSSL_SUCCESS {

@@ -527,9 +527,11 @@ impl OsslRsaHashSignAlgo {
                 return Err(CryptoError::RsaSetPropertyError);
             }
             if self.padding == Padding::PKCS1_PSS {
-                if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, self.salt_len as std::os::raw::c_int)
-                    != 1
-                {
+                // `set_rsa_pss_saltlen` takes a `c_int`; reject salt lengths that
+                // don't fit rather than letting `as` truncate.
+                let saltlen = std::os::raw::c_int::try_from(self.salt_len)
+                    .map_err(|_| CryptoError::RsaSetPropertyError)?;
+                if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, saltlen) != 1 {
                     return Err(CryptoError::RsaSetPropertyError);
                 }
                 // Fetch the MGF1 digest from the private libctx so it never
