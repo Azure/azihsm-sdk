@@ -179,13 +179,7 @@ TEST_F(azihsm_hkdf, hkdf_allows_non_null_salt_info_with_zero_len)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -211,28 +205,16 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_128)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        const uint8_t salt[] = { 0x10, 0x20, 0x30 };
-        const uint8_t info[] = { 0x40, 0x50, 0x60 };
+        uint8_t salt[] = { 0x10, 0x20, 0x30 };
+        uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = {
-            .ptr = const_cast<uint8_t *>(salt),
-            .len = sizeof(salt)
-        };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
 
-        azihsm_buffer info_buf = {
-            .ptr = const_cast<uint8_t *>(info),
-            .len = sizeof(info)
-        };
+        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 128, key_a);
@@ -258,28 +240,16 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_192)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        const uint8_t salt[] = { 0x10, 0x20, 0x30 };
-        const uint8_t info[] = { 0x40, 0x50, 0x60 };
+        uint8_t salt[] = { 0x10, 0x20, 0x30 };
+        uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = {
-            .ptr = const_cast<uint8_t *>(salt),
-            .len = sizeof(salt)
-        };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
 
-        azihsm_buffer info_buf = {
-            .ptr = const_cast<uint8_t *>(info),
-            .len = sizeof(info)
-        };
+        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 192, key_a);
@@ -325,28 +295,16 @@ TEST_F(azihsm_hkdf, hkdf_same_inputs_are_deterministic)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        const uint8_t salt[] = { 0x11, 0x22, 0x33, 0x44 };
-        const uint8_t info[] = { 0x55, 0x66, 0x77, 0x88 };
+        uint8_t salt[] = { 0x11, 0x22, 0x33, 0x44 };
+        uint8_t info[] = { 0x55, 0x66, 0x77, 0x88 };
 
-        azihsm_buffer salt_buf = {
-            .ptr = const_cast<uint8_t *>(salt),
-            .len = sizeof(salt)
-        };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
 
-        azihsm_buffer info_buf = {
-            .ptr = const_cast<uint8_t *>(info),
-            .len = sizeof(info)
-        };
+        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -397,13 +355,7 @@ TEST_F(azihsm_hkdf, hkdf_empty_salt_info_roundtrip_p384)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -434,13 +386,7 @@ TEST_F(azihsm_hkdf, hkdf_empty_salt_info_roundtrip_p521)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -469,25 +415,13 @@ TEST_F(azihsm_hkdf, hkdf_salt_info_roundtrip)
         std::vector<uint8_t> salt(64, 0xA5);
         std::vector<uint8_t> info(64, 0x5A);
 
-        azihsm_buffer salt_buf = {
-            .ptr = salt.data(),
-            .len = salt.size()
-        };
+        azihsm_buffer salt_buf = { .ptr = salt.data(), .len = static_cast<uint32_t>(salt.size()) };
 
-        azihsm_buffer info_buf = {
-            .ptr = info.data(),
-            .len = info.size()
-        };
+        azihsm_buffer info_buf = { .ptr = info.data(), .len = static_cast<uint32_t>(info.size()) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -533,28 +467,16 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_256)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        const uint8_t salt[] = { 0x10, 0x20, 0x30 };
-        const uint8_t info[] = { 0x40, 0x50, 0x60 };
+        uint8_t salt[] = { 0x10, 0x20, 0x30 };
+        uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = {
-            .ptr = const_cast<uint8_t *>(salt),
-            .len = sizeof(salt)
-        };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
 
-        azihsm_buffer info_buf = {
-            .ptr = const_cast<uint8_t *>(info),
-            .len = sizeof(info)
-        };
+        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -620,15 +542,13 @@ TEST_F(azihsm_hkdf, hkdf_with_only_salt)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        const uint8_t salt[] = { 'h', 'k', 'd', 'f', '-', 's', 'a', 'l', 't' };
-        azihsm_buffer salt_buf = {
-            .ptr = const_cast<uint8_t *>(salt),
-            .len = sizeof(salt)
-        };
+        uint8_t salt[] = { 'h', 'k', 'd', 'f', '-', 's', 'a', 'l', 't' };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
 
         azihsm_buffer info_buf = { .ptr = nullptr, .len = 0 };
 
-        for (uint32_t bits : { 128u, 192u, 256u }) {
+        for (uint32_t bits : { 128u, 192u, 256u })
+        {
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
             build_hkdf_algo(
@@ -666,13 +586,11 @@ TEST_F(azihsm_hkdf, hkdf_with_only_info)
 
         azihsm_buffer salt_buf = { .ptr = nullptr, .len = 0 };
 
-        const uint8_t info[] = { 'h', 'k', 'd', 'f', '-', 'i', 'n', 'f', 'o' };
-        azihsm_buffer info_buf = {
-            .ptr = const_cast<uint8_t *>(info),
-            .len = sizeof(info)
-        };
+        uint8_t info[] = { 'h', 'k', 'd', 'f', '-', 'i', 'n', 'f', 'o' };
+        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
 
-        for (uint32_t bits : { 128u, 192u, 256u }) {
+        for (uint32_t bits : { 128u, 192u, 256u })
+        {
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
             build_hkdf_algo(
@@ -713,13 +631,7 @@ TEST_F(azihsm_hkdf, hkdf_large_plaintext_roundtrip)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -729,12 +641,7 @@ TEST_F(azihsm_hkdf, hkdf_large_plaintext_roundtrip)
 
         std::vector<uint8_t> plaintext(32 * 1024, 0x55);
 
-        assert_aes_cbc_roundtrip(
-            key_a.get(),
-            key_b.get(),
-            plaintext.data(),
-            plaintext.size()
-        );
+        assert_aes_cbc_roundtrip(key_a.get(), key_b.get(), plaintext.data(), plaintext.size());
     });
 }
 
@@ -751,13 +658,7 @@ TEST_F(azihsm_hkdf, hkdf_empty_plaintext_roundtrip)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -767,12 +668,7 @@ TEST_F(azihsm_hkdf, hkdf_empty_plaintext_roundtrip)
 
         const uint8_t *plaintext = reinterpret_cast<const uint8_t *>("");
 
-        assert_aes_cbc_roundtrip(
-            key_a.get(),
-            key_b.get(),
-            plaintext,
-            0
-        );
+        assert_aes_cbc_roundtrip(key_a.get(), key_b.get(), plaintext, 0);
     });
 }
 
@@ -789,13 +685,7 @@ TEST_F(azihsm_hkdf, hkdf_single_byte_plaintext_roundtrip)
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
@@ -805,12 +695,7 @@ TEST_F(azihsm_hkdf, hkdf_single_byte_plaintext_roundtrip)
 
         const uint8_t plaintext[] = { 'A' };
 
-        assert_aes_cbc_roundtrip(
-            key_a.get(),
-            key_b.get(),
-            plaintext,
-            sizeof(plaintext)
-        );
+        assert_aes_cbc_roundtrip(key_a.get(), key_b.get(), plaintext, sizeof(plaintext));
     });
 }
 
@@ -825,7 +710,8 @@ TEST_F(azihsm_hkdf, hkdf_multi_key_size_roundtrip)
         azihsm_buffer salt_buf = { .ptr = nullptr, .len = 0 };
         azihsm_buffer info_buf = { .ptr = nullptr, .len = 0 };
 
-        for (uint32_t bits : { 128u, 192u, 256u }) {
+        for (uint32_t bits : { 128u, 192u, 256u })
+        {
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
             build_hkdf_algo(
@@ -864,25 +750,13 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
         std::vector<uint8_t> salt(128, 0x11);
         std::vector<uint8_t> info(128, 0x22);
 
-        azihsm_buffer salt_buf = {
-            .ptr = salt.data(),
-            .len = salt.size()
-        };
+        azihsm_buffer salt_buf = { .ptr = salt.data(), .len = static_cast<uint32_t>(salt.size()) };
 
-        azihsm_buffer info_buf = {
-            .ptr = info.data(),
-            .len = info.size()
-        };
+        azihsm_buffer info_buf = { .ptr = info.data(), .len = info.size() };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
-        build_hkdf_algo(
-            hkdf_params,
-            hkdf_algo,
-            AZIHSM_ALGO_ID_HMAC_SHA256,
-            &salt_buf,
-            &info_buf
-        );
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
 
         auto_key key_a;
         derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), 256, key_a);
