@@ -244,6 +244,7 @@ static azihsm_algo_id hmac_algo_id_for_key_kind(azihsm_key_kind key_kind)
     case AZIHSM_KEY_KIND_HMAC_SHA512:
         return AZIHSM_ALGO_ID_HMAC_SHA512;
     default:
+        ADD_FAILURE() << "Unsupported HMAC key kind";
         return AZIHSM_ALGO_ID_HMAC_SHA256;
     }
 }
@@ -260,6 +261,7 @@ static azihsm_ecc_curve ecc_curve_for_hmac_key_kind(azihsm_key_kind key_kind)
     case AZIHSM_KEY_KIND_HMAC_SHA512:
         return AZIHSM_ECC_CURVE_P521;
     default:
+        ADD_FAILURE() << "Unsupported HMAC key kind";
         return AZIHSM_ECC_CURVE_P256;
     }
 }
@@ -429,7 +431,7 @@ TEST_F(azihsm_hmac_keygen, delete_hmac_key)
         azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         err = azihsm_key_get_prop(hmac_key_handle, &prop);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -459,10 +461,10 @@ TEST_F(azihsm_hmac_keygen, get_prop_negative)
     azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
     auto err = azihsm_key_get_prop(0, &prop);
-    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
     err = azihsm_key_get_prop(0xDEADBEEF, &prop);
-    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
 // Test HMAC-SHA256 key unmask
@@ -598,24 +600,8 @@ TEST_F(azihsm_hmac_keygen, unmask_invalid_data)
             &invalid_buf,
             unmasked_key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
     });
-}
-// Helper to map HMAC key kinds to their signing algorithm IDs
-static azihsm_algo_id get_hmac_algo_id(azihsm_key_kind key_kind)
-{
-    switch (key_kind)
-    {
-    case AZIHSM_KEY_KIND_HMAC_SHA256:
-        return AZIHSM_ALGO_ID_HMAC_SHA256;
-    case AZIHSM_KEY_KIND_HMAC_SHA384:
-        return AZIHSM_ALGO_ID_HMAC_SHA384;
-    case AZIHSM_KEY_KIND_HMAC_SHA512:
-        return AZIHSM_ALGO_ID_HMAC_SHA512;
-    default:
-        ADD_FAILURE() << "Unsupported HMAC key kind";
-        return AZIHSM_ALGO_ID_HMAC_SHA256;
-    }
 }
 
 // Test that masked-key property reports required size and rejects too-small buffers
@@ -701,7 +687,8 @@ TEST_F(azihsm_hmac_keygen, unmask_empty_buffer)
             &empty_buf,
             unmasked_key.get_ptr()
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+
         ASSERT_EQ(unmasked_key.get(), 0);
     });
 }
@@ -765,7 +752,7 @@ TEST_F(azihsm_hmac_keygen, unmask_and_use_hmac_key_all_algorithms)
             azihsm_buffer data_buf = { .ptr = (uint8_t *)test_data,
                                        .len = static_cast<uint32_t>(strlen(test_data)) };
 
-            azihsm_algo hmac_algo = { .id = get_hmac_algo_id(test_case.key_kind),
+            azihsm_algo hmac_algo = { .id = hmac_algo_id_for_key_kind(test_case.key_kind),
                                       .params = nullptr,
                                       .len = 0 };
             azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
@@ -842,7 +829,7 @@ TEST_F(azihsm_hmac_keygen, hmac_verify_rejects_modified_data_and_signature)
                                          .len = static_cast<uint32_t>(signature.size()) };
 
         err = azihsm_crypt_verify(&hmac_algo, hmac_key.get(), &modified_data_buf, &verify_sig_buf);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_SIGNATURE);
 
         signature[0] ^= 0x01;
         verify_sig_buf.ptr = signature.data();
@@ -875,7 +862,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_invalid_hmac_key_classes)
                 props,
                 hmac_key
             );
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
             ASSERT_EQ(hmac_key, 0);
         }
     });
@@ -901,7 +889,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_non_hmac_key_kind)
             props,
             hmac_key
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
         ASSERT_EQ(hmac_key, 0);
     });
 }
@@ -928,7 +917,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_hmac_key_with_ecc_curve_prop)
             props,
             hmac_key
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
         ASSERT_EQ(hmac_key, 0);
     });
 }
@@ -1017,7 +1007,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_invalid_hmac_bits_all_kinds)
                 props,
                 hmac_key
             );
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
             ASSERT_EQ(hmac_key, 0);
         }
     });
@@ -1063,7 +1054,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_unsupported_hmac_usage_flags)
                 props,
                 hmac_key
             );
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
             ASSERT_EQ(hmac_key, 0);
         }
     });
@@ -1237,7 +1229,8 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_multiple_invalid_hmac_props)
             props,
             hmac_key
         );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+
         ASSERT_EQ(hmac_key, 0);
     });
 }
@@ -1284,7 +1277,8 @@ TEST_F(azihsm_hmac_keygen, unmask_rejects_truncated_masked_key_blob)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+
         ASSERT_EQ(unmasked_key.get(), 0);
     });
 }
@@ -1333,7 +1327,8 @@ TEST_F(azihsm_hmac_keygen, unmask_rejects_corrupted_masked_key_blob)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+
         ASSERT_EQ(unmasked_key.get(), 0);
     });
 }
@@ -1376,6 +1371,56 @@ TEST_F(azihsm_hmac_keygen, hmac_verify_rejects_truncated_signature)
                                             .len = static_cast<uint32_t>(signature.size() - 1) };
 
         err = azihsm_crypt_verify(&hmac_algo, hmac_key.get(), &data_buf, &truncated_sig_buf);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_SIGNATURE);
+    });
+}
+
+// Test that unmask rejects unsupported key kinds
+TEST_F(azihsm_hmac_keygen, unmask_rejects_unsupported_key_kind)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        EcdhKeyPairSet key_pairs;
+        auto_key original_hmac_key;
+
+        auto err = generate_ecdh_keys_and_derive_hmac(
+            session,
+            AZIHSM_KEY_KIND_HMAC_SHA256,
+            key_pairs,
+            original_hmac_key.handle,
+            AZIHSM_ECC_CURVE_P256
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(original_hmac_key.get(), 0);
+
+        azihsm_key_prop masked_prop{};
+        masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+        masked_prop.val = nullptr;
+        masked_prop.len = 0;
+
+        err = azihsm_key_get_prop(original_hmac_key.get(), &masked_prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(masked_prop.len, 0u);
+
+        std::vector<uint8_t> masked_key_data(masked_prop.len);
+        masked_prop.val = masked_key_data.data();
+
+        err = azihsm_key_get_prop(original_hmac_key.get(), &masked_prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer masked_key_buf = {
+            .ptr = masked_key_data.data(),
+            .len = static_cast<uint32_t>(masked_key_data.size()),
+        };
+
+        auto_key unmasked_key;
+        err = azihsm_key_unmask(
+            session,
+            AZIHSM_KEY_KIND_AES,
+            &masked_key_buf,
+            unmasked_key.get_ptr()
+        );
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+        ASSERT_EQ(unmasked_key.get(), 0);
     });
 }
