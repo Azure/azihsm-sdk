@@ -113,15 +113,19 @@ impl From<RetCode> for c_int {
 
 /// Push a human-readable message onto the OpenSSL ERR queue.
 ///
-/// `reason` is an `ERR_R_*` constant from `openssl-sys-engine`.  Empty or
-/// NUL-containing messages are dropped silently — OpenSSL has no way to
-/// represent them.  OpenSSL copies the string internally; callers may free
-/// after return.
+/// `reason` is an `ERR_R_*` constant from `openssl-sys-engine`.  The reason
+/// code is always recorded; the message is best-effort and is truncated at
+/// the first interior NUL (rather than dropping the error entirely), since
+/// OpenSSL cannot represent the bytes past it.  OpenSSL copies the string
+/// internally; callers may free after return.
 #[allow(unsafe_code)]
 pub fn openssl_err(reason: c_int, msg: &str) {
-    let Ok(msg_c) = CString::new(msg) else {
-        return;
+    // Truncate at the first interior NUL so the reason code is never lost.
+    let msg = match msg.find('\0') {
+        Some(i) => &msg[..i],
+        None => msg,
     };
+    let msg_c = CString::new(msg).unwrap_or_default();
 
     // SAFETY: ERR_put_error stores the file pointer as-is; we pass a
     // 'static empty C string so it remains valid for the lifetime of the
@@ -162,6 +166,12 @@ where
         Ok(v) => v,
         Err(_) => {
             tracing::error!("panic caught at FFI boundary");
+            // Surface the panic on the ERR queue too, so a caller that only
+            // inspects OpenSSL errors still sees why the call returned 0.
+            openssl_err(
+                ffi::ERR_R_INTERNAL_ERROR as c_int,
+                "panic caught at FFI boundary",
+            );
             on_panic
         }
     }
@@ -244,6 +254,50 @@ mod tests {
             -1,
         );
         assert_eq!(result, -1);
+    }
+
+    /// A panic at the FFI boundary must also leave an entry on the ERR queue.
+    #[test]
+    #[allow(unsafe_code)]
+    fn catch_panic_pushes_error_on_panic() {
+        // SAFETY: see openssl_err_round_trip.
+        unsafe { ffi::ERR_clear_error() };
+
+        let result = catch_panic(
+            || {
+                panic!("simulated");
+                #[allow(unreachable_code)]
+                0
+            },
+            -1,
+        );
+        assert_eq!(result, -1);
+
+        // SAFETY: same as above.
+        let code = unsafe { ffi::ERR_get_error() };
+        assert_ne!(code, 0, "a panic should push onto the ERR queue");
+        assert_eq!((code & 0xfff) as c_int, ffi::ERR_R_INTERNAL_ERROR as c_int);
+
+        // SAFETY: same as above.
+        unsafe { ffi::ERR_clear_error() };
+    }
+
+    /// An interior NUL truncates the message but still records the reason.
+    #[test]
+    #[allow(unsafe_code)]
+    fn openssl_err_with_interior_nul_still_records_reason() {
+        // SAFETY: see openssl_err_round_trip.
+        unsafe { ffi::ERR_clear_error() };
+
+        openssl_err(ffi::ERR_R_INTERNAL_ERROR as c_int, "before\0after");
+
+        // SAFETY: same as above.
+        let code = unsafe { ffi::ERR_get_error() };
+        assert_ne!(code, 0, "interior NUL must not drop the error");
+        assert_eq!((code & 0xfff) as c_int, ffi::ERR_R_INTERNAL_ERROR as c_int);
+
+        // SAFETY: same as above.
+        unsafe { ffi::ERR_clear_error() };
     }
 
     #[test]
