@@ -713,18 +713,12 @@ TEST_F(azihsm_hkdf, hkdf_multi_key_size_roundtrip)
         azihsm_buffer salt_buf = { .ptr = nullptr, .len = 0 };
         azihsm_buffer info_buf = { .ptr = nullptr, .len = 0 };
 
+        azihsm_algo_hkdf_params hkdf_params{};
+        azihsm_algo hkdf_algo{};
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
+
         for (uint32_t bits : { 128u, 192u, 256u })
         {
-            azihsm_algo_hkdf_params hkdf_params{};
-            azihsm_algo hkdf_algo{};
-            build_hkdf_algo(
-                hkdf_params,
-                hkdf_algo,
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                &salt_buf,
-                &info_buf
-            );
-
             auto_key key_a;
             derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), bits, key_a);
 
