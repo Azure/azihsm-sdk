@@ -12,6 +12,8 @@ mod masked_key;
 mod partition;
 mod rsa;
 mod session;
+mod session_crypto;
+mod session_ex;
 mod tpm;
 
 pub(crate) use aes::*;
