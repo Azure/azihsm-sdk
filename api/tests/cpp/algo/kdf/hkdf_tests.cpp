@@ -774,5 +774,5 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
             reinterpret_cast<const uint8_t *>(msg),
             std::strlen(msg)
         );
-});
+    });
 }
