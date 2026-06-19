@@ -13,6 +13,8 @@ engine = ["openssl-sys-engine/engine"]
 
 [dependencies]
 openssl-sys-engine.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

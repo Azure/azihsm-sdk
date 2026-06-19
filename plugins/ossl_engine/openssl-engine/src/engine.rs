@@ -5,41 +5,16 @@
 
 use std::ffi::CStr;
 use std::ffi::c_char;
-use std::ffi::c_int;
 use std::ptr::NonNull;
 use std::ptr::null_mut;
 
 use openssl_sys_engine as ffi;
 
+use crate::error::EngineError;
+use crate::error::EngineResult;
+
 pub struct Engine {
     ptr: *mut ffi::ENGINE,
-}
-
-/// Entry-point glue for a dynamic engine's `bind_engine` export.
-///
-/// Validates the raw pointers OpenSSL's dynamic loader passes to
-/// `bind_engine` and dispatches to `f` with a safe [`Engine`].
-///
-/// # Safety
-/// `engine`, `id`, and `fns` must be the pointers supplied by OpenSSL's
-/// dynamic engine loader: `engine` and `fns`, if non-null, valid for this
-/// call, and `id`, if non-null, a valid C string.
-#[allow(unsafe_code)]
-pub unsafe fn bind_entry(
-    engine: *mut ffi::ENGINE,
-    id: *const c_char,
-    fns: *mut ffi::dynamic_fns,
-    f: fn(&Engine, &CStr) -> c_int,
-) -> c_int {
-    let Some(engine) = NonNull::new(engine) else {
-        return 0;
-    };
-    let Some(fns) = NonNull::new(fns) else {
-        return 0;
-    };
-    // SAFETY: engine and fns are non-null (checked above) and valid for this
-    // call (provided by OpenSSL's dynamic loader).
-    unsafe { Engine::from_ptr(engine).bind(id, fns, f) }
 }
 
 // SAFETY: ENGINE access is serialized by OpenSSL's CRYPTO_LOCK_ENGINE.
@@ -68,8 +43,8 @@ impl Engine {
         &self,
         id: *const c_char,
         fns: NonNull<ffi::dynamic_fns>,
-        f: fn(&Engine, &CStr) -> c_int,
-    ) -> c_int {
+        f: fn(&Engine, &CStr) -> EngineResult<()>,
+    ) -> EngineResult<()> {
         let fns_ptr = fns.as_ptr();
 
         // SAFETY: Caller guarantees fns points to a valid dynamic_fns.
@@ -81,10 +56,10 @@ impl Engine {
                     (*fns_ptr).mem_fns.free_fn,
                 ) != 1
                 {
-                    return 0;
+                    return Err(EngineError::CryptoSetMemFunctionsFailed);
                 }
                 if ffi::OPENSSL_init_crypto(ffi::OPENSSL_INIT_NO_ATEXIT as u64, null_mut()) != 1 {
-                    return 0;
+                    return Err(EngineError::OpensslInitCryptoFailed);
                 }
             }
         }
@@ -100,14 +75,20 @@ impl Engine {
     }
 
     #[allow(unsafe_code)]
-    pub fn set_id(&self, id: &CStr) -> c_int {
+    pub fn set_id(&self, id: &CStr) -> EngineResult<()> {
         // SAFETY: self.ptr is valid (from NonNull), id is a valid CStr.
-        unsafe { ffi::ENGINE_set_id(self.ptr, id.as_ptr()) }
+        match unsafe { ffi::ENGINE_set_id(self.ptr, id.as_ptr()) } {
+            1 => Ok(()),
+            _ => Err(EngineError::SetIdFailed),
+        }
     }
 
     #[allow(unsafe_code)]
-    pub fn set_name(&self, name: &CStr) -> c_int {
+    pub fn set_name(&self, name: &CStr) -> EngineResult<()> {
         // SAFETY: self.ptr is valid (from NonNull), name is a valid CStr.
-        unsafe { ffi::ENGINE_set_name(self.ptr, name.as_ptr()) }
+        match unsafe { ffi::ENGINE_set_name(self.ptr, name.as_ptr()) } {
+            1 => Ok(()),
+            _ => Err(EngineError::SetNameFailed),
+        }
     }
 }
