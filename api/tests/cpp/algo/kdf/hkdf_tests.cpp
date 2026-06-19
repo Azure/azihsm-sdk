@@ -208,9 +208,12 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_128)
         uint8_t salt[] = { 0x10, 0x20, 0x30 };
         uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
-        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
@@ -243,9 +246,9 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_192)
         uint8_t salt[] = { 0x10, 0x20, 0x30 };
         uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
-        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
+        azihsm_buffer info_buf = { .ptr = info, .len = static_cast<uint32_t>(sizeof(info)) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
@@ -298,9 +301,9 @@ TEST_F(azihsm_hkdf, hkdf_same_inputs_are_deterministic)
         uint8_t salt[] = { 0x11, 0x22, 0x33, 0x44 };
         uint8_t info[] = { 0x55, 0x66, 0x77, 0x88 };
 
-        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
-        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
+        azihsm_buffer info_buf = { .ptr = info, .len = static_cast<uint32_t>(sizeof(info)) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
@@ -470,9 +473,9 @@ TEST_F(azihsm_hkdf, hkdf_supports_aes_256)
         uint8_t salt[] = { 0x10, 0x20, 0x30 };
         uint8_t info[] = { 0x40, 0x50, 0x60 };
 
-        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
-        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
+        azihsm_buffer info_buf = { .ptr = info, .len = static_cast<uint32_t>(sizeof(info)) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
@@ -543,7 +546,7 @@ TEST_F(azihsm_hkdf, hkdf_with_only_salt)
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
         uint8_t salt[] = { 'h', 'k', 'd', 'f', '-', 's', 'a', 'l', 't' };
-        azihsm_buffer salt_buf = { .ptr = salt, .len = sizeof(salt) };
+        azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
         azihsm_buffer info_buf = { .ptr = nullptr, .len = 0 };
 
@@ -587,7 +590,7 @@ TEST_F(azihsm_hkdf, hkdf_with_only_info)
         azihsm_buffer salt_buf = { .ptr = nullptr, .len = 0 };
 
         uint8_t info[] = { 'h', 'k', 'd', 'f', '-', 'i', 'n', 'f', 'o' };
-        azihsm_buffer info_buf = { .ptr = info, .len = sizeof(info) };
+        azihsm_buffer info_buf = { .ptr = info, .len = static_cast<uint32_t>(sizeof(info)) };
 
         for (uint32_t bits : { 128u, 192u, 256u })
         {
@@ -752,7 +755,8 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
 
         azihsm_buffer salt_buf = { .ptr = salt.data(), .len = static_cast<uint32_t>(salt.size()) };
 
-        azihsm_buffer info_buf = { .ptr = info.data(), .len = info.size() };
+        azihsm_buffer info_buf = { .ptr = info.data(),
+                                   .len = static_cast<uint32_t>(sizeof(info.size())) };
 
         azihsm_algo_hkdf_params hkdf_params{};
         azihsm_algo hkdf_algo{};
