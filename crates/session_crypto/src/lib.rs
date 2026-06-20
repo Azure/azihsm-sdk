@@ -69,7 +69,7 @@ pub fn ec_pub_from_sec1(sec1: &[u8]) -> SessionCryptoResult<EccPublicKey> {
     let y_be = &sec1[1 + P384_COORD_LEN..];
     EccPublicKey::from_coordinates(EccCurve::P384, x_be, y_be)
         .map_err(|_| SessionCryptoError::InvalidInput)
-
+}
 /// `HMAC-SHA-384(exported, label ‖ session_id_be ‖ pk_init ‖
 /// pk_hsm ‖ pk_resp)`.
 fn confirm_mac(
