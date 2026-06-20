@@ -3,19 +3,20 @@
 
 //! Embassy time driver backed by the ARM Cortex-M SysTick timer.
 //!
-//! Configures SysTick as a periodic tick source at 32 Hz from the
-//! processor clock.
+//! Configures SysTick as a periodic tick source at 32 Hz (31.25 ms per tick)
+//! from a 450 MHz core clock. The 24-bit reload value of 14,062,499 fits
+//! within the SysTick counter's maximum of 16,777,215.
 //!
 //! # Architecture
 //!
 //! ```text
 //! ┌──────────────────────────────────────────┐
 //! │ SysTick (24-bit down-counter)            │
-//! │   reload = RELOAD_VALUE                  │
-//! │   clock  = core clock (insn cycles)      │
-//! │   ISR    = SysTick exception (#15)       │
+//! │   reload = 14,062,499                    │
+//! │   clock  = 450 MHz core clock            │
+//! │   ISR    = SysTick exception             │
 //! └──────────┬───────────────────────────────┘
-//!            │ every RELOAD_VALUE+1 cycles
+//!            │ every 31.25 ms
 //!            ▼
 //!    TICK_COUNT.fetch_add(1)
 //!    queue.next_expiration() → wake Embassy tasks
@@ -40,12 +41,9 @@ use embassy_time_queue_utils::Queue;
 use portable_atomic::AtomicU64;
 use portable_atomic::Ordering;
 
-/// SysTick reload value.
-///
-/// A reload of 999 gives one SysTick interrupt every 1,000 processor
-/// clock ticks, which is frequent enough for Embassy timers to fire
-/// promptly while keeping ISR overhead low (< 0.1 % of cycles).
-const RELOAD_VALUE: u32 = 999;
+const SYSTICK_CLOCK_HZ: u32 = 450_000_000;
+const TICK_RATE_HZ: u32 = 32;
+const RELOAD_VALUE: u32 = SYSTICK_CLOCK_HZ / TICK_RATE_HZ - 1; // 14_062_499
 
 /// Monotonic tick counter, incremented by the SysTick exception handler.
 static TICK_COUNT: AtomicU64 = AtomicU64::new(0);

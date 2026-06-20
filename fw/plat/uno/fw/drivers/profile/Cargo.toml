@@ -11,7 +11,9 @@ doctest = false
 test = false
 
 [features]
-default = ["trace"]
+default = []
+# Enable TraceMailbox MMIO writes — only valid on the emulator where
+# the TRACE_MAILBOX peripheral exists. Do NOT enable on silicon.
 trace = []
 # Trace output backend awareness (set by the trace crate). Selects the
 # task-ID source returned by `current_task_id`: the TraceMailbox MMIO for

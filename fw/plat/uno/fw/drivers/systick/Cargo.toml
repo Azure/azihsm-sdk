@@ -14,6 +14,6 @@ test = false
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 critical-section = { workspace = true }
-embassy-time-driver = { features = ["tick-hz-32"], workspace = true }
+embassy-time-driver = { workspace = true }
 embassy-time-queue-utils = { workspace = true }
 portable-atomic = { workspace = true }

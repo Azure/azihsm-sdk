@@ -7,22 +7,21 @@ pub mod interrupt {
     /// Interrupt numbers for the Uno SoC.
     ///
     /// These map to NVIC IRQ numbers (exception number = IRQ + 16).
-    /// IRQs are spread across ISPR registers to exercise multi-register
-    /// NVIC polling.
+    /// Aligned with the azihsm SoC IRQ assignments.
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     #[repr(u16)]
     pub enum Interrupt {
-        /// IIC inbound completion queue (IRQ33, ISPR1 bit 1).
+        /// IIC inbound completion queue (IRQ103, ISPR3 bit 7).
         #[allow(non_camel_case_types)]
-        IIC_ICQ = 33,
+        IIC_ICQ = 103,
 
-        /// OIC outbound completion queue (IRQ65, ISPR2 bit 1).
+        /// OIC outbound completion queue (IRQ110, ISPR3 bit 14).
         #[allow(non_camel_case_types)]
-        OIC_OCQ = 65,
+        OIC_OCQ = 110,
 
-        /// GDMA completion queue (IRQ97, ISPR3 bit 1).
+        /// GDMA completion queue (IRQ66, ISPR2 bit 2).
         #[allow(non_camel_case_types)]
-        GDMA_CQ = 97,
+        GDMA_CQ = 66,
 
         /// AES completion (IRQ5, ISPR0 bit 5).
         #[allow(non_camel_case_types)]
@@ -139,9 +138,9 @@ pub static __INTERRUPTS: [Option<unsafe extern "C" fn()>; 224] = {
     let mut table: [Option<unsafe extern "C" fn()>; 224] = [None; 224];
     table[5] = Some(AES_DONE);
     table[6] = Some(SHA_DONE);
-    table[33] = Some(IIC_ICQ);
-    table[65] = Some(OIC_OCQ);
-    table[97] = Some(GDMA_CQ);
+    table[66] = Some(GDMA_CQ);
+    table[103] = Some(IIC_ICQ);
+    table[110] = Some(OIC_OCQ);
     // 129 = INTC_IPC — polled, no ISR
     table
 };

@@ -37,20 +37,33 @@
 
 #![no_std]
 #![no_main]
-
-mod boot_handshake;
+mod boot_trampoline;
 
 use azihsm_fw_hsm_core::Hsm;
 use azihsm_fw_hsm_pal_traits::*;
+// Link the profile crate to pull in Embassy trace hook symbols
 use azihsm_fw_uno_drivers_profile as _;
-use azihsm_fw_uno_pal::IoProcessorBootState;
+use azihsm_fw_uno_drivers_uart::Uart;
+// Link the PAC to pull in device.x and interrupt vectors
+use azihsm_fw_uno_pac as _;
 use azihsm_fw_uno_pal::UnoHsmIo;
 use azihsm_fw_uno_pal::UnoHsmPal;
-use cortex_m as _;
 use embassy_executor::Spawner;
 use embassy_sync::once_lock::OnceLock;
 
-use crate::boot_handshake::set_boot_status;
+// Placeholder so the linker emits a non-empty `.data` section.
+//
+// The 1SP bootloader that loads this image requires every loadable
+// section to be at least 16 bytes long and a multiple of 16 bytes
+// (it copies sections in 16-byte units during image staging). Until
+// the firmware accumulates real mutable static state in `.data`,
+// the section would otherwise be 0 bytes and the bootloader would
+// reject the image. Once any genuine `.data` content lands and the
+// section is naturally >= 16 bytes (and a multiple of 16 bytes in
+// size), this dummy can be removed.
+#[used]
+#[unsafe(link_section = ".data")]
+static mut DEFAULT_DATA: [u8; 16] = [0x1; 16];
 
 /// Global HSM singleton, shared by all Embassy tasks.
 ///
@@ -70,9 +83,11 @@ async fn poll_io(spawner: Spawner) -> ! {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
             continue;
         };
+
         let Ok(token) = handle_io(io) else {
             continue;
         };
+
         spawner.spawn(token);
     }
 }
@@ -113,12 +128,12 @@ async fn poll_ipc() -> ! {
 ///    drivers when peripheral interrupts are pending.
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    Uart::new().write("Uno Async firmware starting up...\n");
+
     let _ = HSM.init(Hsm::new(UnoHsmPal::default()));
     let hsm = HSM.get().await;
     hsm.pal().pre_init();
-    set_boot_status(IoProcessorBootState::Done);
     hsm.pal().init();
-    set_boot_status(IoProcessorBootState::Run);
 
     if let Ok(token) = poll_io(spawner) {
         spawner.spawn(token);
@@ -134,11 +149,13 @@ async fn main(spawner: Spawner) {
 
     hsm.pal().run().await;
     hsm.pal().deinit();
+
+    loop {}
 }
 
-/// Panic handler — exits through semihosting with code 1.
+/// Panic handler — writes a message to UART and loops.
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    azihsm_fw_uno_drivers_semihosting::sys_exit(1);
+    Uart::new().write("Panic occurred!\n");
     loop {}
 }

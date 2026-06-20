@@ -24,12 +24,13 @@ azihsm_fw_uno_drivers_oic = { workspace = true }
 azihsm_fw_uno_drivers_rng = { workspace = true }
 azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
 azihsm_fw_uno_drivers_sha = { workspace = true }
-azihsm_fw_uno_drivers_systick = { workspace = true }
 azihsm_fw_uno_drivers_upka = { workspace = true }
 azihsm_fw_uno_error = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
+azihsm_fw_uno_drivers_systick = { workspace = true }
+
 
 embassy-futures = { workspace = true }
 tock-registers = { workspace = true }
@@ -39,7 +40,7 @@ open-enum = { workspace = true }
 zerocopy = { workspace = true }
 
 [features]
-default = ["semihosting"]
+default = []
 # Optional host-poll path: also signal SYS_READY via ARM semihosting in
 # addition to the silicon boot_handshake::set_boot_status(Run). Hosts
 # that cannot snoop semihosting (e.g. production) should disable this
