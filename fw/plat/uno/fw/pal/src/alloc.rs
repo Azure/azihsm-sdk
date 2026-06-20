@@ -18,12 +18,10 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_single_cell::SingleCell;
-use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_COUNT;
 use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::SRAM_IO_BUF_STRIDE;
-use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 
 use crate::UnoHsmPal;
 
@@ -42,9 +40,6 @@ const DTCM_IO_BUF_BASE: u32 =
     + azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_OFFSET;
 const DTCM_IO_BUF_STRIDE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_STRIDE;
 const DTCM_IO_BUF_SIZE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_SIZE;
-
-/// Typed overlay of the IO GSRAM region.
-const IO_Q: StaticRef<IoGsramRegs> = unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
 /// Per-IO × per-heap bump watermarks, stored in the PAL.
 pub(crate) type IoAllocTable = [[SingleCell<usize>; HEAPS]; IO_SLOTS];

@@ -20,8 +20,8 @@
 //! Admin-coordinated flow.
 
 use azihsm_fw_uno_pal::IoProcessorBootState;
-use azihsm_fw_uno_reg_soc::boot_handshake::BOOT_HANDSHAKE_BASE;
-use azihsm_fw_uno_reg_soc::boot_handshake::BOOT_STATUS_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::BOOT_STATUS_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 
 /// Sets the boot status word in GSRAM for an Admin peer to poll.
 ///
@@ -32,6 +32,6 @@ pub fn set_boot_status(status: IoProcessorBootState) {
     // 4-byte word in the GSRAM region reserved by `hsm_status.rdl`.
     // The region is not aliased with any other firmware state.
     unsafe {
-        ((BOOT_HANDSHAKE_BASE + BOOT_STATUS_OFFSET) as *mut u32).write_volatile(status.0);
+        ((IO_GSRAM_BASE + BOOT_STATUS_OFFSET) as *mut u32).write_volatile(status.0);
     }
 }
