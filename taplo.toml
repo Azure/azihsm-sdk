@@ -15,3 +15,13 @@ reorder_arrays = true
 
 # Maximum number of consecutive blank lines
 allowed_blank_lines = 1
+
+# Cargo config files are order-sensitive (e.g. build/target/env keys),
+# so disable alphabetical reordering for them while keeping other formatting.
+[[rule]]
+include = ["**/.cargo/config.toml"]
+
+[rule.formatting]
+reorder_arrays = false
+reorder_inline_tables = false
+reorder_keys = false

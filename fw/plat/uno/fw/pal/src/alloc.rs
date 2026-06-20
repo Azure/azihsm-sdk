@@ -48,7 +48,6 @@ pub(crate) const IO_ALLOC_INIT: IoAllocTable =
     [const { [const { SingleCell::new(0) }; HEAPS] }; IO_SLOTS];
 
 /// Scoped allocator implementation for [`UnoHsmPal`].
-#[derive(Debug)]
 pub struct UnoScopedAlloc<'a> {
     pal: &'a UnoHsmPal,
     io_index: u16,
@@ -56,9 +55,54 @@ pub struct UnoScopedAlloc<'a> {
 }
 
 /// Reset both heaps for the given IO slot.
+///
+/// # Parameters
+/// - `pal`: PAL instance whose per-IO allocator table will be mutated.
+/// - `index`: IO slot index to reset. Must refer to a valid slot in `pal.io_alloc`.
+///
+/// # Returns
+/// Returns `()`.
+///
+/// # Side Effects
+/// Sets both NonDma and Dma watermarks for `index` to `0`.
 pub(crate) fn reset_io_alloc(pal: &UnoHsmPal, index: u16) {
     for cell in &pal.io_alloc[index as usize] {
         cell.with(|v| *v = 0);
+    }
+}
+
+// ── Public test/utility hooks ─────────────────────────────────────
+
+impl UnoHsmPal {
+    /// Snapshot the current DMA-heap watermark for the given IO slot.
+    ///
+    /// Intended for short-lived RAII scopes (for example, the test harness
+    /// `dma!` macro) that allocate a batch of DMA buffers, use them for one
+    /// statement, and then restore the heap baseline.
+    ///
+    /// # Parameters
+    /// - `io_index`: IO slot to inspect in the per-IO DMA heap table.
+    ///
+    /// # Returns
+    /// Current DMA watermark offset (bytes from the slot-local DMA heap base).
+    pub fn dma_mark(&self, io_index: u16) -> usize {
+        wm(self, io_index, DMA).with(|v| *v)
+    }
+
+    /// Restore a previously captured DMA-heap watermark.
+    ///
+    /// # Parameters
+    /// - `io_index`: IO slot whose DMA watermark should be rewound.
+    /// - `mark`: Previously captured watermark (typically from [`Self::dma_mark`]).
+    ///
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// Logically frees all DMA allocations made after `mark` for `io_index`.
+    /// Callers must ensure no live references to those buffers remain.
+    pub fn dma_restore(&self, io_index: u16, mark: usize) {
+        wm(self, io_index, DMA).with(|v| *v = mark);
     }
 }
 
@@ -66,6 +110,15 @@ pub(crate) fn reset_io_alloc(pal: &UnoHsmPal, index: u16) {
 
 /// Returns the base pointer and capacity for a given heap region.
 /// Uses raw pointers to avoid creating aliasing `&mut` references.
+///
+/// # Parameters
+/// - `io_index`: IO slot index selecting the per-IO buffer region.
+/// - `heap`: Heap selector (`NONDMA` or `DMA`).
+///
+/// # Returns
+/// Tuple `(base_ptr, cap)` where:
+/// - `base_ptr`: start address of the slot-local heap.
+/// - `cap`: total capacity in bytes for that heap.
 #[inline(always)]
 fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     let index = io_index as usize;
@@ -80,12 +133,35 @@ fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     }
 }
 
+/// Access the watermark cell for one `(io_index, heap)` pair.
+///
+/// # Parameters
+/// - `pal`: PAL instance owning the allocator table.
+/// - `io_index`: IO slot index.
+/// - `heap`: Heap selector (`NONDMA` or `DMA`).
+///
+/// # Returns
+/// Shared reference to the corresponding [`SingleCell`] watermark.
 #[inline(always)]
 fn wm(pal: &UnoHsmPal, io_index: u16, heap: usize) -> &SingleCell<usize> {
     &pal.io_alloc[io_index as usize][heap]
 }
 
 /// Bump-allocate `size` bytes with given alignment, return (start_offset, slice).
+///
+/// # Parameters
+/// - `pal`: PAL instance owning heap watermarks.
+/// - `io_index`: IO slot to allocate within.
+/// - `heap`: Heap selector (`NONDMA` or `DMA`).
+/// - `size`: Requested allocation length in bytes.
+/// - `align`: Required power-of-two alignment.
+///
+/// # Returns
+/// On success, returns `(start_offset, slice)`:
+/// - `start_offset`: byte offset from heap base where allocation begins.
+/// - `slice`: mutable view over the newly allocated region.
+///
+/// Returns [`HsmError::NotEnoughSpace`] if aligned allocation would exceed heap capacity.
 #[inline(always)]
 fn bump(
     pal: &UnoHsmPal,
@@ -117,11 +193,25 @@ fn bump(
 
 impl HsmScopedAlloc for UnoScopedAlloc<'_> {
     #[inline(always)]
+    /// Allocate `size` bytes from the scoped NonDma heap.
+    ///
+    /// # Parameters
+    /// - `size`: Number of bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable slice to allocated bytes, or [`HsmError::NotEnoughSpace`].
     fn alloc(&self, size: usize) -> HsmResult<&mut [u8]> {
         bump(self.pal, self.io_index, NONDMA, size, 4).map(|(_, s)| s)
     }
 
     #[inline(always)]
+    /// Allocate and zero-initialize `size` bytes from the scoped NonDma heap.
+    ///
+    /// # Parameters
+    /// - `size`: Number of bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable zeroed slice, or [`HsmError::NotEnoughSpace`].
     fn alloc_zeroed(&self, size: usize) -> HsmResult<&mut [u8]> {
         let s = self.alloc(size)?;
         s.fill(0);
@@ -129,6 +219,13 @@ impl HsmScopedAlloc for UnoScopedAlloc<'_> {
     }
 
     #[inline(always)]
+    /// Allocate space for one value of type `T` and move `value` into it.
+    ///
+    /// # Parameters
+    /// - `value`: Value to place in scoped NonDma memory.
+    ///
+    /// # Returns
+    /// Mutable reference to stored value, or [`HsmError::NotEnoughSpace`].
     fn alloc_val<T: Sized>(&self, value: T) -> HsmResult<&mut T> {
         let (_, s) = bump(
             self.pal,
@@ -146,6 +243,13 @@ impl HsmScopedAlloc for UnoScopedAlloc<'_> {
     }
 
     #[inline(always)]
+    /// Allocate `size` bytes from the scoped DMA heap.
+    ///
+    /// # Parameters
+    /// - `size`: Number of DMA-visible bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable [`DmaBuf`] view, or [`HsmError::NotEnoughSpace`].
     fn dma_alloc(&self, size: usize) -> HsmResult<&mut DmaBuf> {
         let s = bump(self.pal, self.io_index, DMA, size, 4).map(|(_, s)| s)?;
         // SAFETY: SRAM region returned by `bump` is DMA-accessible.
@@ -153,6 +257,13 @@ impl HsmScopedAlloc for UnoScopedAlloc<'_> {
     }
 
     #[inline(always)]
+    /// Allocate and zero-initialize `size` bytes from the scoped DMA heap.
+    ///
+    /// # Parameters
+    /// - `size`: Number of DMA-visible bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable zeroed [`DmaBuf`], or [`HsmError::NotEnoughSpace`].
     fn dma_alloc_zeroed(&self, size: usize) -> HsmResult<&mut DmaBuf> {
         let s = self.dma_alloc(size)?;
         s.fill(0);
@@ -173,11 +284,27 @@ impl HsmAlloc for UnoHsmPal {
     type Scoped<'a> = UnoScopedAlloc<'a>;
 
     #[inline(always)]
+    /// Allocate `size` bytes from the slot-local NonDma heap.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `size`: Number of bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable byte slice, or [`HsmError::NotEnoughSpace`].
     fn alloc(&self, io: &impl HsmIo, size: usize) -> HsmResult<&mut [u8]> {
         bump(self, io.index(), NONDMA, size, 4).map(|(_, s)| s)
     }
 
     #[inline(always)]
+    /// Allocate and zero-initialize `size` bytes from NonDma heap.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `size`: Number of bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable zeroed byte slice, or [`HsmError::NotEnoughSpace`].
     fn alloc_zeroed(&self, io: &impl HsmIo, size: usize) -> HsmResult<&mut [u8]> {
         let s = self.alloc(io, size)?;
         s.fill(0);
@@ -185,6 +312,14 @@ impl HsmAlloc for UnoHsmPal {
     }
 
     #[inline(always)]
+    /// Allocate aligned storage for one value of type `T` in NonDma heap.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `value`: Value to store in allocator-owned memory.
+    ///
+    /// # Returns
+    /// Mutable reference to stored value, or [`HsmError::NotEnoughSpace`].
     fn alloc_val<T: Sized>(&self, io: &impl HsmIo, value: T) -> HsmResult<&mut T> {
         let (_, s) = bump(
             self,
@@ -202,6 +337,14 @@ impl HsmAlloc for UnoHsmPal {
     }
 
     #[inline(always)]
+    /// Allocate `size` bytes from slot-local DMA heap.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `size`: Number of DMA-visible bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable [`DmaBuf`], or [`HsmError::NotEnoughSpace`].
     fn dma_alloc(&self, io: &impl HsmIo, size: usize) -> HsmResult<&mut DmaBuf> {
         let s = bump(self, io.index(), DMA, size, 4).map(|(_, s)| s)?;
         // SAFETY: SRAM region returned by `bump` is DMA-accessible.
@@ -209,12 +352,30 @@ impl HsmAlloc for UnoHsmPal {
     }
 
     #[inline(always)]
+    /// Allocate and zero-initialize `size` bytes from slot-local DMA heap.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `size`: Number of DMA-visible bytes to allocate.
+    ///
+    /// # Returns
+    /// Mutable zeroed [`DmaBuf`], or [`HsmError::NotEnoughSpace`].
     fn dma_alloc_zeroed(&self, io: &impl HsmIo, size: usize) -> HsmResult<&mut DmaBuf> {
         let s = self.dma_alloc(io, size)?;
         s.fill(0);
         Ok(s)
     }
 
+    /// Reserve remaining aligned DMA space and let `f` choose final used length.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `f`: Callback receiving a temporary writable slice spanning remaining
+    ///   DMA capacity from current aligned watermark. It returns the number of
+    ///   bytes logically consumed.
+    ///
+    /// # Returns
+    /// Mutable [`DmaBuf`] of length selected by `f`, or error from `f`/allocator.
     fn dma_alloc_var<F>(&self, io: &impl HsmIo, f: F) -> HsmResult<&mut DmaBuf>
     where
         F: FnOnce(&mut [u8]) -> HsmResult<usize>,
@@ -241,6 +402,15 @@ impl HsmAlloc for UnoHsmPal {
         }
     }
 
+    /// Like [`Self::dma_alloc_var`], but allows callback to return extra metadata.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot selects allocator state.
+    /// - `f`: Callback receiving temporary writable remaining DMA span and
+    ///   returning `(len, extra)` where `len` is consumed bytes.
+    ///
+    /// # Returns
+    /// Tuple `(&mut DmaBuf, T)` on success, or error from `f`/allocator.
     fn dma_alloc_var_with<F, T>(&self, io: &impl HsmIo, f: F) -> HsmResult<(&mut DmaBuf, T)>
     where
         F: FnOnce(&mut [u8]) -> HsmResult<(usize, T)>,
@@ -268,6 +438,14 @@ impl HsmAlloc for UnoHsmPal {
     }
 
     #[inline]
+    /// Execute `f` within a scoped allocator frame that auto-restores watermarks.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot defines scoped allocator context.
+    /// - `f`: Closure executed with a scoped allocator reference.
+    ///
+    /// # Returns
+    /// Returns whatever value `f` returns.
     fn alloc_scoped<R>(&self, io: &impl HsmIo, f: impl FnOnce(&Self::Scoped<'_>) -> R) -> R {
         let scope = UnoScopedAlloc {
             pal: self,
@@ -280,6 +458,14 @@ impl HsmAlloc for UnoHsmPal {
         f(&scope)
     }
 
+    /// Async variant of [`Self::alloc_scoped`] with auto-restored watermarks.
+    ///
+    /// # Parameters
+    /// - `io`: IO token whose slot defines scoped allocator context.
+    /// - `f`: Async closure executed with a scoped allocator reference.
+    ///
+    /// # Returns
+    /// Resolves to whatever value `f` returns.
     async fn alloc_scoped_async<R, F>(&self, io: &impl HsmIo, f: F) -> R
     where
         F: for<'a> AsyncFnOnce(&'a Self::Scoped<'a>) -> R,
@@ -293,30 +479,5 @@ impl HsmAlloc for UnoHsmPal {
             ],
         };
         f(&scope).await
-    }
-}
-
-// ── Public test/utility hooks ─────────────────────────────────────
-
-impl UnoHsmPal {
-    /// Snapshot the current DMA-heap watermark for the given IO slot.
-    ///
-    /// Intended for short-lived RAII scopes (e.g. the test harness
-    /// `dma!` macro) that allocate a batch of DMA buffers, use them
-    /// for a single statement, and reset the heap so the next
-    /// statement starts from the same baseline.
-    #[inline]
-    pub fn dma_mark(&self, io_index: u16) -> usize {
-        wm(self, io_index, DMA).with(|v| *v)
-    }
-
-    /// Restore a previously-captured DMA-heap watermark.
-    ///
-    /// All buffers allocated after the watermark was captured are
-    /// logically freed by this call; callers must ensure no live
-    /// references to them remain.
-    #[inline]
-    pub fn dma_restore(&self, io_index: u16, mark: usize) {
-        wm(self, io_index, DMA).with(|v| *v = mark);
     }
 }

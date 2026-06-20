@@ -95,13 +95,9 @@ impl RngDriver {
         Self
     }
 
-    /// Legacy entrypoint preserved for callers that initialise via
-    /// `RngDriver::init()` rather than the calibrated form.
-    /// Calibrates the RNG using [`RngCalibration::DEFAULT`].
-    pub fn init() -> Self {
-        let driver = Self::new();
-        driver.init_calibrated(&RngCalibration::DEFAULT);
-        driver
+    /// Calibrate and enable the RNG block with default calibration values.
+    pub fn init(&self) {
+        self.init_calibrated(&RngCalibration::DEFAULT);
     }
 
     /// Calibrate and enable the RNG block.

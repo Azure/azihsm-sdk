@@ -152,14 +152,11 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
         }
     }
 
-    /// Program OCQ/OSQ channel registers.
+    /// Program OCQ/OSQ channel registers and enable.
     ///
     /// Must only be called after any boot handshake completes. Calling this
     /// earlier can race the controller-side owner of shared common and IRQ
     /// registers.
-    ///
-    /// The channel remains **disabled** afterwards -- call
-    /// [`enable`](Self::enable) to activate.
     pub fn init(&self) {
         let config = self.config;
         let regs = self.regs;
@@ -210,46 +207,9 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
             OSQ_CHANNEL_CTRL::DEPTH.val(Self::ENCODED_DEPTH) + OSQ_CHANNEL_CTRL::IFC_SLCT.val(0),
         );
 
-        // info!(
-        // "oic",
-        // "init ch={} depth={} irq={} ocq_base={:#x} osq_base={:#x} shadow={:#x}",
-        // config.channel,
-        // DEPTH,
-        // config.interrupt,
-        // config.ocq_base,
-        // config.osq_base,
-        // config.ocq_tail_shadow
-        // );
-        // info!(
-        // "oic",
-        // "init regs ocq_ctrl={:#x} osq_ctrl={:#x} irq_en={:#x}",
-        // ocq.ctrl.get(),
-        // osq.ctrl.get(),
-        // regs.irq_enable.get()
-        // );
-    }
-
-    /// Enable the channel — activates OCQ and OSQ hardware.
-    ///
-    /// Interrupt enable is handled during [`init`](Self::init) per the
-    /// programming sequence (Step 2.7 precedes configuration_control).
-    pub fn enable(&self) {
-        let ch = self.channel as usize;
-
-        // Step 2.9: Enable OCQ
-        self.regs.ocq_ch[ch].ctrl.modify(OCQ_CHANNEL_CTRL::EN::SET);
-
-        // Step 3.6: Enable OSQ
-        self.regs.osq_ch[ch].ctrl.modify(OSQ_CHANNEL_CTRL::EN::SET);
-
-        // info!(
-        // "oic",
-        // "enable ch={} ocq_ctrl={:#x} osq_ctrl={:#x} irq_en={:#x}",
-        // self.channel,
-        // self.regs.ocq_ch[ch].ctrl.get(),
-        // self.regs.osq_ch[ch].ctrl.get(),
-        // self.regs.irq_enable.get()
-        // );
+        // ── Step 4: Enable ─────────────────────────────────────────
+        regs.ocq_ch[ch].ctrl.modify(OCQ_CHANNEL_CTRL::EN::SET);
+        regs.osq_ch[ch].ctrl.modify(OSQ_CHANNEL_CTRL::EN::SET);
     }
 
     /// Allocate a tag, post an OSQ entry for the given IO index,
@@ -299,17 +259,6 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
                 .tail
                 .write(OSQ_CHANNEL_TAIL::TAIL.val(s.osq_tail.into()));
 
-            // info!(
-            // "oic",
-            // "submit ch={} idx={} tag={} qid={} addr={:#x} tail={}",
-            // self.channel,
-            // index,
-            // tag,
-            // queue_id,
-            // data_addr,
-            // s.osq_tail
-            // );
-
             Ok(tag)
         })
     }
@@ -358,36 +307,10 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
     pub fn wake(&self, irq: u16) {
         self.state.with(|s| {
             let tail = unsafe { self.ocq_tail_shadow.read_volatile() } as u16;
-            let _hw_tail = self.regs.ocq_ch[self.channel as usize].tail.get() as u16;
-
-            if s.ocq_head != tail {
-                // info!(
-                // "oic",
-                // "wake ch={} head={} shadow_tail={} hw_tail={}",
-                // self.channel,
-                // s.ocq_head,
-                // tail,
-                // hw_tail
-                // );
-            }
 
             while s.ocq_head != tail {
                 let ocq_slot = (s.ocq_head & Self::MASK) as usize;
                 let ocq_entry = unsafe { &*self.ocq_ring.add(ocq_slot) };
-
-                // Dump raw 16-byte OCQ entry as 4 dwords
-                let _entry_words = unsafe {
-                    core::slice::from_raw_parts(ocq_entry as *const OcqEntry as *const u32, 4)
-                };
-                // info!(
-                // "oic",
-                // "ocq slot={} dw0={:#010x} dw1={:#010x} dw2={:#010x} dw3={:#010x}",
-                // ocq_slot,
-                // entry_words[0],
-                // entry_words[1],
-                // entry_words[2],
-                // entry_words[3]
-                // );
 
                 let tag = ocq_entry.tag.read(OCQ_TAG::TAG) as u16;
                 let status = ocq_entry.tag.read(OCQ_TAG::STATUS) as u8;
@@ -399,7 +322,6 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
                     slot.status = status;
                     slot.completed = true;
                     slot.waker.wake();
-                    // info!("oic", "send complete tag={} status={}", tag, status);
                 }
             }
 

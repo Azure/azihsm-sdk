@@ -33,7 +33,7 @@ embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 
 [features]
-default = []
+default = ["trace-uart"]
 
 # Trace output backend (mutually exclusive). Selecting one compiles the
 # trace emitter at INFO level and routes output to that backend. With

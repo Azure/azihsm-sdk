@@ -31,9 +31,9 @@
 //! oic.send(index)?.await?;
 //! ```
 
+mod api;
 mod config;
 mod error;
-mod oic;
+pub use api::*;
 pub use config::*;
 pub use error::*;
-pub use oic::*;

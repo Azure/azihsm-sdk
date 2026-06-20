@@ -8,9 +8,19 @@
 
 pub const IO_GSRAM_BASE: u32 = 0x61000000;
 pub const BOOT_STATUS_OFFSET: u32 = 0x7000;
+pub const IPC_ADMIN_HSM_RX_PI_OFFSET: u32 = 0x7004;
+pub const IPC_ADMIN_HSM_RX_CI_OFFSET: u32 = 0x7008;
+pub const IPC_ADMIN_HSM_TX_PI_OFFSET: u32 = 0x700C;
+pub const IPC_ADMIN_HSM_TX_CI_OFFSET: u32 = 0x7010;
 pub const ICQ_TAIL_SHADOW_OFFSET: u32 = 0xEF40;
 pub const OCQ_TAIL_SHADOW_OFFSET: u32 = 0xF560;
 pub const GDMA_CQ_TAIL_SHADOW_OFFSET: u32 = 0x13240;
+pub const IPC_ADMIN_HSM_RX_RING_OFFSET: u32 = 0x7014;
+pub const IPC_ADMIN_HSM_RX_RING_COUNT: u32 = 2;
+pub const IPC_ADMIN_HSM_RX_RING_STRIDE: u32 = 0x40;
+pub const IPC_ADMIN_HSM_TX_RING_OFFSET: u32 = 0x7094;
+pub const IPC_ADMIN_HSM_TX_RING_COUNT: u32 = 2;
+pub const IPC_ADMIN_HSM_TX_RING_STRIDE: u32 = 0x40;
 pub const ISQ_OFFSET: u32 = 0xE440;
 pub const ISQ_COUNT: u32 = 32;
 pub const ISQ_STRIDE: u32 = 0x08;
@@ -64,6 +74,22 @@ tock_registers::register_bitfields! [u32,
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
     pub BOOT_STATUS [
         STATE OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_ADMIN_HSM_RX_PI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_ADMIN_HSM_RX_CI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_ADMIN_HSM_TX_PI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_ADMIN_HSM_TX_CI [
+        VAL OFFSET(0) NUMBITS(32) [],
     ],
     /// 'DMA shadow of a queue producer/consumer index.'
     pub ICQ_TAIL_SHADOW [
@@ -128,6 +154,27 @@ tock_registers::register_bitfields! [u32,
         QUEUE_INDEX OFFSET(16) NUMBITS(16) [],
     ]
 ];
+
+/// Regfile entry struct for `ipc_message`.
+#[repr(C)]
+pub struct IpcMessage {
+    pub dw0: crate::RW<u32>,
+    pub dw1: crate::RW<u32>,
+    pub dw2: crate::RW<u32>,
+    pub dw3: crate::RW<u32>,
+    pub dw4: crate::RW<u32>,
+    pub dw5: crate::RW<u32>,
+    pub dw6: crate::RW<u32>,
+    pub dw7: crate::RW<u32>,
+    pub dw8: crate::RW<u32>,
+    pub dw9: crate::RW<u32>,
+    pub dw10: crate::RW<u32>,
+    pub dw11: crate::RW<u32>,
+    pub dw12: crate::RW<u32>,
+    pub dw13: crate::RW<u32>,
+    pub dw14: crate::RW<u32>,
+    pub dw15: crate::RW<u32>,
+}
 
 /// Regfile entry struct for `isq_entry`.
 #[repr(C)]
@@ -270,7 +317,13 @@ pub mod regs {
         pub IoGsramRegs {
             (0x0 => _reserved0),
             (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
-            (0x7004 => _reserved1),
+            (0x7004 => pub ipc_admin_hsm_rx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_RX_PI::Register>),
+            (0x7008 => pub ipc_admin_hsm_rx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_RX_CI::Register>),
+            (0x700c => pub ipc_admin_hsm_tx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_TX_PI::Register>),
+            (0x7010 => pub ipc_admin_hsm_tx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_TX_CI::Register>),
+            (0x7014 => pub ipc_admin_hsm_rx_ring: [super::IpcMessage; 2]),
+            (0x7094 => pub ipc_admin_hsm_tx_ring: [super::IpcMessage; 2]),
+            (0x7114 => _reserved1),
             (0xe440 => pub isq: [super::IsqEntry; 32]),
             (0xe540 => pub icq: [super::IcqEntry; 32]),
             (0xe740 => pub io_sq: [super::IoSqEntry; 32]),

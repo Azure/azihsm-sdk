@@ -15,9 +15,7 @@ use azihsm_fw_uno_reg_soc::io_gsram::ShaCmdEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::*;
 use azihsm_fw_uno_reg_soc::sha::regs::ShaRegs;
 use azihsm_fw_uno_reg_soc::sha::SHA_BASE;
-use azihsm_fw_uno_reg_soc::sha::STATUS as ShaStatus;
 use azihsm_fw_uno_reg_soc::sha::STATUS_OFFSET;
-use azihsm_fw_uno_trace::tracing::*;
 use bitfield_struct::bitfield;
 use embassy_sync::waitqueue::WakerRegistration;
 use tock_registers::interfaces::Readable;
@@ -308,7 +306,7 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
     /// # Panics
     ///
     /// Compile-time assertion if `DEPTH` is 0, not a power of 2, or exceeds 128.
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         #[allow(clippy::let_unit_value)]
         let _ = (
             Self::_ASSERT_DEPTH_NONZERO,
@@ -316,17 +314,6 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
             Self::_ASSERT_DEPTH_MAX,
             Self::_ASSERT_DEPTH_FIT,
         );
-
-        clear_status(
-            (ShaStatus::COMPLETE::SET
-                + ShaStatus::ERROR_CMD::SET
-                + ShaStatus::ERROR_BUS::SET
-                + ShaStatus::ERROR_FAULT::SET
-                + ShaStatus::DIGEST_MATCH::SET)
-                .value,
-        );
-
-        info!("sha", "initialized depth={}", DEPTH);
 
         Self {
             state: SingleCell::new(ShaState {

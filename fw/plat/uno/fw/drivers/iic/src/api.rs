@@ -135,14 +135,11 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
     }
 
-    /// Program ICQ/ISQ channel registers and pre-fill the ISQ.
+    /// Program ICQ/ISQ channel registers, pre-fill the ISQ, and enable.
     ///
     /// Must only be called after any boot handshake completes. Calling this
     /// earlier can race the controller-side owner of shared common and IRQ
     /// registers.
-    ///
-    /// The channel remains **disabled** afterwards -- call
-    /// [`enable`](Self::enable) to activate.
     pub fn init(&self) {
         let config = self.config;
         let regs = self.regs;
@@ -162,7 +159,6 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
-        // Fill all DEPTH slots with receive buffer addresses.
         for i in 0..DEPTH {
             let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
             let entry = unsafe { &mut *self.isq_ring.add(i) };
@@ -200,8 +196,6 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         isq.base_lo.set(config.isq_base);
         isq.base_hi.set(0);
         isq.status.write(ISQ_CHANNEL_STATUS::EMPTY::SET);
-        // ISQ tail = DEPTH - 1: HW sees DEPTH-1 valid entries
-        // (NVMe-style ring; one slot reserved as empty/full distinguisher)
         isq.tail
             .write(ISQ_CHANNEL_TAIL::TAIL.val((DEPTH as u32) - 1));
         isq.head.write(ISQ_CHANNEL_HEAD::HEAD.val(0));
@@ -210,48 +204,9 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
                 + ISQ_CHANNEL_CTRL::BUF_LEN.val(config.io_size >> 4),
         );
 
-        // info!(
-        // "iic",
-        // "init ch={} depth={} irq={} icq_base={:#x} isq_base={:#x} shadow={:#x} pool={:#x}",
-        // config.channel,
-        // DEPTH,
-        // config.interrupt,
-        // config.icq_base,
-        // config.isq_base,
-        // config.icq_tail_shadow,
-        // config.io_pool_base
-        // );
-        // info!(
-        // "iic",
-        // "init regs icq_ctrl={:#x} isq_ctrl={:#x} irq_en={:#x} shadow_lo={:#x}",
-        // icq.ctrl.get(),
-        // isq.ctrl.get(),
-        // regs.irq_enable.get(),
-        // icq.tail_shadow_lo.get()
-        // );
-    }
-
-    /// Enable the channel — activates ICQ and ISQ hardware.
-    ///
-    /// Interrupt enable is handled during [`init`](Self::init) per the
-    /// programming sequence (Step 3.7 precedes configuration_control).
-    pub fn enable(&self) {
-        let ch = self.channel as usize;
-
-        // Step 3.9: Enable ICQ
-        self.regs.icq_ch[ch].ctrl.modify(ICQ_CHANNEL_CTRL::EN::SET);
-
-        // Step 4.8: Enable ISQ (DFL)
-        self.regs.isq_ch[ch].ctrl.modify(ISQ_CHANNEL_CTRL::EN::SET);
-
-        // info!(
-        // "iic",
-        // "enable ch={} icq_ctrl={:#x} isq_ctrl={:#x} irq_en={:#x}",
-        // self.channel,
-        // self.regs.icq_ch[ch].ctrl.get(),
-        // self.regs.isq_ch[ch].ctrl.get(),
-        // self.regs.irq_enable.get()
-        // );
+        // ── Step 5: Enable ─────────────────────────────────────────
+        regs.icq_ch[ch].ctrl.modify(ICQ_CHANNEL_CTRL::EN::SET);
+        regs.isq_ch[ch].ctrl.modify(ISQ_CHANNEL_CTRL::EN::SET);
     }
 
     /// Disable the channel — deactivates ISQ and ICQ hardware.
@@ -269,15 +224,6 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         self.regs
             .irq_enable
             .write(IRQ_ENABLE::IRQ_EN.val(current & mask));
-
-        // info!(
-        // "iic",
-        // "disable ch={} icq_ctrl={:#x} isq_ctrl={:#x} irq_en={:#x}",
-        // self.channel,
-        // self.regs.icq_ch[ch].ctrl.get(),
-        // self.regs.isq_ch[ch].ctrl.get(),
-        // self.regs.irq_enable.get()
-        // );
     }
 
     /// Free an IO slot: return the buffer to the ISQ for hardware reuse

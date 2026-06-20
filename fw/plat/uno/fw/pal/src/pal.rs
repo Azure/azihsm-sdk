@@ -28,9 +28,13 @@
 //! `IO_SQ[index]` by IIC, so the firmware can read the SQE in-place
 //! without a copy.
 
+use core::cell::Cell;
+
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
+use azihsm_fw_uno_drivers_boot_status as boot_status;
+use azihsm_fw_uno_drivers_boot_status::BootStatus;
 use azihsm_fw_uno_drivers_gdma::ChannelConfig as GdmaChannelConfig;
 use azihsm_fw_uno_drivers_gdma::GdmaDriver;
 use azihsm_fw_uno_drivers_iic::ChannelConfig as IicChannelConfig;
@@ -42,7 +46,6 @@ use azihsm_fw_uno_drivers_ipc::IpcPairKind;
 use azihsm_fw_uno_drivers_nvic::Nvic;
 use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
-use azihsm_fw_uno_drivers_rng::RngCalibration;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
 use azihsm_fw_uno_drivers_systick as systick_driver;
@@ -57,11 +60,44 @@ use azihsm_fw_uno_reg_soc::io_gsram::IO_CQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_META_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_SQ_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_RING_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::ISQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
+use embassy_futures::select::Either3;
+use embassy_futures::select::select3;
+
+use crate::alloc::IO_ALLOC_INIT;
+use crate::alloc::IoAllocTable;
+use crate::ipc::*;
+
+type Iic = IicDriver<IO_QUEUE_DEPTH>;
+type Oic = OicDriver<IO_QUEUE_DEPTH>;
+type Gdma = GdmaDriver<IO_QUEUE_DEPTH>;
+type Ipc = IpcDriver<IPC_PAIRS>;
+type Aes = AesDriver<IO_QUEUE_DEPTH>;
+type Sha = ShaDriver<IO_QUEUE_DEPTH>;
+type Upka = UpkaDriver<IO_QUEUE_DEPTH, 16>;
+
+/// Boot handshake phase — tracks PAL lifecycle state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BootPhase {
+    /// Waiting for `NormalBoot` from Admin.
+    WaitNormalBoot,
+    /// Waiting for `Start` from Admin.
+    WaitStart,
+    /// Boot complete — steady-state IPC.
+    Running,
+}
 
 /// Queue depth for all IO queues (ISQ, ICQ, OSQ, OCQ, GDMA SQ/CQ).
 const IO_QUEUE_DEPTH: usize = 32;
@@ -69,27 +105,15 @@ const IO_QUEUE_DEPTH: usize = 32;
 /// Number of IPC pairs configured for the firmware.
 const IPC_PAIRS: usize = 2;
 
-/// IPC ring depth (entries per ring).
-const IPC_RING_DEPTH: u16 = 4;
-
-/// IPC message length in DWORDs.
-const IPC_MSG_LEN: u16 = 16;
-
-/// SRAM base for IPC rings (after IO SRAM buffers: 32 × 8KB = 256KB).
-const IPC_SRAM_BASE: u32 = 0x6104_0000;
-
-// IPC pair 0: host→firmware message channel (desc 30 in, 31 out)
-// Layout in SRAM at IPC_SRAM_BASE:
-//   0x00: TX PI (4B)    0x04: TX CI (4B)
-//   0x08: RX PI (4B)    0x0C: RX CI (4B)
-//   0x10: TX ring (4 × 64B = 256B)
-//   0x110: RX ring (4 × 64B = 256B)
-const IPC_PAIR0_TX_PI: u32 = IPC_SRAM_BASE;
-const IPC_PAIR0_TX_CI: u32 = IPC_SRAM_BASE + 4;
-const IPC_PAIR0_RX_PI: u32 = IPC_SRAM_BASE + 8;
-const IPC_PAIR0_RX_CI: u32 = IPC_SRAM_BASE + 12;
-const IPC_PAIR0_TX_RING: u32 = IPC_SRAM_BASE + 0x10;
-const IPC_PAIR0_RX_RING: u32 = IPC_SRAM_BASE + 0x110;
+/// IPC channel identifiers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IpcChannel {
+    /// Admin ↔ HSM command/response messages.
+    AdminMessage = 0,
+    /// Admin → HSM event notifications.
+    AdminEvent = 1,
+}
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
 
@@ -101,6 +125,17 @@ type WakeFn = fn(&UnoHsmPal, u16);
 /// `UPKA_0_DONE..=UPKA_15_DONE` (192..=207) and error IRQs
 /// `UPKA_0_ERROR..=UPKA_15_ERROR` (208..=223). Either edge maps to the
 /// same engine index `irq & 0x0F`.
+///
+/// # Parameters
+/// - `pal`: Shared PAL instance that owns the PKA driver.
+/// - `irq`: Raw NVIC IRQ number in the PKA done/error ranges.
+///
+/// # Returns
+/// Returns `()`.
+///
+/// # Side Effects
+/// Wakes exactly one PKA engine by deriving its index from the low
+/// nibble of `irq`.
 fn wake_pka(pal: &UnoHsmPal, irq: u16) {
     pal.pka.wake_engine((irq & 0x0F) as u8);
 }
@@ -200,17 +235,6 @@ const WAKE_TABLE: [WakeFn; MAX_IRQ] = {
     t
 };
 
-type Iic = IicDriver<IO_QUEUE_DEPTH>;
-type Oic = OicDriver<IO_QUEUE_DEPTH>;
-type Gdma = GdmaDriver<IO_QUEUE_DEPTH>;
-type Ipc = IpcDriver<IPC_PAIRS>;
-type Aes = AesDriver<IO_QUEUE_DEPTH>;
-type Sha = ShaDriver<IO_QUEUE_DEPTH>;
-type Upka = UpkaDriver<IO_QUEUE_DEPTH, 16>;
-
-use crate::alloc::IO_ALLOC_INIT;
-use crate::alloc::IoAllocTable;
-
 /// The Uno HSM platform abstraction layer.
 ///
 /// Holds static references to the IIC, OIC, GDMA, and IPC drivers.
@@ -241,15 +265,17 @@ pub struct UnoHsmPal {
     /// IPC Controller — doorbell-based inter-processor communication.
     pub ipc: &'static Ipc,
 
+    /// Boot handshake phase (PAL lifecycle state).
+    boot_phase: Cell<BootPhase>,
+
     /// Per-IO bump allocator state (watermarks for Local + Global heaps).
     pub(crate) io_alloc: IoAllocTable,
 }
 
-impl core::fmt::Debug for UnoHsmPal {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("UnoHsmPal").finish_non_exhaustive()
-    }
-}
+// SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
+// executor on a single-core Cortex-M7 with no preemptive ISRs.
+// The Cell<BootPhase> field is never accessed from interrupt context.
+unsafe impl Sync for UnoHsmPal {}
 
 impl Default for UnoHsmPal {
     fn default() -> Self {
@@ -281,6 +307,7 @@ impl Default for UnoHsmPal {
             cq_base: IO_GSRAM_BASE + GDMA_CQ_OFFSET,
             cq_tail_shadow: IO_GSRAM_BASE + GDMA_CQ_TAIL_SHADOW_OFFSET,
             sq_head_shadow: IO_GSRAM_BASE + GDMA_CQ_TAIL_SHADOW_OFFSET + 4,
+            interrupt: true,
         };
 
         let ipc_config = IpcConfig {
@@ -291,14 +318,14 @@ impl Default for UnoHsmPal {
                     kind: IpcPairKind::RecvMessage,
                     inbound_desc: 30,
                     outbound_desc: 31,
-                    tx_ring_base: IPC_PAIR0_TX_RING,
-                    tx_pi: IPC_PAIR0_TX_PI,
-                    tx_ci: IPC_PAIR0_TX_CI,
-                    rx_ring_base: IPC_PAIR0_RX_RING,
-                    rx_pi: IPC_PAIR0_RX_PI,
-                    rx_ci: IPC_PAIR0_RX_CI,
-                    depth: IPC_RING_DEPTH,
-                    msg_len: IPC_MSG_LEN,
+                    tx_ring_base: IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_RING_OFFSET,
+                    tx_pi: IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_PI_OFFSET,
+                    tx_ci: IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_CI_OFFSET,
+                    rx_ring_base: IO_GSRAM_BASE + IPC_ADMIN_HSM_RX_RING_OFFSET,
+                    rx_pi: IO_GSRAM_BASE + IPC_ADMIN_HSM_RX_PI_OFFSET,
+                    rx_ci: IO_GSRAM_BASE + IPC_ADMIN_HSM_RX_CI_OFFSET,
+                    depth: IPC_ADMIN_HSM_RX_RING_COUNT as u16,
+                    msg_len: (IPC_ADMIN_HSM_RX_RING_STRIDE / 4) as u16,
                 },
                 // Pair 1: recv events from host (desc 28 in, 29 out)
                 IpcPairConfig {
@@ -321,17 +348,134 @@ impl Default for UnoHsmPal {
             iic: unsafe { static_init!(Iic, Iic::new(iic_config)) },
             oic: unsafe { static_init!(Oic, Oic::new(oic_config)) },
             gdma: unsafe { static_init!(Gdma, Gdma::new(gdma_config)) },
-            aes: unsafe { static_init!(Aes, Aes::init(false)) },
-            sha: unsafe { static_init!(Sha, Sha::init()) },
-            pka: unsafe { static_init!(Upka, Upka::init()) },
-            rng: unsafe { static_init!(RngDriver, RngDriver::init()) },
-            ipc: unsafe { static_init!(Ipc, Ipc::init(ipc_config)) },
+            aes: unsafe { static_init!(Aes, Aes::new(false)) },
+            sha: unsafe { static_init!(Sha, Sha::new()) },
+            pka: unsafe { static_init!(Upka, Upka::new()) },
+            rng: unsafe { static_init!(RngDriver, RngDriver::new()) },
+            ipc: unsafe { static_init!(Ipc, Ipc::new(ipc_config)) },
+            boot_phase: Cell::new(BootPhase::WaitNormalBoot),
             io_alloc: IO_ALLOC_INIT,
         }
     }
 }
 
 impl UnoHsmPal {
+    /// Returns the current boot phase.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance containing the boot handshake state.
+    ///
+    /// # Returns
+    /// Current [`BootPhase`] value:
+    /// - `WaitNormalBoot` before first admin state transition
+    /// - `WaitStart` after `NormalBoot` is acknowledged
+    /// - `Running` after hardware channels are initialized
+    pub fn boot_phase(&self) -> BootPhase {
+        self.boot_phase.get()
+    }
+
+    /// Process one IPC receive cycle.
+    ///
+    /// Awaits the next message, event, or 60s keepalive tick, then
+    /// dispatches to the appropriate handler. Returns after one iteration.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance used to receive IPC traffic and dispatch handlers.
+    ///
+    /// # Returns
+    /// Returns `()` after exactly one completed wait-and-dispatch cycle.
+    /// This method does not return a status; callers should inspect PAL
+    /// state (for example via [`Self::boot_phase`]) if needed.
+    ///
+    /// # Side Effects
+    /// - Consumes one message from [`IpcChannel::Message`] when available.
+    /// - Acknowledges one event on [`IpcChannel::Event`] when available.
+    /// - Emits a periodic trace tick on timeout.
+    pub async fn poll_ipc(&self) {
+        let mut recv_msg = [0u32; 16];
+
+        let result = select3(
+            self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
+            self.ipc.recv_event(IpcChannel::AdminEvent as u8),
+            embassy_time::Timer::after(embassy_time::Duration::from_secs(60)),
+        )
+        .await;
+        match result {
+            Either3::First(_) => {
+                self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg);
+            }
+            Either3::Second(value) => {
+                self.handle_ipc_event(IpcChannel::AdminEvent, value);
+            }
+            Either3::Third(()) => {
+                info!("pal", "tick {}", embassy_time::Instant::now().as_ticks());
+            }
+        }
+    }
+
+    /// Validate and acknowledge an expected boot state-change message.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance used to send the ACK response.
+    /// - `buf`: Inbound IPC payload buffer, expected to contain a state-change message.
+    /// - `expected`: Required [`IoProcessorState`] for this boot phase.
+    /// - `phase_name`: Human-readable phase label for trace diagnostics.
+    ///
+    /// # Returns
+    /// - `true` if `buf` decoded as a state-change and matched `expected`.
+    /// - `false` if decode failed or state did not match.
+    ///
+    /// # Side Effects
+    /// Sends an ACK reply on [`IpcChannel::Message`] only on success.
+    fn try_ack_state_change(
+        &self,
+        buf: &mut [u32; 16],
+        expected: IoProcessorState,
+        phase_name: &'static str,
+    ) -> bool {
+        let _ = phase_name;
+
+        let Some(state) = decode_state_change(buf) else {
+            warn!("boot", "non-StateChange msg during {}", phase_name);
+            return false;
+        };
+
+        if state != expected {
+            warn!("boot", "unexpected state during {}", phase_name);
+            return false;
+        }
+
+        let reply = encode_state_change_ack(buf, state);
+        self.ipc.reply(IpcChannel::AdminMessage as u8, &reply);
+        true
+    }
+
+    /// Finalize boot transition to steady-state operation.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance owning IIC/OIC/GDMA and boot state.
+    ///
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// - Initializes IIC, OIC, and GDMA hardware drivers.
+    /// - Moves boot phase to [`BootPhase::Running`].
+    /// - Publishes `Run` to shared boot-status memory.
+    /// - Optionally emits semihosting `SYS_READY` when feature-enabled.
+    fn on_boot_complete(&self) {
+        self.iic.init();
+        self.oic.init();
+        self.gdma.init();
+        self.boot_phase.set(BootPhase::Running);
+        boot_status::set(BootStatus::Run);
+
+        #[cfg(feature = "semihosting")]
+        azihsm_fw_uno_drivers_semihosting::sys_ready();
+
+        info!("boot", "phase -> Running, status=Run");
+    }
+
     /// Poll the NVIC once and wake any PAL driver with a pending IRQ.
     ///
     /// NVIC pending bits are **not** cleared here. For level-triggered
@@ -341,7 +485,16 @@ impl UnoHsmPal {
     /// `poll_once` call — the driver's `wake()` reads and clears the
     /// hardware status register, so the subsequent call finds nothing
     /// to do and returns early.
-    pub fn poll_once(&self) {
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance providing wake targets for registered IRQs.
+    ///
+    /// # Returns
+    /// Returns `()` after scanning all relevant ISPR registers exactly once.
+    ///
+    /// # Side Effects
+    /// Invokes zero or more driver wake functions from [`WAKE_TABLE`].
+    fn poll_once(&self) {
         for (reg, &mask) in ISPR_MASKS.iter().enumerate() {
             let pend = Nvic::pending_bits(reg) & mask;
             let mut bits = pend;
@@ -354,72 +507,90 @@ impl UnoHsmPal {
         }
     }
 
-    /// Minimum bring-up required before the boot handshake.
+    /// Handle an incoming IPC message.
     ///
-    /// Enables IPC pairs so the firmware can receive `NormalBoot` /
-    /// `Start` messages from the Admin core. On real silicon the RNG
-    /// calibration delay runs here to let Admin finish IPC setup.
+    /// During boot, advances the handshake state machine.
+    /// In steady state, echoes the message back with the response bit set.
     ///
-    /// Everything else — crypto engines, IIC/OIC/GDMA — is deferred
-    /// to [`HsmPal::init`] to match the azihsm boot sequence.
-    pub fn pre_init(&self) {
-        self.rng.init_calibrated(&RngCalibration::DEFAULT);
-        self.ipc.enable(0);
-        self.ipc.enable(1);
-    }
-
-    /// Async IPC message processing loop.
+    /// # Parameters
+    /// - `self`: PAL instance containing boot state and IPC driver.
+    /// - `channel`: IPC channel that received `buf`; used for reply routing in running state.
+    /// - `buf`: In-place message buffer containing one inbound IPC payload.
     ///
-    /// Receives messages on pair 0 and events on pair 1, dispatching
-    /// to the appropriate handler. Currently echoes messages back with
-    /// the response bit set in the header and acknowledges events.
-    pub async fn run_ipc(&self) {
-        loop {
-            let mut recv_msg = [0u32; 16];
-
-            use embassy_futures::select::Either3;
-            use embassy_futures::select::select3;
-
-            let result = select3(
-                self.ipc.recv(0, &mut recv_msg),
-                self.ipc.recv_event(1),
-                embassy_futures::yield_now(),
-            )
-            .await;
-            match result {
-                Either3::First(_) => {
-                    // Set response bit in header and reply
-                    recv_msg[0] |= 0x80;
-                    self.ipc.reply(0, &recv_msg);
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// - May update boot phase (`WaitNormalBoot -> WaitStart -> Running`).
+    /// - May initialize IIC/OIC/GDMA when transitioning to running state.
+    /// - May send an ACK or response via IPC.
+    fn handle_ipc_message(&self, channel: IpcChannel, buf: &mut [u32; 16]) {
+        match self.boot_phase.get() {
+            BootPhase::WaitNormalBoot => {
+                if !self.try_ack_state_change(buf, IoProcessorState::NormalBoot, "WaitNormalBoot") {
+                    return;
                 }
-                Either3::Second(value) => {
-                    self.ipc.ack_event(1, value);
+                self.boot_phase.set(BootPhase::WaitStart);
+                info!("boot", "ACK'd NormalBoot, phase -> WaitStart");
+            }
+            BootPhase::WaitStart => {
+                if !self.try_ack_state_change(buf, IoProcessorState::Start, "WaitStart") {
+                    return;
                 }
-                Either3::Third(()) => {}
+                self.on_boot_complete()
+            }
+            BootPhase::Running => {
+                buf[0] |= 0x80;
+                self.ipc.reply(channel as u8, buf);
             }
         }
+    }
+
+    /// Handle one IPC event notification.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance providing the IPC driver.
+    /// - `channel`: IPC event channel to acknowledge.
+    /// - `value`: Raw event payload delivered by hardware.
+    ///
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// Acknowledges the event in the IPC block for `channel`.
+    fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
+        self.ipc.ack_event(channel as u8, value);
     }
 }
 
 impl HsmPal for UnoHsmPal {
-    /// Initialises the Uno platform.
+    /// Initialises the Uno platform (phase 1 only).
     ///
-    /// Sets up the Embassy timer driver, enables all three peripheral
-    /// channels with interrupt at source, and signals `SYS_READY` so
-    /// the host can begin submitting IOs.
+    /// Sets up the minimum needed for IPC communication:
+    /// 1. SysTick (Embassy time driver) — needed for async timers
+    /// 2. RNG calibration — settling delay for IPC
+    /// 3. IPC init + enable — Admin communication channel
+    ///
+    /// IO hardware (IIC/OIC/GDMA) is deferred until the boot handshake
+    /// completes (PAL transitions to [`BootPhase::Running`]).
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance to initialize for phase-1 boot.
+    ///
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// - Initializes SysTick timing and RNG.
+    /// - Initializes IPC and enables message/event channels.
+    /// - Publishes boot status `Done` for host-side polling.
     fn init(&self) {
         systick_driver::init();
-        self.iic.init();
-        self.oic.init();
-        self.gdma.init();
-        self.iic.enable();
-        self.oic.enable();
-        self.gdma.enable(true);
-        self.ipc.enable(0);
-        self.ipc.enable(1);
-        info!("pal", "initialized");
-        #[cfg(feature = "semihosting")]
-        azihsm_fw_uno_drivers_semihosting::sys_ready();
+        self.rng.init();
+        self.ipc.init();
+        self.ipc.enable(IpcChannel::AdminMessage as u8);
+        self.ipc.enable(IpcChannel::AdminEvent as u8);
+        boot_status::set(BootStatus::Done);
     }
 
     /// Cooperative NVIC polling loop.
@@ -431,6 +602,16 @@ impl HsmPal for UnoHsmPal {
     ///
     /// Yields to the Embassy executor between iterations so other
     /// tasks (poll_io, handle_io) can run.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance used for repeated NVIC polling.
+    ///
+    /// # Returns
+    /// This method does not return under normal execution. It is an
+    /// intentionally infinite cooperative run loop.
+    ///
+    /// # Side Effects
+    /// Continuously wakes driver tasks based on pending IRQ state.
     async fn run(&self) {
         loop {
             self.poll_once();
@@ -439,5 +620,14 @@ impl HsmPal for UnoHsmPal {
     }
 
     /// No-op — the emulated SoC does not require teardown.
+    ///
+    /// # Parameters
+    /// - `self`: PAL instance being deinitialized.
+    ///
+    /// # Returns
+    /// Returns `()`.
+    ///
+    /// # Side Effects
+    /// None.
     fn deinit(&self) {}
 }

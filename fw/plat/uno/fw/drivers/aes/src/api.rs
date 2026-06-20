@@ -12,11 +12,9 @@ use azihsm_fw_uno_error::HsmResult;
 use azihsm_fw_uno_pac::interrupt::Interrupt;
 use azihsm_fw_uno_reg_soc::aes::regs::AesRegs;
 use azihsm_fw_uno_reg_soc::aes::AES_BASE;
-use azihsm_fw_uno_reg_soc::aes::STATUS as AesStatus;
 use azihsm_fw_uno_reg_soc::aes::STATUS_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::*;
-use azihsm_fw_uno_trace::tracing::*;
 use bitfield_struct::bitfield;
 use embassy_sync::waitqueue::WakerRegistration;
 use tock_registers::interfaces::Readable;
@@ -168,6 +166,8 @@ struct AesState<const DEPTH: usize> {
 /// - `DEPTH`: Maximum number of concurrent waiters. Must be a power of 2,
 ///   at most 128.
 pub struct AesDriver<const DEPTH: usize> {
+    #[allow(dead_code)] // reserved for future interrupt-driven mode
+    interrupt: bool,
     state: SingleCell<AesState<DEPTH>>,
 }
 
@@ -198,7 +198,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
     /// # Panics
     ///
     /// Compile-time assertion if `DEPTH` is 0, not a power of 2, or exceeds 128.
-    pub fn init(interrupt: bool) -> Self {
+    pub fn new(interrupt: bool) -> Self {
         #[allow(clippy::let_unit_value)]
         let _ = (
             Self::_ASSERT_DEPTH_NONZERO,
@@ -206,23 +206,10 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
             Self::_ASSERT_DEPTH_MAX,
             Self::_ASSERT_DEPTH_FIT,
         );
-
-        // Clear any stale status bits.
-        clear_status(
-            (AesStatus::COMPLETE::SET
-                + AesStatus::ERROR_CMD::SET
-                + AesStatus::ERROR_BUS::SET
-                + AesStatus::ERROR_FAULT::SET)
-                .value,
-        );
-
-        if interrupt {
-            Nvic::enable(Interrupt::AES_DONE);
-        }
-
-        info!("aes", "initialized depth={} interrupt={}", DEPTH, interrupt);
+        let _ = interrupt; // reserved for future interrupt-driven mode
 
         Self {
+            interrupt,
             state: SingleCell::new(AesState {
                 slots: core::array::from_fn(|_| WaiterSlot {
                     waker: WakerRegistration::new(),

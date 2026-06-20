@@ -172,10 +172,10 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
         }
     }
 
-    /// Program the channelized SQ and CQ registers and clear DTCM shadows.
+    /// Program the channelized SQ and CQ registers, clear DTCM shadows,
+    /// and enable.
     ///
-    /// Must only be called after any boot handshake completes. The channel
-    /// remains **disabled** until [`enable`](Self::enable) is invoked.
+    /// Must only be called after any boot handshake completes.
     pub fn init(&self) {
         let ch = self.config.channel as usize;
 
@@ -195,16 +195,13 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
 
         unsafe { (self.config.cq_tail_shadow as *mut u32).write_volatile(0) };
         unsafe { (self.config.sq_head_shadow as *mut u32).write_volatile(0) };
-    }
 
-    /// Enable the channel and optionally arm its CQ interrupt bit.
-    pub fn enable(&self, interrupt: bool) {
-        let ch = self.channel as usize;
+        // Enable
         self.regs.cq_ctrl[ch].modify(CQ_CTRL::EN::SET + CQ_CTRL::TAIL_SHADOW_EN::SET);
         self.regs.sq_ctrl[ch].modify(SQ_CTRL::EN::SET + SQ_CTRL::HEAD_SHADOW_EN::SET);
 
-        if interrupt {
-            let val = self.regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1u32 << self.channel);
+        if self.config.interrupt {
+            let val = self.regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1u32 << self.config.channel);
             self.regs.irq_enable.write(IRQ_ENABLE::IRQ_EN.val(val));
         }
     }

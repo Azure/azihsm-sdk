@@ -49,9 +49,6 @@ pub const IPC_MESSAGE_PAYLOAD_LEN: usize = IPC_MESSAGE_LENGTH * 4 - 4;
 /// Length of the IPC header in bytes.
 pub const IPC_HEADER_LEN_IN_BYTES: usize = 4;
 
-/// IPC pair ID for Admin ↔ HSM message channel.
-pub const IPC_PAIR_ADMIN: u8 = 0;
-
 /// Raw IPC message slot. Matches the `ipc_message_t` regfile (16 × u32).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, IntoBytes, Immutable, FromBytes)]
@@ -147,9 +144,6 @@ pub enum IpcMessageOpCode {
     #[default]
     StateChange = 0x0,
 
-    /// CDMA vault ECC error.
-    CdmaEccErr = 0x1,
-
     /// Create / delete submission queue.
     CreateDeleteSq = 0x3,
 
@@ -165,45 +159,6 @@ pub enum IpcMessageOpCode {
     /// FP error log.
     FpErrLog = 0x9,
 
-    /// IO controller channel allocation query.
-    UcdQuery = 0xa,
-
-    /// CDMA stat set.
-    CdmaStatSet = 0xd,
-
-    /// DOE request / response.
-    Doe = 0x40,
-
-    /// Shutdown.
-    Shutdown = 0x42,
-
-    /// Stop a list of PCIe function interfaces.
-    StopInterface = 0x43,
-
-    /// RSA key generation.
-    RsaKeyGen = 0x44,
-
-    /// Get cert chain lengths.
-    GetCertChainLengths = 0x45,
-
-    /// Get cert.
-    GetCert = 0x46,
-
-    /// Trigger crash dump.
-    TriggerCrash = 0x47,
-
-    /// Negative self test.
-    NegativeSelfTest = 0x48,
-
-    /// TDISP interrupt.
-    TdispInterrupt = 0x49,
-
-    /// Get AES256 bulk key.
-    GetBulkKey = 0x4A,
-
-    /// Test stack validation.
-    TriggerStackValidation = 0x4B,
-
     /// Set resource.
     SetResource = 0x7f,
 }
@@ -214,25 +169,11 @@ impl TryFrom<u8> for IpcMessageOpCode {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value {
             0x00 => Self::StateChange,
-            0x01 => Self::CdmaEccErr,
             0x03 => Self::CreateDeleteSq,
             0x05 => Self::PfnEnableDisable,
             0x06 => Self::CdmaIo,
             0x07 => Self::AesKeyUpdate,
             0x09 => Self::FpErrLog,
-            0x0A => Self::UcdQuery,
-            0x0D => Self::CdmaStatSet,
-            0x40 => Self::Doe,
-            0x42 => Self::Shutdown,
-            0x43 => Self::StopInterface,
-            0x44 => Self::RsaKeyGen,
-            0x45 => Self::GetCertChainLengths,
-            0x46 => Self::GetCert,
-            0x47 => Self::TriggerCrash,
-            0x48 => Self::NegativeSelfTest,
-            0x49 => Self::TdispInterrupt,
-            0x4A => Self::GetBulkKey,
-            0x4B => Self::TriggerStackValidation,
             0x7F => Self::SetResource,
             _ => return Err(IpcMessageErr::InvalidOpcodeConversion.into()),
         })
@@ -504,4 +445,53 @@ impl IpcMessageEncoderTrait for IpcMessageIoStateChange {
     fn encode(self) -> IpcMessage {
         IpcMessageEncoder::encode(self)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Boot handshake helpers
+// ---------------------------------------------------------------------------
+
+/// Decode a raw IPC message buffer into an [`IoProcessorState`].
+///
+/// Returns `None` if the opcode doesn't match `StateChange` or the state
+/// is unrecognized.
+pub fn decode_state_change(buf: &[u32; IPC_MESSAGE_LENGTH]) -> Option<IoProcessorState> {
+    let msg = IpcMessage { data: *buf };
+    let decoded = IpcMessageIoStateChange::read_from_bytes(msg.as_bytes()).ok()?;
+
+    let header = decoded.header;
+    if header.msg_op() != IpcMessageOpCode::StateChange as u32 {
+        return None;
+    }
+
+    match decoded.state {
+        IoProcessorState::NormalBoot | IoProcessorState::Start => Some(decoded.state),
+        _ => None,
+    }
+}
+
+/// Encode an ACK reply for a state change message.
+///
+/// Copies the original header, sets the response bit and success status,
+/// and echoes the state back.
+pub fn encode_state_change_ack(
+    original_buf: &[u32; IPC_MESSAGE_LENGTH],
+    state: IoProcessorState,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let original_header = IpcMessageHeader::read_from_bytes(original_buf[0].as_bytes())
+        .unwrap_or(IpcMessageHeader::new());
+
+    let ack_header = original_header
+        .with_response(true)
+        .with_status(IpcMessageStatusCode::Success as u32);
+
+    let reply = IpcMessageIoStateChange {
+        header: ack_header,
+        state,
+        _rsvd: [0; IPC_MESSAGE_PAYLOAD_LEN - core::mem::size_of::<IoProcessorState>()],
+    };
+
+    let mut out = [0u32; IPC_MESSAGE_LENGTH];
+    out.as_mut_bytes().copy_from_slice(reply.as_bytes());
+    out
 }

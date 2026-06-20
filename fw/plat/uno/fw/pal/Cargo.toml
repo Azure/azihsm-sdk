@@ -16,6 +16,7 @@ azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
 azihsm_fw_static_ref = { workspace = true }
 azihsm_fw_uno_drivers_aes = { workspace = true }
+azihsm_fw_uno_drivers_boot_status = { workspace = true }
 azihsm_fw_uno_drivers_gdma = { workspace = true }
 azihsm_fw_uno_drivers_iic = { workspace = true }
 azihsm_fw_uno_drivers_ipc = { workspace = true }
@@ -32,6 +33,7 @@ azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
 
 embassy-futures = { workspace = true }
+embassy-time = { workspace = true }
 tock-registers = { workspace = true }
 
 bitfield-struct = { workspace = true }

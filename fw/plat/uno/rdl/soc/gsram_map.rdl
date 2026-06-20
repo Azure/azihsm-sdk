@@ -9,6 +9,7 @@
 //
 // Region layout:
 //   0x07000            BOOT_STATUS (4 B)
+//   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
 //   0x0E440 - 0x0F580  IIC / OIC queues
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
@@ -29,6 +30,41 @@ reg boot_status_t {
     desc = "HSM boot phase indicator. Written by HSM firmware, polled
             by Admin. Values: 0=NotStarted, 1=Done, 2=Run.";
     field { sw = rw; hw = r; } STATE[31:0] = 0x0;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Admin↔HSM IPC queues
+// ══════════════════════════════════════════════════════════════
+
+reg ipc_queue_index_t {
+    name = "IPC Queue Index";
+    desc = "Producer or consumer index for an IPC ring.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+// IPC message slot: 16 DWORDs (64 bytes).
+regfile ipc_message_t {
+    name = "IPC Message";
+    desc = "64-byte IPC message slot (16 × u32). First DWORD is the
+            header (opcode, response bit, status, length). Remaining
+            15 DWORDs are payload.";
+    io_sq_dw_t DW0  @ 0x00;
+    io_sq_dw_t DW1  @ 0x04;
+    io_sq_dw_t DW2  @ 0x08;
+    io_sq_dw_t DW3  @ 0x0C;
+    io_sq_dw_t DW4  @ 0x10;
+    io_sq_dw_t DW5  @ 0x14;
+    io_sq_dw_t DW6  @ 0x18;
+    io_sq_dw_t DW7  @ 0x1C;
+    io_sq_dw_t DW8  @ 0x20;
+    io_sq_dw_t DW9  @ 0x24;
+    io_sq_dw_t DW10 @ 0x28;
+    io_sq_dw_t DW11 @ 0x2C;
+    io_sq_dw_t DW12 @ 0x30;
+    io_sq_dw_t DW13 @ 0x34;
+    io_sq_dw_t DW14 @ 0x38;
+    io_sq_dw_t DW15 @ 0x3C;
 };
 
 
@@ -356,6 +392,16 @@ addrmap io_gsram {
 
     // ─── Boot ───
     boot_status_t    BOOT_STATUS        @ 0x07000;
+
+    // ─── Admin↔HSM IPC (depth=2, msg_len=16 DWORDs) ───
+    // From HSM's perspective: RX = Admin writes / HSM reads,
+    //                         TX = HSM writes / Admin reads.
+    ipc_queue_index_t IPC_ADMIN_HSM_RX_PI   @ 0x07004;
+    ipc_queue_index_t IPC_ADMIN_HSM_RX_CI   @ 0x07008;
+    ipc_queue_index_t IPC_ADMIN_HSM_TX_PI   @ 0x0700C;
+    ipc_queue_index_t IPC_ADMIN_HSM_TX_CI   @ 0x07010;
+    ipc_message_t     IPC_ADMIN_HSM_RX_RING[2] @ 0x07014 += 0x40;
+    ipc_message_t     IPC_ADMIN_HSM_TX_RING[2] @ 0x07094 += 0x40;
 
     // ─── IIC (Inbound IO) — 0x20-aligned ───
     isq_entry_t      ISQ[32]            @ 0x0E440 += 0x08;

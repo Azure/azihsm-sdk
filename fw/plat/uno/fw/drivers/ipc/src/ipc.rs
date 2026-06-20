@@ -12,7 +12,6 @@ use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_reg_soc::intc::regs::IntcRegs;
 use azihsm_fw_uno_reg_soc::intc::INTC_BASE;
-use azihsm_fw_uno_trace::tracing::*;
 use embassy_sync::waitqueue::WakerRegistration;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
@@ -247,14 +246,10 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
     /// Clears all pending bits on this block, builds the
     /// descriptor-to-pair lookup table, and copies pair configs
     /// into internal state.
-    pub fn init(config: IpcConfig<'_>) -> Self {
+    pub fn new(config: IpcConfig<'_>) -> Self {
         assert!(config.pairs.len() <= MAX_PAIRS);
 
         let regs = unsafe { StaticRef::new(INTC_BASE as *const IntcRegs) };
-
-        // Clear all pending bits on this block
-        let pend_clr = &regs.pend_clr[config.int_block as usize];
-        pend_clr.set(0xFFFF_FFFF);
 
         let mut desc_to_pair = [0xFFu8; 32];
         let mut pairs = [PairState::EMPTY; MAX_PAIRS];
@@ -293,6 +288,12 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
         }
     }
 
+    /// Clear pending interrupts. Must be called after clocks are available.
+    pub fn init(&self) {
+        let pend_clr = &self.regs.pend_clr[self.int_block as usize];
+        pend_clr.set(0xFFFF_FFFF);
+    }
+
     /// Enable interrupts for a pair's inbound descriptor.
     pub fn enable(&self, pair: u8) {
         self.state.with(|s| {
@@ -325,8 +326,6 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                 return;
             }
 
-            info!("ipc", "wake block={} pend={:#x}", self.int_block, pend);
-
             let mut bits = pend;
             while bits != 0 {
                 let n = bits.trailing_zeros() as u8;
@@ -340,20 +339,14 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                 let pair = &mut s.pairs[pair_idx as usize];
                 match pair.kind {
                     IpcPairKind::RecvMessage => {
-                        info!("ipc", "waking recv pair={} desc={}", pair_idx, n);
                         pair.waker.wake();
                     }
                     IpcPairKind::RecvEvent => {
-                        info!("ipc", "waking event pair={} desc={}", pair_idx, n);
                         pair.event_pending = Some(self.regs.desc[n as usize].get());
                         pair.waker.wake();
                     }
                     IpcPairKind::SendMessage => {
                         if let Some(slot_idx) = pair.in_flight {
-                            info!(
-                                "ipc",
-                                "waking send pair={} desc={} slot={}", pair_idx, n, slot_idx
-                            );
                             s.send_slots[slot_idx as usize].completed = true;
                             s.send_slots[slot_idx as usize].waker.wake();
                         }
@@ -391,8 +384,6 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                     return Poll::Pending;
                 }
 
-                info!("ipc", "recv pair={} pi={} ci={}", pair, pi, ci);
-
                 // Copy message from RX ring and advance CI
                 unsafe { p.copy_from_rx(ci, buf) };
                 let new_ci = (ci + 1) % p.depth;
@@ -412,7 +403,6 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
             let p = &mut s.pairs[pair as usize];
 
             let pi = unsafe { p.tx_pi.read_volatile() } as u16;
-            info!("ipc", "reply pair={} pi={}", pair, pi);
 
             // Copy message into TX ring and advance PI
             unsafe { p.copy_to_tx(pi, msg) };
@@ -529,10 +519,7 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
             self.state.with(|s| {
                 let p = &mut s.pairs[pair as usize];
                 match p.event_pending.take() {
-                    Some(value) => {
-                        info!("ipc", "recv_event pair={} value={:#x}", pair, value);
-                        Poll::Ready(value)
-                    }
+                    Some(value) => Poll::Ready(value),
                     None => {
                         p.waker.register(cx.waker());
                         Poll::Pending

@@ -7,7 +7,6 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_uno_error::HsmResult;
 use azihsm_fw_uno_reg_soc::io_gsram::UPKA_ENGINE_CMD_COUNT;
-use azihsm_fw_uno_trace::tracing::*;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::engine::UpkaEngine;
@@ -71,7 +70,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     /// # Panics
     ///
     /// Compile-time assertion if `DEPTH` is 0, not a power of 2, or exceeds 128.
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         #[allow(clippy::let_unit_value)]
         let _ = (
             Self::_ASSERT_DEPTH_NONZERO,
@@ -81,8 +80,6 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
             Self::_ASSERT_ENGINES_MAX,
             Self::_ASSERT_ENGINE_COUNT,
         );
-
-        info!("pka", "initialized {} engines, depth={}", ENGINES, DEPTH);
 
         Self {
             state: SingleCell::new(UpkaState {

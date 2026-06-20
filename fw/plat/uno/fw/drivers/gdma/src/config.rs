@@ -20,4 +20,7 @@ pub struct ChannelConfig {
 
     /// Address where hardware mirrors the SQ head.
     pub sq_head_shadow: u32,
+
+    /// Whether to arm the CQ interrupt bit on init.
+    pub interrupt: bool,
 }

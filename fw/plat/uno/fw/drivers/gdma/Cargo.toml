@@ -18,7 +18,6 @@ azihsm_fw_static_ref = { workspace = true }
 azihsm_fw_uno_drivers_nvic = { workspace = true }
 azihsm_fw_uno_error = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
-azihsm_fw_uno_trace = { workspace = true }
 cortex-m = { workspace = true }
 embassy-sync = { workspace = true }
 heapless = { workspace = true }

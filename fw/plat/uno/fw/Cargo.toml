@@ -11,6 +11,7 @@ members = [
   "crates/static_ref",
   "crates/trace",
   "drivers/aes",
+  "drivers/boot_status",
   "drivers/gdma",
   "drivers/iic",
   "drivers/ipc",
@@ -38,6 +39,7 @@ azihsm_fw_static_ref = { path = "crates/static_ref" }
 azihsm_fw_uno_reg_cortex_m = { path = "reg/cortex-m" }
 
 azihsm_fw_uno_drivers_aes = { path = "drivers/aes" }
+azihsm_fw_uno_drivers_boot_status = { path = "drivers/boot_status" }
 azihsm_fw_uno_drivers_gdma = { path = "drivers/gdma" }
 azihsm_fw_uno_drivers_iic = { path = "drivers/iic" }
 azihsm_fw_uno_drivers_ipc = { path = "drivers/ipc" }
