@@ -68,8 +68,7 @@ pub fn ec_pub_from_sec1(sec1: &[u8]) -> SessionCryptoResult<EccPublicKey> {
     let x_be = &sec1[1..1 + P384_COORD_LEN];
     let y_be = &sec1[1 + P384_COORD_LEN..];
     EccPublicKey::from_coordinates(EccCurve::P384, x_be, y_be)
-        .map_err(|_| SessionCryptoError::Crypto)
-}
+        .map_err(|_| SessionCryptoError::InvalidInput)
 
 /// `HMAC-SHA-384(exported, label ‖ session_id_be ‖ pk_init ‖
 /// pk_hsm ‖ pk_resp)`.
@@ -127,7 +126,7 @@ pub fn generate_vm_ephemeral() -> SessionCryptoResult<VmEphemeralKey> {
 pub fn ec_pub_to_sec1(pk: &EccPublicKey) -> SessionCryptoResult<[u8; PK_INIT_LEN]> {
     let (x_be, y_be) = pk.coord_vec().map_err(|_| SessionCryptoError::Crypto)?;
     if x_be.len() != P384_COORD_LEN || y_be.len() != P384_COORD_LEN {
-        return Err(SessionCryptoError::Crypto);
+        return Err(SessionCryptoError::InvalidInput);
     }
     let mut out = [0u8; PK_INIT_LEN];
     out[0] = 0x04;
