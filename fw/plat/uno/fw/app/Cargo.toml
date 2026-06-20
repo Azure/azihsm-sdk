@@ -12,28 +12,25 @@ name = "azihsm_fw_uno_app"
 test = false
 
 [dependencies]
-azihsm_fw_uno_trace = { workspace = true }
-azihsm_fw_uno_drivers_uart = { workspace = true }
-azihsm_fw_uno_drivers_systick = { workspace = true }
-azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_hsm_core = { workspace = true }
 azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
-azihsm_fw_uno_pal = { workspace = true }
 azihsm_fw_uno_drivers_profile = { workspace = true }
-cortex-m = { features = [
-  "critical-section-single-core",
-], workspace = true }
+azihsm_fw_uno_drivers_systick = { workspace = true }
+azihsm_fw_uno_drivers_uart = { workspace = true }
+azihsm_fw_uno_pac = { workspace = true }
+azihsm_fw_uno_pal = { workspace = true }
+azihsm_fw_uno_trace = { workspace = true }
+cortex-m = { features = ["critical-section-single-core"], workspace = true }
 cortex-m-rt = { features = ["device"], workspace = true }
 embassy-executor = { features = [
   "executor-thread",
   "platform-cortex-m",
   "trace",
 ], workspace = true }
+embassy-futures = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
-embassy-futures = { workspace = true }
-
 
 [features]
 default = []

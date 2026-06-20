@@ -43,7 +43,7 @@ azihsm_fw_uno_drivers_iic = { path = "drivers/iic" }
 azihsm_fw_uno_drivers_ipc = { path = "drivers/ipc" }
 azihsm_fw_uno_drivers_nvic = { path = "drivers/nvic" }
 azihsm_fw_uno_drivers_oic = { path = "drivers/oic" }
-azihsm_fw_uno_drivers_profile = { path = "drivers/profile", default-features = false }
+azihsm_fw_uno_drivers_profile = { default-features = false, path = "drivers/profile" }
 azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
 azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
 azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }

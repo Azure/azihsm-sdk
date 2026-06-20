@@ -35,8 +35,7 @@ pub(crate) const IO_SLOTS: usize = SRAM_IO_BUF_COUNT as usize;
 
 // DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.
 // See dtcm_map.rdl: DTCM_IO_BUF[32] @ offset 0x2F400 from DTCM base.
-const DTCM_IO_BUF_BASE: u32 =
-    azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE
+const DTCM_IO_BUF_BASE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE
     + azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_OFFSET;
 const DTCM_IO_BUF_STRIDE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_STRIDE;
 const DTCM_IO_BUF_SIZE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_SIZE;
@@ -71,8 +70,7 @@ pub(crate) fn reset_io_alloc(pal: &UnoHsmPal, index: u16) {
 fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     let index = io_index as usize;
     if heap == NONDMA {
-        let addr = DTCM_IO_BUF_BASE as usize
-            + index * DTCM_IO_BUF_STRIDE as usize;
+        let addr = DTCM_IO_BUF_BASE as usize + index * DTCM_IO_BUF_STRIDE as usize;
         (addr as *mut u8, DTCM_IO_BUF_SIZE as usize)
     } else {
         let addr = IO_GSRAM_BASE as usize
