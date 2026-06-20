@@ -38,12 +38,16 @@ use zeroize::Zeroizing;
 
 use super::*;
 
-/// Maps a backend-agnostic [`SessionCryptoError`] onto the API error
-/// domain. All handshake-crypto failures surface as
+/// Maps a [`SessionCryptoError`] onto the API error domain. Malformed
+/// inputs surface as [`HsmError::InvalidArgument`]; handshake-crypto
+/// failures (key agreement, AEAD, confirm-MAC) surface as
 /// [`HsmError::InternalError`].
 impl From<SessionCryptoError> for HsmError {
-    fn from(_: SessionCryptoError) -> Self {
-        HsmError::InternalError
+    fn from(err: SessionCryptoError) -> Self {
+        match err {
+            SessionCryptoError::InvalidInput => HsmError::InvalidArgument,
+            SessionCryptoError::Crypto | SessionCryptoError::MacMismatch => HsmError::InternalError,
+        }
     }
 }
 
@@ -167,9 +171,10 @@ fn open_session_ex(
 ///
 /// # Errors
 ///
-/// Propagates DDI failures from the round-trip and
-/// [`HsmError::InternalError`] from the handshake crypto (e.g. a
-/// Phase-1 confirm MAC mismatch).
+/// Propagates DDI failures from the round-trip,
+/// [`HsmError::InvalidArgument`] for malformed handshake inputs (e.g.
+/// an unknown `psk_id`), and [`HsmError::InternalError`] for
+/// handshake-crypto failures (e.g. a Phase-1 confirm MAC mismatch).
 fn open_session_ex_init(
     partition: &HsmPartition,
     rev: HsmApiRev,
@@ -247,8 +252,9 @@ fn open_session_ex_init(
 /// # Errors
 ///
 /// Propagates DDI failures from the round-trip (including a Phase-2
-/// confirm-MAC rejection by the FW) and [`HsmError::InternalError`]
-/// from the handshake crypto.
+/// confirm-MAC rejection by the FW), [`HsmError::InvalidArgument`] for
+/// malformed handshake inputs, and [`HsmError::InternalError`] for
+/// handshake-crypto failures.
 fn open_session_ex_finish(
     partition: &HsmPartition,
     pending: PendingHandshake,

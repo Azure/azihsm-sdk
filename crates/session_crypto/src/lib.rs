@@ -26,9 +26,9 @@ use zeroize::Zeroizing;
 
 /// Result alias for the session-establishment crypto helpers.
 ///
-/// Intentionally **not** `pub`: keeping it crate-private avoids
-/// shadowing the standard `Result` at glob-import call sites.
-type Result<T> = core::result::Result<T, SessionCryptoError>;
+/// Distinctly named (not `Result`) so a glob import of this crate
+/// cannot shadow the standard `Result` at call sites.
+pub type SessionCryptoResult<T> = core::result::Result<T, SessionCryptoError>;
 
 /// HPKE suite used by the TBOR session protocol — must match the
 /// firmware's `open_session_init` suite.
@@ -61,7 +61,7 @@ pub enum SessionCryptoError {
 
 /// Decode a 97-byte SEC1 uncompressed P-384 point into a typed
 /// [`EccPublicKey`].
-pub fn ec_pub_from_sec1(sec1: &[u8]) -> Result<EccPublicKey> {
+pub fn ec_pub_from_sec1(sec1: &[u8]) -> SessionCryptoResult<EccPublicKey> {
     if sec1.len() != PK_RESP_LEN || sec1[0] != 0x04 {
         return Err(SessionCryptoError::InvalidInput);
     }
@@ -80,7 +80,7 @@ fn confirm_mac(
     pk_init: &[u8],
     pk_hsm: &[u8],
     pk_resp: &[u8],
-) -> Result<[u8; MAC_LEN]> {
+) -> SessionCryptoResult<[u8; MAC_LEN]> {
     let mut data =
         Vec::with_capacity(label.len() + 2 + pk_init.len() + pk_hsm.len() + pk_resp.len());
     data.extend_from_slice(label);
@@ -109,7 +109,7 @@ pub struct VmEphemeralKey {
 }
 
 /// Generate a fresh per-handshake P-384 ephemeral keypair.
-pub fn generate_vm_ephemeral() -> Result<VmEphemeralKey> {
+pub fn generate_vm_ephemeral() -> SessionCryptoResult<VmEphemeralKey> {
     let mut scalar = Zeroizing::new(vec![0u8; P384_COORD_LEN]);
     let sk = loop {
         Rng::rand_bytes(scalar.as_mut_slice()).map_err(|_| SessionCryptoError::Crypto)?;
@@ -124,7 +124,7 @@ pub fn generate_vm_ephemeral() -> Result<VmEphemeralKey> {
 
 /// Encode a P-384 public key as SEC1 uncompressed
 /// (`0x04 ‖ X_be ‖ Y_be`, 97 B) per RFC 9180 §7.1.1.
-pub fn ec_pub_to_sec1(pk: &EccPublicKey) -> Result<[u8; PK_INIT_LEN]> {
+pub fn ec_pub_to_sec1(pk: &EccPublicKey) -> SessionCryptoResult<[u8; PK_INIT_LEN]> {
     let (x_be, y_be) = pk.coord_vec().map_err(|_| SessionCryptoError::Crypto)?;
     if x_be.len() != P384_COORD_LEN || y_be.len() != P384_COORD_LEN {
         return Err(SessionCryptoError::Crypto);
@@ -149,7 +149,7 @@ pub fn build_hpke_info(psk_id: u8, session_type: u8, suite_id: u8) -> Vec<u8> {
 
 /// Canonical default PSK for the given `psk_id` (`0` = CO,
 /// `1` = CU) on a partition that has not been rotated.
-pub fn default_psk(psk_id: u8) -> Result<&'static [u8; PSK_LEN]> {
+pub fn default_psk(psk_id: u8) -> SessionCryptoResult<&'static [u8; PSK_LEN]> {
     match psk_id {
         0 => Ok(&DEFAULT_PSK_CO),
         1 => Ok(&DEFAULT_PSK_CU),
@@ -168,7 +168,7 @@ pub fn receive_exported(
     info: &[u8],
     psk: &[u8],
     psk_id_byte: &[u8],
-) -> Result<Vec<u8>> {
+) -> SessionCryptoResult<Vec<u8>> {
     let enc = ec_pub_from_sec1(pk_resp_sec1)?;
     let cfg = HpkeReceiveExportConfig::auth_psk(
         SUITE,
@@ -194,7 +194,7 @@ pub fn verify_phase1_mac(
     pk_hsm: &[u8],
     pk_resp: &[u8],
     expected: &[u8],
-) -> Result<()> {
+) -> SessionCryptoResult<()> {
     let computed = confirm_mac(
         exported,
         SESSION_PHASE1_LABEL,
@@ -217,7 +217,7 @@ pub fn build_phase2_mac(
     pk_init: &[u8],
     pk_hsm: &[u8],
     pk_resp: &[u8],
-) -> Result<[u8; MAC_LEN]> {
+) -> SessionCryptoResult<[u8; MAC_LEN]> {
     confirm_mac(
         exported,
         SESSION_PHASE2_LABEL,
@@ -230,7 +230,7 @@ pub fn build_phase2_mac(
 
 /// `HKDF-Expand(prk, label ‖ len_be, len)` — mirrors the firmware's
 /// `hkdf_expand_labeled` helper used by `open_session_finish`.
-fn hkdf_expand_labeled(prk: &[u8], label: &[u8], out_len: usize) -> Result<Vec<u8>> {
+fn hkdf_expand_labeled(prk: &[u8], label: &[u8], out_len: usize) -> SessionCryptoResult<Vec<u8>> {
     let len_be = u16::try_from(out_len)
         .map_err(|_| SessionCryptoError::InvalidInput)?
         .to_be_bytes();
@@ -251,7 +251,7 @@ fn hkdf_expand_labeled(prk: &[u8], label: &[u8], out_len: usize) -> Result<Vec<u
 /// exported secret via [`hkdf_expand_labeled`] with
 /// `SESSION_PARAM_KEY_LABEL`. Returns a typed [`AesKey`] ready to drive
 /// `aead_envelope::seal`.
-pub fn derive_param_key(exported: &[u8]) -> Result<AesKey> {
+pub fn derive_param_key(exported: &[u8]) -> SessionCryptoResult<AesKey> {
     let bytes = Zeroizing::new(hkdf_expand_labeled(
         exported,
         SESSION_PARAM_KEY_LABEL,
@@ -263,7 +263,13 @@ pub fn derive_param_key(exported: &[u8]) -> Result<AesKey> {
 /// Seal a 32-byte `seed` under `param_key` as a no-AAD AEAD-GCM
 /// envelope. Returns the exact `SEED_ENVELOPE_LEN`-byte wire blob that
 /// occupies the `seed_envelope` field of `TborOpenSessionFinishReq`.
-pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> Result<Vec<u8>> {
+pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> SessionCryptoResult<Vec<u8>> {
+    //check seed length
+    if seed.len() != SESSION_SEED_LEN {
+        return Err(SessionCryptoError::InvalidInput);
+    }
+
+    //generate a random 12-byte IV and seal the seed under param_key with no AAD.
     let iv = Rng::rand_vec(12).map_err(|_| SessionCryptoError::Crypto)?;
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, &[], seed, None)
         .map_err(|_| SessionCryptoError::Crypto)?;
@@ -284,13 +290,13 @@ pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> Result<Vec<u8>> {
 /// Derive the authenticated-session MAC **TX** key from the HPKE
 /// exported secret via [`hkdf_expand_labeled`] with
 /// `SESSION_MAC_TX_LABEL`.
-pub fn derive_mac_tx_key(exported: &[u8]) -> Result<Vec<u8>> {
+pub fn derive_mac_tx_key(exported: &[u8]) -> SessionCryptoResult<Vec<u8>> {
     hkdf_expand_labeled(exported, SESSION_MAC_TX_LABEL, SESSION_MAC_DIR_KEY_LEN)
 }
 
 /// Derive the authenticated-session MAC **RX** key from the HPKE
 /// exported secret via [`hkdf_expand_labeled`] with
 /// `SESSION_MAC_RX_LABEL`.
-pub fn derive_mac_rx_key(exported: &[u8]) -> Result<Vec<u8>> {
+pub fn derive_mac_rx_key(exported: &[u8]) -> SessionCryptoResult<Vec<u8>> {
     hkdf_expand_labeled(exported, SESSION_MAC_RX_LABEL, SESSION_MAC_DIR_KEY_LEN)
 }
