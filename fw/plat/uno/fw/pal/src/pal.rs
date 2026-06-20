@@ -51,6 +51,8 @@ use azihsm_fw_uno_drivers_sha::ShaDriver;
 use azihsm_fw_uno_drivers_systick as systick_driver;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
+use azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE;
+use azihsm_fw_uno_reg_soc::hsm_dtcm::regs::HsmDtcmRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_SQ_OFFSET;
@@ -75,6 +77,7 @@ use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
 use embassy_futures::select::Either3;
 use embassy_futures::select::select3;
+use tock_registers::interfaces::Writeable;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -397,7 +400,7 @@ impl UnoHsmPal {
         let result = select3(
             self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
             self.ipc.recv_event(IpcChannel::AdminEvent as u8),
-            embassy_time::Timer::after(embassy_time::Duration::from_secs(60)),
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
         )
         .await;
         match result {
@@ -408,9 +411,20 @@ impl UnoHsmPal {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
             }
             Either3::Third(()) => {
-                info!("pal", "tick {}", embassy_time::Instant::now().as_ticks());
+                self.heartbeat_tick();
             }
         }
+    }
+
+    /// Write the core liveliness heartbeat to DTCM.
+    ///
+    /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
+    /// poll cycle, SP declares the core hung.
+    fn heartbeat_tick(&self) {
+        use azihsm_fw_static_ref::StaticRef;
+        const DTCM: StaticRef<HsmDtcmRegs> =
+            unsafe { StaticRef::new(HSM_DTCM_BASE as *const HsmDtcmRegs) };
+        DTCM.core_run_status.set(1);
     }
 
     /// Validate and acknowledge an expected boot state-change message.
