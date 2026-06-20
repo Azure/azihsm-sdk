@@ -15,27 +15,37 @@
 //!   or above [`SD_TBOR_MIN_REV`].
 //!
 //! The [`open_session_ex`] entry point gates on the negotiated API
-//! revision via [`use_tbor`] and, when TBOR applies, runs
+//! revision via [`use_tbor`]: when TBOR applies it runs
 //! [`open_session_ex_init`] (Phase 1) followed by
-//! [`open_session_ex_finish`] (Phase 2). Revisions below the cutoff
-//! continue to use the MBOR `OpenSession` path in [`super::session`].
+//! [`open_session_ex_finish`] (Phase 2); when `rev` is below the
+//! cutoff it rejects with [`HsmError::UnsupportedApiRevision`]. The
+//! MBOR `OpenSession` path in [`super::session`] is dispatched
+//! separately and is not reached through this entry point.
 //!
 //! Both phases are wired. Their HPKE handshake crypto (VM ephemeral
 //! generation, `receive_export`, the confirm MACs, `param_key`
-//! derivation, and the `seed_envelope` AEAD seal) lives in the sibling
-//! [`super::session_crypto`] module — an intentional copy of the TBOR
-//! test harness's pure crypto helpers (which are test-only and cannot
-//! be imported here). `pk_hsm` retrieval reuses the production cert
-//! chain via [`fetch_pk_hsm`].
+//! derivation, and the `seed_envelope` AEAD seal) lives in the
+//! standalone [`azihsm_session_crypto`] crate, the single host-side
+//! source of truth for the wire protocol. `pk_hsm` retrieval reuses
+//! the production cert chain via [`fetch_pk_hsm`].
 
 #![allow(dead_code)]
 
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
+use azihsm_session_crypto::*;
 use zeroize::Zeroizing;
 
-use super::session_crypto;
 use super::*;
+
+/// Maps a backend-agnostic [`SessionCryptoError`] onto the API error
+/// domain. All handshake-crypto failures surface as
+/// [`HsmError::InternalError`].
+impl From<SessionCryptoError> for HsmError {
+    fn from(_: SessionCryptoError) -> Self {
+        HsmError::InternalError
+    }
+}
 
 /// Minimum [`HsmApiRev`] at which the host dispatches `OpenSession`
 /// over the TBOR opcode plane. Older revisions continue to use the
@@ -98,7 +108,7 @@ pub(super) fn fetch_pk_hsm(
 ) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
     let pk_der = get_part_pub_key(dev, rev)?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| HsmError::InternalError)?;
-    let sec1 = session_crypto::ec_pub_to_sec1(&pk)?;
+    let sec1 = ec_pub_to_sec1(&pk)?;
     Ok((pk, sec1))
 }
 
@@ -136,7 +146,7 @@ fn open_session_ex(
     if !use_tbor(rev) {
         return Err(HsmError::UnsupportedApiRevision);
     }
-    let pending = open_session_ex_init(partition, psk_id, session_type)?;
+    let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
     open_session_ex_finish(partition, pending)
 }
 
@@ -151,6 +161,10 @@ fn open_session_ex(
 /// Uses the partition default PSK for `psk_id` (CO = 0, CU = 1); PSK
 /// rotation is out of scope for now.
 ///
+/// `rev` is the negotiated API revision selected by the caller
+/// ([`open_session_ex`]); it is used for the `pk_hsm` cert-chain
+/// fetch so gating and retrieval observe a single revision.
+///
 /// # Errors
 ///
 /// Propagates DDI failures from the round-trip and
@@ -158,16 +172,16 @@ fn open_session_ex(
 /// Phase-1 confirm MAC mismatch).
 fn open_session_ex_init(
     partition: &HsmPartition,
+    rev: HsmApiRev,
     psk_id: u8,
     session_type: SessionType,
 ) -> HsmResult<PendingHandshake> {
     let inner = partition.inner().read();
     let dev = inner.dev();
-    let rev = inner.api_rev();
 
     // VM per-handshake ephemeral keypair (recipient side of the HPKE
     // auth_psk handshake).
-    let eph = session_crypto::generate_vm_ephemeral()?;
+    let eph = generate_vm_ephemeral()?;
 
     // Partition identity key (`pk_hsm`, HPKE sender) from the leaf
     // cert in the production cert chain.
@@ -188,9 +202,9 @@ fn open_session_ex_init(
 
     // Derive the 48-byte HPKE `exported` secret, then verify the FW's
     // Phase-1 confirm MAC binds the negotiated role/type/suite.
-    let info = session_crypto::build_hpke_info(psk_id, session_type.to_u8(), suite_id);
-    let psk = session_crypto::default_psk(psk_id)?;
-    let exported = session_crypto::receive_exported(
+    let info = build_hpke_info(psk_id, session_type.to_u8(), suite_id);
+    let psk = default_psk(psk_id)?;
+    let exported = receive_exported(
         &eph.sk,
         &eph.pk,
         &pk_hsm_key,
@@ -200,7 +214,7 @@ fn open_session_ex_init(
         &[psk_id],
     )?;
 
-    session_crypto::verify_phase1_mac(
+    verify_phase1_mac(
         &exported,
         resp.session_id,
         &eph.pk_sec1,
@@ -244,10 +258,10 @@ fn open_session_ex_finish(
 
     // Derive the per-session wrap key, generate a fresh seed, and seal
     // it under `param_key` as the `seed_envelope` wire blob.
-    let param_key = session_crypto::derive_param_key(&pending.exported)?;
+    let param_key = derive_param_key(&pending.exported)?;
     let mut seed = Zeroizing::new([0u8; SESSION_SEED_LEN]);
     Rng::rand_bytes(seed.as_mut_slice()).map_err(|_| HsmError::InternalError)?;
-    let envelope = session_crypto::seal_seed_envelope(&param_key, seed.as_slice())?;
+    let envelope = seal_seed_envelope(&param_key, seed.as_slice())?;
     let seed_envelope: [u8; SEED_ENVELOPE_LEN] = envelope
         .as_slice()
         .try_into()
@@ -255,7 +269,7 @@ fn open_session_ex_finish(
 
     // Phase-2 confirm MAC binds the same transcript as Phase 1 under
     // the Phase-2 label.
-    let mac_fin = session_crypto::build_phase2_mac(
+    let mac_fin = build_phase2_mac(
         &pending.exported,
         pending.session_id,
         &pending.pk_init,
@@ -335,8 +349,9 @@ mod tests {
     fn run_handshake(psk_id: u8, session_type: SessionType) -> OpenSessionExResult {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
+        let rev = part.inner().read().api_rev();
 
-        let pending = open_session_ex_init(&part, psk_id, session_type)
+        let pending = open_session_ex_init(&part, rev, psk_id, session_type)
             .expect("phase 1 (open_session_ex_init) should succeed against emu");
         assert_eq!(
             pending.psk_id, psk_id,
@@ -387,7 +402,8 @@ mod tests {
     fn open_session_ex_init_rejects_unknown_psk_id_emu() {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
-        let result = open_session_ex_init(&part, 2, SessionType::Authenticated);
+        let rev = part.inner().read().api_rev();
+        let result = open_session_ex_init(&part, rev, 2, SessionType::Authenticated);
         assert!(
             result.is_err(),
             "unknown psk_id must not produce a pending handshake"
