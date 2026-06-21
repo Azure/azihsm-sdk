@@ -13,22 +13,22 @@
 //! finished the migration of the session-state probe to the new
 //! `ctx.open_session_init`/`finish`/`close_session` methods.
 
-#![cfg(any(feature = "emu", feature = "mock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 
 use azihsm_ddi_tbor_types::TborGetApiRevReq;
 
 use crate::harness::TestCtx;
 
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock"))]
 const EXPECTED: azihsm_ddi_tbor_types::TborGetApiRevResp =
     azihsm_ddi_tbor_types::TborGetApiRevResp {
         min_protocol_version: 1,
         max_protocol_version: 1,
     };
 
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock"))]
 #[test]
-fn round_trip_emu() {
+fn round_trip() {
     let ctx = TestCtx::new();
     let resp = ctx
         .tbor(&TborGetApiRevReq::new())
