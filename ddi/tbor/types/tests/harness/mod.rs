@@ -38,7 +38,7 @@
 //! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
 //! are unavailable under `--features mock`.
 
-#![cfg(any(feature = "emu", feature = "mock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 
 pub mod api_rev;
 pub mod assertions;
