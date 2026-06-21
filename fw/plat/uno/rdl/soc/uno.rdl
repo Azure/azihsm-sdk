@@ -17,6 +17,7 @@
 //   0xA12C_0000  OIC              16 KB  (controller 0)
 //   0xB000_6000  INTC            272 B   (IPC interrupt controller)
 //   0xB000_9000  UART            4 KB    (debug console; silicon-only)
+//   0xB020_0000  DualCpM7        4 B     (CP_ID core identification)
 //   0xC000_0000  UPKA             64 KB  (16 PKA engines × 4 KB)
 //   0xE000_0000  PPB (NVIC, SCB, SysTick, TCM)
 
@@ -29,6 +30,7 @@
 `include "upka.rdl"
 `include "rng.rdl"
 `include "intc.rdl"
+`include "dual_cp_m7.rdl"
 `include "uart.rdl"
 `include "gsram_map.rdl"
 `include "dtcm_map.rdl"
@@ -52,6 +54,7 @@ addrmap uno {
     iic    IIC             @ 0xA128_0000;
     oic    OIC             @ 0xA12C_0000;
     intc   INTC            @ 0xB000_6000;
+    dual_cp_m7 DUAL_CP_M7  @ 0xB020_0000;
     uart   UART            @ 0xB000_9000;
     upka   UPKA            @ 0xC000_0000;
 

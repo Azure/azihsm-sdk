@@ -21,6 +21,10 @@ pub struct Build {
     /// Features to include in the firmware build.
     #[clap(long)]
     pub features: Option<String>,
+
+    /// Build without the crate's default features.
+    #[clap(long)]
+    pub no_default_features: bool,
 }
 
 impl Xtask for Build {
@@ -30,6 +34,9 @@ impl Xtask for Build {
         let _dir = sh.push_dir(&fw.fw_dir);
 
         let mut args = vec!["+nightly", "build", "--release"];
+        if self.no_default_features {
+            args.push("--no-default-features");
+        }
         if let Some(features) = self
             .features
             .as_ref()

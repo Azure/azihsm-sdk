@@ -22,6 +22,7 @@ tracing = ["dep:azihsm_fw_uno_drivers_profile", "dep:embassy-time"]
 # matching task-ID source.
 backend-semihosting = [
   "azihsm_fw_uno_drivers_profile/backend-semihosting",
+  "azihsm_fw_uno_drivers_profile/trace",
   "dep:azihsm_fw_uno_drivers_semihosting",
 ]
 backend-uart = [

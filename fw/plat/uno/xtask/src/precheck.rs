@@ -142,7 +142,12 @@ impl Xtask for Precheck {
 
         if stage.build {
             log::info!("=== build (firmware) ===");
-            if let Err(e) = (crate::build::Build { features: None }).run(ctx.clone()) {
+            if let Err(e) = (crate::build::Build {
+                features: None,
+                no_default_features: false,
+            })
+            .run(ctx.clone())
+            {
                 errors.push(("build", e));
             }
         }

@@ -16,8 +16,8 @@ azihsm_fw_hsm_core = { workspace = true }
 azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_uno_drivers_profile = { workspace = true }
+azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
-azihsm_fw_uno_drivers_uart = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_pal = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
@@ -34,6 +34,18 @@ embassy-time = { workspace = true }
 
 [features]
 default = ["trace-uart"]
+
+# Enable ARM semihosting integration for the emulator:
+#   - The PAL emits `SYS_READY` when the boot handshake completes, so the
+#     emulator host loop (which snoops the semihosting trap) learns the
+#     firmware is ready to accept IO.
+#   - The panic handler reports the panic via `SYS_WRITE0` and exits with
+#     `SYS_EXIT(-1)` so the emulator stops on firmware panic.
+# Disable on targets (e.g. production silicon) that cannot snoop semihosting.
+semihosting = [
+  "azihsm_fw_uno_pal/semihosting",
+  "dep:azihsm_fw_uno_drivers_semihosting",
+]
 
 # Trace output backend (mutually exclusive). Selecting one compiles the
 # trace emitter at INFO level and routes output to that backend. With

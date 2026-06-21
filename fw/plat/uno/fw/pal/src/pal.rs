@@ -35,6 +35,8 @@ use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
 use azihsm_fw_uno_drivers_boot_status::BootStatus;
+use azihsm_fw_uno_drivers_core_status as core_status;
+use azihsm_fw_uno_drivers_core_status::CoreStatus;
 use azihsm_fw_uno_drivers_gdma::ChannelConfig as GdmaChannelConfig;
 use azihsm_fw_uno_drivers_gdma::GdmaDriver;
 use azihsm_fw_uno_drivers_iic::ChannelConfig as IicChannelConfig;
@@ -51,8 +53,6 @@ use azihsm_fw_uno_drivers_sha::ShaDriver;
 use azihsm_fw_uno_drivers_systick as systick_driver;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
-use azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE;
-use azihsm_fw_uno_reg_soc::hsm_dtcm::regs::HsmDtcmRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_SQ_OFFSET;
@@ -77,7 +77,6 @@ use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
 use embassy_futures::select::Either3;
 use embassy_futures::select::select3;
-use tock_registers::interfaces::Writeable;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -411,7 +410,7 @@ impl UnoHsmPal {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
             }
             Either3::Third(()) => {
-                self.heartbeat_tick();
+                self.heartbeat();
             }
         }
     }
@@ -420,11 +419,8 @@ impl UnoHsmPal {
     ///
     /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
     /// poll cycle, SP declares the core hung.
-    fn heartbeat_tick(&self) {
-        use azihsm_fw_static_ref::StaticRef;
-        const DTCM: StaticRef<HsmDtcmRegs> =
-            unsafe { StaticRef::new(HSM_DTCM_BASE as *const HsmDtcmRegs) };
-        DTCM.core_run_status.set(1);
+    fn heartbeat(&self) {
+        core_status::set(CoreStatus::Alive);
     }
 
     /// Validate and acknowledge an expected boot state-change message.
@@ -508,7 +504,12 @@ impl UnoHsmPal {
     ///
     /// # Side Effects
     /// Invokes zero or more driver wake functions from [`WAKE_TABLE`].
-    fn poll_once(&self) {
+    ///
+    /// This is also the entry point used by the synchronous firmware test
+    /// harness, which drives test futures to completion outside the Embassy
+    /// executor and must wake NVIC-gated drivers between polls. Production
+    /// code uses [`HsmPal::run`] instead.
+    pub fn poll_once(&self) {
         for (reg, &mask) in ISPR_MASKS.iter().enumerate() {
             let pend = Nvic::pending_bits(reg) & mask;
             let mut bits = pend;

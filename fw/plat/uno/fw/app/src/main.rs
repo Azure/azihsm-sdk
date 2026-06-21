@@ -41,10 +41,10 @@
 mod trampoline;
 
 use azihsm_fw_hsm_core::Hsm;
+use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_hsm_core_tracing::info;
 use azihsm_fw_hsm_pal_traits::*;
 use azihsm_fw_uno_drivers_profile as _;
-use azihsm_fw_uno_drivers_uart::Uart;
 use azihsm_fw_uno_pac as _;
 use azihsm_fw_uno_pal::BootPhase;
 use azihsm_fw_uno_pal::UnoHsmIo;
@@ -193,19 +193,26 @@ async fn main(spawner: Spawner) {
     hsm.pal().deinit();
 }
 
-/// Panic handler — writes a message to UART and loops.
+/// Panic handler — emits an error trace and halts.
 ///
 /// # Parameters
-/// - `_info`: Panic metadata provided by core (currently unused).
+/// - `info`: Panic metadata (location and message) provided by core.
 ///
 /// # Returns
 /// Never returns (`!`).
 ///
 /// # Side Effects
-/// - Writes panic text to UART for early diagnostic visibility.
-/// - Halts forward progress by looping forever.
+/// - Emits an error-level trace describing the panic to the configured
+///   trace backend for diagnostic visibility.
+/// - With the `semihosting` feature enabled (emulator), terminates via
+///   `SYS_EXIT(-1)` so the host stops on a firmware panic. Otherwise
+///   (e.g. silicon), halts forward progress by looping forever.
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    Uart::new().write("Panic occurred!\n");
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    error!("panic", HsmError::InternalError, "{}", info);
+
+    #[cfg(feature = "semihosting")]
+    azihsm_fw_uno_drivers_semihosting::sys_exit(-1i32 as u32);
+
     loop {}
 }
