@@ -61,11 +61,11 @@ use zerocopy::IntoBytes;
 use zerocopy::KnownLayout;
 use zerocopy::Unaligned;
 
-/// Frame magic: ASCII "DDI1" in little-endian byte order.
-pub const MAGIC: u32 = 0x3144_4944;
+/// Frame magic: ASCII "DDI1" (`b"DDI1"`) interpreted as a little-endian `u32`.
+pub const MAGIC: u32 = 0x3149_4444;
 
 /// Protocol version carried in every frame.
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 1;
 
 /// Submission queue entry size in bytes (16 dwords).
 pub const SQE_BYTES: usize = 64;
