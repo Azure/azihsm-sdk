@@ -33,7 +33,8 @@ embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 
 [features]
-default = ["trace-uart"]
+#default = ["trace-uart"]
+default = []
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the
@@ -50,6 +51,15 @@ semihosting = [
 # Trace output backend (mutually exclusive). Selecting one compiles the
 # trace emitter at INFO level and routes output to that backend. With
 # neither enabled, trace output is disabled.
+#
+# CODE SIZE: enabling a trace backend pulls in formatting code at every
+# `info!`/`error!`/`debug!` call site plus the `Debug` impls they format.
+# On the Uno firmware this costs ~43 KB of `.text` (~22% of the image).
+# Production / size-constrained builds should build WITHOUT any trace
+# backend (e.g. `--no-default-features --features semihosting` for the
+# emulator, or `--no-default-features` for silicon); the emulator only
+# needs `semihosting` (SYS_READY / SYS_EXIT) — trace is verbose output
+# only and all tests pass without it.
 trace-semihosting = [
   "azihsm_fw_uno_trace/backend-semihosting",
   "azihsm_fw_uno_trace/level-info",
@@ -59,4 +69,15 @@ trace-uart = [
   "azihsm_fw_uno_trace/backend-uart",
   "azihsm_fw_uno_trace/level-info",
   "azihsm_fw_uno_trace/tracing",
+]
+
+# Enable per-task profiling: the profile driver writes the active Embassy
+# task ID to the TraceMailbox MMIO (via the embassy trace hooks) so the
+# emulator's `--profile` mode can attribute instructions to tasks. This is
+# just the mailbox writes — it does NOT pull in the trace emitter or
+# `Debug` formatting, so unlike `trace-semihosting` it stays cheap and can
+# be combined with a no-trace (production-like) build for profiling.
+profile = [
+  "azihsm_fw_uno_drivers_profile/backend-semihosting",
+  "azihsm_fw_uno_drivers_profile/trace",
 ]

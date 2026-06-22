@@ -209,6 +209,10 @@ async fn main(spawner: Spawner) {
 ///   (e.g. silicon), halts forward progress by looping forever.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Referenced unconditionally: `error!` compiles out without a trace
+    // backend (the default firmware build), which would otherwise leave
+    // `info` unused.
+    let _ = &info;
     error!("panic", HsmError::InternalError, "{}", info);
 
     #[cfg(feature = "semihosting")]

@@ -372,10 +372,56 @@ mem part_store_t {
     memwidth = 32;
 };
 
-mem key_vault_t {
-    desc = "Cryptographic key vault (1105 KB).";
-    mementries = 282880;  // 1131520 / 4
+// One 8-byte vault metadata entry (mirrors the reference PhysicalEntry).
+reg pe_dw0_t {
+    name = "Vault Entry DW0";
+    desc = "PhysicalEntry low DWORD: blob block offset + flags.";
+    field { sw = rw; hw = na; } OFFSET[15:0]   = 0x0;  // blob block index
+    field { sw = rw; hw = na; } DISABLED[16:16] = 0x0; // EntryFlags bit 0
+    field { sw = rw; hw = na; } SESSION[17:17]  = 0x0; // EntryFlags bit 1
+    field { sw = rw; hw = na; } FLAGS_RSVD[31:18] = 0x0;
+};
+
+reg pe_dw1_t {
+    name = "Vault Entry DW1";
+    desc = "PhysicalEntry high DWORD: session id / key tag, kind, app id.";
+    field { sw = rw; hw = na; } SESSION_OR_TAG[15:0] = 0x0;
+    field { sw = rw; hw = na; } KIND[23:16]          = 0x0; // HsmVaultKeyKind
+    field { sw = rw; hw = na; } APP_ID[31:24]        = 0x0;
+};
+
+regfile physical_entry_t {
+    name = "Vault Physical Entry";
+    desc = "8-byte key metadata entry.";
+    pe_dw0_t DW0 @ 0x0;
+    pe_dw1_t DW1 @ 0x4;
+};
+
+// One word of the per-table used-block allocator bitmap.
+reg used_block_t {
+    name = "Used Block Tracker Word";
+    desc = "32 blob-block occupancy bits.";
+    field { sw = rw; hw = na; } BITS[31:0] = 0x0;
+};
+
+// Key-data blob region (15104 B = TOTAL_TABLE_LEN - 2304).
+mem key_blob_t {
+    desc = "Per-table key-data blob region.";
+    mementries = 3776;  // 15104 / 4
     memwidth = 32;
+};
+
+// One 17408-byte vault table.
+addrmap key_vault_table_t {
+    name = "Key Vault Table";
+    desc = "One 17408-byte vault table: metadata + bitmap + blob.";
+
+    default hw = na;
+    default sw = rw;
+
+    physical_entry_t ENTRY[256]  @ 0x0000 += 0x08;  // 0x0000 - 0x0800
+    used_block_t     BITMAP[64]  @ 0x0800 += 0x04;  // 0x0800 - 0x0900
+    key_blob_t       BLOB        @ 0x0900;          // 0x0900 - 0x4400
 };
 
 
@@ -433,5 +479,5 @@ addrmap io_gsram {
     part_store_t     PART_STORE          @ 0xBB000;
 
     // ─── Key vault ───
-    key_vault_t      KEY_VAULT           @ 0xEBC00;
+    key_vault_table_t KEY_VAULT[65]   @ 0xEBC00 += 0x4400;   // 65 × 17408 = 0x114400
 };

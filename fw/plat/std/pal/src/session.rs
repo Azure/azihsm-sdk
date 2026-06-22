@@ -13,15 +13,9 @@
 //! keys, deletes the session vault key itself, and frees the logical
 //! slot.
 //!
-//! ## RAII guards
-//!
-//! [`session_create`] returns a [`StdSessionGuard`] in a *provisional*
-//! state — on drop the session is torn down (vault key + scoped keys
-//! removed, slot freed) unless the caller calls
-//! [`StdSessionGuard::dismiss`] to commit.  Each guard captures the
-//! partition's incarnation counter (`gen`) at create time; if the
-//! partition has since been freed and reallocated, rollback is
-//! skipped.
+//! `session_create` commits the session immediately and returns its
+//! [`HsmSessId`]; rollback of a half-completed handshake is left to a
+//! future undo log.
 //!
 //! [`KeyVault`]: crate::drivers::vault::KeyVault
 //! [`SessionTable`]: crate::drivers::session::SessionTable
@@ -48,56 +42,7 @@ const SESSION_CU_BLOB_SIZE: usize =
 /// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 216 B.
 const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
-/// RAII guard returned by [`HsmSessionManager::session_create`].
-///
-/// On drop, tears down the provisional session unless
-/// [`dismiss`](Self::dismiss) was called first.  Skips rollback if
-/// the partition's incarnation counter has changed since the guard
-/// was created.
-pub struct StdSessionGuard<'a> {
-    pal: &'a StdHsmPal,
-    pid: HsmPartId,
-    /// Captured partition incarnation counter; rollback is a no-op
-    /// if the live counter no longer matches.
-    gen: u32,
-    sess_id: HsmSessId,
-    committed: bool,
-}
-
-impl SessionGuard for StdSessionGuard<'_> {
-    fn sess_id(&self) -> HsmSessId {
-        self.sess_id
-    }
-
-    fn dismiss(mut self) -> HsmSessId {
-        self.committed = true;
-        self.sess_id
-    }
-}
-
-impl Drop for StdSessionGuard<'_> {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        if self.pal.partition_gen(self.pid) != self.gen {
-            return;
-        }
-        if let Ok(entry) = self.pal.active_part_mut(self.pid) {
-            // Pending slots have no vault entry yet; physical_id()
-            // returns SessionNotFound and we just drop the slot.
-            if let Ok(physical_id) = entry.session_table.physical_id(self.sess_id) {
-                let _ = entry.vault.delete_by_session_key(physical_id);
-                let _ = entry.vault.delete(physical_id);
-            }
-            let _ = entry.session_table.delete(self.sess_id);
-        }
-    }
-}
-
 impl HsmSessionManager for StdHsmPal {
-    type Guard<'a> = StdSessionGuard<'a>;
-
     /// Check whether the partition's session table is full.
     fn session_limit_reached(&self, io: &impl HsmIo) -> bool {
         let Ok(entry) = self.active_part(io.pid()) else {
@@ -111,13 +56,15 @@ impl HsmSessionManager for StdHsmPal {
     /// 1. Builds 88-byte blob: `[api_rev || masking_key]`.
     /// 2. Stores blob in vault as `HsmVaultKeyKind::Session`.
     /// 3. Allocates (or re-maps) a logical session slot.
+    ///
+    /// The session is committed immediately.
     fn session_create(
         &self,
         io: &impl HsmIo,
         api_rev: &[u8],
         masking_key: &[u8],
         id: Option<HsmSessId>,
-    ) -> HsmResult<Self::Guard<'_>> {
+    ) -> HsmResult<HsmSessId> {
         if api_rev.len() != SESSION_API_REV_SIZE || masking_key.len() != SESSION_MASKING_KEY_SIZE {
             return Err(HsmError::InvalidArg);
         }
@@ -142,7 +89,7 @@ impl HsmSessionManager for StdHsmPal {
         let attrs = HsmVaultKeyAttrs::new().with_internal(true);
         let physical_id = entry
             .vault
-            .create(&blob, HsmVaultKeyKind::Session, None, attrs, &[])?;
+            .create(&blob, HsmVaultKeyKind::Session, None, attrs)?;
 
         // Allocate or re-map logical session slot.
         let result = match id {
@@ -150,15 +97,10 @@ impl HsmSessionManager for StdHsmPal {
             Some(reopen_id) => entry.session_table.recreate(reopen_id, physical_id),
         };
 
-        // Rollback: if session table allocation fails, remove the vault key.
+        // If session-table allocation fails, remove the just-stored vault
+        // key so the slot does not leak.
         match result {
-            Ok(sess_id) => Ok(StdSessionGuard {
-                pal: self,
-                pid,
-                gen: self.partition_gen(pid),
-                sess_id,
-                committed: false,
-            }),
+            Ok(sess_id) => Ok(sess_id),
             Err(e) => {
                 let _ = entry.vault.delete(physical_id);
                 Err(e)
@@ -297,13 +239,10 @@ impl HsmSessionManager for StdHsmPal {
             }
         };
 
-        let physical_id = entry.vault.create(
-            &blob[..blob_len],
-            HsmVaultKeyKind::SessionCu,
-            None,
-            attrs,
-            &[],
-        )?;
+        let physical_id =
+            entry
+                .vault
+                .create(&blob[..blob_len], HsmVaultKeyKind::SessionCu, None, attrs)?;
 
         // Promote the slot to Active and bind to the new vault entry.
         if let Err(e) = entry.session_table.promote(id, physical_id) {
