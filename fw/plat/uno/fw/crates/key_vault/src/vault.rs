@@ -296,6 +296,15 @@ impl<S: TableStorage> KeyVault<S> {
         let entry = self.entry(table, slot)?;
         let len = self.resolved_len(table, &entry)?;
         let off = entry.attrs_byte_offset() + ATTRIBUTES_BLOB_SIZE;
+        // Validate `off..off+len` lies within the table blob: callers
+        // build a raw pointer/slice from this tuple (e.g. the Uno PAL),
+        // so corrupted entry metadata must surface as `KeyNotFound`
+        // rather than an out-of-bounds read / unsound `DmaBuf`.
+        let blob_len = self.storage.blob(table)?.len();
+        let end = off.checked_add(len).ok_or(HsmError::KeyNotFound)?;
+        if end > blob_len {
+            return Err(HsmError::KeyNotFound);
+        }
         Ok((table, off, len))
     }
 

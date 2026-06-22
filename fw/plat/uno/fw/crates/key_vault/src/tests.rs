@@ -77,7 +77,9 @@ impl<const N: usize> TableStorage for ArrayStorage<N> {
         N
     }
     fn is_valid_table(&self, table: usize) -> bool {
-        table < N && (self.mask >> table) & 1 != 0
+        // `mask` is a `u128`, so shifting by `table >= 128` is UB / a
+        // debug-panic; guard it explicitly to stay sound for any `N`.
+        table < N && table < 128 && (self.mask >> table) & 1 != 0
     }
     fn entry(&self, table: usize, idx: usize) -> HsmResult<&Entry> {
         if table >= N || idx >= ENTRIES_PER_TABLE {
