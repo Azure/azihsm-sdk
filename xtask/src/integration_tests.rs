@@ -41,11 +41,15 @@ pub struct IntegrationTest {
     /// Which suite to run.  Defaults to `all` (cli + capi + nginx).
     #[clap(long, value_enum, default_value_t = Suite::All)]
     pub suite: Suite,
+
+    /// Whether to run tests with code coverage enabled
+    #[clap(long)]
+    pub coverage: bool,
 }
 
 impl Xtask for IntegrationTest {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
-        log::trace!("start testing");
+        log::trace!("start integration tests");
 
         #[cfg(not(target_os = "linux"))]
         {
@@ -146,15 +150,20 @@ impl Xtask for IntegrationTest {
             }
 
             let run_pkg = |pkg: &str, ctx: XtaskCtx| -> anyhow::Result<()> {
-                crate::nextest::Nextest {
+                let test = crate::nextest::Nextest {
                     features: Some("integration".to_string()),
                     package: Some(pkg.to_string()),
                     no_default_features: false,
                     filterset: None,
                     profile: Some("ci-provider-integration".to_string()),
                     exclude: vec![],
+                };
+
+                if self.coverage {
+                    let test = crate::coverage::Coverage::from(test);
                 }
-                .run(ctx)
+
+                test.run(ctx)
             };
 
             match self.suite {
