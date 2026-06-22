@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #![warn(missing_docs)]
+#![cfg(unix)]
 
 //! Socket-based DDI transport (host-side client).
 //!

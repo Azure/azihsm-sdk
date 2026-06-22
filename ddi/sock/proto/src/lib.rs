@@ -339,6 +339,7 @@ fn encode_frame(
         toc_count: fields.len() as u8,
         _rsvd: 0,
     };
+    body.extend_from_slice(header.as_bytes());
     if kind == Kind::Response {
         body.extend_from_slice(U32::new(status).as_bytes());
     }
@@ -365,6 +366,15 @@ fn encode_frame(
     // Data section.
     for (_, data) in fields {
         body.extend_from_slice(data);
+    }
+
+    // Enforce the overall frame bound: per-field `MAX_FIELD` checks above do
+    // not bound the header + TOC + aggregate data size, so a combination of
+    // fields could otherwise produce a body the reader side would reject.
+    if body.len() > MAX_FRAME as usize {
+        return Err(ProtoError::TooLarge(
+            u32::try_from(body.len()).unwrap_or(u32::MAX),
+        ));
     }
 
     Ok(body)
@@ -612,6 +622,20 @@ mod tests {
         body.extend_from_slice(&0u32.to_le_bytes()); // offset
         body.extend_from_slice(&(MAX_FIELD + 1).to_le_bytes());
         let err = Request::decode(&body).unwrap_err();
+        assert!(matches!(err, ProtoError::TooLarge(_)));
+    }
+
+    #[test]
+    fn encode_rejects_frame_over_max_frame() {
+        // Two fields each at MAX_FIELD exceed MAX_FRAME once header + TOC
+        // overhead is added, so encoding must reject the aggregate size even
+        // though each individual field is within MAX_FIELD.
+        let field = vec![0u8; MAX_FIELD as usize];
+        let fields = [
+            (FieldId::Sqe, field.as_slice()),
+            (FieldId::Payload, field.as_slice()),
+        ];
+        let err = encode_frame(Kind::Request, 0, &fields).unwrap_err();
         assert!(matches!(err, ProtoError::TooLarge(_)));
     }
 
