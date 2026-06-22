@@ -10,6 +10,12 @@ pub use azihsm_ddi_interface::*;
 #[cfg(all(feature = "emu", feature = "mock"))]
 compile_error!("features `emu` and `mock` are mutually exclusive; enable at most one");
 
+#[cfg(all(feature = "emu", feature = "sock"))]
+compile_error!("features `emu` and `sock` are mutually exclusive; enable at most one");
+
+#[cfg(all(feature = "mock", feature = "sock"))]
+compile_error!("features `mock` and `sock` are mutually exclusive; enable at most one");
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "emu")] {
         /// Azihsm DDI emulator implementation (in-process firmware).

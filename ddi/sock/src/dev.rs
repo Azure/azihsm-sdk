@@ -139,9 +139,18 @@ impl DdiSockDev {
             return Err(DdiError::DdiError(u32::from(cqe.status())));
         }
 
-        // The server already truncated the payload to the firmware's
-        // reported `dst_len`; surface it as-is.
-        Ok(resp.payload)
+        // Don't trust the server's framing for the payload length: the
+        // completion entry's `dst_len` is the authoritative count of bytes the
+        // firmware wrote. Reject a short payload (the response can't satisfy the
+        // reported length) and truncate any trailing bytes so callers never
+        // decode past the firmware's output.
+        let dst_len = cqe.dst_len() as usize;
+        let mut payload = resp.payload;
+        if payload.len() < dst_len {
+            return Err(DdiError::DdiError(0));
+        }
+        payload.truncate(dst_len);
+        Ok(payload)
     }
 }
 
