@@ -116,6 +116,29 @@ pub trait HsmGdmaController {
     ///   completion errors.
     async fn copy_mem(&self, io: &impl HsmIo, src: &DmaBuf, dst: &mut DmaBuf) -> HsmResult<()>;
 
+    /// Zeroes an HSM-local buffer in place.
+    ///
+    /// Semantically equivalent to filling `dst` with `0x00`. Intended
+    /// for scrubbing key material on deletion. `dst` should be
+    /// DMA-capable; implementations may offload the clear to the DMA
+    /// engine, but the std and uno PALs currently zero in software
+    /// (CPU) — to be replaced by a hardware memset on uno later.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope; per-IO state is
+    ///   not consumed).
+    /// - `dst` — buffer to zero; the whole `dst.len()` is cleared.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `dst` is fully zeroed.
+    /// - `Err(HsmError::InvalidArg)` — `dst` is not in a memory region
+    ///   the GDMA can address.
+    /// - `Err(HsmError)` — propagated from the GDMA driver on
+    ///   completion errors.
+    async fn zeroize_mem(&self, io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()>;
+
     /// Copies bytes from host memory into an HSM-local DMA buffer.
     ///
     /// `dst` **must** live in DMA-capable memory (see module-level

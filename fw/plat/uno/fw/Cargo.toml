@@ -6,6 +6,7 @@ members = [
   "app",
   "crates/bulk_copy",
   "crates/error",
+  "crates/key_vault",
   "crates/single_cell",
   "crates/static_init",
   "crates/static_ref",
@@ -26,6 +27,7 @@ members = [
   "drivers/systick",
   "drivers/uart",
   "drivers/upka",
+  "drivers/vault",
   "pal",
   "reg/cortex-m",
   "reg/soc",
@@ -54,7 +56,9 @@ azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }
 azihsm_fw_uno_drivers_systick = { path = "drivers/systick" }
 azihsm_fw_uno_drivers_uart = { path = "drivers/uart" }
 azihsm_fw_uno_drivers_upka = { path = "drivers/upka" }
+azihsm_fw_uno_drivers_vault = { path = "drivers/vault" }
 azihsm_fw_uno_error = { path = "crates/error" }
+azihsm_fw_uno_key_vault = { path = "crates/key_vault" }
 azihsm_fw_uno_pac = { path = "drivers/pac" }
 azihsm_fw_uno_pal = { path = "pal" }
 azihsm_fw_uno_reg_soc = { path = "reg/soc" }

@@ -8,7 +8,12 @@ xtask = "run --manifest-path ../xtask/Cargo.toml --target x86_64-unknown-linux-g
 target = "thumbv7em-none-eabi"
 
 [target.thumbv7em-none-eabi]
-rustflags = ["-C", "link-arg=-Tlink.x", "-C", "target-cpu=cortex-m7"]
+rustflags = [
+  "-C",
+  "link-arg=-Tlink.x",
+  "-C",
+  "target-cpu=cortex-m7",
+] #, "-C", "llvm-args=-inline-threshold=25"]
 
 [unstable]
 build-std = ["compiler_builtins", "core"]

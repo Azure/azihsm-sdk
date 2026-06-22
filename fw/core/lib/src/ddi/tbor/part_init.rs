@@ -74,7 +74,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
-use azihsm_fw_hsm_pal_traits::VaultKeyGuard;
 use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
 
 use super::*;
@@ -185,7 +184,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             pta.pub_sec1,
             policy_dma,
             pota_thumb_dma,
-        )?;
+        )
+        .await?;
         encode_response(pal, io, &csr_dma[..csr_len], &report_dma[..report_len])
     })
     .await
@@ -495,11 +495,13 @@ async fn build_report_data<'a, P: HsmPal>(
 ///
 /// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
 /// (all four write-once fields — PTA key, UMS key, policy, POTA
-/// thumbprint — must be set first).  Vault entries are created
-/// provisionally; each `key_id()` is stable before `dismiss()`, so
-/// the ids flow into the partition setters before commit.  Failures
-/// before `dismiss()` roll back both vault entries.
-fn commit_partition_state<P: HsmPal>(
+/// thumbprint — must be set first).  Vault entries are committed as
+/// soon as they are created (`vault_key_create` is awaited), and the
+/// returned `key_id`s then flow into the partition setters.  There is
+/// no provisional / `dismiss()` rollback stage anymore; undoing a
+/// partially-applied `PartInit` is a future undo-log TODO (see the body
+/// comment below).
+async fn commit_partition_state<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     ums: &DmaBuf,
@@ -508,36 +510,34 @@ fn commit_partition_state<P: HsmPal>(
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<()> {
-    // Vault-allocate UMS first.  Both guards are held until every
-    // partition-side setter has succeeded; any earlier `?` rolls back
-    // both vault entries when the guards drop without `dismiss()`.
-    let ums_guard = pal.vault_key_create(
-        io,
-        ums,
-        HsmVaultKeyKind::PartitionUniqueMachineSecret,
-        None,
-        UMS_VAULT_ATTRS,
-        &[],
-    )?;
-    let ums_key_id = ums_guard.key_id();
+    // The keys are committed as they are created; the partition-state
+    // setters below run afterwards (a future undo log will handle
+    // rollback of a partially-applied PartInit).
+    let ums_key_id = pal
+        .vault_key_create(
+            io,
+            ums,
+            HsmVaultKeyKind::PartitionUniqueMachineSecret,
+            None,
+            UMS_VAULT_ATTRS,
+        )
+        .await?;
 
-    let pta_guard = pal.vault_key_create(
-        io,
-        pta_priv,
-        HsmVaultKeyKind::PartitionTrustAnchor,
-        None,
-        PTA_VAULT_ATTRS,
-        &[],
-    )?;
-    let pta_key_id = pta_guard.key_id();
+    let pta_key_id = pal
+        .vault_key_create(
+            io,
+            pta_priv,
+            HsmVaultKeyKind::PartitionTrustAnchor,
+            None,
+            PTA_VAULT_ATTRS,
+        )
+        .await?;
 
     crate::part_state::part_set_pta_key(pal, io, pta_key_id, pta_pub_sec1)?;
     crate::part_state::part_set_ups_key_id(pal, io, ums_key_id)?;
     crate::part_state::part_set_policy(pal, io, policy)?;
     crate::part_state::part_set_pota_thumbprint(pal, io, pota_thumb)?;
     crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
-    let _ = pta_guard.dismiss();
-    let _ = ums_guard.dismiss();
     Ok(())
 }
 

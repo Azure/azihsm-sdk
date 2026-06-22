@@ -110,6 +110,17 @@ impl HsmGdmaController for UnoHsmPal {
             .await
     }
 
+    /// Zero an HSM-local buffer.
+    ///
+    /// Software volatile wipe for now; a hardware GDMA memset will replace
+    /// this on uno later (the async signature is kept so callers are
+    /// unaffected). [`DmaBuf::zeroize`] guarantees the writes are not
+    /// elided so key material is actually scrubbed.
+    async fn zeroize_mem(&self, _io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()> {
+        dst.zeroize();
+        Ok(())
+    }
+
     async fn copy_mem_from_host(
         &self,
         io: &impl HsmIo,

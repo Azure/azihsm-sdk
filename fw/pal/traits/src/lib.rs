@@ -85,15 +85,13 @@
 //!   and returns the same `size`.  `buf.len()` must be ≥ `size` or
 //!   the call returns [`HsmError::InvalidArg`].
 //!
-//! ## RAII guards for fallible-creation operations
+//! ## Creation operations
 //!
 //! [`HsmVault::vault_key_create`] and
-//! [`HsmSessionManager::session_create`] return guards
-//! ([`VaultKeyGuard`], [`SessionGuard`]) that auto-rollback on drop
-//! and require an explicit `dismiss()` call to commit.  This makes it
-//! safe for callers to perform additional fallible work between
-//! creation and commit (e.g. encoding the response buffer) without
-//! leaking partial state on the error path.
+//! [`HsmSessionManager::session_create`] commit the new entry
+//! immediately and return its id. Rollback of a half-completed
+//! operation (e.g. when response encoding fails afterwards) is left to
+//! a future undo log rather than per-call RAII guards.
 
 #![no_std]
 #![allow(async_fn_in_trait)]
@@ -183,8 +181,7 @@ impl From<HsmPartId> for u8 {
 
 /// Key identifier — an opaque `u16` index into the vault's key table.
 ///
-/// Returned by [`HsmVault::vault_key_create`] (via the
-/// [`VaultKeyGuard`] handle) and passed to all subsequent key
+/// Returned by [`HsmVault::vault_key_create`] and passed to all subsequent
 /// operations (lookup, delete, attribute queries).  The value is only
 /// meaningful within the vault that created it; do not reuse a key
 /// ID across partitions.
@@ -237,8 +234,7 @@ impl From<HsmKeyId> for u16 {
 /// Session identifier — an opaque `u16` slot index into the
 /// per-partition session table.
 ///
-/// Returned by [`HsmSessionManager::session_create`] (via the
-/// [`SessionGuard`] handle) and used by all subsequent session
+/// Returned by [`HsmSessionManager::session_create`] and used by all subsequent
 /// operations (state query, deletion).  A session ID is only valid
 /// within the partition that allocated it.
 ///

@@ -28,7 +28,9 @@ azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
 azihsm_fw_uno_drivers_sha = { workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
 azihsm_fw_uno_drivers_upka = { workspace = true }
+azihsm_fw_uno_drivers_vault = { workspace = true }
 azihsm_fw_uno_error = { workspace = true }
+azihsm_fw_uno_key_vault = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }

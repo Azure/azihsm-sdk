@@ -144,6 +144,20 @@ impl DmaBuf {
         let (a, b) = self.inner.split_at_mut(mid);
         unsafe { (DmaBuf::from_raw_mut(a), DmaBuf::from_raw_mut(b)) }
     }
+
+    /// Securely zeroes the buffer.
+    ///
+    /// Uses per-byte volatile writes followed by a compiler fence so the
+    /// wipe cannot be optimized away even when the compiler can prove the
+    /// bytes are never read again. Intended for scrubbing key material.
+    #[inline]
+    pub fn zeroize(&mut self) {
+        for b in self.inner.iter_mut() {
+            // SAFETY: `b` is a valid, aligned, writable byte of this buffer.
+            unsafe { core::ptr::write_volatile(b, 0) };
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl core::ops::Deref for DmaBuf {

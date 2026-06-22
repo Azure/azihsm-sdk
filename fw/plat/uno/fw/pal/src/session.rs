@@ -10,27 +10,11 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmSessionManager;
 use azihsm_fw_hsm_pal_traits::HsmSessionState;
-use azihsm_fw_hsm_pal_traits::SessionGuard;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 
 use crate::UnoHsmPal;
 
-/// Stub session guard — never constructed (create returns Err).
-pub struct UnoSessionGuard;
-
-impl SessionGuard for UnoSessionGuard {
-    fn sess_id(&self) -> HsmSessId {
-        unreachable!()
-    }
-
-    fn dismiss(self) -> HsmSessId {
-        unreachable!()
-    }
-}
-
 impl HsmSessionManager for UnoHsmPal {
-    type Guard<'a> = UnoSessionGuard;
-
     fn session_limit_reached(&self, _io: &impl HsmIo) -> bool {
         true
     }
@@ -41,7 +25,7 @@ impl HsmSessionManager for UnoHsmPal {
         _api_rev: &[u8],
         _masking_key: &[u8],
         _id: Option<HsmSessId>,
-    ) -> HsmResult<Self::Guard<'_>> {
+    ) -> HsmResult<HsmSessId> {
         Err(HsmError::UnsupportedCmd)
     }
 
