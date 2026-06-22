@@ -147,7 +147,14 @@ impl DdiSockDev {
         let dst_len = cqe.dst_len() as usize;
         let mut payload = resp.payload;
         if payload.len() < dst_len {
-            return Err(DdiError::DdiError(0));
+            // The server returned fewer bytes than the firmware reported
+            // writing: a transport/protocol integrity failure, not a device
+            // status. Surface it as malformed data rather than a `0` (success)
+            // device status, matching the other protocol-shape errors here.
+            return Err(DdiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response payload shorter than CQE dst_len",
+            )));
         }
         payload.truncate(dst_len);
         Ok(payload)
