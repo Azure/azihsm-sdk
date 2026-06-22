@@ -495,10 +495,12 @@ async fn build_report_data<'a, P: HsmPal>(
 ///
 /// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
 /// (all four write-once fields — PTA key, UMS key, policy, POTA
-/// thumbprint — must be set first).  Vault entries are created
-/// provisionally; each `key_id()` is stable before `dismiss()`, so
-/// the ids flow into the partition setters before commit.  Failures
-/// before `dismiss()` roll back both vault entries.
+/// thumbprint — must be set first).  Vault entries are committed as
+/// soon as they are created (`vault_key_create` is awaited), and the
+/// returned `key_id`s then flow into the partition setters.  There is
+/// no provisional / `dismiss()` rollback stage anymore; undoing a
+/// partially-applied `PartInit` is a future undo-log TODO (see the body
+/// comment below).
 async fn commit_partition_state<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,

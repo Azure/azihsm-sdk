@@ -219,7 +219,15 @@ impl<S: TableStorage> KeyVault<S> {
         let entry = self.entry(table, slot)?;
         let len = self.resolved_len(table, &entry)?;
         let key_off = entry.attrs_byte_offset() + ATTRIBUTES_BLOB_SIZE;
-        Ok(&self.storage.blob(table)?[key_off..key_off + len])
+        // Bound-check against the blob rather than indexing blindly: a
+        // corrupted block offset / persisted length must surface as
+        // `KeyNotFound`, never a panic (untrusted-input boundary).
+        let blob = self.storage.blob(table)?;
+        let end = key_off.checked_add(len).ok_or(HsmError::KeyNotFound)?;
+        if end > blob.len() {
+            return Err(HsmError::KeyNotFound);
+        }
+        Ok(&blob[key_off..end])
     }
 
     /// Returns a key's [`HsmVaultKeyKind`].
@@ -325,9 +333,13 @@ impl<S: TableStorage> KeyVault<S> {
 
     fn read_attrs(&self, table: usize, attrs_off: usize) -> HsmResult<Attributes> {
         let blob = self.storage.blob(table)?;
-        let bytes = &blob[attrs_off..attrs_off + ATTRIBUTES_BLOB_SIZE];
-        // Copy into an aligned `Attributes` rather than reading in place, so a
-        // mis-aligned blob offset can never panic.
+        // Checked slice: a corrupted/out-of-range `attrs_off` must return
+        // an error, not panic. Copying into an aligned `Attributes` also
+        // avoids any alignment assumption on the blob bytes.
+        let end = attrs_off
+            .checked_add(ATTRIBUTES_BLOB_SIZE)
+            .ok_or(HsmError::KeyNotFound)?;
+        let bytes = blob.get(attrs_off..end).ok_or(HsmError::KeyNotFound)?;
         let mut attrs = Attributes::ZERO;
         attrs.as_mut_bytes().copy_from_slice(bytes);
         Ok(attrs)
@@ -382,11 +394,17 @@ impl<S: TableStorage> KeyVault<S> {
         // Zeroize the whole [attrs][key] region.
         {
             let blob = self.storage.blob_mut(table)?;
-            let region = &mut blob[attrs_off..attrs_off + total];
+            // Checked slice: inconsistent/corrupted entry metadata must
+            // surface as an error rather than panic on out-of-range index.
+            let end = attrs_off.checked_add(total).ok_or(HsmError::KeyNotFound)?;
+            if end > blob.len() {
+                return Err(HsmError::KeyNotFound);
+            }
+            let region = &mut blob[attrs_off..end];
             if total > DMA_THRESHOLD {
                 gdma.zeroize_mem(io, region).await?;
             } else {
-                region.fill(0);
+                region.zeroize();
             }
         }
 

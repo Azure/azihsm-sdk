@@ -20,9 +20,11 @@ use super::*;
 
 /// Handle `DdiAesGenerateKeyCmd`.
 ///
-/// No `partition_lock` is needed: this handler does not perform any
-/// multi-step read-then-mutate against partition state.  Its single
-/// state mutation — `vault_key_create` — is sync and atomic.
+/// No `partition_lock` is needed.  Although `vault_key_create` is now
+/// awaited (it can yield on Uno during the GDMA key copy), DDI commands
+/// run on a single-threaded cooperative executor with one command in
+/// flight per partition, so no concurrent handler can interleave with
+/// this one — there is nothing for a lock to serialize.
 pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
