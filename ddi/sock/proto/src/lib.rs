@@ -426,12 +426,24 @@ impl<'a> Frame<'a> {
             .map_err(|_| ProtoError::Malformed("frame too short for TOC"))?;
 
         let mut toc = Vec::with_capacity(toc_count as usize);
+        let mut seen: Vec<FieldId> = Vec::new();
         let mut total: u64 = 0;
         for raw in toc_raw {
             let offset = raw.offset.get();
             let length = raw.length.get();
             if length > MAX_FIELD {
                 return Err(ProtoError::TooLarge(length));
+            }
+            // Reject duplicate known field IDs: `bytes()` resolves a field by
+            // its first matching TOC entry, so a second entry for the same id
+            // would be silently ignored and could be used to smuggle an
+            // alternate interpretation (protocol confusion). Unknown ids are
+            // still tolerated (and skipped) for forward compatibility.
+            if let Some(known) = FieldId::from_u16(raw.field_id.get()) {
+                if seen.contains(&known) {
+                    return Err(ProtoError::Malformed("duplicate field id in TOC"));
+                }
+                seen.push(known);
             }
             // The field must lie wholly within the data section.
             if u64::from(offset) + u64::from(length) > data.len() as u64 {
@@ -642,6 +654,31 @@ mod tests {
     #[test]
     fn missing_required_field_is_rejected() {
         let body = encode_frame(Kind::Request, 0, &[(FieldId::Payload, &[1, 2, 3])]).unwrap();
+        let err = Request::decode(&body).unwrap_err();
+        assert!(matches!(err, ProtoError::Malformed(_)));
+    }
+
+    #[test]
+    fn duplicate_known_field_id_is_rejected() {
+        // Two `Payload` TOC entries: `bytes()` would resolve only the first,
+        // so the duplicate must be rejected at parse time as protocol confusion.
+        let mut body = Vec::new();
+        body.extend_from_slice(&MAGIC.to_le_bytes());
+        body.push(VERSION);
+        body.push(Kind::Request as u8);
+        body.push(2); // toc_count
+        body.push(0);
+        for (id, offset, len) in [
+            (FieldId::Payload.as_u16(), 0u32, 1u32),
+            (FieldId::Payload.as_u16(), 1u32, 1u32),
+        ] {
+            body.extend_from_slice(&id.to_le_bytes());
+            body.push(FieldType::Buffer.as_u8());
+            body.push(0);
+            body.extend_from_slice(&offset.to_le_bytes());
+            body.extend_from_slice(&len.to_le_bytes());
+        }
+        body.extend_from_slice(&[0xAA, 0xBB]);
         let err = Request::decode(&body).unwrap_err();
         assert!(matches!(err, ProtoError::Malformed(_)));
     }

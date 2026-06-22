@@ -146,6 +146,15 @@ impl DdiSockDev {
         // decode past the firmware's output.
         let dst_len = cqe.dst_len() as usize;
         let mut payload = resp.payload;
+        // The client advertised a fixed destination capacity (`DST_CAP`) in the
+        // SQE, so a CQE reporting more than that is a protocol integrity failure
+        // (malicious or buggy server) — reject it before touching the payload.
+        if dst_len > DST_CAP as usize {
+            return Err(DdiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "CQE dst_len exceeds requested destination capacity",
+            )));
+        }
         if payload.len() < dst_len {
             // The server returned fewer bytes than the firmware reported
             // writing: a transport/protocol integrity failure, not a device

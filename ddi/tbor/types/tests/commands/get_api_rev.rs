@@ -3,9 +3,10 @@
 
 //! Integration tests for TBOR `GetApiRev`.
 //!
-//! `round_trip_emu` exercises the full path host → emu backend → fw
-//! `handle_tbor_op` → response. `unsupported_on_mock` asserts the
-//! design contract that backends opt in to TBOR.
+//! `round_trip` exercises the full path host → backend (`emu` or `sock`)
+//! → fw `handle_tbor_op` → response, so it is transport-agnostic.
+//! `unsupported_on_mock` asserts the design contract that backends opt
+//! in to TBOR.
 //!
 //! Pilot module for the [`TestCtx`](crate::harness::TestCtx)
 //! migration — every test in this file constructs the ctx once and
