@@ -323,6 +323,12 @@ fn encode_frame(
     status: u32,
     fields: &[(FieldId, &[u8])],
 ) -> Result<Vec<u8>, ProtoError> {
+    if fields.len() > MAX_TOC as usize {
+        return Err(ProtoError::TooManyToc(
+            u8::try_from(fields.len()).unwrap_or(u8::MAX),
+        ));
+    }
+
     let mut body = Vec::new();
 
     // Header (+ status for responses).
@@ -333,7 +339,6 @@ fn encode_frame(
         toc_count: fields.len() as u8,
         _rsvd: 0,
     };
-    body.extend_from_slice(header.as_bytes());
     if kind == Kind::Response {
         body.extend_from_slice(U32::new(status).as_bytes());
     }
