@@ -374,9 +374,14 @@ struct Frame<'a> {
 
 impl<'a> Frame<'a> {
     /// Parse a frame body and validate the header against `expect`.
-    fn parse(body: &'a [u8], expect: Kind) -> Result<Self, ProtoError> {
-        let (header, mut rest) = FrameHeader::ref_from_prefix(body)
-            .map_err(|_| ProtoError::Malformed("frame too short for header"))?;
+fn parse(body: &'a [u8], expect: Kind) -> Result<Self, ProtoError> {
+    if body.len() > MAX_FRAME as usize {
+        return Err(ProtoError::TooLarge(
+            u32::try_from(body.len()).unwrap_or(u32::MAX),
+        ));
+    }
+    let (header, mut rest) = FrameHeader::ref_from_prefix(body)
+        .map_err(|_| ProtoError::Malformed("frame too short for header"))?;
         if header.magic.get() != MAGIC {
             return Err(ProtoError::BadMagic(header.magic.get()));
         }
