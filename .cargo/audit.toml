@@ -1,18 +1,29 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# Ignore advisories for transitive dependencies of `lit` (test-only crate).
-# `lit` depends on `clap 2.x` which pulls in these crates. They are never used
-# in library or production code, only during `cargo test` via the
-# `provider-integration-tests-cli` dev-dependency.
+# Advisories ignored here are for transitive dependencies that are never used in
+# library or production code -- either confined to test/build tooling or never
+# actually compiled. Each entry is justified below.
 #
-# RUSTSEC-2018-0015, RUSTSEC-2021-0139, RUSTSEC-2024-0375: unmaintained crates.
-# RUSTSEC-2021-0145: atty - potential unaligned read; the unsound code path is
+# Transitive dependencies of `lit` (test-only crate; `lit` -> `clap 2.x`),
+# reachable only during `cargo test` via the `provider-integration-tests-cli`
+# dev-dependency:
+# - RUSTSEC-2018-0015, RUSTSEC-2021-0139, RUSTSEC-2024-0375: unmaintained crates.
+# - RUSTSEC-2021-0145: atty - potential unaligned read; the unsound code path is
 #   Windows-specific and this crate is only reachable from test code.
+#
+# RUSTSEC-2026-0173: proc-macro-error2 - unmaintained. Pulled transitively via
+#   env_logger -> jiff -> defmt -> defmt-macros. jiff 0.2.29 added `defmt` as an
+#   OPTIONAL dependency (0.2.28 had none); nothing in this workspace enables that
+#   feature, so the crate is never compiled (`cargo tree -i defmt` is empty on the
+#   host and with `--target all`). It exists only as a Cargo.lock entry that
+#   cargo-audit over-reports. Cargo.lock is not committed, so a fresh CI
+#   resolution floats jiff to 0.2.29 and the lockfile picks up the chain.
 [advisories]
 ignore = [
   "RUSTSEC-2018-0015", # term - unmaintained (via lit)
   "RUSTSEC-2021-0139", # ansi_term - unmaintained (via clap 2.x)
   "RUSTSEC-2021-0145", # atty - potential unaligned read (via clap 2.x)
   "RUSTSEC-2024-0375", # atty - unmaintained (via clap 2.x)
+  "RUSTSEC-2026-0173", # proc-macro-error2 - unmaintained (build-time only, via env_logger->jiff->defmt-macros)
 ]
