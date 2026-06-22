@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #![warn(missing_docs)]
-#![cfg(unix)]
 
 //! Socket-based DDI transport (host-side client).
 //!
@@ -19,6 +18,9 @@
 //! socket to connect to. [`Ddi::dev_info_list`] reports a single device
 //! whose path comes from the `AZIHSM_DDI_SOCK` environment variable,
 //! falling back to [`DEFAULT_SOCK_PATH`].
+
+// Uses Unix-domain sockets, so the crate is empty on non-Unix targets.
+#![cfg(unix)]
 
 mod ddi;
 mod dev;
