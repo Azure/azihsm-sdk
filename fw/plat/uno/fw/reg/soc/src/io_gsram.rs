@@ -65,10 +65,6 @@ pub const PART_STORE_OFFSET: u32 = 0xBB000;
 pub const PART_STORE_COUNT: u32 = 1;
 pub const PART_STORE_STRIDE: u32 = 0x30C00;
 pub const PART_STORE_SIZE: u32 = 0x30C00;
-pub const KEY_VAULT_OFFSET: u32 = 0xEBC00;
-pub const KEY_VAULT_COUNT: u32 = 1;
-pub const KEY_VAULT_STRIDE: u32 = 0x114400;
-pub const KEY_VAULT_SIZE: u32 = 0x114400;
 
 tock_registers::register_bitfields! [u32,
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
@@ -346,8 +342,7 @@ pub mod regs {
             (0x20d58 => pub sram_io_buf: [u8; 589824]),
             (0xb0d58 => _reserved6),
             (0xbb000 => pub part_store: [u8; 199680]),
-            (0xebc00 => pub key_vault: [u8; 1131520]),
-            (0x200000 => @END),
+            (0xebc00 => @END),
         }
     }
 }

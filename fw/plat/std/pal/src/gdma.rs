@@ -17,6 +17,12 @@ impl HsmGdmaController for StdHsmPal {
         Ok(())
     }
 
+    /// Zero an HSM-local buffer (software fill on the std platform).
+    async fn zeroize_mem(&self, _io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()> {
+        dst.fill(0);
+        Ok(())
+    }
+
     /// Copy from host memory into an HSM buffer.
     ///
     /// Interprets the PRP address as a raw host pointer.

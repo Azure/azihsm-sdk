@@ -80,15 +80,16 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
     // fails.  `masked_key` is the host's opaque re-import blob;
     // firmware-side masking is pending the `UnmaskKey` handler, so
     // we emit an empty placeholder for wire validity.
-    let guard = pal.vault_key_create(
-        io,
-        secret,
-        super::from_pal::ecdh_secret(curve),
-        target_attrs.session().then_some(HsmSessId::from(sess_id)),
-        target_attrs,
-        body.key_properties.key_label,
-    )?;
-    let key_id: u16 = guard.key_id().into();
+    let key_id: u16 = pal
+        .vault_key_create(
+            io,
+            secret,
+            super::from_pal::ecdh_secret(curve),
+            target_attrs.session().then_some(HsmSessId::from(sess_id)),
+            target_attrs,
+        )
+        .await?
+        .into();
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
@@ -100,6 +101,5 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
             buf,
         )
     })?;
-    let _ = guard.dismiss();
     Ok(resp)
 }

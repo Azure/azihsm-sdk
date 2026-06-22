@@ -47,18 +47,12 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     let key_buf = pal.dma_alloc(io, key_len)?;
     pal.aes_gen_key(io, key_buf).await?;
 
-    // Store in the vault, session-scoped iff requested.  RAII guard
-    // rolls the entry back if the response encoding below fails.
+    // Store in the vault, session-scoped iff requested.
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-    let guard = pal.vault_key_create(
-        io,
-        key_buf,
-        vault_kind,
-        session_binding,
-        attrs,
-        body.key_properties.key_label,
-    )?;
-    let key_id: u16 = guard.key_id().into();
+    let key_id: u16 = pal
+        .vault_key_create(io, key_buf, vault_kind, session_binding, attrs)
+        .await?
+        .into();
 
     // Build the response.  `masked_key` is the host's opaque
     // re-import blob; firmware-side masking against the session BK is
@@ -77,9 +71,6 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
             buf,
         )
     })?;
-
-    // Commit the vault entry.
-    let _ = guard.dismiss();
 
     Ok(resp)
 }

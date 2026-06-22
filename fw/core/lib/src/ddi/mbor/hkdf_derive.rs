@@ -79,15 +79,16 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
     // `masked_key` is the host's opaque re-import blob; firmware-side
     // masking is pending the `UnmaskKey` handler, so we emit an empty
     // placeholder for wire validity.
-    let guard = pal.vault_key_create(
-        io,
-        out,
-        target.kind,
-        attrs.session().then_some(HsmSessId::from(sess_id)),
-        attrs,
-        body.key_properties.key_label,
-    )?;
-    let key_id: u16 = guard.key_id().into();
+    let key_id: u16 = pal
+        .vault_key_create(
+            io,
+            out,
+            target.kind,
+            attrs.session().then_some(HsmSessId::from(sess_id)),
+            attrs,
+        )
+        .await?
+        .into();
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
@@ -100,6 +101,5 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
             buf,
         )
     })?;
-    let _ = guard.dismiss();
     Ok(resp)
 }

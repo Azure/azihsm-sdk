@@ -154,11 +154,9 @@ const STD_DEV_OWNER_SEED_ROW0: [u8; BK_SEED_LEN] = [
 /// ## Generation counter
 ///
 /// `gen` increments on every `part_alloc_internal` and
-/// `part_free_internal` call.  RAII guards (`StdVaultKeyGuard`,
-/// `StdSessionGuard`) capture the value at create time and refuse to
-/// roll back if the partition has since been freed and reallocated —
-/// otherwise a stale guard could delete unrelated state from a
-/// re-incarnated partition.
+/// `part_free_internal` call, and is exposed via
+/// [`PartPropId::GEN`] so callers can detect when a partition has been
+/// freed and reallocated underneath them.
 ///
 /// ## Zeroization
 ///
@@ -600,19 +598,6 @@ impl StdHsmPal {
         Ok(entry)
     }
 
-    /// Returns the partition incarnation counter.
-    ///
-    /// Captured by RAII guards (`StdVaultKeyGuard`, `StdSessionGuard`)
-    /// at create time; if the value differs at drop time, the guard
-    /// has outlived its partition incarnation and skips rollback to
-    /// avoid corrupting a re-allocated partition.
-    pub(crate) fn partition_gen(&self, pid: HsmPartId) -> u32 {
-        let Ok(idx) = Self::part_idx(pid) else {
-            return 0;
-        };
-        self.table().entries[idx].gen
-    }
-
     /// Borrow a partition entry that is not Unallocated.
     pub(crate) fn active_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
         self.part_if(pid, |s| s != PartState::Unallocated)
@@ -680,8 +665,8 @@ impl StdHsmPal {
 
         // Reserve resources + create vault so keygen has somewhere to store.
         let entry = &mut table.entries[idx];
-        // Bump the partition incarnation counter so RAII guards captured
-        // against the prior incarnation refuse to roll back.
+        // Bump the partition incarnation counter so callers tracking it
+        // observe the partition was freed/reallocated.
         entry.gen = entry.gen.wrapping_add(1);
         entry.res_mask = res_mask;
         entry.vault = KeyVault::new(res_mask.count_ones() as usize);
@@ -879,8 +864,8 @@ impl StdHsmPal {
 
         let entry = &mut table.entries[idx];
 
-        // Bump the partition incarnation counter so RAII guards captured
-        // before this free refuse to roll back into the next incarnation.
+        // Bump the partition incarnation counter so callers tracking it
+        // observe the partition was freed.
         entry.gen = entry.gen.wrapping_add(1);
 
         // If enabled, clear internal keys/nonce/vault/sessions first.
@@ -950,9 +935,7 @@ impl StdHsmPal {
         // Store raw HSM private-key bytes in vault.
         let table = self.table_mut();
         let entry = &mut table.entries[pid as usize];
-        entry
-            .vault
-            .create(&priv_buf[..priv_len], kind, None, attrs, &[])
+        entry.vault.create(&priv_buf[..priv_len], kind, None, attrs)
     }
 
     /// Clear all state associated with an enabled partition (internal keys,

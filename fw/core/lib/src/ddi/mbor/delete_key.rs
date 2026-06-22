@@ -23,7 +23,7 @@ use super::*;
 /// with no yield point between them, so there is no read-then-mutate
 /// window that could race against a concurrent handler on the same
 /// partition.
-pub(crate) fn delete_key<'p, P: HsmPal>(
+pub(crate) async fn delete_key<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
@@ -38,7 +38,7 @@ pub(crate) fn delete_key<'p, P: HsmPal>(
     if pal.vault_key_attrs(io, key_id)?.internal() {
         return Err(HsmError::CannotDeleteInternalKeys);
     }
-    pal.vault_key_delete(io, key_id)?;
+    pal.vault_key_delete(io, key_id).await?;
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(

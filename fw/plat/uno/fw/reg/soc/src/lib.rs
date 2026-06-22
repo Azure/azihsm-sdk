@@ -33,6 +33,7 @@ pub mod hsm_dtcm;
 pub mod iic;
 pub mod intc;
 pub mod io_gsram;
+pub mod key_vault_table_t;
 pub mod oic;
 pub mod rng;
 pub mod sha;

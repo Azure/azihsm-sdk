@@ -160,13 +160,12 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // derive its `bk` with those selectors, instead of reusing the
     // `bk` derived from the current selectors in step 10.  Emu has a
     // single lineage so this is a no-op today.
-    let mk_guard = provision_mk(pal, io, body.bmk, bk).await?;
-    let mk_key_id = mk_guard.key_id();
+    let mk_key_id = provision_mk(pal, io, body.bmk, bk).await?;
 
     // ── Step 13: Envelope MK into BMK and emit the response ──────────
     let resp = encode_bmk_response(pal, io, hdr, bk, mk_key_id, svn, bks2_id).await?;
 
-    // ── Atomic commit ────────────────────────────────────────────────
+    // ── Commit partition state ───────────────────────────────────────
     //
     // All partition-state mutations are batched here so that any
     // failure in steps 8-13 (e.g. tampered `masked_bk3`, derivation
@@ -186,11 +185,8 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     //   fail if the partition is disabled, which is prevented by the
     //   partition-enabled check at the start of `handle_io`.
     //
-    // The CREDENTIAL prop write is committed first so a (theoretical)
-    // failure here triggers `mk_guard`'s Drop, which removes the
-    // provisional MK vault entry. The establish-cred encryption key
-    // is cleared only after the credential commit succeeds, so the
-    // host can always retry on failure.
+    // (The MK vault entry was committed at creation; a future undo log
+    // will handle rollback of a partially-applied EstablishCredential.)
     // Compose `id ‖ pin` into a 32 B DmaBuf for the property setter.
     // The CREDENTIAL prop setter enforces the write-once invariant and
     // the all-zero half rejection (the latter is also pre-checked
@@ -202,7 +198,6 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     crate::part_state::part_set_bk3_session(pal, io, bk3_session)?;
     crate::part_state::part_clear_establish_cred_key(pal, io)?;
     crate::part_state::part_set_mk_key_id(pal, io, mk_key_id)?;
-    mk_guard.dismiss();
 
     Ok(resp)
 }
@@ -618,25 +613,26 @@ pub(crate) async fn derive_masking_key<P: HsmPal>(
 ///   the recovered MK plaintext into vault storage.
 ///
 /// Both paths land MK in the vault via [`HsmVault::vault_key_create`]
-/// and return an RAII guard so any subsequent failure rolls the
-/// provisional entry back.
-async fn provision_mk<'p, P: HsmPal>(
-    pal: &'p P,
+/// and return the assigned [`HsmKeyId`]. The entry is committed
+/// immediately (rollback of a later failure is future undo-log work).
+async fn provision_mk<P: HsmPal>(
+    pal: &P,
     io: &impl HsmIo,
     bmk: &mut DmaBuf,
     bk: &DmaBuf,
-) -> HsmResult<<P as HsmVault>::KeyGuard<'p>> {
+) -> HsmResult<HsmKeyId> {
     if bmk.is_empty() {
         let mk_buf = pal.dma_alloc(io, BK_LEN)?;
         pal.rng_fill_bytes(io, mk_buf)?;
-        return pal.vault_key_create(
-            io,
-            mk_buf,
-            HsmVaultKeyKind::MaskingKey,
-            None,
-            MK_VAULT_ATTRS,
-            &[],
-        );
+        return pal
+            .vault_key_create(
+                io,
+                mk_buf,
+                HsmVaultKeyKind::MaskingKey,
+                None,
+                MK_VAULT_ATTRS,
+            )
+            .await;
     }
 
     let layout = unmask(pal, io, bk, bmk).await?;
@@ -644,14 +640,8 @@ async fn provision_mk<'p, P: HsmPal>(
         return Err(HsmError::MaskedKeyDecodeFailed);
     }
     let mk_pt = &bmk[layout.plaintext_offset..layout.plaintext_offset + BK_LEN];
-    pal.vault_key_create(
-        io,
-        mk_pt,
-        HsmVaultKeyKind::MaskingKey,
-        None,
-        MK_VAULT_ATTRS,
-        &[],
-    )
+    pal.vault_key_create(io, mk_pt, HsmVaultKeyKind::MaskingKey, None, MK_VAULT_ATTRS)
+        .await
 }
 
 /// Envelopes the vault-resident `MK` (referenced by `mk_key_id`) under
