@@ -55,13 +55,13 @@ impl HsmVault for UnoHsmPal {
     ) -> HsmResult<HsmKeyId> {
         let app_id = u8::from(io.pid());
         let session = session_id.map(u16::from);
-        vault(io)
-            .create(self, io, app_id, key, kind, session, attrs)
-            .await
+        let mut v = vault(io);
+        v.create(self, io, app_id, key, kind, session, attrs).await
     }
 
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        vault(io).delete(self, io, key_id).await
+        let mut v = vault(io);
+        v.delete(self, io, key_id).await
     }
 
     async fn vault_key_delete_by_session(
@@ -69,13 +69,13 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        vault(io)
-            .delete_by_session(self, io, u16::from(session_id))
-            .await
+        let mut v = vault(io);
+        v.delete_by_session(self, io, u16::from(session_id)).await
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
-        vault(io).clear(self, io).await
+        let mut v = vault(io);
+        v.clear(self, io).await
     }
 
     fn vault_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
