@@ -79,25 +79,43 @@ impl<const N: usize> TableStorage for ArrayStorage<N> {
     fn is_valid_table(&self, table: usize) -> bool {
         table < N && (self.mask >> table) & 1 != 0
     }
-    fn entry(&self, table: usize, idx: usize) -> &Entry {
-        &self.entries[table][idx]
+    fn entry(&self, table: usize, idx: usize) -> HsmResult<&Entry> {
+        if table >= N || idx >= ENTRIES_PER_TABLE {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&self.entries[table][idx])
     }
-    fn entry_mut(&mut self, table: usize, idx: usize) -> &mut Entry {
-        &mut self.entries[table][idx]
+    fn entry_mut(&mut self, table: usize, idx: usize) -> HsmResult<&mut Entry> {
+        if table >= N || idx >= ENTRIES_PER_TABLE {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut self.entries[table][idx])
     }
-    fn bitmap(&self, table: usize) -> &[u32; BITMAP_WORDS] {
-        &self.bitmap[table]
+    fn bitmap(&self, table: usize) -> HsmResult<&[u32; BITMAP_WORDS]> {
+        if table >= N {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&self.bitmap[table])
     }
-    fn bitmap_mut(&mut self, table: usize) -> &mut [u32; BITMAP_WORDS] {
-        &mut self.bitmap[table]
+    fn bitmap_mut(&mut self, table: usize) -> HsmResult<&mut [u32; BITMAP_WORDS]> {
+        if table >= N {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut self.bitmap[table])
     }
-    fn blob(&self, table: usize) -> &DmaBuf {
+    fn blob(&self, table: usize) -> HsmResult<&DmaBuf> {
+        if table >= N {
+            return Err(HsmError::InvalidArg);
+        }
         // SAFETY: test-owned memory; "DMA" is a fiction on the host.
-        unsafe { DmaBuf::from_raw(&self.blob[table]) }
+        Ok(unsafe { DmaBuf::from_raw(&self.blob[table]) })
     }
-    fn blob_mut(&mut self, table: usize) -> &mut DmaBuf {
+    fn blob_mut(&mut self, table: usize) -> HsmResult<&mut DmaBuf> {
+        if table >= N {
+            return Err(HsmError::InvalidArg);
+        }
         // SAFETY: test-owned memory; "DMA" is a fiction on the host.
-        unsafe { DmaBuf::from_raw_mut(&mut self.blob[table]) }
+        Ok(unsafe { DmaBuf::from_raw_mut(&mut self.blob[table]) })
     }
 }
 
@@ -618,7 +636,7 @@ fn delete_zeroizes_blob_cpu_path() {
     let total = key_span(len);
     block_on(v.delete(&g, &io, id)).unwrap();
     assert_eq!(g.zeroizes.get(), 0, "32-byte key zeroed by CPU");
-    let blob = v.storage().blob(table);
+    let blob = v.storage().blob(table).unwrap();
     assert!(
         blob[attrs_off..attrs_off + total].iter().all(|&b| b == 0),
         "key region scrubbed after delete"
@@ -645,7 +663,7 @@ fn delete_zeroizes_blob_dma_path() {
     let total = key_span(len);
     block_on(v.delete(&g, &io, id)).unwrap();
     assert_eq!(g.zeroizes.get(), 1, "516-byte region zeroed via GDMA");
-    let blob = v.storage().blob(table);
+    let blob = v.storage().blob(table).unwrap();
     assert!(blob[attrs_off..attrs_off + total].iter().all(|&b| b == 0));
 }
 

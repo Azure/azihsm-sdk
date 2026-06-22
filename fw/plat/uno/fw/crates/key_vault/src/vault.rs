@@ -29,7 +29,6 @@ use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
-use zerocopy::FromBytes;
 use zerocopy::IntoBytes;
 
 use crate::block::blocks_for;
@@ -103,7 +102,7 @@ impl<S: TableStorage> KeyVault<S> {
             // before the `.await` so nothing bitmap-sized crosses it; on a
             // failed key write we roll back: scrub the staged region and
             // free the run.
-            let start = match crate::block::alloc(self.storage.bitmap_mut(table), need) {
+            let start = match crate::block::alloc(self.storage.bitmap_mut(table)?, need) {
                 Ok(s) => s,
                 Err(HsmError::DefragmentationNeeded) => {
                     saw_defrag = true;
@@ -117,7 +116,7 @@ impl<S: TableStorage> KeyVault<S> {
             // not yet live for lookups until the key write succeeds (a
             // failed write rolls it back via `evict`).
             {
-                let entry = self.storage.entry_mut(table, slot);
+                let entry = self.storage.entry_mut(table, slot)?;
                 entry.set_block_offset(start);
                 entry.set_disabled(false);
                 entry.set_session(session.is_some());
@@ -132,11 +131,11 @@ impl<S: TableStorage> KeyVault<S> {
             if matches!(spec, KeyLen::Variable { .. }) {
                 attrs_blob.var_len = persisted_len;
             }
-            self.write_attrs(table, start, attrs_blob);
+            self.write_attrs(table, start, attrs_blob)?;
 
             // Write key material. On failure, use evict to clean up the staged region.
             if let Err(e) = self.write_key(gdma, io, table, start, key).await {
-                let entry = *self.storage.entry(table, slot);
+                let entry = *self.storage.entry(table, slot)?;
                 self.evict(gdma, io, table, slot, entry).await?;
                 return Err(e);
             }
@@ -180,7 +179,7 @@ impl<S: TableStorage> KeyVault<S> {
                 continue;
             }
             for slot in 0..ENTRIES_PER_TABLE {
-                let entry = *self.storage.entry(table, slot);
+                let entry = *self.storage.entry(table, slot)?;
                 if !entry.is_free() && entry.session() && entry.session_or_tag() == session {
                     self.evict(gdma, io, table, slot, entry).await?;
                 }
@@ -200,7 +199,7 @@ impl<S: TableStorage> KeyVault<S> {
                 continue;
             }
             for slot in 0..ENTRIES_PER_TABLE {
-                let entry = *self.storage.entry(table, slot);
+                let entry = *self.storage.entry(table, slot)?;
                 if !entry.is_free() {
                     self.evict(gdma, io, table, slot, entry).await?;
                 }
@@ -220,7 +219,7 @@ impl<S: TableStorage> KeyVault<S> {
         let entry = self.entry(table, slot)?;
         let len = self.resolved_len(table, &entry)?;
         let key_off = entry.attrs_byte_offset() + ATTRIBUTES_BLOB_SIZE;
-        Ok(&self.storage.blob(table)[key_off..key_off + len])
+        Ok(&self.storage.blob(table)?[key_off..key_off + len])
     }
 
     /// Returns a key's [`HsmVaultKeyKind`].
@@ -233,7 +232,7 @@ impl<S: TableStorage> KeyVault<S> {
     pub fn key_attrs(&self, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
-        Ok(self.read_attrs(table, entry.attrs_byte_offset()).attrs)
+        Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
     }
 
     /// Returns the canonical byte length for a key `kind` — the fixed size
@@ -261,15 +260,15 @@ impl<S: TableStorage> KeyVault<S> {
         let total = storage_bytes(len as u16);
         let attrs_off = entry.attrs_byte_offset();
         {
-            let blob = self.storage.blob_mut(table);
+            let blob = self.storage.blob_mut(table)?;
             blob[attrs_off..attrs_off + total].fill(0);
         }
         crate::block::free(
-            self.storage.bitmap_mut(table),
+            self.storage.bitmap_mut(table)?,
             entry.block_offset(),
             blocks_for(total),
         );
-        *self.storage.entry_mut(table, slot) = Entry::default();
+        *self.storage.entry_mut(table, slot)? = Entry::default();
         Ok(())
     }
 
@@ -302,31 +301,36 @@ impl<S: TableStorage> KeyVault<S> {
     // ── internals ───────────────────────────────────────────────────
 
     fn free_slot(&self, table: usize) -> Option<usize> {
-        (0..ENTRIES_PER_TABLE).find(|&i| self.storage.entry(table, i).is_free())
+        (0..ENTRIES_PER_TABLE).find(|&i| self.storage.entry(table, i).is_ok_and(Entry::is_free))
     }
 
     fn entry(&self, table: usize, slot: usize) -> HsmResult<Entry> {
         if !self.storage.is_valid_table(table) || slot >= ENTRIES_PER_TABLE {
             return Err(HsmError::KeyNotFound);
         }
-        let entry = *self.storage.entry(table, slot);
+        let entry = *self.storage.entry(table, slot)?;
         if entry.is_free() || entry.disabled() {
             return Err(HsmError::KeyNotFound);
         }
         Ok(entry)
     }
 
-    fn write_attrs(&mut self, table: usize, block: u16, attrs: Attributes) {
+    fn write_attrs(&mut self, table: usize, block: u16, attrs: Attributes) -> HsmResult<()> {
         let attrs_off = usize::from(block) * BLOCK_ALIGNMENT;
-        let blob = self.storage.blob_mut(table);
+        let blob = self.storage.blob_mut(table)?;
         let bytes = attrs.as_bytes();
         blob[attrs_off..attrs_off + ATTRIBUTES_BLOB_SIZE].copy_from_slice(bytes);
+        Ok(())
     }
 
-    fn read_attrs(&self, table: usize, attrs_off: usize) -> Attributes {
-        let blob = self.storage.blob(table);
+    fn read_attrs(&self, table: usize, attrs_off: usize) -> HsmResult<Attributes> {
+        let blob = self.storage.blob(table)?;
         let bytes = &blob[attrs_off..attrs_off + ATTRIBUTES_BLOB_SIZE];
-        Attributes::read_from_bytes(bytes).expect("attributes blob alignment guaranteed")
+        // Copy into an aligned `Attributes` rather than reading in place, so a
+        // mis-aligned blob offset can never panic.
+        let mut attrs = Attributes::ZERO;
+        attrs.as_mut_bytes().copy_from_slice(bytes);
+        Ok(attrs)
     }
 
     /// Resolves a stored key's length: fixed from `kind`, variable from
@@ -335,7 +339,7 @@ impl<S: TableStorage> KeyVault<S> {
         match key_len(entry.kind())? {
             KeyLen::Fixed(n) => Ok(usize::from(n)),
             KeyLen::Variable { .. } => {
-                let attrs = self.read_attrs(table, entry.attrs_byte_offset());
+                let attrs = self.read_attrs(table, entry.attrs_byte_offset())?;
                 Ok(usize::from(attrs.var_len))
             }
             KeyLen::Invalid => Err(HsmError::InvalidKeyType),
@@ -352,7 +356,7 @@ impl<S: TableStorage> KeyVault<S> {
     ) -> HsmResult<()> {
         let key_off = usize::from(block) * BLOCK_ALIGNMENT + ATTRIBUTES_BLOB_SIZE;
         let len = key.len();
-        let blob = self.storage.blob_mut(table);
+        let blob = self.storage.blob_mut(table)?;
         let dst = &mut blob[key_off..key_off + len];
         if len > DMA_THRESHOLD {
             gdma.copy_mem(io, key, dst).await
@@ -377,7 +381,7 @@ impl<S: TableStorage> KeyVault<S> {
 
         // Zeroize the whole [attrs][key] region.
         {
-            let blob = self.storage.blob_mut(table);
+            let blob = self.storage.blob_mut(table)?;
             let region = &mut blob[attrs_off..attrs_off + total];
             if total > DMA_THRESHOLD {
                 gdma.zeroize_mem(io, region).await?;
@@ -388,11 +392,11 @@ impl<S: TableStorage> KeyVault<S> {
 
         // Free the blocks and clear the slot.
         crate::block::free(
-            self.storage.bitmap_mut(table),
+            self.storage.bitmap_mut(table)?,
             entry.block_offset(),
             blocks_for(total),
         );
-        *self.storage.entry_mut(table, slot) = Entry::default();
+        *self.storage.entry_mut(table, slot)? = Entry::default();
         Ok(())
     }
 }

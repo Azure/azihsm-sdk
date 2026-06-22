@@ -19,10 +19,13 @@
 #![allow(unsafe_code)]
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_uno_key_vault::Entry;
 use azihsm_fw_uno_key_vault::TableStorage;
 use azihsm_fw_uno_key_vault::BITMAP_WORDS;
 use azihsm_fw_uno_key_vault::BLOB_SIZE;
+use azihsm_fw_uno_key_vault::ENTRIES_PER_TABLE;
 use azihsm_fw_uno_key_vault::MAX_TABLE_COUNT;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 use azihsm_fw_uno_reg_soc::key_vault_table_t::BITMAP_OFFSET;
@@ -167,13 +170,16 @@ impl TableStorage for VaultStorage {
     /// # Returns
     ///
     /// A shared reference to the [`Entry`] at `(table, idx)` in GSRAM.
-    fn entry(&self, table: usize, idx: usize) -> &Entry {
+    fn entry(&self, table: usize, idx: usize) -> HsmResult<&Entry> {
+        if table >= TABLE_COUNT || idx >= ENTRIES_PER_TABLE {
+            return Err(HsmError::InvalidArg);
+        }
         let ptr = (Self::entry_addr(table) + idx * ENTRY_STRIDE as usize) as *const Entry;
-        // SAFETY: GSRAM key-vault tables are plain shared SRAM (not a
-        // peripheral, no read side effects); `idx < ENTRIES_PER_TABLE` keeps
-        // the access in-bounds and 8-byte aligned. `Entry` is a transparent
+        // SAFETY: the bounds check above keeps the access within table
+        // `table`'s entry region (8-byte aligned). GSRAM key-vault tables are
+        // plain shared SRAM (no read side effects); `Entry` is a transparent
         // `u64`, so every bit pattern is a valid value.
-        unsafe { &*ptr }
+        Ok(unsafe { &*ptr })
     }
 
     /// Mutably borrows a metadata entry in GSRAM.
@@ -189,11 +195,14 @@ impl TableStorage for VaultStorage {
     /// # Returns
     ///
     /// An exclusive reference to the [`Entry`] at `(table, idx)` in GSRAM.
-    fn entry_mut(&mut self, table: usize, idx: usize) -> &mut Entry {
+    fn entry_mut(&mut self, table: usize, idx: usize) -> HsmResult<&mut Entry> {
+        if table >= TABLE_COUNT || idx >= ENTRIES_PER_TABLE {
+            return Err(HsmError::InvalidArg);
+        }
         let ptr = (Self::entry_addr(table) + idx * ENTRY_STRIDE as usize) as *mut Entry;
         // SAFETY: as `entry`, with exclusive access on the single-threaded
         // executor for the duration of the `&mut self` borrow.
-        unsafe { &mut *ptr }
+        Ok(unsafe { &mut *ptr })
     }
 
     /// Borrows a table's block-allocator bitmap.
@@ -206,11 +215,14 @@ impl TableStorage for VaultStorage {
     ///
     /// A shared reference to the table's [`BITMAP_WORDS`]-word bitmap in
     /// GSRAM.
-    fn bitmap(&self, table: usize) -> &[u32; BITMAP_WORDS] {
+    fn bitmap(&self, table: usize) -> HsmResult<&[u32; BITMAP_WORDS]> {
+        if table >= TABLE_COUNT {
+            return Err(HsmError::InvalidArg);
+        }
         let ptr = Self::bitmap_addr(table) as *const [u32; BITMAP_WORDS];
-        // SAFETY: plain GSRAM read of the table's bitmap region
-        // (`table < TABLE_COUNT` keeps it in-bounds and 4-byte aligned).
-        unsafe { &*ptr }
+        // SAFETY: the bounds check keeps the access within table `table`'s
+        // bitmap region (plain GSRAM read, 4-byte aligned).
+        Ok(unsafe { &*ptr })
     }
 
     /// Mutably borrows a table's block-allocator bitmap.
@@ -223,11 +235,14 @@ impl TableStorage for VaultStorage {
     ///
     /// An exclusive reference to the table's [`BITMAP_WORDS`]-word bitmap
     /// in GSRAM.
-    fn bitmap_mut(&mut self, table: usize) -> &mut [u32; BITMAP_WORDS] {
+    fn bitmap_mut(&mut self, table: usize) -> HsmResult<&mut [u32; BITMAP_WORDS]> {
+        if table >= TABLE_COUNT {
+            return Err(HsmError::InvalidArg);
+        }
         let ptr = Self::bitmap_addr(table) as *mut [u32; BITMAP_WORDS];
         // SAFETY: as `bitmap`, with exclusive access on the single-threaded
         // executor for the duration of the `&mut self` borrow.
-        unsafe { &mut *ptr }
+        Ok(unsafe { &mut *ptr })
     }
 
     /// Borrows a table's key-data blob region.
@@ -240,15 +255,19 @@ impl TableStorage for VaultStorage {
     ///
     /// A shared [`DmaBuf`] view of the table's [`BLOB_SIZE`]-byte blob in
     /// GSRAM.
-    fn blob(&self, table: usize) -> &DmaBuf {
-        // SAFETY: the blob is `BLOB_SIZE` bytes of 'static GSRAM; the
-        // single-threaded executor guarantees no aliasing mutation.
-        unsafe {
+    fn blob(&self, table: usize) -> HsmResult<&DmaBuf> {
+        if table >= TABLE_COUNT {
+            return Err(HsmError::InvalidArg);
+        }
+        // SAFETY: the bounds check keeps the blob within table `table`'s
+        // `BLOB_SIZE` bytes of 'static GSRAM; the single-threaded executor
+        // guarantees no aliasing mutation.
+        Ok(unsafe {
             DmaBuf::from_raw(core::slice::from_raw_parts(
                 Self::blob_addr(table) as *const u8,
                 BLOB_SIZE,
             ))
-        }
+        })
     }
 
     /// Mutably borrows a table's key-data blob region.
@@ -261,14 +280,17 @@ impl TableStorage for VaultStorage {
     ///
     /// An exclusive [`DmaBuf`] view of the table's [`BLOB_SIZE`]-byte blob
     /// in GSRAM.
-    fn blob_mut(&mut self, table: usize) -> &mut DmaBuf {
+    fn blob_mut(&mut self, table: usize) -> HsmResult<&mut DmaBuf> {
+        if table >= TABLE_COUNT {
+            return Err(HsmError::InvalidArg);
+        }
         // SAFETY: as `blob`, with exclusive access for the duration of the
         // `&mut self` borrow on the single-threaded executor.
-        unsafe {
+        Ok(unsafe {
             DmaBuf::from_raw_mut(core::slice::from_raw_parts_mut(
                 Self::blob_addr(table) as *mut u8,
                 BLOB_SIZE,
             ))
-        }
+        })
     }
 }

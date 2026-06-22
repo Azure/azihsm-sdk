@@ -20,6 +20,7 @@
 //! logic be exercised on the host without real GSRAM.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use zerocopy::FromBytes;
 use zerocopy::Immutable;
@@ -128,7 +129,12 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// A shared reference to the `Entry` at `(table, idx)`.
-    fn entry(&self, table: usize, idx: usize) -> &Entry;
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` or `idx` is out of range.
+    fn entry(&self, table: usize, idx: usize) -> HsmResult<&Entry>;
 
     /// Mutably borrows a metadata entry in the table.
     ///
@@ -143,7 +149,12 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// An exclusive reference to the `Entry` at `(table, idx)`.
-    fn entry_mut(&mut self, table: usize, idx: usize) -> &mut Entry;
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` or `idx` is out of range.
+    fn entry_mut(&mut self, table: usize, idx: usize) -> HsmResult<&mut Entry>;
 
     /// Borrows the block-allocator bitmap for a table (immutably).
     ///
@@ -157,7 +168,12 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// Reference to the 64-word bitmap array. The allocator reads through this borrow.
-    fn bitmap(&self, table: usize) -> &[u32; BITMAP_WORDS];
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` is out of range.
+    fn bitmap(&self, table: usize) -> HsmResult<&[u32; BITMAP_WORDS]>;
 
     /// Borrows the block-allocator bitmap for a table (mutably).
     ///
@@ -172,7 +188,12 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// Mutable reference to the 64-word bitmap array for allocation and deallocation.
-    fn bitmap_mut(&mut self, table: usize) -> &mut [u32; BITMAP_WORDS];
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` is out of range.
+    fn bitmap_mut(&mut self, table: usize) -> HsmResult<&mut [u32; BITMAP_WORDS]>;
 
     /// Borrows the key blob region of a table (immutably).
     ///
@@ -187,7 +208,12 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// Reference to the 15104-byte blob region as a `DmaBuf` (DMA-aligned memory).
-    fn blob(&self, table: usize) -> &DmaBuf;
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` is out of range.
+    fn blob(&self, table: usize) -> HsmResult<&DmaBuf>;
 
     /// Borrows the key blob region of a table (mutably).
     ///
@@ -203,5 +229,10 @@ pub trait TableStorage {
     /// # Returns
     ///
     /// Mutable reference to the 15104-byte blob region for key operations.
-    fn blob_mut(&mut self, table: usize) -> &mut DmaBuf;
+    ///
+    /// # Errors
+    ///
+    /// [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
+    /// if `table` is out of range.
+    fn blob_mut(&mut self, table: usize) -> HsmResult<&mut DmaBuf>;
 }
