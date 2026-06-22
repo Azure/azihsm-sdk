@@ -31,10 +31,11 @@ path = "tests/azihsm_ddi_tbor_tests.rs"
 
 [features]
 # Forward backend selection to the azihsm_ddi facade so the integration
-# test binary picks up the right backend (emu vs mock). Mirrors the
-# pattern used in ddi/mbor/types/Cargo.toml.
+# test binary picks up the right backend. The same tests run across every
+# transport — choose one with `--features emu` / `mock` / `sock`.
 emu = ["azihsm_ddi/emu"]
 mock = ["azihsm_ddi/mock"]
+sock = ["azihsm_ddi/sock"]
 table-4 = ["azihsm_ddi/table-4"]
 table-64 = ["azihsm_ddi/table-64"]
 

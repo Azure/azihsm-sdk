@@ -31,14 +31,18 @@
 //! * No backend feature. The pure host-side codec tests (everything
 //!   in `commands::fw_error_decode` and `commands::unexpected_toc_type`)
 //!   compile and run because they do not touch the harness; this
-//!   module is gated `#![cfg(any(feature = "emu", feature = "mock"))]`
+//!   module is gated `#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]`
 //!   so the harness itself disappears in this mode.
+//!
+//! The `sock` backend joins `emu` in the in-session command suite: it
+//! drives the same TBOR round-trips over the socket transport, so the
+//! harness is also built under `--features sock`.
 //!
 //! Backend-specific [`TestCtx`] methods (`erase`, `cert_chain_info`,
 //! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
 //! are unavailable under `--features mock`.
 
-#![cfg(any(feature = "emu", feature = "mock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 
 pub mod api_rev;
 pub mod assertions;
