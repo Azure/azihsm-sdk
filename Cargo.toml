@@ -28,6 +28,8 @@ members = [
   "ddi/mock",
   "ddi/nix",
   "ddi/res_test_dev",
+  "ddi/sock",
+  "ddi/sock/proto",
   "ddi/tbor/codec",
   "ddi/tbor/derive",
   "ddi/tbor/types",
@@ -50,6 +52,7 @@ members = [
   "fw/core/ddi/tbor/codec",
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
+  "fw/core/io",
   "fw/core/lib",
   "fw/core/tracing",
   "fw/pal/traits",
@@ -91,6 +94,8 @@ azihsm_ddi_mbor_types = { features = [
 ], path = "ddi/mbor/types" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_sock = { path = "ddi/sock" }
+azihsm_ddi_sock_proto = { path = "ddi/sock/proto" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
@@ -131,6 +136,7 @@ azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 # Firmware crates — common
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
+azihsm_fw_hsm_io = { path = "fw/core/io" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
