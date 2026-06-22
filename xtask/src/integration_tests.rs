@@ -160,10 +160,11 @@ impl Xtask for IntegrationTest {
                 };
 
                 if self.coverage {
-                    let test = crate::coverage::Coverage::from(test);
+                    let cov = crate::coverage::Coverage::from(test);
+                    cov.run(ctx)
+                } else {
+                    test.run(ctx)
                 }
-
-                test.run(ctx)
             };
 
             match self.suite {
