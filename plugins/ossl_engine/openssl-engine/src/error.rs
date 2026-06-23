@@ -9,9 +9,11 @@
 //!
 //! - [`EngineError`] + [`EngineResult`] — typed failure modes the toolkit
 //!   emits.  Variants are added as features land.
-//! - [`openssl_err`] / [`result_to_int`] — push human-readable messages
-//!   onto the OpenSSL ERR queue so callers can recover them via
-//!   `ERR_get_error` (and `openssl errstr` on the CLI side).
+//! - [`openssl_err`] / [`result_to_int`] — record the reason code on the
+//!   OpenSSL ERR queue, with a human-readable detail string attached via
+//!   `ERR_add_error_data`. Callers read the code with `ERR_get_error`; the
+//!   detail string is surfaced via `ERR_print_errors*` (or programmatically
+//!   via `ERR_get_error_line_data`).
 //! - [`catch_panic`] — wrap a C entry point so a Rust panic returns a
 //!   caller-supplied fallback instead of unwinding into C (which is UB).
 
@@ -141,8 +143,9 @@ pub fn openssl_err(reason: c_int, msg: &str) {
     // SAFETY: ERR_put_error stores the file pointer as-is; we pass a
     // 'static empty C string so it remains valid for the lifetime of the
     // ERR queue entry. ERR_add_error_data copies its argument internally.
+    // func is 0 ("unknown"): a negative value packs an invalid function code.
     unsafe {
-        ffi::ERR_put_error(ffi::ERR_LIB_ENGINE as c_int, -1, reason, c"".as_ptr(), 0);
+        ffi::ERR_put_error(ffi::ERR_LIB_ENGINE as c_int, 0, reason, c"".as_ptr(), 0);
         ffi::ERR_add_error_data(1, msg_c.as_ptr());
     }
 }
