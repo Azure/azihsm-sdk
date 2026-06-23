@@ -9,10 +9,12 @@ version = "0.1.0"
 
 [features]
 default = []
-engine = ["openssl-sys-engine/engine"]
+engine = ["dep:thiserror", "dep:tracing", "openssl-sys-engine/engine"]
 
 [dependencies]
 openssl-sys-engine.workspace = true
+thiserror = { optional = true, workspace = true }
+tracing = { optional = true, workspace = true }
 
 [lints]
 workspace = true
