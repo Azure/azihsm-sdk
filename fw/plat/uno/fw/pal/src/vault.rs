@@ -36,11 +36,13 @@ use crate::UnoHsmPal;
 
 #[inline]
 pub(crate) fn vault(io: &impl HsmIo) -> KeyVault<VaultStorage> {
-    let _ = io;
-    // Until partition provisioning lands, every partition owns all vault
-    // tables. The per-partition resource mask (from the partition table)
-    // is wired in once `PartTable` exists; for now scope to all 65 tables.
-    let res_mask = u128::MAX;
+    let pid = u8::from(io.pid()) as usize;
+    // Out-of-range partitions own no tables (empty mask → no storage).
+    let res_mask = if pid < crate::part::NUM_PARTITIONS {
+        crate::part::PartTable::res_mask(pid)
+    } else {
+        0
+    };
     KeyVault::new(VaultStorage::new(res_mask))
 }
 

@@ -55,16 +55,12 @@ pub const SHA_CMD_OFFSET: u32 = 0x154A4;
 pub const SHA_CMD_COUNT: u32 = 32;
 pub const SHA_CMD_STRIDE: u32 = 0x20;
 pub const IO_META_OFFSET: u32 = 0x20C58;
-pub const IO_META_COUNT: u32 = 32;
+pub const IO_META_COUNT: u32 = 33;
 pub const IO_META_STRIDE: u32 = 0x08;
-pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D58;
-pub const SRAM_IO_BUF_COUNT: u32 = 32;
+pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D60;
+pub const SRAM_IO_BUF_COUNT: u32 = 33;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4800;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4800;
-pub const PART_STORE_OFFSET: u32 = 0xBB000;
-pub const PART_STORE_COUNT: u32 = 1;
-pub const PART_STORE_STRIDE: u32 = 0x30C00;
-pub const PART_STORE_SIZE: u32 = 0x30C00;
 
 tock_registers::register_bitfields! [u32,
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
@@ -338,11 +334,9 @@ pub mod regs {
             (0x15364 => pub upka_engine_cmd: [super::UpkaCmdEntry; 16]),
             (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
             (0x158a4 => _reserved5),
-            (0x20c58 => pub io_meta: [super::IoMetaEntry; 32]),
-            (0x20d58 => pub sram_io_buf: [u8; 589824]),
-            (0xb0d58 => _reserved6),
-            (0xbb000 => pub part_store: [u8; 199680]),
-            (0xebc00 => @END),
+            (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
+            (0x20d60 => pub sram_io_buf: [u8; 608256]),
+            (0xb5560 => @END),
         }
     }
 }

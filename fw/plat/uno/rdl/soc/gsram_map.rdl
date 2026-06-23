@@ -366,11 +366,105 @@ mem sram_io_buf_t {
 // Partition Store + Key Vault
 // ══════════════════════════════════════════════════════════════
 
-mem part_store_t {
-    desc = "Partition persistent storage (195 KB).";
-    mementries = 49920;  // 199680 / 4
-    memwidth = 32;
+// ── Partition table ─────────────────────────────────────────────
+//
+// Per-partition lifecycle state, mirroring the reference firmware's
+// GSRAM-resident partition table. One entry per partition (cardinality
+// 65, one slot per key-vault table index / controller id). Each entry
+// records the partition lifecycle state, a monotonic generation counter
+// (bumped on free so stale key handles are rejected), a 128-bit resource
+// mask selecting which of the 65 global key-vault tables the partition
+// owns, and the partition identity provisioned at resource-assignment
+// time: a 16-byte random ID, the identity ECC P-384 key handle, and the
+// cached identity public key (X ‖ Y, 96 B). The mask defaults to zero: a
+// partition has no storage until Admin assigns tables via the SetResource
+// IPC, at which point the identity is generated.
+
+reg part_state_t {
+    name = "Partition State";
+    desc = "Partition lifecycle state: 0=Unallocated, 1=Allocated,
+            2=Enabled, 3=Disabled.";
+    field { sw = rw; hw = na; } STATE[7:0] = 0x0;
+    field { sw = rw; hw = na; } RSVD[31:8] = 0x0;
 };
+
+reg part_gen_t {
+    name = "Partition Generation";
+    desc = "Monotonic generation counter, bumped whenever the partition
+            is freed so previously issued key handles are rejected.";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+reg part_res_mask_t {
+    name = "Partition Resource Mask Word";
+    desc = "One 32-bit little-endian word of the 128-bit table-ownership
+            mask. Bit i (global) selects key-vault table i.";
+    field { sw = rw; hw = na; } BITS[31:0] = 0x0;
+};
+
+reg part_id_word_t {
+    name = "Partition ID Word";
+    desc = "One 32-bit word of the 16-byte random partition identity.";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+reg part_key_id_t {
+    name = "Partition Identity Key Handle";
+    desc = "Vault key id of the ECC P-384 identity private key
+            (0 = not provisioned).";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+reg part_pub_word_t {
+    name = "Partition Identity Public Key Word";
+    desc = "One 32-bit word of the 96-byte identity public key (X ‖ Y).";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+reg part_rsvd_t {
+    name = "Partition Reserved Word";
+    desc = "Reserved for future per-partition persistent fields.";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+// One partition table entry (512-byte stride leaves room for future
+// per-partition persistent fields).
+addrmap part_entry_t {
+    name = "Partition Entry";
+    desc = "Per-partition lifecycle state, generation, 128-bit resource
+            mask, provisioned ECC P-384 identity, and the enable-time
+            establish-credential and session-encryption key pairs.";
+
+    default hw = na;
+    default sw = rw;
+
+    part_state_t    STATE         @ 0x00;
+    part_gen_t      GENERATION    @ 0x04;
+    part_res_mask_t RES_MASK[4]   @ 0x08 += 0x04;  // 0x08 - 0x18, 128-bit LE
+    part_id_word_t  ID[4]         @ 0x18 += 0x04;  // 0x18 - 0x28, 16-byte ID
+    part_key_id_t   ID_KEY_ID     @ 0x28;          // 0x28 - 0x2C
+    part_pub_word_t ID_PUB_KEY[24] @ 0x2C += 0x04; // 0x2C - 0x8C, 96-byte pub
+    part_key_id_t   EC_KEY_ID     @ 0x8C;          // 0x8C - 0x90, establish-cred
+    part_pub_word_t EC_PUB_KEY[24] @ 0x90 += 0x04; // 0x90 - 0xF0, 96-byte pub
+    part_key_id_t   SE_KEY_ID     @ 0xF0;          // 0xF0 - 0xF4, session-enc
+    part_pub_word_t SE_PUB_KEY[24] @ 0xF4 += 0x04; // 0xF4 - 0x154, 96-byte pub
+    part_rsvd_t     RSVD[43]      @ 0x154 += 0x04; // 0x154 - 0x200, reserve
+};
+
+// ── Key vault ───────────────────────────────────────────────────
+//
+// Typed mirror of the reference firmware's per-partition key store, so
+// key IDs, sizes, and on-storage layout are interchangeable. One table
+// is TOTAL_TABLE_LEN = 17408 B and holds 256 metadata entries, a
+// block-allocator bitmap, and a key-data blob region:
+//
+//   0x0000 - 0x0800  ENTRY[256]  (256 × 8-byte PhysicalEntry metadata)
+//   0x0800 - 0x0900  BITMAP[64]  (used-block tracker, 64 × u32)
+//   0x0900 - 0x4400  BLOB        (15104-byte key-data region)
+//
+// Within BLOB, each key occupies an 8-byte-aligned block laid out as
+// [32-byte attributes][key bytes]; PhysicalEntry.OFFSET is the block
+// index (× 8 = byte offset into BLOB).
 
 // One 8-byte vault metadata entry (mirrors the reference PhysicalEntry).
 reg pe_dw0_t {
@@ -471,13 +565,13 @@ addrmap io_gsram {
     upka_cmd_entry_t UPKA_ENGINE_CMD[16] @ 0x15364 += 0x14;
     sha_cmd_entry_t  SHA_CMD[32]         @ 0x154A4 += 0x20;
 
-    // ─── Heap (per-IO buffers) ───
-    io_meta_entry_t  IO_META[32]         @ 0x20C58 += 0x08;
-    sram_io_buf_t    SRAM_IO_BUF[32]     @ 0x20D58 += 0x4800;
+    // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
+    io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
+    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4800;
 
-    // ─── Partition store ───
-    part_store_t     PART_STORE          @ 0xBB000;
+    // ─── Partition table (65 entries, 256 B each) ───
+    part_entry_t     PART_STORE[65]      @ 0xBB000 += 0x200;
 
-    // ─── Key vault ───
+    // ─── Key vault (65 typed tables, 17408 B each) ───
     key_vault_table_t KEY_VAULT[65]   @ 0xEBC00 += 0x4400;   // 65 × 17408 = 0x114400
 };
