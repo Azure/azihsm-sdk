@@ -212,13 +212,13 @@ jobs:
         run: cargo xtask setup --skip-taplo --skip-audit
 
       - name: Build provider
-        if: matrix.cov == 'false'
+        if: !matrix.cov
         run: |
           cargo build -p azihsm_api_native --features mock
           cargo build -p azihsm_ossl_provider --features mock
 
       - name: Build provider with coverage
-        if: matrix.cov == 'true'
+        if: matrix.cov
         env:
           RUSTFLAGS: -C instrument-coverage
           LLVM_PROFILE_FILE: ${{ github.workspace }}/target/llvm-cov-target/azihsm-sdk-%p-%14m.profraw
@@ -259,53 +259,53 @@ jobs:
       # run even when cli fails, so the cell's PR check list shows three
       # independent pass/fail indicators instead of one.
       - name: Run cli suite
-        if: matrix.cov == 'false'
+        if: !matrix.cov
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-cli \
             --profile ci-provider-integration --no-fail-fast
 
       - name: Run capi suite
-        if: ${{ !cancelled() && matrix.cov == 'false' }}
+        if: ${{ !cancelled() && !matrix.cov }}
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-capi \
             --profile ci-provider-integration --no-fail-fast
 
       - name: Run nginx suite
-        if: ${{ !cancelled() && matrix.nginx && matrix.cov == 'false' }}
+        if: ${{ !cancelled() && matrix.nginx && !matrix.cov }}
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-nginx \
             --profile ci-provider-integration --no-fail-fast
 
       - name: Run cli suite with coverage
-        if: matrix.cov == 'true'
+        if: matrix.cov
         run: |
           cargo xtask precheck --coverage --features integration \
             -p provider-integration-tests-cli \
             --profile ci-provider-integration
 
       - name: Run capi suite with coverage
-        if: ${{ !cancelled() && matrix.cov == 'true' }}
+        if: ${{ !cancelled() && matrix.cov }}
         run: |
           cargo xtask precheck --coverage --features integration \
             -p provider-integration-tests-capi \
             --profile ci-provider-integration
 
       - name: Run nginx suite with coverage
-        if: ${{ !cancelled() && matrix.nginx && matrix.cov == 'true' }}
+        if: ${{ !cancelled() && matrix.nginx && matrix.cov }}
         run: |
           cargo xtask precheck --coverage --features integration \
             -p provider-integration-tests-nginx \
             --profile ci-provider-integration
 
       - name: Code Coverage Summary Report
-        if: matrix.cov == 'true'
+        if: matrix.cov
         run: cargo xtask precheck --coverage-report
 
       - name: Upload coverage report
-        if: ${{ matrix.cov == 'true' }}
+        if: matrix.cov
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report-ubuntu
