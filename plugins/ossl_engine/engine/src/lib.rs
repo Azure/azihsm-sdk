@@ -57,21 +57,36 @@ mod engine_impl {
     ) -> c_int {
         catch_panic(
             || {
-                let result = (|| -> EngineResult<()> {
-                    let engine_ptr =
-                        NonNull::new(engine_ptr).ok_or(EngineError::NullParam("engine"))?;
-                    let fns = NonNull::new(fns).ok_or(EngineError::NullParam("fns"))?;
-
-                    // SAFETY: engine_ptr and fns are non-null (checked above) and
-                    // valid for this call (provided by OpenSSL's dynamic loader).
-                    unsafe { Engine::from_ptr(engine_ptr).bind(id, fns, bind_helper) }
-                })();
-                result_to_int(result)
+                // SAFETY: forwarding the pointers OpenSSL's dynamic loader
+                // passed to bind_engine, per its ABI contract.
+                result_to_int(unsafe { bind_inner(engine_ptr, id, fns) })
             },
             RetCode::Fail.into(),
         )
     }
 
+    /// Validate the raw pointers from OpenSSL's dynamic loader and dispatch
+    /// to [`bind_helper`] with a safe [`Engine`].
+    ///
+    /// # Safety
+    /// `engine_ptr`, `id`, and `fns` must be the pointers OpenSSL's dynamic
+    /// loader passes to [`bind_engine`] (see its contract).
+    #[allow(unsafe_code)]
+    unsafe fn bind_inner(
+        engine_ptr: *mut ffi::ENGINE,
+        id: *const std::ffi::c_char,
+        fns: *mut ffi::dynamic_fns,
+    ) -> EngineResult<()> {
+        let engine_ptr = NonNull::new(engine_ptr).ok_or(EngineError::NullParam("engine"))?;
+        let fns = NonNull::new(fns).ok_or(EngineError::NullParam("fns"))?;
+
+        // SAFETY: engine_ptr and fns are non-null (checked above) and valid
+        // for this call (provided by OpenSSL's dynamic loader).
+        unsafe { Engine::from_ptr(engine_ptr).bind(id, fns, bind_helper) }
+    }
+
+    /// Engine setup invoked by [`Engine::bind`]: reject a request for a
+    /// different engine id, then register this engine's id and name.
     fn bind_helper(engine: &Engine, id: &CStr) -> EngineResult<()> {
         let id_bytes = id.to_bytes();
         if !id_bytes.is_empty() && !id_bytes.contains(&b'/') && id != ENGINE_ID {
