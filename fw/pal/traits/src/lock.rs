@@ -37,7 +37,7 @@ use super::*;
 /// async fn handle_ddi<P: HsmPal>(pal: &P, io: &impl HsmIo) {
 ///     let _lock = pal.partition_lock(io).await;
 ///     // Exclusive access to this partition until _lock drops.
-///     let _sess_id = pal.session_create(io, api_rev, mk, None)?;
+///     let _sess_id = pal.session_create(io, api_rev, mk, None).await?;
 /// }
 /// ```
 pub trait HsmPartitionLock {

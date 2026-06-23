@@ -58,7 +58,7 @@ impl HsmSessionManager for StdHsmPal {
     /// 3. Allocates (or re-maps) a logical session slot.
     ///
     /// The session is committed immediately.
-    fn session_create(
+    async fn session_create(
         &self,
         io: &impl HsmIo,
         api_rev: &[u8],
@@ -117,7 +117,7 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// For [`Pending`](HsmSessionState::Pending) slots no vault entry
     /// exists yet, so steps 1–3 are skipped and only step 4 runs.
-    fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+    async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;
 
         // Pending slots: no vault state to clean up.
@@ -178,7 +178,7 @@ impl HsmSessionManager for StdHsmPal {
         }
     }
 
-    fn session_promote(
+    async fn session_promote(
         &self,
         io: &impl HsmIo,
         id: HsmSessId,
