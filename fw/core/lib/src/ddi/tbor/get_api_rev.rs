@@ -9,7 +9,6 @@
 //! the request body is empty (the derive emits a synthetic `none`
 //! placeholder TOC entry), and the response carries `(min, max)`.
 
-use azihsm_fw_ddi_tbor_types::TborGetApiRevReq;
 use azihsm_fw_ddi_tbor_types::TborGetApiRevResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -24,18 +23,21 @@ pub(crate) const MAX_PROTOCOL_VERSION: u8 = 1;
 
 /// Handle a TBOR `GetApiRev` request.
 ///
-/// Decodes the request through the shared schema (which enforces:
-/// header parses, opcode matches, body is empty), then encodes the
-/// `(MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION)` response into a
-/// PAL-allocated buffer.  The synchronous body is wrapped in an
-/// `async fn`-equivalent return so the dispatcher signature stays
-/// uniform; this handler itself performs no async PAL work.
+/// The caller (`dispatch`) has already structurally validated the
+/// buffer via [`RequestView::parse`] and confirmed the opcode is
+/// `GET_API_REV`. This handler performs a lightweight opcode
+/// assertion (defense-in-depth) and encodes the
+/// `(MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION)` response.
 pub(crate) fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let _ = TborGetApiRevReq::decode(req_buf)?;
+    // Defense-in-depth: verify the opcode matches without a full
+    // re-parse.  The header structure was already validated by the
+    // upstream `RequestView::parse` in `handle_tbor_op`.
+    debug_assert_eq!(req_buf[3], 0x01, "opcode mismatch in get_api_rev");
+
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborGetApiRevResp::encode(buf, 0, false)?
             .min_protocol_version(MIN_PROTOCOL_VERSION)?

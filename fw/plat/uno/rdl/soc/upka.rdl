@@ -1,0 +1,155 @@
+// Copyright (c) Microsoft Corporation.
+//
+// UPKA — Unified Public Key Accelerator
+//
+// Pool of 16 PKA engine instances at 0x1000 stride. Each engine
+// independently fetches a 5-DWORD descriptor from device memory,
+// executes the requested operation (ECC sign/verify/keygen, RSA
+// mod-exp, etc.), posts STATUS, and fires its Done or Error IRQ.
+//
+// Per-instance MMIO layout (3 registers, 0x0C used out of 0x1000):
+//   COMMAND      @ 0x000   (RW32)  Write descriptor address to start op
+//   STATUS       @ 0x004   (RO32)  BUSY, COMPLETE, ERROR_*, NOT_OWNER
+//   ECC_COUNT    @ 0x008   (RO32)  Memory ECC correctable-error count
+//
+// Address map:
+//   ENGINE[16]   @ 0xC000_0000  stride 0x1000  (engine N at base + N*0x1000)
+//
+// IRQs: Done IRQ192–207 (engine 0–15), Error IRQ208–223 (engine 0–15)
+//
+// Firmware flow (per engine):
+//   1. Build PkaCommand descriptor in GSRAM.
+//   2. Write descriptor's address to COMMAND register (doorbell).
+//   3. Engine fetches descriptor, executes opcode, posts STATUS.
+//   4. Done or Error IRQ fires on completion.
+//   5. FW reads STATUS — COMPLETE bit + bus/cmd/fault error bits.
+
+
+// ── COMMAND — descriptor doorbell ──
+
+reg upka_command_t {
+    desc = "Descriptor doorbell. Writing this register triggers the
+            engine to fetch the 5-DWORD PkaCommand descriptor located
+            at the written address and start executing the requested
+            opcode. The descriptor must be 4-byte aligned and remain
+            valid until STATUS reports completion.";
+
+    field {
+        sw = rw;
+        hw = r;
+        desc = "Address of the PkaCommand descriptor. Reads return the
+                last-written value (not consumed by hardware on read).
+                Writes act as the doorbell that triggers the engine to
+                fetch the descriptor.";
+    } DESC_ADDR[31:0] = 0x0;
+};
+
+
+// ── STATUS — completion + error bits ──
+
+reg upka_status_t {
+    desc = "Engine status. Polled by firmware between submit and
+            completion; latched by the engine on every state
+            transition. A Done or Error IRQ fires on every command
+            completion (positive and negative).";
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine is currently processing a command. Cleared on
+                completion (success or error). Firmware must NOT
+                write the COMMAND register while BUSY is set.";
+    } BUSY[0:0] = 0x0;
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine successfully finished the most recent command.
+                Mutually exclusive with the ERROR_* bits.";
+    } COMPLETE[1:1] = 0x0;
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine could not decode the command structure
+                successfully (invalid opcode, bad descriptor layout).";
+    } ERROR_CMD[2:2] = 0x0;
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine encountered an error initiating a bus
+                transaction (e.g. SLVERR / DECERR on a result, arg, or
+                descriptor fetch).";
+    } ERROR_BUS[3:3] = 0x0;
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine detected an internal fault while working on the
+                operation (parity, lane-fault, or engine-fault).";
+    } ERROR_FAULT[4:4] = 0x0;
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine is/was working on a command initiated by a
+                different bus master than the one reading the STATUS
+                register. Driver masks this bit out of completion
+                decode.";
+    } NOT_OWNER[5:5] = 0x0;
+
+    field { sw = r; } RSVD_0[31:6] = 0x0;
+};
+
+
+// ── ECC_COUNT — memory ECC correctable-error count (RO) ──
+
+reg upka_ecc_count_t {
+    desc = "Memory ECC (Error Correcting Code) correctable-error
+            counter. Incremented by the engine each time it detects
+            and corrects a single-bit ECC error in its internal
+            buffers. Cleared on hardware reset only — firmware cannot
+            clear it.
+
+            NOTE: 'ECC' here refers to memory error correction, not
+            Elliptic Curve Cryptography. This counter is unrelated to
+            the per-op cycle-count or the ECC sign/verify opcodes.";
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Count of memory ECC correctable errors observed since
+                the last hardware reset.";
+    } CE[31:0] = 0x0;
+};
+
+
+// ── Per-engine register file ──
+
+regfile upka_engine_t {
+    desc = "One UPKA engine instance (3 registers in a 0x1000 stride
+            window, 0x0C bytes used).";
+
+    upka_command_t      COMMAND     @ 0x00;
+    upka_status_t       STATUS      @ 0x04;
+    upka_ecc_count_t    ECC_COUNT   @ 0x08;
+};
+
+
+// ── Address Map (16 engines, 0x1000 stride) ──
+
+addrmap upka {
+    name = "UPKA";
+    desc = "Unified Public Key Accelerator — 16-engine pool.
+             Each engine instance is a self-contained ECC / RSA /
+             modular-arithmetic processor with its own descriptor
+             doorbell, status, and IRQ pair (Done / Error).
+             Base address 0xC000_0000.";
+
+    default hw = na;
+    default sw = rw;
+
+    // 16 engines × 0x1000 stride
+    upka_engine_t       ENGINE[16]      @ 0x0000 += 0x1000;
+};

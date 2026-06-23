@@ -58,7 +58,7 @@ pub const KEY_LABEL_MAX: usize = 32;
 /// discover the blob size via [`mask`](crate::aead::mask) with
 /// `out = None`.
 #[inline]
-pub(crate) const fn blob_len(alg: AeadAlg, target_key_len: usize) -> usize {
+pub const fn blob_len(alg: AeadAlg, target_key_len: usize) -> usize {
     alg.envelope_len(target_key_len, META_LEN)
 }
 

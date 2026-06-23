@@ -5,7 +5,7 @@
 //!
 //! Defines the [`HsmPal`] aggregate trait — the single bound that the
 //! HSM core uses to talk to a platform implementation.  Concrete
-//! platforms (`OcelotHsmPal` for STM32, `StdHsmPal` for the host-side
+//! platforms (`UnoHsmPal` for STM32, `StdHsmPal` for the host-side
 //! emulator) implement [`HsmPal`] by composing all of the smaller PAL
 //! sub-traits in this crate.
 //!

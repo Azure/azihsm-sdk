@@ -1,0 +1,73 @@
+// Copyright (c) Microsoft Corporation.
+//
+// TraceMailbox — host-firmware trace communication peripheral
+//
+// Base address: 0x4000_2000
+// Firmware writes task ID and IRQ state via volatile stores;
+// a host-side tracer reads them for per-task instruction profiling.
+
+reg task_id_t {
+    name = "Trace Task ID Register";
+    desc = "Current Embassy task ID. Written by firmware trace hooks.
+             0 = no task active (executor overhead or IRQ handler).
+             Non-zero = address of the active TaskHeader struct.";
+
+    field {} TASK_ID[31:0] = 0x0;
+};
+
+reg event_t {
+    name = "Trace Event Register";
+    desc = "Last trace event type. Written by firmware trace hooks.
+             1 = task_exec_begin
+             2 = task_exec_end
+             3 = task_new
+             4 = task_complete";
+
+    field {} EVENT[31:0] = 0x0;
+};
+
+reg begin_count_t {
+    name = "Trace Begin Count Register";
+    desc = "Total number of task_exec_begin events since boot.
+             Incremented by firmware on each task poll.
+             Used by the host tracer to detect new poll cycles.";
+
+    field {} BEGIN_COUNT[31:0] = 0x0;
+};
+
+reg irq_num_t {
+    name = "Trace IRQ Number Register";
+    desc = "Active exception number (IPSR value).
+             Written by the interrupt handler on entry, cleared on exit.
+             0 = thread mode (no active exception).
+             16 = IRQ0, 17 = IRQ1, etc.";
+
+    field {} IRQ_NUM[31:0] = 0x0;
+};
+
+reg last_begin_task_t {
+    name = "Trace Last-Begin Task Register";
+    desc = "Task ID of the most recent task_exec_begin event.
+             Written atomically with begin_count by the firmware trace hooks.
+             The host tracer uses this to attribute each begin_count delta
+             to the correct task, even when task_begin+task_end happen
+             within a single basic block.";
+
+    field {} TASK_ID[31:0] = 0x0;
+};
+
+addrmap trace_mailbox {
+    name = "TraceMailbox";
+    desc = "Host-firmware trace communication peripheral.
+             Firmware writes task ID and IRQ state via volatile stores;
+             a host-side tracer reads them for per-task instruction profiling.";
+
+    default hw = na;
+    default sw = rw;
+
+    task_id_t         TASK_ID         @ 0x00;
+    event_t           EVENT           @ 0x04;
+    begin_count_t     BEGIN_COUNT     @ 0x08;
+    irq_num_t         IRQ_NUM         @ 0x0C;
+    last_begin_task_t LAST_BEGIN_TASK @ 0x10;
+};

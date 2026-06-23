@@ -15,9 +15,14 @@ mod engine_impl {
     use std::ffi::CStr;
     use std::ffi::c_int;
     use std::ffi::c_ulong;
+    use std::ptr::NonNull;
 
     use openssl_engine::engine::Engine;
-    use openssl_engine::engine::bind_entry;
+    use openssl_engine::error::EngineError;
+    use openssl_engine::error::EngineResult;
+    use openssl_engine::error::RetCode;
+    use openssl_engine::error::catch_panic;
+    use openssl_engine::error::result_to_int;
     use openssl_engine::ffi;
 
     const ENGINE_ID: &CStr = c"azihsm";
@@ -35,40 +40,62 @@ mod engine_impl {
 
     /// Engine entry point exported for OpenSSL's dynamic loader.
     ///
-    /// The raw-pointer validation and the unsafe FFI glue live in
-    /// [`openssl_engine::engine::bind_entry`]; this export just forwards to it.
+    /// Validates the raw pointers, then runs the bind logic inside
+    /// [`catch_panic`] so a panic can never unwind across the FFI boundary;
+    /// failures are reported through the OpenSSL error queue and a `0` return.
     ///
     /// # Safety
     /// `engine_ptr` and `fns` must be valid for the duration of the call and
     /// `id` must be null or a valid C string — guaranteed by OpenSSL's dynamic
     /// engine loader per the `bind_engine`/`v_check` ABI contract.
-    // `#[allow(unsafe_code)]` covers the `#[unsafe(no_mangle)]` export
-    // attribute and the `unsafe extern "C"` signature; the body itself
-    // contains no `unsafe` block.
     #[unsafe(no_mangle)]
     #[allow(unsafe_code)]
-    #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe extern "C" fn bind_engine(
         engine_ptr: *mut ffi::ENGINE,
         id: *const std::ffi::c_char,
         fns: *mut ffi::dynamic_fns,
     ) -> c_int {
-        bind_entry(engine_ptr, id, fns, bind_helper)
+        catch_panic(
+            || {
+                // SAFETY: forwarding the pointers OpenSSL's dynamic loader
+                // passed to bind_engine, per its ABI contract.
+                result_to_int(unsafe { bind_inner(engine_ptr, id, fns) })
+            },
+            RetCode::Fail.into(),
+        )
     }
 
-    fn bind_helper(engine: &Engine, id: &CStr) -> c_int {
+    /// Validate the raw pointers from OpenSSL's dynamic loader and dispatch
+    /// to [`bind_helper`] with a safe [`Engine`].
+    ///
+    /// # Safety
+    /// `engine_ptr`, `id`, and `fns` must be the pointers OpenSSL's dynamic
+    /// loader passes to [`bind_engine`] (see its contract).
+    #[allow(unsafe_code)]
+    unsafe fn bind_inner(
+        engine_ptr: *mut ffi::ENGINE,
+        id: *const std::ffi::c_char,
+        fns: *mut ffi::dynamic_fns,
+    ) -> EngineResult<()> {
+        let engine_ptr = NonNull::new(engine_ptr).ok_or(EngineError::NullParam("engine"))?;
+        let fns = NonNull::new(fns).ok_or(EngineError::NullParam("fns"))?;
+
+        // SAFETY: engine_ptr and fns are non-null (checked above) and valid
+        // for this call (provided by OpenSSL's dynamic loader).
+        unsafe { Engine::from_ptr(engine_ptr).bind(id, fns, bind_helper) }
+    }
+
+    /// Engine setup invoked by [`Engine::bind`]: reject a request for a
+    /// different engine id, then register this engine's id and name.
+    fn bind_helper(engine: &Engine, id: &CStr) -> EngineResult<()> {
         let id_bytes = id.to_bytes();
         if !id_bytes.is_empty() && !id_bytes.contains(&b'/') && id != ENGINE_ID {
-            return 0;
+            return Err(EngineError::IdMismatch);
         }
 
-        if engine.set_id(ENGINE_ID) != 1 {
-            return 0;
-        }
-        if engine.set_name(ENGINE_NAME) != 1 {
-            return 0;
-        }
+        engine.set_id(ENGINE_ID)?;
+        engine.set_name(ENGINE_NAME)?;
 
-        1
+        Ok(())
     }
 }

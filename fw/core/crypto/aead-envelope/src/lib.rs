@@ -40,10 +40,10 @@
 //! # AAD-length invariant
 //!
 //! `aad_len` MUST be `0` or a multiple of `32`. This collapses the
-//! ocelot BCP `[padded_AAD | text]` hardware DMA layout to the
+//! GHASH-block-aligned `[padded_AAD | text]` PAL layout to the
 //! wire-natural `[AAD | DATA]` contiguity — there are no padding
 //! bytes anywhere, so the same buffer serves wire, in-memory, and
-//! hardware-DMA roles simultaneously.
+//! PAL roles simultaneously.
 //!
 //! The constraint is enforced at [`seal`] (rejected with
 //! [`AeadError::InvalidAadLength`]) and at [`open`] (rejected with
@@ -51,10 +51,9 @@
 //!
 //! # Interop
 //!
-//! The PAL produces standard NIST AES-GCM tags (the ocelot BCP
-//! tag-correction step ensures this), so a non-firmware consumer
-//! can open an envelope with one ordinary AES-256-GCM call. See
-//! the crate-level README / design notes for a Python example.
+//! The PAL produces standard NIST AES-GCM tags, so a non-firmware
+//! consumer can open an envelope with one ordinary AES-256-GCM call.
+//! See the crate-level README / design notes for a Python example.
 //!
 //! # Nonce management
 //!

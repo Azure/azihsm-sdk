@@ -71,4 +71,4 @@ Three transparent newtypes in `lib.rs` prevent accidental mixing of partition, k
 | Platform | Crate | Description |
 |----------|-------|-------------|
 | Host-native (std) | `azihsm_fw_hsm_pal_std` | Heap-allocated buffers, OpenSSL crypto, Embassy + tokio |
-| Cortex-M7 (planned) | `azihsm_fw_hsm_pal_ocelot` | On-chip SRAM, hardware PKA engine |
+| Cortex-M7 (planned) | `azihsm_fw_uno_pal` | On-chip SRAM, hardware PKA engine |

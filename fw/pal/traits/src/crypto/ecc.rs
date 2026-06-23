@@ -311,11 +311,15 @@ pub trait HsmEcc {
     ///   is in little-endian byte order** with P-521 components
     ///   padded to 68 bytes — matches the on-wire DDI representation
     ///   and real PKA hardware.
+    /// - `result` — caller-allocated, DMA-capable scratch buffer the
+    ///   hardware DMA-writes the verify status word into.  Must be at
+    ///   least 4 bytes.  Callers interpret the first byte: bit 0 clear
+    ///   indicates "valid", bit 0 set indicates "invalid".
     ///
     /// # Returns
     ///
-    /// - `Ok(true)` — signature is valid.
-    /// - `Ok(false)` — signature is invalid (not an error).
+    /// - `Ok(())` — verification command completed; read validity from
+    ///   `result[0]`.
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or
     ///   malformed public key.
     /// - `Err(HsmError)` — propagated from the PKA driver.
@@ -326,7 +330,8 @@ pub trait HsmEcc {
         pub_key: &DmaBuf,
         hash: &DmaBuf,
         signature: &DmaBuf,
-    ) -> HsmResult<bool>;
+        result: &mut DmaBuf,
+    ) -> HsmResult<()>;
 
     /// ECDH key agreement: derives a shared secret from a local
     /// private key and a remote public key.

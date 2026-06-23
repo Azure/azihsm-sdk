@@ -3,9 +3,10 @@
 
 //! Integration tests for TBOR `GetApiRev`.
 //!
-//! `round_trip_emu` exercises the full path host → emu backend → fw
-//! `handle_tbor_op` → response. `unsupported_on_mock` asserts the
-//! design contract that backends opt in to TBOR.
+//! `round_trip` exercises the full path host → backend (`emu` or `sock`)
+//! → fw `handle_tbor_op` → response, so it is transport-agnostic.
+//! `unsupported_on_mock` asserts the design contract that backends opt
+//! in to TBOR.
 //!
 //! Pilot module for the [`TestCtx`](crate::harness::TestCtx)
 //! migration — every test in this file constructs the ctx once and
@@ -13,22 +14,22 @@
 //! finished the migration of the session-state probe to the new
 //! `ctx.open_session_init`/`finish`/`close_session` methods.
 
-#![cfg(any(feature = "emu", feature = "mock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 
 use azihsm_ddi_tbor_types::TborGetApiRevReq;
 
 use crate::harness::TestCtx;
 
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock"))]
 const EXPECTED: azihsm_ddi_tbor_types::TborGetApiRevResp =
     azihsm_ddi_tbor_types::TborGetApiRevResp {
         min_protocol_version: 1,
         max_protocol_version: 1,
     };
 
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock"))]
 #[test]
-fn round_trip_emu() {
+fn round_trip() {
     let ctx = TestCtx::new();
     let resp = ctx
         .tbor(&TborGetApiRevReq::new())

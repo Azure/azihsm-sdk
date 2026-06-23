@@ -25,9 +25,11 @@ use super::*;
 
 /// Handle `DdiHkdfDeriveCmd`.
 ///
-/// No `partition_lock` is needed: this handler does not perform any
-/// multi-step read-then-mutate against partition state.  Its single
-/// state mutation — `vault_key_create` — is sync and atomic.
+/// No `partition_lock` is needed.  Although `vault_key_create` is now
+/// awaited (it can yield on Uno during the GDMA key copy), DDI commands
+/// run on a single-threaded cooperative executor with one command in
+/// flight per partition, so no concurrent handler can interleave with
+/// this one — there is nothing for a lock to serialize.
 pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -79,15 +81,16 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
     // `masked_key` is the host's opaque re-import blob; firmware-side
     // masking is pending the `UnmaskKey` handler, so we emit an empty
     // placeholder for wire validity.
-    let guard = pal.vault_key_create(
-        io,
-        out,
-        target.kind,
-        attrs.session().then_some(HsmSessId::from(sess_id)),
-        attrs,
-        body.key_properties.key_label,
-    )?;
-    let key_id: u16 = guard.key_id().into();
+    let key_id: u16 = pal
+        .vault_key_create(
+            io,
+            out,
+            target.kind,
+            attrs.session().then_some(HsmSessId::from(sess_id)),
+            attrs,
+        )
+        .await?
+        .into();
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
@@ -100,6 +103,5 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
             buf,
         )
     })?;
-    let _ = guard.dismiss();
     Ok(resp)
 }

@@ -22,9 +22,9 @@ azihsm_fw_ddi_mbor_types.workspace = true
 azihsm_fw_ddi_tbor.workspace = true
 azihsm_fw_ddi_tbor_types.workspace = true
 azihsm_fw_hsm_core_tracing.workspace = true
+azihsm_fw_hsm_io.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
 
-bitfield-struct.workspace = true
 zerocopy.workspace = true
 
 [features]

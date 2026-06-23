@@ -1,0 +1,379 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// RNG — Random Number Generator
+//
+// CTR_DRBG-style random number generator with TRBG entropy source,
+// per-output health tests (repetition count, adaptive proportion,
+// chi-square), and DAS (Direct Access Slave) and FW-mode backdoors
+// for raw-entropy and self-test access.
+//
+// Base address: 0xA030_0000  (per legacy spec; confirm against silicon RDL)
+// Block size:   0x1000       (4 KB peripheral window)
+//
+// Internal layout:
+//   CTRL              @ 0x000
+//   DAS_EN            @ 0x004
+//   DAS_DATA          @ 0x008  (RO)
+//   STATUS            @ 0x00C  (RO)
+//   RESEED_INTERVAL   @ 0x010
+//   GENERATE_INTERVAL @ 0x014
+//   RESEED_CNT        @ 0x018  (RO)
+//   GENERATE_CNT      @ 0x01C  (RO)
+//   DRBG_STATUS       @ 0x020  (RO)
+//   CLK_DIV_MSB       @ 0x024
+//   REPCNT_CUTOFF     @ 0x030
+//   APT_CUTOFF        @ 0x034
+//   CHISQ_CUTOFF      @ 0x038
+//   K[16]             @ 0x100  stride 0x04  (RO — DRBG K state)
+//   V[16]             @ 0x140  stride 0x04  (RO — DRBG V state)
+//   RN_DATA           @ 0x200  (RO — random output)
+//   FWIN_DATA         @ 0x400  (WO — FW-mode input FIFO)
+//   FWOUT_DATA        @ 0x600  (RO — FW-mode output FIFO)
+//
+// Firmware flow:
+//   Init:  CTRL.ENABLE = 1
+//          poll STATUS.BUSY until clear → entropy ready
+//   Read:  while STATUS.BUSY { spin }
+//          rng_word = RN_DATA  (consumes one DRBG output word)
+
+
+// ── CTRL — main enable + DRBG mode + clock divider lo bits ──
+
+reg rng_ctrl_t {                                            // RNG: ctrl
+    desc = "RNG main control. Enables the block, selects FW vs HW DRBG
+            mode, and exposes the DRBG state-machine triggers used in
+            FW mode.";
+
+    field {
+        desc = "Lower 8 bits of the TRBG clock divider ratio. The TRBG
+                generates a new bit every time its internal counter
+                reaches {CLK_DIV_MSB[1:0], CLK_DIV[7:0], 8'b00}.";
+    } CLK_DIV[7:0] = 0x0;                               // RNG: clk_div
+
+    field {
+        desc = "Master enable for the RNG block. Must be set to 1 early
+                during boot before any random data can be read.";
+    } ENABLE[8:8] = 0x0;                                // RNG: enable
+
+    field {
+        desc = "FW mode. When set, DRBG inputs/outputs route through
+                the FW FIFOs (FWIN_DATA / FWOUT_DATA) instead of the
+                hardware entropy path. Toggling this clears the FW
+                FIFOs and DRBG state.";
+    } FW_MODE[9:9] = 0x0;                               // RNG: fw_mode
+
+    field {
+        desc = "DRBG instantiate. In FW mode with the FWIN FIFO full,
+                asserting this triggers a DRBG instantiate operation.";
+    } DRBG_INSTANTIATE[10:10] = 0x0;                    // RNG: drbg_instantiate
+
+    field {
+        desc = "DRBG generate. In FW mode with the DRBG instantiated,
+                asserting this triggers generate operations to fill the
+                FWOUT FIFO.";
+    } DRBG_GENERATE[11:11] = 0x0;                       // RNG: drbg_generate
+
+    field {
+        desc = "DRBG uninstantiate. Asserting this in FW mode clears the
+                DRBG state. Takes precedence over DRBG_INSTANTIATE and
+                DRBG_GENERATE.";
+    } DRBG_UNINSTANTIATE[12:12] = 0x0;                  // RNG: drbg_uninstantiate
+
+    field { sw = r; } RSVD_0[31:13] = 0x0;
+};
+
+
+// ── DAS_EN — Direct Access Slave enable ──
+
+reg rng_das_en_t {                                          // RNG: das_en
+    desc = "Direct Access Slave enable. Writing 0xDA enables the DAS
+            backdoor that lets firmware read TRBG entropy directly
+            (used for entropy validation and ACVP).";
+
+    field {
+        desc = "DAS enable code. DAS is enabled when the value is 0xDA.";
+    } CODE[7:0] = 0x0;                                  // RNG: das_en
+
+    field { sw = r; } RSVD_0[31:8] = 0x0;
+};
+
+
+// ── DAS_DATA — raw entropy from the TRBG (DAS path) ──
+
+reg rng_das_data_t {                                        // RNG: das_data
+    desc = "Raw entropy word read directly from the TRBG when the DAS
+            backdoor is enabled.";
+
+    field { sw = r; hw = w;
+        desc = "DAS entropy data.";
+    } DATA[31:0] = 0x0;
+};
+
+
+// ── STATUS — health-test failures and DRBG/FIFO status ──
+
+reg rng_status_t {                                          // RNG: status
+    desc = "RNG status — RN_DATA validity, TRBG/DRBG fault flags, and
+            FIFO/operation indicators.";
+
+    field { sw = r; hw = w;
+        desc = "Set when RN_DATA does NOT contain valid data. Must be 0
+                before reading RN_DATA in FW mode (otherwise the bus
+                returns SLVERR). In HW mode the read transaction is
+                stretched until data is available.";
+    } BUSY[0:0] = 0x0;                                  // RNG: busy
+
+    field { sw = r; hw = w;
+        desc = "TRBG repetition-count health test failed.";
+    } REPCNT_FAULT_ERROR[1:1] = 0x0;                    // RNG: repcnt_fault_error
+
+    field { sw = r; hw = w;
+        desc = "TRBG adaptive-proportion health test failed.";
+    } APT_FAULT_ERROR[2:2] = 0x0;                       // RNG: apt_fault_error
+
+    field { sw = r; hw = w;
+        desc = "TRBG chi-square health test failed.";
+    } CHISQ_FAULT_ERROR[3:3] = 0x0;                     // RNG: chisq_fault_error
+
+    field { sw = r; hw = w;
+        desc = "TRBG internal state-machine fault.";
+    } RBG_FAULT_ERROR[4:4] = 0x0;                       // RNG: rbg_fault_error
+
+    field { sw = r; hw = w;
+        desc = "DRBG anomaly — either an HSSHA fault or an internal DRBG
+                state-machine fault.";
+    } DRBG_FAULT_ERROR[5:5] = 0x0;                      // RNG: drbg_fault_error
+
+    field { sw = r; hw = w;
+        desc = "DRBG instantiate operation in progress.";
+    } DRBG_INST_BUSY[6:6] = 0x0;                        // RNG: drbg_inst_busy
+
+    field { sw = r; hw = w;
+        desc = "DRBG reseed operation in progress.";
+    } DRBG_RESEED_BUSY[7:7] = 0x0;                      // RNG: drbg_reseed_busy
+
+    field { sw = r; hw = w;
+        desc = "Both entropy FIFOs (FIFO1 and EXT_FIFO) are full.";
+    } ENTROPY_FIFO_FULL[8:8] = 0x0;                     // RNG: entropy_fifo_full
+
+    field { sw = r; hw = w;
+        desc = "Entropy FIFO read in progress. Cannot switch to FW mode
+                while this is set.";
+    } ENTROPY_FIFO_READ[9:9] = 0x0;                     // RNG: entropy_fifo_read
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+
+// ── RESEED_INTERVAL — DRBG reseed interval ──
+
+reg rng_reseed_interval_t {                                 // RNG: reseed_interval
+    desc = "Programmable DRBG reseed interval (in DRBG generate cycles).";
+
+    field {
+        desc = "Reseed interval value.";
+    } VALUE[31:0] = 0x0;
+};
+
+
+// ── GENERATE_INTERVAL — DRBG K-update interval ──
+
+reg rng_generate_interval_t {                               // RNG: generate_interval
+    desc = "Programmable generate interval — number of generate cycles
+            between K-value updates inside the DRBG.";
+
+    field {
+        desc = "Generate interval value.";
+    } VALUE[9:0] = 0x0;                                 // RNG: generate_interval
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+
+// ── RESEED_CNT — DRBG reseed counter (RO) ──
+
+reg rng_reseed_cnt_t {                                      // RNG: reseed_cnt
+    desc = "Current DRBG reseed counter.";
+
+    field { sw = r; hw = w;
+        desc = "Reseed counter value.";
+    } VALUE[31:0] = 0x0;
+};
+
+
+// ── GENERATE_CNT — DRBG generate counter (RO) ──
+
+reg rng_generate_cnt_t {                                    // RNG: generate_cnt
+    desc = "Current DRBG generate counter.";
+
+    field { sw = r; hw = w;
+        desc = "Generate counter value.";
+    } VALUE[9:0] = 0x0;                                 // RNG: generate_cnt
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+
+// ── DRBG_STATUS — DRBG state machine (RO) ──
+
+reg rng_drbg_status_t {                                     // RNG: drbg_status
+    desc = "DRBG state machine status.
+            Encoding: 0=Idle, 1=Instantiate, 2=Generate HMAC Op,
+            3=Generate Fill FIFO, 4=Generate HMAC Update,
+            5=Reseed Wait, 6=Reseed, 7=DRBG Error.";
+
+    field { sw = r; hw = w;
+        desc = "DRBG state.";
+    } STATE[2:0] = 0x0;                                 // RNG: state
+
+    field { sw = r; } RSVD_0[31:3] = 0x0;
+};
+
+
+// ── CLK_DIV_MSB — TRBG clock divider high bits ──
+
+reg rng_clk_div_msb_t {                                     // RNG: clk_div_msb
+    desc = "Upper 2 bits of the TRBG clock divider ratio. Combined with
+            CTRL.CLK_DIV to form {CLK_DIV_MSB[1:0], CTRL.CLK_DIV[7:0],
+            8'b00} as the divider counter target.";
+
+    field {
+        desc = "Clock divider MSB.";
+    } VALUE[1:0] = 0x0;                                 // RNG: clk_div_msb
+
+    field { sw = r; } RSVD_0[31:2] = 0x0;
+};
+
+
+// ── Health-test cutoffs (RW) ──
+
+reg rng_repcnt_cutoff_t {                                   // RNG: repcnt_cutoff
+    desc = "Programmable cutoff value for the TRBG repetition-count
+            health test.";
+
+    field {
+        desc = "Repetition-count cutoff.";
+    } VALUE[9:0] = 0x0;                                 // RNG: repcnt_cutoff
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+reg rng_apt_cutoff_t {                                      // RNG: apt_cutoff
+    desc = "Programmable cutoff value for the TRBG adaptive-proportion
+            health test.";
+
+    field {
+        desc = "Adaptive-proportion cutoff.";
+    } VALUE[9:0] = 0x0;                                 // RNG: apt_cutoff
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+reg rng_chisq_cutoff_t {                                    // RNG: chisq_cutoff
+    desc = "Programmable cutoff value for the TRBG chi-square health
+            test.";
+
+    field {
+        desc = "Chi-square cutoff.";
+    } VALUE[9:0] = 0x0;                                 // RNG: chisq_cutoff
+
+    field { sw = r; } RSVD_0[31:10] = 0x0;
+};
+
+
+// ── DRBG state observation (RO) ──
+
+reg rng_k_t {                                               // RNG: k_<n>
+    desc = "DRBG K state word (RO observation register, 16 banks).";
+
+    field { sw = r; hw = w;
+        desc = "K word.";
+    } DATA[31:0] = 0x0;
+};
+
+reg rng_v_t {                                               // RNG: v_<n>
+    desc = "DRBG V state word (RO observation register, 16 banks).";
+
+    field { sw = r; hw = w;
+        desc = "V word.";
+    } DATA[31:0] = 0x0;
+};
+
+
+// ── RN_DATA — random output (RO) ──
+
+reg rng_rn_data_t {                                         // RNG: rn_data
+    desc = "Random number output. Read consumes one DRBG output word.
+            In HW mode reads stall until data is available; in FW mode
+            STATUS.BUSY must be polled and clear before each read.";
+
+    field { sw = r; hw = w;
+        desc = "Random output word.";
+    } DATA[31:0] = 0x0;
+};
+
+
+// ── FWIN_DATA — FW-mode input FIFO (WO) ──
+
+reg rng_fwin_data_t {                                       // RNG: fwin_data
+    desc = "FW-mode input FIFO write port. Used to seed the DRBG with
+            test vectors during KAT and ACVP self-testing.";
+
+    field { sw = w; hw = r;
+        desc = "FW-mode input data.";
+    } DATA[31:0] = 0x0;
+};
+
+
+// ── FWOUT_DATA — FW-mode output FIFO (RO) ──
+
+reg rng_fwout_data_t {                                      // RNG: fwout_data
+    desc = "FW-mode output FIFO read port. Used to consume DRBG test
+            output during KAT and ACVP self-testing.";
+
+    field { sw = r; hw = w;
+        desc = "FW-mode output data.";
+    } DATA[31:0] = 0x0;
+};
+
+
+// ── Top-level Address Map ──
+
+addrmap rng {
+    name = "Random Number Generator";
+    desc = "CTR_DRBG-style RNG with TRBG entropy source, per-output
+            health tests, and DAS / FW-mode backdoors for self-testing.
+
+            Base address: 0xA030_0000 (per legacy spec; confirm with
+            silicon RDL).
+            Total register space: 0x1000 (4 KB).
+
+            Driver uses:
+              CTRL.ENABLE             — enable RNG
+              STATUS.BUSY             — poll before reading RN_DATA
+              RN_DATA                 — read random word
+              STATUS.*_FAULT_ERROR    — health-test fault flags";
+
+    default hw = na;
+    default sw = rw;
+
+    rng_ctrl_t              CTRL                @ 0x000;
+    rng_das_en_t            DAS_EN              @ 0x004;
+    rng_das_data_t          DAS_DATA            @ 0x008;
+    rng_status_t            STATUS              @ 0x00C;
+    rng_reseed_interval_t   RESEED_INTERVAL     @ 0x010;
+    rng_generate_interval_t GENERATE_INTERVAL   @ 0x014;
+    rng_reseed_cnt_t        RESEED_CNT          @ 0x018;
+    rng_generate_cnt_t      GENERATE_CNT        @ 0x01C;
+    rng_drbg_status_t       DRBG_STATUS         @ 0x020;
+    rng_clk_div_msb_t       CLK_DIV_MSB         @ 0x024;
+    rng_repcnt_cutoff_t     REPCNT_CUTOFF       @ 0x030;
+    rng_apt_cutoff_t        APT_CUTOFF          @ 0x034;
+    rng_chisq_cutoff_t      CHISQ_CUTOFF        @ 0x038;
+    rng_k_t                 K[16]               @ 0x100 += 0x04;
+    rng_v_t                 V[16]               @ 0x140 += 0x04;
+    rng_rn_data_t           RN_DATA             @ 0x200;
+    rng_fwin_data_t         FWIN_DATA           @ 0x400;
+    rng_fwout_data_t        FWOUT_DATA          @ 0x600;
+};

@@ -1,0 +1,67 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// DTCM address map (hsm_dtcm).
+//
+// Single unified address map for HSM local DTCM at base 0x2000_0000
+// (256 KB total). The lower portion is for linker-placed stack/.bss;
+// the upper portion holds fixed firmware data structures:
+//
+//   0x2002_F400  DTCM_IO_BUF[32]    (64 KB, per-IO NonDma scratch)
+//   0x2003_F400  CRASHDUMP_BASE     (1024 B)
+//   0x2003_F800  CORE_RUN_STATUS    (4 B)
+//
+// memory.x should set RAM LENGTH = 189K to prevent the linker from
+// placing .bss/stack into the reserved upper region.
+
+
+// ══════════════════════════════════════════════════════════════
+// Per-IO NonDma scratch buffers
+// ══════════════════════════════════════════════════════════════
+
+mem dtcm_io_buf_t {
+    desc = "2KB per-slot CPU-only scratch buffer. Indexed 1:1 with IO_SQ.";
+    mementries = 512;   // 512 × 32 bits = 2048 B = 2 KB
+    memwidth = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Crashdump + Core Status
+// ══════════════════════════════════════════════════════════════
+
+mem crashdump_base_t {
+    desc = "Crashdump staging buffer (1024 B). Exception handler stages
+            register state + stack trace here for SP collection.";
+    mementries = 256;   // 256 × 32 bits = 1024 B
+    memwidth   = 32;
+};
+
+reg core_run_status_t {
+    name = "Core Run Status";
+    desc = "Liveliness heartbeat. HSM writes 1 periodically; SP reads
+            then zeroes. Zero on next poll = hung.";
+    field { sw = rw; hw = na; } ALIVE[31:0] = 0x0;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
+// ══════════════════════════════════════════════════════════════
+
+addrmap hsm_dtcm {
+    name = "HSM DTCM";
+    desc = "HSM local DTCM (256 KB at 0x2000_0000). Upper region holds
+             per-IO scratch buffers and status/crashdump registers.
+             Lower 189 KB is linker-managed (stack + .bss).";
+
+    default hw = na;
+    default sw = rw;
+
+    // Per-IO NonDma scratch (32 × 2 KB = 64 KB)
+    dtcm_io_buf_t    DTCM_IO_BUF[32]   @ 0x2F400 += 0x800;
+
+    // Crashdump + heartbeat
+    crashdump_base_t  CRASHDUMP_BASE    @ 0x3F400;
+    core_run_status_t CORE_RUN_STATUS   @ 0x3F800;
+};
