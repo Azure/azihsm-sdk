@@ -80,8 +80,9 @@ impl<T: Send + Sync + 'static> EngineExData<T> {
         })
     }
 
-    /// Attach `value`, returning any previously-stored value (which the caller
-    /// must drop — there is no auto-free callback; see module docs).
+    /// Attach `value`. Returns any previously-stored value, already detached
+    /// from the `ENGINE` — drop it directly. (The newly stored `value` has no
+    /// auto-free callback; reclaim it later via [`take`](Self::take).)
     ///
     /// `&mut Engine`: a live `&T` from [`get`](Self::get) then statically
     /// conflicts with detaching the value, closing a safe-code use-after-free.
@@ -126,10 +127,15 @@ impl<T: Send + Sync + 'static> EngineExData<T> {
         if ptr.is_null() {
             return None;
         }
-        // Clear the slot so the free callback (if it fires later) is a no-op.
-        // SAFETY: same as above.
-        let _ = unsafe { ffi::ENGINE_set_ex_data(engine.as_ptr(), self.idx, null_mut::<c_void>()) };
-        // SAFETY: `ptr` was put there by `set` and OpenSSL has not freed it.
+        // SAFETY: engine.as_ptr() is a valid ENGINE; self.idx is a registered slot.
+        let rc =
+            unsafe { ffi::ENGINE_set_ex_data(engine.as_ptr(), self.idx, null_mut::<c_void>()) };
+        // Clear the slot before reclaiming the box. If the clear fails the
+        // ENGINE still references `ptr`, so leave it in place (return None,
+        // leaking) rather than hand back a box the ENGINE could free later —
+        // a use-after-free.
+        ossl_check(rc, EngineError::ExDataSetFailed).ok()?;
+        // SAFETY: `ptr` was put there by `set`; the slot is now cleared.
         Some(unsafe { Box::from_raw(ptr) })
     }
 }
