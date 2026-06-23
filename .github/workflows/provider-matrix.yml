@@ -302,7 +302,7 @@ jobs:
 
       - name: Code Coverage Summary Report
         if: ${{ matrix.cov }}
-        run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths ${{ github.workspace }}/target/debug/libazihsm_api_native.so --additional-obj-paths /usr/lib/libazihsm_api_native.so
+        run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths /usr/lib/libazihsm_api_native.so
 
       - name: Upload coverage report
         if: ${{ matrix.cov }}
