@@ -81,10 +81,12 @@ impl AeadAlg {
     /// multiple of this value at [`seal`](crate::seal) /
     /// [`open`](crate::open).
     ///
-    /// AES-256-GCM uses `32` — the ocelot BCP `[padded_AAD | text]`
-    /// hardware layout requires AAD padding to a 32-byte boundary,
-    /// and constraining the wire `aad_len` to a multiple of 32
-    /// makes that padding a no-op (wire layout = DMA layout).
+    /// AES-256-GCM uses `32` — the 16-byte GHASH-block-aligned
+    /// `[padded_AAD | text]` PAL layout requires AAD padding to a
+    /// 32-byte boundary, and constraining the wire `aad_len` to a
+    /// multiple of 32 makes that padding a no-op (wire layout = PAL
+    /// layout). See [`gcm_buf`](azihsm_fw_core_crypto_gcm_buf) for
+    /// the rationale.
     /// Future algorithms with no alignment requirement (e.g.
     /// ChaCha20-Poly1305 on a software PAL) would return `1`.
     pub const fn aad_granularity(self) -> usize {

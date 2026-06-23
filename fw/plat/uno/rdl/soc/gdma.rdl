@@ -1,0 +1,201 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// GDMA Channel register map — banked layout
+//
+// Single-bank register map (bank 0). Multi-bank SoCs instantiate
+// at stride 0x200 for additional banks.
+//
+// Base address: assigned by SoC (0xA000_0000 in Uno)
+//
+// Internal layout (bank 0):
+//   sq_ctrl[4]            @ 0x020  stride 0x04
+//   cq_ctrl[4]            @ 0x030  stride 0x04
+//   sq.channel[4]         @ 0x040  stride 0x20
+//   cq.channel[4]         @ 0x100  stride 0x20
+//   irq_enable            @ 0x484
+//
+// SQ entry = 64 bytes, CQ entry = 16 bytes (unchanged).
+// Depth is raw 13-bit value (max 4096). Head/Tail are 12-bit.
+
+// ── SQ Control (one per channel, separate from channel regfile) ──
+
+reg gdma_sq_ctrl_t {
+    desc = "SQ enable, head-shadow enable, depth, interface select.";
+
+    field {
+        desc = "Queue depth (max 4096 entries).";
+    } DEPTH[12:0] = 0x0;
+
+    field {} RSVD_1[15:13] = 0x0;
+    RSVD_1->sw = r;
+
+    field {
+        desc = "AXI port where SQ and optional head shadow reside.";
+    } IFC_SLCT[23:16] = 0x0;
+
+    field {} RSVD_0[29:24] = 0x0;
+    RSVD_0->sw = r;
+
+    field {} HEAD_SHADOW_EN[30:30] = 0x0;
+    HEAD_SHADOW_EN->desc = "When set, HW mirrors head (CI) to the shadow address.";
+
+    field {} EN[31:31] = 0x0;
+    EN->desc = "When set, HW fetches entries following tail (PI) writes.";
+};
+
+// ── CQ Control (one per channel, separate from channel regfile) ──
+
+reg gdma_cq_ctrl_t {
+    desc = "CQ enable, tail-shadow enable, depth, interface select.";
+
+    field {
+        desc = "Queue depth.";
+    } DEPTH[12:0] = 0x0;
+
+    field {} RSVD_1[15:13] = 0x0;
+    RSVD_1->sw = r;
+
+    field {
+        desc = "AXI port where CQ resides.";
+    } IFC_SLCT[23:16] = 0x0;
+
+    field {} RSVD_0[29:24] = 0x0;
+    RSVD_0->sw = r;
+
+    field {} TAIL_SHADOW_EN[30:30] = 0x0;
+    TAIL_SHADOW_EN->desc = "When set, HW mirrors tail (PI) to the shadow address.";
+
+    field {} EN[31:31] = 0x0;
+    EN->desc = "When set, HW updates CQ and tail on command completion.";
+};
+
+// ── SQ Channel Registers (stride 0x20, 0x14 used) ──
+
+reg sq_base_lo_t {
+    desc = "Lower 32 bits of the SQ base address.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg sq_base_hi_t {
+    desc = "Upper 32 bits of the SQ base address.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg sq_head_shadow_t {
+    desc = "Address where HW mirrors the head (CI) value.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg sq_tail_t {
+    desc = "SQ Tail — SW advances after enqueuing a descriptor.";
+
+    field {} TAIL[11:0] = 0x0;
+
+    field {} RSVD_0[31:12] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg sq_head_t {
+    desc = "SQ Head — HW advances after consuming a descriptor. Read-only for SW.";
+
+    field {} HEAD[11:0] = 0x0;
+    HEAD->hw = w;
+    HEAD->sw = rw;
+
+    field {} RSVD_0[31:12] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile sq_channel_t {
+    desc = "One SQ channel (0x20 byte stride, 0x14 used).";
+
+    sq_base_lo_t      BASE_LO       @ 0x00;
+    sq_base_hi_t      BASE_HI       @ 0x04;
+    sq_head_shadow_t  HEAD_SHADOW   @ 0x08;
+    sq_tail_t         TAIL          @ 0x0C;
+    sq_head_t         HEAD          @ 0x10;
+};
+
+// ── CQ Channel Registers (stride 0x20, 0x14 used) ──
+
+reg cq_base_lo_t {
+    desc = "Lower 32 bits of the CQ base address.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg cq_base_hi_t {
+    desc = "Upper 32 bits of the CQ base address.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg cq_tail_shadow_t {
+    desc = "Address where HW mirrors the tail (PI) value.";
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg cq_tail_t {
+    desc = "CQ Tail — HW advances after posting a completion. Read-only for SW.";
+
+    field {} TAIL[11:0] = 0x0;
+    TAIL->hw = w;
+    TAIL->sw = rw;
+
+    field {} RSVD_0[31:12] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg cq_head_t {
+    desc = "CQ Head — SW advances after consuming a completion.";
+
+    field {} HEAD[11:0] = 0x0;
+
+    field {} RSVD_0[31:12] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile cq_channel_t {
+    desc = "One CQ channel (0x20 byte stride, 0x14 used).";
+
+    cq_base_lo_t      BASE_LO       @ 0x00;
+    cq_base_hi_t      BASE_HI       @ 0x04;
+    cq_tail_shadow_t  TAIL_SHADOW   @ 0x08;
+    cq_tail_t         TAIL          @ 0x0C;
+    cq_head_t         HEAD          @ 0x10;
+};
+
+// ── IRQ Enable ──
+
+reg gdma_irq_enable_t {
+    desc = "Per-channel CQ interrupt enable. Bit N = channel N.";
+
+    field {} IRQ_EN[31:0] = 0x0;
+};
+
+// ── Top-level Address Map (single bank) ──
+
+addrmap gdma {
+    name = "GDMA";
+    desc = "GDMA Channel register map — single bank (4 channels).
+
+             Multi-bank SoCs instantiate at stride 0x200.
+             bank[0] = channels 0-3
+             bank[1] = channels 4-7 (at +0x200)
+
+             SQ entry = 64 bytes, CQ entry = 16 bytes.
+             Depth is raw 13-bit (max 4096). Head/Tail are 12-bit.";
+
+    default hw = na;
+    default sw = rw;
+
+    // Per-channel SQ/CQ control registers (scalar arrays)
+    gdma_sq_ctrl_t     SQ_CTRL[4]   @ 0x020 += 0x04;
+    gdma_cq_ctrl_t     CQ_CTRL[4]   @ 0x030 += 0x04;
+
+    // Per-channel SQ/CQ data registers (regfile arrays)
+    sq_channel_t       SQ[4]        @ 0x040 += 0x20;
+    cq_channel_t       CQ[4]        @ 0x100 += 0x20;
+
+    // Common interrupt enable
+    gdma_irq_enable_t  IRQ_ENABLE   @ 0x484;
+};

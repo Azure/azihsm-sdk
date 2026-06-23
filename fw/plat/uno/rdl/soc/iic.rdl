@@ -1,0 +1,273 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// Inbound IO Controller (IIC) — receives external IO requests via DMA
+//
+// Register map for a single IIC controller instance.
+// Two controllers exist at stride 0x4000:
+//   controller[0] @ 0xA128_0000  (Core0)
+//   controller[1] @ 0xA128_4000  (Fast Path)
+//
+// Internal layout:
+//   common (irq_enable)                    @ 0x0000
+//   isq.channel[6]                         @ 0x0060  stride 0x20
+//   icq.channel[5]                         @ 0x0120  stride 0x30
+//   iq.queue[132]                          @ 0x1000  stride 0x40
+//
+// Queue semantics: NVMe-aligned (Head/Tail, wrap-at-depth, one reserved slot)
+// ICQ: Inbound Completion Queue — HW posts entries, FW consumes
+// ISQ: Inbound Submission Queue — FW posts buffer addresses, HW consumes
+
+// ── Common Registers ──
+
+reg iic_interrupt_cause_t {
+    name = "IIC Interrupt Cause";
+    desc = "Inbound interrupt cause bitmap. Read to identify the source
+            of an inbound error. Bits include: IQ soft error, DFL empty
+            per channel, DFL overflow per channel, etc.";
+
+    field {} CAUSE[31:0] = 0x0;
+    CAUSE->sw = r;
+};
+
+reg iic_irq_enable_t {
+    name = "IIC IRQ Enable";
+    desc = "Per-channel IRQ enable bitmask (bit N = channel N).";
+
+    field {} IRQ_EN[31:0] = 0x0;
+};
+
+// ── ICQ Channel Registers (stride 0x30, 0x28 used) ──
+
+reg icq_ctrl_t {
+    name = "ICQ Control";
+    desc = "ICQ enable, shadow enable, depth, interface select.";
+
+    field {} EN[0:0] = 0x0;
+    EN->desc = "Completion queue enable.";
+
+    field {} SHADOW_EN[1:1] = 0x0;
+    SHADOW_EN->desc = "Tail shadow enable — HW writes tail to shadow address.";
+
+    field {} RSVD_2[7:2] = 0x0;
+    RSVD_2->sw = r;
+
+    field {} DEPTH[11:8] = 0x0;
+    DEPTH->desc = "Encoded depth: 0h=32 .. Bh=65536. Each entry is 128 bits.";
+
+    field {} RSVD_1[15:12] = 0x0;
+    RSVD_1->sw = r;
+
+    field {} IFC_SLCT[23:16] = 0x0;
+    IFC_SLCT->desc = "AXI fabric port where ICQ resides.";
+
+    field {} RSVD_0[31:24] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg icq_tail_shadow_lo_t {
+    name = "ICQ Tail Shadow Address Low";
+    desc = "Lower 32 bits of tail shadow address (4B-aligned).";
+
+    field {} RSVD_0[1:0] = 0x0;
+    RSVD_0->sw = r;
+    field {} ADDR[31:2] = 0x0;
+};
+
+reg icq_tail_shadow_hi_t {
+    name = "ICQ Tail Shadow Address High";
+    desc = "Upper 32 bits of tail shadow address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg icq_base_lo_t {
+    name = "ICQ Base Address Low";
+    desc = "Lower 32 bits of ICQ base address (4B-aligned).";
+
+    field {} RSVD_0[1:0] = 0x0;
+    RSVD_0->sw = r;
+    field {} ADDR[31:2] = 0x0;
+};
+
+reg icq_base_hi_t {
+    name = "ICQ Base Address High";
+    desc = "Upper 32 bits of ICQ base address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg icq_tail_t {
+    name = "ICQ Tail";
+    desc = "ICQ Tail — HW advances after posting entry. FW writes 0 at init.";
+
+    field {} TAIL[15:0] = 0x0;
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg icq_head_t {
+    name = "ICQ Head";
+    desc = "ICQ Head — FW advances after consuming entries.";
+
+    field {} HEAD[15:0] = 0x0;
+    field {} RSVD_1[29:16] = 0x0;
+    RSVD_1->sw = r;
+    field {} INTRPT_CLR[30:30] = 0x0;
+    INTRPT_CLR->desc = "Write 1 to clear channel interrupt.";
+    field {} RSVD_0[31:31] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile icq_channel_t {
+    desc = "One ICQ channel (0x30 byte stride, 0x28 used).";
+
+    icq_ctrl_t              CTRL            @ 0x00;
+    icq_tail_shadow_lo_t    TAIL_SHADOW_LO  @ 0x10;
+    icq_tail_shadow_hi_t    TAIL_SHADOW_HI  @ 0x14;
+    icq_base_lo_t           BASE_LO         @ 0x18;
+    icq_base_hi_t           BASE_HI         @ 0x1C;
+    icq_tail_t              TAIL            @ 0x20;
+    icq_head_t              HEAD            @ 0x24;
+};
+
+// ── ISQ Channel Registers (stride 0x20, 0x1C used) ──
+
+reg isq_ctrl_t {
+    name = "ISQ Control";
+    desc = "ISQ enable, depth, buffer length.";
+
+    field {} EN[0:0] = 0x0;
+    EN->desc = "Submission queue enable.";
+
+    field {} RSVD_2[7:1] = 0x0;
+    RSVD_2->sw = r;
+
+    field {} DEPTH[11:8] = 0x0;
+    DEPTH->desc = "Encoded element count: 0h=32 .. Bh=65536. Each element is 8 bytes.";
+
+    field {} RSVD_1[15:12] = 0x0;
+    RSVD_1->sw = r;
+
+    field {} BUF_LEN[27:16] = 0x0;
+    BUF_LEN->desc = "Buffer length per entry (encoded): 1h=16B .. 4h=64B.";
+
+    field {} RSVD_0[31:28] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg isq_ifc_slct_t {
+    name = "ISQ Interface Select";
+    desc = "AXI interface select for buffers and list.";
+
+    field {} BUF_IFC_SLCT[7:0] = 0x0;
+    BUF_IFC_SLCT->desc = "AXI interface for buffer DMA.";
+
+    field {} LIST_IFC_SLCT[15:8] = 0x0;
+    LIST_IFC_SLCT->desc = "AXI interface for list access.";
+
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg isq_base_lo_t {
+    name = "ISQ Base Address Low";
+    desc = "Lower 32 bits of ISQ base address (8B-aligned).";
+
+    field {} RSVD_0[2:0] = 0x0;
+    RSVD_0->sw = r;
+    field {} ADDR[31:3] = 0x0;
+};
+
+reg isq_base_hi_t {
+    name = "ISQ Base Address High";
+    desc = "Upper 32 bits of ISQ base address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg isq_tail_t {
+    name = "ISQ Tail";
+    desc = "ISQ Tail — FW advances after posting buffer address.";
+
+    field {} TAIL[15:0] = 0x0;
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg isq_head_t {
+    name = "ISQ Head";
+    desc = "ISQ Head — HW advances after consuming buffer address.";
+
+    field {} HEAD[15:0] = 0x0;
+    HEAD->sw = rw;
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg isq_status_t {
+    name = "ISQ Status";
+    desc = "ISQ status — empty indication.";
+
+    field {} EMPTY[0:0] = 0x0;
+    EMPTY->sw = rw;
+    field {} RSVD_0[31:1] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile isq_channel_t {
+    desc = "One ISQ channel (0x20 byte stride, 0x1C used).";
+
+    isq_ctrl_t      CTRL        @ 0x00;
+    isq_ifc_slct_t  IFC_SLCT    @ 0x04;
+    isq_base_lo_t   BASE_LO     @ 0x08;
+    isq_base_hi_t   BASE_HI     @ 0x0C;
+    isq_tail_t      TAIL        @ 0x10;
+    isq_head_t      HEAD        @ 0x14;
+    isq_status_t    STATUS      @ 0x18;
+};
+
+// ── IQ Credit Register (stride 0x40) ──
+
+reg iq_credit_t {
+    name = "IQ Credit Count";
+    desc = "Per-queue credit count. HW decrements on fetch,
+             FW increments after processing via RMW.";
+
+    field {} CREDIT[7:0] = 0x0;
+    field {} RSVD_0[31:8] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile iq_queue_t {
+    desc = "One IQ instance (0x40 byte stride). Only credit at offset 0x08.";
+
+    iq_credit_t     CREDIT      @ 0x08;
+};
+
+// ── Address Map (single controller) ──
+
+addrmap iic {
+    name = "IIC";
+    desc = "Inbound IO Controller — single controller register map.
+             Two instances exist at 0xA128_0000 stride 0x4000.
+             
+             controller[0] = Core0 (Core0)
+             controller[1] = Core1 (Fast Path)";
+
+    default hw = na;
+    default sw = rw;
+
+    // Common registers
+    iic_interrupt_cause_t  INTERRUPT_CAUSE  @ 0x000C;
+    iic_irq_enable_t       IRQ_ENABLE       @ 0x0010;
+
+    // ICQ — 5 channels × 0x30 stride
+    icq_channel_t       ICQ_CH[5]       @ 0x0120 += 0x30;
+
+    // ISQ — 6 channels × 0x20 stride
+    isq_channel_t       ISQ_CH[6]       @ 0x0060 += 0x20;
+
+    // IQ — 132 queues × 0x40 stride
+    iq_queue_t          IQ[132]         @ 0x1000 += 0x40;
+};

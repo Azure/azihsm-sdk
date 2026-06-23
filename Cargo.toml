@@ -28,6 +28,8 @@ members = [
   "ddi/mock",
   "ddi/nix",
   "ddi/res_test_dev",
+  "ddi/sock",
+  "ddi/sock/proto",
   "ddi/tbor/codec",
   "ddi/tbor/derive",
   "ddi/tbor/types",
@@ -50,6 +52,7 @@ members = [
   "fw/core/ddi/tbor/codec",
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
+  "fw/core/io",
   "fw/core/lib",
   "fw/core/tracing",
   "fw/pal/traits",
@@ -91,6 +94,8 @@ azihsm_ddi_mbor_types = { features = [
 ], path = "ddi/mbor/types" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_sock = { path = "ddi/sock" }
+azihsm_ddi_sock_proto = { path = "ddi/sock/proto" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
@@ -131,6 +136,7 @@ azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 # Firmware crates — common
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
+azihsm_fw_hsm_io = { path = "fw/core/io" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
@@ -139,11 +145,7 @@ azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
 
 # Embassy crates
 embassy-executor = "0.10.0"
-embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
-embassy-time = "0.5.1"
-embassy-time-driver = "0.2.2"
-embassy-time-queue-utils = "0.3.1"
 
 # Public crates
 anyhow = "1.0"
@@ -158,7 +160,6 @@ cfg-if = "1"
 chrono = "0.4.31"
 clap = "4.2"
 cmake = "0.1.57"
-convert_case = "0.6.0"
 critical-section = "1.2.0"
 darling = "0.20.11"
 delegate = "0.13.3"

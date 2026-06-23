@@ -315,7 +315,7 @@ impl ChainValidator {
         let digest_len = hash_algo.digest_len();
         let curve = verify_key.curve;
         let coord_len = curve.priv_key_len();
-        let hw_len = curve.priv_key_len();
+        let hw_len = curve.wire_coord_len();
         let sig_len = curve.sig_len();
 
         // Allocate DMA buffer for digest output.
@@ -325,26 +325,26 @@ impl ChainValidator {
         pal.hash(io, hash_algo, curr.tbs_raw, digest_dma, true)
             .await?;
 
-        // Decode DER ECDSA signature directly into a DMA buffer.
-        // Use hw_len per component (68 for P-521) for zero-padded output.
+        // Decode DER ECDSA signature directly into a DMA buffer (raw format).
         let sig_dma = alloc.dma_alloc(sig_len)?;
         ecdsa::decode_ecdsa_sig(curr.signature, curve, sig_dma)?;
 
         // Copy public key into hardware wire format.
         // X.509 uses coord_len per coordinate (66 for P-521),
         // hardware expects hw_len (68 for P-521) with leading zeros.
-        let pk_dma = alloc.dma_alloc(curve.pub_key_len())?;
+        let pk_dma = alloc.dma_alloc(curve.wire_pub_key_len())?;
         pk_dma.fill(0);
         let pad = hw_len - coord_len;
         pk_dma[pad..pad + coord_len].copy_from_slice(&verify_key.point[..coord_len]);
         pk_dma[hw_len + pad..hw_len + pad + coord_len]
             .copy_from_slice(&verify_key.point[coord_len..coord_len * 2]);
 
-        let valid = pal
-            .ecc_verify(io, curve, pk_dma, digest_dma, sig_dma)
+        let result_dma = alloc.dma_alloc(4)?;
+
+        pal.ecc_verify(io, curve, pk_dma, digest_dma, sig_dma, result_dma)
             .await?;
 
-        if valid {
+        if (result_dma[0] & 1) == 0 {
             Ok(())
         } else {
             Err(HsmError::X509SignatureInvalid)

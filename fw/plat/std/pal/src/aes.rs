@@ -252,53 +252,56 @@ impl HsmAes for StdHsmPal {
         todo!()
     }
 
-    async fn aes_xts_gen_key(&self, _io: &impl HsmIo, _key: &mut [u8]) -> HsmResult<()> {
-        todo!()
-    }
-
-    async fn aes_xts_encrypt(
-        &self,
-        _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _tweak: &DmaBuf,
-        _dul: XtsDataUnitLen,
-        _input: &DmaBuf,
-        _output: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        todo!()
-    }
-
-    async fn aes_xts_decrypt(
-        &self,
-        _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _tweak: &DmaBuf,
-        _dul: XtsDataUnitLen,
-        _input: &DmaBuf,
-        _output: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        todo!()
-    }
-
-    async fn aes_xts_encrypt_in_place(
-        &self,
-        _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _tweak: &DmaBuf,
-        _dul: XtsDataUnitLen,
-        _data: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        todo!()
-    }
-
-    async fn aes_xts_decrypt_in_place(
-        &self,
-        _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _tweak: &DmaBuf,
-        _dul: XtsDataUnitLen,
-        _data: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        todo!()
-    }
+    // AES-XTS support is currently disabled; the stub entry points are
+    // retained here, commented out, for future re-enablement.
+    //
+    // async fn aes_xts_gen_key(&self, _io: &impl HsmIo, _key: &mut [u8]) -> HsmResult<()> {
+    //     todo!()
+    // }
+    //
+    // async fn aes_xts_encrypt(
+    //     &self,
+    //     _io: &impl HsmIo,
+    //     _key: &DmaBuf,
+    //     _tweak: &DmaBuf,
+    //     _dul: XtsDataUnitLen,
+    //     _input: &DmaBuf,
+    //     _output: &mut DmaBuf,
+    // ) -> HsmResult<()> {
+    //     todo!()
+    // }
+    //
+    // async fn aes_xts_decrypt(
+    //     &self,
+    //     _io: &impl HsmIo,
+    //     _key: &DmaBuf,
+    //     _tweak: &DmaBuf,
+    //     _dul: XtsDataUnitLen,
+    //     _input: &DmaBuf,
+    //     _output: &mut DmaBuf,
+    // ) -> HsmResult<()> {
+    //     todo!()
+    // }
+    //
+    // async fn aes_xts_encrypt_in_place(
+    //     &self,
+    //     _io: &impl HsmIo,
+    //     _key: &DmaBuf,
+    //     _tweak: &DmaBuf,
+    //     _dul: XtsDataUnitLen,
+    //     _data: &mut DmaBuf,
+    // ) -> HsmResult<()> {
+    //     todo!()
+    // }
+    //
+    // async fn aes_xts_decrypt_in_place(
+    //     &self,
+    //     _io: &impl HsmIo,
+    //     _key: &DmaBuf,
+    //     _tweak: &DmaBuf,
+    //     _dul: XtsDataUnitLen,
+    //     _data: &mut DmaBuf,
+    // ) -> HsmResult<()> {
+    //     todo!()
+    // }
 }

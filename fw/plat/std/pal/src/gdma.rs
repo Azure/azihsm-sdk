@@ -17,6 +17,14 @@ impl HsmGdmaController for StdHsmPal {
         Ok(())
     }
 
+    /// Zero an HSM-local buffer (software volatile wipe on the std
+    /// platform). [`DmaBuf::zeroize`] guarantees the writes are not
+    /// optimized away so key material is actually scrubbed.
+    async fn zeroize_mem(&self, _io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()> {
+        dst.zeroize();
+        Ok(())
+    }
+
     /// Copy from host memory into an HSM buffer.
     ///
     /// Interprets the PRP address as a raw host pointer.

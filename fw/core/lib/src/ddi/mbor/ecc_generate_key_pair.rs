@@ -17,12 +17,11 @@ use super::*;
 
 /// Handle `DdiEccGenerateKeyPairCmd`.
 ///
-/// No `partition_lock` is needed: this handler does not perform any
-/// multi-step read-then-mutate against partition state.  Its single
-/// state mutation — `vault_key_create` — is sync and atomic.  A
-/// concurrent `CloseSession` racing with our `ecc_gen_keypair` await
-/// would just turn the subsequent vault create into a clean
-/// `SessionNotFound` error, never a partial commit.
+/// No `partition_lock` is needed.  Although `vault_key_create` is now
+/// awaited (it can yield on Uno during the GDMA key copy), DDI commands
+/// run on a single-threaded cooperative executor with one command in
+/// flight per partition, so no concurrent handler can interleave with
+/// this one — there is nothing for a lock to serialize.
 pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -72,22 +71,22 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
         .await?;
 
     // Store the private key in the vault, session-scoped iff the
-    // requested attrs say so.  RAII guard rolls the entry back if
-    // the response encoding below fails.
+    // requested attrs say so.
     let session_binding = if attrs.session() {
         Some(HsmSessId::from(sess_id))
     } else {
         None
     };
-    let guard = pal.vault_key_create(
-        io,
-        &priv_key[..priv_len],
-        vault_kind,
-        session_binding,
-        attrs,
-        body.key_properties.key_label,
-    )?;
-    let private_key_id: u16 = guard.key_id().into();
+    let private_key_id: u16 = pal
+        .vault_key_create(
+            io,
+            &priv_key[..priv_len],
+            vault_kind,
+            session_binding,
+            attrs,
+        )
+        .await?
+        .into();
 
     // Build the response.  `masked_key` is the host's opaque
     // re-import blob; firmware-side masking against the session BK is
@@ -114,9 +113,6 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     // PAL already emitted the public key in wire format (LE + P-521
     // padding), so copy directly without further reordering.
     frame.pub_key.raw.copy_from_slice(&pub_key[..pub_len]);
-
-    // Commit the vault entry; response is now fully populated.
-    let _ = guard.dismiss();
 
     Ok(resp)
 }

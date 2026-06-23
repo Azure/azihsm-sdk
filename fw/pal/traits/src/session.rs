@@ -211,44 +211,6 @@ impl SessionSuite {
     }
 }
 
-/// RAII guard for a newly created session.
-///
-/// Returned by [`HsmSessionManager::session_create`].  The guard
-/// implements an explicit commit/rollback discipline: the session is
-/// *provisional* until [`dismiss`](Self::dismiss) is called.  If the
-/// guard is dropped without dismissing — for example because a
-/// downstream encode step or DDI handler returned an error — the
-/// destructor tears the session down (frees the slot, deletes the
-/// session vault key, removes any session-scoped keys), leaving no
-/// half-created session behind.
-///
-/// Typical usage:
-///
-/// ```ignore
-/// let guard = pal.session_create(io, api_rev, masking_key, None)?;
-/// // ... fallible work that uses `guard.sess_id()` ...
-/// let id = guard.dismiss(); // commit; session now permanent
-/// ```
-pub trait SessionGuard {
-    /// Returns the session ID assigned to the provisional session.
-    ///
-    /// Safe to call multiple times; does **not** commit the session.
-    ///
-    /// # Returns
-    ///
-    /// The [`HsmSessId`] under which the session is currently
-    /// registered in the partition's session table.
-    fn sess_id(&self) -> HsmSessId;
-
-    /// Commits the session.  The session table entry persists past
-    /// the guard's lifetime and the destructor becomes a no-op.
-    ///
-    /// # Returns
-    ///
-    /// The committed [`HsmSessId`].
-    fn dismiss(self) -> HsmSessId;
-}
-
 /// Session management interface.
 ///
 /// All methods take an [`HsmIo`] handle, which scopes the operation to
@@ -258,16 +220,6 @@ pub trait SessionGuard {
 /// session table (the firmware is single-core, cooperatively
 /// scheduled, so a plain `Cell`/`RefCell` suffices).
 pub trait HsmSessionManager {
-    /// RAII guard returned by
-    /// [`session_create`](Self::session_create).
-    ///
-    /// The lifetime parameter ties the guard to the session manager
-    /// so an uncommitted session cannot outlive the manager that
-    /// owns it.
-    type Guard<'a>: SessionGuard
-    where
-        Self: 'a;
-
     /// Returns `true` if the calling partition has no free session
     /// slots.
     ///
@@ -289,10 +241,9 @@ pub trait HsmSessionManager {
 
     /// Creates a new session, or re-keys an existing one in place.
     ///
-    /// On success, returns a [`Self::Guard`] that holds the session
-    /// in a *provisional* state.  The caller must invoke
-    /// [`SessionGuard::dismiss`] to commit; dropping the guard
-    /// otherwise rolls the session back.
+    /// The session is committed immediately. (Rollback of a
+    /// half-completed handshake will be handled by a future undo log,
+    /// not here.)
     ///
     /// # Parameters
     ///
@@ -311,8 +262,7 @@ pub trait HsmSessionManager {
     ///
     /// # Returns
     ///
-    /// - `Ok(guard)` — provisional session; commit with
-    ///   [`SessionGuard::dismiss`].
+    /// - `Ok(sess_id)` — the new session's [`HsmSessId`].
     /// - `Err(HsmError::VaultSessionLimitReached)` — `id == None` and
     ///   no slots are free (see
     ///   [`session_limit_reached`](Self::session_limit_reached)).
@@ -326,7 +276,7 @@ pub trait HsmSessionManager {
         api_rev: &[u8],
         masking_key: &[u8],
         id: Option<HsmSessId>,
-    ) -> HsmResult<Self::Guard<'_>>;
+    ) -> HsmResult<HsmSessId>;
 
     /// Closes a session.
     ///

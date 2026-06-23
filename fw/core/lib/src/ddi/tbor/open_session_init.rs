@@ -358,10 +358,9 @@ async fn compute_phase1_mac<'a, P: HsmPal>(
         .hmac_begin(io, HsmHashAlgo::Sha384, exported, alloc)
         .await?;
 
-    pal.hmac_continue(io, &mut hmac_ctx, label_sid).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_init).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_hsm).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_resp).await?;
+    for chunk in &[label_sid as &DmaBuf, pk_init, pk_hsm, pk_resp] {
+        pal.hmac_continue(io, &mut hmac_ctx, chunk).await?;
+    }
     pal.hmac_finish_into(io, hmac_ctx, mac_resp).await?;
     Ok(mac_resp)
 }

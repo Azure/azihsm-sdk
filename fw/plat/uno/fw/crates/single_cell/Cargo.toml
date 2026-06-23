@@ -1,0 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+description = "Zero-cost interior mutability for single-core, cooperative environments"
+edition = "2024"
+license = "MIT"
+name = "azihsm_fw_single_cell"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
