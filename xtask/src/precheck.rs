@@ -84,7 +84,7 @@ pub struct Precheck {
     #[clap(long = "exclude")]
     exclude: Vec<String>,
     /// Package to run tests for
-    #[clap(long)]
+    #[clap(long, short = 'p')]
     package: Option<String>,
     /// Features to enable when running tests
     #[clap(long)]
