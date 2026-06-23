@@ -116,27 +116,31 @@ impl<T: Send + Sync + 'static> EngineExData<T> {
         unsafe { ptr.as_ref() }
     }
 
-    /// Detach and return the stored value, if any. The slot is cleared.
+    /// Detach and return the stored value: `Ok(Some(_))` if present,
+    /// `Ok(None)` if the slot was empty.
     ///
     /// Takes `&mut Engine` for the same reason as [`set`](Self::set): it must
     /// not run while a `&T` from [`get`](Self::get) is still live.
+    ///
+    /// Returns `Err(ExDataSetFailed)` if clearing the slot fails. In that case
+    /// the value is intentionally left attached to the `ENGINE` (not reclaimed)
+    /// so there is no use-after-free — the slot may still be populated.
     #[allow(unsafe_code)]
-    pub fn take(&self, engine: &mut Engine) -> Option<Box<T>> {
+    pub fn take(&self, engine: &mut Engine) -> EngineResult<Option<Box<T>>> {
         // SAFETY: engine.as_ptr() is a valid ENGINE; self.idx is a registered slot.
         let ptr = unsafe { ffi::ENGINE_get_ex_data(engine.as_ptr(), self.idx) } as *mut T;
         if ptr.is_null() {
-            return None;
+            return Ok(None);
         }
         // SAFETY: engine.as_ptr() is a valid ENGINE; self.idx is a registered slot.
         let rc =
             unsafe { ffi::ENGINE_set_ex_data(engine.as_ptr(), self.idx, null_mut::<c_void>()) };
         // Clear the slot before reclaiming the box. If the clear fails the
-        // ENGINE still references `ptr`, so leave it in place (return None,
-        // leaking) rather than hand back a box the ENGINE could free later —
-        // a use-after-free.
-        ossl_check(rc, EngineError::ExDataSetFailed).ok()?;
+        // ENGINE still references `ptr`, so leave it attached and surface the
+        // error rather than hand back a box the ENGINE could free later (UAF).
+        ossl_check(rc, EngineError::ExDataSetFailed)?;
         // SAFETY: `ptr` was put there by `set`; the slot is now cleared.
-        Some(unsafe { Box::from_raw(ptr) })
+        Ok(Some(unsafe { Box::from_raw(ptr) }))
     }
 }
 
@@ -182,7 +186,7 @@ mod tests {
 
         assert_eq!(slot.get(&e), Some(&0xDEAD_BEEF));
 
-        let taken = slot.take(&mut e).unwrap();
+        let taken = slot.take(&mut e).unwrap().expect("slot populated");
         assert_eq!(*taken, 0xDEAD_BEEF);
         assert!(slot.get(&e).is_none(), "slot should be empty after take");
 
@@ -220,7 +224,7 @@ mod tests {
 
         slot.set(&mut e, Box::new(DropCounter(Arc::clone(&counter))))
             .unwrap();
-        let taken = slot.take(&mut e).unwrap();
+        let taken = slot.take(&mut e).unwrap().expect("slot populated");
         assert_eq!(counter.load(Ordering::SeqCst), 0);
 
         drop(taken);
