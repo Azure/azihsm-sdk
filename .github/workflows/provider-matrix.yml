@@ -300,9 +300,19 @@ jobs:
             -p provider-integration-tests-nginx \
             --profile ci-provider-integration
 
+      # DEBUG: Show contents of ./target/debug/ to verify the provider .so is present
+      - name: List ./target/debug/
+        if: ${{ matrix.cov }}
+        run: ls -l ./target/debug/
+
+      # DEBUG: Show coverage data collected in ./target/llvm-cov-target/ to verify the .profraw files are present
+      - name: List ./target/llvm-cov-target/
+        if: ${{ matrix.cov }}
+        run: ls -l ./target/llvm-cov-target/
+
       - name: Code Coverage Summary Report
         if: ${{ matrix.cov }}
-        run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths /usr/lib/libazihsm_api_native.so
+        run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths $PROVIDER_PATH/azihsm_provider.so
 
       - name: Upload coverage report
         if: ${{ matrix.cov }}
