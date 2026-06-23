@@ -20,6 +20,9 @@ extern "C"
 #define AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY "azihsm.input_key"
 #define AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY "azihsm.wrapped_key"
 
+/* Opaque AES key kind for SKEYMGMT import/generate: "AES" (default), "AES-GCM", or "AES-XTS". */
+#define AZIHSM_OSSL_PKEY_PARAM_KEY_KIND "azihsm.key_kind"
+
 /* Key usage types - single usage for the entire key pair */
 typedef enum
 {
