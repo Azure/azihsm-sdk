@@ -184,13 +184,13 @@ impl Xtask for Precheck {
             if self.package.is_none() && self.features.is_none() {
                 // run default tests
                 let tests = default_tests(&self.exclude, self.profile.clone());
-                run_tests(tests, false, ctx.clone())?;
+                run_tests(tests, false, self.skip_clean, ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
                     // Run azihsm_ddi mock tests
                     let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
-                    run_tests(ddi_tests, false, ctx.clone())?;
+                    run_tests(ddi_tests, false, self.skip_clean, ctx.clone())?;
                 }
             } else {
                 Nextest {
@@ -210,7 +210,7 @@ impl Xtask for Precheck {
             if self.package.is_none() && self.features.is_none() {
                 // Run default tests with coverage
                 let tests = default_tests(&self.exclude, self.profile.clone());
-                run_tests(tests, true, ctx.clone())?;
+                run_tests(tests, true, self.skip_clean, ctx.clone())?;
             } else {
                 Coverage {
                     features: self.features.clone(),
@@ -305,10 +305,23 @@ fn ddi_mock_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 }
 
 // Helper function to run tests defined by other helper functions
-fn run_tests(tests: Vec<Nextest>, coverage: bool, ctx: XtaskCtx) -> anyhow::Result<()> {
+fn run_tests(
+    tests: Vec<Nextest>,
+    coverage: bool,
+    skip_clean: bool,
+    ctx: XtaskCtx,
+) -> anyhow::Result<()> {
+    let mut first_run = true;
     for test in tests {
         if coverage {
-            Coverage::from(test).run(ctx.clone())?;
+            let mut cov = Coverage::from(test);
+            if !first_run {
+                cov.skip_clean = skip_clean;
+            } else {
+                cov.skip_clean = false;
+            }
+            first_run = false;
+            cov.run(ctx.clone())?;
         } else {
             test.run(ctx.clone())?;
         }
