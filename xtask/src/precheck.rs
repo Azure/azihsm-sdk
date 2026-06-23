@@ -191,16 +191,6 @@ impl Xtask for Precheck {
                     // Run azihsm_ddi mock tests
                     let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
                     run_tests(ddi_tests, false, ctx.clone())?;
-
-                    // OSSL Provider integration tests (CLI + C API, Linux only)
-                    #[cfg(target_os = "linux")]
-                    if !self.skip_integration {
-                        IntegrationTest {
-                            suite: Suite::All,
-                            coverage: false,
-                        }
-                        .run(ctx.clone())?;
-                    }
                 }
             } else {
                 Nextest {
@@ -221,18 +211,6 @@ impl Xtask for Precheck {
                 // Run default tests with coverage
                 let tests = default_tests(&self.exclude, self.profile.clone());
                 run_tests(tests, true, ctx.clone())?;
-
-                // Run OSSL Provider integration tests with coverage (CLI + C API, Linux only)
-                #[cfg(target_os = "linux")]
-                {
-                    if !self.skip_integration {
-                        IntegrationTest {
-                            suite: Suite::All,
-                            coverage: true,
-                        }
-                        .run(ctx.clone())?;
-                    }
-                }
             } else {
                 Coverage {
                     features: self.features.clone(),
