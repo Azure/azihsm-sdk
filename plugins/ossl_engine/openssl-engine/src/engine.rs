@@ -12,6 +12,7 @@ use openssl_sys_engine as ffi;
 
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::ossl_check;
 
 pub struct Engine {
     ptr: *mut ffi::ENGINE,
@@ -50,17 +51,18 @@ impl Engine {
         // SAFETY: Caller guarantees fns points to a valid dynamic_fns.
         unsafe {
             if ffi::ENGINE_get_static_state() != (*fns_ptr).static_state {
-                if ffi::CRYPTO_set_mem_functions(
-                    (*fns_ptr).mem_fns.malloc_fn,
-                    (*fns_ptr).mem_fns.realloc_fn,
-                    (*fns_ptr).mem_fns.free_fn,
-                ) != 1
-                {
-                    return Err(EngineError::CryptoSetMemFunctionsFailed);
-                }
-                if ffi::OPENSSL_init_crypto(ffi::OPENSSL_INIT_NO_ATEXIT as u64, null_mut()) != 1 {
-                    return Err(EngineError::OpensslInitCryptoFailed);
-                }
+                ossl_check(
+                    ffi::CRYPTO_set_mem_functions(
+                        (*fns_ptr).mem_fns.malloc_fn,
+                        (*fns_ptr).mem_fns.realloc_fn,
+                        (*fns_ptr).mem_fns.free_fn,
+                    ),
+                    EngineError::CryptoSetMemFunctionsFailed,
+                )?;
+                ossl_check(
+                    ffi::OPENSSL_init_crypto(ffi::OPENSSL_INIT_NO_ATEXIT as u64, null_mut()),
+                    EngineError::OpensslInitCryptoFailed,
+                )?;
             }
         }
 
@@ -74,21 +76,24 @@ impl Engine {
         f(self, id)
     }
 
+    /// Set the engine's id — the short identifier OpenSSL matches against
+    /// (e.g. in `ENGINE_by_id`).
     #[allow(unsafe_code)]
     pub fn set_id(&self, id: &CStr) -> EngineResult<()> {
         // SAFETY: self.ptr is valid (from NonNull), id is a valid CStr.
-        match unsafe { ffi::ENGINE_set_id(self.ptr, id.as_ptr()) } {
-            1 => Ok(()),
-            _ => Err(EngineError::SetIdFailed),
-        }
+        ossl_check(
+            unsafe { ffi::ENGINE_set_id(self.ptr, id.as_ptr()) },
+            EngineError::SetIdFailed,
+        )
     }
 
+    /// Set the engine's human-readable display name.
     #[allow(unsafe_code)]
     pub fn set_name(&self, name: &CStr) -> EngineResult<()> {
         // SAFETY: self.ptr is valid (from NonNull), name is a valid CStr.
-        match unsafe { ffi::ENGINE_set_name(self.ptr, name.as_ptr()) } {
-            1 => Ok(()),
-            _ => Err(EngineError::SetNameFailed),
-        }
+        ossl_check(
+            unsafe { ffi::ENGINE_set_name(self.ptr, name.as_ptr()) },
+            EngineError::SetNameFailed,
+        )
     }
 }

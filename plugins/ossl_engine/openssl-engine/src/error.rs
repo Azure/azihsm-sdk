@@ -111,6 +111,17 @@ impl From<RetCode> for c_int {
     }
 }
 
+/// Map an OpenSSL `1`(success)/`0`(failure) return code into a result,
+/// attaching `err` on failure. Keeps the bare `1`/`!= 1` literal out of
+/// the call sites.
+pub(crate) fn ossl_check(rc: c_int, err: EngineError) -> EngineResult<()> {
+    if rc == RetCode::Success as c_int {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
 /// Push a human-readable message onto the OpenSSL ERR queue.
 ///
 /// `reason` is an `ERR_R_*` constant from `openssl-sys-engine`.  The reason
