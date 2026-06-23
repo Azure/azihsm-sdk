@@ -7,6 +7,7 @@ members = [
   "crates/bulk_copy",
   "crates/error",
   "crates/key_vault",
+  "crates/session",
   "crates/single_cell",
   "crates/static_init",
   "crates/static_ref",
@@ -20,9 +21,11 @@ members = [
   "drivers/nvic",
   "drivers/oic",
   "drivers/pac",
+  "drivers/part_store",
   "drivers/profile",
   "drivers/rng",
   "drivers/semihosting",
+  "drivers/session_store",
   "drivers/sha",
   "drivers/systick",
   "drivers/uart",
@@ -49,9 +52,11 @@ azihsm_fw_uno_drivers_iic = { path = "drivers/iic" }
 azihsm_fw_uno_drivers_ipc = { path = "drivers/ipc" }
 azihsm_fw_uno_drivers_nvic = { path = "drivers/nvic" }
 azihsm_fw_uno_drivers_oic = { path = "drivers/oic" }
+azihsm_fw_uno_drivers_part_store = { path = "drivers/part_store" }
 azihsm_fw_uno_drivers_profile = { default-features = false, path = "drivers/profile" }
 azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
 azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
+azihsm_fw_uno_drivers_session_store = { path = "drivers/session_store" }
 azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }
 azihsm_fw_uno_drivers_systick = { path = "drivers/systick" }
 azihsm_fw_uno_drivers_uart = { path = "drivers/uart" }
@@ -59,6 +64,7 @@ azihsm_fw_uno_drivers_upka = { path = "drivers/upka" }
 azihsm_fw_uno_drivers_vault = { path = "drivers/vault" }
 azihsm_fw_uno_error = { path = "crates/error" }
 azihsm_fw_uno_key_vault = { path = "crates/key_vault" }
+azihsm_fw_uno_session = { path = "crates/session" }
 azihsm_fw_uno_pac = { path = "drivers/pac" }
 azihsm_fw_uno_pal = { path = "pal" }
 azihsm_fw_uno_reg_soc = { path = "reg/soc" }

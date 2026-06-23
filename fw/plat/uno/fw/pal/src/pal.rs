@@ -661,7 +661,8 @@ impl HsmPal for UnoHsmPal {
         self.ipc.init();
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
-        crate::part::PartTable::init_default();
+        azihsm_fw_uno_drivers_part_store::PartTable::init_default();
+        azihsm_fw_uno_drivers_session_store::SessionStore::init_default();
         boot_status::set(BootStatus::Done);
     }
 

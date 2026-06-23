@@ -37,32 +37,17 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
-use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
-use azihsm_fw_uno_reg_soc::part_entry_t::EC_KEY_ID_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::EC_PUB_KEY_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::GENERATION_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::ID_KEY_ID_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::ID_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::ID_PUB_KEY_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::PART_ENTRY_T_BASE;
-use azihsm_fw_uno_reg_soc::part_entry_t::RES_MASK_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::SE_KEY_ID_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::SE_PUB_KEY_OFFSET;
-use azihsm_fw_uno_reg_soc::part_entry_t::STATE_OFFSET;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
 use crate::io::UnoHsmIo;
 use crate::ipc::PfnEnableDisableAction;
-
-/// Number of partition slots (one per global key-vault table index).
-pub const NUM_PARTITIONS: usize = 65;
-
-/// Length of the random partition identity, in bytes.
-pub const ID_LEN: usize = 16;
-
-/// Length of the identity ECC P-384 public key (X ‖ Y), in bytes.
-pub const ID_PUB_KEY_LEN: usize = 96;
+use azihsm_fw_uno_drivers_part_store::PartTable;
+use azihsm_fw_uno_drivers_part_store::ID_LEN;
+use azihsm_fw_uno_drivers_part_store::ID_PUB_KEY_LEN;
+pub(crate) use azihsm_fw_uno_drivers_part_store::NUM_PARTITIONS;
+use azihsm_fw_uno_drivers_session_store::SessionStore;
+use azihsm_fw_uno_drivers_session_store::SessionTable;
 
 /// Length of an ECC P-384 private scalar (HSM wire format), in bytes.
 const P384_PRIV_LEN: usize = 48;
@@ -71,296 +56,6 @@ const P384_PRIV_LEN: usize = 48;
 /// session-encryption): ECC P-384 `pub(96) ‖ priv(48)`, mirroring the
 /// reference firmware's 144-byte blob.
 const ENABLE_KEY_LEN: usize = ID_PUB_KEY_LEN + P384_PRIV_LEN;
-
-/// Marker bit set in a stored key-handle field to distinguish a
-/// provisioned key whose [`HsmKeyId`] is `0` (table 0, slot 0) from an
-/// unprovisioned slot (all-zero field). Key handles are 16-bit, so bit 16
-/// is free for this flag.
-const KEY_PRESENT: u32 = 1 << 16;
-
-/// Encodes an [`HsmKeyId`] into a stored key-handle field.
-#[inline]
-fn encode_key(key_id: HsmKeyId) -> u32 {
-    (u16::from(key_id) as u32) | KEY_PRESENT
-}
-
-/// Decodes a stored key-handle field into an [`HsmKeyId`], or `None` if no
-/// key is provisioned.
-#[inline]
-fn decode_key(raw: u32) -> Option<HsmKeyId> {
-    (raw & KEY_PRESENT != 0).then(|| HsmKeyId::from(raw as u16))
-}
-
-/// Copies `src` into a partition-entry byte field at GSRAM address `dst`.
-///
-/// `dst` must be 4-byte aligned with capacity `>= src.len()`. Used to write
-/// key material straight from a DMA buffer into the partition table,
-/// avoiding a stack / task-storage intermediate array. GSRAM is plain
-/// shared SRAM, so a plain (non-volatile) copy is used.
-#[inline]
-fn copy_to_field(dst: usize, src: &[u8]) {
-    // SAFETY: `dst` is a partition-entry field in 'static GSRAM with
-    // capacity >= `src.len()`; the single-threaded executor guarantees no
-    // aliasing during the write.
-    let field = unsafe { core::slice::from_raw_parts_mut(dst as *mut u8, src.len()) };
-    field.copy_from_slice(src);
-}
-
-/// Absolute GSRAM address of the first partition table entry.
-const PART_BASE: u32 = IO_GSRAM_BASE + PART_ENTRY_T_BASE;
-
-/// Plain in-memory mirror of one GSRAM partition-table entry.
-///
-/// The partition table is plain shared GSRAM (not a peripheral), so entries
-/// are accessed as an ordinary `#[repr(C)]` struct rather than through the
-/// tock-registers overlay — letting the compiler use efficient block
-/// loads/stores. The field layout and 0x200 stride are asserted against the
-/// generated RDL constants below.
-#[repr(C)]
-struct PartEntry {
-    /// Lifecycle state ([`PartState`] discriminant).
-    state: u32,
-    /// Monotonic incarnation counter (bumped on free).
-    generation: u32,
-    /// 128-bit table-ownership mask, little-endian.
-    res_mask: [u8; 16],
-    /// 16-byte random partition identity.
-    id: [u8; ID_LEN],
-    /// Identity ECC P-384 key handle (`KEY_PRESENT`-tagged).
-    id_key_id: u32,
-    /// Identity public key (X ‖ Y).
-    id_pub_key: [u8; ID_PUB_KEY_LEN],
-    /// Establish-credential key handle.
-    ec_key_id: u32,
-    /// Establish-credential public key.
-    ec_pub_key: [u8; ID_PUB_KEY_LEN],
-    /// Session-encryption key handle.
-    se_key_id: u32,
-    /// Session-encryption public key.
-    se_pub_key: [u8; ID_PUB_KEY_LEN],
-    /// Reserved padding to the 0x200 entry stride.
-    _rsvd: [u8; 172],
-}
-
-// Lock the in-memory struct to the generated RDL layout so the plain
-// `#[repr(C)]` access stays byte-compatible with the partition table.
-const _: () = {
-    use core::mem::offset_of;
-    assert!(core::mem::size_of::<PartEntry>() == 0x200);
-    assert!(offset_of!(PartEntry, state) == STATE_OFFSET as usize);
-    assert!(offset_of!(PartEntry, generation) == GENERATION_OFFSET as usize);
-    assert!(offset_of!(PartEntry, res_mask) == RES_MASK_OFFSET as usize);
-    assert!(offset_of!(PartEntry, id) == ID_OFFSET as usize);
-    assert!(offset_of!(PartEntry, id_key_id) == ID_KEY_ID_OFFSET as usize);
-    assert!(offset_of!(PartEntry, id_pub_key) == ID_PUB_KEY_OFFSET as usize);
-    assert!(offset_of!(PartEntry, ec_key_id) == EC_KEY_ID_OFFSET as usize);
-    assert!(offset_of!(PartEntry, ec_pub_key) == EC_PUB_KEY_OFFSET as usize);
-    assert!(offset_of!(PartEntry, se_key_id) == SE_KEY_ID_OFFSET as usize);
-    assert!(offset_of!(PartEntry, se_pub_key) == SE_PUB_KEY_OFFSET as usize);
-};
-
-/// Bytes between consecutive partition entries.
-const PART_STRIDE: usize = core::mem::size_of::<PartEntry>();
-
-/// GSRAM-backed partition table.
-///
-/// Zero-sized: every entry is addressed directly in GSRAM, so this
-/// handle carries no state and the accessors are associated functions.
-pub(crate) struct PartTable;
-
-impl PartTable {
-    /// Raw pointer to partition `pid`'s entry in GSRAM.
-    #[inline]
-    fn entry_ptr(pid: usize) -> *mut PartEntry {
-        debug_assert!(pid < NUM_PARTITIONS);
-        (PART_BASE as usize + pid * PART_STRIDE) as *mut PartEntry
-    }
-
-    /// Shared reference to partition `pid`'s entry.
-    #[inline]
-    fn entry(pid: usize) -> &'static PartEntry {
-        // SAFETY: `pid < NUM_PARTITIONS` keeps the entry within the reserved
-        // PART_STORE GSRAM region; the single-threaded executor guarantees
-        // no aliasing for the (non-escaping) borrow.
-        unsafe { &*Self::entry_ptr(pid) }
-    }
-
-    /// Exclusive reference to partition `pid`'s entry.
-    #[inline]
-    fn entry_mut(pid: usize) -> &'static mut PartEntry {
-        // SAFETY: as `entry`; the returned borrow does not escape the calling
-        // accessor, so no two `&mut` to the same entry coexist.
-        unsafe { &mut *Self::entry_ptr(pid) }
-    }
-
-    /// Resolves an [`HsmPartId`] to a valid table index.
-    #[inline(never)]
-    pub(crate) fn index(pid: HsmPartId) -> HsmResult<usize> {
-        let idx = u8::from(pid) as usize;
-        if idx < NUM_PARTITIONS {
-            Ok(idx)
-        } else {
-            Err(HsmError::InvalidArg)
-        }
-    }
-
-    /// Initializes every partition to the [`PartState::Unallocated`]
-    /// posture: empty resource mask, generation zero, no identity.
-    ///
-    /// Partitions are provisioned and enabled on demand by Admin via the
-    /// `SetResource` + `PfnEnable` IPCs. Called once during PAL init; GSRAM
-    /// is not guaranteed zeroed, so each field is written explicitly.
-    pub(crate) fn init_default() {
-        for pid in 0..NUM_PARTITIONS {
-            let e = Self::entry_mut(pid);
-            e.state = PartState::Unallocated as u32;
-            e.generation = 0;
-            e.res_mask = [0; 16];
-            e.id = [0; ID_LEN];
-            e.id_key_id = 0;
-            e.id_pub_key = [0; ID_PUB_KEY_LEN];
-            e.ec_key_id = 0;
-            e.ec_pub_key = [0; ID_PUB_KEY_LEN];
-            e.se_key_id = 0;
-            e.se_pub_key = [0; ID_PUB_KEY_LEN];
-        }
-    }
-
-    /// Reads partition `pid`'s lifecycle state.
-    #[inline(never)]
-    pub(crate) fn state(pid: usize) -> HsmResult<PartState> {
-        PartState::from_u8(Self::entry(pid).state as u8).ok_or(HsmError::InvalidArg)
-    }
-
-    /// Writes partition `pid`'s lifecycle state.
-    #[inline(never)]
-    pub(crate) fn set_state(pid: usize, state: PartState) {
-        Self::entry_mut(pid).state = state as u32;
-    }
-
-    /// Reads partition `pid`'s 128-bit resource mask (little-endian).
-    #[inline(never)]
-    pub(crate) fn res_mask(pid: usize) -> u128 {
-        u128::from_le_bytes(Self::entry(pid).res_mask)
-    }
-
-    /// Writes partition `pid`'s 128-bit resource mask (little-endian).
-    #[inline(never)]
-    pub(crate) fn set_res_mask(pid: usize, mask: u128) {
-        Self::entry_mut(pid).res_mask = mask.to_le_bytes();
-    }
-
-    /// Bumps the generation counter, invalidating stale key handles.
-    #[inline(never)]
-    pub(crate) fn bump_gen(pid: usize) {
-        let e = Self::entry_mut(pid);
-        e.generation = e.generation.wrapping_add(1);
-    }
-
-    /// Reads partition `pid`'s generation counter.
-    #[inline(never)]
-    pub(crate) fn generation(pid: usize) -> u32 {
-        Self::entry(pid).generation
-    }
-
-    /// OR of every *other* partition's resource mask -- the set of key-vault
-    /// tables already owned cluster-wide, excluding `self_idx`. Used to reject
-    /// overlapping `SetResource` assignments (one owner per table).
-    pub(crate) fn others_res_mask(self_idx: usize) -> u128 {
-        let mut owned = 0u128;
-        for pid in 0..NUM_PARTITIONS {
-            if pid != self_idx {
-                owned |= Self::res_mask(pid);
-            }
-        }
-        owned
-    }
-
-    /// Absolute GSRAM address of partition `pid`'s 16-byte identity.
-    #[inline]
-    fn id_addr(pid: usize) -> usize {
-        Self::entry_ptr(pid) as usize + ID_OFFSET as usize
-    }
-
-    /// Reads partition `pid`'s identity key handle, or `None` if not
-    /// provisioned.
-    #[inline(never)]
-    pub(crate) fn id_key(pid: usize) -> Option<HsmKeyId> {
-        decode_key(Self::entry(pid).id_key_id)
-    }
-
-    /// Writes partition `pid`'s identity key handle.
-    #[inline(never)]
-    pub(crate) fn set_id_key(pid: usize, key_id: HsmKeyId) {
-        Self::entry_mut(pid).id_key_id = encode_key(key_id);
-    }
-
-    /// Absolute GSRAM address of partition `pid`'s 96-byte identity public
-    /// key.
-    #[inline]
-    fn id_pub_key_addr(pid: usize) -> usize {
-        Self::entry_ptr(pid) as usize + ID_PUB_KEY_OFFSET as usize
-    }
-
-    /// Zeroes partition `pid`'s provisioned identity (ID, key handle, and
-    /// public key).
-    #[inline]
-    pub(crate) fn clear_identity(pid: usize) {
-        let e = Self::entry_mut(pid);
-        e.id = [0; ID_LEN];
-        e.id_key_id = 0;
-        e.id_pub_key = [0; ID_PUB_KEY_LEN];
-    }
-
-    /// Reads partition `pid`'s establish-credential key handle, or `None`.
-    #[inline(never)]
-    pub(crate) fn ec_key(pid: usize) -> Option<HsmKeyId> {
-        decode_key(Self::entry(pid).ec_key_id)
-    }
-
-    /// Writes partition `pid`'s establish-credential key handle.
-    #[inline(never)]
-    pub(crate) fn set_ec_key(pid: usize, key_id: HsmKeyId) {
-        Self::entry_mut(pid).ec_key_id = encode_key(key_id);
-    }
-
-    /// Absolute GSRAM address of partition `pid`'s establish-credential
-    /// public key (96 bytes).
-    #[inline]
-    fn ec_pub_key_addr(pid: usize) -> usize {
-        Self::entry_ptr(pid) as usize + EC_PUB_KEY_OFFSET as usize
-    }
-
-    /// Reads partition `pid`'s session-encryption key handle, or `None`.
-    #[inline(never)]
-    pub(crate) fn se_key(pid: usize) -> Option<HsmKeyId> {
-        decode_key(Self::entry(pid).se_key_id)
-    }
-
-    /// Writes partition `pid`'s session-encryption key handle.
-    #[inline(never)]
-    pub(crate) fn set_se_key(pid: usize, key_id: HsmKeyId) {
-        Self::entry_mut(pid).se_key_id = encode_key(key_id);
-    }
-
-    /// Absolute GSRAM address of partition `pid`'s session-encryption
-    /// public key (96 bytes).
-    #[inline]
-    fn se_pub_key_addr(pid: usize) -> usize {
-        Self::entry_ptr(pid) as usize + SE_PUB_KEY_OFFSET as usize
-    }
-
-    /// Zeroes partition `pid`'s enable-time keys (establish-credential and
-    /// session-encryption key handles and public keys).
-    #[inline]
-    pub(crate) fn clear_enabled_keys(pid: usize) {
-        let e = Self::entry_mut(pid);
-        e.ec_key_id = 0;
-        e.ec_pub_key = [0; ID_PUB_KEY_LEN];
-        e.se_key_id = 0;
-        e.se_pub_key = [0; ID_PUB_KEY_LEN];
-    }
-}
 
 impl UnoHsmPal {
     /// Applies a `SetResource` assignment from Admin, driving the partition
@@ -443,7 +138,9 @@ impl UnoHsmPal {
         }
         PartTable::clear_identity(idx);
 
-        // Release resources and reset lifecycle state.
+        // Drop all sessions for this incarnation, then release resources and
+        // reset lifecycle state. (Disable preserves sessions; free does not.)
+        SessionStore::clear(idx);
         PartTable::set_res_mask(idx, 0);
         PartTable::bump_gen(idx);
         PartTable::set_state(idx, PartState::Unallocated);
@@ -462,7 +159,8 @@ impl UnoHsmPal {
         kind: HsmVaultKeyKind,
         attrs: HsmVaultKeyAttrs,
         pct: HsmEccPct,
-        pub_dst: usize,
+        pub_key_pid: usize,
+        pub_key_store: fn(usize, &[u8]),
     ) -> HsmResult<HsmKeyId> {
         let admin_io = UnoHsmIo::admin(pid);
         let alloc = UnoScopedAlloc::for_admin(self);
@@ -486,7 +184,7 @@ impl UnoHsmPal {
         // Cache the public key into the partition entry's GSRAM field,
         // copied straight from the DMA buffer (no stack / task-storage
         // intermediate array).
-        copy_to_field(pub_dst, &pub_buf[..ID_PUB_KEY_LEN]);
+        pub_key_store(pub_key_pid, &pub_buf[..ID_PUB_KEY_LEN]);
 
         // Assemble the stored blob to the format the vault expects for
         // `kind`: the identity key stores the bare 48-byte private scalar,
@@ -526,7 +224,8 @@ impl UnoHsmPal {
                 HsmVaultKeyKind::Ecc384Private,
                 attrs,
                 HsmEccPct::SignVerify,
-                PartTable::id_pub_key_addr(idx),
+                idx,
+                PartTable::set_id_pub_key,
             )
             .await?;
         PartTable::set_id_key(idx, key_id);
@@ -536,7 +235,7 @@ impl UnoHsmPal {
         let alloc = UnoScopedAlloc::for_admin(self);
         let id_buf = alloc.dma_alloc(ID_LEN)?;
         self.rng.fill_bytes(id_buf)?;
-        copy_to_field(PartTable::id_addr(idx), &id_buf[..ID_LEN]);
+        PartTable::set_id(idx, &id_buf[..ID_LEN]);
         Ok(())
     }
 
@@ -557,7 +256,8 @@ impl UnoHsmPal {
                 HsmVaultKeyKind::EstablishCred,
                 attrs,
                 HsmEccPct::KeyAgreement,
-                PartTable::ec_pub_key_addr(idx),
+                idx,
+                PartTable::set_ec_pub_key,
             )
             .await?;
         PartTable::set_ec_key(idx, ec_id);
@@ -568,7 +268,8 @@ impl UnoHsmPal {
                 HsmVaultKeyKind::SessionEncryption,
                 attrs,
                 HsmEccPct::KeyAgreement,
-                PartTable::se_pub_key_addr(idx),
+                idx,
+                PartTable::set_se_pub_key,
             )
             .await
         {
@@ -687,6 +388,14 @@ impl PartEntryRef {
     pub(crate) fn res_mask(&self) -> u128 {
         PartTable::res_mask(self.idx)
     }
+
+    /// Exclusive handle to this partition's GSRAM-backed session table.
+    /// The Uno analog of std's `entry.session_table`, giving the session PAL
+    /// impl `active_part(io.pid()).session_table()` ergonomics.
+    #[inline]
+    pub(crate) fn session_table(&self) -> &'static mut SessionTable {
+        SessionStore::table_mut(self.idx)
+    }
 }
 
 impl UnoHsmPal {
@@ -804,36 +513,24 @@ impl HsmPartitionManager for UnoHsmPal {
         let pid = PartTable::index(io.pid())?;
         // Each public-key field is only valid once its backing key has
         // been provisioned (identity at SetResource, the others at enable).
-        let (addr, len, present) = match id {
-            PartPropId::ID => (
-                PartTable::id_addr(pid),
-                ID_LEN,
-                PartTable::id_key(pid).is_some(),
-            ),
-            PartPropId::ID_PUB_KEY => (
-                PartTable::id_pub_key_addr(pid),
-                ID_PUB_KEY_LEN,
-                PartTable::id_key(pid).is_some(),
-            ),
-            PartPropId::ESTABLISH_CRED_PUB_KEY => (
-                PartTable::ec_pub_key_addr(pid),
-                ID_PUB_KEY_LEN,
-                PartTable::ec_key(pid).is_some(),
-            ),
-            PartPropId::SESSION_ENC_PUB_KEY => (
-                PartTable::se_pub_key_addr(pid),
-                ID_PUB_KEY_LEN,
-                PartTable::se_key(pid).is_some(),
-            ),
+        let (bytes, present) = match id {
+            PartPropId::ID => (PartTable::id(pid), PartTable::id_key(pid).is_some()),
+            PartPropId::ID_PUB_KEY => (PartTable::id_pub_key(pid), PartTable::id_key(pid).is_some()),
+            PartPropId::ESTABLISH_CRED_PUB_KEY => {
+                (PartTable::ec_pub_key(pid), PartTable::ec_key(pid).is_some())
+            }
+            PartPropId::SESSION_ENC_PUB_KEY => {
+                (PartTable::se_pub_key(pid), PartTable::se_key(pid).is_some())
+            }
             _ => return Err(HsmError::UnsupportedCmd),
         };
         if !present {
             return Err(HsmError::KeyNotFound);
         }
-        // SAFETY: `addr..addr+len` is the partition's field in its 'static
-        // GSRAM entry; the single-threaded executor guarantees no aliasing
-        // mutation for the borrow's duration.
-        Ok(unsafe { DmaBuf::from_raw(core::slice::from_raw_parts(addr as *const u8, len)) })
+        // SAFETY: the driver returned a partition field in 'static GSRAM;
+        // the single-threaded executor guarantees no aliasing mutation for
+        // the borrow's duration.
+        Ok(unsafe { DmaBuf::from_raw(bytes) })
     }
 
     fn part_prop_set_bytes(

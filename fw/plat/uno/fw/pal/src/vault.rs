@@ -29,6 +29,8 @@ use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
+use azihsm_fw_uno_drivers_part_store::PartTable;
+use azihsm_fw_uno_drivers_part_store::NUM_PARTITIONS;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
 
@@ -38,8 +40,8 @@ use crate::UnoHsmPal;
 pub(crate) fn vault(io: &impl HsmIo) -> KeyVault<VaultStorage> {
     let pid = u8::from(io.pid()) as usize;
     // Out-of-range partitions own no tables (empty mask → no storage).
-    let res_mask = if pid < crate::part::NUM_PARTITIONS {
-        crate::part::PartTable::res_mask(pid)
+    let res_mask = if pid < NUM_PARTITIONS {
+        PartTable::res_mask(pid)
     } else {
         0
     };
