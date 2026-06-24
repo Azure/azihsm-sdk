@@ -1151,7 +1151,7 @@ fn test_ecdh_rejects_non_derivable_shared_secret(session: HsmSession) {
         ecdh_derive_shared_secret_with_props(&session, &priv_a, &pub_b, non_derivable_props);
 
     assert!(
-        matches!(result, Err(HsmError::DdiCmdFailure)),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "ECDH should reject creating a shared secret without can_derive flag"
     );
 }
