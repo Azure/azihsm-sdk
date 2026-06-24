@@ -76,15 +76,17 @@ impl BksStore {
         &Self::table()[CURRENT_BKS1].bks[..]
     }
 
-    /// BKS1 seed for a specific `svn`: scans the table for the entry
-    /// whose `svn` matches.  Returns [`HsmError::SeedNotFound`] if no
-    /// entry carries that SVN.
+    /// BKS1 seed for a specific `svn`: scans the BKS1 entries (the
+    /// current entry plus the SVN history, i.e. all rows *except* the
+    /// trailing BKS2 row) for a **valid** entry whose `svn` matches.
+    /// Returns [`HsmError::SeedNotFound`] if no valid BKS1 entry carries
+    /// that SVN.
     #[inline(never)]
     pub fn bks1(svn: u64) -> HsmResult<&'static [u8]> {
         let target = svn.to_le_bytes();
-        Self::table()
+        Self::table()[CURRENT_BKS1..BKS2]
             .iter()
-            .find(|e| e.svn == target)
+            .find(|e| e.valid != 0 && e.svn == target)
             .map(|e| &e.bks[..])
             .ok_or(HsmError::SeedNotFound)
     }

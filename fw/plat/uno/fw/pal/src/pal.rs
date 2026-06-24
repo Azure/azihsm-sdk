@@ -615,6 +615,20 @@ impl UnoHsmPal {
 
         let pid = HsmPartId::from(msg.info.pfn as u8);
         let mask = msg.info.mask_u128();
+        // The system has only `NUM_PARTITIONS` key-vault tables; any bit at
+        // or above that index references a non-existent table and would
+        // corrupt the ACK's owned-table count and the persisted `res_mask`.
+        // Reject such a request before applying the allocation.
+        let valid_tables = if crate::part::NUM_PARTITIONS >= u128::BITS as usize {
+            u128::MAX
+        } else {
+            (1u128 << crate::part::NUM_PARTITIONS) - 1
+        };
+        if mask & !valid_tables != 0 {
+            let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
         // A zero mask frees the partition; any other mask (re)allocates it.
         // The ACK's owned-table count is a pure function of the mask — an
         // IPC-reply concern, computed here rather than in the partition layer.

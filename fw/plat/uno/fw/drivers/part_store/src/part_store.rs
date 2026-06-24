@@ -58,7 +58,8 @@ const RESERVED3_LEN: usize = 626
     - 1  // pota_thumbprint_valid
     - PUB_KEY_LEN  // pta_pub_key
     - 1  // pta_pub_key_valid
-    - 1; // policy_hash_valid
+    - 1  // policy_hash_valid
+    - 1; // bk3_initialized
 
 /// Total per-partition slot size (matches the reference layout).
 const STORE_SIZE: usize = 3072;
@@ -222,6 +223,10 @@ struct Storage {
     pota_thumbprint_valid: bool,
     pta_pub_key_valid: bool,
     policy_hash_valid: bool,
+    // One-shot InitBk3 gate. Distinct from `bk3_session_key.is_valid`,
+    // which tracks presence of the BK3 *session key*; this flag records
+    // that InitBk3 has run and must not run again.
+    bk3_initialized: bool,
     reserved3: [u8; RESERVED3_LEN],
 }
 
@@ -553,6 +558,9 @@ impl Partition {
         let slot = self.slot_mut();
         slot.masked_bk_boot.len = src.len() as u32;
         slot.masked_bk_boot.data[..src.len()].copy_from_slice(src);
+        // Zeroize any stale (sensitive) bytes left by a previously longer
+        // blob so nothing survives past the new length.
+        slot.masked_bk_boot.data[src.len()..].fill(0);
         Ok(())
     }
 
@@ -582,6 +590,9 @@ impl Partition {
         let slot = self.slot_mut();
         slot.sealed_bk3.len = src.len() as u32;
         slot.sealed_bk3.data[..src.len()].copy_from_slice(src);
+        // Zeroize any stale (sensitive) bytes left by a previously longer
+        // blob so nothing survives past the new length.
+        slot.sealed_bk3.data[src.len()..].fill(0);
         Ok(())
     }
 
@@ -642,16 +653,16 @@ impl Partition {
         slot.masked_bk_boot.len = 0;
     }
 
-    /// Whether the BK3 session key has been initialized.
+    /// Whether InitBk3 has already run for this partition (one-shot gate).
     #[inline(never)]
     pub fn bk3_initialized(self) -> bool {
-        self.slot().bk3_session_key.is_valid
+        self.slot().bk3_initialized
     }
 
-    /// Sets the BK3-session-key validity flag.
+    /// Sets the one-shot InitBk3 gate.
     #[inline(never)]
     pub fn set_bk3_initialized(self, valid: bool) {
-        self.slot_mut().bk3_session_key.is_valid = valid;
+        self.slot_mut().bk3_initialized = valid;
     }
 
     // ── lockout policy ───────────────────────────────────────────────────

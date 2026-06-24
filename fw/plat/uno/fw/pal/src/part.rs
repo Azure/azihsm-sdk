@@ -403,9 +403,31 @@ impl HsmPartitionManager for UnoHsmPal {
         let part = PartStore::partition(io.pid())?;
         match id {
             PartPropId::STATE => {
-                let state = PartState::from_u8(value).ok_or(HsmError::InvalidArg)?;
-                part.set_state(state);
-                Ok(())
+                let target = PartState::from_u8(value).ok_or(HsmError::InvalidArg)?;
+                let current = part.state()?;
+                match (current, target) {
+                    // The single caller-facing transition: `Enabled →
+                    // Initializing`, which additionally requires the four
+                    // write-once provisioning fields (PTA key, UPS key,
+                    // policy hash, POTA thumbprint) to be present. Mirrors
+                    // the std PAL property-API contract.
+                    (PartState::Enabled, PartState::Initializing) => {
+                        if part.pta_key_id().is_none()
+                            || part.ups_key_id().is_none()
+                            || !part.policy_hash_valid()
+                            || !part.pota_thumbprint_valid()
+                        {
+                            return Err(HsmError::InvalidArg);
+                        }
+                        part.set_state(PartState::Initializing);
+                        Ok(())
+                    }
+                    // No-op writes (same state) are accepted as a convenience.
+                    (cur, tgt) if cur == tgt => Ok(()),
+                    // All other transitions are PAL-internal (driven by the
+                    // device-command lifecycle) — reject from the prop API.
+                    _ => Err(HsmError::InvalidArg),
+                }
             }
             // RES_COUNT is read-only; it is derived from the resource mask.
             _ => Err(HsmError::UnsupportedCmd),
