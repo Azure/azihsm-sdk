@@ -174,27 +174,24 @@ impl UnoHsmPal {
         attrs: HsmVaultKeyAttrs,
         pct: HsmEccPct,
     ) -> HsmResult<HsmKeyId> {
-        let mut part = PartStore::partition(pid)?;
+        let part = PartStore::partition(pid)?;
         let admin_io = UnoHsmIo::admin(pid);
         let alloc = UnoScopedAlloc::for_admin(self);
 
-        // Generate the public key straight into its part_store field
-        // (selected by `kind`) — the field is 4-byte aligned for the keygen
-        // DMA write, so no separate scratch buffer is needed. The private
-        // scalar still needs a transient DMA buffer to build the vault blob.
-        let pub_dst = match kind {
-            HsmVaultKeyKind::Ecc384Private => part.id_pub_key_mut(),
-            HsmVaultKeyKind::EstablishCred => part.ec_pub_key_mut(),
-            HsmVaultKeyKind::SessionEncryption => part.se_pub_key_mut(),
-            _ => return Err(HsmError::InternalError),
-        };
+        // Generate the key pair into transient admin-slot DMA scratch
+        // buffers. The public key is *not* written straight into its
+        // part_store field: doing so would hold a `&mut` borrow into the
+        // GSRAM-backed PartStore across the keygen `.await`, which the
+        // PartStore driver forbids (no yielding while a slot is mutably
+        // borrowed). The store is updated synchronously after the await.
         let priv_buf = alloc.dma_alloc(P384_PRIV_LEN)?;
+        let pub_buf = alloc.dma_alloc(ID_PUB_KEY_LEN)?;
         let (_priv_len, pub_len) = self
             .ecc_gen_keypair(
                 &admin_io,
                 &alloc,
                 HsmEccCurve::P384,
-                Some((priv_buf, pub_dst)),
+                Some((priv_buf, pub_buf)),
                 pct,
             )
             .await?;
@@ -202,19 +199,25 @@ impl UnoHsmPal {
             return Err(HsmError::InternalError);
         }
 
+        // Persist the freshly generated public key into its part_store
+        // field (selected by `kind`). This borrow of the PartStore slot is
+        // strictly synchronous — no `.await` is reached while it is held.
+        match kind {
+            HsmVaultKeyKind::Ecc384Private => part.set_id_pub_key(pub_buf)?,
+            HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
+            HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
+            _ => return Err(HsmError::InternalError),
+        }
+
         // Assemble the stored blob to the format the vault expects for
         // `kind`: the identity key stores the bare 48-byte private scalar,
         // while the establish-credential and session-encryption keys store
         // the 144-byte `pub(96) ‖ priv(48)` blob (matching the reference
-        // firmware's on-storage layout), reading the public key back from
-        // the part_store field just written.
+        // firmware's on-storage layout), using the scratch public key.
         let key_buf: &DmaBuf = match kind {
             HsmVaultKeyKind::Ecc384Private => priv_buf,
-            HsmVaultKeyKind::EstablishCred => {
-                self.build_enable_key_blob(&alloc, part.ec_pub_key(), priv_buf)?
-            }
-            HsmVaultKeyKind::SessionEncryption => {
-                self.build_enable_key_blob(&alloc, part.se_pub_key(), priv_buf)?
+            HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
+                self.build_enable_key_blob(&alloc, pub_buf, priv_buf)?
             }
             _ => return Err(HsmError::InternalError),
         };

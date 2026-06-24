@@ -844,9 +844,16 @@ impl Partition {
     }
 
     /// Sets (or clears, with `None`) the identity key handle.
+    ///
+    /// Keeps `partition_id_valid` in sync with handle presence: the PAL
+    /// gates identity-property access on `id_key_id().is_some()`, so the
+    /// stored validity flag tracks the same "identity provisioned" state
+    /// (set on provisioning, cleared on `clear_identity` / free).
     #[inline(never)]
     pub fn set_id_key_id(mut self, key: Option<HsmKeyId>) {
-        self.slot_mut().id_key_id = write_handle(key);
+        let slot = self.slot_mut();
+        slot.id_key_id = write_handle(key);
+        slot.partition_id_valid = key.is_some();
     }
 
     /// Reads the establish-credential key handle.

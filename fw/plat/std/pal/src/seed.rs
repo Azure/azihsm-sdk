@@ -37,7 +37,17 @@ const STD_OWNER_SEED_ROW0: [u8; BK_SEED_LEN] = [
 
 /// Firmware-supplied secret seed (`fw_seed`), a device-global firmware
 /// constant used as the KBKDF key in boot-key (`BKx`) derivations.
-const STD_FW_SEED48: [u8; 48] = [0x42u8; 48];
+///
+/// Must match the Uno PAL's `FW_SEED` (the reference firmware's
+/// `BK_BOOT_MASKING_KEY`): `fw_seed` is a firmware constant, not
+/// hardware-fused, so a shared value keeps `BKx` derivation — and thus
+/// `Masked_BK_BOOT` masking/unmasking — bit-compatible across the
+/// emulator and real hardware.
+const STD_FW_SEED48: [u8; 48] = [
+    0x5f, 0xb0, 0x8b, 0x84, 0xb2, 0x8c, 0x54, 0xc5, 0x73, 0x5c, 0x73, 0x07, 0x96, 0x99, 0xc0, 0xd0,
+    0xe6, 0x11, 0x84, 0x8f, 0x65, 0xa1, 0xa5, 0x8e, 0x75, 0x72, 0x43, 0x59, 0x9e, 0x99, 0x2c, 0x88,
+    0xe5, 0x73, 0x98, 0x75, 0xb4, 0x0d, 0xa1, 0x24, 0x08, 0x36, 0x70, 0xa7, 0x65, 0xa1, 0x36, 0x7d,
+];
 
 /// Unique Device Secret — the device-global root secret.  The std PAL
 /// has no fused per-device secret, so a fixed device constant stands
