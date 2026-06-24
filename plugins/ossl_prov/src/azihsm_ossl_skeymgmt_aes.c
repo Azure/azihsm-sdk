@@ -192,13 +192,23 @@ static void *azihsm_ossl_aes_skeymgmt_import(
         return NULL;
     }
 
-    if (params == NULL || azihsm_skey_get_str_param(
-                              params,
-                              AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY,
-                              masked_key_file,
-                              sizeof(masked_key_file)
-                          ) != 1)
+    if (params == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, PROV_R_MISSING_KEY);
+        return NULL;
+    }
+    switch (azihsm_skey_get_str_param(
+        params,
+        AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY,
+        masked_key_file,
+        sizeof(masked_key_file)
+    ))
+    {
+    case 1:
+        break;
+    case -1:
+        return NULL; /* present but invalid; the specific error is already raised */
+    default:         /* 0 = absent */
         ERR_raise(ERR_LIB_PROV, PROV_R_MISSING_KEY);
         return NULL;
     }

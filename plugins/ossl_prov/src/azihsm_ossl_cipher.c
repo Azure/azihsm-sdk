@@ -238,6 +238,19 @@ static int azihsm_ossl_cipher_skey_init(
         return OSSL_FAILURE;
     }
 
+    /* When the key length is known, it must match the cipher variant so that, for
+     * example, an AES-256 key cannot be bound to AES-128-CBC.  Imported opaque
+     * keys may report 0 (unknown), in which case this check is skipped. */
+    if (skey->key_bytes != 0 && skey->key_bytes != ctx->keylen)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_KEY_LENGTH,
+            "AES key length does not match the requested cipher"
+        );
+        return OSSL_FAILURE;
+    }
+
     /* Re-init: drop every per-operation state so a reused EVP_CIPHER_CTX starts
      * clean — no stale CBC chaining IV / buffered sub-block, and no carried-over
      * GCM tag or IV from the previous operation. */
@@ -549,6 +562,9 @@ static int azihsm_ossl_cbc_decrypt_ensure_stream(AZIHSM_CIPHER_CTX *ctx)
     }
 
     memcpy(ctx->cbc_params.iv, ctx->iv, sizeof(ctx->cbc_params.iv));
+    /* Mark the chaining IV live so UPDATED_IV tracks decrypt as well: the FFI
+     * advances cbc_params.iv on every streamed update/finish. */
+    ctx->cbc_iv_init = true;
 
     /* Stream in no-padding mode and strip PKCS#7 at final(): the HSM's padded
      * decrypt finish needs a two-block output buffer that EVP's final cannot

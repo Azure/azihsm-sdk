@@ -44,7 +44,7 @@ fn rerun_if_changed_recursive(dir: &std::path::Path) {
         if path.is_dir() {
             rerun_if_changed_recursive(&path);
         } else {
-            println!("cargo::rerun-if-changed={}", path.display());
+            println!("cargo:rerun-if-changed={}", path.display());
         }
     }
 }

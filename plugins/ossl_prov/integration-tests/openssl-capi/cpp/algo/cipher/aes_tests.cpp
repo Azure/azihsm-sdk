@@ -187,6 +187,75 @@ TEST_F(aes_skey, cbc_updated_iv_tracks_chaining_RequiresOpenssl35)
     EXPECT_NE(std::memcmp(updated, iv, 16), 0) << "UPDATED_IV must not be the init IV";
 }
 
+/// The CBC *decrypt* streaming path must also advance UPDATED_IV (the FFI writes
+/// the chaining IV back on each update); it must not keep reporting the init IV.
+TEST_F(aes_skey, cbc_decrypt_updated_iv_tracks_chaining_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, nullptr);
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-CBC");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[16];
+    for (int i = 0; i < 16; ++i)
+        iv[i] = static_cast<unsigned char>(i);
+
+    // Produce two ciphertext blocks.
+    std::vector<unsigned char> pt(32, 0x5A);
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+    ASSERT_EQ(outl, 32);
+
+    // Decrypt: feed the ciphertext, then read UPDATED_IV.
+    EvpCipherCtxPtr dctx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(dctx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 0, nullptr),
+        1
+    );
+    std::vector<unsigned char> dec(ct.size() + 16);
+    ASSERT_EQ(EVP_CipherUpdate(dctx.get(), dec.data(), &outl, ct.data(), 32), 1);
+
+    unsigned char updated[16] = { 0 };
+    OSSL_PARAM get_iv[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, updated, sizeof(updated)),
+        OSSL_PARAM_construct_end(),
+    };
+    ASSERT_EQ(EVP_CIPHER_CTX_get_params(dctx.get(), get_iv), 1);
+    EXPECT_NE(std::memcmp(updated, iv, 16), 0)
+        << "decrypt UPDATED_IV must advance from the init IV";
+}
+
+/// A key whose length is known must match the cipher variant: an AES-256 key
+/// must not bind to AES-128-CBC, but must bind to AES-256-CBC.
+TEST_F(aes_skey, init_rejects_key_length_mismatch_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, nullptr); // AES-256, key_bytes=32
+    ASSERT_NE(skey, nullptr);
+
+    unsigned char iv[16] = { 0 };
+
+    EvpCipherPtr c128 = fetch_cipher(prov_.libctx(), "AES-128-CBC");
+    ASSERT_NE(c128, nullptr);
+    EvpCipherCtxPtr bad(EVP_CIPHER_CTX_new());
+    EXPECT_NE(EVP_CipherInit_SKEY(bad.get(), c128.get(), skey.get(), iv, sizeof(iv), 1, nullptr), 1)
+        << "binding a 32-byte key to AES-128-CBC must fail";
+
+    EvpCipherPtr c256 = fetch_cipher(prov_.libctx(), "AES-256-CBC");
+    ASSERT_NE(c256, nullptr);
+    EvpCipherCtxPtr ok(EVP_CIPHER_CTX_new());
+    EXPECT_EQ(EVP_CipherInit_SKEY(ok.get(), c256.get(), skey.get(), iv, sizeof(iv), 1, nullptr), 1)
+        << "the matching AES-256-CBC binding must succeed";
+}
+
 /// A cipher context cannot be cloned faithfully once data processing has begun
 /// (CBC carries chaining state), so EVP_CIPHER_CTX_copy() must fail mid-stream
 /// rather than produce a half-copied context; copying a fresh context is fine.
