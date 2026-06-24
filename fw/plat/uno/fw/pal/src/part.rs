@@ -31,6 +31,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_uno_drivers_part_store::PartStore;
+use azihsm_fw_uno_drivers_session_store::SessionStore;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
@@ -322,10 +323,11 @@ impl UnoHsmPal {
     }
 
     /// Clears partition `pid`'s per-tenant state — deletes every
-    /// enable-time and provisioning vault key, then zeroizes all cached
-    /// public keys, caller-presented secrets, write-once provisioning
-    /// fields, the nonce, VM launch GUID, BK3 incarnation flag, and the
-    /// session table (see [`PartStore`]'s `clear_enabled_state`).
+    /// enable-time and provisioning vault key plus every session-blob
+    /// vault key, then zeroizes all cached public keys, caller-presented
+    /// secrets, write-once provisioning fields, the nonce, VM launch GUID,
+    /// BK3 incarnation flag, and the session table (see [`PartStore`]'s
+    /// `clear_enabled_state`).
     ///
     /// The partition identity and `Masked_BK_BOOT` are preserved — they
     /// are torn down only on free. Best-effort and idempotent: keys are
@@ -349,6 +351,14 @@ impl UnoHsmPal {
         .flatten()
         {
             self.delete_key(pid, key_id).await;
+        }
+        // Delete every session-blob vault key (Active, NeedsRenegotiation,
+        // or Pending) mapped by the session table, so none are orphaned in
+        // the vault when the table is zeroized below.
+        if let Ok(sessions) = SessionStore::partition(pid) {
+            for key_id in sessions.occupied_physical_ids().into_iter().flatten() {
+                self.delete_key(pid, key_id).await;
+            }
         }
         part.clear_enabled_state();
     }
