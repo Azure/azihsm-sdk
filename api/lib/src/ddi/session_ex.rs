@@ -303,6 +303,34 @@ fn open_session_ex_finish(
     })
 }
 
+/// Closes an active TBOR security-domain session — `CloseSession`
+/// (opcode `0x12`).
+///
+/// Tears down the FW-side session slot identified by `session_id`,
+/// releasing its key material and invalidating the identifier.
+///
+/// Resiliency (retry / session reopen) is not yet wired for the TBOR
+/// transport, so any DDI failure is surfaced to the caller as-is.
+///
+/// # Arguments
+///
+/// * `partition` - The HSM partition handle.
+/// * `session_id` - The TBOR session identifier to tear down.
+///
+/// # Errors
+///
+/// Propagates DDI failures from the round-trip.
+pub(crate) fn close_session_ex(partition: &HsmPartition, session_id: u16) -> HsmResult<()> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+
+    let req = TborCloseSessionReq { session_id };
+    let mut cookie = None;
+    dev.exec_op_tbor(&req, &mut cookie)
+        .map_err(HsmError::from)
+        .map(|_| ())
+}
+
 #[cfg(all(test, feature = "emu"))]
 mod tests {
     use parking_lot::Mutex;

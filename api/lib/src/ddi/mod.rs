@@ -29,6 +29,7 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use rsa::*;
 pub(crate) use session::*;
+pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
 
 use super::*;
