@@ -66,8 +66,8 @@ impl PotaEndorsementCallback for FilePotaCallback {
     }
 }
 
-/// OBK provider that re-reads the OBK file on demand. The file must be at
-/// least [`OBK_LEN`] bytes; anything shorter is rejected as invalid.
+/// MOBK provider that re-reads the masked-OBK file on demand. The file must be
+/// at least [`OBK_LEN`] bytes; anything shorter is rejected as invalid.
 pub struct FileMobkCallback {
     path: PathBuf,
 }

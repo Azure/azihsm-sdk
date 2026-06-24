@@ -49,7 +49,6 @@ const ENV_POTA_PUB: &str = "AZIHSM_POTA_PUBLIC_KEY_PATH";
 const DEFAULT_STORAGE_DIR: &str = "/var/lib/azihsm/resiliency";
 const DEFAULT_OBK_PATH: &str = "./obk.bin";
 const DEFAULT_MOBK_PATH: &str = "./mobk.bin";
-const LOCK_FILE_NAME: &str = ".lock";
 
 /// Error from reading the engine's resiliency environment variables.
 #[derive(Debug, thiserror::Error)]
@@ -107,17 +106,22 @@ impl ResiliencySettings {
         let pota_pub_path = env_nonempty(ENV_POTA_PUB).map(PathBuf::from);
 
         // Reject unsafe paths up front (mirrors the provider's path_is_safe),
-        // but only when resiliency is on: a disabled engine ignores these vars
-        // and must not fail to start over a path it will never use.
+        // but only those that will actually be used: a disabled engine, or a
+        // `tpm` source whose file paths are ignored, must not fail to start
+        // over a path it will never read.
         if enabled {
             validate_path(ENV_STORAGE_DIR, &storage_dir)?;
-            validate_path(ENV_OBK_PATH, &obk_path)?;
-            validate_path(ENV_MOBK_PATH, &mobk_path)?;
-            if let Some(p) = &pota_priv_path {
-                validate_path(ENV_POTA_PRIV, p)?;
+            if matches!(obk_source, HsmOwnerBackupKeySource::Caller) {
+                validate_path(ENV_OBK_PATH, &obk_path)?;
+                validate_path(ENV_MOBK_PATH, &mobk_path)?;
             }
-            if let Some(p) = &pota_pub_path {
-                validate_path(ENV_POTA_PUB, p)?;
+            if matches!(pota_source, HsmPotaEndorsementSource::Caller) {
+                if let Some(p) = &pota_priv_path {
+                    validate_path(ENV_POTA_PRIV, p)?;
+                }
+                if let Some(p) = &pota_pub_path {
+                    validate_path(ENV_POTA_PUB, p)?;
+                }
             }
         }
 
@@ -164,7 +168,7 @@ impl ResiliencySettings {
         };
 
         setup_storage_dir(&self.storage_dir)?;
-        let lock_path = self.storage_dir.join(LOCK_FILE_NAME);
+        let lock_path = self.storage_dir.join(crate::LOCK_FILE_NAME);
 
         Ok(Some(HsmResiliencyConfig {
             storage: Box::new(FileStorage::new(self.storage_dir)),
