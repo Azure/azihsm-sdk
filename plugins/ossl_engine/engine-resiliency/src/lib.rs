@@ -176,11 +176,12 @@ fn rename_atomic(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Cross-process / cross-thread lock backed by `flock(2)` on a lock file.
 ///
-/// Opens a new file descriptor per [`lock`](Self::lock) call: `flock(2)`
-/// operates per open-file-description, so reusing a single descriptor
-/// would let a second thread acquire the same lock immediately. Reentrant
-/// lock() on the same instance is rejected; the OS lock from the second
-/// `open` is released before returning.
+/// Opens a fresh file descriptor per [`lock`](Self::lock) call: `flock(2)`
+/// operates per open-file-description, so a distinct fd is what lets separate
+/// holders contend at the OS level. Two fds to the same file conflict even
+/// within one process, so a reentrant `lock()` would block on its own held
+/// lock; reentrancy is therefore rejected up front via the in-process
+/// `active` slot, before the (potentially blocking) OS lock is attempted.
 pub struct FileLock {
     path: PathBuf,
     active: Mutex<Option<fs::File>>,
@@ -197,6 +198,14 @@ impl FileLock {
 
 impl ResiliencyLock for FileLock {
     fn lock(&self) -> HsmResult<()> {
+        let mut guard = self.active.lock();
+        // Reject reentrancy before touching the OS lock: opening a fresh fd and
+        // calling flock again would deadlock against our own held lock, since
+        // flock locks are per open-file-description (see struct docs).
+        if guard.is_some() {
+            return Err(HsmError::InternalError);
+        }
+
         // O_NOFOLLOW + 0600: refuse a symlinked lock path and keep it
         // owner-only, matching the provider's hardened lock file.
         let file = fs::OpenOptions::new()
@@ -219,13 +228,6 @@ impl ResiliencyLock for FileLock {
         }
         file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
 
-        let mut guard = self.active.lock();
-        if guard.is_some() {
-            // Release the OS lock just acquired before rejecting the reentrant
-            // call; best-effort, since we are already returning an error.
-            let _ = file.unlock();
-            return Err(HsmError::InternalError);
-        }
         *guard = Some(file);
         Ok(())
     }
@@ -339,6 +341,20 @@ mod tests {
 
         let l = FileLock::new(fifo);
         assert!(l.lock().is_err(), "lock on a FIFO must be rejected");
+    }
+
+    #[test]
+    fn reentrant_lock_is_rejected() {
+        let scratch = Scratch::new("reent");
+        let l = FileLock::new(scratch.0.join("lock"));
+
+        l.lock().unwrap();
+        // A second lock() on the held instance must be rejected, not deadlock.
+        assert!(l.lock().is_err(), "reentrant lock must be rejected");
+        l.unlock().unwrap();
+        // Once released, locking again succeeds.
+        l.lock().unwrap();
+        l.unlock().unwrap();
     }
 
     #[test]
