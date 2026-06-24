@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <openssl/bio.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
@@ -39,6 +40,12 @@
 
 #if OPENSSL_VERSION_NUMBER >= 0x30500000L
 
+/* HSM-supported AES key sizes, in bytes. */
+#define AZIHSM_AES128_KEY_BYTES 16
+#define AZIHSM_AES192_KEY_BYTES 24
+#define AZIHSM_AES256_KEY_BYTES 32
+#define AZIHSM_AES_XTS_KEY_BYTES 64 /* an AES-256 key pair */
+
 /* Helper: map an azihsm.key_kind string to the HSM key kind + key-generation algo ID */
 static int azihsm_skey_kind_from_str(
     const char *s,
@@ -51,24 +58,39 @@ static int azihsm_skey_kind_from_str(
     {
         *kind = AZIHSM_KEY_KIND_AES;
         *keygen_algo = AZIHSM_ALGO_ID_AES_KEY_GEN;
-        *default_bytes = 32;
+        *default_bytes = AZIHSM_AES256_KEY_BYTES;
         return 1;
     }
     if (OPENSSL_strcasecmp(s, "AES-GCM") == 0)
     {
         *kind = AZIHSM_KEY_KIND_AES_GCM;
         *keygen_algo = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
-        *default_bytes = 32; /* HSM AES-GCM is 256-bit only */
+        *default_bytes = AZIHSM_AES256_KEY_BYTES; /* HSM AES-GCM is 256-bit only */
         return 1;
     }
     if (OPENSSL_strcasecmp(s, "AES-XTS") == 0)
     {
         *kind = AZIHSM_KEY_KIND_AES_XTS;
         *keygen_algo = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
-        *default_bytes = 64; /* HSM AES-XTS is a 512-bit key pair */
+        *default_bytes = AZIHSM_AES_XTS_KEY_BYTES; /* HSM AES-XTS is a 512-bit key pair */
         return 1;
     }
     return 0;
+}
+
+/* Helper: is key_bytes a length the HSM supports for this kind? */
+static bool azihsm_skey_key_bytes_supported(azihsm_key_kind kind, size_t key_bytes)
+{
+    switch (kind)
+    {
+    case AZIHSM_KEY_KIND_AES_GCM:
+        return key_bytes == AZIHSM_AES256_KEY_BYTES;
+    case AZIHSM_KEY_KIND_AES_XTS:
+        return key_bytes == AZIHSM_AES_XTS_KEY_BYTES;
+    default: /* plain AES */
+        return key_bytes == AZIHSM_AES128_KEY_BYTES || key_bytes == AZIHSM_AES192_KEY_BYTES ||
+               key_bytes == AZIHSM_AES256_KEY_BYTES;
+    }
 }
 
 /* Helper: read a UTF-8 string parameter into a fixed-size buffer (NUL-terminated) */
@@ -200,7 +222,13 @@ static void *azihsm_ossl_aes_skeymgmt_import(
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
             return NULL;
         }
-        key_bytes = default_bytes;
+        /* GCM/XTS have an HSM-fixed key length; a plain-AES masked blob's length
+         * is not derivable from the opaque bytes, so leave key_bytes = 0
+         * ("unknown") rather than guess a default. */
+        if (kind == AZIHSM_KEY_KIND_AES_GCM || kind == AZIHSM_KEY_KIND_AES_XTS)
+        {
+            key_bytes = default_bytes;
+        }
     }
 
     if (azihsm_ensure_session(provctx) != AZIHSM_STATUS_SUCCESS)
@@ -248,7 +276,7 @@ static void *azihsm_ossl_aes_skeymgmt_generate(void *vprovctx, const OSSL_PARAM 
     char kind_str[16];
     azihsm_key_kind kind = AZIHSM_KEY_KIND_AES;
     azihsm_algo_id keygen_algo = AZIHSM_ALGO_ID_AES_KEY_GEN;
-    size_t default_bytes = 32;
+    size_t default_bytes = AZIHSM_AES256_KEY_BYTES;
     size_t key_bytes = 0;
     bool persist_masked = false;
     uint32_t bits;
@@ -317,6 +345,19 @@ static void *azihsm_ossl_aes_skeymgmt_generate(void *vprovctx, const OSSL_PARAM 
     else
     {
         key_bytes = default_bytes;
+    }
+
+    /* Reject lengths the HSM cannot honour up front, with a clear error, rather
+     * than forwarding an unsupported request and failing opaquely in the HSM. */
+    if (!azihsm_skey_key_bytes_supported(kind, key_bytes))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_KEY_LENGTH,
+            "unsupported AES key length %zu for the requested kind",
+            key_bytes
+        );
+        return NULL;
     }
 
     bits = (uint32_t)(key_bytes * 8u);

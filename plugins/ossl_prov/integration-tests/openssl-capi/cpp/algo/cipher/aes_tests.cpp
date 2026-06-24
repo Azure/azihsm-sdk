@@ -143,6 +143,131 @@ TEST_F(aes_skey, cbc_roundtrip_RequiresOpenssl35)
     EXPECT_EQ(dec, pt);
 }
 
+/// OSSL_CIPHER_PARAM_UPDATED_IV must report the post-update CBC chaining IV (the
+/// last ciphertext block), not the original init IV, so a caller can resume the
+/// chain.
+TEST_F(aes_skey, cbc_updated_iv_tracks_chaining_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, nullptr);
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-CBC");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[16];
+    for (int i = 0; i < 16; ++i)
+        iv[i] = static_cast<unsigned char>(i);
+
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+
+    // Two full blocks: the update emits 32 bytes and chains the IV forward.
+    std::vector<unsigned char> pt(32, 0x5A);
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+    ASSERT_EQ(outl, 32);
+
+    unsigned char updated[16] = { 0 };
+    OSSL_PARAM get_iv[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, updated, sizeof(updated)),
+        OSSL_PARAM_construct_end(),
+    };
+    ASSERT_EQ(EVP_CIPHER_CTX_get_params(ectx.get(), get_iv), 1);
+
+    // The chained IV is the last ciphertext block produced so far, and has moved
+    // on from the original init IV.
+    EXPECT_EQ(std::memcmp(updated, ct.data() + 16, 16), 0)
+        << "UPDATED_IV must equal the last ciphertext block";
+    EXPECT_NE(std::memcmp(updated, iv, 16), 0) << "UPDATED_IV must not be the init IV";
+}
+
+/// A cipher context cannot be cloned faithfully once data processing has begun
+/// (CBC carries chaining state), so EVP_CIPHER_CTX_copy() must fail mid-stream
+/// rather than produce a half-copied context; copying a fresh context is fine.
+TEST_F(aes_skey, dupctx_after_update_rejected_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, nullptr);
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-CBC");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[16] = { 0 };
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+
+    // A copy before any data has been fed is allowed.
+    EvpCipherCtxPtr fresh(EVP_CIPHER_CTX_new());
+    EXPECT_EQ(EVP_CIPHER_CTX_copy(fresh.get(), ectx.get()), 1)
+        << "copying a freshly-initialised context should succeed";
+
+    // Feed a block; the chaining state now makes a faithful copy impossible.
+    std::vector<unsigned char> pt(16, 0x11);
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+
+    EvpCipherCtxPtr mid(EVP_CIPHER_CTX_new());
+    EXPECT_NE(EVP_CIPHER_CTX_copy(mid.get(), ectx.get()), 1)
+        << "copying a mid-stream context must fail";
+}
+
+/// Reusing an EVP_CIPHER_CTX via a second EVP_CipherInit_SKEY must fully reset
+/// per-operation state (CBC chaining IV, buffered sub-block): the re-initialised
+/// context must produce the same ciphertext as a fresh one.
+TEST_F(aes_skey, cbc_reinit_resets_state_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, nullptr);
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-CBC");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv1[16];
+    unsigned char iv2[16];
+    for (int i = 0; i < 16; ++i)
+    {
+        iv1[i] = static_cast<unsigned char>(i);
+        iv2[i] = static_cast<unsigned char>(0xF0 + i);
+    }
+    const std::string msg = "reuse the same context!!";
+    std::vector<unsigned char> pt(msg.begin(), msg.end());
+
+    auto encrypt = [&](EVP_CIPHER_CTX *c, const unsigned char *iv) {
+        EXPECT_EQ(EVP_CipherInit_SKEY(c, cipher.get(), skey.get(), iv, 16, 1, nullptr), 1);
+        std::vector<unsigned char> ct(pt.size() + 16);
+        int outl = 0;
+        int total = 0;
+        EXPECT_EQ(EVP_CipherUpdate(c, ct.data(), &outl, pt.data(), static_cast<int>(pt.size())), 1);
+        total = outl;
+        EXPECT_EQ(EVP_CipherFinal_ex(c, ct.data() + total, &outl), 1);
+        total += outl;
+        ct.resize(static_cast<size_t>(total));
+        return ct;
+    };
+
+    // First operation with iv1, then RE-INIT the same context with iv2.
+    EvpCipherCtxPtr ctx(EVP_CIPHER_CTX_new());
+    encrypt(ctx.get(), iv1);
+    std::vector<unsigned char> reused = encrypt(ctx.get(), iv2);
+
+    // A fresh context with iv2 must produce identical ciphertext.
+    EvpCipherCtxPtr fresh(EVP_CIPHER_CTX_new());
+    std::vector<unsigned char> clean = encrypt(fresh.get(), iv2);
+
+    EXPECT_EQ(reused, clean) << "re-init must reset CBC state to match a fresh context";
+}
+
 // ---------------------------------------------------------------------------
 // AES-GCM (AEAD tag + AAD)
 // ---------------------------------------------------------------------------
@@ -297,6 +422,146 @@ TEST_F(aes_skey, gcm_bad_tag_rejected_RequiresOpenssl35)
     EXPECT_FALSE(upd == 1 && fin == 1) << "GCM accepted a corrupted tag";
 }
 
+/// AES-GCM must never encrypt under an unset (NULL) nonce.  This provider has no
+/// post-init IV parameter, so a NULL IV is unrecoverable: init must fail closed
+/// rather than silently use an all-zero nonce (a catastrophic reuse hazard).
+TEST_F(aes_skey, gcm_missing_iv_rejected_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, "AES-GCM");
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-GCM");
+    ASSERT_NE(cipher, nullptr);
+
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_NE(ectx, nullptr);
+    EXPECT_NE(EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), nullptr, 0, 1, nullptr), 1)
+        << "GCM encrypt-init with a NULL IV must fail, not default to a zero nonce";
+}
+
+/// AES-GCM decrypt verifies the tag inside the single HSM operation, so feeding
+/// ciphertext before the tag is set must fail clearly instead of decrypting
+/// against an unset (zero) tag.
+TEST_F(aes_skey, gcm_decrypt_without_tag_rejected_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, "AES-GCM");
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-GCM");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[12];
+    for (int i = 0; i < 12; ++i)
+        iv[i] = static_cast<unsigned char>(i);
+    const std::string msg = "tag before data";
+    std::vector<unsigned char> pt(msg.begin(), msg.end());
+
+    // Encrypt to obtain valid ciphertext (the tag is intentionally discarded).
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    int total = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+    total = outl;
+    ASSERT_EQ(EVP_CipherFinal_ex(ectx.get(), ct.data() + total, &outl), 1);
+    total += outl;
+    ct.resize(static_cast<size_t>(total));
+
+    // Decrypt WITHOUT setting the tag: the ciphertext update must fail.
+    EvpCipherCtxPtr dctx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(dctx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 0, nullptr),
+        1
+    );
+    std::vector<unsigned char> dec(ct.size() + 16);
+    EXPECT_NE(
+        EVP_CipherUpdate(dctx.get(), dec.data(), &outl, ct.data(), static_cast<int>(ct.size())),
+        1
+    ) << "GCM decrypt without a tag must fail, not run against a zero tag";
+}
+
+/// A truncated GCM tag read (a leading prefix of the full 16-byte tag) must be
+/// honoured rather than rejected.
+TEST_F(aes_skey, gcm_tag_truncation_supported_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, "AES-GCM");
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-GCM");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[12] = { 0 };
+    const std::string msg = "truncate my tag";
+    std::vector<unsigned char> pt(msg.begin(), msg.end());
+
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    int total = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+    total = outl;
+    ASSERT_EQ(EVP_CipherFinal_ex(ectx.get(), ct.data() + total, &outl), 1);
+
+    unsigned char full[16] = { 0 };
+    OSSL_PARAM get_full[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, full, sizeof(full)),
+        OSSL_PARAM_construct_end(),
+    };
+    ASSERT_EQ(EVP_CIPHER_CTX_get_params(ectx.get(), get_full), 1);
+
+    unsigned char trunc[12] = { 0 };
+    OSSL_PARAM get_trunc[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, trunc, sizeof(trunc)),
+        OSSL_PARAM_construct_end(),
+    };
+    ASSERT_EQ(EVP_CIPHER_CTX_get_params(ectx.get(), get_trunc), 1)
+        << "a 12-byte (truncated) GCM tag read must be accepted";
+    EXPECT_EQ(std::memcmp(full, trunc, sizeof(trunc)), 0)
+        << "truncated tag must be the leading prefix of the full tag";
+}
+
+/// GCM AAD supplied after the (one-shot) data update must be rejected: it could
+/// not have been folded into the authentication tag.
+TEST_F(aes_skey, gcm_aad_after_data_rejected_RequiresOpenssl35)
+{
+    EvpSkeyPtr skey = generate_skey(prov_.libctx(), 32, "AES-GCM");
+    ASSERT_NE(skey, nullptr);
+    EvpCipherPtr cipher = fetch_cipher(prov_.libctx(), "AES-256-GCM");
+    ASSERT_NE(cipher, nullptr);
+
+    unsigned char iv[12] = { 0 };
+    const std::string msg = "data first";
+    std::vector<unsigned char> pt(msg.begin(), msg.end());
+
+    EvpCipherCtxPtr ectx(EVP_CIPHER_CTX_new());
+    ASSERT_EQ(
+        EVP_CipherInit_SKEY(ectx.get(), cipher.get(), skey.get(), iv, sizeof(iv), 1, nullptr),
+        1
+    );
+    std::vector<unsigned char> ct(pt.size() + 16);
+    int outl = 0;
+    ASSERT_EQ(
+        EVP_CipherUpdate(ectx.get(), ct.data(), &outl, pt.data(), static_cast<int>(pt.size())),
+        1
+    );
+
+    // Feeding AAD (out == NULL) after the data one-shot must fail.
+    const unsigned char aad[4] = { 1, 2, 3, 4 };
+    EXPECT_NE(EVP_CipherUpdate(ectx.get(), nullptr, &outl, aad, sizeof(aad)), 1)
+        << "AAD after the GCM data one-shot must be rejected";
+}
+
 // ---------------------------------------------------------------------------
 // AES-XTS (double-length key)
 // ---------------------------------------------------------------------------
@@ -374,6 +639,20 @@ TEST_F(aes_skey, opaque_key_not_exportable_RequiresOpenssl35)
     size_t raw_len = 0;
     EXPECT_EQ(EVP_SKEY_get0_raw_key(skey.get(), &raw, &raw_len), 0)
         << "opaque HSM key must not export raw bytes";
+}
+
+/// Key generation must reject lengths the HSM cannot honour, with a clear early
+/// failure, while a supported length still succeeds.
+TEST_F(aes_skey, generate_rejects_unsupported_key_length_RequiresOpenssl35)
+{
+    // AES-GCM is 256-bit only.
+    EXPECT_EQ(generate_skey(prov_.libctx(), 16, "AES-GCM"), nullptr)
+        << "AES-GCM with a 16-byte key must be rejected";
+    // Plain AES accepts only 16/24/32 bytes.
+    EXPECT_EQ(generate_skey(prov_.libctx(), 20, nullptr), nullptr)
+        << "AES with a 20-byte key must be rejected";
+    // A supported length still generates.
+    EXPECT_NE(generate_skey(prov_.libctx(), 32, nullptr), nullptr) << "AES-256 must still generate";
 }
 
 #endif // OPENSSL_VERSION_NUMBER >= 0x30500000L

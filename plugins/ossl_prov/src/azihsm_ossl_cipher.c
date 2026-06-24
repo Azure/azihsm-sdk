@@ -150,6 +150,22 @@ static void *azihsm_ossl_cipher_dupctx(void *vctx)
         return NULL;
     }
 
+    /* A context that has begun processing carries state that cannot be cloned
+     * faithfully: CBC's chaining IV + buffered sub-block, an open HSM streaming
+     * context (decrypt), accumulated GCM AAD, or a completed one-shot.  Rather
+     * than emit a half-copied (and therefore wrong) duplicate, refuse to dup once
+     * any data has been fed; duplicating a freshly-initialised context is fine. */
+    if (src->cbc_iv_init || src->part_len != 0 || src->stream_active || src->oneshot_done ||
+        src->aad != NULL)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_NOT_SUPPORTED,
+            "cannot duplicate a cipher context after data processing has begun"
+        );
+        return NULL;
+    }
+
     dst = OPENSSL_zalloc(sizeof(AZIHSM_CIPHER_CTX));
     if (dst == NULL)
     {
@@ -157,8 +173,9 @@ static void *azihsm_ossl_cipher_dupctx(void *vctx)
         return NULL;
     }
 
-    /* Copy configuration + key binding + IV; in-flight streaming state and
-     * accumulated AAD are intentionally NOT shared (the duplicate restarts). */
+    /* Copy configuration + key binding + IV + any pre-set GCM tag.  Reachable
+     * only before data processing (see the guard above), so there is no in-flight
+     * CBC chain, AAD, or streaming context to carry over. */
     dst->provctx = src->provctx;
     dst->mode = src->mode;
     dst->evp_mode = src->evp_mode;
@@ -171,7 +188,6 @@ static void *azihsm_ossl_cipher_dupctx(void *vctx)
     dst->pad = src->pad;
     dst->have_iv = src->have_iv;
     memcpy(dst->iv, src->iv, sizeof(dst->iv));
-    memcpy(&dst->cbc_params, &src->cbc_params, sizeof(dst->cbc_params));
     memcpy(dst->tag, src->tag, sizeof(dst->tag));
     dst->tag_set = src->tag_set;
     dst->tag_avail = src->tag_avail;
@@ -222,11 +238,18 @@ static int azihsm_ossl_cipher_skey_init(
         return OSSL_FAILURE;
     }
 
-    /* Re-init: drop any previous streaming context / accumulated state. */
+    /* Re-init: drop every per-operation state so a reused EVP_CIPHER_CTX starts
+     * clean — no stale CBC chaining IV / buffered sub-block, and no carried-over
+     * GCM tag or IV from the previous operation. */
     azihsm_ossl_release_hsm_ctx(&ctx->stream_ctx);
     ctx->stream_active = false;
     ctx->oneshot_done = false;
+    ctx->have_iv = false;
     ctx->tag_avail = false;
+    ctx->tag_set = false;
+    ctx->cbc_iv_init = false;
+    ctx->part_len = 0;
+    OPENSSL_cleanse(ctx->part, sizeof(ctx->part));
     if (ctx->aad != NULL)
     {
         OPENSSL_clear_free(ctx->aad, ctx->aad_len);
@@ -248,9 +271,12 @@ static int azihsm_ossl_cipher_skey_init(
         memcpy(ctx->iv, iv, ivlen);
         ctx->have_iv = true;
     }
-    else if (ctx->mode != AZIHSM_CIPHER_MODE_GCM)
+    else
     {
-        /* CBC and XTS require an IV/tweak. */
+        /* Every mode binds its IV/nonce/tweak at init; this provider exposes no
+         * post-init IV-setting parameter, so a missing IV is unrecoverable.  For
+         * GCM in particular, proceeding with an unset (all-zero) nonce would be a
+         * silent nonce-reuse hazard, so reject it here rather than fail open. */
         ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
         return OSSL_FAILURE;
     }
@@ -572,6 +598,13 @@ static int azihsm_ossl_cipher_oneshot(
         );
         return OSSL_FAILURE;
     }
+    /* The IV/nonce/tweak is bound at skey_init; never run the transform with an
+     * unset (zero) IV (mirrors the CBC have_iv guards). */
+    if (!ctx->have_iv)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NOT_INSTANTIATED);
+        return OSSL_FAILURE;
+    }
     /* GCM and XTS do not expand: output length equals input length, and the
      * azihsm FFI requires the output buffer length to be exactly that. */
     if (inl > UINT32_MAX || outsize < inl)
@@ -696,6 +729,18 @@ static int azihsm_ossl_cipher_update(
     /* GCM AAD is fed as an update with a NULL output buffer. */
     if (ctx->mode == AZIHSM_CIPHER_MODE_GCM && out == NULL)
     {
+        /* The one-shot already authenticated the AAD captured so far; AAD added
+         * afterwards would never enter the tag, so reject it instead of silently
+         * accepting it. */
+        if (ctx->oneshot_done)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_NOT_SUPPORTED,
+                "AAD cannot be supplied after the AES-GCM data has been processed"
+            );
+            return OSSL_FAILURE;
+        }
         return azihsm_ossl_gcm_accumulate_aad(ctx, in, inl);
     }
 
@@ -734,6 +779,20 @@ static int azihsm_ossl_cipher_update(
         }
         *outl = (size_t)out_buf.len;
         return OSSL_SUCCESS;
+    }
+
+    /* GCM decrypt verifies the tag inside the single HSM operation, so the tag
+     * must already be set when the ciphertext arrives.  Unlike software GCM, we
+     * cannot decrypt now and verify a tag supplied later at final(); fail clearly
+     * rather than run the one-shot against an unset (zero) tag. */
+    if (ctx->mode == AZIHSM_CIPHER_MODE_GCM && !ctx->enc && !ctx->tag_set)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_TAG,
+            "AES-GCM decrypt requires the authentication tag to be set before the ciphertext"
+        );
+        return OSSL_FAILURE;
     }
 
     /* GCM / XTS: one-shot over the supplied data. */
@@ -1004,10 +1063,20 @@ static int azihsm_ossl_cipher_get_ctx_params(void *vctx, OSSL_PARAM params[])
         return OSSL_FAILURE;
     }
 
+    /* UPDATED_IV reflects the IV *after* the data processed so far.  For CBC the
+     * HSM rewrites cbc_params.iv to the last ciphertext block on each update, so
+     * once chaining has started that is the live value; before any update (and
+     * for GCM/XTS) it equals the original IV. */
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
-    if (p != NULL && ctx->have_iv && !OSSL_PARAM_set_octet_string(p, ctx->iv, ctx->ivlen))
+    if (p != NULL && ctx->have_iv)
     {
-        return OSSL_FAILURE;
+        const unsigned char *updated_iv = (ctx->mode == AZIHSM_CIPHER_MODE_CBC && ctx->cbc_iv_init)
+                                              ? ctx->cbc_params.iv
+                                              : ctx->iv;
+        if (!OSSL_PARAM_set_octet_string(p, updated_iv, ctx->ivlen))
+        {
+            return OSSL_FAILURE;
+        }
     }
 
     if (ctx->mode == AZIHSM_CIPHER_MODE_GCM)
@@ -1026,8 +1095,10 @@ static int azihsm_ossl_cipher_get_ctx_params(void *vctx, OSSL_PARAM params[])
                 ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_TAG);
                 return OSSL_FAILURE;
             }
-            if (p->data_size != AZIHSM_AES_GCM_TAG_SIZE ||
-                !OSSL_PARAM_set_octet_string(p, ctx->tag, AZIHSM_AES_GCM_TAG_SIZE))
+            /* GCM tags may be truncated to a leading prefix; the HSM always
+             * produces the full 16-byte tag, so honour any request in (0, 16]. */
+            if (p->data_size == 0 || p->data_size > AZIHSM_AES_GCM_TAG_SIZE ||
+                !OSSL_PARAM_set_octet_string(p, ctx->tag, p->data_size))
             {
                 ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_TAG);
                 return OSSL_FAILURE;
