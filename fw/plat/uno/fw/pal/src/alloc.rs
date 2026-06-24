@@ -35,11 +35,12 @@ pub(crate) const IO_SLOTS: usize = SRAM_IO_BUF_COUNT as usize;
 
 /// Dedicated admin/internal IO slot — the last of [`IO_SLOTS`].
 ///
-/// IIC only hands out the host slots `0..IO_SLOTS - 1`; the PAL reserves
-/// this slot for internal provisioning crypto (partition identity and
-/// enable-time keygen), so its bump heaps never collide with a concurrent
-/// host IO. It has full DMA (`SRAM_IO_BUF`) and NonDma (`DTCM_IO_BUF`)
-/// backing, like any host slot.
+/// IIC only hands out the host slots `0..ADMIN_IO_INDEX` (the first
+/// [`IO_SLOTS`]` - 1` slots); the PAL reserves this final slot for
+/// internal provisioning crypto (partition identity and enable-time
+/// keygen), so its bump heaps never collide with a concurrent host IO.
+/// It has full DMA (`SRAM_IO_BUF`) and NonDma (`DTCM_IO_BUF`) backing,
+/// like any host slot.
 pub(crate) const ADMIN_IO_INDEX: u16 = (IO_SLOTS - 1) as u16;
 
 // DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.

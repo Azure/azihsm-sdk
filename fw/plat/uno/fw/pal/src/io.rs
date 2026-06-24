@@ -57,7 +57,10 @@ const IO_Q: StaticRef<IoGsramRegs> = unsafe { StaticRef::new(IO_GSRAM_BASE as *c
 /// `IO_META[index]`, written by the IIC driver at recv time.
 #[derive(Debug)]
 pub struct UnoHsmIo {
-    /// IO_SQ slot index (0..31).
+    /// IO_SQ slot index. Host IO uses `0..ADMIN_IO_INDEX`; the reserved
+    /// admin slot (`ADMIN_IO_INDEX`, the last of `IO_SLOTS`) is used only
+    /// for PAL-internal provisioning crypto. So the valid range is
+    /// `0..=ADMIN_IO_INDEX`, not just the host range.
     index: u16,
 }
 

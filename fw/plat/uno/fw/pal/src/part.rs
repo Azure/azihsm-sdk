@@ -446,7 +446,7 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::SESSION_ENC_KEY_ID => part.se_key_id(),
             _ => return Err(HsmError::UnsupportedCmd),
         };
-        key.map(u16::from).ok_or(HsmError::KeyNotFound)
+        key.map(u16::from).ok_or(HsmError::PartPropNotFound)
     }
 
     fn part_prop_set_u16(&self, io: &impl HsmIo, id: PartPropId, value: u16) -> HsmResult<()> {
@@ -529,7 +529,7 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::ID
             | PartPropId::ID_PUB_KEY
             | PartPropId::ESTABLISH_CRED_PUB_KEY
-            | PartPropId::SESSION_ENC_PUB_KEY => Err(HsmError::KeyNotFound),
+            | PartPropId::SESSION_ENC_PUB_KEY => Err(HsmError::PartPropNotFound),
 
             // Always-present fields.
             PartPropId::NONCE => Ok(p.nonce()),

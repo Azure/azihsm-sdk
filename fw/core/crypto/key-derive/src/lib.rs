@@ -154,6 +154,12 @@ pub async fn unmask_bk_boot<P: HsmPal>(
     masked: &DmaBuf,
     out: &mut DmaBuf,
 ) -> HsmResult<()> {
+    // `out` is a trust-boundary buffer; validate its length up front so a
+    // wrong-sized caller buffer is rejected rather than panicking in the
+    // final `copy_from_slice`.
+    if out.len() != BK_BOOT_LEN {
+        return Err(HsmError::InvalidArg);
+    }
     // Unmask decrypts in place, so work on a mutable copy.
     let masked_buf = pal.dma_alloc(io, masked.len())?;
     masked_buf.copy_from_slice(masked);
