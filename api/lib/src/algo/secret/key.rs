@@ -55,13 +55,11 @@ impl HsmGenericSecretKey {
     fn check_key_usage(props: &HsmKeyProps) -> bool {
         //check if key usage flags are valid for the key kind
         match props.kind() {
-            HsmKeyKind::SharedSecret => props.flags().contains(HsmKeyFlags::DERIVE),
-            HsmKeyKind::Aes => props
-                .flags()
-                .contains(HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT),
-            HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => props
-                .flags()
-                .contains(HsmKeyFlags::SIGN | HsmKeyFlags::VERIFY),
+            HsmKeyKind::SharedSecret => props.can_derive(),
+            HsmKeyKind::Aes => props.can_encrypt() && props.can_decrypt(),
+            HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
+                props.can_sign() && props.can_verify()
+            }
             _ => false,
         }
     }
