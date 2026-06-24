@@ -20,7 +20,7 @@
 //! Cross-test isolation comes from `open_dev`'s factory-reset; no
 //! per-test cleanup is required.
 
-#![cfg(feature = "emu")]
+#![cfg(any(feature = "emu", feature = "sock"))]
 
 use azihsm_ddi_tbor_types::SessionType;
 

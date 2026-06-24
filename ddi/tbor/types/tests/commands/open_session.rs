@@ -22,7 +22,7 @@
 //!   second finish against an already-completed slot.
 //! * Multiple concurrent sessions return distinct session ids.
 
-#![cfg(feature = "emu")]
+#![cfg(any(feature = "emu", feature = "sock"))]
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborOpenSessionFinishReq;

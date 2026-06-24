@@ -89,6 +89,8 @@ pub const MAX_TOC: u8 = 16;
 enum Kind {
     Request = 1,
     Response = 2,
+    EraseRequest = 3,
+    EraseResponse = 4,
 }
 
 impl Kind {
@@ -96,9 +98,55 @@ impl Kind {
         match v {
             1 => Ok(Self::Request),
             2 => Ok(Self::Response),
+            3 => Ok(Self::EraseRequest),
+            4 => Ok(Self::EraseResponse),
             other => Err(ProtoError::BadKind(other)),
         }
     }
+
+    /// Whether a frame of this kind carries a 4-byte `status` immediately
+    /// after the header (true for the response-direction kinds).
+    fn has_status(self) -> bool {
+        matches!(self, Kind::Response | Kind::EraseResponse)
+    }
+}
+
+/// Public classification of a frame, recovered from its header without
+/// fully decoding the body. Lets a server peek the kind to dispatch a
+/// control frame ([`EraseRequest`]) versus a normal [`Request`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameKind {
+    /// A normal SQE-level [`Request`].
+    Request,
+    /// A [`Response`].
+    Response,
+    /// An [`EraseRequest`] control frame.
+    EraseRequest,
+    /// An [`EraseResponse`] control frame.
+    EraseResponse,
+}
+
+/// Peek a frame body's kind from its header, without decoding the rest.
+///
+/// # Errors
+///
+/// Returns [`ProtoError`] if the body is too short, has a bad magic /
+/// version, or carries an unknown kind discriminator.
+pub fn peek_kind(body: &[u8]) -> Result<FrameKind, ProtoError> {
+    let (header, _) = FrameHeader::ref_from_prefix(body)
+        .map_err(|_| ProtoError::Malformed("frame too short for header"))?;
+    if header.magic.get() != MAGIC {
+        return Err(ProtoError::BadMagic(header.magic.get()));
+    }
+    if header.version != VERSION {
+        return Err(ProtoError::BadVersion(header.version));
+    }
+    Ok(match Kind::from_u8(header.kind)? {
+        Kind::Request => FrameKind::Request,
+        Kind::Response => FrameKind::Response,
+        Kind::EraseRequest => FrameKind::EraseRequest,
+        Kind::EraseResponse => FrameKind::EraseResponse,
+    })
 }
 
 /// Logical identity of a TOC field.
@@ -316,8 +364,69 @@ impl Response {
     }
 }
 
-/// Serialize a frame body: header + TOC + data. `status` is only
-/// meaningful for responses (0 for requests).
+/// A control frame asking the server to factory-reset the device
+/// (partition disable + re-enable), restoring pristine per-test state.
+///
+/// Carries no fields — the target partition is the server's host
+/// partition. Mirrors the in-process emulator backend's `erase()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EraseRequest;
+
+impl EraseRequest {
+    /// Encode this erase request as a complete length-delimited frame.
+    pub fn encode(&self) -> Result<Vec<u8>, ProtoError> {
+        encode_frame(Kind::EraseRequest, 0, &[])
+    }
+
+    /// Decode an erase request from a complete frame body.
+    pub fn decode(body: &[u8]) -> Result<Self, ProtoError> {
+        Frame::parse(body, Kind::EraseRequest)?;
+        Ok(Self)
+    }
+
+    /// Write a complete length-delimited erase-request frame to `w`.
+    pub fn write_to(&self, w: &mut impl Write) -> Result<(), ProtoError> {
+        write_framed(w, &self.encode()?)
+    }
+
+    /// Read a complete length-delimited erase-request frame from `r`.
+    pub fn read_from(r: &mut impl Read) -> Result<Self, ProtoError> {
+        Self::decode(&read_framed(r)?)
+    }
+}
+
+/// The server's reply to an [`EraseRequest`]: a single transport-level
+/// `status` (0 = success).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EraseResponse {
+    /// 0 on success; non-zero if the reset failed.
+    pub status: u32,
+}
+
+impl EraseResponse {
+    /// Encode this erase response as a complete length-delimited frame.
+    pub fn encode(&self) -> Result<Vec<u8>, ProtoError> {
+        encode_frame(Kind::EraseResponse, self.status, &[])
+    }
+
+    /// Decode an erase response from a complete frame body.
+    pub fn decode(body: &[u8]) -> Result<Self, ProtoError> {
+        let frame = Frame::parse(body, Kind::EraseResponse)?;
+        Ok(Self {
+            status: frame.status,
+        })
+    }
+
+    /// Write a complete length-delimited erase-response frame to `w`.
+    pub fn write_to(&self, w: &mut impl Write) -> Result<(), ProtoError> {
+        write_framed(w, &self.encode()?)
+    }
+
+    /// Read a complete length-delimited erase-response frame from `r`.
+    pub fn read_from(r: &mut impl Read) -> Result<Self, ProtoError> {
+        Self::decode(&read_framed(r)?)
+    }
+}
 fn encode_frame(
     kind: Kind,
     status: u32,
@@ -340,7 +449,7 @@ fn encode_frame(
         _rsvd: 0,
     };
     body.extend_from_slice(header.as_bytes());
-    if kind == Kind::Response {
+    if kind.has_status() {
         body.extend_from_slice(U32::new(status).as_bytes());
     }
 
@@ -412,7 +521,7 @@ impl<'a> Frame<'a> {
             return Err(ProtoError::TooManyToc(toc_count));
         }
 
-        let status = if kind == Kind::Response {
+        let status = if kind.has_status() {
             let (s, r) = U32::ref_from_prefix(rest)
                 .map_err(|_| ProtoError::Malformed("frame too short for status"))?;
             rest = r;

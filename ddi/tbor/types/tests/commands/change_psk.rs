@@ -24,7 +24,7 @@
 //!   shipped through this session → `TborStatus::AeadEnvelopeAuthFailed`.
 //! * Plaintext that is not exactly `PSK_LEN` bytes → `TborStatus::InvalidArg`.
 
-#![cfg(feature = "emu")]
+#![cfg(any(feature = "emu", feature = "sock"))]
 
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;

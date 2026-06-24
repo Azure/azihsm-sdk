@@ -24,7 +24,7 @@
 //! live in this module and are `pub(super)` so each submodule can
 //! reach them via `super::*`.
 
-#![cfg(feature = "emu")]
+#![cfg(any(feature = "emu", feature = "sock"))]
 
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;

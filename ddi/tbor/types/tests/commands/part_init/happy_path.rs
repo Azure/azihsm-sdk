@@ -106,6 +106,10 @@ fn part_init_smoke_roundtrip_emu() {
     // Alias CA in the std PAL emu cert store).  Cross-binds the
     // report by also asserting its embedded COSE_Key `pk_x`/`pk_y`
     // matches the PTA pubkey we just extracted from the CSR.
+    //
+    // Emu-only: it depends on the std PAL's emu cert store, which the
+    // firmware (identity-only, no cert chain) does not provide.
+    #[cfg(feature = "emu")]
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
 
     // 2. Second PartInit on a freshly-opened session must be rejected
@@ -144,6 +148,10 @@ fn part_init_smoke_roundtrip_emu() {
 ///    the CSR's SubjectPublicKeyInfo — proving the report
 ///    actually attests the same key the CSR is requesting a cert
 ///    for.
+///
+/// Emu-only: depends on the std PAL's emu cert store (slot-0 cert
+/// chain), which the firmware (identity-only) does not provide.
+#[cfg(feature = "emu")]
 fn verify_pta_report(ctx: &TestCtx, pta_report: &[u8], pta_spki_der: &[u8]) {
     use azihsm_crypto::DerEccPublicKey;
     use azihsm_ddi_mbor_sim::attestation::KeyAttester;

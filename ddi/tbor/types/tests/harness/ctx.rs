@@ -75,7 +75,7 @@ impl TestCtx {
     /// Factory-reset the partition. Available only on `emu`; the
     /// determinism tests in `commands::part_init` call this between
     /// cold-restart iterations.
-    #[cfg(feature = "emu")]
+    #[cfg(any(feature = "emu", feature = "sock"))]
     pub fn erase(&self) -> DdiResult<()> {
         self.dev.erase()
     }

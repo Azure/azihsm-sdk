@@ -26,6 +26,8 @@ use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
+use azihsm_ddi_sock_proto::EraseRequest;
+use azihsm_ddi_sock_proto::EraseResponse;
 use azihsm_ddi_sock_proto::ProtoError;
 use azihsm_ddi_sock_proto::Request;
 use azihsm_ddi_sock_proto::Response;
@@ -292,7 +294,16 @@ impl DdiDev for DdiSockDev {
     }
 
     fn erase(&self) -> Result<(), DdiError> {
-        Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))
+        // Send the Erase control frame and await the server's reset ack.
+        let resp: EraseResponse = {
+            let mut stream = self.stream.lock();
+            EraseRequest.write_to(&mut *stream).map_err(map_proto_err)?;
+            EraseResponse::read_from(&mut *stream).map_err(map_proto_err)?
+        };
+        if resp.status != 0 {
+            return Err(DdiError::DdiError(resp.status));
+        }
+        Ok(())
     }
 }
 

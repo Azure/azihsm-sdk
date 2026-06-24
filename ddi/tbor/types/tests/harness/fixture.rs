@@ -28,7 +28,7 @@ use std::ops::Deref;
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock"))]
 use azihsm_ddi_interface::DdiDev;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
@@ -78,7 +78,7 @@ pub fn open_dev() -> TestDev {
     let infos = ddi.dev_info_list();
     let info = infos.first().expect("backend should advertise a device");
     let dev = ddi.open_dev(&info.path).expect("open test backend device");
-    #[cfg(feature = "emu")]
+    #[cfg(any(feature = "emu", feature = "sock"))]
     dev.erase()
         .expect("open_dev: factory-reset emu backend before test");
     TestDev { dev, _guard: guard }
