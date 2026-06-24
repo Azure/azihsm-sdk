@@ -62,6 +62,9 @@ pub enum ConfigError {
 
     #[error("resiliency storage directory {0:?} could not be created or is insecure")]
     StorageDir(PathBuf),
+
+    #[error("env var {0} has unsafe path {1:?} (must be non-empty and contain no \"..\")")]
+    UnsafePath(&'static str, PathBuf),
 }
 
 /// Parsed view of the engine's resiliency-related environment variables.
@@ -84,23 +87,35 @@ pub struct ResiliencySettings {
 
 impl ResiliencySettings {
     /// Read settings from the process environment, applying defaults from
-    /// the module docs. Returns an error for malformed values; missing
-    /// optional vars fall back to their defaults.
+    /// the module docs. An empty value is treated as unset (falls back to the
+    /// default, or `None` for optional vars). Returns an error for malformed
+    /// values or unsafe paths (empty or containing `..`).
     pub fn from_env() -> Result<Self, ConfigError> {
         let enabled = parse_bool(ENV_ENABLED, &std::env::var(ENV_ENABLED).unwrap_or_default())?;
-        let storage_dir = std::env::var(ENV_STORAGE_DIR)
+        let storage_dir = env_nonempty(ENV_STORAGE_DIR)
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_STORAGE_DIR));
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_DIR));
         let obk_source = parse_obk_source(&std::env::var(ENV_OBK_SOURCE).unwrap_or_default())?;
-        let obk_path = std::env::var(ENV_OBK_PATH)
+        let obk_path = env_nonempty(ENV_OBK_PATH)
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_OBK_PATH));
-        let mobk_path = std::env::var(ENV_MOBK_PATH)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_OBK_PATH));
+        let mobk_path = env_nonempty(ENV_MOBK_PATH)
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_MOBK_PATH));
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_MOBK_PATH));
         let pota_source = parse_pota_source(&std::env::var(ENV_POTA_SOURCE).unwrap_or_default())?;
-        let pota_priv_path = std::env::var(ENV_POTA_PRIV).ok().map(PathBuf::from);
-        let pota_pub_path = std::env::var(ENV_POTA_PUB).ok().map(PathBuf::from);
+        let pota_priv_path = env_nonempty(ENV_POTA_PRIV).map(PathBuf::from);
+        let pota_pub_path = env_nonempty(ENV_POTA_PUB).map(PathBuf::from);
+
+        // Reject unsafe paths up front (mirrors the provider's path_is_safe).
+        validate_path(ENV_STORAGE_DIR, &storage_dir)?;
+        validate_path(ENV_OBK_PATH, &obk_path)?;
+        validate_path(ENV_MOBK_PATH, &mobk_path)?;
+        if let Some(p) = &pota_priv_path {
+            validate_path(ENV_POTA_PRIV, p)?;
+        }
+        if let Some(p) = &pota_pub_path {
+            validate_path(ENV_POTA_PUB, p)?;
+        }
 
         Ok(Self {
             enabled,
@@ -190,6 +205,24 @@ fn parse_pota_source(raw: &str) -> Result<HsmPotaEndorsementSource, ConfigError>
             "caller or tpm",
         )),
     }
+}
+
+/// Read an env var, treating unset or empty as "not provided" (mirrors the
+/// provider's `dir_env[0] != '\0'` check).
+fn env_nonempty(var: &str) -> Option<String> {
+    match std::env::var(var) {
+        Ok(v) if !v.is_empty() => Some(v),
+        _ => None,
+    }
+}
+
+/// Reject an empty path or one containing `..`. Mirrors the provider's
+/// `azihsm_path_is_safe` so a configured path can't escape its intended tree.
+fn validate_path(var: &'static str, path: &Path) -> Result<(), ConfigError> {
+    if path.as_os_str().is_empty() || path.to_string_lossy().contains("..") {
+        return Err(ConfigError::UnsafePath(var, path.to_path_buf()));
+    }
+    Ok(())
 }
 
 /// Current process UID; `getuid(2)` takes no arguments and cannot fail.
@@ -323,6 +356,16 @@ mod tests {
             parse_bool("X", "maybe"),
             Err(ConfigError::InvalidValue("X", _, _))
         ));
+    }
+
+    #[test]
+    fn validate_path_rejects_unsafe_and_empty() {
+        assert!(validate_path("X", Path::new("")).is_err());
+        assert!(validate_path("X", Path::new("..")).is_err());
+        assert!(validate_path("X", Path::new("../escape")).is_err());
+        assert!(validate_path("X", Path::new("/var/lib/azihsm/../x")).is_err());
+        assert!(validate_path("X", Path::new("/var/lib/azihsm/resiliency")).is_ok());
+        assert!(validate_path("X", Path::new("./obk.bin")).is_ok());
     }
 
     #[test]
