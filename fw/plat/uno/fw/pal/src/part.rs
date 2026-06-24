@@ -174,7 +174,7 @@ impl UnoHsmPal {
         attrs: HsmVaultKeyAttrs,
         pct: HsmEccPct,
     ) -> HsmResult<HsmKeyId> {
-        let part = PartStore::partition(pid)?;
+        let mut part = PartStore::partition(pid)?;
         let admin_io = UnoHsmIo::admin(pid);
         let alloc = UnoScopedAlloc::for_admin(self);
 
@@ -243,7 +243,7 @@ impl UnoHsmPal {
     /// storing the private key in the partition's vault and caching the
     /// ID, key handle, and public key in the partition table.
     async fn provision_identity(&self, pid: HsmPartId) -> HsmResult<()> {
-        let part = PartStore::partition(pid)?;
+        let mut part = PartStore::partition(pid)?;
 
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
