@@ -61,14 +61,18 @@ impl From<SessionControlKind> for u8 {
 
 mod change_psk;
 mod close_session;
+mod finalize_part;
 mod get_api_rev;
+mod get_part_id;
 mod open_session_finish;
 mod open_session_init;
 mod part_init;
 mod status;
 pub use change_psk::*;
 pub use close_session::*;
+pub use finalize_part::*;
 pub use get_api_rev::*;
+pub use get_part_id::*;
 pub use open_session_finish::*;
 pub use open_session_init::*;
 pub use part_init::*;

@@ -10,6 +10,7 @@ mod hmac;
 mod key;
 mod masked_key;
 mod partition;
+mod partition_ex;
 mod rsa;
 mod session;
 mod session_ex;
