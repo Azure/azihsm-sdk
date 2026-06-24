@@ -94,14 +94,24 @@ impl ResiliencySettings {
         let storage_dir = env_nonempty(ENV_STORAGE_DIR)
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_DIR));
-        let obk_source = parse_obk_source(&std::env::var(ENV_OBK_SOURCE).unwrap_or_default())?;
+        // Sources parse (and can error on a bad value) only when enabled; a
+        // disabled engine must not fail over a var it will never use.
+        let obk_source = if enabled {
+            parse_obk_source(&std::env::var(ENV_OBK_SOURCE).unwrap_or_default())?
+        } else {
+            HsmOwnerBackupKeySource::Caller
+        };
         let obk_path = env_nonempty(ENV_OBK_PATH)
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_OBK_PATH));
         let mobk_path = env_nonempty(ENV_MOBK_PATH)
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_MOBK_PATH));
-        let pota_source = parse_pota_source(&std::env::var(ENV_POTA_SOURCE).unwrap_or_default())?;
+        let pota_source = if enabled {
+            parse_pota_source(&std::env::var(ENV_POTA_SOURCE).unwrap_or_default())?
+        } else {
+            HsmPotaEndorsementSource::Caller
+        };
         let pota_priv_path = env_nonempty(ENV_POTA_PRIV).map(PathBuf::from);
         let pota_pub_path = env_nonempty(ENV_POTA_PUB).map(PathBuf::from);
 
