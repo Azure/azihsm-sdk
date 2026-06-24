@@ -3,9 +3,6 @@
 
 //! File-backed [`PotaEndorsementCallback`] and [`MobkProviderCallback`].
 
-use std::fs::OpenOptions;
-use std::io::Read;
-use std::path::Path;
 use std::path::PathBuf;
 
 use azihsm_api::HsmError;
@@ -25,7 +22,9 @@ use zeroize::Zeroizing;
 /// Bytes per coordinate of a P-384 point / ECDSA component.
 const P384_COORD_LEN: usize = 48;
 
-/// Length of the OBK (owner backup key), enforced on load.
+/// Minimum length of the masked OBK accepted on load. The native bridge
+/// enforces `len >= OBK_SIZE` (a masked blob may be larger), so anything
+/// shorter is rejected.
 const OBK_LEN: usize = 48;
 
 /// POTA endorsement that signs the device's PID public key with a
@@ -53,8 +52,10 @@ impl PotaEndorsementCallback for FilePotaCallback {
         _pid_cert_chain_pem: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData> {
         // Private key is zeroized on drop; the public key is not secret.
-        let priv_der = Zeroizing::new(read_regular_no_follow(&self.priv_path).map_err(io_to_hsm)?);
-        let pub_der = read_regular_no_follow(&self.pub_path).map_err(io_to_hsm)?;
+        let priv_der = Zeroizing::new(
+            crate::read_regular_hardened(&self.priv_path).map_err(crate::io_to_hsm)?,
+        );
+        let pub_der = crate::read_regular_hardened(&self.pub_path).map_err(crate::io_to_hsm)?;
 
         let point_bytes = pid_pub_key_uncompressed(pid_pub_key_der)?;
         let sig_raw = ecdsa_sha384_raw(&priv_der, &point_bytes)?;
@@ -63,8 +64,8 @@ impl PotaEndorsementCallback for FilePotaCallback {
     }
 }
 
-/// OBK provider that re-reads the OBK file on demand. The file must be
-/// exactly [`OBK_LEN`] bytes; anything else is rejected as invalid.
+/// OBK provider that re-reads the OBK file on demand. The file must be at
+/// least [`OBK_LEN`] bytes; anything shorter is rejected as invalid.
 pub struct FileMobkCallback {
     path: PathBuf,
 }
@@ -77,8 +78,8 @@ impl FileMobkCallback {
 
 impl MobkProviderCallback for FileMobkCallback {
     fn get_mobk(&self) -> HsmResult<Vec<u8>> {
-        let mut bytes = read_regular_no_follow(&self.path).map_err(io_to_hsm)?;
-        if bytes.len() != OBK_LEN {
+        let mut bytes = crate::read_regular_hardened(&self.path).map_err(crate::io_to_hsm)?;
+        if bytes.len() < OBK_LEN {
             // Scrub the rejected buffer; it may hold a truncated real OBK.
             // The accepted buffer is returned to the SDK, whose
             // HsmOwnerBackupKeyConfig zeroizes its own copy on drop.
@@ -87,39 +88,6 @@ impl MobkProviderCallback for FileMobkCallback {
         }
         Ok(bytes)
     }
-}
-
-fn io_to_hsm(e: std::io::Error) -> HsmError {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        HsmError::NotFound
-    } else {
-        HsmError::InternalError
-    }
-}
-
-/// Read a file that must be a regular file, refusing to follow a symlink at
-/// the final path component (`O_NOFOLLOW` on unix). The regular-file check
-/// is done via the opened fd's metadata, so there is no TOCTOU window. This
-/// mirrors the provider's hardened secret-material loads
-/// (`load_credentials_from_file` / `resiliency_get_obk`).
-fn read_regular_no_follow(path: &Path) -> std::io::Result<Vec<u8>> {
-    let mut opts = OpenOptions::new();
-    opts.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file = opts.open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ));
-    }
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(buf)
 }
 
 /// Map any OpenSSL error to [`HsmError::InternalError`]. Details land in
@@ -247,13 +215,26 @@ mod tests {
     }
 
     #[test]
-    fn obk_wrong_size_rejected() {
+    fn obk_too_short_rejected() {
         let scratch = Scratch::new("obksz");
         let path = scratch.0.join("obk.bin");
-        fs::write(&path, vec![0u8; OBK_LEN + 1]).unwrap();
+        fs::write(&path, vec![0u8; OBK_LEN - 1]).unwrap();
 
         let cb = FileMobkCallback::new(path);
         assert!(matches!(cb.get_mobk(), Err(HsmError::InvalidArgument)));
+    }
+
+    #[test]
+    fn obk_larger_than_min_accepted() {
+        // A masked OBK blob may exceed OBK_LEN; the native bridge enforces
+        // `>= OBK_SIZE`, so a longer blob must pass through unchanged.
+        let scratch = Scratch::new("obkbig");
+        let path = scratch.0.join("obk.bin");
+        let blob = vec![0xBB; OBK_LEN + 16];
+        fs::write(&path, &blob).unwrap();
+
+        let cb = FileMobkCallback::new(path);
+        assert_eq!(cb.get_mobk().unwrap(), blob);
     }
 
     #[test]

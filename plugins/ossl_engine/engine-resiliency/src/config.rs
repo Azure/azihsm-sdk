@@ -21,6 +21,10 @@
 //! | `AZIHSM_POTA_PRIVATE_KEY_PATH`   | none                             | required when `POTA_SOURCE=caller` and resiliency enabled |
 //! | `AZIHSM_POTA_PUBLIC_KEY_PATH`    | none                             | same |
 
+use std::fs;
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -47,6 +51,7 @@ const DEFAULT_OBK_PATH: &str = "./obk.bin";
 const DEFAULT_MOBK_PATH: &str = "./mobk.bin";
 const LOCK_FILE_NAME: &str = ".lock";
 
+/// Error from reading the engine's resiliency environment variables.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("env var {0} contains invalid value {1:?} (expected one of {2})")]
@@ -54,6 +59,9 @@ pub enum ConfigError {
 
     #[error("env var {0} is required but unset")]
     Missing(&'static str),
+
+    #[error("resiliency storage directory {0:?} could not be created or is insecure")]
+    StorageDir(PathBuf),
 }
 
 /// Parsed view of the engine's resiliency-related environment variables.
@@ -136,6 +144,7 @@ impl ResiliencySettings {
             _ => None,
         };
 
+        setup_storage_dir(&self.storage_dir)?;
         let lock_path = self.storage_dir.join(LOCK_FILE_NAME);
 
         Ok(Some(HsmResiliencyConfig {
@@ -183,11 +192,42 @@ fn parse_pota_source(raw: &str) -> Result<HsmPotaEndorsementSource, ConfigError>
     }
 }
 
+/// Current process UID; `getuid(2)` takes no arguments and cannot fail.
+#[allow(unsafe_code)]
+fn current_uid() -> u32 {
+    // SAFETY: getuid() has no preconditions and always succeeds.
+    unsafe { libc::getuid() }
+}
+
+/// Create `dir` with mode `0700`, or, if it already exists, require it to be a
+/// real directory owned by us with no group/other permissions. Mirrors the
+/// provider's storage-directory setup so misconfiguration fails up front
+/// rather than as a generic IO error on the first write.
+fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
+    let err = || ConfigError::StorageDir(dir.to_path_buf());
+    match fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // symlink_metadata (lstat) so a symlink at `dir` is rejected here
+            // rather than silently followed.
+            let meta = fs::symlink_metadata(dir).map_err(|_| err())?;
+            if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o077 != 0 {
+                return Err(err());
+            }
+            Ok(())
+        }
+        Err(_) => Err(err()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
+    use crate::test_util::Scratch;
 
     fn caller_caller_settings(storage: PathBuf) -> ResiliencySettings {
         ResiliencySettings {
@@ -211,7 +251,8 @@ mod tests {
 
     #[test]
     fn caller_sources_get_both_callbacks() {
-        let s = caller_caller_settings(PathBuf::from("/tmp/x"));
+        let scratch = Scratch::new("cfg-both");
+        let s = caller_caller_settings(scratch.0.join("store"));
         let cfg = s.into_resiliency_config().unwrap().unwrap();
         assert!(cfg.pota_callback.is_some());
         assert!(cfg.mobk_callback.is_some());
@@ -219,7 +260,8 @@ mod tests {
 
     #[test]
     fn tpm_obk_drops_obk_callback() {
-        let mut s = caller_caller_settings(PathBuf::from("/tmp/x"));
+        let scratch = Scratch::new("cfg-tpmobk");
+        let mut s = caller_caller_settings(scratch.0.join("store"));
         s.obk_source = HsmOwnerBackupKeySource::Tpm;
         let cfg = s.into_resiliency_config().unwrap().unwrap();
         assert!(cfg.mobk_callback.is_none());
@@ -228,11 +270,35 @@ mod tests {
 
     #[test]
     fn tpm_pota_drops_pota_callback() {
-        let mut s = caller_caller_settings(PathBuf::from("/tmp/x"));
+        let scratch = Scratch::new("cfg-tpmpota");
+        let mut s = caller_caller_settings(scratch.0.join("store"));
         s.pota_source = HsmPotaEndorsementSource::Tpm;
         let cfg = s.into_resiliency_config().unwrap().unwrap();
         assert!(cfg.pota_callback.is_none());
         assert!(cfg.mobk_callback.is_some());
+    }
+
+    #[test]
+    fn creates_storage_dir_with_owner_only_perms() {
+        let scratch = Scratch::new("cfg-mk");
+        let dir = scratch.0.join("store");
+        let s = caller_caller_settings(dir.clone());
+        assert!(s.into_resiliency_config().is_ok());
+        let mode = fs::symlink_metadata(&dir).unwrap().mode() & 0o777;
+        assert_eq!(mode, 0o700, "created storage dir must be 0700");
+    }
+
+    #[test]
+    fn rejects_group_or_other_accessible_storage_dir() {
+        let scratch = Scratch::new("cfg-perm");
+        let dir = scratch.0.join("store");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+        let s = caller_caller_settings(dir);
+        assert!(matches!(
+            s.into_resiliency_config(),
+            Err(ConfigError::StorageDir(_))
+        ));
     }
 
     #[test]
