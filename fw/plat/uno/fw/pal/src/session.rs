@@ -313,8 +313,12 @@ impl HsmSessionManager for UnoHsmPal {
         // The param_key is the 32-byte field following the 8-byte api_rev
         // in the committed SessionEx blob.
         let blob = self.vault_key(io, physical_id)?;
+        // A committed SessionEx blob is always long enough to carry the
+        // param_key; a short blob indicates vault corruption, not a caller
+        // error — surface it as `InternalError` (matches the trait contract
+        // and the std PAL).
         if blob.len() < SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN {
-            return Err(HsmError::InvalidArg);
+            return Err(HsmError::InternalError);
         }
         Ok(blob
             .split_at(SESSION_API_REV_SIZE)

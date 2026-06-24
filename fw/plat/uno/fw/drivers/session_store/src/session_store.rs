@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! [`SessionStore`]: the persistent session indirection table, operating on
-//! the raw 18-byte session-table region of a partition's persistent store.
+//! [`SessionStore`]: the session indirection table. Its persistent state
+//! lives in the raw 18-byte `session_table` region of a partition's
+//! persistent store; the volatile Pending and PSK-change bitmasks live in
+//! the adjacent 2-byte `session_meta` region (cleared on reset).
 
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;

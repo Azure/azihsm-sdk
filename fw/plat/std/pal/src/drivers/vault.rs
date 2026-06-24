@@ -100,7 +100,7 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::PartitionTrustAnchor => 48,
         HsmVaultKeyKind::PartitionUniqueMachineSecret => 48,
         // SessionEx is length-discriminated by session type
-        // (PlainText=168, Authenticated=264); reported as variable
+        // (PlainText=120, Authenticated=216); reported as variable
         // length, same handling as VarLenHmac*.
         HsmVaultKeyKind::SessionEx => return None,
         // Variable-length HMAC — size depends on actual key.

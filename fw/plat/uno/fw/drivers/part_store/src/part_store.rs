@@ -59,7 +59,6 @@ const RESERVED3_LEN: usize = 626
     - PUB_KEY_LEN  // pta_pub_key
     - 1  // pta_pub_key_valid
     - 1  // policy_hash_valid
-    - 1  // policy_hash_valid
     - 1  // bk3_initialized
     - 2; // session_meta (pending_mask + psk_change_mask)
 
