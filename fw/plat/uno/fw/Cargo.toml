@@ -12,6 +12,7 @@ members = [
   "crates/static_ref",
   "crates/trace",
   "drivers/aes",
+  "drivers/bks_store",
   "drivers/boot_status",
   "drivers/core_status",
   "drivers/gdma",
@@ -20,6 +21,7 @@ members = [
   "drivers/nvic",
   "drivers/oic",
   "drivers/pac",
+  "drivers/part_store",
   "drivers/profile",
   "drivers/rng",
   "drivers/semihosting",
@@ -42,6 +44,7 @@ azihsm_fw_static_ref = { path = "crates/static_ref" }
 azihsm_fw_uno_reg_cortex_m = { path = "reg/cortex-m" }
 
 azihsm_fw_uno_drivers_aes = { path = "drivers/aes" }
+azihsm_fw_uno_drivers_bks_store = { path = "drivers/bks_store" }
 azihsm_fw_uno_drivers_boot_status = { path = "drivers/boot_status" }
 azihsm_fw_uno_drivers_core_status = { path = "drivers/core_status" }
 azihsm_fw_uno_drivers_gdma = { path = "drivers/gdma" }
@@ -49,6 +52,7 @@ azihsm_fw_uno_drivers_iic = { path = "drivers/iic" }
 azihsm_fw_uno_drivers_ipc = { path = "drivers/ipc" }
 azihsm_fw_uno_drivers_nvic = { path = "drivers/nvic" }
 azihsm_fw_uno_drivers_oic = { path = "drivers/oic" }
+azihsm_fw_uno_drivers_part_store = { path = "drivers/part_store" }
 azihsm_fw_uno_drivers_profile = { default-features = false, path = "drivers/profile" }
 azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
 azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
@@ -67,6 +71,8 @@ azihsm_fw_uno_trace = { path = "crates/trace" }
 azihsm_fw_core_crypto_aes_cbc_pad = { path = "../../../core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "../../../core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "../../../core/crypto/hpke" }
+azihsm_fw_core_crypto_key_derive = { path = "../../../core/crypto/key-derive" }
+azihsm_fw_core_crypto_key_masking = { path = "../../../core/crypto/key-masking" }
 azihsm_fw_core_crypto_x509_chain = { path = "../../../core/crypto/x509-chain" }
 azihsm_fw_ddi_mbor = { path = "../../../core/ddi/mbor/codec" }
 azihsm_fw_ddi_mbor_api = { path = "../../../core/ddi/mbor/api" }

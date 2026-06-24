@@ -41,8 +41,10 @@ use azihsm_fw_uno_reg_soc::io_gsram::IoMetaEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::IoSqEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 use tock_registers::interfaces::Readable;
+use tock_registers::interfaces::Writeable;
 
 use crate::UnoHsmPal;
+use crate::alloc::ADMIN_IO_INDEX;
 use crate::alloc::reset_io_alloc;
 
 /// Typed overlay of the IO GSRAM region.
@@ -60,6 +62,28 @@ pub struct UnoHsmIo {
 }
 
 impl UnoHsmIo {
+    /// Constructs an IO handle over the dedicated admin slot
+    /// ([`ADMIN_IO_INDEX`]), targeting partition `pid`.
+    ///
+    /// Internal provisioning (partition identity and enable-time keygen)
+    /// runs without a host IO. Reusing the concrete [`UnoHsmIo`] /
+    /// [`UnoScopedAlloc`] types — rather than a bespoke admin IO type —
+    /// avoids re-monomorphizing the generic vault / crypto / DMA paths.
+    /// The target `pid` is written into the admin slot's `IO_META` so
+    /// [`pid`](HsmIo::pid) resolves correctly.
+    ///
+    /// [`ADMIN_IO_INDEX`]: crate::alloc::ADMIN_IO_INDEX
+    /// [`UnoScopedAlloc`]: crate::alloc::UnoScopedAlloc
+    pub(crate) fn admin(pid: HsmPartId) -> Self {
+        let io = Self {
+            index: ADMIN_IO_INDEX,
+        };
+        io.io_meta()
+            .ctlr
+            .write(IO_META_CTLR::CONTROLLER_ID.val(u8::from(pid) as u32));
+        io
+    }
+
     /// Returns a reference to the IO_META entry for this slot.
     #[inline]
     fn io_meta(&self) -> &IoMetaEntry {

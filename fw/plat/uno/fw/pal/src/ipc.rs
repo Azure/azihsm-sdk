@@ -296,6 +296,9 @@ pub enum IpcMessageErr {
 
     /// Opcode did not match the expected message type.
     InvalidOpcodeConversion = 13,
+
+    /// Target partition id is out of range.
+    InvalidPartitionId = 14,
 }
 
 impl From<IpcMessageErr> for u32 {
@@ -493,5 +496,194 @@ pub fn encode_state_change_ack(
 
     let mut out = [0u32; IPC_MESSAGE_LENGTH];
     out.as_mut_bytes().copy_from_slice(reply.as_bytes());
+    out
+}
+// ---------------------------------------------------------------------------
+// IpcMessageSetResource (opcode 0x7f)
+// ---------------------------------------------------------------------------
+
+/// `SetResource` payload: assigns key-vault tables to a partition.
+///
+/// Mirrors the reference firmware's `SetResInfo`. The 128-bit `mask`
+/// (little-endian) selects which of the 65 global key-vault tables the
+/// target partition (`pfn`) owns; a zero mask frees the partition.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
+pub struct SetResInfo {
+    /// 128-bit table-ownership mask (little-endian byte order).
+    pub mask: [u8; 16],
+
+    /// Target partition (PCIe function) the mask applies to.
+    pub pfn: u16,
+
+    /// VM launch GUID (unused by the emulator; retained for wire
+    /// compatibility with the reference firmware).
+    pub vm_launch_guid: [u8; 16],
+}
+
+impl SetResInfo {
+    /// Decodes the resource mask into a `u128` (little-endian).
+    #[inline]
+    pub fn mask_u128(&self) -> u128 {
+        u128::from_le_bytes(self.mask)
+    }
+}
+
+/// `SetResource` IPC message body (opcode `SetResource`, 0x7f).
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessageSetResource {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Resource assignment payload.
+    pub info: SetResInfo,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageSetResource::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageSetResource>() == core::mem::size_of::<IpcMessage>());
+
+// Lock the wire layout: 16-byte mask + 2-byte pfn + 16-byte guid, no padding.
+const _: () = assert!(core::mem::size_of::<SetResInfo>() == 34);
+
+impl IpcMessageType for IpcMessageSetResource {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::SetResource;
+    const LEN: usize = core::mem::size_of::<SetResInfo>();
+
+    fn validate(&self) -> IpcResult<()> {
+        if usize::from(self.info.pfn) >= crate::part::NUM_PARTITIONS {
+            return Err(IpcMessageErr::InvalidPartitionId.into());
+        }
+        Ok(())
+    }
+}
+
+/// Decode a raw IPC buffer into an [`IpcMessageSetResource`].
+///
+/// Returns `None` if the opcode does not match or the body fails to
+/// decode/validate.
+pub fn decode_set_resource(buf: &[u32; IPC_MESSAGE_LENGTH]) -> Option<IpcMessageSetResource> {
+    let msg = IpcMessage { data: *buf };
+    IpcMessageDecoder::decode::<IpcMessageSetResource>(msg).ok()
+}
+
+/// Encode an ACK reply for a `SetResource` message.
+///
+/// Copies the original header, sets the response bit, writes `status`,
+/// and reports the resulting owned-table count in the first payload byte.
+pub fn encode_set_resource_ack(
+    original_buf: &[u32; IPC_MESSAGE_LENGTH],
+    status: IpcMessageStatusCode,
+    res_count: u8,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let original_header = IpcMessageHeader::read_from_bytes(original_buf[0].as_bytes())
+        .unwrap_or(IpcMessageHeader::new());
+
+    let ack_header = original_header
+        .with_response(true)
+        .with_status(status as u32);
+
+    let mut out = *original_buf;
+    out[0] = ack_header.into_bits();
+    // Report the owned-table count in the first payload byte.
+    out[1] = res_count as u32;
+    out
+}
+// ---------------------------------------------------------------------------
+// IpcMessagePfnEnableDisable (opcode 0x5)
+// ---------------------------------------------------------------------------
+
+/// Partition (PCIe function) enable / disable action.
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum PfnEnableDisableAction {
+    /// Disable the partition (`Enabled` → `Disabled`).
+    Disable = 0,
+
+    /// Enable the partition (`Allocated` | `Disabled` → `Enabled`).
+    Enable = 1,
+
+    /// Reset / migrate the partition.
+    Migrate = 2,
+}
+
+/// `PfnEnableDisable` payload: targets one partition and an action.
+///
+/// Mirrors the reference firmware's `PfnEnableDisableInfo`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
+pub struct PfnEnableDisableInfo {
+    /// Target partition (PCIe function).
+    pub pfn: u16,
+
+    /// Action to perform (`Disable` / `Enable` / `Migrate`).
+    pub action: u8,
+
+    /// Explicit padding (keeps the struct free of implicit padding so it
+    /// can derive `IntoBytes`).
+    pub _pad: u8,
+}
+
+/// `PfnEnableDisable` IPC message body (opcode `PfnEnableDisable`, 0x5).
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessagePfnEnableDisable {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Enable / disable payload.
+    pub info: PfnEnableDisableInfo,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessagePfnEnableDisable::LEN],
+}
+
+const _: () = assert!(
+    core::mem::size_of::<IpcMessagePfnEnableDisable>() == core::mem::size_of::<IpcMessage>()
+);
+
+impl IpcMessageType for IpcMessagePfnEnableDisable {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::PfnEnableDisable;
+    const LEN: usize = core::mem::size_of::<PfnEnableDisableInfo>();
+
+    fn validate(&self) -> IpcResult<()> {
+        if usize::from(self.info.pfn) >= crate::part::NUM_PARTITIONS {
+            return Err(IpcMessageErr::InvalidPartitionId.into());
+        }
+        Ok(())
+    }
+}
+
+/// Decode a raw IPC buffer into an [`IpcMessagePfnEnableDisable`].
+///
+/// Returns `None` if the opcode does not match or the body fails to
+/// decode/validate.
+pub fn decode_pfn_enable_disable(
+    buf: &[u32; IPC_MESSAGE_LENGTH],
+) -> Option<IpcMessagePfnEnableDisable> {
+    let msg = IpcMessage { data: *buf };
+    IpcMessageDecoder::decode::<IpcMessagePfnEnableDisable>(msg).ok()
+}
+
+/// Encode an ACK reply for a `PfnEnableDisable` message.
+///
+/// Copies the original header, sets the response bit and `status`.
+pub fn encode_pfn_enable_disable_ack(
+    original_buf: &[u32; IPC_MESSAGE_LENGTH],
+    status: IpcMessageStatusCode,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let original_header = IpcMessageHeader::read_from_bytes(original_buf[0].as_bytes())
+        .unwrap_or(IpcMessageHeader::new());
+
+    let ack_header = original_header
+        .with_response(true)
+        .with_status(status as u32);
+
+    let mut out = *original_buf;
+    out[0] = ack_header.into_bits();
     out
 }

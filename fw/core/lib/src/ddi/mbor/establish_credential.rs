@@ -10,6 +10,7 @@
 
 use core::ops::Deref;
 
+use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_core_crypto_key_masking::cbc::unmask;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialReq;
@@ -147,8 +148,9 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // `bk3_session_set` flag unchanged.
 
     // ── Step 10: Derive partition BK ─────────────────────────────────
-    let svn = crate::part_state::part_svn(pal, io)?;
-    let bks2_id = crate::part_state::part_bks2_id(pal, io)?;
+    let svn = crate::part_state::part_mfgr_svn(pal);
+    let bks2_id =
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
     let bk = pal.dma_alloc(io, BK_LEN)?;
     derive_partition_bk(pal, io, bk3, body.pota_pub_key.raw, svn, bks2_id, bk).await?;
 
@@ -450,12 +452,8 @@ async fn unmask_partition_bk3<P: HsmPal>(
     masked_bk3: &mut DmaBuf,
     bk3_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    {
-        let src = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot.copy_from_slice(&src[..bk_boot_len]);
-    }
+    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
 
     let layout = unmask(pal, io, bk_boot, masked_bk3).await?;
     if layout.plaintext_max_len < BK3_LEN {
@@ -518,84 +516,6 @@ async fn derive_partition_bk<P: HsmPal>(
     bk_label[PARTITION_BK_LABEL.len()..].copy_from_slice(signer_pub_key);
 
     derive_masking_key(pal, io, bk3, &bk_label, &[], svn, bks2_id, bk_out).await
-}
-
-/// Derives a masking key via SP 800-108 KBKDF-HMAC-SHA-384.
-///
-/// The effective KDF context is
-/// `MFGR_SEED[svn] ‖ DEV_OWNER_SEED[bks2_id] ‖ extra_context`.  The
-/// two seed rows are PAL-private root-of-trust material exposed
-/// through [`PartPropId::MFGR_SEED`] / [`PartPropId::DEV_OWNER_SEED`]
-/// (sensitive, indexed, read-only); the KDK is caller-supplied so the
-/// same primitive can derive multiple flavours of masking key:
-///
-/// | Derivation | KDK | `label` | `extra_context` |
-/// |---|---|---|---|
-/// | `BKx` for `Masked_BK_BOOT` | `fw_seed` | `b"BK_BOOT_MK_DEFAULT"` | `&[]` |
-/// | Partition `BK` | partition `BK3` | `b"PARTITION_BK" ‖ pota_pub_key` | `&[]` |
-///
-/// # Parameters
-///
-/// - `kdk` — KBKDF key-derivation key, already DMA-resident.
-/// - `label` — KBKDF purpose label; `&[]` permitted (no label).
-/// - `extra_context` — caller-supplied context suffix appended after
-///   the seed rows.  `&[]` permitted.
-/// - `svn` — selects the [`PartPropId::MFGR_SEED`] row (`0..64`).
-/// - `bks2_id` — selects the [`PartPropId::DEV_OWNER_SEED`] row
-///   (`0..64`).
-/// - `output` — DMA-accessible destination; `output.len()` bytes are
-///   written.
-///
-/// # Errors
-///
-/// - [`HsmError::InvalidArg`] — `svn` ≥ 64, or PAL-layer validation
-///   failure (e.g. partition not in a serving state).
-/// - [`HsmError::PartPropNotFound`] — PAL has not provisioned a row
-///   for the requested `(svn, bks2_id)`.
-/// - [`HsmError::NotEnoughSpace`] — DMA arena exhausted.
-/// - Errors propagated from the underlying SP 800-108 driver.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn derive_masking_key<P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    kdk: &DmaBuf,
-    label: &[u8],
-    extra_context: &[u8],
-    svn: u64,
-    bks2_id: u16,
-    output: &mut DmaBuf,
-) -> HsmResult<()> {
-    let mfgr = crate::part_state::part_mfgr_seed(pal, io, svn)?;
-    let dev_owner = crate::part_state::part_dev_owner_seed(pal, io, bks2_id)?;
-
-    let mfgr_len = mfgr.len();
-    let dev_owner_len = dev_owner.len();
-    let ctx_len = mfgr_len + dev_owner_len + extra_context.len();
-    let ctx = pal.dma_alloc(io, ctx_len)?;
-    {
-        let (mfgr_slot, rest) = ctx.split_at_mut(mfgr_len);
-        let (dev_slot, extra_slot) = rest.split_at_mut(dev_owner_len);
-        mfgr_slot.copy_from_slice(mfgr);
-        dev_slot.copy_from_slice(dev_owner);
-        if !extra_context.is_empty() {
-            extra_slot.copy_from_slice(extra_context);
-        }
-    }
-
-    let label_dma = pal.dma_alloc(io, label.len())?;
-    if !label.is_empty() {
-        label_dma.copy_from_slice(label);
-    }
-
-    pal.sp800_108_kdf(
-        io,
-        HsmHashAlgo::Sha384,
-        kdk,
-        Some(label_dma),
-        Some(ctx),
-        output,
-    )
-    .await
 }
 
 /// Provisions the partition masking key (MK) in the vault.

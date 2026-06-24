@@ -175,6 +175,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         )
         .await?;
 
+        // Persist only the SHA-384 hash of the policy blob; the full
+        // PartPolicy is consumed transiently during UMS derivation (above)
+        // and is never stored in the partition.
+        let policy_hash_dma = alloc.dma_alloc(SHA384_LEN)?;
+        pal.hash(io, HsmHashAlgo::Sha384, policy_dma, policy_hash_dma, true)
+            .await?;
+
         // Commit partition state, then encode the response.
         commit_partition_state(
             pal,
@@ -182,7 +189,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             ums_dma,
             pta.priv_scalar,
             pta.pub_sec1,
-            policy_dma,
+            policy_hash_dma,
             pota_thumb_dma,
         )
         .await?;
@@ -305,12 +312,9 @@ async fn derive_ums<'a, P: HsmPal>(
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let uds_len = crate::part_state::part_uds(pal, io)?.len();
-    let uds = alloc.dma_alloc(uds_len)?;
-    {
-        let src = crate::part_state::part_uds(pal, io)?;
-        uds.copy_from_slice(&src[..uds_len]);
-    }
+    let src = crate::part_state::part_uds(pal);
+    let uds = alloc.dma_alloc(src.len())?;
+    uds.copy_from_slice(src);
 
     let ums = alloc.dma_alloc(kdf::UMS_LEN)?;
     let _ = kdf::derive_ums(
@@ -494,7 +498,7 @@ async fn build_report_data<'a, P: HsmPal>(
 /// transition.
 ///
 /// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
-/// (all four write-once fields — PTA key, UMS key, policy, POTA
+/// (all four write-once fields — PTA key, UMS key, policy hash, POTA
 /// thumbprint — must be set first).  Vault entries are committed as
 /// soon as they are created (`vault_key_create` is awaited), and the
 /// returned `key_id`s then flow into the partition setters.  There is
@@ -507,7 +511,7 @@ async fn commit_partition_state<P: HsmPal>(
     ums: &DmaBuf,
     pta_priv: &DmaBuf,
     pta_pub_sec1: &DmaBuf,
-    policy: &DmaBuf,
+    policy_hash: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<()> {
     // The keys are committed as they are created; the partition-state
@@ -535,7 +539,7 @@ async fn commit_partition_state<P: HsmPal>(
 
     crate::part_state::part_set_pta_key(pal, io, pta_key_id, pta_pub_sec1)?;
     crate::part_state::part_set_ups_key_id(pal, io, ums_key_id)?;
-    crate::part_state::part_set_policy(pal, io, policy)?;
+    crate::part_state::part_set_policy_hash(pal, io, policy_hash)?;
     crate::part_state::part_set_pota_thumbprint(pal, io, pota_thumb)?;
     crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
     Ok(())
