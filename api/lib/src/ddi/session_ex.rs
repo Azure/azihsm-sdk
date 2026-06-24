@@ -72,10 +72,10 @@ struct PendingHandshake {
     /// Wire `pk_init` (SEC1 uncompressed, 97 B).
     pub pk_init: [u8; PK_INIT_LEN],
     /// Wire `pk_resp` (SEC1 uncompressed, 97 B).
-    pub pk_resp: [u8; PK_INIT_LEN],
+    pub pk_resp: [u8; PK_RESP_LEN],
     /// Wire `pk_hsm` (SEC1 uncompressed, 97 B) — partition identity
     /// public key fetched out-of-band via the MBOR cert chain.
-    pub pk_hsm: [u8; PK_INIT_LEN],
+    pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
 pub struct OpenSessionExResult {
