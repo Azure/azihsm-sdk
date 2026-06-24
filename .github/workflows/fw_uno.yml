@@ -1,0 +1,59 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: Firmware Uno
+
+on:
+  push:
+    branches: [ main, dev, fw-main ]
+  pull_request:
+    branches: [ main, dev, fw-main ]
+  merge_group:
+    branches: [ main, dev, fw-main ]
+  schedule:
+    - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  precheck:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: fw/plat/uno
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install nightly rustfmt
+      run: rustup component add rustfmt --toolchain nightly
+
+    - name: Install nightly clippy
+      run: rustup component add clippy --toolchain nightly
+
+    - name: Install thumbv7em-none-eabi target
+      run: rustup target add thumbv7em-none-eabi --toolchain nightly
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+
+    - name: Run reggen check
+      run: cargo xtask precheck --reggen
+
+    - name: Run fmt check
+      run: cargo xtask precheck --fmt
+
+    - name: Run clippy check
+      run: cargo xtask precheck --clippy
+
+    - name: Run copyright check
+      run: cargo xtask precheck --copyright
+
+    - name: Run audit
+      run: cargo xtask precheck --audit
+
+    - name: Run build
+      run: cargo xtask precheck --build
