@@ -51,6 +51,7 @@ static const OSSL_ALGORITHM azihsm_ossl_digest[] = {
 extern const OSSL_DISPATCH azihsm_ossl_aes128cbc_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes192cbc_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes256cbc_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_aes256gcm_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes128xts_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes256xts_functions[];
 
@@ -58,10 +59,20 @@ static const OSSL_ALGORITHM azihsm_ossl_cipher[] = {
     ALG(AZIHSM_OSSL_ALG_NAME_AES_128_CBC, azihsm_ossl_aes128cbc_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_192_CBC, azihsm_ossl_aes192cbc_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_256_CBC, azihsm_ossl_aes256cbc_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_AES_256_GCM, azihsm_ossl_aes256gcm_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_128_XTS, azihsm_ossl_aes128xts_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_256_XTS, azihsm_ossl_aes256xts_functions),
     ALG_TABLE_END
 };
+
+// Symmetric Key Management (SKEYMGMT, OpenSSL 3.5+)
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+extern const OSSL_DISPATCH azihsm_ossl_aes_skeymgmt_functions[];
+
+static const OSSL_ALGORITHM azihsm_ossl_skeymgmt[] = { ALG(AZIHSM_OSSL_ALG_NAME_AES_SKEYMGMT,
+                                                           azihsm_ossl_aes_skeymgmt_functions),
+                                                       ALG_TABLE_END };
+#endif
 
 // MAC
 extern const OSSL_DISPATCH azihsm_ossl_hmac_functions[];
@@ -320,6 +331,10 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_digest;
     case OSSL_OP_CIPHER:
         return azihsm_ossl_cipher;
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+    case OSSL_OP_SKEYMGMT:
+        return azihsm_ossl_skeymgmt;
+#endif
     case OSSL_OP_MAC:
         return azihsm_ossl_mac;
     case OSSL_OP_KDF:
