@@ -87,7 +87,7 @@ mod engine_impl {
 
     /// Engine setup invoked by [`Engine::bind`]: reject a request for a
     /// different engine id, then register this engine's id and name.
-    fn bind_helper(engine: &Engine, id: &CStr) -> EngineResult<()> {
+    fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
         let id_bytes = id.to_bytes();
         if !id_bytes.is_empty() && !id_bytes.contains(&b'/') && id != ENGINE_ID {
             return Err(EngineError::IdMismatch);

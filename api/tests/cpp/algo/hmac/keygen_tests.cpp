@@ -964,7 +964,7 @@ TEST_F(azihsm_hmac_keygen, derive_rejects_missing_hmac_usage_flags)
                 props,
                 hmac_key
             );
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
             ASSERT_EQ(hmac_key, 0);
         }
     });
