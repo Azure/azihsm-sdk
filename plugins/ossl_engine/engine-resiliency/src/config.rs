@@ -106,15 +106,19 @@ impl ResiliencySettings {
         let pota_priv_path = env_nonempty(ENV_POTA_PRIV).map(PathBuf::from);
         let pota_pub_path = env_nonempty(ENV_POTA_PUB).map(PathBuf::from);
 
-        // Reject unsafe paths up front (mirrors the provider's path_is_safe).
-        validate_path(ENV_STORAGE_DIR, &storage_dir)?;
-        validate_path(ENV_OBK_PATH, &obk_path)?;
-        validate_path(ENV_MOBK_PATH, &mobk_path)?;
-        if let Some(p) = &pota_priv_path {
-            validate_path(ENV_POTA_PRIV, p)?;
-        }
-        if let Some(p) = &pota_pub_path {
-            validate_path(ENV_POTA_PUB, p)?;
+        // Reject unsafe paths up front (mirrors the provider's path_is_safe),
+        // but only when resiliency is on: a disabled engine ignores these vars
+        // and must not fail to start over a path it will never use.
+        if enabled {
+            validate_path(ENV_STORAGE_DIR, &storage_dir)?;
+            validate_path(ENV_OBK_PATH, &obk_path)?;
+            validate_path(ENV_MOBK_PATH, &mobk_path)?;
+            if let Some(p) = &pota_priv_path {
+                validate_path(ENV_POTA_PRIV, p)?;
+            }
+            if let Some(p) = &pota_pub_path {
+                validate_path(ENV_POTA_PUB, p)?;
+            }
         }
 
         Ok(Self {

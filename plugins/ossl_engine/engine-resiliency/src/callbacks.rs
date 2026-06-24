@@ -51,7 +51,9 @@ impl PotaEndorsementCallback for FilePotaCallback {
         pid_pub_key_der: &[u8],
         _pid_cert_chain_pem: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData> {
-        // Private key is zeroized on drop; the public key is not secret.
+        // The DER buffer is zeroized on drop; the public key is not secret.
+        // Note: OpenSSL's parsed copy (the PKey built from this DER in
+        // ecdsa_sha384_raw) is freed but not guaranteed to be cleansed.
         let priv_der = Zeroizing::new(
             crate::read_regular_hardened(&self.priv_path).map_err(crate::io_to_hsm)?,
         );
