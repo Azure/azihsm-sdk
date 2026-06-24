@@ -37,6 +37,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_uno_trace::tracing::info;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
@@ -100,12 +101,24 @@ impl UnoHsmPal {
         }
         PartTable::set_res_mask(idx, mask);
 
+        info!("part_alloc", "Provision identity for pid={:?}", pid);
         match self.provision_identity(pid).await {
             Ok(()) => {
+                info!("part_alloc", "Provisioned identity for pid={:?}", pid);
+                // Generate the enable-time keys at allocation, matching the
+                // reference firmware's part_init provisioning. Enable is then
+                // just an unconditional flag (see set_pfn_action).
+                if let Err(e) = self.provision_enabled_keys(pid).await {
+                    PartTable::clear_identity(idx);
+                    PartTable::set_res_mask(idx, 0);
+                    PartTable::set_state(idx, PartState::Unallocated);
+                    return Err(e);
+                }
                 PartTable::set_state(idx, PartState::Allocated);
                 Ok(mask.count_ones())
             }
             Err(e) => {
+                info!("part_alloc", "Failed to provision identity for pid={:?}: {:?}", pid, e);
                 // Roll back: release resources, wipe any partial identity.
                 PartTable::clear_identity(idx);
                 PartTable::set_res_mask(idx, 0);
@@ -141,6 +154,7 @@ impl UnoHsmPal {
         // Drop all sessions for this incarnation, then release resources and
         // reset lifecycle state. (Disable preserves sessions; free does not.)
         SessionStore::clear(idx);
+        PartTable::set_enabled(idx, false);
         PartTable::set_res_mask(idx, 0);
         PartTable::bump_gen(idx);
         PartTable::set_state(idx, PartState::Unallocated);
@@ -218,6 +232,7 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_sign(true);
+        info!("part_alloc", "create ecc 384 private");
         let key_id = self
             .create_internal_ecc384(
                 pid,
@@ -228,6 +243,7 @@ impl UnoHsmPal {
                 PartTable::set_id_pub_key,
             )
             .await?;
+        info!("part_alloc", "created ecc 384 private");
         PartTable::set_id_key(idx, key_id);
 
         // Generate the random partition identity straight into its GSRAM
@@ -250,6 +266,8 @@ impl UnoHsmPal {
             .with_local(true)
             .with_derive(true);
 
+        info!("part_alloc", "Generating enable-time keys for pid={:?}", pid);
+
         let ec_id = self
             .create_internal_ecc384(
                 pid,
@@ -262,6 +280,7 @@ impl UnoHsmPal {
             .await?;
         PartTable::set_ec_key(idx, ec_id);
 
+        info!("part_alloc", "Generating session-encryption key for pid={:?}", pid);
         match self
             .create_internal_ecc384(
                 pid,
@@ -279,6 +298,7 @@ impl UnoHsmPal {
             }
             Err(e) => {
                 // Roll back the establish-credential key.
+                info!("part_alloc", "Failed to generate session-encryption key for pid={:?}, rolling back establish-credential key", pid);
                 self.delete_key(pid, ec_id).await;
                 PartTable::clear_enabled_keys(idx);
                 Err(e)
@@ -330,25 +350,25 @@ impl UnoHsmPal {
         action: PfnEnableDisableAction,
     ) -> HsmResult<()> {
         let idx = PartTable::index(pid)?;
-        let state = PartTable::state(idx)?;
         match action {
-            PfnEnableDisableAction::Enable => match state {
-                PartState::Allocated | PartState::Disabled => {
-                    self.provision_enabled_keys(pid).await?;
-                    PartTable::set_state(idx, PartState::Enabled);
-                    Ok(())
-                }
-                _ => Err(HsmError::InvalidArg),
-            },
-            PfnEnableDisableAction::Disable => match state {
-                PartState::Enabled => {
-                    self.clear_enabled_state(pid).await;
-                    PartTable::set_state(idx, PartState::Disabled);
-                    Ok(())
-                }
-                _ => Err(HsmError::InvalidArg),
-            },
-            _ => Err(HsmError::UnsupportedCmd),
+            // Enable is an unconditional flag set (mirrors the reference
+            // firmware's `enable()`); enable-time keys are generated at
+            // allocation (SetResource), not here, so the Admin may enable a
+            // partition before -- or after -- assigning its resources.
+            PfnEnableDisableAction::Enable => {
+                PartTable::set_enabled(idx, true);
+                Ok(())
+            }
+            // Disable clears the operational (enable-time) crypto state and
+            // unsets the flag (mirrors the reference `disable()`).
+            PfnEnableDisableAction::Disable => {
+                self.clear_enabled_state(pid).await;
+                PartTable::set_enabled(idx, false);
+                Ok(())
+            }
+            _ => {
+                Err(HsmError::UnsupportedCmd)
+            }
         }
     }
 }
@@ -416,7 +436,17 @@ impl HsmPartitionManager for UnoHsmPal {
     fn part_prop_get_u8(&self, io: &impl HsmIo, id: PartPropId, _idx: u16) -> HsmResult<u8> {
         let pid = PartTable::index(io.pid())?;
         match id {
-            PartPropId::STATE => Ok(PartTable::state(pid)? as u8),
+            PartPropId::STATE => {
+                // The core gates DDI on STATE == Enabled. Report Enabled only
+                // when the partition is both allocated (provisioned) AND
+                // flagged enabled by PfnEnable.
+                let st = PartTable::state(pid)?;
+                if st == PartState::Allocated && PartTable::enabled(pid) {
+                    Ok(PartState::Enabled as u8)
+                } else {
+                    Ok(st as u8)
+                }
+            }
             PartPropId::RES_COUNT => Ok(PartTable::res_mask(pid).count_ones() as u8),
             _ => Err(HsmError::UnsupportedCmd),
         }

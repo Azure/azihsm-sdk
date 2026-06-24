@@ -76,8 +76,8 @@ use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
-use embassy_futures::select::Either3;
-use embassy_futures::select::select3;
+use embassy_futures::select::Either;
+use embassy_futures::select::select;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -282,8 +282,19 @@ unsafe impl Sync for UnoHsmPal {}
 
 impl Default for UnoHsmPal {
     fn default() -> Self {
+        // IIC/OIC channel 3 and GDMA channel 1 are MANDATED by what the
+        // mcr-hsm Admin programs into the IO-controller HW, not free choices:
+        //   - Admin `make_hsm_channels` creates the HSM IO proxy channel as
+        //     `IoChannelId::Channel3` (cp/hsm/admin/src/env.rs), so host SQEs
+        //     for the HSM are routed to ISQ/ICQ channel 3. FP owns channels
+        //     0/1 and Admin owns channel 2.
+        //   - The Admin's own GDMA uses `GdmaChannelId::Channel0`, so the HSM
+        //     must use a different GDMA register block; mcr-hsm/azihsm use 1.
+        // Listening on channel 0 (the old value) put the HSM on the FP's IIC
+        // channel and collided with the Admin's GDMA, so controller-enable IO
+        // never reached the HSM.
         let iic_config = IicChannelConfig {
-            channel: 0,
+            channel: 3,
             isq_base: IO_GSRAM_BASE + ISQ_OFFSET,
             // IIC DMAs into IO_SQ so the firmware reads the SQE in-place.
             io_pool_base: IO_GSRAM_BASE + IO_SQ_OFFSET,
@@ -295,7 +306,7 @@ impl Default for UnoHsmPal {
         };
 
         let oic_config = OicChannelConfig {
-            channel: 0,
+            channel: 3,
             osq_base: IO_GSRAM_BASE + OSQ_OFFSET,
             ocq_base: IO_GSRAM_BASE + OCQ_OFFSET,
             ocq_tail_shadow: IO_GSRAM_BASE + OCQ_TAIL_SHADOW_OFFSET,
@@ -305,7 +316,7 @@ impl Default for UnoHsmPal {
         };
 
         let gdma_config = GdmaChannelConfig {
-            channel: 0,
+            channel: 1,
             sq_base: IO_GSRAM_BASE + GDMA_SQ_OFFSET,
             cq_base: IO_GSRAM_BASE + GDMA_CQ_OFFSET,
             cq_tail_shadow: IO_GSRAM_BASE + GDMA_CQ_TAIL_SHADOW_OFFSET,
@@ -393,26 +404,21 @@ impl UnoHsmPal {
     /// # Side Effects
     /// - Consumes one message from [`IpcChannel::Message`] when available.
     /// - Acknowledges one event on [`IpcChannel::Event`] when available.
-    /// - Emits a periodic trace tick on timeout.
     pub async fn poll_ipc(&self) {
         let mut recv_msg = [0u32; 16];
 
-        let result = select3(
+        let result = select(
             self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
             self.ipc.recv_event(IpcChannel::AdminEvent as u8),
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
         )
         .await;
         match result {
-            Either3::First(_) => {
+            Either::First(_) => {
                 self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg)
                     .await;
             }
-            Either3::Second(value) => {
+            Either::Second(value) => {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
-            }
-            Either3::Third(()) => {
-                self.heartbeat();
             }
         }
     }
@@ -420,8 +426,11 @@ impl UnoHsmPal {
     /// Write the core liveliness heartbeat to DTCM.
     ///
     /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
-    /// poll cycle, SP declares the core hung.
-    fn heartbeat(&self) {
+    /// poll cycle, SP declares the core hung. Driven by a dedicated
+    /// Embassy task (the app's `core_liveliness` task) so it keeps
+    /// ticking even while `poll_ipc` is blocked servicing a slow IPC
+    /// (e.g. partition key generation during `SetResource`).
+    pub fn heartbeat(&self) {
         core_status::set(CoreStatus::Alive);
     }
 
@@ -557,56 +566,73 @@ impl UnoHsmPal {
                 self.on_boot_complete()
             }
             BootPhase::Running => {
-                if self.try_handle_set_resource(channel, buf).await {
-                    return;
+                // Dispatch by the header opcode exactly once, rather than
+                // speculatively decoding the message as each admin type in
+                // turn (which mislabels e.g. a PfnEnableDisable as a failed
+                // SetResource).
+                let op = IpcMessageDecoder::decode_header(&IpcMessage { data: *buf })
+                    .ok()
+                    .and_then(|h| IpcMessageOpCode::try_from(h.msg_op() as u8).ok());
+                match op {
+                    Some(IpcMessageOpCode::SetResource) => {
+                        info!("ipc", "SetResource message received");
+                        self.handle_set_resource(channel, buf).await;
+                    }
+                    Some(IpcMessageOpCode::PfnEnableDisable) => {
+                        self.handle_pfn_enable(channel, buf).await;
+                    }
+                    _ => {
+                        // Unhandled opcode: echo back with the response bit set.
+                        buf[0] |= 0x80;
+                        self.ipc.reply(channel as u8, buf);
+                    }
                 }
-                if self.try_handle_pfn_enable(channel, buf).await {
-                    return;
-                }
-                buf[0] |= 0x80;
-                self.ipc.reply(channel as u8, buf);
             }
         }
     }
 
-    /// Handle a `PfnEnableDisable` IPC in the running state.
-    ///
-    /// Decodes the message; if it is a `PfnEnableDisable`, drives the
-    /// target partition's lifecycle (enable/disable, including enable-time
-    /// key generation) and replies with an ACK. Returns `true` when the
-    /// message was handled here, `false` otherwise so the caller falls back
-    /// to the default echo path.
-    async fn try_handle_pfn_enable(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+    /// Handle a `PfnEnableDisable` IPC (opcode already matched by the
+    /// caller). Drives the target partition's lifecycle (enable/disable,
+    /// including enable-time key generation) and replies with an ACK; a
+    /// malformed body is NACK'd with `InvalidField`.
+    async fn handle_pfn_enable(&self, channel: IpcChannel, buf: &[u32; 16]) {
         let Some(msg) = decode_pfn_enable_disable(buf) else {
-            return false;
+            let reply = encode_pfn_enable_disable_ack(buf, IpcMessageStatusCode::InvalidField);
+            self.ipc.reply(channel as u8, &reply);
+            return;
         };
-
+        
         let pid = HsmPartId::from(msg.info.pfn as u8);
         let action = PfnEnableDisableAction(msg.info.action);
         let status = match self.set_pfn_action(pid, action).await {
             Ok(()) => IpcMessageStatusCode::Success,
             Err(_) => IpcMessageStatusCode::InvalidField,
         };
-
+        
         let reply = encode_pfn_enable_disable_ack(buf, status);
         self.ipc.reply(channel as u8, &reply);
-        true
     }
 
-    /// Handle a `SetResource` IPC in the running state.
-    ///
-    /// Decodes the message; if it is a `SetResource`, applies the
-    /// resource mask to the target partition (provisioning or freeing the
-    /// partition identity) and replies with an ACK reporting the resulting
-    /// owned-table count. Returns `true` when the message was a
-    /// `SetResource` (and thus fully handled here), `false` otherwise so
-    /// the caller falls back to the default echo path.
-    async fn try_handle_set_resource(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+    /// Handle a `SetResource` IPC (opcode already matched by the caller).
+    /// Applies the resource mask to the target partition (provisioning or
+    /// freeing the partition identity) and replies with an ACK reporting the
+    /// resulting owned-table count; a malformed body (e.g. pfn out of range)
+    /// is NACK'd with `InvalidField`.
+    async fn handle_set_resource(&self, channel: IpcChannel, buf: &[u32; 16]) {
         let Some(msg) = decode_set_resource(buf) else {
-            return false;
+            info!("ipc", "SetResource message decode failed");
+            let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
+            self.ipc.reply(channel as u8, &reply);
+            return;
         };
 
         let pid = HsmPartId::from(msg.info.pfn as u8);
+        info!(
+            "part_alloc",
+            "SetResource: pid={:?} mask={:#034x}",
+            pid,
+            msg.info.mask_u128()
+        );
         let (status, count) = match self.set_resource(pid, msg.info.mask_u128()).await {
             Ok(count) => (IpcMessageStatusCode::Success, count as u8),
             Err(_) => (IpcMessageStatusCode::InvalidField, 0),
@@ -614,7 +640,6 @@ impl UnoHsmPal {
 
         let reply = encode_set_resource_ack(buf, status, count);
         self.ipc.reply(channel as u8, &reply);
-        true
     }
 
     /// Handle one IPC event notification.
@@ -688,6 +713,15 @@ impl HsmPal for UnoHsmPal {
     async fn run(&self) {
         loop {
             self.poll_once();
+            // Crypto/DMA engine command completions are not delivered via
+            // NVIC on this platform, so scan each engine's status register
+            // every iteration (mirrors azihsm's run loop, which polls pka +
+            // aes). Without this, the PKA `ecc_gen_keypair` await and the key
+            // vault's large-key GDMA `copy_mem` await never resolve.
+            self.pka.wake();
+            self.gdma.wake(Interrupt::GDMA_CQ as u16);
+            self.aes.wake();
+            self.sha.wake();
             embassy_futures::yield_now().await;
         }
     }

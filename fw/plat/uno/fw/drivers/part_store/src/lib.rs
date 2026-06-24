@@ -6,6 +6,7 @@
 #![no_std]
 #![allow(unsafe_code)]
 
+
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
@@ -22,7 +23,9 @@ use azihsm_fw_uno_reg_soc::part_entry_t::PART_ENTRY_T_BASE;
 use azihsm_fw_uno_reg_soc::part_entry_t::RES_MASK_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::SE_KEY_ID_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::SE_PUB_KEY_OFFSET;
+use azihsm_fw_uno_reg_soc::part_entry_t::ENABLED_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::STATE_OFFSET;
+use azihsm_fw_uno_trace::tracing::info;
 
 /// Number of partition slots (one per global key-vault table index).
 pub const NUM_PARTITIONS: usize = 65;
@@ -84,8 +87,12 @@ pub struct PartEntry {
     se_key_id: u32,
     /// Session-encryption public key.
     se_pub_key: [u8; ID_PUB_KEY_LEN],
+    /// Enabled flag (1 = enabled), set/cleared by `PfnEnableDisable`,
+    /// orthogonal to the allocation `state`. Stored as `u32` so it is written
+    /// with a word-aligned store -- GSRAM faults on sub-word (byte) writes.
+    enabled: u32,
     /// Reserved padding to the 0x200 entry stride.
-    _rsvd: [u8; 172],
+    _rsvd: [u8; 168],
 }
 
 // Lock the in-memory struct to the generated RDL layout so the plain
@@ -103,6 +110,7 @@ const _: () = {
     assert!(offset_of!(PartEntry, ec_pub_key) == EC_PUB_KEY_OFFSET as usize);
     assert!(offset_of!(PartEntry, se_key_id) == SE_KEY_ID_OFFSET as usize);
     assert!(offset_of!(PartEntry, se_pub_key) == SE_PUB_KEY_OFFSET as usize);
+    assert!(offset_of!(PartEntry, enabled) == ENABLED_OFFSET as usize);
 };
 
 /// Bytes between consecutive partition entries.
@@ -169,6 +177,7 @@ impl PartTable {
             e.ec_pub_key = [0; ID_PUB_KEY_LEN];
             e.se_key_id = 0;
             e.se_pub_key = [0; ID_PUB_KEY_LEN];
+            e.enabled = 0;
         }
     }
 
@@ -207,6 +216,18 @@ impl PartTable {
     #[inline(never)]
     pub fn generation(pid: usize) -> u32 {
         Self::entry(pid).generation
+    }
+
+    /// Reads partition `pid`'s enabled flag.
+    #[inline(never)]
+    pub fn enabled(pid: usize) -> bool {
+        Self::entry(pid).enabled != 0
+    }
+
+    /// Sets partition `pid`'s enabled flag (orthogonal to allocation state).
+    #[inline(never)]
+    pub fn set_enabled(pid: usize, enabled: bool) {
+        Self::entry_mut(pid).enabled = enabled as u32;
     }
 
     /// OR of every *other* partition's resource mask -- the set of key-vault

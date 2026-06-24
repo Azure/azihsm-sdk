@@ -33,8 +33,7 @@ embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 
 [features]
-#default = ["trace-uart"]
-default = []
+default = ["trace-uart"]
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the

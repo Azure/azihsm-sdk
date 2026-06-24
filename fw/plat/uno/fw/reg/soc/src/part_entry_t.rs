@@ -17,6 +17,7 @@ pub const EC_KEY_ID_OFFSET: u32 = 0x8C;
 pub const EC_PUB_KEY_OFFSET: u32 = 0x90;
 pub const SE_KEY_ID_OFFSET: u32 = 0xF0;
 pub const SE_PUB_KEY_OFFSET: u32 = 0xF4;
+pub const ENABLED_OFFSET: u32 = 0x154;
 pub const RSVD_OFFSET: u32 = 0x154;
 
 tock_registers::register_bitfields! [u32,

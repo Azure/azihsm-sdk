@@ -14,3 +14,4 @@ test = false
 [dependencies]
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
+azihsm_fw_uno_trace = { workspace = true }

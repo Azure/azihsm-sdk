@@ -96,18 +96,33 @@ fn host_interface(part_id: HsmPartId) -> HsmResult<MemInterface> {
 /// Uno platform implementation of [`HsmGdmaController`].
 impl HsmGdmaController for UnoHsmPal {
     async fn copy_mem(&self, _io: &impl HsmIo, src: &DmaBuf, dst: &mut DmaBuf) -> HsmResult<()> {
-        let src_addr = device_dma_buf(src.as_ptr(), src.len() as u32);
-        let dst_addr = device_dma_buf(dst.as_mut_ptr(), dst.len() as u32);
-        self.gdma
-            .copy_mem(
-                src_addr,
-                MemInterface::Device,
-                src.len() as u32,
-                dst_addr,
-                MemInterface::Device,
-                dst.len() as u32,
-            )?
-            .await
+        // WORKAROUND (GDMA bring-up pending): the GDMA `Device -> Device` copy
+        // does not yet complete on uno -- the engine never signals completion,
+        // so this await would hang (e.g. the key vault's large-key write during
+        // partition provisioning). Both operands are HSM-resident `DmaBuf`s, so
+        // a CPU copy is functionally correct (just slower than the DMA engine).
+        // Host-facing transfers (`copy_mem_{from,to}_host`) still require the
+        // GDMA and are intentionally left on the hardware path.
+        //
+        // Original GDMA `Device -> Device` implementation, preserved for when
+        // the GDMA engine is brought up on uno -- restore this and delete the
+        // CPU-copy fallback below:
+        //
+        //     let src_addr = device_dma_buf(src.as_ptr(), src.len() as u32);
+        //     let dst_addr = device_dma_buf(dst.as_mut_ptr(), dst.len() as u32);
+        //     self.gdma
+        //         .copy_mem(
+        //             src_addr,
+        //             MemInterface::Device,
+        //             src.len() as u32,
+        //             dst_addr,
+        //             MemInterface::Device,
+        //             dst.len() as u32,
+        //         )?
+        //         .await
+        let n = core::cmp::min(src.len(), dst.len());
+        dst[..n].copy_from_slice(&src[..n]);
+        Ok(())
     }
 
     /// Zero an HSM-local buffer.
