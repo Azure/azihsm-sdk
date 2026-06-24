@@ -325,6 +325,27 @@ fn test_digest() {
 
 #[test]
 #[serial]
+fn test_aes_cbc() {
+    let keybits = vec!["128".to_string(), "192".to_string(), "256".to_string()];
+
+    for kb in &keybits {
+        lit::run::tests(lit::event_handler::Default::default(), |config| {
+            config.add_search_path(search_path("testfiles/aes/cbc"));
+            config.add_extension("sh");
+            config
+                .constants
+                .insert("bash".to_owned(), "/bin/bash".to_string());
+            config.constants.insert("keybits".to_owned(), kb.clone());
+            config
+                .constants
+                .insert("cleanup".to_owned(), CLEANUP.to_string());
+        })
+        .expect("Lit test failed");
+    }
+}
+
+#[test]
+#[serial]
 fn test_ec_verify() {
     let curves = vec!["256".to_string(), "384".to_string(), "521".to_string()];
     let dgst_algos = vec![
