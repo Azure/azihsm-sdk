@@ -103,7 +103,9 @@ impl Xtask for Setup {
         // ignore failure in adding rust-src (nightly)
         if add_rust_src.run(ctx.clone()).is_ok() {
             // Check rust-src (nightly) version
-            let _ = cmd!(sh, "rustup +nightly component list --installed | grep rust-src").quiet().run();
+            let _ = cmd!(sh, "rustup +nightly component list --installed")
+                .quiet()
+                .run();
         }
 
         log::trace!("done setup");
