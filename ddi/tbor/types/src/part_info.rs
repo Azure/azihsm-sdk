@@ -26,8 +26,8 @@ pub const TBOR_OP_PART_INFO: u8 = 0x31;
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;
 
-/// Length of the raw ECC-P384 identity public key (`x ‖ y`, big-endian
-/// coordinates with the SEC1 `0x04` prefix stripped).
+/// Length of the raw ECC-P384 identity public key (`x ‖ y`), with each
+/// 48-byte coordinate in little-endian (HSM wire format; SEC1 `0x04` prefix stripped).
 pub const PID_PUB_KEY_LEN: usize = 96;
 
 /// Host-facing TBOR `PartInfo` request. Carries no per-call data.
