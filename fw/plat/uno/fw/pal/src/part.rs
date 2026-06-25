@@ -441,7 +441,16 @@ impl HsmPartitionManager for UnoHsmPal {
                 // when the partition is both allocated (provisioned) AND
                 // flagged enabled by PfnEnable.
                 let st = PartTable::state(pid)?;
-                if st == PartState::Allocated && PartTable::enabled(pid) {
+                let en = PartTable::enabled(pid);
+                info!(
+                    "part",
+                    "STATE get: pid={:?} idx={} state={:?} enabled={}",
+                    io.pid(),
+                    pid,
+                    st,
+                    en
+                );
+                if st == PartState::Allocated && en {
                     Ok(PartState::Enabled as u8)
                 } else {
                     Ok(st as u8)

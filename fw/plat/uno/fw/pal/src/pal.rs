@@ -76,8 +76,8 @@ use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
-use embassy_futures::select::Either;
-use embassy_futures::select::select;
+use embassy_futures::select::Either3;
+use embassy_futures::select::select3;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -404,21 +404,26 @@ impl UnoHsmPal {
     /// # Side Effects
     /// - Consumes one message from [`IpcChannel::Message`] when available.
     /// - Acknowledges one event on [`IpcChannel::Event`] when available.
+    /// - Emits the core-liveliness heartbeat on the periodic timeout.
     pub async fn poll_ipc(&self) {
         let mut recv_msg = [0u32; 16];
 
-        let result = select(
+        let result = select3(
             self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
             self.ipc.recv_event(IpcChannel::AdminEvent as u8),
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
         )
         .await;
         match result {
-            Either::First(_) => {
+            Either3::First(_) => {
                 self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg)
                     .await;
             }
-            Either::Second(value) => {
+            Either3::Second(value) => {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
+            }
+            Either3::Third(()) => {
+                self.heartbeat();
             }
         }
     }
@@ -426,11 +431,8 @@ impl UnoHsmPal {
     /// Write the core liveliness heartbeat to DTCM.
     ///
     /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
-    /// poll cycle, SP declares the core hung. Driven by a dedicated
-    /// Embassy task (the app's `core_liveliness` task) so it keeps
-    /// ticking even while `poll_ipc` is blocked servicing a slow IPC
-    /// (e.g. partition key generation during `SetResource`).
-    pub fn heartbeat(&self) {
+    /// poll cycle, SP declares the core hung.
+    fn heartbeat(&self) {
         core_status::set(CoreStatus::Alive);
     }
 
@@ -602,7 +604,7 @@ impl UnoHsmPal {
             return;
         };
         
-        let pid = HsmPartId::from(msg.info.pfn as u8);
+        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
         let action = PfnEnableDisableAction(msg.info.action);
         let status = match self.set_pfn_action(pid, action).await {
             Ok(()) => IpcMessageStatusCode::Success,
@@ -626,7 +628,7 @@ impl UnoHsmPal {
             return;
         };
 
-        let pid = HsmPartId::from(msg.info.pfn as u8);
+        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
         info!(
             "part_alloc",
             "SetResource: pid={:?} mask={:#034x}",
@@ -737,4 +739,20 @@ impl HsmPal for UnoHsmPal {
     /// # Side Effects
     /// None.
     fn deinit(&self) {}
+}
+
+/// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
+/// that IIC `recv` reports for host IO, so a provisioned/enabled partition
+/// matches `io.pid()`. Mirrors cp/azihsm (io.pid() == axi_id).
+/// PF 64 -> 0x10, VFn n -> 0x20 + n.
+#[inline]
+fn pfn_to_axi_id(pfn: u8) -> u8 {
+    const PF_PCIE_FN: u8 = 64;
+    const PF_AXI_ID: u8 = 0x10;
+    const VF_AXI_ID_START: u8 = 0x20;
+    if pfn == PF_PCIE_FN {
+        PF_AXI_ID
+    } else {
+        VF_AXI_ID_START.wrapping_add(pfn)
+    }
 }

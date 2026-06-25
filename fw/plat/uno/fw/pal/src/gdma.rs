@@ -36,6 +36,8 @@ use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
 
+use azihsm_fw_uno_trace::tracing::info;
+
 use crate::UnoHsmPal;
 
 /// Converts an [`HsmDmaAddr`] (the trait-level 64-bit address) into a
@@ -81,10 +83,11 @@ fn device_dma_buf(ptr: *const u8, len: u32) -> GdmaBuf {
     }
 }
 
-/// Maps a partition ID to a GDMA host interface selector.
+/// Maps a partition ID to its GDMA host interface selector (`IFC_SLCT`).
 ///
-/// Controller ID = `part_id + 1` because GDMA `IFC_SLCT` uses 0 for
-/// device memory, so host interfaces start at 1.
+/// Mirrors the working azihsm reference: `IFC_SLCT = io.pid() + 1`, where
+/// `io.pid()` is the raw axi_id reported by IIC `recv` (PF = 0x10 -> 0x11,
+/// VFn = 0x20+n -> 0x21+n). `MemInterface::Device` maps to 0 (device/Soc).
 #[inline(always)]
 fn host_interface(part_id: HsmPartId) -> HsmResult<MemInterface> {
     let ctrl_id = u8::from(part_id)
@@ -146,7 +149,27 @@ impl HsmGdmaController for UnoHsmPal {
         let len = dst.len() as u32;
         let src_addr = host_dma_buf(src, prp);
         let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
-        self.gdma
+       let (gcfg, gcs) = unsafe {
+            let base = azihsm_fw_uno_reg_soc::gdma::GDMA_BASE;
+            (
+                core::ptr::read_volatile(base as *const u32),
+                core::ptr::read_volatile((base + 4) as *const u32),
+            )
+        };
+        info!(
+            "gdma",
+            "from_host: submit len={} prp={} ifc={:#x} src=({:#x}:{:#x}) dst={:#x} cfg={:#x} cs={:#x}",
+            len,
+            prp,
+            u8::from(io.pid()),
+            src.hi,
+            src.lo,
+            dst.as_mut_ptr() as usize as u32,
+            gcfg,
+            gcs
+        );
+        let r = self
+            .gdma
             .copy_mem(
                 src_addr,
                 host_interface(io.pid())?,
@@ -155,7 +178,9 @@ impl HsmGdmaController for UnoHsmPal {
                 MemInterface::Device,
                 len,
             )?
-            .await
+            .await;
+        info!("gdma", "from_host: done ok={}", r.is_ok());
+        r
     }
 
     async fn copy_mem_to_host(
@@ -168,7 +193,9 @@ impl HsmGdmaController for UnoHsmPal {
         let len = src.len() as u32;
         let src_addr = device_dma_buf(src.as_ptr(), len);
         let dst_addr = host_dma_buf(dst, prp);
-        self.gdma
+        info!("gdma", "to_host: submit len={} prp={}", len, prp);
+        let r = self
+            .gdma
             .copy_mem(
                 src_addr,
                 MemInterface::Device,
@@ -177,6 +204,8 @@ impl HsmGdmaController for UnoHsmPal {
                 host_interface(io.pid())?,
                 len,
             )?
-            .await
+            .await;
+        info!("gdma", "to_host: done ok={}", r.is_ok());
+        r
     }
 }

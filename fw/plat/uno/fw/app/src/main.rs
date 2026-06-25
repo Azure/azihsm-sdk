@@ -72,12 +72,6 @@ static mut DEFAULT_DATA: [u8; 16] = [0x1; 16];
 /// accesses via `HSM.get().await` are zero-cost after the first init.
 static HSM: OnceLock<Hsm<UnoHsmPal>> = OnceLock::new();
 
-/// Interval between core liveliness heartbeats.
-///
-/// Kept well below the Service Processor's hang-detection window so the
-/// liveliness check has margin even if the executor is briefly busy.
-const HEARTBEAT_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_millis(100);
-
 /// IO receive loop — runs forever as a single Embassy task.
 ///
 /// Awaits [`HsmIoController::poll_io`] for the next inbound IO from
@@ -100,6 +94,7 @@ async fn poll_io(spawner: Spawner) -> ! {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
             continue;
         };
+        info!("io", "poll_io: received host IO");
 
         let Ok(token) = handle_io(io) else {
             continue;
@@ -160,27 +155,6 @@ async fn poll_ipc(spawner: Spawner) -> ! {
     }
 }
 
-/// Core liveliness heartbeat — runs forever as a single Embassy task.
-///
-/// Writes `CoreStatus::Alive` to the DTCM `CORE_RUN_STATUS` slot every
-/// [`HEARTBEAT_INTERVAL`], independent of [`poll_ipc`]. Running it as its
-/// own task keeps the Service Processor's liveliness check satisfied even
-/// when `poll_ipc` is blocked for a long time servicing a single IPC
-/// (e.g. partition key generation during `SetResource`), which previously
-/// starved the heartbeat (it shared `poll_ipc`'s timer arm) and tripped
-/// the SP watchdog.
-///
-/// # Returns
-/// Never returns (`!`). This is a permanent heartbeat loop.
-#[embassy_executor::task]
-async fn core_liveliness() -> ! {
-    let hsm = HSM.get().await;
-    loop {
-        hsm.pal().heartbeat();
-        embassy_time::Timer::after(HEARTBEAT_INTERVAL).await;
-    }
-}
-
 /// Firmware async entry point.
 ///
 /// 1. Initialises the HSM singleton with a default [`UnoHsmPal`].
@@ -209,12 +183,6 @@ async fn main(spawner: Spawner) {
     let _ = HSM.init(Hsm::new(UnoHsmPal::default()));
     let hsm = HSM.get().await;
     hsm.pal().init();
-
-    // Start the liveliness heartbeat before anything else so the Service
-    // Processor sees the core as alive throughout boot and steady state.
-    if let Ok(token) = core_liveliness() {
-        spawner.spawn(token);
-    }
 
     if let Ok(token) = poll_ipc(spawner) {
         spawner.spawn(token);
