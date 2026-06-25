@@ -282,21 +282,31 @@ jobs:
       - name: Run cli suite with coverage
         if: ${{ matrix.cov }}
         run: |
-          cargo xtask precheck --coverage --features integration \
+          cargo xtask precheck --coverage --skip-clean --features integration \
             -p provider-integration-tests-cli \
             --profile ci-provider-integration
+
+      # DEBUG: Show coverage data collected in ./target/llvm-cov-target/ to verify the .profraw files are present
+      - name: List ./target/llvm-cov-target/
+        if: ${{ matrix.cov }}
+        run: ls -l ./target/llvm-cov-target/
 
       - name: Run capi suite with coverage
         if: ${{ !cancelled() && matrix.cov }}
         run: |
-          cargo xtask precheck --coverage --features integration \
+          cargo xtask precheck --coverage --skip-clean --features integration \
             -p provider-integration-tests-capi \
             --profile ci-provider-integration
+
+      # DEBUG: Show coverage data collected in ./target/llvm-cov-target/ to verify the .profraw files are present
+      - name: List ./target/llvm-cov-target/
+        if: ${{ matrix.cov }}
+        run: ls -l ./target/llvm-cov-target/
 
       - name: Run nginx suite with coverage
         if: ${{ !cancelled() && matrix.nginx && matrix.cov }}
         run: |
-          cargo xtask precheck --coverage --features integration \
+          cargo xtask precheck --coverage --skip-clean --features integration \
             -p provider-integration-tests-nginx \
             --profile ci-provider-integration
 
