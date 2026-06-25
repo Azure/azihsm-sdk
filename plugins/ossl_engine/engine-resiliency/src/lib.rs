@@ -23,6 +23,7 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::thread::ThreadId;
 
 use azihsm_api::HsmError;
 use azihsm_api::HsmResult;
@@ -177,14 +178,15 @@ fn rename_atomic(from: &Path, to: &Path) -> std::io::Result<()> {
 /// Cross-process / cross-thread lock backed by `flock(2)` on a lock file.
 ///
 /// Opens a fresh file descriptor per [`lock`](Self::lock) call: `flock(2)`
-/// operates per open-file-description, so a distinct fd is what lets separate
-/// holders contend at the OS level. Two fds to the same file conflict even
-/// within one process, so a reentrant `lock()` would block on its own held
-/// lock; reentrancy is therefore rejected up front via the in-process
-/// `active` slot, before the (potentially blocking) OS lock is attempted.
+/// operates per open-file-description, so distinct fds — even within one
+/// process — contend at the OS level, giving the cross-thread / cross-process
+/// blocking the `ResiliencyLock` contract requires. The in-process `active`
+/// slot records the holding thread so a *reentrant* `lock()` from that same
+/// thread is rejected (it would otherwise deadlock on its own held lock);
+/// other threads simply block on the OS lock until it is released.
 pub struct FileLock {
     path: PathBuf,
-    active: Mutex<Option<fs::File>>,
+    active: Mutex<Option<(fs::File, ThreadId)>>,
 }
 
 impl FileLock {
@@ -198,12 +200,18 @@ impl FileLock {
 
 impl ResiliencyLock for FileLock {
     fn lock(&self) -> HsmResult<()> {
-        let mut guard = self.active.lock();
-        // Reject reentrancy before touching the OS lock: opening a fresh fd and
-        // calling flock again would deadlock against our own held lock, since
-        // flock locks are per open-file-description (see struct docs).
-        if guard.is_some() {
-            return Err(HsmError::InternalError);
+        // Reject only *true* (same-thread) reentrancy: a reentrant flock on a
+        // fresh fd would deadlock against our own held lock (flock is per
+        // open-file-description). Drop the guard before the OS lock so other
+        // threads block on flock rather than erroring.
+        let this = std::thread::current().id();
+        {
+            let guard = self.active.lock();
+            if let Some((_, holder)) = guard.as_ref()
+                && *holder == this
+            {
+                return Err(HsmError::InternalError);
+            }
         }
 
         // O_NOFOLLOW + 0600: refuse a symlinked lock path and keep it
@@ -226,15 +234,16 @@ impl ResiliencyLock for FileLock {
         {
             return Err(HsmError::InternalError);
         }
+        // Blocks until the lock is available (cross-thread / cross-process).
         file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
 
-        *guard = Some(file);
+        *self.active.lock() = Some((file, this));
         Ok(())
     }
 
     fn unlock(&self) -> HsmResult<()> {
         match self.active.lock().take() {
-            Some(file) => file.unlock().map_err(|_| HsmError::InternalError),
+            Some((file, _)) => file.unlock().map_err(|_| HsmError::InternalError),
             None => Err(HsmError::InternalError),
         }
     }
@@ -349,12 +358,44 @@ mod tests {
         let l = FileLock::new(scratch.0.join("lock"));
 
         l.lock().unwrap();
-        // A second lock() on the held instance must be rejected, not deadlock.
+        // A second lock() from the same thread must be rejected, not deadlock.
         assert!(l.lock().is_err(), "reentrant lock must be rejected");
         l.unlock().unwrap();
         // Once released, locking again succeeds.
         l.lock().unwrap();
         l.unlock().unwrap();
+    }
+
+    #[test]
+    fn other_thread_blocks_until_unlock() {
+        use std::sync::Arc;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let scratch = Scratch::new("xthread");
+        let l = Arc::new(FileLock::new(scratch.0.join("lock")));
+        l.lock().unwrap();
+
+        let l2 = Arc::clone(&l);
+        let (tx, rx) = mpsc::channel();
+        let h = std::thread::spawn(move || {
+            // Blocks here until the main thread releases the lock.
+            l2.lock().unwrap();
+            tx.send(()).unwrap();
+            l2.unlock().unwrap();
+        });
+
+        // While we hold the lock the other thread cannot acquire it (it blocks
+        // on flock rather than erroring).
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "other thread acquired the lock while it was held"
+        );
+        l.unlock().unwrap();
+        // After release it proceeds.
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("other thread should acquire after unlock");
+        h.join().unwrap();
     }
 
     #[test]
