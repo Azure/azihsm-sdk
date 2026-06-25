@@ -95,6 +95,17 @@ impl Xtask for Setup {
             let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
+        // Add rust-src (nightly)
+        let add_rust_src = rustup_component_add::RustupComponentAdd {
+            component: "rust-src".to_string(),
+            toolchain: Some("nightly".to_string()), // Use nightly toolchain by default
+        };
+        // ignore failure in adding rust-src (nightly)
+        if add_rust_src.run(ctx.clone()).is_ok() {
+            // Check rust-src (nightly) version
+            let _ = cmd!(sh, "rustup +nightly component list --installed | grep rust-src").quiet().run();
+        }
+
         log::trace!("done setup");
         Ok(())
     }
