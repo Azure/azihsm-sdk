@@ -38,6 +38,7 @@ members = [
   "fw/core/crypto/aes-cbc-pad",
   "fw/core/crypto/gcm-buf",
   "fw/core/crypto/hpke",
+  "fw/core/crypto/key-derive",
   "fw/core/crypto/key-masking",
   "fw/core/crypto/key-report",
   "fw/core/crypto/key-report/gen",
@@ -127,6 +128,7 @@ azihsm_fw_core_crypto_aead_envelope = { path = "fw/core/crypto/aead-envelope" }
 azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
+azihsm_fw_core_crypto_key_derive = { path = "fw/core/crypto/key-derive" }
 azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
 azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
 azihsm_fw_core_crypto_x509_builder = { path = "fw/core/crypto/x509-builder" }

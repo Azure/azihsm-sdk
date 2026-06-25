@@ -33,8 +33,18 @@ const HEAPS: usize = 2;
 
 pub(crate) const IO_SLOTS: usize = SRAM_IO_BUF_COUNT as usize;
 
+/// Dedicated admin/internal IO slot — the last of [`IO_SLOTS`].
+///
+/// IIC only hands out the host slots `0..ADMIN_IO_INDEX` (the first
+/// [`IO_SLOTS`]` - 1` slots); the PAL reserves this final slot for
+/// internal provisioning crypto (partition identity and enable-time
+/// keygen), so its bump heaps never collide with a concurrent host IO.
+/// It has full DMA (`SRAM_IO_BUF`) and NonDma (`DTCM_IO_BUF`) backing,
+/// like any host slot.
+pub(crate) const ADMIN_IO_INDEX: u16 = (IO_SLOTS - 1) as u16;
+
 // DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.
-// See dtcm_map.rdl: DTCM_IO_BUF[32] @ offset 0x2F400 from DTCM base.
+// See dtcm_map.rdl: DTCM_IO_BUF[33] @ offset 0x2EC00 from DTCM base.
 const DTCM_IO_BUF_BASE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::HSM_DTCM_BASE
     + azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_OFFSET;
 const DTCM_IO_BUF_STRIDE: u32 = azihsm_fw_uno_reg_soc::hsm_dtcm::DTCM_IO_BUF_STRIDE;
@@ -52,6 +62,22 @@ pub struct UnoScopedAlloc<'a> {
     pal: &'a UnoHsmPal,
     io_index: u16,
     marks: [usize; 2],
+}
+
+impl<'a> UnoScopedAlloc<'a> {
+    /// Scoped allocator over the dedicated admin IO slot
+    /// ([`ADMIN_IO_INDEX`]).
+    ///
+    /// Rewinds the slot's watermarks so each internal provisioning sequence
+    /// starts from a clean DMA heap. Drops restore the (zero) baseline.
+    pub(crate) fn for_admin(pal: &'a UnoHsmPal) -> Self {
+        reset_io_alloc(pal, ADMIN_IO_INDEX);
+        Self {
+            pal,
+            io_index: ADMIN_IO_INDEX,
+            marks: [0, 0],
+        }
+    }
 }
 
 /// Reset both heaps for the given IO slot.

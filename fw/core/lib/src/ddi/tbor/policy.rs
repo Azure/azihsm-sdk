@@ -38,8 +38,8 @@ use zerocopy::TryFromBytes;
 // `azihsm_fw_hsm_pal_traits` (which has no dependency on
 // `azihsm_fw_ddi_tbor_types`) must match the canonical
 // `azihsm_fw_ddi_tbor_types::policy::PART_POLICY_LEN` byte for byte;
-// a mismatch would surface as a runtime `InvalidArg` from
-// `HsmPartitionManager::part_set_policy`.
+// a mismatch would surface as a runtime `InvalidArg` when the
+// `PartInit` handler validates the request's `part_policy` length.
 const _: () = assert!(azihsm_fw_hsm_pal_traits::PART_POLICY_LEN == PART_POLICY_LEN);
 
 /// First byte of an uncompressed SEC1 ECC point.
