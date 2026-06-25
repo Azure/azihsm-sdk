@@ -105,6 +105,7 @@ mod io;
 mod lock;
 mod pal;
 mod part;
+mod seed;
 mod session;
 mod vault;
 
@@ -118,6 +119,7 @@ pub use io::*;
 pub use lock::*;
 pub use pal::*;
 pub use part::*;
+pub use seed::*;
 pub use session::*;
 pub use vault::*;
 

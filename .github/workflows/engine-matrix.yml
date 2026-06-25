@@ -100,5 +100,11 @@ jobs:
           cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
             --features engine --all-targets -- -D warnings
 
+      # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
+      # only on the 1.1 FFI, so they run here. The azihsm_engine mock lifecycle
+      # tests pull the OpenSSL-3.x SDK and need separate handling (roadmap #19).
+      - name: Test openssl-engine
+        run: cargo test -p openssl-engine --features engine
+
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"

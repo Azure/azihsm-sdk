@@ -36,13 +36,13 @@ pub struct UnmaskedView<'a> {
     pub key_attrs: HsmVaultKeyAttrs,
 
     /// Partition SVN at mask time. Bound by the AEAD tag; the
-    /// caller compares this against the current `part_svn` to
+    /// caller compares this against the current `part_mfgr_svn` to
     /// enforce anti-rollback policy.
     pub svn: u64,
 
     /// Owner-seed (BKS2) lineage identifier at mask time. Bound by
     /// the AEAD tag; the caller compares this against the current
-    /// `part_bks2_id` to enforce lineage policy.
+    /// `part_owner_svn` to enforce lineage policy.
     pub owner_seed_id: u16,
 
     /// Caller-supplied label bound by the GCM tag. Length matches

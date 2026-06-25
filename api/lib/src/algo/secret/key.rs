@@ -43,6 +43,27 @@ impl HsmGenericSecretKey {
         props.check_supported_flags(supported_flag)
     }
 
+    /// Returns whether `props.flags()` contains the required usage flags for `props.kind()`.
+    ///
+    /// Required flags per supported kind:
+    /// - [`HsmKeyKind::SharedSecret`] must contain `DERIVE`
+    /// - [`HsmKeyKind::Aes`] must contain `ENCRYPT | DECRYPT`
+    /// - [`HsmKeyKind::HmacSha256`]/[`HsmKeyKind::HmacSha384`]/[`HsmKeyKind::HmacSha512`]
+    ///   must contain `SIGN | VERIFY`
+    ///
+    /// Any other kind is rejected.
+    fn check_key_usage(props: &HsmKeyProps) -> bool {
+        //check if key usage flags are valid for the key kind
+        match props.kind() {
+            HsmKeyKind::SharedSecret => props.can_derive(),
+            HsmKeyKind::Aes => props.can_encrypt() && props.can_decrypt(),
+            HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
+                props.can_sign() && props.can_verify()
+            }
+            _ => false,
+        }
+    }
+
     /// Validates that these key properties describe a well-formed generic secret key.
     ///
     /// This is used by higher-level operations (e.g. ECDH/HKDF) to fail fast before issuing
@@ -61,6 +82,11 @@ impl HsmGenericSecretKey {
 
         //check key kind, GenericSecretKey can be of kind SharedSecret, AES or HMAC
         if !Self::check_key_kind(props) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //check key usage flags, GenericSecretKey can be of kind SharedSecret, AES or HMAC
+        if !Self::check_key_usage(props) {
             Err(HsmError::InvalidKeyProps)?;
         }
 
