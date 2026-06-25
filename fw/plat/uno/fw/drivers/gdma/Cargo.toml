@@ -22,3 +22,4 @@ cortex-m = { workspace = true }
 embassy-sync = { workspace = true }
 heapless = { workspace = true }
 tock-registers = { workspace = true }
+azihsm_fw_uno_trace = { workspace = true }

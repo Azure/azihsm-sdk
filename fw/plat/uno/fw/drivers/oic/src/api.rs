@@ -265,6 +265,7 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
 
     /// Poll until the OCQ completion arrives for `tag`.
     fn wait_completion(&self, tag: u16) -> impl core::future::Future<Output = HsmResult<()>> + '_ {
+        info!("wait_completion", "oic: wait_completion tag={}", tag);
         poll_fn(move |cx| {
             self.state.with(|s| {
                 let slot = &mut s.tags[tag as usize];

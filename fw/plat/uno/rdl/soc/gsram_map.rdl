@@ -283,11 +283,17 @@ regfile gdma_sq_entry_t {
 };
 
 reg gdma_cq_status_t {
-    name = "GDMA CQ Status";
-    desc = "GDMA completion status and tag.";
-    field { sw = rw; hw = rw; } TAG[15:0] = 0x0;
-    field { sw = rw; hw = rw; } SUCCESS[16:16] = 0x0;
-    field { sw = rw; hw = rw; } RSVD[31:17] = 0x0;
+    name = "CQ Status (DW0)";
+    desc = "Completion status and TAG echoed from SQ entry.";
+ 
+    field {} SUCCESS[0:0] = 0x0;
+    SUCCESS->desc = "Success flag. 1 = success, 0 = failure.";
+ 
+    field {} RSVD0[15:1] = 0x0;
+    RSVD0->sw = r;
+ 
+    field {} TAG[31:16] = 0x0;
+    TAG->desc = "16-bit tag echoed from SQ entry.";
 };
 
 reg gdma_cq_rsvd_t {

@@ -22,3 +22,4 @@ bitfield-struct = { workspace = true }
 embassy-sync = { workspace = true }
 tock-registers = { workspace = true }
 zerocopy = { features = ["derive"], workspace = true }
+azihsm_fw_uno_trace = { workspace = true }

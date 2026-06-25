@@ -129,11 +129,11 @@ tock_registers::register_bitfields! [u32,
         STATUS OFFSET(16) NUMBITS(8) [],
         RSVD OFFSET(24) NUMBITS(8) [],
     ],
-    /// 'GDMA completion status and tag.'
+    /// 'Completion status and TAG echoed from SQ entry.'
     pub GDMA_CQ_STATUS [
-        TAG OFFSET(0) NUMBITS(16) [],
-        SUCCESS OFFSET(16) NUMBITS(1) [],
-        RSVD OFFSET(17) NUMBITS(15) [],
+        SUCCESS OFFSET(0) NUMBITS(1) [],
+        RSVD0 OFFSET(1) NUMBITS(15) [],
+        TAG OFFSET(16) NUMBITS(16) [],
     ],
     /// 'Controller ID for this IO slot.'
     pub IO_META_CTLR [

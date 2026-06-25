@@ -577,7 +577,6 @@ impl UnoHsmPal {
                     .and_then(|h| IpcMessageOpCode::try_from(h.msg_op() as u8).ok());
                 match op {
                     Some(IpcMessageOpCode::SetResource) => {
-                        info!("ipc", "SetResource message received");
                         self.handle_set_resource(channel, buf).await;
                     }
                     Some(IpcMessageOpCode::PfnEnableDisable) => {
@@ -622,7 +621,6 @@ impl UnoHsmPal {
     /// is NACK'd with `InvalidField`.
     async fn handle_set_resource(&self, channel: IpcChannel, buf: &[u32; 16]) {
         let Some(msg) = decode_set_resource(buf) else {
-            info!("ipc", "SetResource message decode failed");
             let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
             self.ipc.reply(channel as u8, &reply);
             return;
@@ -715,14 +713,9 @@ impl HsmPal for UnoHsmPal {
     async fn run(&self) {
         loop {
             self.poll_once();
-            // Crypto/DMA engine command completions are not delivered via
-            // NVIC on this platform, so scan each engine's status register
-            // every iteration (mirrors azihsm's run loop, which polls pka +
-            // aes). Without this, the PKA `ecc_gen_keypair` await and the key
-            // vault's large-key GDMA `copy_mem` await never resolve.
-            self.pka.wake();
-            self.aes.wake();
-            //self.sha.wake();
+            
+            // self.pka.wake();
+            // self.aes.wake();            
             embassy_futures::yield_now().await;
         }
     }
