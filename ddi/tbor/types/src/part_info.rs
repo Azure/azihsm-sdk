@@ -21,7 +21,7 @@
 use crate::tbor;
 
 /// TBOR opcode for `PartInfo`.
-pub const TBOR_OP_PART_INFO: u8 = 0x31;
+pub const TBOR_OP_PART_INFO: u8 = 0x32;
 
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;

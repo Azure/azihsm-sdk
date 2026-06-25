@@ -84,7 +84,7 @@ pub(crate) mod opcode {
     /// (state, generation, owner/manufacturer SVN, PID, identity public
     /// key).  TBOR analogue of MBOR `GetDeviceInfo` + the Manticore
     /// `GetPartID` primitive.
-    pub(crate) const PART_INFO: u8 = 0x31;
+    pub(crate) const PART_INFO: u8 = 0x32;
 }
 
 /// Dispatch a parsed TBOR request to its handler.

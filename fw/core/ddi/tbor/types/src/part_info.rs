@@ -18,7 +18,7 @@
 use azihsm_fw_ddi_tbor_api::tbor;
 
 /// TBOR opcode for `PartInfo`.
-pub const TBOR_OP_PART_INFO: u8 = 0x31;
+pub const TBOR_OP_PART_INFO: u8 = 0x32;
 
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;
@@ -32,7 +32,7 @@ pub const PID_PUB_KEY_LEN: usize = 96;
 /// single `none` TOC placeholder to satisfy the TBOR codec's
 /// `toc_count >= 1` requirement; the decoder verifies that placeholder
 /// is present and the opcode matches.
-#[tbor(opcode = 0x31)]
+#[tbor(opcode = 0x32)]
 pub struct TborPartInfoReq;
 
 /// `PartInfo` response schema.
