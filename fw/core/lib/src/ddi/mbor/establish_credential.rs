@@ -10,6 +10,7 @@
 
 use core::ops::Deref;
 
+use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_core_crypto_key_masking::cbc::unmask;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialReq;
@@ -147,8 +148,9 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // `bk3_session_set` flag unchanged.
 
     // ── Step 10: Derive partition BK ─────────────────────────────────
-    let svn = crate::part_state::part_svn(pal, io)?;
-    let bks2_id = crate::part_state::part_bks2_id(pal, io)?;
+    let svn = crate::part_state::part_mfgr_svn(pal);
+    let bks2_id =
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
     let bk = pal.dma_alloc(io, BK_LEN)?;
     derive_partition_bk(pal, io, bk3, body.pota_pub_key.raw, svn, bks2_id, bk).await?;
 
@@ -160,13 +162,12 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // derive its `bk` with those selectors, instead of reusing the
     // `bk` derived from the current selectors in step 10.  Emu has a
     // single lineage so this is a no-op today.
-    let mk_guard = provision_mk(pal, io, body.bmk, bk).await?;
-    let mk_key_id = mk_guard.key_id();
+    let mk_key_id = provision_mk(pal, io, body.bmk, bk).await?;
 
     // ── Step 13: Envelope MK into BMK and emit the response ──────────
     let resp = encode_bmk_response(pal, io, hdr, bk, mk_key_id, svn, bks2_id).await?;
 
-    // ── Atomic commit ────────────────────────────────────────────────
+    // ── Commit partition state ───────────────────────────────────────
     //
     // All partition-state mutations are batched here so that any
     // failure in steps 8-13 (e.g. tampered `masked_bk3`, derivation
@@ -186,11 +187,8 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     //   fail if the partition is disabled, which is prevented by the
     //   partition-enabled check at the start of `handle_io`.
     //
-    // The CREDENTIAL prop write is committed first so a (theoretical)
-    // failure here triggers `mk_guard`'s Drop, which removes the
-    // provisional MK vault entry. The establish-cred encryption key
-    // is cleared only after the credential commit succeeds, so the
-    // host can always retry on failure.
+    // (The MK vault entry was committed at creation; a future undo log
+    // will handle rollback of a partially-applied EstablishCredential.)
     // Compose `id ‖ pin` into a 32 B DmaBuf for the property setter.
     // The CREDENTIAL prop setter enforces the write-once invariant and
     // the all-zero half rejection (the latter is also pre-checked
@@ -202,7 +200,6 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     crate::part_state::part_set_bk3_session(pal, io, bk3_session)?;
     crate::part_state::part_clear_establish_cred_key(pal, io)?;
     crate::part_state::part_set_mk_key_id(pal, io, mk_key_id)?;
-    mk_guard.dismiss();
 
     Ok(resp)
 }
@@ -289,16 +286,19 @@ async fn verify_pota_signature<P: HsmPal>(
     pal.hash(io, HsmHashAlgo::Sha384, id_uncompressed, digest, true)
         .await?;
 
-    if !pal
-        .ecc_verify(
-            io,
-            HsmEccCurve::P384,
-            signer_pub_key_raw,
-            digest,
-            signature_raw,
-        )
-        .await?
-    {
+    let verify_result = pal.dma_alloc(io, 4)?;
+
+    pal.ecc_verify(
+        io,
+        HsmEccCurve::P384,
+        signer_pub_key_raw,
+        digest,
+        signature_raw,
+        verify_result,
+    )
+    .await?;
+
+    if (verify_result[0] & 1) != 0 {
         return Err(HsmError::EccVerifyFailed);
     }
     Ok(())
@@ -452,12 +452,8 @@ async fn unmask_partition_bk3<P: HsmPal>(
     masked_bk3: &mut DmaBuf,
     bk3_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    {
-        let src = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot.copy_from_slice(&src[..bk_boot_len]);
-    }
+    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
 
     let layout = unmask(pal, io, bk_boot, masked_bk3).await?;
     if layout.plaintext_max_len < BK3_LEN {
@@ -522,84 +518,6 @@ async fn derive_partition_bk<P: HsmPal>(
     derive_masking_key(pal, io, bk3, &bk_label, &[], svn, bks2_id, bk_out).await
 }
 
-/// Derives a masking key via SP 800-108 KBKDF-HMAC-SHA-384.
-///
-/// The effective KDF context is
-/// `MFGR_SEED[svn] ‖ DEV_OWNER_SEED[bks2_id] ‖ extra_context`.  The
-/// two seed rows are PAL-private root-of-trust material exposed
-/// through [`PartPropId::MFGR_SEED`] / [`PartPropId::DEV_OWNER_SEED`]
-/// (sensitive, indexed, read-only); the KDK is caller-supplied so the
-/// same primitive can derive multiple flavours of masking key:
-///
-/// | Derivation | KDK | `label` | `extra_context` |
-/// |---|---|---|---|
-/// | `BKx` for `Masked_BK_BOOT` | `fw_seed` | `b"BK_BOOT_MK_DEFAULT"` | `&[]` |
-/// | Partition `BK` | partition `BK3` | `b"PARTITION_BK" ‖ pota_pub_key` | `&[]` |
-///
-/// # Parameters
-///
-/// - `kdk` — KBKDF key-derivation key, already DMA-resident.
-/// - `label` — KBKDF purpose label; `&[]` permitted (no label).
-/// - `extra_context` — caller-supplied context suffix appended after
-///   the seed rows.  `&[]` permitted.
-/// - `svn` — selects the [`PartPropId::MFGR_SEED`] row (`0..64`).
-/// - `bks2_id` — selects the [`PartPropId::DEV_OWNER_SEED`] row
-///   (`0..64`).
-/// - `output` — DMA-accessible destination; `output.len()` bytes are
-///   written.
-///
-/// # Errors
-///
-/// - [`HsmError::InvalidArg`] — `svn` ≥ 64, or PAL-layer validation
-///   failure (e.g. partition not in a serving state).
-/// - [`HsmError::PartPropNotFound`] — PAL has not provisioned a row
-///   for the requested `(svn, bks2_id)`.
-/// - [`HsmError::NotEnoughSpace`] — DMA arena exhausted.
-/// - Errors propagated from the underlying SP 800-108 driver.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn derive_masking_key<P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    kdk: &DmaBuf,
-    label: &[u8],
-    extra_context: &[u8],
-    svn: u64,
-    bks2_id: u16,
-    output: &mut DmaBuf,
-) -> HsmResult<()> {
-    let mfgr = crate::part_state::part_mfgr_seed(pal, io, svn)?;
-    let dev_owner = crate::part_state::part_dev_owner_seed(pal, io, bks2_id)?;
-
-    let mfgr_len = mfgr.len();
-    let dev_owner_len = dev_owner.len();
-    let ctx_len = mfgr_len + dev_owner_len + extra_context.len();
-    let ctx = pal.dma_alloc(io, ctx_len)?;
-    {
-        let (mfgr_slot, rest) = ctx.split_at_mut(mfgr_len);
-        let (dev_slot, extra_slot) = rest.split_at_mut(dev_owner_len);
-        mfgr_slot.copy_from_slice(mfgr);
-        dev_slot.copy_from_slice(dev_owner);
-        if !extra_context.is_empty() {
-            extra_slot.copy_from_slice(extra_context);
-        }
-    }
-
-    let label_dma = pal.dma_alloc(io, label.len())?;
-    if !label.is_empty() {
-        label_dma.copy_from_slice(label);
-    }
-
-    pal.sp800_108_kdf(
-        io,
-        HsmHashAlgo::Sha384,
-        kdk,
-        Some(label_dma),
-        Some(ctx),
-        output,
-    )
-    .await
-}
-
 /// Provisions the partition masking key (MK) in the vault.
 ///
 /// - **Empty `bmk`**: first ever EstablishCredential on this
@@ -615,25 +533,26 @@ pub(crate) async fn derive_masking_key<P: HsmPal>(
 ///   the recovered MK plaintext into vault storage.
 ///
 /// Both paths land MK in the vault via [`HsmVault::vault_key_create`]
-/// and return an RAII guard so any subsequent failure rolls the
-/// provisional entry back.
-async fn provision_mk<'p, P: HsmPal>(
-    pal: &'p P,
+/// and return the assigned [`HsmKeyId`]. The entry is committed
+/// immediately (rollback of a later failure is future undo-log work).
+async fn provision_mk<P: HsmPal>(
+    pal: &P,
     io: &impl HsmIo,
     bmk: &mut DmaBuf,
     bk: &DmaBuf,
-) -> HsmResult<<P as HsmVault>::KeyGuard<'p>> {
+) -> HsmResult<HsmKeyId> {
     if bmk.is_empty() {
         let mk_buf = pal.dma_alloc(io, BK_LEN)?;
         pal.rng_fill_bytes(io, mk_buf)?;
-        return pal.vault_key_create(
-            io,
-            mk_buf,
-            HsmVaultKeyKind::MaskingKey,
-            None,
-            MK_VAULT_ATTRS,
-            &[],
-        );
+        return pal
+            .vault_key_create(
+                io,
+                mk_buf,
+                HsmVaultKeyKind::MaskingKey,
+                None,
+                MK_VAULT_ATTRS,
+            )
+            .await;
     }
 
     let layout = unmask(pal, io, bk, bmk).await?;
@@ -641,14 +560,8 @@ async fn provision_mk<'p, P: HsmPal>(
         return Err(HsmError::MaskedKeyDecodeFailed);
     }
     let mk_pt = &bmk[layout.plaintext_offset..layout.plaintext_offset + BK_LEN];
-    pal.vault_key_create(
-        io,
-        mk_pt,
-        HsmVaultKeyKind::MaskingKey,
-        None,
-        MK_VAULT_ATTRS,
-        &[],
-    )
+    pal.vault_key_create(io, mk_pt, HsmVaultKeyKind::MaskingKey, None, MK_VAULT_ATTRS)
+        .await
 }
 
 /// Envelopes the vault-resident `MK` (referenced by `mk_key_id`) under

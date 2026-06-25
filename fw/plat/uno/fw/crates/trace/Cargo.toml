@@ -1,0 +1,45 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_uno_trace"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[features]
+default = []
+# Compile the trace emitter (`__hsm_trace_emit`). Enable alongside a
+# `azihsm_fw_hsm_core_tracing/level-*` feature to actually emit output.
+# Pulls in the profile driver, which owns the backend-aware task-ID source.
+tracing = ["dep:azihsm_fw_uno_drivers_profile", "dep:embassy-time"]
+# Output backend selectors. At most one may be enabled; if neither is
+# selected, the emitter compiles to a no-op (output disabled). Each
+# propagates its backend awareness to the profile driver so it returns the
+# matching task-ID source.
+backend-semihosting = [
+  "azihsm_fw_uno_drivers_profile/backend-semihosting",
+  "azihsm_fw_uno_drivers_profile/trace",
+  "dep:azihsm_fw_uno_drivers_semihosting",
+]
+backend-uart = [
+  "azihsm_fw_uno_drivers_profile/backend-uart",
+  "dep:azihsm_fw_uno_drivers_uart",
+]
+# Log-level threshold pass-throughs to the tracing facade. Enable exactly
+# one; without any, only `error!` is compiled in.
+level-debug = ["azihsm_fw_hsm_core_tracing/level-debug"]
+level-error = ["azihsm_fw_hsm_core_tracing/level-error"]
+level-info = ["azihsm_fw_hsm_core_tracing/level-info"]
+level-trace = ["azihsm_fw_hsm_core_tracing/level-trace"]
+level-warn = ["azihsm_fw_hsm_core_tracing/level-warn"]
+
+[dependencies]
+azihsm_fw_hsm_core_tracing.workspace = true
+azihsm_fw_uno_drivers_profile = { optional = true, workspace = true }
+azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
+azihsm_fw_uno_drivers_uart = { optional = true, workspace = true }
+embassy-time = { optional = true, workspace = true }

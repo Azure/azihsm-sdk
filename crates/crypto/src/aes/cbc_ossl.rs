@@ -23,7 +23,8 @@
 //!   like AES-GCM for new applications
 //! - **IV Reuse**: Never reuse the same key-IV pair for different plaintexts
 
-use openssl::symm::*;
+use openssl::cipher::Cipher;
+use openssl::cipher_ctx::CipherCtx;
 
 use super::*;
 
@@ -143,7 +144,9 @@ impl OsslAesCbcAlgo {
     /// Returns the appropriate OpenSSL cipher based on key size.
     ///
     /// This internal method selects the correct AES-CBC cipher variant (128, 192, or 256-bit)
-    /// based on the provided key size.
+    /// based on the provided key size. The cipher is fetched from the crate-private libctx
+    /// (default-provider-only) so it never resolves to a third-party provider (e.g. azihsm)
+    /// in the process default libctx. See [`crate::libctx`].
     ///
     /// # Arguments
     ///
@@ -157,12 +160,14 @@ impl OsslAesCbcAlgo {
     ///
     /// Returns `CryptoError::AesInvalidKeySize` if the key size is not 16, 24, or 32 bytes.
     fn cipher(key_size: usize) -> Result<Cipher, CryptoError> {
-        match key_size {
-            16 => Ok(Cipher::aes_128_cbc()),
-            24 => Ok(Cipher::aes_192_cbc()),
-            32 => Ok(Cipher::aes_256_cbc()),
-            _ => Err(CryptoError::AesInvalidKeySize),
-        }
+        let name = match key_size {
+            16 => "AES-128-CBC",
+            24 => "AES-192-CBC",
+            32 => "AES-256-CBC",
+            _ => return Err(CryptoError::AesInvalidKeySize),
+        };
+        Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
+            .map_err(|_| CryptoError::AesError)
     }
 }
 
@@ -205,16 +210,23 @@ impl EncryptOp for OsslAesCbcAlgo {
         if let Some(output) = output {
             let pad = self.pad();
             let iv = self.iv_mut();
-            let mut crypter = Crypter::new(cipher, Mode::Encrypt, key_bytes, Some(iv))
+            let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesError)?;
+            ctx.encrypt_init(Some(&cipher), Some(key_bytes), Some(iv))
                 .map_err(|_| CryptoError::AesError)?;
-            crypter.pad(pad);
-            count += crypter
-                .update(input, output)
+            ctx.set_padding(pad);
+            count += ctx
+                .cipher_update(input, Some(output))
                 .map_err(|_| CryptoError::AesEncryptError)?;
-            count += crypter
-                .finalize(&mut output[count..])
+            count += ctx
+                .cipher_final(&mut output[count..])
                 .map_err(|_| CryptoError::AesEncryptError)?;
-            iv.copy_from_slice(&output[count - iv.len()..count]);
+            // Advance the IV to the last ciphertext block for CBC chaining, but
+            // only when a full block was produced: an empty input with padding
+            // disabled yields count == 0, where `count - iv.len()` would
+            // underflow and panic. (Matches the streaming path's guard.)
+            if count >= iv.len() {
+                iv.copy_from_slice(&output[count - iv.len()..count]);
+            }
         } else {
             // The required output buffer size for OpenSSL's `update` is
             // `input.len() + block_size` regardless of whether padding is enabled.
@@ -252,18 +264,15 @@ impl<'a> EncryptStreamingOp<'a> for OsslAesCbcAlgo {
     /// - OpenSSL context initialization fails
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, super::CryptoError> {
         let key_bytes = key.bytes();
-        let mut crypter = Crypter::new(
-            Self::cipher(key_bytes.len())?,
-            Mode::Encrypt,
-            key_bytes,
-            Some(&self.iv),
-        )
-        .map_err(|_| CryptoError::AesError)?;
-        crypter.pad(self.pad);
+        let cipher = Self::cipher(key_bytes.len())?;
+        let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesError)?;
+        ctx.encrypt_init(Some(&cipher), Some(key_bytes), Some(&self.iv))
+            .map_err(|_| CryptoError::AesError)?;
+        ctx.set_padding(self.pad);
 
         Ok(OsslAesCbcEncryptContext {
             algo: self,
-            crypter,
+            ctx,
             block: AesBlock::default(),
         })
     }
@@ -293,7 +302,7 @@ impl<'a> EncryptStreamingOp<'a> for OsslAesCbcAlgo {
 /// This context is not thread-safe and should be used from a single thread.
 pub struct OsslAesCbcEncryptContext {
     algo: OsslAesCbcAlgo,
-    crypter: Crypter,
+    ctx: CipherCtx,
     block: AesBlock,
 }
 
@@ -333,8 +342,8 @@ impl<'a> EncryptOpContext<'a> for OsslAesCbcEncryptContext {
             let mut offset = 0;
             self.block.update(input, |data| {
                 let count = self
-                    .crypter
-                    .update(data, &mut output[offset..])
+                    .ctx
+                    .cipher_update(data, Some(&mut output[offset..]))
                     .map_err(|_| CryptoError::AesEncryptError)?;
                 offset += count;
                 Ok(count)
@@ -379,12 +388,12 @@ impl<'a> EncryptOpContext<'a> for OsslAesCbcEncryptContext {
         if let Some(output) = output {
             self.block.r#final(|input| {
                 let mut count = self
-                    .crypter
-                    .update(input, output)
+                    .ctx
+                    .cipher_update(input, Some(output))
                     .map_err(|_| CryptoError::AesEncryptError)?;
                 count += self
-                    .crypter
-                    .finalize(&mut output[count..])
+                    .ctx
+                    .cipher_final(&mut output[count..])
                     .map_err(|_| CryptoError::AesEncryptError)?;
                 let iv_len = self.algo.iv.len();
                 if count >= iv_len {
@@ -465,16 +474,23 @@ impl DecryptOp for OsslAesCbcAlgo {
         if let Some(output) = output {
             let pad = self.pad();
             let iv = self.iv_mut();
-            let mut crypter = Crypter::new(cipher, Mode::Decrypt, key_bytes, Some(iv))
+            let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesError)?;
+            ctx.decrypt_init(Some(&cipher), Some(key_bytes), Some(iv))
                 .map_err(|_| CryptoError::AesError)?;
-            crypter.pad(pad);
-            count += crypter
-                .update(input, output)
+            ctx.set_padding(pad);
+            count += ctx
+                .cipher_update(input, Some(output))
                 .map_err(|_| CryptoError::AesDecryptError)?;
-            count += crypter
-                .finalize(&mut output[count..])
+            count += ctx
+                .cipher_final(&mut output[count..])
                 .map_err(|_| CryptoError::AesDecryptError)?;
-            iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            // Advance the IV to the last ciphertext block for CBC chaining, but
+            // only when there is a full block: an empty ciphertext (a valid
+            // zero-block input with padding disabled) would underflow
+            // `input.len() - iv.len()` and panic. (Matches the streaming path.)
+            if input.len() >= iv.len() {
+                iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            }
         } else {
             count = input.len() + cipher.block_size();
         }
@@ -510,18 +526,15 @@ impl<'a> DecryptStreamingOp<'a> for OsslAesCbcAlgo {
     /// - OpenSSL context initialization fails
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, super::CryptoError> {
         let key_bytes = key.bytes();
-        let mut crypter = Crypter::new(
-            Self::cipher(key_bytes.len())?,
-            Mode::Decrypt,
-            key_bytes,
-            Some(&self.iv),
-        )
-        .map_err(|_| CryptoError::AesError)?;
-        crypter.pad(self.pad);
+        let cipher = Self::cipher(key_bytes.len())?;
+        let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesError)?;
+        ctx.decrypt_init(Some(&cipher), Some(key_bytes), Some(&self.iv))
+            .map_err(|_| CryptoError::AesError)?;
+        ctx.set_padding(self.pad);
 
         Ok(OsslAesCbcDecryptContext {
             algo: self,
-            crypter,
+            ctx,
             block: AesBlock::default(),
         })
     }
@@ -551,7 +564,7 @@ impl<'a> DecryptStreamingOp<'a> for OsslAesCbcAlgo {
 /// This context is not thread-safe and should be used from a single thread.
 pub struct OsslAesCbcDecryptContext {
     algo: OsslAesCbcAlgo,
-    crypter: Crypter,
+    ctx: CipherCtx,
     block: AesBlock,
 }
 
@@ -593,8 +606,8 @@ impl<'a> DecryptOpContext<'a> for OsslAesCbcDecryptContext {
             let mut offset = 0;
             self.block.update(input, |data| {
                 let count = self
-                    .crypter
-                    .update(data, &mut output[offset..])
+                    .ctx
+                    .cipher_update(data, Some(&mut output[offset..]))
                     .map_err(|_| CryptoError::AesDecryptError)?;
                 offset += count;
                 Ok(count)
@@ -639,12 +652,12 @@ impl<'a> DecryptOpContext<'a> for OsslAesCbcDecryptContext {
         if let Some(output) = output {
             self.block.r#final(|input| {
                 let mut count = self
-                    .crypter
-                    .update(input, output)
+                    .ctx
+                    .cipher_update(input, Some(output))
                     .map_err(|_| CryptoError::AesDecryptError)?;
                 count += self
-                    .crypter
-                    .finalize(&mut output[count..])
+                    .ctx
+                    .cipher_final(&mut output[count..])
                     .map_err(|_| CryptoError::AesDecryptError)?;
                 // Note: IV is updated in the context but not propagated back to the caller
                 // For proper IV chaining in streaming mode, the IV should be the last block of ciphertext

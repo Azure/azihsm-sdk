@@ -147,7 +147,7 @@ pub trait HsmIo {
 /// Asynchronous I/O controller that produces and completes IOs.
 ///
 /// Implementations own the platform's submission/completion queue
-/// pair (or pairs): IPC mailboxes on Ocelot, in-process channels for
+/// pair (or pairs): IPC mailboxes on Uno, in-process channels for
 /// the std PAL emulator.  The controller is consumed by the core's
 /// main loop, which calls [`poll_io`](Self::poll_io) in an
 /// `async` fashion and dispatches each returned [`HsmIo`] to the

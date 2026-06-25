@@ -1,0 +1,38 @@
+// Copyright (c) Microsoft Corporation.
+//
+// TCM Control — Cortex-M7 Tightly-Coupled Memory configuration
+//
+// Reference: DDI0489F §4.3
+// Addresses: 0xE000_EF90 (ITCMCR), 0xE000_EF94 (DTCMCR)
+
+reg tcmcr_t {
+    name = "TCM Control Register";
+    desc = "Controls TCM enable, read-modify-write, and retry behavior.
+             SZ field is read-only (set by implementation configuration).";
+
+    field {} EN[0:0] = 0x0;
+    EN->desc = "TCM enable. 0 = disabled, 1 = enabled.";
+
+    field {} RMW[1:1] = 0x0;
+    RMW->desc = "Read-Modify-Write enable. 1 = enabled for sub-word writes.";
+
+    field {} RETEN[2:2] = 0x0;
+    RETEN->desc = "Retry phase enable. 1 = retry signals enabled.";
+
+    field {} SZ[6:3] = 0x0;
+    SZ->desc = "TCM size. Read-only. 0=none, 3=4KB, 4=8KB, 5=16KB, 6=32KB,
+                 7=64KB, 8=128KB, 9=256KB, 10=512KB, 11=1MB.";
+    SZ->sw = r;
+};
+
+addrmap tcm {
+    name = "TCM";
+    desc = "Cortex-M7 Tightly-Coupled Memory control registers.
+             ITCMCR and DTCMCR share the same register layout.";
+
+    default hw = na;
+    default sw = rw;
+
+    tcmcr_t ITCMCR @ 0x00;
+    tcmcr_t DTCMCR @ 0x04;
+};

@@ -1,0 +1,130 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// SHA — Secure Hash Accelerator (HS-SHA)
+//
+// Single-instance hardware accelerator supporting SHA-1, SHA-256,
+// SHA-384, SHA-512 (modes 1, 3, 4, 5 in command_code.sha_mode).
+//
+// MMIO layout (2 registers, 0x08 used out of 0x1000):
+//   COMMAND      @ 0x000   (RW32)  Write descriptor AXI address to start op
+//   STATUS       @ 0x004   (RO32)  BUSY, COMPLETE, ERROR_*, NOT_OWNER, DIGEST_MATCH
+//
+// Address map:
+//   SHA              @ 0xA040_0000  (single instance)
+//
+// Firmware flow:
+//   1. Build ShaCommandDesc (8 DWORDs, 32 B) in GSRAM (see rdl/soc/sha_gsram.rdl).
+//   2. Write descriptor's AXI address to COMMAND register (doorbell).
+//   3. Engine fetches descriptor, executes mode (SHA-1/256/384/512),
+//      reads message from message_buffer, writes digest to digest addr,
+//      posts STATUS.
+//   4. Either Done IRQ or Error IRQ fires (silicon RDL pending for vectors).
+//   5. FW reads STATUS — COMPLETE bit + bus/cmd/fault error bits.
+//
+// -- COMMAND -- descriptor doorbell --
+
+reg sha_command_t {                                         // SHA: command
+    desc = "Descriptor doorbell. Writing this register triggers the
+            engine to fetch the 8-DWORD ShaCommandDesc descriptor
+            located at the written AXI address (GSRAM only -- DTCM is
+            NOT reachable by the SHA AXI master) and start executing
+            the requested operation. The descriptor must be 4-byte
+            aligned and remain valid until STATUS reports completion.";
+
+    field {
+        sw = rw;
+        hw = r;
+        desc = "AXI address of the ShaCommandDesc descriptor in GSRAM.
+                Reads return the last-written value (not consumed by
+                hardware on read). Writes act as the doorbell that
+                triggers the engine to fetch the descriptor.";
+    } DESC_ADDR[31:0] = 0x0;                            // SHA: desc_addr
+};
+
+
+// -- STATUS -- completion + error bits --
+
+reg sha_status_t {                                          // SHA: status
+    desc = "Engine status. Polled by firmware between submit and
+            completion; latched by the engine on every state
+            transition. A Done or Error IRQ fires on every command
+            completion (positive and negative).";
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine is currently processing a command. Cleared on
+                completion (success or error). Firmware must NOT
+                write the COMMAND register while BUSY is set.";
+    } BUSY[0:0] = 0x0;                                  // SHA: busy
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine successfully finished the most recent command.
+                Mutually exclusive with the ERROR_* bits. Cleared by
+                firmware via write-1-to-clear before submitting the
+                next command.";
+    } COMPLETE[1:1] = 0x0;                              // SHA: complete
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine could not decode the command structure
+                successfully (invalid opcode, bad descriptor layout).";
+    } ERROR_CMD[2:2] = 0x0;                             // SHA: error_cmd
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine encountered an error initiating an AXI bus
+                transaction (e.g. SLVERR / DECERR on a result, message
+                buffer, or descriptor fetch).";
+    } ERROR_BUS[3:3] = 0x0;                             // SHA: error_bus
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine detected an internal fault while working on the
+                operation (parity, lane-fault, or engine-fault).";
+    } ERROR_FAULT[4:4] = 0x0;                           // SHA: error_fault
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Engine is/was working on a command initiated by a
+                different bus master than the one reading the STATUS
+                register. Driver masks this bit out of completion
+                decode (mirrors UPKA pattern).";
+    } NOT_OWNER[5:5] = 0x0;                             // SHA: not_owner
+
+    field {
+        sw = r;
+        hw = w;
+        desc = "Reference digest matched the computed digest for the
+                last command. Only meaningful when the descriptor was
+                submitted with command_code.check_digest set; for
+                plain digest operations this bit is ignored.";
+    } DIGEST_MATCH[6:6] = 0x0;                          // SHA: digest_match
+
+    field { sw = r; } RSVD_0[31:7] = 0x0;
+};
+
+
+// -- Address Map (single SHA instance) --
+
+addrmap sha {
+    name = "SHA";
+    desc = "HS-SHA secure hash accelerator (single instance) supporting
+             SHA-1, SHA-256, SHA-384, SHA-512. Descriptor-driven
+             dispatch model identical to UPKA.
+             Base address 0xA040_0000 -- confirm against silicon RDL
+             when available.";
+
+    default hw = na;
+    default sw = rw;
+
+    sha_command_t       COMMAND     @ 0x00;
+    sha_status_t        STATUS      @ 0x04;
+};

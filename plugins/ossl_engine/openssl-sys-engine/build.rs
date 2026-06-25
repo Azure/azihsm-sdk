@@ -84,6 +84,8 @@ fn main() {
         .allowlist_function("EC_GROUP_.*")
         .allowlist_function("ERR_put_error")
         .allowlist_function("ERR_add_error_data")
+        .allowlist_function("ERR_get_error")
+        .allowlist_function("ERR_clear_error")
         .allowlist_function("CRYPTO_get_ex_new_index")
         .allowlist_function("CRYPTO_set_mem_functions")
         .allowlist_function("OPENSSL_init_crypto")

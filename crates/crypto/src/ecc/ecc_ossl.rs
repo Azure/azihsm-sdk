@@ -30,9 +30,14 @@
 //! - Each signature uses a unique random value (nonce) generated securely
 //! - Verify signatures before trusting signed data
 
-use openssl::pkey_ctx::*;
+use std::ptr;
+
+use foreign_types::ForeignTypeRef;
+use openssl_sys as ffi;
 
 use super::*;
+use crate::libctx::OSSL_SUCCESS;
+use crate::libctx::PkeyCtx;
 
 /// OpenSSL ECDSA signature and verification operations.
 ///
@@ -81,6 +86,7 @@ impl SignOp for OsslEccAlgo {
     /// - Always hash the input data before signing (e.g., with SHA-256)
     /// - Never sign raw user input directly
     /// - Each signature uses a unique cryptographically secure random nonce
+    #[allow(unsafe_code)]
     fn sign(
         &mut self,
         key: &Self::Key,
@@ -93,21 +99,49 @@ impl SignOp for OsslEccAlgo {
                 return Err(CryptoError::EccSignError);
             }
 
-            let mut ctx = PkeyCtx::new(key.pkey()).map_err(|_| CryptoError::EccError)?;
+            // The openssl crate's `PkeyCtx` uses the legacy `EVP_PKEY_CTX_new`,
+            // which fetches the ECDSA signature op from the *process default*
+            // libctx regardless of the key's libctx — on OpenSSL 3.5 that
+            // resolves to the azihsm provider and re-enters it during the HSM
+            // session open. Build the sign ctx explicitly in the crate-private
+            // libctx (default-provider only) via `PkeyCtx` so the fetch never
+            // lands on azihsm. See [`crate::libctx`].
+            //
+            // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+            // frees it on drop on every path); the output buffer is sized from
+            // the first `EVP_PKEY_sign` (sig=NULL) query.
+            let vec = unsafe {
+                let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EccError)?;
+                if ffi::EVP_PKEY_sign_init(ctx.as_ptr()) != OSSL_SUCCESS {
+                    return Err(CryptoError::EccSignError);
+                }
+                let mut siglen: usize = 0;
+                if ffi::EVP_PKEY_sign(
+                    ctx.as_ptr(),
+                    ptr::null_mut(),
+                    &mut siglen,
+                    data.as_ptr(),
+                    data.len(),
+                ) != OSSL_SUCCESS
+                {
+                    return Err(CryptoError::EccSignError);
+                }
+                let mut vec = vec![0u8; siglen];
+                if ffi::EVP_PKEY_sign(
+                    ctx.as_ptr(),
+                    vec.as_mut_ptr(),
+                    &mut siglen,
+                    data.as_ptr(),
+                    data.len(),
+                ) != OSSL_SUCCESS
+                {
+                    return Err(CryptoError::EccSignError);
+                }
+                vec.truncate(siglen);
+                vec
+            };
 
-            ctx.sign_init().map_err(|_| CryptoError::EccSignError)?;
-
-            let len = ctx
-                .sign(data, None)
-                .map_err(|_| CryptoError::EccSignError)?;
-
-            let mut vec = vec![0u8; len];
-
-            let len = ctx
-                .sign(data, Some(&mut vec))
-                .map_err(|_| CryptoError::EccSignError)?;
-
-            let der = DerEccSignature::from_der(key.curve(), &vec[..len])?;
+            let der = DerEccSignature::from_der(key.curve(), &vec)?;
 
             signature[..key.curve().point_size()].copy_from_slice(der.r());
             signature[key.curve().point_size()..].copy_from_slice(der.s());
@@ -148,6 +182,7 @@ impl VerifyOp for OsslEccAlgo {
     /// - Always use the same hash algorithm for verification as was used for signing
     /// - Invalid signatures return `Ok(false)`, not an error
     /// - Malformed signatures that cannot be parsed return an error
+    #[allow(unsafe_code)]
     fn verify(
         &mut self,
         key: &Self::Key,
@@ -169,14 +204,31 @@ impl VerifyOp for OsslEccAlgo {
         let mut der = vec![0u8; der_len];
         let der_len = der_sig.to_der(Some(&mut der))?;
 
-        let mut ctx = PkeyCtx::new(key.pkey()).map_err(|_| CryptoError::EccError)?;
-        ctx.verify_init().map_err(|_| CryptoError::EccVerifyError)?;
-
-        // Returns true for valid signatures, false for invalid ones.
+        // Build the verify ctx in the crate-private libctx (default-provider
+        // only) via `PkeyCtx` so the ECDSA op fetch never resolves to azihsm on
+        // OpenSSL 3.5 (which would re-enter it during the HSM session open). See
+        // [`crate::libctx`].
         //
-        // The underlying OpenSSL function (EVP_PKEY_verify) may return an error
-        // when encountering malformed signatures or corrupt data rather than returning false.
-        // We treat such errors as invalid signatures and return false.
-        ctx.verify(data, &der[..der_len]).or(Ok(false))
+        // SAFETY: the key's `EVP_PKEY*` outlives `ctx` (the `PkeyCtx` guard
+        // frees it on drop on every path); the DER signature slice and `data`
+        // are valid for the call.
+        let valid = unsafe {
+            let ctx = PkeyCtx::from_pkey(key.pkey().as_ptr()).ok_or(CryptoError::EccError)?;
+            if ffi::EVP_PKEY_verify_init(ctx.as_ptr()) != OSSL_SUCCESS {
+                return Err(CryptoError::EccVerifyError);
+            }
+            // EVP_PKEY_verify returns 1 for a valid signature, 0 for an invalid
+            // one, and a negative value on error (e.g. malformed signatures or
+            // corrupt data). We treat anything other than 1 as invalid.
+            ffi::EVP_PKEY_verify(
+                ctx.as_ptr(),
+                der[..der_len].as_ptr(),
+                der_len,
+                data.as_ptr(),
+                data.len(),
+            ) == OSSL_SUCCESS
+        };
+
+        Ok(valid)
     }
 }

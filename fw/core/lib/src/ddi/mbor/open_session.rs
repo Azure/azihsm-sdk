@@ -30,13 +30,10 @@
 //!    and the decrypted seed as context — the host stores the wrapped
 //!    blob and re-presents it on `ReopenSession`.
 //! 9. `session_create` — install MK_SESSION as the session-vault
-//!    blob, get back a guard with the freshly-allocated `HsmSessId`.
+//!    blob, returning the freshly-allocated `HsmSessId`.
 //! 10. Encode the response (header echoes the new `sess_id`) and
 //!     mask-CBC the MK_SESSION under BK_SESSION into the response's
 //!     `bmk_session` slot.
-//! 11. Atomic commit via `guard.dismiss()`.  Any failure between
-//!     `session_create` and `dismiss` rolls the provisional session
-//!     back via the guard's `Drop`.
 
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -113,12 +110,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     let mk_session = pal.dma_alloc(io, BK_LEN)?;
     pal.rng_fill_bytes(io, mk_session)?;
 
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    {
-        let src = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot.copy_from_slice(&src[..bk_boot_len]);
-    }
+    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
 
     let bk_session = pal.dma_alloc(io, BK_LEN)?;
     let session_bk_label = pal.dma_alloc(io, SESSION_BK_LABEL.len())?;
@@ -135,8 +128,7 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
 
     // ── Step 8: Allocate the session table entry ─────────────────────
     let api_rev_bytes = pack_api_rev(api_rev);
-    let guard = pal.session_create(io, &api_rev_bytes, mk_session, None)?;
-    let sess_id = guard.sess_id();
+    let sess_id = pal.session_create(io, &api_rev_bytes, mk_session, None)?;
 
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
     let resp = encode_response(
@@ -146,18 +138,10 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         sess_id,
         bk_session,
         mk_session,
-        crate::part_state::part_svn(pal, io)?,
-        crate::part_state::part_bks2_id(pal, io)?,
+        crate::part_state::part_mfgr_svn(pal),
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?,
     )
     .await?;
-
-    // ── Atomic commit ────────────────────────────────────────────────
-    //
-    // session_create's guard tears the provisional session down on
-    // Drop, so any failure above (notably encode_response) rolls the
-    // session back.  The nonce refresh in step 5 stays — required even
-    // on failure to prevent replay of the original request.
-    guard.dismiss();
 
     Ok(resp)
 }

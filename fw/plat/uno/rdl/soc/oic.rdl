@@ -1,0 +1,265 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// Outbound IO Controller (OIC) — transmits data to external destinations via DMA
+//
+// Register map for a single OIC controller instance.
+// Two controllers exist at stride 0x4000:
+//   controller[0] @ 0xA12C_0000  (Core0)
+//   controller[1] @ 0xA12C_4000  (Fast Path)
+//
+// Internal layout:
+//   common (irq_enable)                    @ 0x0010
+//   osq.channel[5]                         @ 0x0070  stride 0x20
+//   ocq.channel[5]                         @ 0x0120  stride 0x30
+//   oq.queue[132]                          @ 0x1000  stride 0x40
+//
+// Queue semantics: NVMe-aligned (Head/Tail, wrap-at-depth, one reserved slot)
+// OCQ: Outbound Completion Queue — HW posts entries, FW consumes
+// OSQ: Outbound Submission Queue — FW posts TX descriptors, HW consumes
+
+// ── Common Registers ──
+
+reg oic_irq_enable_t {
+    name = "OIC IRQ Enable";
+    desc = "Per-channel IRQ enable bitmask (bit N = channel N).";
+
+    field {} IRQ_EN[31:0] = 0x0;
+};
+
+// ── OCQ Channel Registers (stride 0x30, 0x28 used) ──
+
+reg ocq_channel_ctrl_t {
+    name = "OCQ Channel Control";
+    desc = "OCQ enable, shadow enable, depth, interface select.";
+
+    field {} EN[0:0] = 0x0;
+    EN->desc = "Channel enable.";
+
+    field {} SHADOW_EN[1:1] = 0x0;
+    SHADOW_EN->desc = "Tail shadow enable — HW writes tail to shadow address after each completion.";
+
+    field {} RSVD_2[7:2] = 0x0;
+    RSVD_2->sw = r;
+
+    field {} DEPTH[11:8] = 0x0;
+    DEPTH->desc = "Encoded depth: 0h=32, 1h=64, ..., Bh=65536.";
+
+    field {} RSVD_1[15:12] = 0x0;
+    RSVD_1->sw = r;
+
+    field {} IFC_SLCT[23:16] = 0x0;
+    IFC_SLCT->desc = "AXI interface select.";
+
+    field {} RSVD_0[31:24] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg ocq_channel_tail_shadow_lo_t {
+    name = "OCQ Tail Shadow Address (Low)";
+    desc = "Lower 32 bits of tail shadow address (4B-aligned).";
+
+    field {} RSVD_0[1:0] = 0x0;
+    RSVD_0->sw = r;
+
+    field {} ADDR[31:2] = 0x0;
+};
+
+reg ocq_channel_tail_shadow_hi_t {
+    name = "OCQ Tail Shadow Address (High)";
+    desc = "Upper 32 bits of tail shadow address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg ocq_channel_base_hi_t {
+    name = "OCQ Base Address (High)";
+    desc = "Upper 32 bits of OCQ base address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg ocq_channel_base_lo_t {
+    name = "OCQ Base Address (Low)";
+    desc = "Lower 32 bits of OCQ base address (32B-aligned).";
+
+    field {} RSVD_0[4:0] = 0x0;
+    RSVD_0->sw = r;
+
+    field {} ADDR[31:5] = 0x0;
+};
+
+reg ocq_channel_tail_t {
+    name = "OCQ Tail";
+    desc = "OCQ Tail — HW advances after posting entry. FW reads.";
+
+    field {} TAIL[15:0] = 0x0;
+    TAIL->hw = w;
+    TAIL->sw = rw;
+
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg ocq_channel_head_t {
+    name = "OCQ Head";
+    desc = "OCQ Head — FW advances after consuming entries.";
+
+    field {} HEAD[15:0] = 0x0;
+
+    field {} RSVD_1[29:16] = 0x0;
+    RSVD_1->sw = r;
+
+    field {} INTRPT_CLR[30:30] = 0x0;
+    INTRPT_CLR->desc = "Write 1 to clear interrupt.";
+
+    field {} RSVD_0[31:31] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile ocq_channel_t {
+    desc = "One OCQ channel (0x30 byte stride, 0x28 used).";
+
+    ocq_channel_ctrl_t             CTRL             @ 0x00;
+    // 0x04, 0x08 — interrupt_coalescing_0, interrupt_coalescing_1 (unused)
+    ocq_channel_tail_shadow_lo_t   TAIL_SHADOW_LO   @ 0x0C;
+    ocq_channel_tail_shadow_hi_t   TAIL_SHADOW_HI   @ 0x10;
+    ocq_channel_base_lo_t          BASE_LO           @ 0x14;
+    ocq_channel_base_hi_t          BASE_HI           @ 0x18;
+    ocq_channel_tail_t             TAIL              @ 0x1C;
+    ocq_channel_head_t             HEAD              @ 0x20;
+    // 0x28, 0x2C padding (2 DWORDs)
+};
+
+// ── OSQ Channel Registers (stride 0x20, 0x18 used) ──
+
+reg osq_channel_ctrl_t {
+    name = "OSQ Channel Control";
+    desc = "OSQ enable, depth, interface select.";
+
+    field {} EN[0:0] = 0x0;
+    EN->desc = "Channel enable.";
+
+    field {} RSVD_2[7:1] = 0x0;
+    RSVD_2->sw = r;
+
+    field {} DEPTH[11:8] = 0x0;
+    DEPTH->desc = "Encoded depth: 0h=32, 1h=64, ..., Bh=65536.";
+
+    field {} RSVD_1[15:12] = 0x0;
+    RSVD_1->sw = r;
+
+    field {} IFC_SLCT[23:16] = 0x0;
+    IFC_SLCT->desc = "AXI interface select.";
+
+    field {} RSVD_0[31:24] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg osq_channel_base_hi_t {
+    name = "OSQ Base Address (High)";
+    desc = "Upper 32 bits of OSQ base address.";
+
+    field {} ADDR[31:0] = 0x0;
+};
+
+reg osq_channel_base_lo_t {
+    name = "OSQ Base Address (Low)";
+    desc = "Lower 32 bits of OSQ base address (32B-aligned).";
+
+    field {} RSVD_0[4:0] = 0x0;
+    RSVD_0->sw = r;
+
+    field {} ADDR[31:5] = 0x0;
+};
+
+reg osq_channel_tail_t {
+    name = "OSQ Tail";
+    desc = "OSQ Tail — FW advances after posting TX descriptor.";
+
+    field {} TAIL[15:0] = 0x0;
+
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg osq_channel_head_t {
+    name = "OSQ Head";
+    desc = "OSQ Head — HW advances after consuming TX descriptor.";
+
+    field {} HEAD[15:0] = 0x0;
+    HEAD->hw = w;
+    HEAD->sw = rw;
+
+    field {} RSVD_0[31:16] = 0x0;
+    RSVD_0->sw = r;
+};
+
+reg osq_channel_status_t {
+    name = "OSQ Status";
+    desc = "OSQ status — empty indication.";
+
+    field {} EMPTY[0:0] = 0x0;
+    EMPTY->sw = r;
+
+    field {} RSVD_0[31:1] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile osq_channel_t {
+    desc = "One OSQ channel (0x20 byte stride, 0x18 used).";
+
+    osq_channel_ctrl_t         CTRL       @ 0x00;
+    // 0x04 padding (IFC_SLCT in ctrl already)
+    osq_channel_base_lo_t      BASE_LO    @ 0x08;
+    osq_channel_base_hi_t      BASE_HI    @ 0x0C;
+    osq_channel_tail_t         TAIL       @ 0x10;
+    osq_channel_head_t         HEAD       @ 0x14;
+    osq_channel_status_t       STATUS     @ 0x18;
+    // 0x1C padding
+};
+
+// ── OQ Queue (credit registers, stride 0x40) ──
+
+reg oq_queue_credit_t {
+    name = "OQ Credit";
+    desc = "Per-queue credit count. HW decrements on fetch, FW increments after processing via RMW.";
+
+    field {} CREDIT[7:0] = 0x0;
+
+    field {} RSVD_0[31:8] = 0x0;
+    RSVD_0->sw = r;
+};
+
+regfile oq_queue_t {
+    desc = "One OQ instance (0x40 byte stride). Only credit at offset 0x08.";
+
+    // 0x00, 0x04 padding
+    oq_queue_credit_t CREDIT @ 0x08;
+    // remainder padding to 0x40
+};
+
+// ── Top-level Address Map (single controller) ──
+
+addrmap oic {
+    name = "OIC";
+    desc = "Outbound IO Controller — single controller register map.
+             Two instances exist at 0xA12C_0000 stride 0x4000.
+             controller[0] = Core0 (Core0)
+             controller[1] = Core1 (Fast Path)";
+
+    default hw = na;
+    default sw = rw;
+
+    // Common registers
+    oic_irq_enable_t    IRQ_ENABLE      @ 0x0010;
+
+    // OSQ — 5 channels × 0x20 stride
+    osq_channel_t       OSQ_CH[5]       @ 0x0070 += 0x20;
+
+    // OCQ — 5 channels × 0x30 stride
+    ocq_channel_t       OCQ_CH[5]       @ 0x0120 += 0x30;
+
+    // OQ — 132 queues × 0x40 stride
+    oq_queue_t          OQ[132]         @ 0x1000 += 0x40;
+};

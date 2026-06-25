@@ -74,7 +74,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
-use azihsm_fw_hsm_pal_traits::VaultKeyGuard;
 use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
 
 use super::*;
@@ -163,9 +162,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
         // PTACSR + PTAReport: build everything before any partition-
         // state mutation so failures roll back cleanly.
-        let csr_assets = build_csr_assets(pal, io, alloc, pta.pub_sec1).await?;
         let (csr_dma, csr_len) =
-            build_signed_csr(pal, io, alloc, pta.pub_sec1, pta.priv_scalar, &csr_assets).await?;
+            build_signed_csr(pal, io, alloc, pta.pub_sec1, pta.priv_scalar).await?;
         let (report_dma, report_len) = build_pta_report(
             pal,
             io,
@@ -177,6 +175,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         )
         .await?;
 
+        // Persist only the SHA-384 hash of the policy blob; the full
+        // PartPolicy is consumed transiently during UMS derivation (above)
+        // and is never stored in the partition.
+        let policy_hash_dma = alloc.dma_alloc(SHA384_LEN)?;
+        pal.hash(io, HsmHashAlgo::Sha384, policy_dma, policy_hash_dma, true)
+            .await?;
+
         // Commit partition state, then encode the response.
         commit_partition_state(
             pal,
@@ -184,9 +189,10 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             ums_dma,
             pta.priv_scalar,
             pta.pub_sec1,
-            policy_dma,
+            policy_hash_dma,
             pota_thumb_dma,
-        )?;
+        )
+        .await?;
         encode_response(pal, io, &csr_dma[..csr_len], &report_dma[..report_len])
     })
     .await
@@ -240,12 +246,6 @@ fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
 struct PtaKeypair<'a> {
     priv_scalar: &'a mut DmaBuf,
     pub_sec1: &'a mut DmaBuf,
-}
-
-/// PTACSR assets used to seed both `build_tbs` and `build_csr` calls.
-struct CsrAssets {
-    cn: [u8; csr::SUBJECT_CN_LEN],
-    sn: [u8; csr::SUBJECT_SN_LEN],
 }
 
 // ─── Pipeline stage helpers ──────────────────────────────────────────────────
@@ -312,12 +312,9 @@ async fn derive_ums<'a, P: HsmPal>(
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let uds_len = crate::part_state::part_uds(pal, io)?.len();
-    let uds = alloc.dma_alloc(uds_len)?;
-    {
-        let src = crate::part_state::part_uds(pal, io)?;
-        uds.copy_from_slice(&src[..uds_len]);
-    }
+    let src = crate::part_state::part_uds(pal);
+    let uds = alloc.dma_alloc(src.len())?;
+    uds.copy_from_slice(src);
 
     let ums = alloc.dma_alloc(kdf::UMS_LEN)?;
     let _ = kdf::derive_ums(
@@ -363,12 +360,16 @@ async fn derive_pta_keypair<'a, P: HsmPal>(
 }
 
 /// Compute the PTACSR subject `commonName` and `serialNumber` slots.
-async fn build_csr_assets<P: HsmPal>(
+/// Build the CSR subject fields, then sign with the PTA private key
+/// and emit the full DER-encoded CSR.  The `cn`/`sn` arrays are local
+/// to this function so they never cross an await boundary in `handle`.
+async fn build_signed_csr<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    alloc: &impl HsmScopedAlloc,
+    alloc: &'a impl HsmScopedAlloc,
     pub_sec1: &DmaBuf,
-) -> HsmResult<CsrAssets> {
+    pta_priv: &DmaBuf,
+) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let mut cn = [0u8; csr::SUBJECT_CN_LEN];
     padding::pad_cn_to(PTA_SUBJECT_CN, &mut cn).ok_or(HsmError::InternalError)?;
 
@@ -387,32 +388,16 @@ async fn build_csr_assets<P: HsmPal>(
     let ptaid_hex_str = core::str::from_utf8(&ptaid_hex).map_err(|_| HsmError::InternalError)?;
     padding::pad_sn_to(ptaid_hex_str, &mut sn).ok_or(HsmError::InternalError)?;
 
-    Ok(CsrAssets { cn, sn })
-}
-
-/// Build the unsigned TBS, sign it with the PTA private key, then
-/// emit the full DER-encoded CSR.
-async fn build_signed_csr<'a, P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    alloc: &'a impl HsmScopedAlloc,
-    pub_sec1: &DmaBuf,
-    pta_priv: &DmaBuf,
-    assets: &CsrAssets,
-) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let input = csr_builder::CsrInput {
         tbs_template: &csr::TBS_TEMPLATE,
         public_key_offset: csr::PUBLIC_KEY_OFFSET,
         public_key: pub_sec1,
         subject_cn_offset: csr::SUBJECT_CN_OFFSET,
-        subject_cn: &assets.cn,
+        subject_cn: &cn,
         subject_sn_offset: csr::SUBJECT_SN_OFFSET,
-        subject_sn: &assets.sn,
+        subject_sn: &sn,
     };
 
-    // Single-shot async build: patches TBS, hashes, signs via PAL,
-    // emits the full DER-encoded CSR.  See `csr_builder::build_csr`
-    // for the unified pal/io/alloc + DmaBuf priv_key API.
     let csr = alloc.dma_alloc(PTA_CSR_MAX_LEN)?;
     let csr_len = csr_builder::build_csr(pal, io, alloc, &input, pta_priv, Some(csr)).await?;
     Ok((csr, csr_len))
@@ -458,13 +443,11 @@ async fn build_pta_report<'a, P: HsmPal>(
         vm_launch_id: &vm_launch_id,
     };
 
-    let report_len = key_report(pal, io, alloc, &params, pid_priv, None).await?;
+    // Allocate at max size and build in a single pass — avoids the
+    // size-query await that would add an extra state machine variant.
+    let report = alloc.dma_alloc(COSE_SIGN1_MAX_LEN)?;
+    let report_len = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
     if report_len > PTA_REPORT_MAX_LEN {
-        return Err(HsmError::InternalError);
-    }
-    let report = alloc.dma_alloc(report_len)?;
-    let written = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
-    if written != report_len {
         return Err(HsmError::InternalError);
     }
     Ok((report, report_len))
@@ -515,50 +498,50 @@ async fn build_report_data<'a, P: HsmPal>(
 /// transition.
 ///
 /// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
-/// (all four write-once fields — PTA key, UMS key, policy, POTA
-/// thumbprint — must be set first).  Vault entries are created
-/// provisionally; each `key_id()` is stable before `dismiss()`, so
-/// the ids flow into the partition setters before commit.  Failures
-/// before `dismiss()` roll back both vault entries.
-fn commit_partition_state<P: HsmPal>(
+/// (all four write-once fields — PTA key, UMS key, policy hash, POTA
+/// thumbprint — must be set first).  Vault entries are committed as
+/// soon as they are created (`vault_key_create` is awaited), and the
+/// returned `key_id`s then flow into the partition setters.  There is
+/// no provisional / `dismiss()` rollback stage anymore; undoing a
+/// partially-applied `PartInit` is a future undo-log TODO (see the body
+/// comment below).
+async fn commit_partition_state<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     ums: &DmaBuf,
     pta_priv: &DmaBuf,
     pta_pub_sec1: &DmaBuf,
-    policy: &DmaBuf,
+    policy_hash: &DmaBuf,
     pota_thumb: &DmaBuf,
 ) -> HsmResult<()> {
-    // Vault-allocate UMS first.  Both guards are held until every
-    // partition-side setter has succeeded; any earlier `?` rolls back
-    // both vault entries when the guards drop without `dismiss()`.
-    let ums_guard = pal.vault_key_create(
-        io,
-        ums,
-        HsmVaultKeyKind::PartitionUniqueMachineSecret,
-        None,
-        UMS_VAULT_ATTRS,
-        &[],
-    )?;
-    let ums_key_id = ums_guard.key_id();
+    // The keys are committed as they are created; the partition-state
+    // setters below run afterwards (a future undo log will handle
+    // rollback of a partially-applied PartInit).
+    let ums_key_id = pal
+        .vault_key_create(
+            io,
+            ums,
+            HsmVaultKeyKind::PartitionUniqueMachineSecret,
+            None,
+            UMS_VAULT_ATTRS,
+        )
+        .await?;
 
-    let pta_guard = pal.vault_key_create(
-        io,
-        pta_priv,
-        HsmVaultKeyKind::PartitionTrustAnchor,
-        None,
-        PTA_VAULT_ATTRS,
-        &[],
-    )?;
-    let pta_key_id = pta_guard.key_id();
+    let pta_key_id = pal
+        .vault_key_create(
+            io,
+            pta_priv,
+            HsmVaultKeyKind::PartitionTrustAnchor,
+            None,
+            PTA_VAULT_ATTRS,
+        )
+        .await?;
 
     crate::part_state::part_set_pta_key(pal, io, pta_key_id, pta_pub_sec1)?;
     crate::part_state::part_set_ups_key_id(pal, io, ums_key_id)?;
-    crate::part_state::part_set_policy(pal, io, policy)?;
+    crate::part_state::part_set_policy_hash(pal, io, policy_hash)?;
     crate::part_state::part_set_pota_thumbprint(pal, io, pota_thumb)?;
     crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
-    let _ = pta_guard.dismiss();
-    let _ = ums_guard.dismiss();
     Ok(())
 }
 

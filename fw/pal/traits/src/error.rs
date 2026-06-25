@@ -319,12 +319,16 @@ pub enum HsmError {
     /// Returned by the property-based getters on
     /// [`HsmPartitionManager`](crate::HsmPartitionManager)
     /// (`part_prop_get_*` / `part_prop_get_bytes`) when the addressed
-    /// `(PartPropId, idx)` slot is absent (i.e. has not been
-    /// populated, or was last
+    /// [`PartPropId`](crate::PartPropId) slot is absent (i.e. has not
+    /// been populated, or was last
     /// [`part_prop_clear`](crate::HsmPartitionManager::part_prop_clear)ed).
     /// Distinct from [`HsmError::InvalidArg`], which signals a
-    /// caller bug (unknown id, out-of-range idx, kind mismatch, etc.).
+    /// caller bug (unknown id, kind mismatch, etc.).
     PartPropNotFound = 0x087000FF,
+    /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
+    /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
+    /// carries the requested selector (SVN / owner id).
+    SeedNotFound = 0x08700100,
 }
 
 impl core::fmt::Debug for HsmError {

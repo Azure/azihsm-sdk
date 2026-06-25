@@ -30,9 +30,15 @@ fi
 
 echo "$OUTPUT"
 
-if echo "$OUTPUT" | grep -q "unregistered scheme"; then
+# When the azihsm provider is unavailable, nginx fails to open the
+# `store:azihsm://` cert key.  The exact OpenSSL diagnostic differs by version:
+#   - OpenSSL 3.0.x:  "... unregistered scheme ..."
+#   - OpenSSL 3.5.x:  "OSSL_STORE_open() failed ... No store loader found ...
+#                      Scheme (azihsm : 0) ..."
+# Both confirm the same negative behaviour: no loader for the azihsm scheme.
+if echo "$OUTPUT" | grep -qiE "unregistered scheme|no store loader found"; then
     echo "Negative test passed: nginx correctly rejects config without provider."
 else
-    echo "ERROR: nginx did not report 'unregistered scheme' — provider may still be loaded." >&2
+    echo "ERROR: nginx did not report a missing azihsm store-loader error — provider may still be loaded." >&2
     exit 1
 fi

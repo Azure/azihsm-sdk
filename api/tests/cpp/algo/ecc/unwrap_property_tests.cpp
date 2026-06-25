@@ -1222,3 +1222,61 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_unsupported_public_usa
         }
     });
 }
+
+// Verifies unwrap rejects an empty private property list while using a valid wrapped ECC blob.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_empty_private_property_list)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto priv_prop_list = ctx.priv_props.get_prop_list();
+        auto pub_prop_list = ctx.pub_props.get_prop_list();
+
+        priv_prop_list.count = 0;
+
+        auto result = try_unwrap_pair(
+            &ctx.unwrap_algo.algo,
+            ctx.rsa_priv_key.get(),
+            &ctx.wrapped_key_buf,
+            &priv_prop_list,
+            &pub_prop_list
+        );
+
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap rejects an empty public property list while using a valid wrapped ECC blob.
+TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_empty_public_property_list)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto priv_prop_list = ctx.priv_props.get_prop_list();
+        auto pub_prop_list = ctx.pub_props.get_prop_list();
+
+        pub_prop_list.count = 0;
+
+        auto result = try_unwrap_pair(
+            &ctx.unwrap_algo.algo,
+            ctx.rsa_priv_key.get(),
+            &ctx.wrapped_key_buf,
+            &priv_prop_list,
+            &pub_prop_list
+        );
+
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}

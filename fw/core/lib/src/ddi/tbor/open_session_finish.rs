@@ -25,6 +25,7 @@ use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
 use azihsm_fw_core_crypto_aead_envelope::AeadAlg;
 use azihsm_fw_core_crypto_hpke::HpkeSuite;
 use azihsm_fw_core_crypto_key_masking::aead::mask as mask_key;
+use azihsm_fw_core_crypto_key_masking::aead::masked_blob_len;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
@@ -292,10 +293,9 @@ async fn verify_mac<P: HsmPal>(
     let mut hmac_ctx = pal
         .hmac_begin(io, HsmHashAlgo::Sha384, exported, alloc)
         .await?;
-    pal.hmac_continue(io, &mut hmac_ctx, label_sid).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_init).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_hsm).await?;
-    pal.hmac_continue(io, &mut hmac_ctx, pk_resp).await?;
+    for chunk in &[label_sid as &DmaBuf, pk_init, pk_hsm, pk_resp] {
+        pal.hmac_continue(io, &mut hmac_ctx, chunk).await?;
+    }
     let mac_verified = pal.hmac_finish_verify(io, hmac_ctx, mac_fin).await?;
     if !mac_verified {
         let _ = pal.session_destroy(io, id);
@@ -344,10 +344,10 @@ async fn open_seed_envelope<'a, P: HsmPal>(
     Ok(view.payload)
 }
 
-/// HKDF-derive the remaining per-session keys: `masking_key` (always)
-/// and `mac_tx_key`/`mac_rx_key` (Authenticated sessions only).
-/// `param_key` was derived earlier (we needed it to open the seed
-/// envelope) and is plumbed through here so it can be moved straight
+/// Derive the remaining per-session keys from the HPKE `exported`
+/// secret.  Uses a loop over key specs to reduce async state machine
+/// variants.  `param_key` was derived earlier (needed to open the
+/// seed envelope) and is plumbed through so it can be moved straight
 /// into the [`DerivedKeys`] carrier without re-deriving.
 async fn derive_remaining_keys<'a, P: HsmPal>(
     pal: &P,
@@ -357,43 +357,27 @@ async fn derive_remaining_keys<'a, P: HsmPal>(
     session_type: SessionType,
     param_key: &'a mut DmaBuf,
 ) -> HsmResult<DerivedKeys<'a>> {
-    let masking_key = hkdf_expand_labeled(
-        pal,
-        io,
-        alloc,
-        exported,
-        SESSION_MASKING_KEY_LABEL,
-        SESSION_MASKING_KEY_LEN,
-    )
-    .await?;
-
-    let (mac_tx_key, mac_rx_key) = if session_type.is_authenticated() {
-        let tx = hkdf_expand_labeled(
-            pal,
-            io,
-            alloc,
-            exported,
-            SESSION_MAC_TX_LABEL,
-            SESSION_MAC_DIR_KEY_LEN,
-        )
-        .await?;
-        let rx = hkdf_expand_labeled(
-            pal,
-            io,
-            alloc,
-            exported,
-            SESSION_MAC_RX_LABEL,
-            SESSION_MAC_DIR_KEY_LEN,
-        )
-        .await?;
-        (Some(tx), Some(rx))
+    let is_auth = session_type.is_authenticated();
+    let specs: &[(&[u8], usize)] = if is_auth {
+        &[
+            (SESSION_MASKING_KEY_LABEL, SESSION_MASKING_KEY_LEN),
+            (SESSION_MAC_TX_LABEL, SESSION_MAC_DIR_KEY_LEN),
+            (SESSION_MAC_RX_LABEL, SESSION_MAC_DIR_KEY_LEN),
+        ]
     } else {
-        (None, None)
+        &[(SESSION_MASKING_KEY_LABEL, SESSION_MASKING_KEY_LEN)]
     };
+
+    let mut results: [Option<&'a mut DmaBuf>; 3] = [None, None, None];
+    for (i, &(label, out_len)) in specs.iter().enumerate() {
+        results[i] = Some(hkdf_expand_labeled(pal, io, alloc, exported, label, out_len).await?);
+    }
+
+    let [masking_key, mac_tx_key, mac_rx_key] = results;
 
     Ok(DerivedKeys {
         param_key,
-        masking_key,
+        masking_key: masking_key.unwrap(),
         mac_tx_key,
         mac_rx_key,
     })
@@ -439,8 +423,9 @@ async fn build_bmk_session<'a, P: HsmPal>(
 ) -> HsmResult<&'a mut DmaBuf> {
     let bk_session = derive_bk_session(pal, io, alloc, seed).await?;
 
-    let svn = crate::part_state::part_svn(pal, io)?;
-    let owner_seed_id = crate::part_state::part_bks2_id(pal, io)?;
+    let svn = crate::part_state::part_mfgr_svn(pal);
+    let owner_seed_id =
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
 
     // `key_label` must be a DmaBuf per the masking-lib API; stage
     // the constant label into one.
@@ -455,18 +440,8 @@ async fn build_bmk_session<'a, P: HsmPal>(
         key_label,
     };
 
-    // Size-query first, then seal into a freshly-allocated buffer.
-    let bmk_len = mask_key(
-        pal,
-        io,
-        alloc,
-        AEAD_ALG,
-        bk_session,
-        &params,
-        masking_key,
-        None,
-    )
-    .await?;
+    // Compute blob size statically, then seal in a single pass.
+    let bmk_len = masked_blob_len(AEAD_ALG, masking_key.len());
     let bmk_buf = alloc.dma_alloc(bmk_len)?;
     mask_key(
         pal,
@@ -490,12 +465,8 @@ async fn derive_bk_session<'a, P: HsmPal>(
     alloc: &'a impl HsmScopedAlloc,
     seed: &DmaBuf,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let bk_boot = alloc.dma_alloc(bk_boot_len)?;
-    {
-        let src = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot.copy_from_slice(&src[..bk_boot_len]);
-    }
+    let bk_boot = alloc.dma_alloc(BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
 
     let label = alloc.dma_alloc(SESSION_BK_LABEL.len())?;
     label.copy_from_slice(SESSION_BK_LABEL);

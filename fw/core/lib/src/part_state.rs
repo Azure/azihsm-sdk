@@ -54,17 +54,6 @@
 //! partition from `io.pid()`; this module never names a partition
 //! id directly.
 //!
-//! ## Cardinality
-//!
-//! Most catalogued properties are single-valued
-//! (`cardinality = 1` in their [`PartPropMeta`]); their wrappers
-//! hard-wire the underlying property API's `idx` argument to `0`.
-//! Indexed properties (currently [`PartPropId::MFGR_SEED`] and
-//! [`PartPropId::DEV_OWNER_SEED`], both `cardinality = 64`) expose
-//! the row index as an `idx: u16` parameter on their wrappers
-//! (see [`part_mfgr_seed`] / [`part_dev_owner_seed`]); the rest
-//! still take no index.
-//!
 //! ## Byte-valued properties use [`DmaBuf`]
 //!
 //! All byte-valued accessors take or return `&DmaBuf` instead of the
@@ -99,7 +88,7 @@
 //! ## Sensitivity
 //!
 //! Properties whose PAL meta marks them as `sensitive` (PSKs,
-//! credentials, nonce, sealed / masked / unmasked BK_BOOT, UDS,
+//! credentials, nonce, sealed / masked BK_BOOT,
 //! firmware seed) are zeroised by the PAL when overwritten or
 //! cleared.  Callers in this module never log the value of those
 //! properties; downstream code that takes a `&DmaBuf` of sensitive
@@ -144,7 +133,7 @@ use super::*;
 /// a known [`PartState`] is treated as PAL-side corruption and
 /// surfaces as [`HsmError::InternalError`].
 pub fn part_state(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<PartState> {
-    let raw = pal.part_prop_get_u8(io, PartPropId::STATE, 0)?;
+    let raw = pal.part_prop_get_u8(io, PartPropId::STATE)?;
     PartState::from_u8(raw).ok_or(HsmError::InternalError)
 }
 
@@ -159,7 +148,7 @@ pub fn part_set_state(
     io: &impl HsmIo,
     s: PartState,
 ) -> HsmResult<()> {
-    pal.part_prop_set_u8(io, PartPropId::STATE, 0, s as u8)
+    pal.part_prop_set_u8(io, PartPropId::STATE, s as u8)
 }
 
 /// [`PartPropId`] backing [`part_state`] / [`part_set_state`].
@@ -175,7 +164,7 @@ pub const fn part_state_prop_id() -> PartPropId {
 /// lifetime guards (e.g. session handles) to detect partition reuse
 /// across a free/realloc and refuse to operate on a stale generation.
 pub fn part_gen(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<u32> {
-    pal.part_prop_get_u32(io, PartPropId::GEN, 0)
+    pal.part_prop_get_u32(io, PartPropId::GEN)
 }
 
 /// [`PartPropId`] backing [`part_gen`].
@@ -187,20 +176,15 @@ pub const fn part_gen_prop_id() -> PartPropId {
 /// Security version number bound into this partition's derivation
 /// lineage.
 ///
-/// Wraps [`PartPropId::SVN`] (`U64`, `RequiredPresent`, read-only).
-/// Read-only from the caller's perspective; the PAL pins the value
-/// at partition allocation time from the firmware SVN baked into the
-/// image, and no setter is exposed here.  Used as a tweak input to
-/// partition-bound key derivations so that material derived under
-/// firmware version N is not reachable from firmware version N-1.
-pub fn part_svn(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<u64> {
-    pal.part_prop_get_u64(io, PartPropId::SVN, 0)
-}
-
-/// [`PartPropId`] backing [`part_svn`].
-#[inline]
-pub const fn part_svn_prop_id() -> PartPropId {
-    PartPropId::SVN
+/// Current firmware SVN — the manufacturer-seed (BKS1) selector.
+///
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::mfgr_svn`](azihsm_fw_hsm_pal_traits::HsmSeedStore::mfgr_svn).
+/// Used as a tweak input to partition-bound key derivations so that
+/// material derived under firmware version N is not reachable from
+/// firmware version N-1.
+pub fn part_mfgr_svn(pal: &impl HsmSeedStore) -> u64 {
+    pal.mfgr_svn()
 }
 
 /// Number of host-allocated SQ/CQ resource pairs.
@@ -209,7 +193,7 @@ pub const fn part_svn_prop_id() -> PartPropId {
 /// read-only).  Read-only from the caller's perspective; set by the
 /// PAL at partition allocation time from the resource grant.
 pub fn part_res_count(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<u8> {
-    pal.part_prop_get_u8(io, PartPropId::RES_COUNT, 0)
+    pal.part_prop_get_u8(io, PartPropId::RES_COUNT)
 }
 
 /// [`PartPropId`] backing [`part_res_count`].
@@ -226,7 +210,7 @@ pub const fn part_res_count_prop_id() -> PartPropId {
 /// for this partition.  The bytes are opaque to core; only the host
 /// management layer interprets them.
 pub fn part_id<'a>(pal: &'a impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::ID, 0)
+    pal.part_prop_get_bytes(io, PartPropId::ID)
 }
 
 /// [`PartPropId`] backing [`part_id`].
@@ -237,40 +221,23 @@ pub const fn part_id_prop_id() -> PartPropId {
 
 /// Unique Device Secret (32 B).  **Sensitive.**
 ///
-/// Wraps [`PartPropId::UDS`] (`FixedBytes { len: 32 }`,
-/// `AbsentUntilSet`, sensitive, **read-only**).  Returns
-/// [`HsmError::PartPropNotFound`] before the PAL has provisioned it.
-/// The UDS is the root secret for partition-bound derivations; the
-/// returned borrow must not be logged or copied outside crypto
-/// primitives.
-pub fn part_uds<'a>(pal: &'a impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::UDS, 0)
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::uds`](azihsm_fw_hsm_pal_traits::HsmSeedStore::uds).
+/// The UDS is the device root secret used as the KBKDF key for
+/// partition-bound derivations (the partition-distinguishing inputs are
+/// the KBKDF context); the returned borrow must not be logged or copied
+/// outside crypto primitives.
+pub fn part_uds(pal: &impl HsmSeedStore) -> &[u8] {
+    pal.uds()
 }
 
-/// [`PartPropId`] backing [`part_uds`].
-#[inline]
-pub const fn part_uds_prop_id() -> PartPropId {
-    PartPropId::UDS
-}
-
-/// Firmware-supplied per-partition seed (48 B).  **Sensitive.**
+/// Firmware-supplied secret seed (48 B).  **Sensitive.**
 ///
-/// Wraps [`PartPropId::FW_SEED`] (`FixedBytes { len: 48 }`,
-/// `RequiredPresent`, read-only).  Owned by the PAL; never set
-/// from core.  Used as a PAL-controlled tweak input to partition-bound
-/// derivations so that material from a forged or replayed UDS cannot
-/// alone reconstruct partition keys.
-pub fn part_fw_seed<'a>(
-    pal: &'a impl HsmPartitionManager,
-    io: &impl HsmIo,
-) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::FW_SEED, 0)
-}
-
-/// [`PartPropId`] backing [`part_fw_seed`].
-#[inline]
-pub const fn part_fw_seed_prop_id() -> PartPropId {
-    PartPropId::FW_SEED
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::fw_seed`](azihsm_fw_hsm_pal_traits::HsmSeedStore::fw_seed).
+/// Used as the KBKDF key in boot-key (`BKx`) derivations.
+pub fn part_fw_seed(pal: &impl HsmSeedStore) -> &[u8] {
+    pal.fw_seed()
 }
 
 // ─── Vault references ─────────────────────────────────────────────────────
@@ -294,7 +261,7 @@ fn key_id_get(
     io: &impl HsmIo,
     id: PartPropId,
 ) -> HsmResult<HsmKeyId> {
-    let raw = pal.part_prop_get_u16(io, id, 0)?;
+    let raw = pal.part_prop_get_u16(io, id)?;
     Ok(HsmKeyId::from(raw))
 }
 
@@ -306,7 +273,7 @@ fn key_id_set(
     id: PartPropId,
     key_id: HsmKeyId,
 ) -> HsmResult<()> {
-    pal.part_prop_set_u16(io, id, 0, u16::from(key_id))
+    pal.part_prop_set_u16(io, id, u16::from(key_id))
 }
 
 /// Vault id of the partition identity (ECC-P384) key.
@@ -487,7 +454,7 @@ pub fn part_clear_establish_cred_key(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<()> {
-    pal.part_prop_clear(io, PartPropId::ESTABLISH_CRED_KEY_ID, 0)
+    pal.part_prop_clear(io, PartPropId::ESTABLISH_CRED_KEY_ID)
 }
 
 /// [`PartPropId`] backing [`part_establish_cred_key_id`] /
@@ -523,7 +490,7 @@ pub fn part_psk<'a>(
     io: &impl HsmIo,
     psk_id: u8,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, part_psk_prop_id(psk_id)?, 0)
+    pal.part_prop_get_bytes(io, part_psk_prop_id(psk_id)?)
 }
 
 /// Write a pre-shared key.
@@ -537,7 +504,7 @@ pub fn part_set_psk(
     psk_id: u8,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, part_psk_prop_id(psk_id)?, 0, data)
+    pal.part_prop_set_bytes(io, part_psk_prop_id(psk_id)?, data)
 }
 
 /// Translate the `0/1` PSK selector into the backing
@@ -567,7 +534,7 @@ pub fn part_credential<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::CREDENTIAL, 0)
+    pal.part_prop_get_bytes(io, PartPropId::CREDENTIAL)
 }
 
 /// Write the caller-presented credential blob.  **Sensitive.**
@@ -582,7 +549,7 @@ pub fn part_set_credential(
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::CREDENTIAL, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::CREDENTIAL, data)
 }
 
 /// Constant-time-compare the supplied `id` and `pin` (16 B each)
@@ -648,7 +615,7 @@ pub const NONCE_LEN: usize = 32;
 /// initialises it on partition allocation.  Refresh by writing fresh
 /// PAL-RNG bytes via [`part_set_nonce`].
 pub fn part_nonce<'a>(pal: &'a impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::NONCE, 0)
+    pal.part_prop_get_bytes(io, PartPropId::NONCE)
 }
 
 /// Overwrite the partition nonce with the supplied 32-byte buffer.
@@ -661,7 +628,7 @@ pub fn part_set_nonce(
     io: &impl HsmIo,
     nonce: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::NONCE, 0, nonce)
+    pal.part_prop_set_bytes(io, PartPropId::NONCE, nonce)
 }
 
 /// [`PartPropId`] backing [`part_nonce`].
@@ -705,37 +672,26 @@ pub fn part_verify_nonce(
 // Only rows actually provisioned by the current PAL are present;
 // unprovisioned rows return [`HsmError::PartPropNotFound`].
 
-/// Manufacturer-provisioned 32 B seed row indexed by SVN.
-/// **Sensitive** PAL-private root-of-trust material.
+/// Manufacturer-provisioned 32 B seed (BKS1) for a specific `svn`.
+/// **Sensitive** device-global root-of-trust material.
 ///
-/// Wraps [`PartPropId::MFGR_SEED`] (`FixedBytes { len: 32 }`,
-/// cardinality 64, `AbsentUntilSet`, sensitive).  `svn` must be in
-/// `0..64`; otherwise [`HsmError::InvalidArg`].  Returns
-/// [`HsmError::PartPropNotFound`] when the PAL has not provisioned a
-/// row for that SVN.
-pub fn part_mfgr_seed<'a>(
-    pal: &'a impl HsmPartitionManager,
-    io: &impl HsmIo,
-    svn: u64,
-) -> HsmResult<&'a DmaBuf> {
-    let idx = u16::try_from(svn).map_err(|_| HsmError::InvalidArg)?;
-    pal.part_prop_get_bytes(io, PartPropId::MFGR_SEED, idx)
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::mfgr_seed`](azihsm_fw_hsm_pal_traits::HsmSeedStore::mfgr_seed).
+/// Returns [`HsmError::SeedNotFound`] when the PAL has not provisioned
+/// a row for that SVN.
+pub fn part_mfgr_seed(pal: &impl HsmSeedStore, svn: u64) -> HsmResult<&[u8]> {
+    pal.mfgr_seed(svn)
 }
 
-/// Device-owner-provisioned 32 B seed row indexed by `bks2_index`.
-/// **Sensitive** PAL-private root-of-trust material.
+/// Device-owner-provisioned 32 B seed (BKS2) for a specific owner
+/// selector `svn`.  **Sensitive** device-global root-of-trust material.
 ///
-/// Wraps [`PartPropId::DEV_OWNER_SEED`] (`FixedBytes { len: 32 }`,
-/// cardinality 64, `AbsentUntilSet`, sensitive).  `bks2_index` must
-/// be in `0..64`; otherwise [`HsmError::InvalidArg`].  Returns
-/// [`HsmError::PartPropNotFound`] when the PAL has not provisioned a
-/// row for that index.
-pub fn part_dev_owner_seed<'a>(
-    pal: &'a impl HsmPartitionManager,
-    io: &impl HsmIo,
-    bks2_index: u16,
-) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::DEV_OWNER_SEED, bks2_index)
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::owner_seed`](azihsm_fw_hsm_pal_traits::HsmSeedStore::owner_seed).
+/// Returns [`HsmError::SeedNotFound`] when the PAL has not provisioned
+/// a row for that selector.
+pub fn part_owner_seed(pal: &impl HsmSeedStore, svn: u64) -> HsmResult<&[u8]> {
+    pal.owner_seed(svn)
 }
 
 // ─── Boot / launch-time bound material ────────────────────────────────────
@@ -756,7 +712,7 @@ pub fn part_sealed_bk3<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::SEALED_BK3, 0)
+    pal.part_prop_get_bytes(io, PartPropId::SEALED_BK3)
 }
 
 /// Write the sealed BK3 blob.  **Sensitive.**
@@ -770,7 +726,7 @@ pub fn part_set_sealed_bk3(
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::SEALED_BK3, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::SEALED_BK3, data)
 }
 
 /// [`PartPropId`] backing [`part_sealed_bk3`] / [`part_set_sealed_bk3`].
@@ -789,7 +745,7 @@ pub fn part_masked_bk_boot<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::MASKED_BK_BOOT, 0)
+    pal.part_prop_get_bytes(io, PartPropId::MASKED_BK_BOOT)
 }
 
 /// Write the masked BK_BOOT blob.  **Sensitive.**
@@ -800,7 +756,7 @@ pub fn part_set_masked_bk_boot(
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::MASKED_BK_BOOT, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::MASKED_BK_BOOT, data)
 }
 
 /// [`PartPropId`] backing [`part_masked_bk_boot`] /
@@ -808,25 +764,6 @@ pub fn part_set_masked_bk_boot(
 #[inline]
 pub const fn part_masked_bk_boot_prop_id() -> PartPropId {
     PartPropId::MASKED_BK_BOOT
-}
-
-/// Unmasked BK_BOOT (exactly [`BK_BOOT_LEN`] bytes).  **Sensitive.**
-///
-/// Wraps [`PartPropId::BK_BOOT`]
-/// (`FixedBytes { len: BK_BOOT_LEN }`, `AbsentUntilSet`, sensitive,
-/// **read-only**).  The PAL derives the unmasked value from
-/// [`PartPropId::MASKED_BK_BOOT`]; callers only read it.
-pub fn part_bk_boot<'a>(
-    pal: &'a impl HsmPartitionManager,
-    io: &impl HsmIo,
-) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::BK_BOOT, 0)
-}
-
-/// [`PartPropId`] backing [`part_bk_boot`].
-#[inline]
-pub const fn part_bk_boot_prop_id() -> PartPropId {
-    PartPropId::BK_BOOT
 }
 
 /// VM-launch GUID (16 B), bound at session-establishment time.
@@ -839,7 +776,7 @@ pub fn part_vm_launch_guid<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::VM_LAUNCH_GUID, 0)
+    pal.part_prop_get_bytes(io, PartPropId::VM_LAUNCH_GUID)
 }
 
 /// [`PartPropId`] backing [`part_vm_launch_guid`].
@@ -848,34 +785,36 @@ pub const fn part_vm_launch_guid_prop_id() -> PartPropId {
     PartPropId::VM_LAUNCH_GUID
 }
 
-/// Partition policy blob (exactly [`PART_POLICY_LEN`] bytes).
+/// Partition policy hash — the SHA-384 digest (48 bytes) of the
+/// partition's PartPolicy blob.
 ///
-/// Wraps [`PartPropId::POLICY`]
-/// (`FixedBytes { len: PART_POLICY_LEN }`, `AbsentUntilSet`).  Set
-/// by the TBOR `PartInit` handler and consulted by every DDI handler
-/// that gates on policy.
-pub fn part_policy<'a>(
+/// Wraps [`PartPropId::POLICY_HASH`] (fixed 48 bytes, `AbsentUntilSet`).
+/// Set by the TBOR `PartInit` handler from the hash of the request's
+/// `part_policy`, and consulted by DDI handlers that gate on policy
+/// identity.
+pub fn part_policy_hash<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::POLICY, 0)
+    pal.part_prop_get_bytes(io, PartPropId::POLICY_HASH)
 }
 
-/// Write the partition policy blob.
+/// Write the partition policy hash.
 ///
-/// `data` must be exactly [`PART_POLICY_LEN`] bytes.
-pub fn part_set_policy(
+/// `data` must be exactly the 48-byte SHA-384 digest of the PartPolicy
+/// blob.
+pub fn part_set_policy_hash(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::POLICY, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::POLICY_HASH, data)
 }
 
-/// [`PartPropId`] backing [`part_policy`] / [`part_set_policy`].
+/// [`PartPropId`] backing [`part_policy_hash`] / [`part_set_policy_hash`].
 #[inline]
-pub const fn part_policy_prop_id() -> PartPropId {
-    PartPropId::POLICY
+pub const fn part_policy_hash_prop_id() -> PartPropId {
+    PartPropId::POLICY_HASH
 }
 
 /// POTA thumbprint (48 B).  Set by `PartInit`.
@@ -886,7 +825,7 @@ pub fn part_pota_thumbprint<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::POTA_THUMBPRINT, 0)
+    pal.part_prop_get_bytes(io, PartPropId::POTA_THUMBPRINT)
 }
 
 /// Write the POTA thumbprint.
@@ -897,7 +836,7 @@ pub fn part_set_pota_thumbprint(
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::POTA_THUMBPRINT, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::POTA_THUMBPRINT, data)
 }
 
 /// [`PartPropId`] backing [`part_pota_thumbprint`] /
@@ -944,7 +883,7 @@ pub fn part_psk_is_default(
 /// [`HsmError::PartPropNotFound`] to `Ok(false)`; any other PAL error
 /// propagates.
 pub fn part_is_credential_set(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<bool> {
-    match pal.part_prop_get_bytes(io, PartPropId::CREDENTIAL, 0) {
+    match pal.part_prop_get_bytes(io, PartPropId::CREDENTIAL) {
         Ok(_) => Ok(true),
         Err(HsmError::PartPropNotFound) => Ok(false),
         Err(e) => Err(e),
@@ -958,7 +897,7 @@ pub fn part_id_pub_key<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::ID_PUB_KEY, 0)
+    pal.part_prop_get_bytes(io, PartPropId::ID_PUB_KEY)
 }
 
 /// Raw ECC-P384 public key (x ∥ y, 96 B) for the session encryption key.
@@ -966,7 +905,7 @@ pub fn part_session_enc_pub_key<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::SESSION_ENC_PUB_KEY, 0)
+    pal.part_prop_get_bytes(io, PartPropId::SESSION_ENC_PUB_KEY)
 }
 
 /// Raw ECC-P384 public key (x ∥ y, 96 B) for the establish-credential key.
@@ -974,36 +913,52 @@ pub fn part_establish_cred_pub_key<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::ESTABLISH_CRED_PUB_KEY, 0)
+    pal.part_prop_get_bytes(io, PartPropId::ESTABLISH_CRED_PUB_KEY)
 }
 
-/// SEC1-uncompressed ECC-P384 public key (97 B) for the Partition Trust Anchor.
-pub fn part_pta_pub_sec1<'a>(
+/// Raw ECC-P384 public-key coordinates (x ∥ y, 96 B) of the Partition
+/// Trust Anchor.
+pub fn part_pta_pub_key<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::PTA_PUB_SEC1, 0)
+    pal.part_prop_get_bytes(io, PartPropId::PTA_PUB_KEY)
 }
 
-/// Set the PTA SEC1 public key bytes (97 B).
-pub fn part_set_pta_pub_sec1(
+/// Validates a host-supplied SEC1-uncompressed P-384 PTA key (`0x04 ‖ x
+/// ‖ y`, 97 B) and returns a view of the 96-byte raw `x ‖ y`
+/// coordinates (the constant `0x04` prefix is dropped before storage).
+fn pta_sec1_to_raw(sec1: &DmaBuf) -> HsmResult<&DmaBuf> {
+    const PTA_SEC1_LEN: usize = 97;
+    if sec1.len() != PTA_SEC1_LEN || sec1[0] != 0x04 {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(sec1.split_at(1).1)
+}
+
+/// Store the PTA public key from its host-supplied SEC1 form: validates
+/// the `0x04` prefix and persists the 96-byte raw coordinates.
+pub fn part_set_pta_pub_key(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
-    data: &DmaBuf,
+    sec1: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_SEC1, 0, data)
+    let raw = pta_sec1_to_raw(sec1)?;
+    pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_KEY, raw)
 }
 
 /// Bind both halves of the Partition Trust Anchor — the vault key id
-/// and the SEC1 public key bytes — in a single composite write.
+/// and the public key — in a single composite write.  `pub_sec1` is the
+/// host-supplied SEC1 form; its raw coordinates are stored.
 pub fn part_set_pta_key(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
     key_id: HsmKeyId,
     pub_sec1: &DmaBuf,
 ) -> HsmResult<()> {
+    let raw = pta_sec1_to_raw(pub_sec1)?;
     key_id_set(pal, io, PartPropId::PTA_KEY_ID, key_id)?;
-    pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_SEC1, 0, pub_sec1)
+    pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_KEY, raw)
 }
 
 /// BK3 session key (48 B). **Sensitive.**
@@ -1011,7 +966,7 @@ pub fn part_bk3_session<'a>(
     pal: &'a impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<&'a DmaBuf> {
-    pal.part_prop_get_bytes(io, PartPropId::BK3_SESSION, 0)
+    pal.part_prop_get_bytes(io, PartPropId::BK3_SESSION)
 }
 
 /// Set the BK3 session key (48 B).
@@ -1020,12 +975,12 @@ pub fn part_set_bk3_session(
     io: &impl HsmIo,
     data: &DmaBuf,
 ) -> HsmResult<()> {
-    pal.part_prop_set_bytes(io, PartPropId::BK3_SESSION, 0, data)
+    pal.part_prop_set_bytes(io, PartPropId::BK3_SESSION, data)
 }
 
 /// Whether the partition has completed one-shot BK3 initialization.
 pub fn part_is_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<bool> {
-    pal.part_prop_get_bool(io, PartPropId::BK3_INITIALIZED, 0)
+    pal.part_prop_get_bool(io, PartPropId::BK3_INITIALIZED)
 }
 
 /// Atomically commit the partition's one-shot BK3 init state to
@@ -1033,10 +988,13 @@ pub fn part_is_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) 
 /// was already set in the current partition incarnation.  This is the
 /// authoritative race-winner gate for `DdiInitBk3`.
 pub fn part_mark_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
-    pal.part_prop_set_bool(io, PartPropId::BK3_INITIALIZED, 0, true)
+    pal.part_prop_set_bool(io, PartPropId::BK3_INITIALIZED, true)
 }
 
-/// Partition BKS2 lineage identifier (`u16`). Read-only.
-pub fn part_bks2_id(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<u16> {
-    pal.part_prop_get_u16(io, PartPropId::BKS2_ID, 0)
+/// Current owner-seed (BKS2) selector (BKS2 lineage; always 0 today).
+///
+/// Device-global (not per-partition); served by
+/// [`HsmSeedStore::owner_svn`](azihsm_fw_hsm_pal_traits::HsmSeedStore::owner_svn).
+pub fn part_owner_svn(pal: &impl HsmSeedStore) -> u64 {
+    pal.owner_svn()
 }

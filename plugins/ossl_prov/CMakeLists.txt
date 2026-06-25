@@ -108,6 +108,7 @@ set(AZIHSM_OSSL_SOURCES
     ./src/azihsm_ossl_store.c
     ./src/azihsm_ossl_digest.c
     ./src/azihsm_ossl_cipher.c
+    ./src/azihsm_ossl_skeymgmt_aes.c
     ./src/azihsm_ossl_mac.c
     ./src/azihsm_ossl_kdf.c
     ./src/azihsm_ossl_keymgmt_rsa.c

@@ -58,7 +58,7 @@ pub const KEY_LABEL_MAX: usize = 32;
 /// discover the blob size via [`mask`](crate::aead::mask) with
 /// `out = None`.
 #[inline]
-pub(crate) const fn blob_len(alg: AeadAlg, target_key_len: usize) -> usize {
+pub const fn blob_len(alg: AeadAlg, target_key_len: usize) -> usize {
     alg.envelope_len(target_key_len, META_LEN)
 }
 
@@ -130,7 +130,7 @@ pub struct MaskedKeyMetadata {
     /// Partition SVN at mask time.
     pub svn: Le64,
     /// Owner-seed (BKS2) lineage identifier (from
-    /// `part_bks2_id`).
+    /// `part_owner_svn`).
     pub owner_seed_id: Le16,
     /// Caller-supplied label, left-justified and zero-padded to
     /// [`KEY_LABEL_MAX`] bytes.

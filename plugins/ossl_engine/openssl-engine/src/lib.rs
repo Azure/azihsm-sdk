@@ -13,5 +13,9 @@
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod engine;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod error;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod exdata;
 
 pub use openssl_sys_engine as ffi;

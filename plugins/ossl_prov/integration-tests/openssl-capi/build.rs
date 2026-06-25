@@ -24,7 +24,27 @@ fn main() {
         );
     });
 
+    // Rebuild the GoogleTest binary whenever any C++ source/header or the CMake
+    // configuration changes.  Without this, cargo would not re-run the build
+    // script on a test edit and would silently reuse a stale binary.
+    rerun_if_changed_recursive(std::path::Path::new("cpp"));
+
     cmake::Config::new("cpp")
         .define("OPENSSL_ROOT_DIR", &openssl_dir)
         .build();
+}
+
+/// Emit `cargo::rerun-if-changed` for every file under `dir` (recursively).
+fn rerun_if_changed_recursive(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rerun_if_changed_recursive(&path);
+        } else {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 }

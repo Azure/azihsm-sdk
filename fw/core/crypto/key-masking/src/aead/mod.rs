@@ -21,6 +21,7 @@ pub use decode::unmask;
 pub use decode::UnmaskedView;
 pub use encode::mask;
 pub use encode::MaskParams;
+pub use format::blob_len as masked_blob_len;
 pub use format::MaskedKeyMetadata;
 pub use format::KEY_LABEL_MAX;
 pub use format::META_MAGIC;

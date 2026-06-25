@@ -1,0 +1,8 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[advisories]
+ignore = [
+  # discussed in https://github.com/rust-embedded/cortex-m/issues/651 advisory is suspected wrong/misleading
+  "RUSTSEC-2026-0110",
+]

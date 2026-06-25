@@ -116,45 +116,35 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     }
 
     // Pre-dispatch gating work (session-id cross-check, default-PSK
-    // gate) runs against a short-lived shared reborrow of the parent
-    // mutable buffer. The reborrow drops at the end of this block,
-    // freeing `req_buf` for handlers that need `&mut DmaBuf`.
+    // gate).  Only out-of-session opcodes that need neither check skip
+    // the re-parse entirely — the caller's `RequestView::parse` in
+    // `handle_tbor_op` already validated the header and TOC structure.
     {
-        let view = RequestView::parse(&*req_buf)?;
+        let needs_cross_check = needs_session_id_cross_check(opcode);
+        let needs_psk_gate = is_in_session(opcode) && !allowed_with_default_psk(opcode);
 
-        // SQE/body session-id cross-check: for every opcode whose
-        // `SessionCtrl` requires `id_valid = true` (close + in-session),
-        // the SQE-carried `session_id` MUST match the inline body
-        // `session_id` TOC entry.  Out-of-session opcodes do not carry a
-        // body session id, and `validate_tbor_session_flags` has already
-        // rejected the `id_valid = true` case for them upstream.
-        //
-        // This matches MBOR's `validate_session` (Rule 3): the audit
-        // trail / CQE always reflects the same slot the handler mutates.
-        if needs_session_id_cross_check(opcode) {
-            let body_sess_id = extract_session_id(&view)?;
-            if u16::from(body_sess_id) != sqe_session_id {
-                return Err(HsmError::InvalidArg);
+        if needs_cross_check || needs_psk_gate {
+            let view = RequestView::parse(&*req_buf)?;
+
+            // SQE/body session-id cross-check: for every opcode whose
+            // `SessionCtrl` requires `id_valid = true` (close +
+            // in-session), the SQE-carried `session_id` MUST match the
+            // inline body `session_id` TOC entry.
+            if needs_cross_check {
+                let body_sess_id = extract_session_id(&view)?;
+                if u16::from(body_sess_id) != sqe_session_id {
+                    return Err(HsmError::InvalidArg);
+                }
             }
-        }
 
-        // Default-PSK gate: applies only to in-session commands that are
-        // not on the allow-list.  Skipped for out-of-session opcodes.
-        //
-        // The role used for the gate is derived from the request's
-        // `session_id` TOC field (via [`HsmSessId::role`]).  This is the
-        // same source of truth each handler ultimately uses to fetch the
-        // session's `param_key`, so a client that forges a `session_id`
-        // they do not own gains nothing — the handler's crypto-layer
-        // authentication still rejects them.  When an outer
-        // authenticated-framing layer lands, the role source should
-        // switch to it; the gate's invariant ("the requested role's PSK
-        // must be rotated") remains the same.
-        if is_in_session(opcode) && !allowed_with_default_psk(opcode) {
-            let sess_id = extract_session_id(&view)?;
-            let psk_id = psk_id_for_role(sess_id.role());
-            if crate::part_state::part_psk_is_default(pal, io, psk_id)? {
-                return Err(HsmError::DefaultPskMustRotate);
+            // Default-PSK gate: applies only to in-session commands
+            // that are not on the allow-list.
+            if needs_psk_gate {
+                let sess_id = extract_session_id(&view)?;
+                let psk_id = psk_id_for_role(sess_id.role());
+                if crate::part_state::part_psk_is_default(pal, io, psk_id)? {
+                    return Err(HsmError::DefaultPskMustRotate);
+                }
             }
         }
     }

@@ -1,0 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "xtask"
+version = "0.1.0"
+
+[dependencies]
+anyhow = { workspace = true }
+azihsm_reggen = { workspace = true }
+azihsm_systemrdl = { workspace = true }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+toml_edit = { workspace = true }
+walkdir = { workspace = true }
+xshell = { workspace = true }
