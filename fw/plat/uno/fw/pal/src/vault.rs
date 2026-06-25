@@ -29,6 +29,7 @@ use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
+use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
 
@@ -36,11 +37,8 @@ use crate::UnoHsmPal;
 
 #[inline]
 pub(crate) fn vault(io: &impl HsmIo) -> KeyVault<VaultStorage> {
-    let _ = io;
-    // Until partition provisioning lands, every partition owns all vault
-    // tables. The per-partition resource mask (from the partition table)
-    // is wired in once `PartTable` exists; for now scope to all 65 tables.
-    let res_mask = u128::MAX;
+    // Out-of-range partitions own no tables (empty mask → no storage).
+    let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
     KeyVault::new(VaultStorage::new(res_mask))
 }
 

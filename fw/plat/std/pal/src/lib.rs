@@ -64,6 +64,7 @@ mod part;
 mod part_lock;
 mod rng;
 mod rsa;
+mod seed;
 mod session;
 mod tracing;
 mod vault;

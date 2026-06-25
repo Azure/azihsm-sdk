@@ -55,16 +55,16 @@ pub const SHA_CMD_OFFSET: u32 = 0x154A4;
 pub const SHA_CMD_COUNT: u32 = 32;
 pub const SHA_CMD_STRIDE: u32 = 0x20;
 pub const IO_META_OFFSET: u32 = 0x20C58;
-pub const IO_META_COUNT: u32 = 32;
+pub const IO_META_COUNT: u32 = 33;
 pub const IO_META_STRIDE: u32 = 0x08;
-pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D58;
-pub const SRAM_IO_BUF_COUNT: u32 = 32;
+pub const BKS_TABLE_OFFSET: u32 = 0x1110;
+pub const BKS_TABLE_COUNT: u32 = 12;
+pub const BKS_TABLE_STRIDE: u32 = 0x29;
+pub const BKS_TABLE_SIZE: u32 = 0x29;
+pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D60;
+pub const SRAM_IO_BUF_COUNT: u32 = 33;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4800;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4800;
-pub const PART_STORE_OFFSET: u32 = 0xBB000;
-pub const PART_STORE_COUNT: u32 = 1;
-pub const PART_STORE_STRIDE: u32 = 0x30C00;
-pub const PART_STORE_SIZE: u32 = 0x30C00;
 
 tock_registers::register_bitfields! [u32,
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
@@ -312,6 +312,8 @@ pub mod regs {
     tock_registers::register_structs! {
         pub IoGsramRegs {
             (0x0 => _reserved0),
+            (0x1110 => pub bks_table: [u8; 492]),
+            (0x12fc => _reserved1),
             (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
             (0x7004 => pub ipc_admin_hsm_rx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_RX_PI::Register>),
             (0x7008 => pub ipc_admin_hsm_rx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_RX_CI::Register>),
@@ -319,30 +321,28 @@ pub mod regs {
             (0x7010 => pub ipc_admin_hsm_tx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_TX_CI::Register>),
             (0x7014 => pub ipc_admin_hsm_rx_ring: [super::IpcMessage; 2]),
             (0x7094 => pub ipc_admin_hsm_tx_ring: [super::IpcMessage; 2]),
-            (0x7114 => _reserved1),
+            (0x7114 => _reserved2),
             (0xe440 => pub isq: [super::IsqEntry; 32]),
             (0xe540 => pub icq: [super::IcqEntry; 32]),
             (0xe740 => pub io_sq: [super::IoSqEntry; 32]),
             (0xef40 => pub icq_tail_shadow: crate::RW<u32, super::ICQ_TAIL_SHADOW::Register>),
-            (0xef44 => _reserved2),
+            (0xef44 => _reserved3),
             (0xef60 => pub osq: [super::OsqEntry; 32]),
             (0xf160 => pub ocq: [super::OcqEntry; 32]),
             (0xf360 => pub io_cq: [super::IoCqEntry; 32]),
             (0xf560 => pub ocq_tail_shadow: crate::RW<u32, super::OCQ_TAIL_SHADOW::Register>),
-            (0xf564 => _reserved3),
+            (0xf564 => _reserved4),
             (0x12840 => pub gdma_sq: [super::GdmaSqEntry; 32]),
             (0x13040 => pub gdma_cq: [super::GdmaCqEntry; 32]),
             (0x13240 => pub gdma_cq_tail_shadow: crate::RW<u32, super::GDMA_CQ_TAIL_SHADOW::Register>),
-            (0x13244 => _reserved4),
+            (0x13244 => _reserved5),
             (0x15064 => pub aes_cmd: [super::AesCmdEntry; 32]),
             (0x15364 => pub upka_engine_cmd: [super::UpkaCmdEntry; 16]),
             (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
-            (0x158a4 => _reserved5),
-            (0x20c58 => pub io_meta: [super::IoMetaEntry; 32]),
-            (0x20d58 => pub sram_io_buf: [u8; 589824]),
-            (0xb0d58 => _reserved6),
-            (0xbb000 => pub part_store: [u8; 199680]),
-            (0xebc00 => @END),
+            (0x158a4 => _reserved6),
+            (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
+            (0x20d60 => pub sram_io_buf: [u8; 608256]),
+            (0xb5560 => @END),
         }
     }
 }

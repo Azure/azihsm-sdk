@@ -90,6 +90,22 @@ impl StdHsmIo {
             cqe: [0; CQE_DWORDS],
         }
     }
+
+    /// Construct a transient admin IO for internal provisioning crypto
+    /// (e.g. masking `BK_BOOT` at partition allocation), backed by a
+    /// caller-borrowed buffer-pool `slot`.  `tx` is a throwaway reply
+    /// channel — no host awaits the completion.
+    pub(crate) fn admin(pid: HsmPartId, slot: u16, tx: ReplySender<HsmCqe>) -> Self {
+        Self {
+            pid,
+            qid: 0,
+            qidx: 0,
+            sqe: [0; SQE_DWORDS],
+            slot,
+            tx,
+            cqe: [0; CQE_DWORDS],
+        }
+    }
 }
 
 impl core::fmt::Debug for StdHsmIo {
