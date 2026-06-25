@@ -3,6 +3,7 @@
 
 //! SetSealedBk3 / GetSealedBk3 smoke tests for the emu backend.
 
+#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
 use azihsm_ddi::*;

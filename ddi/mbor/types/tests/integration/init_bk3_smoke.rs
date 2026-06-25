@@ -21,6 +21,7 @@
 //!   called again — the new `BK_BOOT` produces a different
 //!   `masked_bk3`.
 
+#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
 use azihsm_ddi::*;
