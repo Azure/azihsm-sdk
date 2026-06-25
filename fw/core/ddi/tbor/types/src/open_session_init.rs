@@ -42,6 +42,9 @@ pub const MAC_RESP_LEN: usize = 48;
 /// `exported` secret on the HSM and fail the Phase-1 confirm MAC.
 /// See [`azihsm_fw_hsm_pal_traits::SessionSuite`] for the wire
 /// registry.
+/// TBOR opcode for `OpenSessionInit` (session-establishment Phase 1).
+pub const TBOR_OP_OPEN_SESSION_INIT: u8 = 0x10;
+
 #[tbor(opcode = 0x10)]
 pub struct TborOpenSessionInitReq<'a> {
     /// PSK identifier asserting the caller role.

@@ -30,6 +30,9 @@ pub const SEED_ENVELOPE_LEN: usize = 8 + 12 + SEED_LEN + 16;
 pub const BMK_SESSION_MAX_LEN: usize = 512;
 
 /// `OpenSessionFinish` request schema.
+/// TBOR opcode for `OpenSessionFinish` (session-establishment Phase 2).
+pub const TBOR_OP_OPEN_SESSION_FINISH: u8 = 0x11;
+
 #[tbor(opcode = 0x11)]
 pub struct TborOpenSessionFinishReq<'a> {
     /// Pending session identifier the handshake reserved in Phase 1.
