@@ -17,6 +17,9 @@ use crate::XtaskCtx;
 
 #[derive(Parser, Debug, Clone, Default)]
 struct Stage {
+    /// Run setup.
+    #[clap(long)]
+    setup: bool,
     /// Run reggen --check.
     #[clap(long)]
     reggen: bool,
@@ -39,11 +42,18 @@ struct Stage {
 
 impl Stage {
     fn any(&self) -> bool {
-        self.reggen || self.fmt || self.clippy || self.copyright || self.audit || self.build
+        self.setup
+            || self.reggen
+            || self.fmt
+            || self.clippy
+            || self.copyright
+            || self.audit
+            || self.build
     }
 
     fn all() -> Self {
         Self {
+            setup: true,
             reggen: true,
             fmt: true,
             clippy: true,
@@ -75,6 +85,19 @@ impl Xtask for Precheck {
         } else {
             Stage::all()
         };
+
+        if stage.setup {
+            log::info!("=== setup ===");
+            if let Err(e) = (crate::setup::Setup {
+                force: false,
+                config: None,
+                skip_audit: self.skip_audit,
+            })
+            .run(ctx.clone())
+            {
+                errors.push(("setup", e));
+            }
+        }
 
         if stage.reggen {
             log::info!("=== reggen --check (uno) ===");
