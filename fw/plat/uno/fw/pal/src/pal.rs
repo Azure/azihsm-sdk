@@ -721,9 +721,8 @@ impl HsmPal for UnoHsmPal {
             // aes). Without this, the PKA `ecc_gen_keypair` await and the key
             // vault's large-key GDMA `copy_mem` await never resolve.
             self.pka.wake();
-            self.gdma.wake(Interrupt::GDMA_CQ as u16);
             self.aes.wake();
-            self.sha.wake();
+            //self.sha.wake();
             embassy_futures::yield_now().await;
         }
     }
