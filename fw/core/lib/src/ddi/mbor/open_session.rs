@@ -110,12 +110,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     let mk_session = pal.dma_alloc(io, BK_LEN)?;
     pal.rng_fill_bytes(io, mk_session)?;
 
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let bk_boot = pal.dma_alloc(io, bk_boot_len)?;
-    {
-        let src = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot.copy_from_slice(&src[..bk_boot_len]);
-    }
+    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
 
     let bk_session = pal.dma_alloc(io, BK_LEN)?;
     let session_bk_label = pal.dma_alloc(io, SESSION_BK_LABEL.len())?;
@@ -142,8 +138,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         sess_id,
         bk_session,
         mk_session,
-        crate::part_state::part_svn(pal, io)?,
-        crate::part_state::part_bks2_id(pal, io)?,
+        crate::part_state::part_mfgr_svn(pal),
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?,
     )
     .await?;
 

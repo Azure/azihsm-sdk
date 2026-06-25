@@ -30,7 +30,9 @@
 
 use core::cell::Cell;
 
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmPal;
+use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
@@ -404,7 +406,8 @@ impl UnoHsmPal {
         .await;
         match result {
             Either3::First(_) => {
-                self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg);
+                self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg)
+                    .await;
             }
             Either3::Second(value) => {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
@@ -539,7 +542,7 @@ impl UnoHsmPal {
     /// - May update boot phase (`WaitNormalBoot -> WaitStart -> Running`).
     /// - May initialize IIC/OIC/GDMA when transitioning to running state.
     /// - May send an ACK or response via IPC.
-    fn handle_ipc_message(&self, channel: IpcChannel, buf: &mut [u32; 16]) {
+    async fn handle_ipc_message(&self, channel: IpcChannel, buf: &mut [u32; 16]) {
         match self.boot_phase.get() {
             BootPhase::WaitNormalBoot => {
                 if !self.try_ack_state_change(buf, IoProcessorState::NormalBoot, "WaitNormalBoot") {
@@ -555,10 +558,93 @@ impl UnoHsmPal {
                 self.on_boot_complete()
             }
             BootPhase::Running => {
+                if self.try_handle_set_resource(channel, buf).await {
+                    return;
+                }
+                if self.try_handle_pfn_enable(channel, buf).await {
+                    return;
+                }
                 buf[0] |= 0x80;
                 self.ipc.reply(channel as u8, buf);
             }
         }
+    }
+
+    /// Handle a `PfnEnableDisable` IPC in the running state.
+    ///
+    /// Decodes the message; if it is a `PfnEnableDisable`, drives the
+    /// target partition's lifecycle (enable/disable, including enable-time
+    /// key generation) and replies with an ACK. Returns `true` when the
+    /// message was handled here, `false` otherwise so the caller falls back
+    /// to the default echo path.
+    async fn try_handle_pfn_enable(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+        let Some(msg) = decode_pfn_enable_disable(buf) else {
+            return false;
+        };
+
+        let pid = HsmPartId::from(msg.info.pfn as u8);
+        // Map the IPC action onto a partition-lifecycle primitive; Migrate
+        // and any unknown action are not supported.
+        let result = match PfnEnableDisableAction(msg.info.action) {
+            PfnEnableDisableAction::Enable => self.part_enable(pid).await,
+            PfnEnableDisableAction::Disable => self.part_disable(pid).await,
+            _ => Err(HsmError::UnsupportedCmd),
+        };
+        let status = match result {
+            Ok(()) => IpcMessageStatusCode::Success,
+            Err(_) => IpcMessageStatusCode::InvalidField,
+        };
+
+        let reply = encode_pfn_enable_disable_ack(buf, status);
+        self.ipc.reply(channel as u8, &reply);
+        true
+    }
+
+    /// Handle a `SetResource` IPC in the running state.
+    ///
+    /// Decodes the message; if it is a `SetResource`, applies the
+    /// resource mask to the target partition (provisioning or freeing the
+    /// partition identity) and replies with an ACK reporting the resulting
+    /// owned-table count. Returns `true` when the message was a
+    /// `SetResource` (and thus fully handled here), `false` otherwise so
+    /// the caller falls back to the default echo path.
+    async fn try_handle_set_resource(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+        let Some(msg) = decode_set_resource(buf) else {
+            return false;
+        };
+
+        let pid = HsmPartId::from(msg.info.pfn as u8);
+        let mask = msg.info.mask_u128();
+        // The system has only `NUM_PARTITIONS` key-vault tables; any bit at
+        // or above that index references a non-existent table and would
+        // corrupt the ACK's owned-table count and the persisted `res_mask`.
+        // Reject such a request before applying the allocation.
+        let valid_tables = if crate::part::NUM_PARTITIONS >= u128::BITS as usize {
+            u128::MAX
+        } else {
+            (1u128 << crate::part::NUM_PARTITIONS) - 1
+        };
+        if mask & !valid_tables != 0 {
+            let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+        // A zero mask frees the partition; any other mask (re)allocates it.
+        // The ACK's owned-table count is a pure function of the mask — an
+        // IPC-reply concern, computed here rather than in the partition layer.
+        let result = if mask == 0 {
+            self.part_free(pid).await
+        } else {
+            self.part_alloc(pid, mask).await
+        };
+        let (status, count) = match result {
+            Ok(()) => (IpcMessageStatusCode::Success, mask.count_ones() as u8),
+            Err(_) => (IpcMessageStatusCode::InvalidField, 0),
+        };
+
+        let reply = encode_set_resource_ack(buf, status, count);
+        self.ipc.reply(channel as u8, &reply);
+        true
     }
 
     /// Handle one IPC event notification.
@@ -605,6 +691,7 @@ impl HsmPal for UnoHsmPal {
         self.ipc.init();
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
+        azihsm_fw_uno_drivers_part_store::PartStore::init_default();
         boot_status::set(BootStatus::Done);
     }
 

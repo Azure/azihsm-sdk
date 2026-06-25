@@ -33,9 +33,8 @@
 //! HMAC-SHA-384 tag computed over the entire blob (encrypt-then-MAC).
 //! The same envelope is used twice in this handler:
 //!
-//! 1. **BK3** (plaintext) is enveloped under **`BK_BOOT`** (the 80-byte
-//!    boot key sourced from
-//!    [`HsmPartitionManager::part_bk_boot`]).  The result —
+//! 1. **BK3** (plaintext) is enveloped under **`BK_BOOT`** (a fresh
+//!    80-byte random boot key generated here).  The result —
 //!    `masked_bk3` — is returned to the host.
 //! 2. **`BK_BOOT`** (plaintext) is enveloped under **`BKx`** (the
 //!    partition's masking key produced per-call by
@@ -43,7 +42,8 @@
 //!    firmware boot seed bound to `(svn, bks2_id)`).  The result —
 //!    `Masked_BK_BOOT` — is persisted via
 //!    [`HsmPartitionManager::part_set_masked_bk_boot`] and never
-//!    crosses the wire.
+//!    crosses the wire.  The raw `BK_BOOT` is never stored; later
+//!    flows recover it on demand by unmasking `Masked_BK_BOOT`.
 //!
 //! For each envelope the 80-byte masking key is split into a 32-byte
 //! AES key (low half) and a 48-byte HMAC key (high half).  Metadata
@@ -82,33 +82,11 @@ const BK3_LEN: usize = 48;
 ///   after import.
 ///
 /// All other attributes are cleared.  In particular `local` is
-/// cleared because BK3 is host-imported (contrast with
-/// [`BK_BOOT_KEY_ATTRIBUTES`]); the operation-bits (`encrypt`,
+/// cleared because BK3 is host-imported (contrast with the on-device
+/// `BK_BOOT` masking key); the operation-bits (`encrypt`,
 /// `sign`, `wrap`, `derive`, …) are cleared because BK3 has no
 /// PKCS#11 handle the host could pass to those APIs.
 const BK3_KEY_ATTRIBUTES: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
-    .with_internal(true)
-    .with_never_extractable(true);
-
-/// KBKDF label selecting the `BK_BOOT` masking-key derivation purpose
-/// when calling [`HsmPartitionManager::derive_masking_key`].  The PAL
-/// combines this with its firmware boot seed plus `(svn, bks2_id)` to
-/// produce `BKx`.  The literal matches the reference firmware so
-/// persisted `Masked_BK_BOOT` blobs stay bit-compatible with host
-/// tooling.
-const BK_BOOT_MK_LABEL: &[u8] = b"BK_BOOT_MK_DEFAULT";
-
-/// PKCS#11-style attributes recorded in `Masked_BK_BOOT`'s metadata.
-///
-/// `BK_BOOT` is a firmware-internal boot key **generated on-device**
-/// during partition enable.  It is never exposed and is used solely
-/// as a masking key (for BK3 here, and re-enveloped as
-/// `Masked_BK_BOOT` under `BKx`).
-///
-/// Identical to [`BK3_KEY_ATTRIBUTES`] except `local` is **set**,
-/// reflecting on-device generation versus BK3's host import.
-const BK_BOOT_KEY_ATTRIBUTES: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
-    .with_local(true)
     .with_internal(true)
     .with_never_extractable(true);
 
@@ -145,8 +123,9 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
         return Err(HsmError::Bk3AlreadyInitialized);
     }
 
-    let svn = crate::part_state::part_svn(pal, io)?;
-    let bks2_id = crate::part_state::part_bks2_id(pal, io)?;
+    let svn = crate::part_state::part_mfgr_svn(pal);
+    let bks2_id =
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
     let metadata = DdiMaskedKeyMetadata {
         svn,
         key_type: DdiKeyType::AesCbc256Hmac384,
@@ -159,15 +138,11 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
         key_length: BK3_LEN as u16,
     };
 
-    // Single combined alloc for BK_BOOT + BKx (both live simultaneously
-    // during the second mask call below).
-    let bk_boot_len = crate::part_state::part_bk_boot(pal, io)?.len();
-    let keys_dma = pal.dma_alloc(io, 2 * bk_boot_len)?;
-    let (bk_boot_dma, bkx_dma) = keys_dma.split_at_mut(bk_boot_len);
-    {
-        let bk = crate::part_state::part_bk_boot(pal, io)?;
-        bk_boot_dma.copy_from_slice(&bk[..bk_boot_len]);
-    }
+    // Recover BK_BOOT.  The raw boot key is never stored; it is created
+    // masked once at partition allocation and recovered here by
+    // unmasking the persisted `Masked_BK_BOOT`.
+    let bk_boot_dma = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot_dma).await?;
 
     // Size-only query (no crypto).
     let masked_bk3_len = mask(pal, io, bk_boot_dma, body.bk3, &metadata, None).await?;
@@ -195,57 +170,6 @@ pub(crate) async fn init_bk3<'p, P: HsmPal>(
         Some(frame.masked_bk3),
     )
     .await?;
-
-    // Envelope BK_BOOT under BKx and persist as `Masked_BK_BOOT`.  This
-    // blob is firmware-internal — never crosses the wire — but is held
-    // in the partition table so raw BK_BOOT can be recovered through
-    // the partition lifecycle.  See [`BK_BOOT_KEY_ATTRIBUTES`] for the
-    // attribute selection.
-    let bk_boot_metadata = DdiMaskedKeyMetadata {
-        svn,
-        key_type: DdiKeyType::AesCbc256Hmac384,
-        key_attributes: BK_BOOT_KEY_ATTRIBUTES.into(),
-        bks2_index: Some(bks2_id),
-        rsvd: None,
-        key_label: b"BKBoot",
-        key_length: BK_BOOT_LEN as u16,
-    };
-
-    // Derive BKx per-call from the PAL's fw_seed bound to (svn,
-    // bks2_id).  The key materializes only inside `bkx_dma`; no BKx
-    // value crosses the trait boundary.  `derive_masking_key` lives
-    // in `super::establish_credential` because that handler is the
-    // primary user; it reads the MFGR_SEED / DEV_OWNER_SEED rows
-    // from the PAL via the property API.
-    let fw_seed = crate::part_state::part_fw_seed(pal, io)?;
-    super::derive_masking_key(
-        pal,
-        io,
-        fw_seed,
-        BK_BOOT_MK_LABEL,
-        &[],
-        svn,
-        bks2_id,
-        bkx_dma,
-    )
-    .await?;
-
-    // Size-query, then zeroed alloc (mask requires `out` to be zero
-    // on entry).
-    let bk_boot_plain = &bk_boot_dma[..BK_BOOT_LEN];
-    let masked_bk_boot_len = mask(pal, io, bkx_dma, bk_boot_plain, &bk_boot_metadata, None).await?;
-    let masked_bk_boot_dma = pal.dma_alloc_zeroed(io, masked_bk_boot_len)?;
-    mask(
-        pal,
-        io,
-        bkx_dma,
-        bk_boot_plain,
-        &bk_boot_metadata,
-        Some(masked_bk_boot_dma),
-    )
-    .await?;
-
-    crate::part_state::part_set_masked_bk_boot(pal, io, masked_bk_boot_dma)?;
 
     {
         let guid = crate::part_state::part_vm_launch_guid(pal, io)?;

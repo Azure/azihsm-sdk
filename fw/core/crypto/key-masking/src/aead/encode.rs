@@ -51,11 +51,11 @@ pub struct MaskParams<'a> {
     /// vault stores alongside live keys.
     pub key_attrs: HsmVaultKeyAttrs,
 
-    /// Partition SVN at mask time (from `part_svn`). Bound by the
+    /// Partition SVN at mask time (from `part_mfgr_svn`). Bound by the
     /// AEAD tag so blobs cannot be replayed across SVN bumps.
     pub svn: u64,
 
-    /// Owner-seed (BKS2) lineage identifier (from `part_bks2_id`).
+    /// Owner-seed (BKS2) lineage identifier (from `part_owner_svn`).
     /// Bound by the AEAD tag so blobs cannot be replayed across
     /// owner-seed rotations.
     pub owner_seed_id: u16,

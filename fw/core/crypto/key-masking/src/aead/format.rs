@@ -130,7 +130,7 @@ pub struct MaskedKeyMetadata {
     /// Partition SVN at mask time.
     pub svn: Le64,
     /// Owner-seed (BKS2) lineage identifier (from
-    /// `part_bks2_id`).
+    /// `part_owner_svn`).
     pub owner_seed_id: Le16,
     /// Caller-supplied label, left-justified and zero-padded to
     /// [`KEY_LABEL_MAX`] bytes.

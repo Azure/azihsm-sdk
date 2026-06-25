@@ -8,6 +8,7 @@
 // vault. DTCM_IO_BUF is NOT here — it lives in dtcm_map.rdl.
 //
 // Region layout:
+//   0x01110 - 0x012FC  BKS table (device-global, 12 × 41-byte entries)
 //   0x07000            BOOT_STATUS (4 B)
 //   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
 //   0x0E440 - 0x0F580  IIC / OIC queues
@@ -19,6 +20,27 @@
 //
 // Hardware alignment: UCD and GDMA hardware expect queue base
 // addresses to be 32-byte (0x20) aligned.
+
+
+// ══════════════════════════════════════════════════════════════
+// BKS Table (device-global, SP-populated, read-only)
+// ══════════════════════════════════════════════════════════════
+//
+// Mirrors the reference firmware's GsRamMemMap::bks_table at the
+// identical GSRAM offset 0x1110 (abs 0x6100_1110). 12 packed 41-byte
+// entries = 492 B (0x1EC):
+//   entry[0]     = current BKS1  (entry[0].svn = current firmware SVN)
+//   entry[1..10] = last ten SVNs' BKS1 (history)
+//   entry[11]    = the single BKS2 (bks2_id is always 0)
+// Each entry is packed { valid:u8, svn:[u8;8], bks:[u8;32] } and not
+// word-aligned, so it is modeled as a byte-granular (memwidth = 8) mem;
+// the typed valid/svn/bks split is owned by the bks_store driver.
+
+mem bks_table_entry_t {
+    desc = "Packed 41-byte BKS entry: valid(1) + svn(8) + bks(32).";
+    mementries = 41;
+    memwidth   = 8;
+};
 
 
 // ══════════════════════════════════════════════════════════════
@@ -366,11 +388,55 @@ mem sram_io_buf_t {
 // Partition Store + Key Vault
 // ══════════════════════════════════════════════════════════════
 
-mem part_store_t {
-    desc = "Partition persistent storage (195 KB).";
-    mementries = 49920;  // 199680 / 4
-    memwidth = 32;
+// ── Partition persistent store ──────────────────────────────────
+//
+// Per-partition persistent store, one entry per partition (cardinality
+// 65, one slot per key-vault table index / controller id), each a
+// 3072-byte (0xC00) region mirroring the reference firmware's
+// HsmPartPersistentStore with Uno-specific working-state fields appended
+// into its trailing reserved region. The typed layout and the only
+// access path are owned by the part_store driver — the PAL no longer
+// reads or writes this GSRAM directly.
+
+reg part_store_word_t {
+    name = "Partition Store Word";
+    desc = "One 32-bit word of the per-partition persistent store. The
+            typed field layout (reference HsmPartPersistentStore plus the
+            Uno-specific working-state fields) is owned by the part_store
+            driver, not described here.";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
 };
+
+// One partition persistent-store entry: an opaque 3072-byte (0xC00)
+// region, 768 words. The typed layout lives in the part_store driver,
+// which owns the only access path (the PAL no longer touches GSRAM
+// directly).
+addrmap part_store_t {
+    name = "Partition Persistent Store";
+    desc = "Per-partition persistent store (3072 B), mirroring the reference
+            firmware's HsmPartPersistentStore with Uno-specific fields
+            appended into the trailing reserved region.";
+
+    default hw = na;
+    default sw = rw;
+
+    part_store_word_t DATA[768] @ 0x00 += 0x04;  // 0x000 - 0xC00
+};
+
+// ── Key vault ───────────────────────────────────────────────────
+//
+// Typed mirror of the reference firmware's per-partition key store, so
+// key IDs, sizes, and on-storage layout are interchangeable. One table
+// is TOTAL_TABLE_LEN = 17408 B and holds 256 metadata entries, a
+// block-allocator bitmap, and a key-data blob region:
+//
+//   0x0000 - 0x0800  ENTRY[256]  (256 × 8-byte PhysicalEntry metadata)
+//   0x0800 - 0x0900  BITMAP[64]  (used-block tracker, 64 × u32)
+//   0x0900 - 0x4400  BLOB        (15104-byte key-data region)
+//
+// Within BLOB, each key occupies an 8-byte-aligned block laid out as
+// [32-byte attributes][key bytes]; PhysicalEntry.OFFSET is the block
+// index (× 8 = byte offset into BLOB).
 
 // One 8-byte vault metadata entry (mirrors the reference PhysicalEntry).
 reg pe_dw0_t {
@@ -436,6 +502,9 @@ addrmap io_gsram {
     default hw = na;
     default sw = rw;
 
+    // ─── BKS table (device-global, SP-populated): 12 × 41-byte entries ───
+    bks_table_entry_t BKS_TABLE[12]    @ 0x01110 += 0x29;  // 0x1110 - 0x12FC
+
     // ─── Boot ───
     boot_status_t    BOOT_STATUS        @ 0x07000;
 
@@ -471,13 +540,13 @@ addrmap io_gsram {
     upka_cmd_entry_t UPKA_ENGINE_CMD[16] @ 0x15364 += 0x14;
     sha_cmd_entry_t  SHA_CMD[32]         @ 0x154A4 += 0x20;
 
-    // ─── Heap (per-IO buffers) ───
-    io_meta_entry_t  IO_META[32]         @ 0x20C58 += 0x08;
-    sram_io_buf_t    SRAM_IO_BUF[32]     @ 0x20D58 += 0x4800;
+    // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
+    io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
+    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4800;
 
-    // ─── Partition store ───
-    part_store_t     PART_STORE          @ 0xBB000;
+    // ─── Partition persistent store (65 entries, 3072 B each) ───
+    part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;
 
-    // ─── Key vault ───
+    // ─── Key vault (65 typed tables, 17408 B each) ───
     key_vault_table_t KEY_VAULT[65]   @ 0xEBC00 += 0x4400;   // 65 × 17408 = 0x114400
 };
