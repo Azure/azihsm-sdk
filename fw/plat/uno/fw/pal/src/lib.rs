@@ -44,6 +44,7 @@ mod ipc;
 mod lock;
 mod pal;
 mod part;
+mod seed;
 mod session;
 mod vault;
 

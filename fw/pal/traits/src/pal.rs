@@ -63,6 +63,7 @@ pub trait HsmPal:
     + HsmPartitionManager
     + HsmPartitionLock
     + HsmCertStore
+    + HsmSeedStore
     + HsmSessionManager
     + HsmVault
     + HsmCrypto
