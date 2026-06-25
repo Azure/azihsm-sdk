@@ -118,7 +118,6 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_unknown_property_fails)
     });
 }
 
-
 TEST_F(azihsm_rsa_keygen, generated_rsa_keys_report_expected_kind_and_class)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -182,11 +181,9 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_null_property_pointer)
 
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_key_handle)
 {
-    part_list_.for_each_session([](azihsm_handle session) {
+    part_list_.for_each_session([](azihsm_handle /*session*/) {
         azihsm_key_kind kind{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND,
-                              .val = &kind,
-                              .len = sizeof(kind) };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         auto err = azihsm_key_get_prop(static_cast<azihsm_handle>(0), &prop);
 
@@ -277,16 +274,12 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_zero_length_buffer)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_key_kind kind{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND,
-                              .val = &kind,
-                              .len = 0 };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = 0 };
 
         err = azihsm_key_get_prop(pub_key.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
     });
 }
-
-
 
 TEST_F(azihsm_rsa_keygen, generate_unwrapping_key_flags)
 {
@@ -297,9 +290,7 @@ TEST_F(azihsm_rsa_keygen, generate_unwrapping_key_flags)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         bool value{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_LOCAL,
-                              .val = &value,
-                              .len = sizeof(value) };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_LOCAL, .val = &value, .len = sizeof(value) };
 
         err = azihsm_key_get_prop(priv_key.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -413,9 +404,7 @@ TEST_F(azihsm_rsa_keygen, generate_unwrapping_public_key_capability)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         bool value{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_WRAP,
-                              .val = &value,
-                              .len = sizeof(value) };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_WRAP, .val = &value, .len = sizeof(value) };
 
         err = azihsm_key_get_prop(pub_key.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -521,9 +510,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_zero_length_bit_len_buffer)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint32_t bits{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_BIT_LEN,
-                              .val = &bits,
-                              .len = 0 };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = 0 };
 
         err = azihsm_key_get_prop(pub_key.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
@@ -560,9 +547,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_bit_len_does_not_modify_output_on_failure
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint32_t bits = 0xA5A5A5A5;
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_BIT_LEN,
-                              .val = &bits,
-                              .len = 0 };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = 0 };
 
         err = azihsm_key_get_prop(priv_key.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
@@ -597,8 +582,7 @@ TEST_F(azihsm_rsa_keygen, generate_multiple_rsa_keypairs_in_same_session)
     part_list_.for_each_session([](azihsm_handle session) {
         for (int i = 0; i < 3; ++i)
         {
-            SCOPED_TRACE("RSA keygen iteration " + std::to_string(i));
-
+            SCOPED_TRACE(::testing::Message() << "RSA keygen iteration " << i);
             auto_key priv_key;
             auto_key pub_key;
 
@@ -621,14 +605,18 @@ TEST_F(azihsm_rsa_keygen, generated_keypair_handles_are_unique_across_keygen_cal
         auto_key second_priv_key;
         auto_key second_pub_key;
 
-        auto err =
-            generate_rsa_unwrapping_keypair(session, first_priv_key.get_ptr(), first_pub_key.get_ptr());
+        auto err = generate_rsa_unwrapping_keypair(
+            session,
+            first_priv_key.get_ptr(),
+            first_pub_key.get_ptr()
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = generate_rsa_unwrapping_keypair(
             session,
             second_priv_key.get_ptr(),
-            second_pub_key.get_ptr());
+            second_pub_key.get_ptr()
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         ASSERT_NE(first_priv_key.get(), 0);
@@ -661,9 +649,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_deleted_private_key_handle)
         priv_key.release();
 
         azihsm_key_kind kind{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND,
-                              .val = &kind,
-                              .len = sizeof(kind) };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         err = azihsm_key_get_prop(deleted_key, &prop);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
@@ -688,9 +674,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_deleted_public_key_handle)
         pub_key.release();
 
         azihsm_key_kind kind{};
-        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND,
-                              .val = &kind,
-                              .len = sizeof(kind) };
+        azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         err = azihsm_key_get_prop(deleted_key, &prop);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
@@ -764,7 +748,8 @@ TEST_F(azihsm_rsa_keygen, generate_rsa_keypair_rejects_invalid_session_handle)
     auto err = generate_rsa_unwrapping_keypair(
         static_cast<azihsm_handle>(0),
         priv_key.get_ptr(),
-        pub_key.get_ptr());
+        pub_key.get_ptr()
+    );
 
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(priv_key.get(), 0);
