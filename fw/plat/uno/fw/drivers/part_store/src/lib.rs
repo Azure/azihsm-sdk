@@ -25,7 +25,6 @@ use azihsm_fw_uno_reg_soc::part_entry_t::SE_KEY_ID_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::SE_PUB_KEY_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::ENABLED_OFFSET;
 use azihsm_fw_uno_reg_soc::part_entry_t::STATE_OFFSET;
-use azihsm_fw_uno_trace::tracing::info;
 
 /// Number of partition slots (one per global key-vault table index).
 pub const NUM_PARTITIONS: usize = 65;

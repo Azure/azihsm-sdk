@@ -627,12 +627,6 @@ impl UnoHsmPal {
         };
 
         let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
-        info!(
-            "part_alloc",
-            "SetResource: pid={:?} mask={:#034x}",
-            pid,
-            msg.info.mask_u128()
-        );
         let (status, count) = match self.set_resource(pid, msg.info.mask_u128()).await {
             Ok(count) => (IpcMessageStatusCode::Success, count as u8),
             Err(_) => (IpcMessageStatusCode::InvalidField, 0),

@@ -24,7 +24,6 @@ use embassy_sync::waitqueue::WakerRegistration;
 use tock_registers::interfaces::ReadWriteable;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
-use azihsm_fw_uno_trace::tracing::info;
 
 use crate::ChannelConfig;
 use crate::GdmaBuf;
@@ -229,7 +228,6 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
                 return Err(GdmaError::NO_FREE_TAGS);
             }
             let tag = s.tag_free.trailing_zeros() as u16;
-            info!("submit", "submit: tag={} src_len={} dst_len={}", tag, src_len, dst_len);
 
             s.tag_free &= !(1u32 << tag);
 
@@ -329,10 +327,8 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
                     slot.completed = false;
                     s.tag_free |= 1u32 << tag;
                     return Poll::Ready(if status == 0 {
-                        // info!("copy_mem", "gdma: copy_mem tag={} completed successfully", tag);
                         Ok(())
                     } else {
-                        // info!("copy_mem", "gdma: copy_mem tag={} failed with status={}", tag, status);
                         Err(GdmaError::dma_error(status))
                     });
                 }
@@ -348,16 +344,11 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
     /// SingleCell borrow and batching the MMIO head pointer write.
     /// Call from the GDMA_CQ IRQ handler or the main poll loop.
     pub fn wake(&self, irq: u16) {
-        // info!("wake", "gdma: wake channel={} irq={}", self.channel, irq);
         self.state.with(|s| {
             // Clear NVIC pending bit for this interrupt
-            //info!("wake", "gdma: wake channel={} irq={} clearing NVIC pending", self.channel, irq);
-
             let tail = unsafe { self.cq_tail_shadow.read_volatile() } as u16;
 
-
             while s.cq_head != tail {
-                info!("wake", "gdma: wake channel={} irq={} cq_head={} tail={}", self.channel, irq, s.cq_head, tail);
                 let cq_slot = (s.cq_head & Self::MASK) as usize;
                 let cq_entry = unsafe { &*self.cq_ring.add(cq_slot) };
 
@@ -374,7 +365,6 @@ impl<const DEPTH: usize> GdmaDriver<DEPTH> {
                     let slot = &mut s.tags[tag as usize];
                     slot.status = status;
                     slot.completed = true;
-                    info!("wake", "about to wake tag={} status={}", tag, status);
                     slot.waker.wake();
                 }
             }

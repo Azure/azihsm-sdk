@@ -36,7 +36,6 @@ use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
 
-use azihsm_fw_uno_trace::tracing::info;
 
 use crate::UnoHsmPal;
 
@@ -149,25 +148,7 @@ impl HsmGdmaController for UnoHsmPal {
         let len = dst.len() as u32;
         let src_addr = host_dma_buf(src, prp);
         let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
-       let (gcfg, gcs) = unsafe {
-            let base = azihsm_fw_uno_reg_soc::gdma::GDMA_BASE;
-            (
-                core::ptr::read_volatile(base as *const u32),
-                core::ptr::read_volatile((base + 4) as *const u32),
-            )
-        };
-        info!(
-            "gdma",
-            "from_host: submit len={} prp={} ifc={:#x} src=({:#x}:{:#x}) dst={:#x} cfg={:#x} cs={:#x}",
-            len,
-            prp,
-            u8::from(io.pid()),
-            src.hi,
-            src.lo,
-            dst.as_mut_ptr() as usize as u32,
-            gcfg,
-            gcs
-        );
+       
         let r = self
             .gdma
             .copy_mem(
@@ -179,7 +160,6 @@ impl HsmGdmaController for UnoHsmPal {
                 len,
             )?
             .await;
-        info!("gdma", "from_host: done ok={}", r.is_ok());
         r
     }
 
@@ -193,7 +173,6 @@ impl HsmGdmaController for UnoHsmPal {
         let len = src.len() as u32;
         let src_addr = device_dma_buf(src.as_ptr(), len);
         let dst_addr = host_dma_buf(dst, prp);
-        info!("gdma", "to_host: submit len={} prp={}", len, prp);
         let r = self
             .gdma
             .copy_mem(
@@ -205,7 +184,6 @@ impl HsmGdmaController for UnoHsmPal {
                 len,
             )?
             .await;
-        info!("gdma", "to_host: done ok={}", r.is_ok());
         r
     }
 }

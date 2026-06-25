@@ -4,7 +4,6 @@
 use core::task::Context;
 
 use embassy_sync::waitqueue::WakerRegistration;
-use azihsm_fw_uno_trace::tracing::info;
 
 use crate::EngineId;
 use crate::EngineState;
@@ -85,7 +84,6 @@ impl EngineSlot {
     }
 
     pub(crate) fn wake_waiter(&mut self) {
-        info!("wake", "wake_waiter");
         self.waker.wake();
     }
 }

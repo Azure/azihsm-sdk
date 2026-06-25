@@ -13,7 +13,6 @@ use crate::engine::UpkaEngine;
 use crate::executor::EngineExecutor;
 use crate::pool::UpkaState;
 use crate::UpkaError;
-use azihsm_fw_uno_trace::tracing::info;
 
 /// Schedules queue/engine assignment and completion handling for UPKA commands.
 #[derive(Debug, Clone, Copy)]
@@ -131,7 +130,6 @@ impl<'a, const DEPTH: usize, const ENGINES: usize> Scheduler<'a, DEPTH, ENGINES>
 
     /// Poll one engine and wake waiters if completed.
     pub(crate) fn wake_engine(&self, id: u8) {
-        info!("wake", "wake_engine: id={}", id);
         self.driver.state.with(|s| {
             Self::wake_engine_inner(s, id as usize);
         });
@@ -153,7 +151,6 @@ impl<'a, const DEPTH: usize, const ENGINES: usize> Scheduler<'a, DEPTH, ENGINES>
 
     /// Release an engine and dispatch next queued waiter if available.
     pub(crate) fn release_engine(&self, id: u8) {
-        info!("release", "release_engine: id={}", id);
         self.driver.state.with(|s| {
             let _ = s.release_engine_and_dispatch(id);
         });

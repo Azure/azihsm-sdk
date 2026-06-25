@@ -94,7 +94,6 @@ async fn poll_io(spawner: Spawner) -> ! {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
             continue;
         };
-        info!("io", "poll_io: received host IO");
 
         let Ok(token) = handle_io(io) else {
             continue;

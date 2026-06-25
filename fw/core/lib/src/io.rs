@@ -55,14 +55,7 @@ impl<P: HsmPal> Hsm<P> {
     /// writes session fields and status to the CQE before completion.
     pub async fn handle_io(&self, mut io: P::Io) {
         // Gate on partition state — drop IOs for non-enabled partitions.
-        info!(
-            "core",
-            "handle_io: pid={:?} state={:?}",
-            io.pid(),
-            crate::part_state::part_state(self.pal(), &io)
-        );
         if !self.partition_enabled(&io) {
-            info!("core", "dropping IO for disabled partition {:?}", io.pid());
             if let Err(_e) = self.pal().drop_io(io).await {
                 error!("core", HsmError::DropIoFailure, "drop_io failed: {:?}", _e);
             }

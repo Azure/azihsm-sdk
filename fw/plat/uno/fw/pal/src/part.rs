@@ -22,6 +22,8 @@
 //! property ids return [`HsmError::UnsupportedCmd`] until the uno
 //! partition-crypto handlers are implemented.
 
+use core::error;
+
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
@@ -37,7 +39,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
-use azihsm_fw_uno_trace::tracing::info;
+use azihsm_fw_uno_trace::tracing::*;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
@@ -100,25 +102,25 @@ impl UnoHsmPal {
             return Err(HsmError::InvalidArg);
         }
         PartTable::set_res_mask(idx, mask);
-
-        info!("part_alloc", "Provision identity for pid={:?}", pid);
+        
         match self.provision_identity(pid).await {
             Ok(()) => {
-                info!("part_alloc", "Provisioned identity for pid={:?}", pid);
                 // Generate the enable-time keys at allocation, matching the
                 // reference firmware's part_init provisioning. Enable is then
                 // just an unconditional flag (see set_pfn_action).
                 if let Err(e) = self.provision_enabled_keys(pid).await {
+                    error!("part_alloc", e, "Failed to provision enable-time keys for pid={:?}", pid);
                     PartTable::clear_identity(idx);
                     PartTable::set_res_mask(idx, 0);
                     PartTable::set_state(idx, PartState::Unallocated);
                     return Err(e);
                 }
+                info!("part_alloc", "Provisioned identity and enable-time keys for pid={:?}", pid);
                 PartTable::set_state(idx, PartState::Allocated);
                 Ok(mask.count_ones())
             }
             Err(e) => {
-                info!("part_alloc", "Failed to provision identity for pid={:?}: {:?}", pid, e);
+                error!("part_alloc", e, "Failed to provision identity for pid={:?}", pid);
                 // Roll back: release resources, wipe any partial identity.
                 PartTable::clear_identity(idx);
                 PartTable::set_res_mask(idx, 0);
@@ -232,7 +234,6 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_sign(true);
-        info!("part_alloc", "create ecc 384 private");
         let key_id = self
             .create_internal_ecc384(
                 pid,
@@ -243,7 +244,6 @@ impl UnoHsmPal {
                 PartTable::set_id_pub_key,
             )
             .await?;
-        info!("part_alloc", "created ecc 384 private");
         PartTable::set_id_key(idx, key_id);
 
         // Generate the random partition identity straight into its GSRAM
@@ -264,9 +264,7 @@ impl UnoHsmPal {
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
-            .with_derive(true);
-
-        info!("part_alloc", "Generating enable-time keys for pid={:?}", pid);
+            .with_derive(true);        
 
         let ec_id = self
             .create_internal_ecc384(
@@ -279,8 +277,7 @@ impl UnoHsmPal {
             )
             .await?;
         PartTable::set_ec_key(idx, ec_id);
-
-        info!("part_alloc", "Generating session-encryption key for pid={:?}", pid);
+       
         match self
             .create_internal_ecc384(
                 pid,
@@ -298,7 +295,9 @@ impl UnoHsmPal {
             }
             Err(e) => {
                 // Roll back the establish-credential key.
-                info!("part_alloc", "Failed to generate session-encryption key for pid={:?}, rolling back establish-credential key", pid);
+                error!("part_alloc", e,
+                "Failed to generate session-encryption key for pid={:?}, rolling back establish-credential key", pid);
+
                 self.delete_key(pid, ec_id).await;
                 PartTable::clear_enabled_keys(idx);
                 Err(e)
@@ -442,14 +441,6 @@ impl HsmPartitionManager for UnoHsmPal {
                 // flagged enabled by PfnEnable.
                 let st = PartTable::state(pid)?;
                 let en = PartTable::enabled(pid);
-                info!(
-                    "part",
-                    "STATE get: pid={:?} idx={} state={:?} enabled={}",
-                    io.pid(),
-                    pid,
-                    st,
-                    en
-                );
                 if st == PartState::Allocated && en {
                     Ok(PartState::Enabled as u8)
                 } else {
