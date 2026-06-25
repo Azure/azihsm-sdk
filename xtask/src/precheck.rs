@@ -324,7 +324,12 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 }
 
 // Helper function to run tests defined by other helper functions
-fn run_tests(tests: Vec<Nextest>, coverage: bool, skip_clean: bool, ctx: XtaskCtx) -> anyhow::Result<()> {
+fn run_tests(
+    tests: Vec<Nextest>,
+    coverage: bool,
+    skip_clean: bool,
+    ctx: XtaskCtx,
+) -> anyhow::Result<()> {
     let mut first_run = true;
     for test in tests {
         if coverage {
