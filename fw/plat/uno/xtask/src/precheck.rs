@@ -66,7 +66,7 @@ impl Stage {
 
 /// Run pre-commit checks across the uno firmware workspace.
 #[derive(Parser)]
-#[clap(about = "Run all pre-commit checks (fmt, clippy, copyright, audit, build, reggen)")]
+#[clap(about = "Run all pre-commit checks (setup, fmt, clippy, copyright, audit, build, reggen)")]
 pub struct Precheck {
     #[clap(flatten)]
     stage: Stage,
