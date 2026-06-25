@@ -170,15 +170,33 @@ static std::vector<uint8_t> hmac_sign_vec(
     azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
 
     auto size_err = azihsm_crypt_sign(&algo, hmac_key, &data_buf, &sig_buf);
-    EXPECT_EQ(size_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-    EXPECT_GT(sig_buf.len, 0);
+    if (size_err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign size query failed: " << size_err;
+        return {};
+    }
+
+    if (sig_buf.len == 0)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign size query returned zero length";
+        return {};
+    }
 
     std::vector<uint8_t> signature(sig_buf.len);
     sig_buf.ptr = signature.data();
 
     auto sign_err = azihsm_crypt_sign(&algo, hmac_key, &data_buf, &sig_buf);
-    EXPECT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
-    EXPECT_GT(sig_buf.len, 0);
+    if (sign_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign failed: " << sign_err;
+        return {};
+    }
+
+    if (sig_buf.len == 0)
+    {
+        ADD_FAILURE() << "azihsm_crypt_sign returned zero length";
+        return {};
+    }
 
     signature.resize(sig_buf.len);
     return signature;
