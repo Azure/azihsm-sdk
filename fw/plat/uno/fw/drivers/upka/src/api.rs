@@ -126,6 +126,20 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         self.scheduler().wake_engine(id);
     }
 
+    /// Poll every PKA engine for completion.
+    ///
+    /// On this platform the per-engine UPKA done/error IRQs are **not**
+    /// delivered through NVIC, so command completion is observed by reading
+    /// the engine status registers. The PAL `run` loop must call this on every
+    /// iteration (mirroring azihsm's `PkaDriver::wake`); otherwise an in-flight
+    /// command's `.await` (e.g. `ecc_gen_keypair`) never resolves and the
+    /// caller hangs.
+    pub fn wake(&self) {
+        for id in 0..ENGINES as u8 {
+            self.scheduler().wake_engine(id);
+        }
+    }
+
     pub(crate) fn release_engine(&self, id: u8) {
         self.scheduler().release_engine(id);
     }

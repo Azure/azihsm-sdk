@@ -282,7 +282,7 @@ unsafe impl Sync for UnoHsmPal {}
 impl Default for UnoHsmPal {
     fn default() -> Self {
         let iic_config = IicChannelConfig {
-            channel: 0,
+            channel: 3,
             isq_base: IO_GSRAM_BASE + ISQ_OFFSET,
             // IIC DMAs into IO_SQ so the firmware reads the SQE in-place.
             io_pool_base: IO_GSRAM_BASE + IO_SQ_OFFSET,
@@ -294,7 +294,7 @@ impl Default for UnoHsmPal {
         };
 
         let oic_config = OicChannelConfig {
-            channel: 0,
+            channel: 3,
             osq_base: IO_GSRAM_BASE + OSQ_OFFSET,
             ocq_base: IO_GSRAM_BASE + OCQ_OFFSET,
             ocq_tail_shadow: IO_GSRAM_BASE + OCQ_TAIL_SHADOW_OFFSET,
@@ -304,7 +304,7 @@ impl Default for UnoHsmPal {
         };
 
         let gdma_config = GdmaChannelConfig {
-            channel: 0,
+            channel: 1,
             sq_base: IO_GSRAM_BASE + GDMA_SQ_OFFSET,
             cq_base: IO_GSRAM_BASE + GDMA_CQ_OFFSET,
             cq_tail_shadow: IO_GSRAM_BASE + GDMA_CQ_TAIL_SHADOW_OFFSET,
@@ -630,6 +630,8 @@ impl HsmPal for UnoHsmPal {
     async fn run(&self) {
         loop {
             self.poll_once();
+            self.pka.wake();            
+            self.aes.wake();
             embassy_futures::yield_now().await;
         }
     }
