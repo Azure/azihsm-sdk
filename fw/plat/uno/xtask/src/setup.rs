@@ -45,6 +45,7 @@ impl Xtask for Setup {
         {
             let tgt = "thumbv7em-none-eabi";
             cmd!(sh, "rustup target add {tgt}").quiet().run()?;
+            cmd!(sh, "rustup +nightly target add {tgt}").quiet().run()?;
         }
 
         // Run Install cargo-audit
