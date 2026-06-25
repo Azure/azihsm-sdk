@@ -1614,3 +1614,66 @@ TEST_F(azihsm_hmac_sign_verify, streaming_verify_rejects_tampered_tag)
         );
     });
 }
+
+// Verifies that single-shot HMAC supports a null message pointer when message length is zero.
+TEST_F(azihsm_hmac_sign_verify, sign_verify_null_ptr_empty_hmac_message)
+{
+    for (const auto &test_case : hmac_test_cases())
+    {
+        SCOPED_TRACE(
+            "Testing null pointer empty HMAC message with " + std::string(test_case.test_name)
+        );
+
+        part_list_.for_each_session([&](azihsm_handle session) {
+            EcdhKeyPairSet key_pairs;
+            auto_key hmac_key;
+
+            ASSERT_EQ(
+                generate_ecdh_keys_and_derive_hmac(
+                    session,
+                    test_case.key_kind,
+                    key_pairs,
+                    hmac_key.handle,
+                    test_case.curve
+                ),
+                AZIHSM_STATUS_SUCCESS
+            );
+
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
+
+            azihsm_buffer data_buf = {
+                .ptr = nullptr,
+                .len = 0,
+            };
+
+            azihsm_buffer sig_buf = {
+                .ptr = nullptr,
+                .len = 0,
+            };
+
+            ASSERT_EQ(
+                azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
+                AZIHSM_STATUS_BUFFER_TOO_SMALL
+            );
+            ASSERT_EQ(sig_buf.len, expected_hmac_tag_len(test_case.key_kind));
+
+            std::vector<uint8_t> signature(sig_buf.len);
+            sig_buf.ptr = signature.data();
+
+            ASSERT_EQ(
+                azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
+                AZIHSM_STATUS_SUCCESS
+            );
+            ASSERT_EQ(sig_buf.len, expected_hmac_tag_len(test_case.key_kind));
+
+            ASSERT_EQ(
+                azihsm_crypt_verify(&algo, hmac_key.get(), &data_buf, &sig_buf),
+                AZIHSM_STATUS_SUCCESS
+            );
+        });
+    }
+}
