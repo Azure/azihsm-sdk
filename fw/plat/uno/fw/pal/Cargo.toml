@@ -28,6 +28,7 @@ azihsm_fw_uno_drivers_oic = { workspace = true }
 azihsm_fw_uno_drivers_part_store = { workspace = true }
 azihsm_fw_uno_drivers_rng = { workspace = true }
 azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
+azihsm_fw_uno_drivers_session_store = { workspace = true }
 azihsm_fw_uno_drivers_sha = { workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
 azihsm_fw_uno_drivers_upka = { workspace = true }

@@ -131,20 +131,37 @@ pub enum HsmVaultKeyKind {
     VarLenHmacSha384 = 33,
     VarLenHmacSha512 = 34,
 
+    /// In-flight TBOR session-handshake (Pending) state blob.
+    ///
+    /// Holds the opaque Pending blob (`exported ‖ pk_init ‖ pk_resp ‖
+    /// session_type ‖ suite_id`, up to
+    /// [`SESSION_PENDING_BLOB_MAX`](crate::SESSION_PENDING_BLOB_MAX) =
+    /// 256 B) produced by the TBOR `OpenSessionInit` phase and consumed
+    /// by `OpenSessionFinish`.
+    ///
+    /// Written by
+    /// [`HsmSessionManager::session_create_pending`](crate::HsmSessionManager::session_create_pending)
+    /// as a session-scoped key (auto-deleted on session close); replaced
+    /// by a [`SessionEx`](Self::SessionEx) key on
+    /// [`session_promote`](crate::HsmSessionManager::session_promote).
+    /// Used only by PALs that back Pending state in the key vault (e.g.
+    /// the Uno PAL); the std PAL keeps Pending state in RAM.
+    SessionExPending = 35,
+
     /// Session-establishment-protocol blob for TBOR sessions (both CO
     /// and CU).
     ///
     /// Length-discriminated by session type:
-    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(80) ‖ masking_key(80)]`
-    ///   = 168 B.
+    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(80)]`
+    ///   = 120 B.
     /// * **Authenticated (CO):** the above ‖ `mac_tx(48) ‖ mac_rx(48)`
-    ///   = 264 B.
+    ///   = 216 B.
     ///
     /// Written by
     /// [`HsmSessionManager::session_promote`](crate::HsmSessionManager::session_promote)
     /// when any TBOR session completes its handshake; never produced
     /// by the existing [`Session`](Self::Session) path.
-    SessionCu = 35,
+    SessionEx = 36,
 
     /// Partition Trust Anchor (PTA) ECC-P384 private key.
     ///
@@ -153,7 +170,7 @@ pub enum HsmVaultKeyKind {
     /// rebinding is rejected with [`HsmError::PtaKeyAlreadySet`].
     ///
     /// [`HsmError::PtaKeyAlreadySet`]: crate::HsmError::PtaKeyAlreadySet
-    PartitionTrustAnchor = 36,
+    PartitionTrustAnchor = 37,
 
     /// Partition Unique Machine Secret (UMS) — 48 B HMAC-SHA-384-sized
     /// secret derived in `PartInit` from `UDS` plus the request-side
@@ -166,7 +183,7 @@ pub enum HsmVaultKeyKind {
     /// rejected with [`HsmError::UmsKeyAlreadySet`].
     ///
     /// [`HsmError::UmsKeyAlreadySet`]: crate::HsmError::UmsKeyAlreadySet
-    PartitionUniqueMachineSecret = 37,
+    PartitionUniqueMachineSecret = 38,
 }
 
 /// Key attribute bitfield for vault-stored keys.

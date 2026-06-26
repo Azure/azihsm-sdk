@@ -137,7 +137,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             exported,
             pk_init,
             pk_resp,
-        )?;
+        )
+        .await?;
         let session_id = u16::from(slot);
 
         // ── Phase-1 confirm MAC ────────────────────────────────────
@@ -300,7 +301,7 @@ async fn hpke_auth_psk_export<'a, P: HsmPal>(
 /// Pack `exported ‖ pk_init ‖ pk_resp ‖ session_type ‖ suite_id`
 /// into a Pending blob and hand it to `session_create_pending`.
 #[allow(clippy::too_many_arguments)]
-fn create_pending_slot<P: HsmPal>(
+async fn create_pending_slot<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &impl HsmScopedAlloc,
@@ -324,7 +325,7 @@ fn create_pending_slot<P: HsmPal>(
     off += npk;
     pending_blob[off] = session_type.to_u8();
     pending_blob[off + 1] = suite.to_u8();
-    pal.session_create_pending(io, role, pending_blob)
+    pal.session_create_pending(io, role, pending_blob).await
 }
 
 /// Compute the Phase-1 confirm MAC:
