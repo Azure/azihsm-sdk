@@ -598,13 +598,6 @@ impl UnoHsmPal {
             Err(_) => IpcMessageStatusCode::InvalidField,
         };
 
-        info!(
-            "boot",
-            "PFN {} {} -> status={:?}",
-            msg.info.pfn,
-            msg.info.action,
-            status
-        );
         let reply = encode_pfn_enable_disable_ack(buf, status);
         self.ipc.reply(channel as u8, &reply);
         true

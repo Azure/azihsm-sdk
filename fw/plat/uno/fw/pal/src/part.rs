@@ -31,7 +31,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_uno_drivers_part_store::PartStore;
-use azihsm_fw_uno_trace::tracing::*;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
@@ -66,9 +65,7 @@ impl UnoHsmPal {
     ///
     /// [`part_enable`]: Self::part_enable
     pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128, is_pf: bool) -> HsmResult<()> {
-        let part = PartStore::partition(pid)?;
-
-        info!("part", "allocating partition {:?} with mask {:#x}", pid, mask);
+        let part = PartStore::partition(pid)?;        
 
         // A PF enabled before its resources were assigned is already
         // `Enabled` with its enabled keys deferred; freeing it would tear the
@@ -76,7 +73,6 @@ impl UnoHsmPal {
         // is freed so keygen starts from a clean slate.
         let pre_enabled = part.state()? == PartState::Enabled;
         if !pre_enabled {
-            info!("part", "freeing partition {:?} before allocation", pid);
             self.part_free(pid).await?;
         }
         part.set_res_mask(mask);
@@ -109,7 +105,6 @@ impl UnoHsmPal {
     /// Provisions the per-allocation key material: the random ID and ECC
     /// P-384 identity key, then the partition's `Masked_BK_BOOT`.
     async fn provision_allocation(&self, pid: HsmPartId) -> HsmResult<()> {
-        info!("part", "provisioning allocation for partition {:?}", pid);
         self.provision_identity(pid).await?;
         self.provision_masked_bk_boot(pid).await
     }
@@ -219,6 +214,7 @@ impl UnoHsmPal {
                 pct,
             )
             .await?;
+        
         if pub_len != ID_PUB_KEY_LEN {
             return Err(HsmError::InternalError);
         }
@@ -270,7 +266,6 @@ impl UnoHsmPal {
     /// storing the private key in the partition's vault and caching the
     /// ID, key handle, and public key in the partition table.
     async fn provision_identity(&self, pid: HsmPartId) -> HsmResult<()> {
-        info!("part", "provisioning identity for partition {:?}", pid);
         let mut part = PartStore::partition(pid)?;
 
         let attrs = HsmVaultKeyAttrs::new()
@@ -286,14 +281,12 @@ impl UnoHsmPal {
                 HsmEccPct::SignVerify,
             )
             .await?;
-        part.set_id_key_id(Some(key_id));
-
-        info!("part", "generated identity key {:?} for partition {:?}", key_id, pid);
+        part.set_id_key_id(Some(key_id));        
 
         // Generate the random partition identity straight into its
         // part_store field (RNG fill is a plain CPU copy, no DMA buffer
         // needed).
-        self.rng.fill_bytes(part.id_mut())?;
+        self.rng.fill_bytes(part.id_mut())?;        
         Ok(())
     }
 
@@ -302,7 +295,6 @@ impl UnoHsmPal {
     /// reference firmware's `part_enable`. On failure, any partial key is
     /// rolled back. Certificates, nonce, and BK_BOOT are out of scope.
     async fn provision_enabled_keys(&self, pid: HsmPartId) -> HsmResult<()> {
-        info!("part", "provisioning enabled keys for partition {:?}", pid);
         let part = PartStore::partition(pid)?;
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
@@ -393,7 +385,6 @@ impl UnoHsmPal {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Allocated | PartState::Disabled => {
-                info!("part", "enabling partition {:?}", pid);
                 self.provision_enabled_keys(pid).await?;
                 part.set_state(PartState::Enabled);
                 Ok(())
@@ -403,14 +394,12 @@ impl UnoHsmPal {
             // vault has no table yet). Record the enable; `part_alloc`
             // provisions the keys once the resources arrive.
             PartState::Unallocated if is_pf => {
-                info!("part", "enabling partition {:?} (PF, pre-resource)", pid);
                 part.set_state(PartState::Enabled);
                 Ok(())
             }
             // Idempotent re-enable (e.g. an Admin/driver retry).
             PartState::Enabled => Ok(()),
             _ => {
-                info!("part", "invalid transition for partition {:?}", pid);
                 Err(HsmError::InvalidArg)
             }
         }
