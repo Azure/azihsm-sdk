@@ -14,6 +14,7 @@ use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
+use zeroize::Zeroize;
 
 use super::*;
 
@@ -306,6 +307,14 @@ impl Drop for HsmSessionInner {
             }
             SessionKind::Ver2 { .. } => ddi::close_session_ex(&self.partition, self.id),
         };
+
+        // Wipe sensitive session material from process memory once the
+        // session is closed: `seed` for V1 and the HPKE `exported`
+        // secret for V2. `bmk_session` is an opaque device-wrapped blob.
+        match &mut self.kind {
+            SessionKind::Ver1 { seed, .. } => seed.zeroize(),
+            SessionKind::Ver2 { exported, .. } => exported.zeroize(),
+        }
     }
 }
 

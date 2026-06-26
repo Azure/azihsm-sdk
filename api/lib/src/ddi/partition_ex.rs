@@ -26,8 +26,6 @@
 //! binds the envelope to the session id so the firmware's in-place open
 //! rejects a seed minted for a different session.
 
-#![allow(dead_code)]
-
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
 
