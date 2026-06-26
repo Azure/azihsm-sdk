@@ -31,6 +31,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_uno_drivers_part_store::PartStore;
+use azihsm_fw_uno_trace::tracing::*;
 
 use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
@@ -64,11 +65,20 @@ impl UnoHsmPal {
     /// declarative "set the resources to this mask" operation.
     ///
     /// [`part_enable`]: Self::part_enable
-    pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128) -> HsmResult<()> {
+    pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128, is_pf: bool) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
 
-        // Free any prior allocation so keygen starts from a clean slate.
-        self.part_free(pid).await?;
+        info!("part", "allocating partition {:?} with mask {:#x}", pid, mask);
+
+        // A PF enabled before its resources were assigned is already
+        // `Enabled` with its enabled keys deferred; freeing it would tear the
+        // enable down, so skip the free in that case. Every other prior state
+        // is freed so keygen starts from a clean slate.
+        let pre_enabled = part.state()? == PartState::Enabled;
+        if !pre_enabled {
+            info!("part", "freeing partition {:?} before allocation", pid);
+            self.part_free(pid).await?;
+        }
         part.set_res_mask(mask);
 
         // Provision the identity then the masked boot key; on any failure
@@ -79,13 +89,27 @@ impl UnoHsmPal {
             self.rollback_alloc(pid).await;
             return Err(e);
         }
-        part.set_state(PartState::Allocated);
+
+        if is_pf {
+            // PF: PfnEnable preceded SetResource, so the enabled keys were
+            // deferred from `part_enable`; provision them now that `res_mask`
+            // exists and leave the partition `Enabled`.
+            if let Err(e) = self.provision_enabled_keys(pid).await {
+                self.rollback_alloc(pid).await;
+                return Err(e);
+            }
+            part.set_state(PartState::Enabled);
+        } else {
+            // VF: PfnEnable follows and provisions the enabled keys.
+            part.set_state(PartState::Allocated);
+        }
         Ok(())
     }
 
     /// Provisions the per-allocation key material: the random ID and ECC
     /// P-384 identity key, then the partition's `Masked_BK_BOOT`.
     async fn provision_allocation(&self, pid: HsmPartId) -> HsmResult<()> {
+        info!("part", "provisioning allocation for partition {:?}", pid);
         self.provision_identity(pid).await?;
         self.provision_masked_bk_boot(pid).await
     }
@@ -246,6 +270,7 @@ impl UnoHsmPal {
     /// storing the private key in the partition's vault and caching the
     /// ID, key handle, and public key in the partition table.
     async fn provision_identity(&self, pid: HsmPartId) -> HsmResult<()> {
+        info!("part", "provisioning identity for partition {:?}", pid);
         let mut part = PartStore::partition(pid)?;
 
         let attrs = HsmVaultKeyAttrs::new()
@@ -263,6 +288,8 @@ impl UnoHsmPal {
             .await?;
         part.set_id_key_id(Some(key_id));
 
+        info!("part", "generated identity key {:?} for partition {:?}", key_id, pid);
+
         // Generate the random partition identity straight into its
         // part_store field (RNG fill is a plain CPU copy, no DMA buffer
         // needed).
@@ -275,6 +302,7 @@ impl UnoHsmPal {
     /// reference firmware's `part_enable`. On failure, any partial key is
     /// rolled back. Certificates, nonce, and BK_BOOT are out of scope.
     async fn provision_enabled_keys(&self, pid: HsmPartId) -> HsmResult<()> {
+        info!("part", "provisioning enabled keys for partition {:?}", pid);
         let part = PartStore::partition(pid)?;
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
@@ -361,15 +389,30 @@ impl UnoHsmPal {
     /// are out of scope.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
-    pub(crate) async fn part_enable(&self, pid: HsmPartId) -> HsmResult<()> {
+    pub(crate) async fn part_enable(&self, pid: HsmPartId, is_pf: bool) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Allocated | PartState::Disabled => {
+                info!("part", "enabling partition {:?}", pid);
                 self.provision_enabled_keys(pid).await?;
                 part.set_state(PartState::Enabled);
                 Ok(())
             }
-            _ => Err(HsmError::InvalidArg),
+            // PF (PcieFunction::Pf) is enabled before SetResource assigns its
+            // `res_mask`, so the enabled keys cannot be provisioned here (the
+            // vault has no table yet). Record the enable; `part_alloc`
+            // provisions the keys once the resources arrive.
+            PartState::Unallocated if is_pf => {
+                info!("part", "enabling partition {:?} (PF, pre-resource)", pid);
+                part.set_state(PartState::Enabled);
+                Ok(())
+            }
+            // Idempotent re-enable (e.g. an Admin/driver retry).
+            PartState::Enabled => Ok(()),
+            _ => {
+                info!("part", "invalid transition for partition {:?}", pid);
+                Err(HsmError::InvalidArg)
+            }
         }
     }
 

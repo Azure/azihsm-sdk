@@ -159,7 +159,7 @@ const WAKE_ENTRIES: &[(u16, WakeFn)] = &[
     (Interrupt::SHA_DONE as u16, |pal, _| pal.sha.wake()),
     (Interrupt::GDMA_CQ as u16, |pal, irq| pal.gdma.wake(irq)),
     (Interrupt::INTC_IPC as u16, |pal, irq| pal.ipc.wake(irq)),
-    // PKA done IRQs (192..=207) — `wake_pka` derives the engine index.
+    // PKA done IRQs (32..=47) — `wake_pka` derives the engine index.
     (Interrupt::UPKA_0_DONE as u16, wake_pka),
     (Interrupt::UPKA_1_DONE as u16, wake_pka),
     (Interrupt::UPKA_2_DONE as u16, wake_pka),
@@ -582,11 +582,14 @@ impl UnoHsmPal {
             return false;
         };
 
-        let pid = HsmPartId::from(msg.info.pfn as u8);
+        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
+        // PF (PcieFunction::Pf == 64) is enabled before its resources are
+        // assigned; a VF is enabled after. `part_enable` needs to know which.
+        let is_pf = msg.info.pfn == 64;
         // Map the IPC action onto a partition-lifecycle primitive; Migrate
         // and any unknown action are not supported.
         let result = match PfnEnableDisableAction(msg.info.action) {
-            PfnEnableDisableAction::Enable => self.part_enable(pid).await,
+            PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
             _ => Err(HsmError::UnsupportedCmd),
         };
@@ -595,6 +598,13 @@ impl UnoHsmPal {
             Err(_) => IpcMessageStatusCode::InvalidField,
         };
 
+        info!(
+            "boot",
+            "PFN {} {} -> status={:?}",
+            msg.info.pfn,
+            msg.info.action,
+            status
+        );
         let reply = encode_pfn_enable_disable_ack(buf, status);
         self.ipc.reply(channel as u8, &reply);
         true
@@ -613,7 +623,10 @@ impl UnoHsmPal {
             return false;
         };
 
-        let pid = HsmPartId::from(msg.info.pfn as u8);
+        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
+        // PF (PcieFunction::Pf == 64) assigns resources after it is enabled;
+        // a VF before. `part_alloc` provisions the enabled keys for the PF.
+        let is_pf = msg.info.pfn == 64;
         let mask = msg.info.mask_u128();
         // The system has only `NUM_PARTITIONS` key-vault tables; any bit at
         // or above that index references a non-existent table and would
@@ -635,7 +648,7 @@ impl UnoHsmPal {
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {
-            self.part_alloc(pid, mask).await
+            self.part_alloc(pid, mask, is_pf).await
         };
         let (status, count) = match result {
             Ok(()) => (IpcMessageStatusCode::Success, mask.count_ones() as u8),
@@ -717,8 +730,6 @@ impl HsmPal for UnoHsmPal {
     async fn run(&self) {
         loop {
             self.poll_once();
-            self.pka.wake();            
-            self.aes.wake();
             embassy_futures::yield_now().await;
         }
     }
@@ -734,4 +745,21 @@ impl HsmPal for UnoHsmPal {
     /// # Side Effects
     /// None.
     fn deinit(&self) {}
+}
+
+
+/// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
+/// that IIC `recv` reports for host IO, so a provisioned/enabled partition
+/// matches `io.pid()`. Mirrors cp/azihsm (io.pid() == axi_id).
+/// PF 64 -> 0x10, VFn n -> 0x20 + n.
+#[inline]
+fn pfn_to_axi_id(pfn: u8) -> u8 {
+    const PF_PCIE_FN: u8 = 64;
+    const PF_AXI_ID: u8 = 0x10;
+    const VF_AXI_ID_START: u8 = 0x20;
+    if pfn == PF_PCIE_FN {
+        PF_AXI_ID
+    } else {
+        VF_AXI_ID_START.wrapping_add(pfn)
+    }
 }
