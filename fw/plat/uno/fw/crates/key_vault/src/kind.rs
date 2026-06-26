@@ -79,9 +79,10 @@ impl KeyLen {
 /// Per-kind length table, indexed by `HsmVaultKeyKind` discriminant.
 ///
 /// Mirrors the reference firmware's `raw_key_blob_size()` (fixed kinds)
-/// and var-HMAC min/max. `SessionCu` is length-discriminated by session
-/// type (PlainText=168, Authenticated=264) and modelled as variable.
-static KIND_LEN: [KeyLen; 38] = [
+/// and var-HMAC min/max. `SessionEx` is length-discriminated by session
+/// type (PlainText=120, Authenticated=216) and modelled as variable;
+/// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
+static KIND_LEN: [KeyLen; 39] = [
     /* 0  Free                         */ KeyLen::Invalid,
     /* 1  Rsa2kPublic                  */ KeyLen::Fixed(260),
     /* 2  Rsa3kPublic                  */ KeyLen::Fixed(388),
@@ -117,9 +118,10 @@ static KIND_LEN: [KeyLen; 38] = [
     /* 32 VarLenHmacSha256             */ KeyLen::Variable { min: 32, max: 64 },
     /* 33 VarLenHmacSha384             */ KeyLen::Variable { min: 48, max: 128 },
     /* 34 VarLenHmacSha512             */ KeyLen::Variable { min: 64, max: 128 },
-    /* 35 SessionCu                    */ KeyLen::Variable { min: 168, max: 264 },
-    /* 36 PartitionTrustAnchor         */ KeyLen::Fixed(48),
-    /* 37 PartitionUniqueMachineSecret */ KeyLen::Fixed(48),
+    /* 35 SessionExPending           */ KeyLen::Variable { min: 32, max: 256 },
+    /* 36 SessionEx                    */ KeyLen::Variable { min: 120, max: 216 },
+    /* 37 PartitionTrustAnchor         */ KeyLen::Fixed(48),
+    /* 38 PartitionUniqueMachineSecret */ KeyLen::Fixed(48),
 ];
 
 /// Resolves the length contract for `kind` in O(1).
@@ -195,7 +197,7 @@ mod tests {
 
     #[test]
     fn unknown_discriminant_is_invalid_key_type() {
-        // 200 is well outside the named 0..=37 range.
+        // 200 is well outside the named 0..=38 range.
         assert_eq!(key_len(HsmVaultKeyKind(200)), Err(HsmError::InvalidKeyType));
     }
 
@@ -238,8 +240,12 @@ mod tests {
             Ok(KeyLen::Variable { min: 64, max: 128 })
         );
         assert_eq!(
-            key_len(HsmVaultKeyKind::SessionCu),
-            Ok(KeyLen::Variable { min: 168, max: 264 })
+            key_len(HsmVaultKeyKind::SessionEx),
+            Ok(KeyLen::Variable { min: 120, max: 216 })
+        );
+        assert_eq!(
+            key_len(HsmVaultKeyKind::SessionExPending),
+            Ok(KeyLen::Variable { min: 32, max: 256 })
         );
     }
 

@@ -59,7 +59,8 @@ const RESERVED3_LEN: usize = 626
     - PUB_KEY_LEN  // pta_pub_key
     - 1  // pta_pub_key_valid
     - 1  // policy_hash_valid
-    - 1; // bk3_initialized
+    - 1  // bk3_initialized
+    - 2; // session_meta (pending_mask + psk_change_mask)
 
 /// Total per-partition slot size (matches the reference layout).
 const STORE_SIZE: usize = 3072;
@@ -227,6 +228,11 @@ struct Storage {
     // which tracks presence of the BK3 *session key*; this flag records
     // that InitBk3 has run and must not run again.
     bk3_initialized: bool,
+    // Volatile TBOR session slot metadata: byte 0 = pending_mask
+    // (bit N set while slot N's handshake is in flight), byte 1 =
+    // psk_change_mask (bit N set once slot N has consumed its one
+    // allowed PSK change). Owned by the session_store driver.
+    session_meta: [u8; 2],
     reserved3: [u8; RESERVED3_LEN],
 }
 
@@ -406,6 +412,7 @@ impl Partition {
         slot.nonce = [0u8; NONCE_LEN];
         slot.vm_launch_guid = [0u8; GUID_LEN];
         slot.session_table = [0u8; SESSION_TABLE_LEN];
+        slot.session_meta = [0u8; 2];
     }
 
     /// Borrows the partition's 16-byte identity.
@@ -1145,6 +1152,19 @@ impl Partition {
     #[inline(never)]
     pub fn session_table_mut(&mut self) -> &mut [u8; SESSION_TABLE_LEN] {
         &mut self.slot_mut().session_table
+    }
+
+    /// Borrows the 2-byte volatile session metadata (`pending_mask`,
+    /// `psk_change_mask`) for the TBOR session slots.
+    #[inline(never)]
+    pub fn session_meta(self) -> &'static [u8; 2] {
+        &self.slot().session_meta
+    }
+
+    /// Mutably borrows the session metadata region.
+    #[inline(never)]
+    pub fn session_meta_mut(&mut self) -> &mut [u8; 2] {
+        &mut self.slot_mut().session_meta
     }
 }
 
