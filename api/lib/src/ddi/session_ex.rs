@@ -7,20 +7,19 @@
 //! HSM partition. Two transports coexist:
 //!
 //! * **MBOR** — the established single-round-trip `OpenSession` command
-//!   implemented in [`super::session`]. This remains the default for
-//!   API revisions below [`SD_TBOR_MIN_REV`].
+//!   implemented in [`super::session`], reached via
+//!   [`HsmPartition::open_session`].
 //! * **TBOR** — the two-phase HPKE handshake mirroring the firmware
 //!   handlers `open_session_init` (opcode `0x10`) and
-//!   `open_session_finish` (opcode `0x11`). Selected for revisions at
-//!   or above [`SD_TBOR_MIN_REV`].
+//!   `open_session_finish` (opcode `0x11`), reached via
+//!   [`HsmPartition::open_session_ex`].
 //!
-//! The [`open_session_ex`] entry point gates on the negotiated API
-//! revision via [`use_tbor`]: when TBOR applies it runs
+//! Transport selection is driven solely by which call the caller makes:
+//! [`open_session_ex`] always runs the TBOR handshake —
 //! [`open_session_ex_init`] (Phase 1) followed by
-//! [`open_session_ex_finish`] (Phase 2); when `rev` is below the
-//! cutoff it rejects with [`HsmError::UnsupportedApiRevision`]. The
-//! MBOR `OpenSession` path in [`super::session`] is dispatched
-//! separately and is not reached through this entry point.
+//! [`open_session_ex_finish`] (Phase 2). The MBOR `OpenSession` path in
+//! [`super::session`] is dispatched separately and is not reached
+//! through this entry point.
 //!
 //! Both phases are wired. Their HPKE handshake crypto (VM ephemeral
 //! generation, `receive_export`, the confirm MACs, `param_key`
@@ -52,13 +51,6 @@ impl From<SessionExCryptoError> for HsmError {
         }
     }
 }
-
-/// Minimum [`HsmApiRev`] at which the host dispatches `OpenSession`
-/// over the TBOR opcode plane. Older revisions continue to use the
-/// MBOR encoder in [`super::session`]. The value is a placeholder
-/// until the firmware TBOR handlers are pinned to a shipped revision.
-// TODO: pin to the real cutoff revision once the FW handlers land.
-const SD_TBOR_MIN_REV: HsmApiRev = HsmApiRev { major: 2, minor: 0 };
 
 #[derive(Debug)]
 struct PendingHandshake {
@@ -97,13 +89,6 @@ pub struct OpenSessionExResult {
     pub bmk_session: Vec<u8>,
 }
 
-/// `true` when `rev` is at or above the TBOR cutoff for security-domain
-/// session establishment.
-#[inline]
-fn use_tbor(rev: HsmApiRev) -> bool {
-    rev >= SD_TBOR_MIN_REV
-}
-
 /// Look up the partition identity public key (`pk_hsm`) via the
 /// production cert chain. Reuses [`get_part_pub_key`], whose leaf
 /// cert is the partition-ID cert; its SubjectPublicKeyInfo carries
@@ -120,14 +105,17 @@ pub(super) fn fetch_pk_hsm(
 
 /// Opens a session on an HSM partition over the TBOR transport.
 ///
-/// Runs the two-phase handshake — [`open_session_ex_init`] (Phase 1)
-/// followed by [`open_session_ex_finish`] (Phase 2) — when the
-/// negotiated `rev` is at or above [`SD_TBOR_MIN_REV`].
+/// Always runs the two-phase HPKE handshake —
+/// [`open_session_ex_init`] (Phase 1) followed by
+/// [`open_session_ex_finish`] (Phase 2). The transport is selected by
+/// the caller invoking this entry point, not by the negotiated API
+/// revision.
 ///
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle.
-/// * `rev` - The negotiated API revision.
+/// * `rev` - The negotiated API revision (used for the `pk_hsm`
+///   cert-chain fetch).
 /// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
 ///   1 = CU).
 /// * `session_type` - Channel integrity profile to pin for the session.
@@ -139,19 +127,13 @@ pub(super) fn fetch_pk_hsm(
 ///
 /// # Errors
 ///
-/// Propagates transport-specific failures. Returns
-/// [`HsmError::UnsupportedApiRevision`] when `rev` is below
-/// [`SD_TBOR_MIN_REV`].
-fn open_session_ex(
+/// Propagates transport-specific failures from the handshake.
+pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
     session_type: SessionType,
 ) -> HsmResult<OpenSessionExResult> {
-    // check if the negotiated API revision supports TBOR for session establishment;
-    if !use_tbor(rev) {
-        return Err(HsmError::UnsupportedApiRevision);
-    }
     let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
     open_session_ex_finish(partition, pending)
 }
@@ -376,12 +358,10 @@ mod tests {
     /// emulator and return the finished session material.
     ///
     /// This exercises [`open_session_ex_init`] / [`open_session_ex_finish`]
-    /// directly rather than the [`open_session_ex`] dispatcher. The
-    /// dispatcher gates on `use_tbor(rev)` with the placeholder
-    /// [`SD_TBOR_MIN_REV`] (`2.0`), but the emulator advertises an
-    /// MBOR max revision of `1.0`, so that gate cannot be satisfied
-    /// until the real cutoff is pinned. The handshake mechanics under
-    /// test here are independent of that gate.
+    /// directly rather than the [`open_session_ex`] dispatcher, so the
+    /// test can assert on the intermediate [`PendingHandshake`] fields
+    /// (the echoed `psk_id` / `session_type` and the HPKE export
+    /// length) between the two phases.
     fn run_handshake(psk_id: u8, session_type: SessionType) -> OpenSessionExResult {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();

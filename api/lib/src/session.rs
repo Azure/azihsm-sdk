@@ -7,8 +7,10 @@
 //! Sessions represent authenticated connections to an HSM partition, providing
 //! a context for performing cryptographic operations.
 
+use std::fmt;
 use std::sync::Arc;
 
+use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
@@ -47,10 +49,6 @@ impl HsmSession {
 
     /// Wraps a successful `open_session_ex` (TBOR) result in a session
     /// handle.
-    ///
-    /// POC: not wired into the live dispatch path yet — TBOR sessions
-    /// are currently surfaced through `HsmSessionEx`.
-    #[allow(dead_code)]
     pub(crate) fn new_ex(
         rev: HsmApiRev,
         partition: HsmPartition,
@@ -132,6 +130,65 @@ impl HsmSession {
     pub(crate) fn set_bmk_session(&self, bmk_session: Vec<u8>) {
         self.inner.write().set_bmk_session(bmk_session);
     }
+
+    /// Issues TBOR `PartInit` (opcode `0x30`) on this CO session.
+    ///
+    /// Seals `mach_seed` under the session `param_key` and ships it
+    /// alongside `part_policy` + `pota_thumbprint`. Only valid on a
+    /// TBOR session; an MBOR session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn part_init(
+        &self,
+        mach_seed: &[u8],
+        part_policy: &[u8],
+        pota_thumbprint: &[u8],
+    ) -> HsmResult<PartInitResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Tbor { param_key, .. } => ddi::init_part_ex(
+                &inner.partition,
+                inner.id,
+                param_key,
+                mach_seed,
+                part_policy,
+                pota_thumbprint,
+            ),
+            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `FinalizePart` (opcode `0x31`) on this CO session.
+    ///
+    /// Only valid on a TBOR session; an MBOR session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn finalize_part(
+        &self,
+        pta_cert_chain: &[u8],
+        prev_part_local_bmk: Option<&[u8]>,
+    ) -> HsmResult<FinalizePartResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Tbor { .. } => ddi::finalize_part_ex(
+                &inner.partition,
+                inner.id,
+                pta_cert_chain,
+                prev_part_local_bmk,
+            ),
+            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `GetPartId` (opcode `0x32`) on this CO session.
+    ///
+    /// Only valid on a TBOR session; an MBOR session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn get_part_id(&self) -> HsmResult<GetPartIdResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Tbor { .. } => ddi::get_part_id_ex(&inner.partition, inner.id),
+            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.
@@ -139,7 +196,6 @@ impl HsmSession {
 /// The fields that differ between the MBOR `open_session` path and the
 /// TBOR `open_session_ex` handshake live here; the shared
 /// identity/rev/partition/epoch fields stay on [`HsmSessionInner`].
-#[derive(Debug)]
 enum SessionKind {
     /// Session established over the MBOR `OpenSession` command.
     Mbor {
@@ -156,8 +212,6 @@ enum SessionKind {
     /// Session established over the two-phase TBOR `OpenSessionEx`
     /// handshake.
     ///
-    /// POC scaffolding: not yet constructed by the live dispatch path.
-    #[allow(dead_code)]
     Tbor {
         /// PSK id selecting the role (0 = CO, 1 = CU).
         psk_id: u8,
@@ -165,14 +219,44 @@ enum SessionKind {
         session_type: SessionType,
         /// HPKE exported secret (`Nh = 48`).
         exported: Vec<u8>,
-        // Per-session AES-256 wrap key derived from the HPKE export.
-        // Sensitive — never logged. Kept commented out until the channel
-        // crypto layer consumes it; `AesKey` is not `Debug` so re-adding it
-        // requires a manual `Debug` impl.
-        // param_key: AesKey,
+        /// Per-session AES-256 wrap key derived from the HPKE export.
+        /// Sensitive — never logged (redacted in the manual `Debug`
+        /// impl, since `AesKey` is not `Debug`).
+        param_key: AesKey,
         /// FW-emitted wrapped masking-key blob.
         bmk_session: Vec<u8>,
     },
+}
+
+impl fmt::Debug for SessionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SessionKind::Mbor {
+                app_id,
+                seed,
+                bmk_session,
+            } => f
+                .debug_struct("Mbor")
+                .field("app_id", app_id)
+                .field("seed", seed)
+                .field("bmk_session", bmk_session)
+                .finish(),
+            SessionKind::Tbor {
+                psk_id,
+                session_type,
+                exported,
+                bmk_session,
+                ..
+            } => f
+                .debug_struct("Tbor")
+                .field("psk_id", psk_id)
+                .field("session_type", session_type)
+                .field("exported", exported)
+                .field("param_key", &"<redacted>")
+                .field("bmk_session", bmk_session)
+                .finish(),
+        }
+    }
 }
 
 /// HSM session handle.
@@ -251,9 +335,6 @@ impl HsmSessionInner {
 
     /// Creates a new TBOR session handle from an `open_session_ex`
     /// result.
-    ///
-    /// POC scaffolding: not yet constructed by the live dispatch path.
-    #[allow(dead_code)]
     #[instrument(skip_all, fields(session_id = result.session_id))]
     pub(crate) fn new_ex(
         rev: HsmApiRev,
@@ -270,7 +351,7 @@ impl HsmSessionInner {
                 psk_id: result.psk_id,
                 session_type: result.session_type,
                 exported: result.exported,
-                // param_key: result.param_key,
+                param_key: result.param_key,
                 bmk_session: result.bmk_session,
             },
         }

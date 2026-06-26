@@ -8,17 +8,19 @@ mod op;
 mod partition;
 mod resiliency;
 mod session;
-mod session_ex;
 mod shared_types;
 pub mod traits;
 
 pub use algo::*;
+pub use azihsm_ddi_tbor_types::SessionType;
+pub use ddi::FinalizePartResult;
+pub use ddi::GetPartIdResult;
+pub use ddi::PartInitResult;
 pub use error::*;
 pub use op::*;
 pub use partition::*;
 pub use resiliency::*;
 pub use session::*;
-pub use session_ex::*;
 pub use shared_types::*;
 pub use traits::*;
 
