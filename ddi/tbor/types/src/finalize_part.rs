@@ -32,7 +32,6 @@ pub struct TborFinalizePartReq {
     /// CO session id this request is bound to.
     #[tbor(session_id)]
     pub session_id: u16,
-    /// TODO : remove session_id
 
     /// DER PTA certificate chain rooted at the provisioning POTA.
     #[tbor(max_len = 2048)]

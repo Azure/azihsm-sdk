@@ -1034,7 +1034,12 @@ impl HsmPartition {
         // Read session material directly from the session itself.
         let sess_id = session.id();
         let rev = session.api_rev();
-        let seed = session.seed();
+        // TBOR sessions have no MBOR reopen path: their stale state must
+        // be re-established via a fresh handshake. Fail fast rather than
+        // attempting an MBOR `reopen_session` with bogus material.
+        let Some(seed) = session.seed() else {
+            return Err(HsmError::SessionNeedsRenegotiation);
+        };
         let bmk_session = session.bmk_session();
 
         // Hold the session write lock across the DDI call so that only

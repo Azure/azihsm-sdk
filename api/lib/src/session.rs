@@ -116,8 +116,11 @@ impl HsmSession {
         self.inner.read().partition().clone()
     }
 
-    /// Returns the 48-byte session seed needed for `reopen_session`.
-    pub(crate) fn seed(&self) -> [u8; 48] {
+    /// Returns the 48-byte MBOR session seed needed for
+    /// `reopen_session`, or `None` for a TBOR session (whose stale
+    /// state must be re-established via a fresh handshake, not the
+    /// MBOR reopen path).
+    pub(crate) fn seed(&self) -> Option<[u8; 48]> {
         self.inner.read().seed()
     }
 
@@ -238,8 +241,11 @@ impl fmt::Debug for SessionKind {
             } => f
                 .debug_struct("Mbor")
                 .field("app_id", app_id)
-                .field("seed", seed)
-                .field("bmk_session", bmk_session)
+                .field("seed", &format_args!("<redacted; {} bytes>", seed.len()))
+                .field(
+                    "bmk_session",
+                    &format_args!("<redacted; {} bytes>", bmk_session.len()),
+                )
                 .finish(),
             SessionKind::Tbor {
                 psk_id,
@@ -251,9 +257,15 @@ impl fmt::Debug for SessionKind {
                 .debug_struct("Tbor")
                 .field("psk_id", psk_id)
                 .field("session_type", session_type)
-                .field("exported", exported)
+                .field(
+                    "exported",
+                    &format_args!("<redacted; {} bytes>", exported.len()),
+                )
                 .field("param_key", &"<redacted>")
-                .field("bmk_session", bmk_session)
+                .field(
+                    "bmk_session",
+                    &format_args!("<redacted; {} bytes>", bmk_session.len()),
+                )
                 .finish(),
         }
     }
@@ -388,12 +400,13 @@ impl HsmSessionInner {
         }
     }
 
-    /// Returns the 48-byte MBOR session seed, or zeros for a TBOR
-    /// session (whose reopen path is not yet wired).
-    pub(crate) fn seed(&self) -> [u8; 48] {
+    /// Returns the 48-byte MBOR session seed, or `None` for a TBOR
+    /// session (which is re-established via a fresh handshake rather
+    /// than the MBOR reopen path).
+    pub(crate) fn seed(&self) -> Option<[u8; 48]> {
         match &self.kind {
-            SessionKind::Mbor { seed, .. } => *seed,
-            SessionKind::Tbor { .. } => [0u8; 48],
+            SessionKind::Mbor { seed, .. } => Some(*seed),
+            SessionKind::Tbor { .. } => None,
         }
     }
 
