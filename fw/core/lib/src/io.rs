@@ -56,7 +56,7 @@ impl<P: HsmPal> Hsm<P> {
     pub async fn handle_io(&self, mut io: P::Io) {
         // Gate on partition state — drop IOs for non-enabled partitions.
         if !self.partition_enabled(&io) {
-            info!("core", "dropping IO for disabled partition {:?}", io.pid());
+            debug!("core", "dropping IO for disabled partition {:?}", io.pid());
             if let Err(_e) = self.pal().drop_io(io).await {
                 error!("core", HsmError::DropIoFailure, "drop_io failed: {:?}", _e);
             }

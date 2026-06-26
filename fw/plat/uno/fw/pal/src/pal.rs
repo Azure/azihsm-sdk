@@ -740,7 +740,6 @@ impl HsmPal for UnoHsmPal {
     fn deinit(&self) {}
 }
 
-
 /// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
 /// that IIC `recv` reports for host IO, so a provisioned/enabled partition
 /// PF 64 -> 0x10, VFn n -> 0x20 + n.
