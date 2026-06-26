@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for the TBOR `OpenSessionInit` /
-//! `OpenSessionFinish` two-phase session handshake.
+//! Integration tests for the TBOR `SessionOpenInit` /
+//! `SessionOpenFinish` two-phase session handshake.
 //!
 //! Cross-test isolation comes from `open_dev`'s factory-reset; the
 //! [`TEST_LOCK`](crate::harness::fixture) held by every [`TestCtx`]
@@ -18,15 +18,15 @@
 //! * Invalid PSK id and invalid `session_type` byte at the parse stage.
 //! * Phase-2 MAC tampering → `TborStatus::SessionAuthFailure`.
 //! * Phase-2 `seed_envelope` tampering → `TborStatus::SessionAuthFailure`.
-//! * `OpenSessionFinish` against an unknown session id, and a
+//! * `SessionOpenFinish` against an unknown session id, and a
 //!   second finish against an already-completed slot.
 //! * Multiple concurrent sessions return distinct session ids.
 
 #![cfg(feature = "emu")]
 
 use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborOpenSessionFinishReq;
-use azihsm_ddi_tbor_types::TborOpenSessionInitReq;
+use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
+use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
@@ -79,7 +79,7 @@ fn open_session_cu_plaintext_happy_emu() {
 fn open_session_co_plaintext_rejected_emu() {
     let ctx = TestCtx::new();
     let err = ctx
-        .open_session_init(CO, SessionType::PlainText)
+        .session_open_init(CO, SessionType::PlainText)
         .expect_err("CO + PlainText is not a permitted pairing");
     crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
@@ -88,7 +88,7 @@ fn open_session_co_plaintext_rejected_emu() {
 fn open_session_cu_authenticated_rejected_emu() {
     let ctx = TestCtx::new();
     let err = ctx
-        .open_session_init(CU, SessionType::Authenticated)
+        .session_open_init(CU, SessionType::Authenticated)
         .expect_err("CU + Authenticated is not a permitted pairing");
     crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
@@ -107,7 +107,7 @@ fn open_session_invalid_psk_id_emu() {
     let ctx = TestCtx::new();
     for bad in [2u8, 0x7F, 0xFF] {
         let err = ctx
-            .open_session_init(bad, SessionType::PlainText)
+            .session_open_init(bad, SessionType::PlainText)
             .expect_err(&format!("psk_id {bad} must be rejected"));
         crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidPskId);
     }
@@ -118,7 +118,7 @@ fn open_session_invalid_session_type_byte_emu() {
     // Bypass the typed `SessionType` enum to ship an out-of-range
     // byte directly. The FW `SessionType::from_u8` must reject.
     let ctx = TestCtx::new();
-    let req = TborOpenSessionInitReq {
+    let req = TborSessionOpenInitReq {
         psk_id: CU,
         session_type: 42,
         suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
@@ -139,7 +139,7 @@ fn open_session_unsupported_suite_id_emu() {
     // and the all-ones byte (0xFF).
     let ctx = TestCtx::new();
     for bad in [0x00u8, 0x02, 0xff] {
-        let req = TborOpenSessionInitReq {
+        let req = TborSessionOpenInitReq {
             psk_id: CU,
             session_type: SessionType::PlainText.to_u8(),
             suite_id: bad,
@@ -154,15 +154,15 @@ fn open_session_unsupported_suite_id_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_session_finish_mac_tampered_emu() {
+fn session_open_finish_mac_tampered_emu() {
     let ctx = TestCtx::new();
     let pending = ctx
-        .open_session_init(CU, SessionType::PlainText)
+        .session_open_init(CU, SessionType::PlainText)
         .expect("phase 1 must succeed");
     let mut mac_fin = build_mac_fin(&pending).expect("build phase-2 mac");
     mac_fin[0] ^= 0x01;
     let err = ctx
-        .open_session_finish_with_mac(pending, mac_fin)
+        .session_open_finish_with_mac(pending, mac_fin)
         .expect_err("tampered mac_fin must be rejected by the FW");
     crate::harness::assertions::assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
     // FW destroys the pending slot on MAC mismatch.
@@ -173,11 +173,11 @@ fn open_session_finish_mac_tampered_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_session_finish_unknown_session_id_emu() {
+fn session_open_finish_unknown_session_id_emu() {
     // Pick a session id that cannot possibly correspond to a live
     // pending slot. The FW pre-check fails to load the blob.
     let ctx = TestCtx::new();
-    let req = TborOpenSessionFinishReq {
+    let req = TborSessionOpenFinishReq {
         session_id: 0xFFFF,
         mac_fin: [0u8; 48],
         seed_envelope: [0u8; SEED_ENVELOPE_LEN],
@@ -196,7 +196,7 @@ fn open_session_double_finish_emu() {
     let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     // Replay the finish: pending slot is gone, FW must refuse.
-    let req = TborOpenSessionFinishReq {
+    let req = TborSessionOpenFinishReq {
         session_id: session.session_id(),
         mac_fin: [0u8; 48],
         seed_envelope: [0u8; SEED_ENVELOPE_LEN],
@@ -215,12 +215,12 @@ fn open_session_double_finish_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_session_finish_seed_envelope_tampered_emu() {
+fn session_open_finish_seed_envelope_tampered_emu() {
     // Build a finish request by hand so we can corrupt the seed_envelope
     // ciphertext byte after Phase-1 succeeds but before shipping it.
     let ctx = TestCtx::new();
     let pending = ctx
-        .open_session_init(CU, SessionType::PlainText)
+        .session_open_init(CU, SessionType::PlainText)
         .expect("phase 1 must succeed");
     let session_id = pending.session_id;
     let mac_fin = build_mac_fin(&pending).expect("build phase-2 mac");
@@ -232,7 +232,7 @@ fn open_session_finish_seed_envelope_tampered_emu() {
     seed_envelope[0..4].copy_from_slice(b"AEAD");
     seed_envelope[4] = 0x03; // AeadAlg::AesGcm256
 
-    let req = TborOpenSessionFinishReq {
+    let req = TborSessionOpenFinishReq {
         session_id,
         mac_fin,
         seed_envelope,

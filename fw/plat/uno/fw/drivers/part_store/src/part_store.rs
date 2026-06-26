@@ -45,6 +45,8 @@ const RES_MASK_LEN: usize = 16;
 const RESERVED3_LEN: usize = 626
     - POLICY_HASH_LEN
     - POTA_THUMBPRINT_LEN
+    - POTA_THUMBPRINT_LEN  // sata_thumbprint
+    - POTA_THUMBPRINT_LEN  // sapota_thumbprint
     - 4  // state
     - 4  // generation
     - RES_MASK_LEN
@@ -56,6 +58,8 @@ const RESERVED3_LEN: usize = 626
     - CREDENTIAL_LEN
     - 1  // credential_valid
     - 1  // pota_thumbprint_valid
+    - 1  // sata_thumbprint_valid
+    - 1  // sapota_thumbprint_valid
     - PUB_KEY_LEN  // pta_pub_key
     - 1  // pta_pub_key_valid
     - 1  // policy_hash_valid
@@ -210,6 +214,8 @@ struct Storage {
     credential: [u8; CREDENTIAL_LEN],
     policy_hash: [u8; POLICY_HASH_LEN],
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
+    sata_thumbprint: [u8; POTA_THUMBPRINT_LEN],
+    sapota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
     id_key_id: [u8; 2],
     ec_key_id: [u8; 2],
     se_key_id: [u8; 2],
@@ -222,6 +228,8 @@ struct Storage {
     // harmless and the DMA-target public keys above stay 4-aligned).
     credential_valid: bool,
     pota_thumbprint_valid: bool,
+    sata_thumbprint_valid: bool,
+    sapota_thumbprint_valid: bool,
     pta_pub_key_valid: bool,
     policy_hash_valid: bool,
     // One-shot InitBk3 gate. Distinct from `bk3_session_key.is_valid`,
@@ -400,6 +408,8 @@ impl Partition {
         self.clear_pta_pub_key();
         self.clear_policy_hash();
         self.clear_pota_thumbprint();
+        self.clear_sata_thumbprint();
+        self.clear_sapota_thumbprint();
         self.clear_credential();
         // BK3 session/sealed material + incarnation flag.
         self.clear_bk3_session();
@@ -791,6 +801,84 @@ impl Partition {
         let slot = self.slot_mut();
         slot.pota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
         slot.pota_thumbprint_valid = false;
+    }
+
+    /// Borrows the SATA thumbprint (48 B).
+    #[inline(never)]
+    pub fn sata_thumbprint(self) -> &'static DmaBuf {
+        // SAFETY: GSRAM bytes branded as DMA-accessible; valid for 'static.
+        unsafe { DmaBuf::from_raw(&self.slot().sata_thumbprint) }
+    }
+
+    /// Sets the SATA thumbprint.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::InvalidArg`] — `v` is not exactly `POTA_THUMBPRINT_LEN`
+    ///   bytes.
+    #[inline(never)]
+    pub fn set_sata_thumbprint(mut self, v: &DmaBuf) -> HsmResult<()> {
+        let src: &[u8] = v;
+        if src.len() != POTA_THUMBPRINT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let slot = self.slot_mut();
+        slot.sata_thumbprint.copy_from_slice(src);
+        slot.sata_thumbprint_valid = true;
+        Ok(())
+    }
+
+    /// Whether a SATA thumbprint has been provisioned.
+    #[inline(never)]
+    pub fn sata_thumbprint_valid(self) -> bool {
+        self.slot().sata_thumbprint_valid
+    }
+
+    /// Clears the SATA thumbprint (zeroizes and marks absent).
+    #[inline(never)]
+    pub fn clear_sata_thumbprint(mut self) {
+        let slot = self.slot_mut();
+        slot.sata_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
+        slot.sata_thumbprint_valid = false;
+    }
+
+    /// Borrows the SAPOTA thumbprint (48 B).
+    #[inline(never)]
+    pub fn sapota_thumbprint(self) -> &'static DmaBuf {
+        // SAFETY: GSRAM bytes branded as DMA-accessible; valid for 'static.
+        unsafe { DmaBuf::from_raw(&self.slot().sapota_thumbprint) }
+    }
+
+    /// Sets the SAPOTA thumbprint.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::InvalidArg`] — `v` is not exactly `POTA_THUMBPRINT_LEN`
+    ///   bytes.
+    #[inline(never)]
+    pub fn set_sapota_thumbprint(mut self, v: &DmaBuf) -> HsmResult<()> {
+        let src: &[u8] = v;
+        if src.len() != POTA_THUMBPRINT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let slot = self.slot_mut();
+        slot.sapota_thumbprint.copy_from_slice(src);
+        slot.sapota_thumbprint_valid = true;
+        Ok(())
+    }
+
+    /// Whether a SAPOTA thumbprint has been provisioned.
+    #[inline(never)]
+    pub fn sapota_thumbprint_valid(self) -> bool {
+        self.slot().sapota_thumbprint_valid
+    }
+
+    /// Clears the SAPOTA thumbprint (zeroizes and marks absent).
+    #[inline(never)]
+    pub fn clear_sapota_thumbprint(mut self) {
+        let slot = self.slot_mut();
+        slot.sapota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
+        slot.sapota_thumbprint_valid = false;
     }
 
     // ── lifecycle state / generation / resource mask ─────────────────────

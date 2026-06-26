@@ -101,8 +101,8 @@ fn part_info_independent_of_session_state_emu() {
 
     // CO Pending: init only, do not finish yet.
     let pending = ctx
-        .open_session_init(0, SessionType::Authenticated)
-        .expect("OpenSessionInit (CO/Authenticated) for pending-state probe");
+        .session_open_init(0, SessionType::Authenticated)
+        .expect("SessionOpenInit (CO/Authenticated) for pending-state probe");
     let during_pending = ctx
         .tbor(&TborPartInfoReq::new())
         .expect("PartInfo with one Pending session slot");
@@ -113,8 +113,8 @@ fn part_info_independent_of_session_state_emu() {
 
     // CO Active: finish the same handshake.
     let session = ctx
-        .open_session_finish(pending)
-        .expect("OpenSessionFinish for probe");
+        .session_open_finish(pending)
+        .expect("SessionOpenFinish for probe");
     let during_active = ctx
         .tbor(&TborPartInfoReq::new())
         .expect("PartInfo with one Active session slot");
@@ -124,7 +124,7 @@ fn part_info_independent_of_session_state_emu() {
     );
 
     // Cleanup.
-    ctx.close_session(session.session_id)
+    ctx.session_close(session.session_id)
         .expect("close probe session");
     let post = ctx
         .tbor(&TborPartInfoReq::new())
@@ -191,7 +191,7 @@ fn part_info_reflects_part_init_transition_emu() {
         "manufacturer SVN must be stable across PartInit",
     );
 
-    ctx.close_session(session.session_id)
+    ctx.session_close(session.session_id)
         .expect("close CO session");
 }
 

@@ -25,6 +25,26 @@ pub enum HsmError {
     UnsupportedCmd = 0x08000009,
     DdiEncodeFailed = 0x08680001,
     DdiDecodeFailed = 0x08680002,
+    // TBOR wire-decode failures. Each corresponds to a distinct
+    // structural fault detected by the zero-copy TBOR decoder; the
+    // decode path returns these directly (no intermediate error type).
+    TborBufferTooShort = 0x08680010,
+    TborUnsupportedVersion = 0x08680011,
+    TborMessageTruncated = 0x08680012,
+    TborOffsetLengthOutOfBounds = 0x08680013,
+    TborInvalidFixedLength = 0x08680014,
+    TborOpcodeMismatch = 0x08680015,
+    TborUnexpectedTocType = 0x08680016,
+    TborInvalidNonePayload = 0x08680017,
+    TborNonMonotonicTocOffsets = 0x08680018,
+    TborMissingField = 0x08680019,
+    TborDuplicateField = 0x0868001A,
+    TborInvalidEnumValue = 0x0868001B,
+    // TBOR wire-encode failures.
+    TborBufferTooSmall = 0x0868001C,
+    TborTooManyTocEntries = 0x0868001D,
+    TborDataTooLarge = 0x0868001E,
+    TborDataOffsetOverflow = 0x0868001F,
     VaultSessionLimitReached = 0x08700001,
     SessionNotExpected = 0x08700002,
     SessionExpected = 0x08700003,
