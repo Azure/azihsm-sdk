@@ -19,12 +19,11 @@ use super::*;
 /// validates it before calling the handler.  We re-check defensively so
 /// the partition state never sees `session_destroy` with a `None` id.
 ///
-/// No `partition_lock` is needed: the only state mutation is the single
-/// synchronous [`HsmSessionManager::session_destroy`] call, which is
-/// atomic on the partition entry (no yield points), so there is no
-/// read-then-mutate window that could race against a concurrent
-/// handler on the same partition.
-pub(crate) fn close_session<'p, P: HsmPal>(
+/// No `partition_lock` is needed.  Although `session_destroy` is now
+/// awaited (it can yield on Uno during vault GDMA cleanup), DDI commands
+/// run on a single-threaded cooperative executor with one command in
+/// flight per partition, so no concurrent handler can interleave.
+pub(crate) async fn close_session<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
@@ -33,7 +32,7 @@ pub(crate) fn close_session<'p, P: HsmPal>(
     let _body: DdiCloseSessionReq = decoder.decode_data()?;
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
-    pal.session_destroy(io, HsmSessId::from(sess_id))?;
+    pal.session_destroy(io, HsmSessId::from(sess_id)).await?;
 
     // Echo the closed session id back in the response header so the
     // host can confirm which session was torn down.

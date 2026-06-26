@@ -25,6 +25,7 @@ members = [
   "drivers/profile",
   "drivers/rng",
   "drivers/semihosting",
+  "drivers/session_store",
   "drivers/sha",
   "drivers/systick",
   "drivers/uart",
@@ -56,6 +57,7 @@ azihsm_fw_uno_drivers_part_store = { path = "drivers/part_store" }
 azihsm_fw_uno_drivers_profile = { default-features = false, path = "drivers/profile" }
 azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
 azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
+azihsm_fw_uno_drivers_session_store = { path = "drivers/session_store" }
 azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }
 azihsm_fw_uno_drivers_systick = { path = "drivers/systick" }
 azihsm_fw_uno_drivers_uart = { path = "drivers/uart" }

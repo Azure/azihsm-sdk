@@ -33,12 +33,12 @@ const SESSION_MASKING_KEY_SIZE: usize = 80;
 /// MBOR masking-key flow: `[api_rev(8) || masking_key(80)]` = 88 B.
 const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE;
 
-/// `SessionCu`-kind blob size for **PlainText (CU)** sessions:
+/// `SessionEx`-kind blob size for **PlainText (CU)** sessions:
 /// `api_rev(8) || param_key(32) || masking_key(80)` = 120 B.
 const SESSION_CU_BLOB_SIZE: usize =
     SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
-/// `SessionCu`-kind blob size for **Authenticated (CO)** sessions:
+/// `SessionEx`-kind blob size for **Authenticated (CO)** sessions:
 /// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 216 B.
 const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
@@ -58,7 +58,7 @@ impl HsmSessionManager for StdHsmPal {
     /// 3. Allocates (or re-maps) a logical session slot.
     ///
     /// The session is committed immediately.
-    fn session_create(
+    async fn session_create(
         &self,
         io: &impl HsmIo,
         api_rev: &[u8],
@@ -117,7 +117,7 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// For [`Pending`](HsmSessionState::Pending) slots no vault entry
     /// exists yet, so steps 1–3 are skipped and only step 4 runs.
-    fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+    async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;
 
         // Pending slots: no vault state to clean up.
@@ -148,11 +148,11 @@ impl HsmSessionManager for StdHsmPal {
         entry.session_table.state(id)
     }
 
-    fn session_create_pending(
+    async fn session_create_pending(
         &self,
         io: &impl HsmIo,
         role: SessionRole,
-        handshake_state: &[u8],
+        handshake_state: &DmaBuf,
     ) -> HsmResult<HsmSessId> {
         let entry = self.active_part_mut(io.pid())?;
         entry.session_table.create_pending(role, handshake_state)
@@ -178,7 +178,7 @@ impl HsmSessionManager for StdHsmPal {
         }
     }
 
-    fn session_promote(
+    async fn session_promote(
         &self,
         io: &impl HsmIo,
         id: HsmSessId,
@@ -242,7 +242,7 @@ impl HsmSessionManager for StdHsmPal {
         let physical_id =
             entry
                 .vault
-                .create(&blob[..blob_len], HsmVaultKeyKind::SessionCu, None, attrs)?;
+                .create(&blob[..blob_len], HsmVaultKeyKind::SessionEx, None, attrs)?;
 
         // Promote the slot to Active and bind to the new vault entry.
         if let Err(e) = entry.session_table.promote(id, physical_id) {
