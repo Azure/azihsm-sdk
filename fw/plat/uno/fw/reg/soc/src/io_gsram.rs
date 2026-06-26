@@ -122,22 +122,23 @@ tock_registers::register_bitfields! [u32,
         TAG OFFSET(0) NUMBITS(16) [],
         CONTROL OFFSET(16) NUMBITS(16) [],
     ],
-    /// 'Outbound Completion Queue info.'
+    /// 'Routing info: queue_index, queue_id, axi_id.'
     pub OCQ_INFO [
-        STATUS OFFSET(0) NUMBITS(8) [],
-        RSVD OFFSET(8) NUMBITS(24) [],
+        QUEUE_INDEX OFFSET(0) NUMBITS(16) [],
+        QUEUE_ID OFFSET(16) NUMBITS(8) [],
+        AXI_ID OFFSET(24) NUMBITS(8) [],
     ],
-    /// '16-bit tag + status echoed from the OSQ entry.'
+    /// 'Tag and completion status.'
     pub OCQ_TAG [
         TAG OFFSET(0) NUMBITS(16) [],
-        STATUS OFFSET(16) NUMBITS(8) [],
-        RSVD OFFSET(24) NUMBITS(8) [],
+        RSVD0 OFFSET(16) NUMBITS(8) [],
+        STATUS OFFSET(24) NUMBITS(8) [],
     ],
-    /// 'GDMA completion status and tag.'
+    /// 'Completion status and TAG echoed from SQ entry.'
     pub GDMA_CQ_STATUS [
-        TAG OFFSET(0) NUMBITS(16) [],
-        SUCCESS OFFSET(16) NUMBITS(1) [],
-        RSVD OFFSET(17) NUMBITS(15) [],
+        SUCCESS OFFSET(0) NUMBITS(1) [],
+        RSVD0 OFFSET(1) NUMBITS(15) [],
+        TAG OFFSET(16) NUMBITS(16) [],
     ],
     /// 'Controller ID for this IO slot.'
     pub IO_META_CTLR [

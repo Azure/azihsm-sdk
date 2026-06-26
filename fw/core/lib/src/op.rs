@@ -31,8 +31,17 @@ const PAGE_4K: u32 = 4096;
 /// Maximum source buffer length (one 4K page).
 const MAX_SRC_LEN: u32 = PAGE_4K;
 
-/// Maximum destination buffer length (one 4K page).
-const MAX_DST_LEN: u32 = PAGE_4K;
+/// Maximum destination buffer length (two 4K pages).
+///
+/// The host driver allocates an 8K (2-page) response buffer and advertises
+/// its full size in the SQE, so destination-length validation must accept up
+/// to 8K — matching the reference firmware (cp/azihsm uses the same
+/// `2 * PAGE_4K`). This bounds the *advertised buffer*, not the transfer:
+/// actual DDI responses stay within a single 4K page, so the outbound GDMA
+/// (which uses a single PRP / PRP0 — max 4K, no page crossing) always carries
+/// the real payload. A response that ever needed to exceed 4K would require
+/// the GDMA path to plumb a second PRP page (`dst_prp2`).
+const MAX_DST_LEN: u32 = 2 * PAGE_4K;
 
 /// Returns true if the 64-bit DMA address is 4K-page-aligned.
 #[inline]
@@ -58,7 +67,7 @@ pub trait SqeValidateExt {
     ///
     /// Checks:
     /// - Source length must be 1..=4096
-    /// - Destination length must be 1..=4096
+    /// - Destination length must be 1..=8192
     /// - Source PRP1 must be 4K-aligned
     /// - Destination PRP1 must be 4K-aligned
     ///
