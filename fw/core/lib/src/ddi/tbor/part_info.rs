@@ -48,7 +48,11 @@ pub(crate) fn handle<'p, P: HsmPal>(
     // Defense-in-depth: verify the opcode matches without a full
     // re-parse.  The header structure was already validated by the
     // upstream `RequestView::parse` in `handle_tbor_op`.
-    debug_assert_eq!(req_buf[3], super::opcode::PART_INFO, "opcode mismatch in part_info");
+    debug_assert_eq!(
+        req_buf[3],
+        super::opcode::PART_INFO,
+        "opcode mismatch in part_info"
+    );
 
     let part_state_val = part_state::part_state(pal, io)? as u8;
     let generation = part_state::part_gen(pal, io)?;
