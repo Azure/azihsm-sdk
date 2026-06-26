@@ -582,7 +582,16 @@ impl UnoHsmPal {
             return false;
         };
 
-        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
+        // Map the admin's PcieFunction to the partition's axi_id, rejecting
+        // PFNs that map outside the partition-store range deterministically
+        // here rather than relying on a generic error from a deeper layer.
+        let axi_id = pfn_to_axi_id(msg.info.pfn);
+        if axi_id as usize >= crate::part::NUM_PARTITIONS {
+            let reply = encode_pfn_enable_disable_ack(buf, IpcMessageStatusCode::InvalidField);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+        let pid = HsmPartId::from(axi_id);
         // PF (PcieFunction::Pf == 64) is enabled before its resources are
         // assigned; a VF is enabled after. `part_enable` needs to know which.
         let is_pf = msg.info.pfn == 64;
@@ -616,7 +625,15 @@ impl UnoHsmPal {
             return false;
         };
 
-        let pid = HsmPartId::from(pfn_to_axi_id(msg.info.pfn));
+        // Map the admin's PcieFunction to the partition's axi_id, rejecting
+        // out-of-range PFNs deterministically before touching the partition.
+        let axi_id = pfn_to_axi_id(msg.info.pfn);
+        if axi_id as usize >= crate::part::NUM_PARTITIONS {
+            let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+        let pid = HsmPartId::from(axi_id);
         // PF (PcieFunction::Pf == 64) assigns resources after it is enabled;
         // a VF before. `part_alloc` provisions the enabled keys for the PF.
         let is_pf = msg.info.pfn == 64;
