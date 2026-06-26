@@ -181,18 +181,6 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
-
-    /// Issues TBOR `GetPartId` (opcode `0x32`) on this CO session.
-    ///
-    /// Only valid on a V2 session; a V1 session returns
-    /// [`HsmError::InvalidSession`].
-    pub fn get_part_id(&self) -> HsmResult<GetPartIdResult> {
-        let inner = self.inner.read();
-        match &inner.kind {
-            SessionKind::Ver2 { .. } => ddi::get_part_id_ex(&inner.partition, inner.id),
-            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
-        }
-    }
 }
 
 /// Transport-specific session state.

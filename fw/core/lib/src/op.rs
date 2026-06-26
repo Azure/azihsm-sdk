@@ -203,8 +203,8 @@ impl SessionCtrl {
     /// session-open flow; the SQE carries no session id (the FW
     /// allocates a pending slot and returns its id in the response).
     ///
-    /// `OpenSessionFinish`, `ChangePsk`, `PartInit`, `FinalizePart`,
-    /// and `GetPartId` reference the pending/active slot, so the SQE
+    /// `OpenSessionFinish`, `ChangePsk`, `PartInit`, and `FinalizePart`
+    /// reference the pending/active slot, so the SQE
     /// must carry the slot's `session_id` (`InSession`).
     /// `CloseSession` carries the slot id and is classified as `Close`
     /// so the CQE flags signal the slot transition to the host.
@@ -220,8 +220,7 @@ impl SessionCtrl {
             opcode::OPEN_SESSION_FINISH
             | opcode::CHANGE_PSK
             | opcode::PART_INIT
-            | opcode::FINALIZE_PART
-            | opcode::GET_PART_ID => Self::InSession,
+            | opcode::FINALIZE_PART => Self::InSession,
             opcode::CLOSE_SESSION => Self::Close,
             _ => Self::NoSession,
         }

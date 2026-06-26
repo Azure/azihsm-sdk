@@ -11,8 +11,6 @@
 //!   return the PTA CSR + COSE_Sign1 attestation report.
 //! * **`FinalizePart`** (opcode `0x31`) — complete provisioning begun by
 //!   `PartInit`; returns the partition-local backup masked key.
-//! * **`GetPartId`** (opcode `0x32`) — return the partition identifier
-//!   and its DER-encoded public key.
 //!
 //! All three run **inside an already-open CO session** established by
 //! [`super::session_ex::open_session_ex`]: each request carries the
@@ -67,27 +65,6 @@ impl From<TborFinalizePartResp> for FinalizePartResult {
     fn from(resp: TborFinalizePartResp) -> Self {
         Self {
             part_local_bmk: resp.part_local_bmk,
-        }
-    }
-}
-
-/// API-layer result of a TBOR `GetPartId` command.
-///
-/// Mirrors [`TborGetPartIdResp`] so the wire response type stays
-/// confined to the DDI layer.
-#[derive(Debug, Clone, Default)]
-pub struct GetPartIdResult {
-    /// Stable partition identifier.
-    pub part_id: [u8; PART_ID_LEN],
-    /// DER `SubjectPublicKeyInfo` of the partition public key.
-    pub part_pub_key: Vec<u8>,
-}
-
-impl From<TborGetPartIdResp> for GetPartIdResult {
-    fn from(resp: TborGetPartIdResp) -> Self {
-        Self {
-            part_id: resp.part_id,
-            part_pub_key: resp.part_pub_key,
         }
     }
 }
@@ -256,33 +233,6 @@ pub(crate) fn finalize_part_ex(
     let mut cookie = None;
     dev.exec_op_tbor(&req, &mut cookie)
         .map(FinalizePartResult::from)
-        .map_err(HsmError::from)
-}
-
-/// Issue `GetPartId` (opcode `0x32`) on the active CO session.
-///
-/// Returns the partition's stable identifier and its DER-encoded
-/// `SubjectPublicKeyInfo`.
-///
-/// # Arguments
-///
-/// * `partition` - The HSM partition handle.
-/// * `session_id` - The active CO session id this request binds to.
-///
-/// # Errors
-///
-/// Surfaces DDI/device failures from the round-trip.
-pub(crate) fn get_part_id_ex(
-    partition: &HsmPartition,
-    session_id: u16,
-) -> HsmResult<GetPartIdResult> {
-    let req = TborGetPartIdReq { session_id };
-
-    let inner = partition.inner().read();
-    let dev = inner.dev();
-    let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
-        .map(GetPartIdResult::from)
         .map_err(HsmError::from)
 }
 

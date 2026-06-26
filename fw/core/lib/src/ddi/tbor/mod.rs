@@ -355,11 +355,7 @@ mod tests {
 
     #[test]
     fn part_commands_are_in_session_and_cross_checked() {
-        for op in [
-            opcode::PART_INIT,
-            opcode::FINALIZE_PART,
-            opcode::GET_PART_ID,
-        ] {
+        for op in [opcode::PART_INIT, opcode::FINALIZE_PART] {
             assert!(is_in_session(op), "{op:#04x} must be in-session");
             assert!(
                 needs_session_id_cross_check(op),

@@ -29,7 +29,6 @@ pub(crate) use key::*;
 pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub use partition_ex::FinalizePartResult;
-pub use partition_ex::GetPartIdResult;
 pub use partition_ex::PartInitResult;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
