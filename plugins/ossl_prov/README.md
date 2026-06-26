@@ -10,6 +10,7 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Signature** | ECDSA, RSA PKCS#1 v1.5, RSA-PSS |
 | **Key Exchange** | ECDH |
 | **Asymmetric Encryption** | RSA-OAEP |
+| **Symmetric Encryption** | AES-CBC (128/192/256), AES-GCM (256), AES-XTS (256) — **OpenSSL 3.5+** |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
 | **MAC** | HMAC-SHA256, HMAC-SHA384, HMAC-SHA512 |
 | **KDF** | HKDF (RFC 5869) |
@@ -17,6 +18,8 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Store** | `azihsm://` URI scheme for masked key loading |
 
 > **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter (plaintext DER) or `azihsm.wrapped_key` parameter (pre-wrapped blob).
+
+> **Note:** AES symmetric keys are opaque **`EVP_SKEY`** objects and require **OpenSSL 3.5+** (they use the 3.5 `SKEYMGMT` API). They are generated inside the HSM (or re-imported from a masked blob) and are never exposed as raw bytes. On OpenSSL versions before 3.5 the opaque-key manager is unavailable, so AES keys cannot be created or bound — the cipher names still resolve but are unusable. See [AES Symmetric Encryption](#aes-symmetric-encryption).
 
 ## Key Usage and Operation Dependencies
 
@@ -55,6 +58,7 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - **ECDH** requires an EC key generated with `keyAgreement`. A `digitalSignature` EC key cannot be used for ECDH.
 - **HKDF** requires a masked key file as input (`azihsm.ikm_file`). In practice this is the output of an ECDH derive (`shared_masked.bin`). There is no other way to provide the input keying material from the CLI besides using a masked key file.
 - **HMAC** requires a masked HMAC key derived via HKDF with `derived_key_type:hmac`. The HKDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
+- **AES** (CBC / GCM / XTS) uses opaque symmetric `EVP_SKEY` keys generated inside the HSM, selected by the `azihsm.key_kind` skey option rather than `azihsm.key_usage`. Requires OpenSSL 3.5+. See [AES Symmetric Encryption](#aes-symmetric-encryption).
 
 ## Building
 
@@ -459,6 +463,77 @@ openssl pkeyutl -decrypt ${PROV} \
 | `rsa_padding_mode` | `oaep` |
 | `rsa_oaep_md` | Hash for OAEP: `sha256`, `sha384`, `sha512` (SHA-1 rejected) |
 | `rsa_mgf1_md` | MGF1 hash (defaults to `rsa_oaep_md`) |
+
+### AES Symmetric Encryption
+
+AES uses the OpenSSL 3.5 opaque symmetric-key (`EVP_SKEY` / `SKEYMGMT`) API. Keys are opaque, HSM-resident objects — generated inside the HSM and never exposed as raw bytes; a masked blob is written to disk for later re-import, just like the asymmetric keys.
+
+**Requires:** OpenSSL 3.5+ — the opaque-key manager (`SKEYMGMT`) and the cipher's `EVP_SKEY` init hooks exist only in 3.5+, so on any OpenSSL before 3.5 AES keys cannot be created or bound (raw-key init is refused). Note the build example earlier in this README uses OpenSSL 3.0.3; build and run against 3.5+ to use AES. No other prerequisite — the key is generated in the first step below.
+
+Three kinds are supported, selected by the `azihsm.key_kind` skey option:
+
+| `azihsm.key_kind` | Modes | `key-length` (bytes) |
+|-------------------|-------|----------------------|
+| `AES` (default) | CBC | 16 / 24 / 32 (AES-128/192/256) |
+| `AES-GCM` | GCM | 32 (AES-256 only) |
+| `AES-XTS` | XTS | 64 (an AES-256 key pair) |
+
+Generate an opaque AES key with `skeyutl -genkey`; the masked blob is written to the `azihsm.masked_key` path:
+
+```bash
+# AES-256 (CBC-capable) key
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:32 \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin
+
+# AES-256-GCM key
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:32 \
+    -skeyopt azihsm.key_kind:AES-GCM \
+    -skeyopt azihsm.masked_key:./aes256_gcm_masked.bin
+
+# AES-256-XTS key (64-byte key pair)
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:64 \
+    -skeyopt azihsm.key_kind:AES-XTS \
+    -skeyopt azihsm.masked_key:./aes256_xts_masked.bin
+```
+
+Encrypt and decrypt with AES-CBC via `openssl enc`. The opaque key is re-imported from its masked blob with the same `-skeymgmt AES -skeyopt azihsm.masked_key:...` options; the IV is supplied with `-iv`:
+
+```bash
+# Encrypt
+openssl enc -e -aes-256-cbc ${PROV} \
+    -skeymgmt AES \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin \
+    -iv 000102030405060708090a0b0c0d0e0f \
+    -in plaintext.bin -out ciphertext.bin
+
+# Decrypt
+openssl enc -d -aes-256-cbc ${PROV} \
+    -skeymgmt AES \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin \
+    -iv 000102030405060708090a0b0c0d0e0f \
+    -in ciphertext.bin -out decrypted.bin
+```
+
+PKCS#7 padding is applied by default, so the input need not be block-aligned. `-aes-128-cbc` and `-aes-192-cbc` work the same way with 16- and 24-byte keys.
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-skeymgmt AES` | Yes | Select the azihsm AES opaque-key manager |
+| `key-length` | No | (`-genkey` only) Raw key length in **bytes**; defaults to 32 for `AES`/`AES-GCM`, 64 for `AES-XTS`. On `enc` the length comes from the masked blob |
+| `azihsm.key_kind` | No | `AES` (default, CBC), `AES-GCM`, or `AES-XTS` |
+| `azihsm.masked_key` | Yes | On `-genkey`: output path for the masked blob. On `enc`: the masked blob to re-import |
+
+> **GCM and XTS are not reachable through `openssl enc`** — the `enc` app's `opt_cipher()` rejects AEAD and XTS ciphers, so a GCM nonce/AAD/tag or an XTS tweak cannot be passed through the CLI. These modes are driven through the `EVP_CipherInit_SKEY` C API instead. (On decrypt, AES-GCM requires the tag to be set *before* the ciphertext, since the HSM decrypts and verifies in a single operation.)
+
+> **Opacity:** AES keys are non-exportable — `EVP_SKEY_get0_raw_key()` fails by design, so raw key bytes never leave the HSM.
 
 ### ECDH Key Exchange
 
