@@ -25,7 +25,7 @@
 //! Both phases are wired. Their HPKE handshake crypto (VM ephemeral
 //! generation, `receive_export`, the confirm MACs, `param_key`
 //! derivation, and the `seed_envelope` AEAD seal) lives in the
-//! standalone [`azihsm_session_crypto`] crate, the single host-side
+//! standalone [`azihsm_session_ex_crypto`] crate, the single host-side
 //! source of truth for the wire protocol. `pk_hsm` retrieval reuses
 //! the production cert chain via [`fetch_pk_hsm`].
 
@@ -33,20 +33,22 @@
 
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
-use azihsm_session_crypto::*;
+use azihsm_session_ex_crypto::*;
 use zeroize::Zeroizing;
 
 use super::*;
 
-/// Maps a [`SessionCryptoError`] onto the API error domain. Malformed
+/// Maps a [`SessionExCryptoError`] onto the API error domain. Malformed
 /// inputs surface as [`HsmError::InvalidArgument`]; handshake-crypto
 /// failures (key agreement, AEAD, confirm-MAC) surface as
 /// [`HsmError::InternalError`].
-impl From<SessionCryptoError> for HsmError {
-    fn from(err: SessionCryptoError) -> Self {
+impl From<SessionExCryptoError> for HsmError {
+    fn from(err: SessionExCryptoError) -> Self {
         match err {
-            SessionCryptoError::InvalidInput => HsmError::InvalidArgument,
-            SessionCryptoError::Crypto | SessionCryptoError::MacMismatch => HsmError::InternalError,
+            SessionExCryptoError::InvalidInput => HsmError::InvalidArgument,
+            SessionExCryptoError::Crypto | SessionExCryptoError::MacMismatch => {
+                HsmError::InternalError
+            }
         }
     }
 }

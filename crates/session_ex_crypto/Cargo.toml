@@ -3,7 +3,7 @@
 
 [package]
 edition = "2024"
-name = "azihsm_session_crypto"
+name = "azihsm_session_ex_crypto"
 version = "0.1.0"
 
 [dependencies]

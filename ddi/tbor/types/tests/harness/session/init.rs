@@ -25,13 +25,13 @@ use azihsm_ddi_tbor_types::TborOpenSessionInitReq;
 use azihsm_ddi_tbor_types::TborOpenSessionInitResp;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
-use azihsm_session_crypto::build_hpke_info;
-use azihsm_session_crypto::default_psk;
-use azihsm_session_crypto::ec_pub_from_sec1;
-use azihsm_session_crypto::generate_vm_ephemeral;
-use azihsm_session_crypto::receive_exported;
-use azihsm_session_crypto::verify_phase1_mac;
-use azihsm_session_crypto::VmEphemeralKey;
+use azihsm_session_ex_crypto::build_hpke_info;
+use azihsm_session_ex_crypto::default_psk;
+use azihsm_session_ex_crypto::ec_pub_from_sec1;
+use azihsm_session_ex_crypto::generate_vm_ephemeral;
+use azihsm_session_ex_crypto::receive_exported;
+use azihsm_session_ex_crypto::verify_phase1_mac;
+use azihsm_session_ex_crypto::VmEphemeralKey;
 
 use super::crypto;
 

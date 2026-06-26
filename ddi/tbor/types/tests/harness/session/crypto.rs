@@ -3,11 +3,11 @@
 
 //! Device-IO + error-mapping shim for the TBOR session harness.
 //!
-//! The handshake math lives in the standalone [`azihsm_session_crypto`]
+//! The handshake math lives in the standalone [`azihsm_session_ex_crypto`]
 //! crate — the single host-side source of truth shared with
 //! `azihsm_api`. The [`init`](super::init) and [`finish`](super::finish)
 //! harness code calls that crate directly, mapping its
-//! backend-agnostic `SessionCryptoError` onto [`DdiError`] inline at
+//! backend-agnostic `SessionExCryptoError` onto [`DdiError`] inline at
 //! each call site (the orphan rule prevents a blanket `From` impl).
 //!
 //! Only the device-IO `pk_hsm` retrieval stays here: it walks the MBOR
@@ -29,7 +29,7 @@ use azihsm_ddi_tbor_types::PK_RESP_LEN;
 /// the FW uses as `pk_s` in HPKE `auth_psk`.
 ///
 /// Device IO is intentionally kept here (out of the pure
-/// [`azihsm_session_crypto`] crate).
+/// [`azihsm_session_ex_crypto`] crate).
 pub(super) fn fetch_pk_hsm(
     dev: &<AzihsmDdi as Ddi>::Dev,
 ) -> Result<(EccPublicKey, [u8; PK_RESP_LEN]), DdiError> {
@@ -43,7 +43,7 @@ pub(super) fn fetch_pk_hsm(
     let pk_der = extract_subject_public_key_der(der)?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| DdiError::InvalidParameter)?;
     let sec1 =
-        azihsm_session_crypto::ec_pub_to_sec1(&pk).map_err(|_| DdiError::InvalidParameter)?;
+        azihsm_session_ex_crypto::ec_pub_to_sec1(&pk).map_err(|_| DdiError::InvalidParameter)?;
     Ok((pk, sec1))
 }
 

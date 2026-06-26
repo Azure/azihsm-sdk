@@ -25,9 +25,9 @@ use azihsm_ddi_tbor_types::TborOpenSessionFinishReq;
 use azihsm_ddi_tbor_types::TborOpenSessionFinishResp;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
-use azihsm_session_crypto::build_phase2_mac;
-use azihsm_session_crypto::derive_param_key;
-use azihsm_session_crypto::seal_seed_envelope;
+use azihsm_session_ex_crypto::build_phase2_mac;
+use azihsm_session_ex_crypto::derive_param_key;
+use azihsm_session_ex_crypto::seal_seed_envelope;
 
 use super::init::PendingHandshake;
 
@@ -66,14 +66,14 @@ impl SessionHandshake {
     /// returns the bytes regardless of whether the FW actually
     /// installed them — `PlainText` sessions discard them.
     pub fn derive_mac_tx_key(&self) -> Result<Vec<u8>, DdiError> {
-        azihsm_session_crypto::derive_mac_tx_key(&self.exported)
+        azihsm_session_ex_crypto::derive_mac_tx_key(&self.exported)
             .map_err(|_| DdiError::TborDecodeError)
     }
 
     /// Re-derive the authenticated-session MAC RX key
     /// (`SESSION_MAC_RX_LABEL`). See [`Self::derive_mac_tx_key`].
     pub fn derive_mac_rx_key(&self) -> Result<Vec<u8>, DdiError> {
-        azihsm_session_crypto::derive_mac_rx_key(&self.exported)
+        azihsm_session_ex_crypto::derive_mac_rx_key(&self.exported)
             .map_err(|_| DdiError::TborDecodeError)
     }
 }
