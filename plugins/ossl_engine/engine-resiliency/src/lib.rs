@@ -23,6 +23,8 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::thread::ThreadId;
 
 use azihsm_api::HsmError;
@@ -148,7 +150,15 @@ impl ResiliencyStorage for FileStorage {
             return Err(HsmError::InvalidArgument);
         }
         let path = self.dir.join(key);
-        let tmp_path = self.dir.join(format!(".{key}.tmp"));
+        // Per-write unique staging file so concurrent writes to the same key
+        // don't race on a shared temp path: the PID distinguishes processes and
+        // the atomic counter distinguishes writers within a process.
+        static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+        let tmp_path = self.dir.join(format!(
+            ".{key}.{}.{}.tmp",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+        ));
 
         let result = self
             .write_durable(&tmp_path, &path, data)
