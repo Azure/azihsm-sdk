@@ -85,7 +85,7 @@ impl Xtask for Coverage {
             command_args.push(&profile_val);
         }
         let exclude_vals: Vec<String>;
-        if self.package.is_none() {
+        if !self.exclude.is_empty() && self.package.is_none() {
             command_args.push("--workspace");
             if !self.exclude.is_empty() {
                 exclude_vals = self

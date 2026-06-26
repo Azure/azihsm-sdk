@@ -186,7 +186,7 @@ impl Xtask for Precheck {
                 #[cfg(not(target_os = "windows"))]
                 {
                     // Run azihsm_ddi mock tests
-                    let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
+                    let ddi_tests = ddi_tests(&self.exclude, self.profile.clone());
                     run_tests(ddi_tests, false, self.skip_clean, ctx.clone())?;
                 }
             } else {
@@ -273,27 +273,40 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 
 // Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
 #[cfg(not(target_os = "windows"))]
-fn ddi_mock_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
-    if !exclude.iter().any(|e| e == "azihsm_ddi") {
-        // SDK Run azihsm_ddi mock tests table-4
+    if !exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
+        // SDK Run azihsm_ddi_mbor_types mock tests table-4
         tests.push(Nextest {
             features: Some("mock,table-4".to_string()),
-            package: Some("azihsm_ddi".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
             exclude: exclude.to_owned(),
         });
 
-        // SDK Run azihsm_ddi mock tests table-64
+        // SDK Run azihsm_ddi_mbor_types mock tests table-64
         tests.push(Nextest {
             features: Some("mock,table-64".to_string()),
-            package: Some("azihsm_ddi".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    if !exclude.iter().any(|e| e == "azihsm_ddi_tbor_types") {
+        // SDK Run azihsm_ddi_tbor_types tests through the emu
+        // backend (in-process firmware).
+        tests.push(Nextest {
+            features: Some("emu".to_string()),
+            package: Some("azihsm_ddi_tbor_types".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-tbor-emu".to_string())),
             exclude: exclude.to_owned(),
         });
     }

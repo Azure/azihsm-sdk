@@ -149,7 +149,7 @@ impl Xtask for IntegrationTest {
                 );
             }
 
-            let run_pkg = |pkg: &str, ctx: XtaskCtx| -> anyhow::Result<()> {
+            let run_pkg = |pkg: &str, skip_clean: bool, ctx: XtaskCtx| -> anyhow::Result<()> {
                 let test = crate::nextest::Nextest {
                     features: Some("integration".to_string()),
                     package: Some(pkg.to_string()),
@@ -160,7 +160,8 @@ impl Xtask for IntegrationTest {
                 };
 
                 if self.coverage {
-                    let cov = crate::coverage::Coverage::from(test);
+                    let mut cov = crate::coverage::Coverage::from(test);
+                    cov.skip_clean = skip_clean;
                     cov.run(ctx)
                 } else {
                     test.run(ctx)
@@ -168,13 +169,13 @@ impl Xtask for IntegrationTest {
             };
 
             match self.suite {
-                Suite::Cli => run_pkg("provider-integration-tests-cli", _ctx),
-                Suite::Capi => run_pkg("provider-integration-tests-capi", _ctx),
-                Suite::Nginx => run_pkg("provider-integration-tests-nginx", _ctx),
+                Suite::Cli => run_pkg("provider-integration-tests-cli", false, _ctx),
+                Suite::Capi => run_pkg("provider-integration-tests-capi", false, _ctx),
+                Suite::Nginx => run_pkg("provider-integration-tests-nginx", false, _ctx),
                 Suite::All => {
-                    run_pkg("provider-integration-tests-cli", _ctx.clone())?;
-                    run_pkg("provider-integration-tests-capi", _ctx.clone())?;
-                    run_pkg("provider-integration-tests-nginx", _ctx)
+                    run_pkg("provider-integration-tests-cli", false, _ctx.clone())?;
+                    run_pkg("provider-integration-tests-capi", true, _ctx.clone())?;
+                    run_pkg("provider-integration-tests-nginx", true, _ctx)
                 }
             }
         }
