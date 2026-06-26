@@ -921,9 +921,7 @@ impl DdiDev for DdiNixDev {
         // ── 3. Issue the ioctl ───────────────────────────────────
         // SAFETY: src/dst pointers above are valid for the duration
         // of the ioctl call; the buffers outlive `cmd`.
-        let res = unsafe {
-            mcr_ctrl_cmd_generic_ioctl(self.file.read().as_raw_fd(), &mut cmd)
-        };
+        let res = unsafe { mcr_ctrl_cmd_generic_ioctl(self.file.read().as_raw_fd(), &mut cmd) };
         if res.is_err() {
             self.map_ioctl_status(cmd.out_data.ioctl_status)?;
             res.map_err(DdiError::NixError)?;
