@@ -47,7 +47,7 @@ impl HsmSession {
         }
     }
 
-    /// Wraps a successful `open_session_ex` (TBOR) result in a session
+    /// Wraps a successful `open_session_ex` (V2) result in a session
     /// handle.
     pub(crate) fn new_ex(
         rev: HsmApiRev,
@@ -116,10 +116,10 @@ impl HsmSession {
         self.inner.read().partition().clone()
     }
 
-    /// Returns the 48-byte MBOR session seed needed for
-    /// `reopen_session`, or `None` for a TBOR session (whose stale
+    /// Returns the 48-byte V1 session seed needed for
+    /// `reopen_session`, or `None` for a V2 session (whose stale
     /// state must be re-established via a fresh handshake, not the
-    /// MBOR reopen path).
+    /// V1 reopen path).
     pub(crate) fn seed(&self) -> Option<[u8; 48]> {
         self.inner.read().seed()
     }
@@ -138,7 +138,7 @@ impl HsmSession {
     ///
     /// Seals `mach_seed` under the session `param_key` and ships it
     /// alongside `part_policy` + `pota_thumbprint`. Only valid on a
-    /// TBOR session; an MBOR session returns
+    /// V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn part_init(
         &self,
@@ -148,7 +148,7 @@ impl HsmSession {
     ) -> HsmResult<PartInitResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Tbor { param_key, .. } => ddi::init_part_ex(
+            SessionKind::Ver2 { param_key, .. } => ddi::init_part_ex(
                 &inner.partition,
                 inner.id,
                 param_key,
@@ -156,13 +156,13 @@ impl HsmSession {
                 part_policy,
                 pota_thumbprint,
             ),
-            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
 
     /// Issues TBOR `FinalizePart` (opcode `0x31`) on this CO session.
     ///
-    /// Only valid on a TBOR session; an MBOR session returns
+    /// Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn finalize_part(
         &self,
@@ -171,37 +171,38 @@ impl HsmSession {
     ) -> HsmResult<FinalizePartResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Tbor { .. } => ddi::finalize_part_ex(
+            SessionKind::Ver2 { .. } => ddi::finalize_part_ex(
                 &inner.partition,
                 inner.id,
                 pta_cert_chain,
                 prev_part_local_bmk,
             ),
-            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
 
     /// Issues TBOR `GetPartId` (opcode `0x32`) on this CO session.
     ///
-    /// Only valid on a TBOR session; an MBOR session returns
+    /// Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn get_part_id(&self) -> HsmResult<GetPartIdResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Tbor { .. } => ddi::get_part_id_ex(&inner.partition, inner.id),
-            SessionKind::Mbor { .. } => Err(HsmError::InvalidSession),
+            SessionKind::Ver2 { .. } => ddi::get_part_id_ex(&inner.partition, inner.id),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
 }
 
 /// Transport-specific session state.
 ///
-/// The fields that differ between the MBOR `open_session` path and the
-/// TBOR `open_session_ex` handshake live here; the shared
+/// The fields that differ between the V1 `open_session` path and the
+/// V2 `open_session_ex` handshake live here; the shared
 /// identity/rev/partition/epoch fields stay on [`HsmSessionInner`].
 enum SessionKind {
-    /// Session established over the MBOR `OpenSession` command.
-    Mbor {
+    /// Version 1 session, established over the single-round-trip
+    /// `OpenSession` command.
+    Ver1 {
         /// 8-bit application id assigned by the device.
         app_id: u8,
         /// 48-byte random seed used for credential encryption during
@@ -212,10 +213,9 @@ enum SessionKind {
         /// Updated after each successful `reopen_session` call.
         bmk_session: Vec<u8>,
     },
-    /// Session established over the two-phase TBOR `OpenSessionEx`
-    /// handshake.
-    ///
-    Tbor {
+    /// Version 2 session, established over the two-phase
+    /// `OpenSessionEx` HPKE handshake.
+    Ver2 {
         /// PSK id selecting the role (0 = CO, 1 = CU).
         psk_id: u8,
         /// Channel integrity profile pinned at handshake time.
@@ -234,12 +234,12 @@ enum SessionKind {
 impl fmt::Debug for SessionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SessionKind::Mbor {
+            SessionKind::Ver1 {
                 app_id,
                 seed,
                 bmk_session,
             } => f
-                .debug_struct("Mbor")
+                .debug_struct("Ver1")
                 .field("app_id", app_id)
                 .field("seed", &format_args!("<redacted; {} bytes>", seed.len()))
                 .field(
@@ -247,14 +247,14 @@ impl fmt::Debug for SessionKind {
                     &format_args!("<redacted; {} bytes>", bmk_session.len()),
                 )
                 .finish(),
-            SessionKind::Tbor {
+            SessionKind::Ver2 {
                 psk_id,
                 session_type,
                 exported,
                 bmk_session,
                 ..
             } => f
-                .debug_struct("Tbor")
+                .debug_struct("Ver2")
                 .field("psk_id", psk_id)
                 .field("session_type", session_type)
                 .field(
@@ -289,7 +289,7 @@ struct HsmSessionInner {
     /// Compared against `ResiliencyState::restore_epoch` to decide whether
     /// a `reopen_session` call is needed before retrying a key operation.
     last_restore_epoch: u64,
-    /// Transport-specific session material (MBOR vs TBOR).
+    /// Version-specific session material (V1 vs V2).
     kind: SessionKind,
 }
 
@@ -301,10 +301,10 @@ impl Drop for HsmSessionInner {
     #[instrument(skip_all, fields(session_id = self.id))]
     fn drop(&mut self) {
         let _ = match &self.kind {
-            SessionKind::Mbor { .. } => {
+            SessionKind::Ver1 { .. } => {
                 self.with_dev(|dev| ddi::close_session(dev, self.id, self.rev))
             }
-            SessionKind::Tbor { .. } => ddi::close_session_ex(&self.partition, self.id),
+            SessionKind::Ver2 { .. } => ddi::close_session_ex(&self.partition, self.id),
         };
     }
 }
@@ -337,7 +337,7 @@ impl HsmSessionInner {
             rev,
             partition,
             last_restore_epoch: epoch,
-            kind: SessionKind::Mbor {
+            kind: SessionKind::Ver1 {
                 app_id,
                 seed,
                 bmk_session,
@@ -345,7 +345,7 @@ impl HsmSessionInner {
         }
     }
 
-    /// Creates a new TBOR session handle from an `open_session_ex`
+    /// Creates a new V2 session handle from an `open_session_ex`
     /// result.
     #[instrument(skip_all, fields(session_id = result.session_id))]
     pub(crate) fn new_ex(
@@ -359,7 +359,7 @@ impl HsmSessionInner {
             rev,
             partition,
             last_restore_epoch: epoch,
-            kind: SessionKind::Tbor {
+            kind: SessionKind::Ver2 {
                 psk_id: result.psk_id,
                 session_type: result.session_type,
                 exported: result.exported,
@@ -391,29 +391,29 @@ impl HsmSessionInner {
     ///
     /// # Returns
     ///
-    /// The 8-bit application ID associated with this session (MBOR
-    /// only; `0` for a TBOR session).
+    /// The 8-bit application ID associated with this session (V1
+    /// only; `0` for a V2 session).
     pub(crate) fn _app_id(&self) -> u8 {
         match &self.kind {
-            SessionKind::Mbor { app_id, .. } => *app_id,
-            SessionKind::Tbor { .. } => 0,
+            SessionKind::Ver1 { app_id, .. } => *app_id,
+            SessionKind::Ver2 { .. } => 0,
         }
     }
 
-    /// Returns the 48-byte MBOR session seed, or `None` for a TBOR
+    /// Returns the 48-byte V1 session seed, or `None` for a V2
     /// session (which is re-established via a fresh handshake rather
-    /// than the MBOR reopen path).
+    /// than the V1 reopen path).
     pub(crate) fn seed(&self) -> Option<[u8; 48]> {
         match &self.kind {
-            SessionKind::Mbor { seed, .. } => Some(*seed),
-            SessionKind::Tbor { .. } => None,
+            SessionKind::Ver1 { seed, .. } => Some(*seed),
+            SessionKind::Ver2 { .. } => None,
         }
     }
 
     /// Returns a clone of the backed-up session masking key.
     pub(crate) fn bmk_session(&self) -> Vec<u8> {
         match &self.kind {
-            SessionKind::Mbor { bmk_session, .. } | SessionKind::Tbor { bmk_session, .. } => {
+            SessionKind::Ver1 { bmk_session, .. } | SessionKind::Ver2 { bmk_session, .. } => {
                 bmk_session.clone()
             }
         }
@@ -423,7 +423,7 @@ impl HsmSessionInner {
     /// reopen.
     pub(crate) fn set_bmk_session(&mut self, bmk_session: Vec<u8>) {
         match &mut self.kind {
-            SessionKind::Mbor { bmk_session: b, .. } | SessionKind::Tbor { bmk_session: b, .. } => {
+            SessionKind::Ver1 { bmk_session: b, .. } | SessionKind::Ver2 { bmk_session: b, .. } => {
                 *b = bmk_session;
             }
         }

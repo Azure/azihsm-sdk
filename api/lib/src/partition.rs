@@ -570,16 +570,13 @@ impl HsmPartition {
     /// Opens a session over the TBOR transport (security-domain).
     ///
     /// Runs the two-phase `open_session_ex` HPKE handshake and wraps
-    /// the result in an [`HsmSession`] (`SessionKind::Tbor`). Requires
-    /// a negotiated `api_rev` at or above the TBOR cutoff; otherwise
-    /// returns [`HsmError::UnsupportedApiRevision`].
+    /// the result in an [`HsmSession`] (`SessionKind::Ver2`).
     ///
     /// # Arguments
     ///
     /// * `api_rev` - The negotiated API revision.
     /// * `psk_id` - PSK identity selecting the role (0 = CO, 1 = CU).
     /// * `session_type` - Channel integrity profile to pin.
-    #[allow(dead_code)]
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session_ex(
         &self,
@@ -1034,9 +1031,9 @@ impl HsmPartition {
         // Read session material directly from the session itself.
         let sess_id = session.id();
         let rev = session.api_rev();
-        // TBOR sessions have no MBOR reopen path: their stale state must
+        // V2 sessions have no V1 reopen path: their stale state must
         // be re-established via a fresh handshake. Fail fast rather than
-        // attempting an MBOR `reopen_session` with bogus material.
+        // attempting a `reopen_session` with bogus material.
         let Some(seed) = session.seed() else {
             return Err(HsmError::SessionNeedsRenegotiation);
         };

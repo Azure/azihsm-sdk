@@ -28,8 +28,6 @@
 //! source of truth for the wire protocol. `pk_hsm` retrieval reuses
 //! the production cert chain via [`fetch_pk_hsm`].
 
-#![allow(dead_code)]
-
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
@@ -45,9 +43,8 @@ impl From<SessionExCryptoError> for HsmError {
     fn from(err: SessionExCryptoError) -> Self {
         match err {
             SessionExCryptoError::InvalidInput => HsmError::InvalidArgument,
-            SessionExCryptoError::Crypto | SessionExCryptoError::MacMismatch => {
-                HsmError::InternalError
-            }
+            SessionExCryptoError::Crypto => HsmError::InternalError,
+            SessionExCryptoError::MacMismatch => HsmError::InvalidSignature,
         }
     }
 }
