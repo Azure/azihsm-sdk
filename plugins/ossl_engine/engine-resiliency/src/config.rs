@@ -1,12 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Environment-variable-driven assembly of [`HsmResiliencyConfig`].
+//! Environment-variable-driven resiliency configuration.
 //!
-//! The engine reads its resiliency configuration from `AZIHSM_*` environment
-//! variables, captures them into [`ResiliencySettings`], and turns them into
-//! an SDK [`HsmResiliencyConfig`] for the 6th argument of
-//! `HsmPartition::init`.
+//! The engine reads its resiliency settings from `AZIHSM_*` environment
+//! variables and captures them into [`ResiliencySettings`].
+//! [`ResiliencySettings::into_resiliency_config`] turns the relevant subset
+//! (storage dir, lock, and the POTA / MOBK callbacks) into an SDK
+//! [`HsmResiliencyConfig`] for the 6th argument of `HsmPartition::init`.
+//!
+//! Not every field feeds that config: the plaintext-OBK input (`obk_path`)
+//! is consumed by the engine's init/lifecycle layer to build the
+//! `HsmOwnerBackupKeyConfig` for cold init, not by `into_resiliency_config`.
 //!
 //! # Environment variables
 //!
@@ -266,7 +271,11 @@ fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
             // symlink_metadata (lstat) so a symlink at `dir` is rejected here
             // rather than silently followed.
             let meta = fs::symlink_metadata(dir).map_err(|_| err())?;
-            if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o077 != 0 {
+            // Require exactly owner-rwx, no group/other (i.e. mode 0700, what
+            // we create above): rejecting too-loose perms protects the key
+            // material, and rejecting too-tight owner perms surfaces the
+            // misconfig here rather than as a generic IO error on first write.
+            if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o777 != 0o700 {
                 return Err(err());
             }
             Ok(())
@@ -349,6 +358,21 @@ mod tests {
         let dir = scratch.0.join("store");
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+        let s = caller_caller_settings(dir);
+        assert!(matches!(
+            s.into_resiliency_config(),
+            Err(ConfigError::StorageDir(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_storage_dir_with_too_tight_owner_perms() {
+        // An existing dir missing owner write/exec passes the group/other
+        // check but would fail later on first write; reject it up front.
+        let scratch = Scratch::new("cfg-tight");
+        let dir = scratch.0.join("store");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o400)).unwrap();
         let s = caller_caller_settings(dir);
         assert!(matches!(
             s.into_resiliency_config(),
