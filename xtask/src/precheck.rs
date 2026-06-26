@@ -103,9 +103,6 @@ pub struct Precheck {
     /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
     #[clap(long)]
     pub additional_obj_paths: Vec<String>,
-    /// Skip provider integration tests when running test stages that include them
-    #[clap(long)]
-    skip_integration: bool,
 }
 
 impl Xtask for Precheck {
@@ -316,9 +313,9 @@ fn run_tests(
         if coverage {
             let mut cov = Coverage::from(test);
             if !first_run {
-                cov.skip_clean = skip_clean;
+                cov.skip_clean = true;
             } else {
-                cov.skip_clean = false;
+                cov.skip_clean = skip_clean;
             }
             first_run = false;
             cov.run(ctx.clone())?;

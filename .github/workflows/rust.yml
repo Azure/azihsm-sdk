@@ -71,7 +71,7 @@ jobs:
       run: rm -rf target/debug target/tmp
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage --skip-integration
+      run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
@@ -129,7 +129,7 @@ jobs:
       run: cargo xtask precheck --clippy
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
-      run: cargo xtask precheck --coverage --skip-integration
+      run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
