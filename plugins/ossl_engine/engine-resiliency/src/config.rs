@@ -189,6 +189,8 @@ impl ResiliencySettings {
     }
 }
 
+/// Parse a boolean env value (`1`/`true`/`yes`/`on` vs `0`/`false`/`no`/`off`,
+/// case-insensitive); empty parses as `false`.
 fn parse_bool(var: &'static str, raw: &str) -> Result<bool, ConfigError> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "" | "0" | "false" | "no" | "off" => Ok(false),
@@ -201,6 +203,7 @@ fn parse_bool(var: &'static str, raw: &str) -> Result<bool, ConfigError> {
     }
 }
 
+/// Parse the OBK source env value: `caller` (or empty, the default) or `tpm`.
 fn parse_obk_source(raw: &str) -> Result<HsmOwnerBackupKeySource, ConfigError> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "" | "caller" => Ok(HsmOwnerBackupKeySource::Caller),
@@ -213,6 +216,7 @@ fn parse_obk_source(raw: &str) -> Result<HsmOwnerBackupKeySource, ConfigError> {
     }
 }
 
+/// Parse the POTA source env value: `caller` (or empty, the default) or `tpm`.
 fn parse_pota_source(raw: &str) -> Result<HsmPotaEndorsementSource, ConfigError> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "" | "caller" => Ok(HsmPotaEndorsementSource::Caller),

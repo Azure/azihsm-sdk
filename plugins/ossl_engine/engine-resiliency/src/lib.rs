@@ -114,6 +114,26 @@ impl FileStorage {
     pub fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
+
+    /// Durably write `data` to `tmp_path` (fsync), then atomically rename it
+    /// onto `dest` and fsync the directory. Returns the raw IO error so the
+    /// single caller can map it once.
+    fn write_durable(&self, tmp_path: &Path, dest: &Path, data: &[u8]) -> std::io::Result<()> {
+        // O_NOFOLLOW + 0600: the temp file may hold key material, so refuse a
+        // pre-planted symlink and keep it owner-only.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .mode(0o600)
+            .open(tmp_path)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        rename_atomic(tmp_path, dest)?;
+        let dir = fs::File::open(&self.dir)?;
+        dir.sync_all()
+    }
 }
 
 impl ResiliencyStorage for FileStorage {
@@ -130,28 +150,12 @@ impl ResiliencyStorage for FileStorage {
         let path = self.dir.join(key);
         let tmp_path = self.dir.join(format!(".{key}.tmp"));
 
-        // Closure so any step's failure funnels to the temp-file cleanup below.
-        let result = (|| -> HsmResult<()> {
-            // O_NOFOLLOW + 0600: the temp file may hold key material, so refuse
-            // a pre-planted symlink and keep it owner-only.
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                .mode(0o600)
-                .open(&tmp_path)
-                .map_err(|_| HsmError::InternalError)?;
-            file.write_all(data).map_err(|_| HsmError::InternalError)?;
-            file.sync_all().map_err(|_| HsmError::InternalError)?;
-            rename_atomic(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
-            let dir = fs::File::open(&self.dir).map_err(|_| HsmError::InternalError)?;
-            dir.sync_all().map_err(|_| HsmError::InternalError)
-        })();
-
+        let result = self
+            .write_durable(&tmp_path, &path, data)
+            .map_err(|_| HsmError::InternalError);
         if result.is_err() {
-            // Best-effort: the write already failed, so a failed cleanup of
-            // the temp file must not mask the original error.
+            // Best-effort: the write already failed, so a failed cleanup of the
+            // temp file must not mask the original error.
             let _ = fs::remove_file(&tmp_path);
         }
         result

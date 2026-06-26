@@ -36,6 +36,8 @@ pub struct FilePotaCallback {
 }
 
 impl FilePotaCallback {
+    /// Create an endorser that signs with the P-384 private key at `priv_path`
+    /// and returns the public key at `pub_path`.
     pub fn new(priv_path: PathBuf, pub_path: PathBuf) -> Self {
         Self {
             priv_path,
@@ -45,6 +47,8 @@ impl FilePotaCallback {
 }
 
 impl PotaEndorsementCallback for FilePotaCallback {
+    /// Sign the device's PID public key with the on-disk P-384 key, returning
+    /// the raw `r‖s` signature paired with the POTA public key.
     fn endorse(
         &self,
         _pota_pub_key_der: &[u8],
@@ -73,12 +77,14 @@ pub struct FileMobkCallback {
 }
 
 impl FileMobkCallback {
+    /// Create a MOBK provider that reads the masked OBK from `path`.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
 
 impl MobkProviderCallback for FileMobkCallback {
+    /// Read and return the masked OBK; rejects a file shorter than [`OBK_LEN`].
     fn get_mobk(&self) -> HsmResult<Vec<u8>> {
         let mut bytes = crate::read_regular_hardened(&self.path).map_err(crate::io_to_hsm)?;
         if bytes.len() < OBK_LEN {
