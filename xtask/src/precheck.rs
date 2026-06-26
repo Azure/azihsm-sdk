@@ -325,11 +325,8 @@ fn run_tests(
     for test in tests {
         if coverage {
             let mut cov = Coverage::from(test);
-            if !first_run {
-                cov.skip_clean = true;
-            } else {
-                cov.skip_clean = skip_clean;
-            }
+            // Clean at most once; if the user requested --skip-clean, never clean.
+            cov.skip_clean = !first_run || skip_clean;
             first_run = false;
             cov.run(ctx.clone())?;
         } else {
