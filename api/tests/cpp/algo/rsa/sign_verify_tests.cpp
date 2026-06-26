@@ -895,8 +895,8 @@ TEST_F(azihsm_rsa_sign_verify, streaming_verify_rejects_tampered_signature)
     });
 }
 
-// RSA verify rejects a signature when the verification key has a different RSA modulus size.
-TEST_F(azihsm_rsa_sign_verify, verify_rejects_mismatched_key_size)
+// RSA verify rejects a signature when using a different public key.
+TEST_F(azihsm_rsa_sign_verify, verify_rejects_signature_with_wrong_public_key)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key wrapping_priv_key, wrapping_pub_key;
@@ -1241,9 +1241,9 @@ TEST_F(azihsm_rsa_sign_verify, verify_rejects_empty_signature)
             .len = 0,
         };
 
-        std::vector<uint8_t> empty_sig;
+        uint8_t dummy = 0;
         azihsm_buffer empty_sig_buf = {
-            .ptr = empty_sig.data(),
+            .ptr = &dummy,
             .len = 0,
         };
 
