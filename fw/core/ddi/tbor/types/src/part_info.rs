@@ -23,7 +23,9 @@ pub const TBOR_OP_PART_INFO: u8 = 0x32;
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;
 
-/// Length of the raw ECC-P384 identity public key (`x ‖ y`).
+/// Length of the raw ECC-P384 identity public key (`x ‖ y`), with each
+/// 48-byte coordinate in little-endian (HSM wire format; SEC1 `0x04`
+/// prefix stripped).
 pub const PID_PUB_KEY_LEN: usize = 96;
 
 /// `PartInfo` request schema.
@@ -32,7 +34,11 @@ pub const PID_PUB_KEY_LEN: usize = 96;
 /// single `none` TOC placeholder to satisfy the TBOR codec's
 /// `toc_count >= 1` requirement; the decoder verifies that placeholder
 /// is present and the opcode matches.
-#[tbor(opcode = TBOR_OP_PART_INFO)]
+///
+/// The `tbor` derive requires an integer literal here, so the opcode is
+/// spelled out rather than referencing [`TBOR_OP_PART_INFO`]; the two
+/// MUST stay in sync (both `0x32`).
+#[tbor(opcode = 0x32)]
 pub struct TborPartInfoReq;
 
 /// `PartInfo` response schema.

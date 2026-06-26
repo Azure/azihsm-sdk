@@ -38,22 +38,14 @@ const FIPS_APPROVED: bool = false;
 ///
 /// The caller (`dispatch`) has already structurally validated the
 /// buffer via [`RequestView::parse`] and confirmed the opcode is
-/// `PART_INFO`. This handler gathers the device/partition fields and
-/// encodes the response.
+/// `PART_INFO`, so the request body is not re-inspected here. This
+/// handler gathers the device/partition fields and encodes the
+/// response.
 pub(crate) fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    req_buf: &DmaBuf,
+    _req_buf: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    // Defense-in-depth: verify the opcode matches without a full
-    // re-parse.  The header structure was already validated by the
-    // upstream `RequestView::parse` in `handle_tbor_op`.
-    debug_assert_eq!(
-        req_buf[3],
-        super::opcode::PART_INFO,
-        "opcode mismatch in part_info"
-    );
-
     let part_state_val = part_state::part_state(pal, io)? as u8;
     let generation = part_state::part_gen(pal, io)?;
     let owner_svn = part_state::part_owner_svn(pal);
