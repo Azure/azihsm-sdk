@@ -270,7 +270,7 @@ pub trait HsmSessionManager {
     ///   is free, or `api_rev`/`masking_key` is the wrong length.
     /// - `Err(HsmError::NotEnoughSpace)` — vault is full and cannot
     ///   store the masking blob.
-    fn session_create(
+    async fn session_create(
         &self,
         io: &impl HsmIo,
         api_rev: &[u8],
@@ -302,7 +302,7 @@ pub trait HsmSessionManager {
     /// - `Ok(())` on success.
     /// - `Err(HsmError::InvalidArg)` — `id` does not refer to a live
     ///   session in the caller's partition.
-    fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
+    async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
 
     /// Queries the lifecycle state of a session slot.
     ///
@@ -368,11 +368,11 @@ pub trait HsmSessionManager {
     ///   `handshake_state.len() > SESSION_PENDING_BLOB_MAX`.
     /// - `Err(HsmError::VaultSessionLimitReached)` — no eligible slot
     ///   available for `role`.
-    fn session_create_pending(
+    async fn session_create_pending(
         &self,
         io: &impl HsmIo,
         role: SessionRole,
-        handshake_state: &[u8],
+        handshake_state: &DmaBuf,
     ) -> HsmResult<HsmSessId>;
 
     /// Borrows the opaque handshake state of a
@@ -453,7 +453,7 @@ pub trait HsmSessionManager {
     /// - `Err(HsmError::SessionNotPending)` — slot exists but is not
     ///   in [`Pending`](HsmSessionState::Pending) state.
     #[allow(clippy::too_many_arguments)]
-    fn session_promote(
+    async fn session_promote(
         &self,
         io: &impl HsmIo,
         id: HsmSessId,
