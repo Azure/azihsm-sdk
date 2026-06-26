@@ -28,6 +28,9 @@ const AES: StaticRef<AesRegs> = unsafe { StaticRef::new(AES_BASE as *const AesRe
 const AES_Q: StaticRef<IoGsramRegs> =
     unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
+/// W1C status flag mask: COMPLETE, ERROR_CMD, ERROR_BUS, ERROR_FAULT.
+const STATUS_FLAGS_MASK: u32 = 0x1E;
+
 /// AES block size in bytes.
 pub const AES_BLOCK_SIZE: usize = 16;
 
@@ -291,7 +294,8 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
     /// main poll loop (polling mode).
     pub fn wake(&self) {
         let status = AES.status.get();
-        if (status & 0x1E) == 0 {
+        let flags = status & STATUS_FLAGS_MASK;
+        if flags == 0 {
             // No flag set — spurious wake.
             return;
         }
@@ -471,11 +475,12 @@ impl<const DEPTH: usize> AesExclusive<'_, DEPTH> {
 
         loop {
             let status = AES.status.get();
-            if (status & 0x1E) != 0 {
+            let flags = status & STATUS_FLAGS_MASK;
+            if flags != 0 {
                 // STATUS is read-only; do not write it (bus-faults). It
                 // auto-clears on the next command doorbell.
                 Nvic::unpend(Interrupt::AES_DONE);
-                return Ok((status & 0x1E) as u8);
+                return Ok(flags as u8);
             }
         }
     }
