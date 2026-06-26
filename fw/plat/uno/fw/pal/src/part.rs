@@ -96,8 +96,8 @@ impl UnoHsmPal {
             return Err(e);
         }
 
-        if is_pf {
-            // PF: PfnEnable preceded SetResource, so the enabled keys were
+         if pre_enabled {
+            // PF pre-enable: PfnEnable preceded SetResource, so the enabled keys were
             // deferred from `part_enable`; provision them now that `res_mask`
             // exists and leave the partition `Enabled`.
             if let Err(e) = self.provision_enabled_keys(pid).await {
@@ -106,7 +106,7 @@ impl UnoHsmPal {
             }
             part.set_state(PartState::Enabled);
         } else {
-            // VF: PfnEnable follows and provisions the enabled keys.
+            // VF (or PF SetResource-before-enable): PfnEnable follows and provisions the enabled keys.
             part.set_state(PartState::Allocated);
         }
         Ok(())
