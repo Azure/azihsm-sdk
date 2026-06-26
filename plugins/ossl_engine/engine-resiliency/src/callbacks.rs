@@ -10,17 +10,16 @@ use azihsm_api::HsmPotaEndorsementData;
 use azihsm_api::HsmResult;
 use azihsm_api::MobkProviderCallback;
 use azihsm_api::PotaEndorsementCallback;
+use azihsm_crypto::EccPrivateKey;
+use azihsm_crypto::EcdsaAlgo;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::Signer;
 use openssl::bn::BigNumContext;
 use openssl::ec::PointConversionForm;
-use openssl::ecdsa::EcdsaSig;
-use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
-use openssl::sign::Signer;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
-
-/// Bytes per coordinate of a P-384 point / ECDSA component.
-const P384_COORD_LEN: usize = 48;
 
 /// Minimum length of the masked OBK accepted on load. The native bridge
 /// enforces `len >= OBK_SIZE` (a masked blob may be larger), so anything
@@ -116,27 +115,13 @@ fn pid_pub_key_uncompressed(pid_pub_key_der: &[u8]) -> HsmResult<Vec<u8>> {
     )
 }
 
-/// ECDSA-SHA384 sign `data` with the P-384 key in `priv_der` (PKCS#8 DER
-/// or traditional EC private key DER) and return a raw `r||s` signature
-/// (96 bytes total, each component left-padded to 48 bytes).
+/// ECDSA-SHA384 sign `data` with the P-384 key in `priv_der` (PKCS#8 DER) and
+/// return a raw `r||s` signature (96 bytes for P-384). Uses `azihsm_crypto`,
+/// whose `Signer::sign_vec` emits the raw signature directly.
 fn ecdsa_sha384_raw(priv_der: &[u8], data: &[u8]) -> HsmResult<Vec<u8>> {
-    let pkey = ossl(PKey::private_key_from_der(priv_der))?;
-
-    let mut signer = ossl(Signer::new(MessageDigest::sha384(), &pkey))?;
-    ossl(signer.update(data))?;
-    let der_sig = ossl(signer.sign_to_vec())?;
-
-    let ecdsa = ossl(EcdsaSig::from_der(&der_sig))?;
-    let r = ecdsa.r().to_vec();
-    let s = ecdsa.s().to_vec();
-    if r.len() > P384_COORD_LEN || s.len() > P384_COORD_LEN {
-        return Err(HsmError::InternalError);
-    }
-
-    let mut raw = vec![0u8; 2 * P384_COORD_LEN];
-    raw[P384_COORD_LEN - r.len()..P384_COORD_LEN].copy_from_slice(&r);
-    raw[2 * P384_COORD_LEN - s.len()..].copy_from_slice(&s);
-    Ok(raw)
+    let priv_key = EccPrivateKey::from_bytes(priv_der).map_err(|_| HsmError::InternalError)?;
+    let mut ecdsa = EcdsaAlgo::new(HashAlgo::sha384());
+    Signer::sign_vec(&mut ecdsa, &priv_key, data).map_err(|_| HsmError::InternalError)
 }
 
 #[cfg(test)]
@@ -148,19 +133,25 @@ mod tests {
     use openssl::bn::BigNum;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
+    use openssl::ecdsa::EcdsaSig;
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
 
     use super::*;
     use crate::test_util::Scratch;
 
-    /// Generate a fresh P-384 key pair; return (`PKey`, priv-DER, pub-DER).
+    /// Bytes per coordinate of a P-384 ECDSA component (raw r/s half-length).
+    const P384_COORD_LEN: usize = 48;
+
+    /// Generate a fresh P-384 key pair; return (`PKey`, priv-PKCS#8-DER,
+    /// pub-DER). The private key is PKCS#8 because `ecdsa_sha384_raw` now
+    /// accepts only that format.
     #[allow(clippy::type_complexity)]
     fn fresh_p384() -> (PKey<openssl::pkey::Private>, Vec<u8>, Vec<u8>) {
         let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
         let ec = EcKey::generate(&group).unwrap();
         let pkey = PKey::from_ec_key(ec).unwrap();
-        let priv_der = pkey.private_key_to_der().unwrap();
+        let priv_der = pkey.private_key_to_pkcs8().unwrap();
         let pub_der = pkey.public_key_to_der().unwrap();
         (pkey, priv_der, pub_der)
     }
