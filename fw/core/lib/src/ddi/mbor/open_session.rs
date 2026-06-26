@@ -128,7 +128,9 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
 
     // ── Step 8: Allocate the session table entry ─────────────────────
     let api_rev_bytes = pack_api_rev(api_rev);
-    let sess_id = pal.session_create(io, &api_rev_bytes, mk_session, None)?;
+    let sess_id = pal
+        .session_create(io, &api_rev_bytes, mk_session, None)
+        .await?;
 
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
     let resp = encode_response(

@@ -53,7 +53,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // request in the outer AEAD-authenticated framing layer once it
     // lands; until then this is vulnerable to same-partition DoS by
     // a caller who guesses an active slot id.
-    pal.session_destroy(io, id)?;
+    pal.session_destroy(io, id).await?;
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborCloseSessionResp::encode(buf, 0, false)?.finish();
         Ok(frame.as_bytes().len())
