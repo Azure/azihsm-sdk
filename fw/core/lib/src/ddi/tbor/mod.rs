@@ -25,6 +25,7 @@ pub(crate) mod close_session;
 pub(crate) mod get_api_rev;
 pub(crate) mod open_session_finish;
 pub(crate) mod open_session_init;
+pub mod part_info;
 pub mod part_init;
 pub mod policy;
 
@@ -77,6 +78,13 @@ pub(crate) mod opcode {
 
     /// `PartInit` — bind PTA, policy, and POTA thumbprint.
     pub(crate) const PART_INIT: u8 = 0x30;
+
+    /// `PartInfo` — out-of-session info command reporting device kind /
+    /// FIPS status plus the bound partition's lifecycle and identity
+    /// (state, generation, owner/manufacturer SVN, PID, identity public
+    /// key).  TBOR analogue of MBOR `GetDeviceInfo` + the Manticore
+    /// `GetPartID` primitive.
+    pub(crate) const PART_INFO: u8 = 0x32;
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -156,6 +164,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::CLOSE_SESSION => close_session::handle(pal, io, req_buf).await,
         opcode::CHANGE_PSK => change_psk::handle(pal, io, req_buf).await,
         opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
+        opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -173,6 +182,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::CLOSE_SESSION
             | opcode::CHANGE_PSK
             | opcode::PART_INIT
+            | opcode::PART_INFO
     )
 }
 
@@ -191,7 +201,10 @@ fn is_known_opcode(opcode: u8) -> bool {
 /// default-PSK gate via [`allowed_with_default_psk`].
 fn is_in_session(opcode: u8) -> bool {
     match opcode {
-        opcode::GET_API_REV | opcode::OPEN_SESSION_INIT | opcode::OPEN_SESSION_FINISH => false,
+        opcode::GET_API_REV
+        | opcode::OPEN_SESSION_INIT
+        | opcode::OPEN_SESSION_FINISH
+        | opcode::PART_INFO => false,
         opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
@@ -221,7 +234,7 @@ fn is_in_session(opcode: u8) -> bool {
 /// same change that wires it into `dispatch`.
 fn needs_session_id_cross_check(opcode: u8) -> bool {
     match opcode {
-        opcode::GET_API_REV | opcode::OPEN_SESSION_INIT => false,
+        opcode::GET_API_REV | opcode::OPEN_SESSION_INIT | opcode::PART_INFO => false,
         opcode::OPEN_SESSION_FINISH
         | opcode::CLOSE_SESSION
         | opcode::CHANGE_PSK
