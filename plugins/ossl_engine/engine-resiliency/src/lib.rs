@@ -152,10 +152,12 @@ impl ResiliencyStorage for FileStorage {
         let path = self.dir.join(key);
         // Per-write unique staging file so concurrent writes to the same key
         // don't race on a shared temp path: the PID distinguishes processes and
-        // the atomic counter distinguishes writers within a process.
+        // the atomic counter distinguishes writers within a process. The name
+        // is independent of `key` so it stays well under NAME_MAX and doesn't
+        // leak key names into directory listings.
         static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
         let tmp_path = self.dir.join(format!(
-            ".{key}.{}.{}.tmp",
+            ".staging.{}.{}.tmp",
             std::process::id(),
             TMP_SEQ.fetch_add(1, Ordering::Relaxed),
         ));
