@@ -230,6 +230,11 @@ static std::vector<uint8_t> hmac_streaming_sign_vec(
     while (offset < msg.size())
     {
         const size_t requested_chunk_size = chunk_sizes[chunk_index++ % chunk_sizes.size()];
+        if (requested_chunk_size == 0)
+        {
+            ADD_FAILURE() << "chunk_sizes must not contain zero-length chunks";
+            return {};
+        }
         const size_t end = std::min(offset + requested_chunk_size, msg.size());
 
         azihsm_buffer chunk_buf = {
@@ -311,6 +316,11 @@ static azihsm_status hmac_streaming_verify(
     while (offset < msg.size())
     {
         const size_t requested_chunk_size = chunk_sizes[chunk_index++ % chunk_sizes.size()];
+        if (requested_chunk_size == 0)
+        {
+            ADD_FAILURE() << "chunk_sizes must not contain zero-length chunks";
+            return AZIHSM_STATUS_INVALID_ARGUMENT;
+        }
         const size_t end = std::min(offset + requested_chunk_size, msg.size());
 
         azihsm_buffer chunk_buf = {
@@ -499,10 +509,10 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
                 azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_BUFFER_TOO_SMALL
             );
+            ASSERT_GT(sig_buf.len, 0u);
 
             std::vector<uint8_t> signature(sig_buf.len);
             sig_buf.ptr = signature.data();
-
             ASSERT_EQ(
                 azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_SUCCESS
@@ -573,10 +583,10 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key
                 azihsm_crypt_sign(&algo, signing_hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_BUFFER_TOO_SMALL
             );
+            ASSERT_GT(sig_buf.len, 0u);
 
             std::vector<uint8_t> signature(sig_buf.len);
             sig_buf.ptr = signature.data();
-
             ASSERT_EQ(
                 azihsm_crypt_sign(&algo, signing_hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_SUCCESS
@@ -703,10 +713,10 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_truncated_hmac_signature)
                 azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_BUFFER_TOO_SMALL
             );
+            ASSERT_GT(sig_buf.len, 0u);
 
             std::vector<uint8_t> signature(sig_buf.len);
             sig_buf.ptr = signature.data();
-
             ASSERT_EQ(
                 azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
                 AZIHSM_STATUS_SUCCESS
@@ -1031,10 +1041,10 @@ TEST_F(azihsm_hmac_sign_verify, streaming_zero_length_update_succeeds)
 
         azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(sig_buf.len, 0u);
 
         std::vector<uint8_t> tag(sig_buf.len);
         sig_buf.ptr = tag.data();
-
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
         ASSERT_EQ(
@@ -1080,10 +1090,10 @@ TEST_F(azihsm_hmac_sign_verify, streaming_sign_update_after_finish_fails)
 
         azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(sig_buf.len, 0u);
 
         std::vector<uint8_t> tag(sig_buf.len);
         sig_buf.ptr = tag.data();
-
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
         ASSERT_EQ(
