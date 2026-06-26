@@ -415,6 +415,7 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_streaming_all_algorithms)
     }
 }
 
+// Verifies that HMAC verification rejects a modified signature.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
 {
     for (const auto &test_case : hmac_test_cases())
@@ -445,25 +446,21 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
                 .len = static_cast<uint32_t>(data.size()),
             };
 
-            azihsm_algo algo = { .id = test_case.algo_id, .params = nullptr, .len = 0 };
+            azihsm_algo algo = {
+                .id = test_case.algo_id,
+                .params = nullptr,
+                .len = 0,
+            };
 
-            azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
-            ASSERT_EQ(
-                azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
-                AZIHSM_STATUS_BUFFER_TOO_SMALL
-            );
-            ASSERT_GT(sig_buf.len, 0);
+            auto signature = hmac_sign_vec(hmac_key.get(), algo, data);
+            ASSERT_FALSE(signature.empty());
 
-            std::vector<uint8_t> signature(sig_buf.len);
-            sig_buf.ptr = signature.data();
-
-            ASSERT_EQ(
-                azihsm_crypt_sign(&algo, hmac_key.get(), &data_buf, &sig_buf),
-                AZIHSM_STATUS_SUCCESS
-            );
-
-            ASSERT_GT(sig_buf.len, 0);
             signature[0] ^= 0x01;
+
+            azihsm_buffer sig_buf = {
+                .ptr = signature.data(),
+                .len = static_cast<uint32_t>(signature.size()),
+            };
 
             ASSERT_NE(
                 azihsm_crypt_verify(&algo, hmac_key.get(), &data_buf, &sig_buf),
@@ -473,6 +470,7 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_signature)
     }
 }
 
+// Verifies that HMAC verification fails when the original signed message is modified.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
 {
     for (const auto &test_case : hmac_test_cases())
@@ -533,6 +531,8 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
     }
 }
 
+// Verifies that an HMAC tag generated with one derived key cannot be verified with another derived
+// key.
 TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key)
 {
     for (const auto &test_case : hmac_test_cases())
