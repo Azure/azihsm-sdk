@@ -28,7 +28,7 @@ const AES: StaticRef<AesRegs> = unsafe { StaticRef::new(AES_BASE as *const AesRe
 const AES_Q: StaticRef<IoGsramRegs> =
     unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
-/// W1C status flag mask: COMPLETE, ERROR_CMD, ERROR_BUS, ERROR_FAULT.
+/// Status flag mask (read-side decode): COMPLETE, ERROR_CMD, ERROR_BUS, ERROR_FAULT.
 const STATUS_FLAGS_MASK: u32 = 0x1E;
 
 /// AES block size in bytes.
@@ -310,7 +310,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
             if s.active != s.tail {
                 let idx = (s.active & Self::MASK) as usize;
                 let slot = &mut s.slots[idx];
-                slot.status = status as u8;
+                slot.status = flags as u8;
                 slot.waker.wake();
 
                 // Advance past the completed slot and submit the next
