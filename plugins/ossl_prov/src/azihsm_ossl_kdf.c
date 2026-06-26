@@ -280,8 +280,14 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
 
     memcpy(dup, ctx, sizeof(AZIHSM_HKDF_CTX));
 
-    /* Deep copy IKM data */
+    /* NULL the owned heap pointers up front: the memcpy above aliased them to the
+     * caller's ctx, so a deep-copy failure must not let cleanup free the caller's
+     * buffers. Each is overwritten with dup's own copy below. */
     dup->ikm_data = NULL;
+    dup->salt = NULL;
+    dup->info = NULL;
+
+    /* Deep copy IKM data */
     if (ctx->ikm_data != NULL && ctx->ikm_data_len > 0)
     {
         dup->ikm_data = OPENSSL_malloc(ctx->ikm_data_len);
@@ -295,7 +301,6 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
     }
 
     /* Deep copy salt */
-    dup->salt = NULL;
     if (ctx->salt != NULL && ctx->salt_len > 0)
     {
         dup->salt = OPENSSL_malloc(ctx->salt_len);
@@ -309,7 +314,6 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
     }
 
     /* Deep copy info */
-    dup->info = NULL;
     if (ctx->info != NULL && ctx->info_len > 0)
     {
         dup->info = OPENSSL_malloc(ctx->info_len);
