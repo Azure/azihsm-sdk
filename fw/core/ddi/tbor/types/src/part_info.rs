@@ -32,7 +32,7 @@ pub const PID_PUB_KEY_LEN: usize = 96;
 /// single `none` TOC placeholder to satisfy the TBOR codec's
 /// `toc_count >= 1` requirement; the decoder verifies that placeholder
 /// is present and the opcode matches.
-#[tbor(opcode = 0x32)]
+#[tbor(opcode = TBOR_OP_PART_INFO)]
 pub struct TborPartInfoReq;
 
 /// `PartInfo` response schema.
