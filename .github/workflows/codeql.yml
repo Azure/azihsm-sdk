@@ -5,6 +5,8 @@ on:
     branches: [ main, dev, fw-main ]
   pull_request:
     branches: [ main, dev, fw-amin ]
+  merge_group:
+    branches: [ main, dev, fw-main ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
