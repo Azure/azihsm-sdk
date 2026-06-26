@@ -281,12 +281,12 @@ impl UnoHsmPal {
                 HsmEccPct::SignVerify,
             )
             .await?;
-        part.set_id_key_id(Some(key_id));        
+        part.set_id_key_id(Some(key_id));
 
         // Generate the random partition identity straight into its
         // part_store field (RNG fill is a plain CPU copy, no DMA buffer
         // needed).
-        self.rng.fill_bytes(part.id_mut())?;        
+        self.rng.fill_bytes(part.id_mut())?;
         Ok(())
     }
 

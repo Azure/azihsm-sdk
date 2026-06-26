@@ -743,7 +743,6 @@ impl HsmPal for UnoHsmPal {
 
 /// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
 /// that IIC `recv` reports for host IO, so a provisioned/enabled partition
-/// matches `io.pid()`. Mirrors cp/azihsm (io.pid() == axi_id).
 /// PF 64 -> 0x10, VFn n -> 0x20 + n.
 #[inline]
 fn pfn_to_axi_id(pfn: u8) -> u8 {
