@@ -66,13 +66,15 @@ impl UnoHsmPal {
     ///
     /// [`part_enable`]: Self::part_enable
     pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128, is_pf: bool) -> HsmResult<()> {
-        let part = PartStore::partition(pid)?;        
+        let part = PartStore::partition(pid)?;
 
-        // A PF enabled before its resources were assigned is already
-        // `Enabled` with its enabled keys deferred; freeing it would tear the
-        // enable down, so skip the free in that case. Every other prior state
-        // is freed so keygen starts from a clean slate.
-        let pre_enabled = part.state()? == PartState::Enabled;
+        // A PF enabled before its resources were assigned is `Enabled` with no
+        // resource mask yet (its identity/enabled keys are deferred); freeing
+        // it would tear the enable down, so skip the free only in that case.
+        // Every other prior state — including a fully-provisioned `Enabled`
+        // partition being reallocated — is freed so keygen starts from a clean
+        // slate (no leaked vault keys, no stale resource mask).
+        let pre_enabled = part.state()? == PartState::Enabled && part.res_mask() == 0;
         if !pre_enabled {
             self.part_free(pid).await?;
         }

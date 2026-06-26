@@ -126,8 +126,8 @@ type WakeFn = fn(&UnoHsmPal, u16);
 /// Wake the PKA driver engine that owns the given IRQ.
 ///
 /// PKA IRQs are laid out as two contiguous ranges of 16: done IRQs
-/// `UPKA_0_DONE..=UPKA_15_DONE` (192..=207) and error IRQs
-/// `UPKA_0_ERROR..=UPKA_15_ERROR` (208..=223). Either edge maps to the
+/// `UPKA_0_DONE..=UPKA_15_DONE` (32..=47) and error IRQs
+/// `UPKA_0_ERROR..=UPKA_15_ERROR` (0..=15). Either edge maps to the
 /// same engine index `irq & 0x0F`.
 ///
 /// # Parameters
@@ -176,7 +176,7 @@ const WAKE_ENTRIES: &[(u16, WakeFn)] = &[
     (Interrupt::UPKA_13_DONE as u16, wake_pka),
     (Interrupt::UPKA_14_DONE as u16, wake_pka),
     (Interrupt::UPKA_15_DONE as u16, wake_pka),
-    // PKA error IRQs (208..=223) — same routing as the done IRQs.
+    // PKA error IRQs (0..=15) — same routing as the done IRQs.
     (Interrupt::UPKA_0_ERROR as u16, wake_pka),
     (Interrupt::UPKA_1_ERROR as u16, wake_pka),
     (Interrupt::UPKA_2_ERROR as u16, wake_pka),
@@ -742,6 +742,7 @@ impl HsmPal for UnoHsmPal {
 
 /// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
 /// that IIC `recv` reports for host IO, so a provisioned/enabled partition
+/// matches `io.pid()` (which reports the axi_id, mirroring cp/azihsm).
 /// PF 64 -> 0x10, VFn n -> 0x20 + n.
 #[inline]
 fn pfn_to_axi_id(pfn: u8) -> u8 {
