@@ -15,7 +15,8 @@
 //! compiled, so fault diagnostics appear even in production builds that
 //! ship with tracing disabled.
 
-use core::fmt::{self, Write};
+use core::fmt::Write;
+use core::fmt::{self};
 
 use azihsm_fw_uno_drivers_uart::Uart;
 

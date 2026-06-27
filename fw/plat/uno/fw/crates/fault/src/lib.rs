@@ -42,9 +42,8 @@ use azihsm_fw_uno_reg_cortex_m::scb::HFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::SCB_BASE;
 use cortex_m_rt::exception;
 use cortex_m_rt::ExceptionFrame;
-use tock_registers::interfaces::Readable;
-
 pub use sink::FaultWriter;
+use tock_registers::interfaces::Readable;
 
 /// Borrow the System Control Block MMIO register block.
 ///
