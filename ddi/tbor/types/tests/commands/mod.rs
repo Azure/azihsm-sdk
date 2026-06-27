@@ -12,5 +12,6 @@ pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_api_rev;
 pub mod open_session;
+pub mod part_info;
 pub mod part_init;
 pub mod unexpected_toc_type;

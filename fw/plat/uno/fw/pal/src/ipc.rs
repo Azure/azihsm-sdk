@@ -513,8 +513,10 @@ pub struct SetResInfo {
     /// 128-bit table-ownership mask (little-endian byte order).
     pub mask: [u8; 16],
 
-    /// Target partition (PCIe function) the mask applies to.
-    pub pfn: u16,
+    /// Target partition (PCIe function) the mask applies to. The
+    /// reference firmware encodes this as a 1-byte `PcieFunction`, not a
+    /// `u16` -- a wider field shifts `vm_launch_guid` and corrupts `pfn`.
+    pub pfn: u8,
 
     /// VM launch GUID (unused by the emulator; retained for wire
     /// compatibility with the reference firmware).
@@ -546,8 +548,8 @@ pub struct IpcMessageSetResource {
 const _: () =
     assert!(core::mem::size_of::<IpcMessageSetResource>() == core::mem::size_of::<IpcMessage>());
 
-// Lock the wire layout: 16-byte mask + 2-byte pfn + 16-byte guid, no padding.
-const _: () = assert!(core::mem::size_of::<SetResInfo>() == 34);
+// Lock the wire layout: 16-byte mask + 1-byte pfn + 16-byte guid, no padding.
+const _: () = assert!(core::mem::size_of::<SetResInfo>() == 33);
 
 impl IpcMessageType for IpcMessageSetResource {
     const OP: IpcMessageOpCode = IpcMessageOpCode::SetResource;
@@ -617,15 +619,11 @@ pub enum PfnEnableDisableAction {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
 pub struct PfnEnableDisableInfo {
-    /// Target partition (PCIe function).
-    pub pfn: u16,
+    /// Target partition (PCIe function); 1-byte `PcieFunction` on the wire.
+    pub pfn: u8,
 
     /// Action to perform (`Disable` / `Enable` / `Migrate`).
     pub action: u8,
-
-    /// Explicit padding (keeps the struct free of implicit padding so it
-    /// can derive `IntoBytes`).
-    pub _pad: u8,
 }
 
 /// `PfnEnableDisable` IPC message body (opcode `PfnEnableDisable`, 0x5).

@@ -20,7 +20,7 @@ tock_registers::register_bitfields! [u32,
     pub STATUS [
         /// 'Engine is currently processing a command. Cleared on completion (success or error). Firmware must NOT write the COMMAND register while BUSY is set.'
         BUSY OFFSET(0) NUMBITS(1) [],
-        /// 'Engine successfully finished the most recent command. Mutually exclusive with the ERROR_* bits. Cleared by firmware via write-1-to-clear before submitting the next command.'
+        /// 'Engine successfully finished the most recent command. Mutually exclusive with the ERROR_* bits. STATUS is read-only; this bit is cleared by hardware when the next command's doorbell sets BUSY (firmware must NOT write STATUS).'
         COMPLETE OFFSET(1) NUMBITS(1) [],
         /// 'Engine could not decode the command structure successfully (invalid opcode, bad descriptor layout).'
         ERROR_CMD OFFSET(2) NUMBITS(1) [],
