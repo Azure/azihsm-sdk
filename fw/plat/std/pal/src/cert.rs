@@ -24,7 +24,6 @@
 //! bottom of this file is the only path the core uses.
 
 use azihsm_crypto::EccCurve;
-use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableHsmKey;
 use azihsm_crypto::HashAlgo;
@@ -320,19 +319,14 @@ impl StdHsmPal {
     /// drives the [`StdEcc`] driver directly, mirroring what the trait
     /// impl in `crate::ecc` would do.
     async fn gen_cert_keypair(&self) -> HsmResult<CertKeyPair> {
-        let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
-
-        // Export private key as raw HSM scalar bytes (48 B for P-384).
+        // Generate the keypair, then serialize: the public key as raw
+        // big-endian `x ∥ y`, the private key as raw HSM scalar bytes.
+        let (pk, pub_key) = self.ecc.gen_keypair(EccCurve::P384).await?;
+        let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
+        self.ecc.pub_coords(&pub_key, true, &mut pub_raw).await?;
         let priv_len = pk.hsm_bytes_len();
         let mut priv_key = vec![0u8; priv_len];
         pk.to_hsm_bytes(&mut priv_key[..priv_len])
-            .map_err(|_| HsmError::EccExportError)?;
-
-        // Export raw P-384 public key (x ∥ y).
-        let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
-        let half = P384_PUB_KEY_LEN / 2;
-        let (x_buf, y_buf) = pub_raw.split_at_mut(half);
-        pubk.coord(Some((x_buf, y_buf)))
             .map_err(|_| HsmError::EccExportError)?;
 
         let uncompressed = to_uncompressed(&pub_raw);
