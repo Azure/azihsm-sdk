@@ -22,11 +22,14 @@ mod copyright;
 mod filt;
 mod fmt;
 mod fw_util;
+mod install;
 mod nm;
 mod objdump;
 mod precheck;
 mod readelf;
 mod reggen;
+mod rustup_component_add;
+mod setup;
 mod size;
 
 /// Common context passed into every xtask.
@@ -65,6 +68,7 @@ enum Commands {
     Reggen(reggen::Reggen),
     Filt(filt::Filt),
     Audit(audit::Audit),
+    Setup(setup::Setup),
 }
 
 fn main() {
@@ -102,5 +106,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Reggen(task) => task.run(ctx),
         Commands::Filt(task) => task.run(ctx),
         Commands::Audit(task) => task.run(ctx),
+        Commands::Setup(task) => task.run(ctx),
     }
 }
