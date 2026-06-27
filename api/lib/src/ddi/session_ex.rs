@@ -69,6 +69,16 @@ struct PendingHandshake {
     pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
+impl Drop for PendingHandshake {
+    fn drop(&mut self) {
+        // Wipe the HPKE `exported` secret when the handshake is
+        // dropped (Phase-1 MAC rejection, Phase-2 failure, or after a
+        // successful Phase 2 has cloned it into the session) so derived
+        // session secret material does not linger in process memory.
+        zeroize::Zeroize::zeroize(&mut self.exported);
+    }
+}
+
 pub struct OpenSessionExResult {
     /// Active session identifier.
     pub session_id: u16,
@@ -278,7 +288,9 @@ fn open_session_ex_finish(
         session_id: pending.session_id,
         psk_id: pending.psk_id,
         session_type: pending.session_type,
-        exported: pending.exported,
+        // Hand the session its own copy of the export secret; the
+        // original in `pending` is wiped by its `Drop` impl.
+        exported: pending.exported.clone(),
         param_key,
         bmk_session: resp.bmk_session,
     })
