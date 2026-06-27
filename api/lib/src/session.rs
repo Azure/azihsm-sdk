@@ -371,9 +371,9 @@ impl HsmSessionInner {
             kind: SessionKind::Ver2 {
                 psk_id: result.psk_id,
                 session_type: result.session_type,
-                exported: result.exported,
+                exported: result.exported.to_vec(),
                 param_key: result.param_key,
-                bmk_session: result.bmk_session,
+                bmk_session: result.bmk_session.to_vec(),
             },
         }
     }

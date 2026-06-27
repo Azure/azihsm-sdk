@@ -272,7 +272,14 @@ pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> SessionExCryptoRes
     let iv = Rng::rand_vec(12).map_err(|_| SessionExCryptoError::Crypto)?;
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, &[], seed, None)
         .map_err(|_| SessionExCryptoError::Crypto)?;
-    let mut envelope = vec![0u8; total];
+    // The framed envelope is a fixed-size wire blob; reject any sizing
+    // that does not match the `SEED_ENVELOPE_LEN` contract here rather
+    // than letting a mismatch surface as a late `try_into` failure in
+    // the caller.
+    if total != SEED_ENVELOPE_LEN {
+        return Err(SessionExCryptoError::Crypto);
+    }
+    let mut envelope = vec![0u8; SEED_ENVELOPE_LEN];
     let written = aead_envelope::seal(
         AeadAlg::AesGcm256,
         param_key,
@@ -282,7 +289,9 @@ pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> SessionExCryptoRes
         Some(&mut envelope),
     )
     .map_err(|_| SessionExCryptoError::Crypto)?;
-    envelope.truncate(written);
+    if written != SEED_ENVELOPE_LEN {
+        return Err(SessionExCryptoError::Crypto);
+    }
     Ok(envelope)
 }
 

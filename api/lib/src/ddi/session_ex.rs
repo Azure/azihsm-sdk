@@ -58,8 +58,11 @@ struct PendingHandshake {
     /// Caller-selected channel integrity profile.
     pub session_type: SessionType,
     /// HPKE export secret (`Nh = 48`) derived by HPKE
-    /// `receive_export` after Phase 1 completes.
-    pub exported: Vec<u8>,
+    /// `receive_export` after Phase 1 completes. Held in a
+    /// [`Zeroizing`] buffer so it is wiped on every drop path
+    /// (Phase-1 MAC rejection, Phase-2 failure, or after a successful
+    /// Phase 2 has copied it into the session).
+    pub exported: Zeroizing<Vec<u8>>,
     /// Wire `pk_init` (SEC1 uncompressed, 97 B).
     pub pk_init: [u8; PK_INIT_LEN],
     /// Wire `pk_resp` (SEC1 uncompressed, 97 B).
@@ -67,16 +70,6 @@ struct PendingHandshake {
     /// Wire `pk_hsm` (SEC1 uncompressed, 97 B) — partition identity
     /// public key fetched out-of-band via the MBOR cert chain.
     pub pk_hsm: [u8; PK_RESP_LEN],
-}
-
-impl Drop for PendingHandshake {
-    fn drop(&mut self) {
-        // Wipe the HPKE `exported` secret when the handshake is
-        // dropped (Phase-1 MAC rejection, Phase-2 failure, or after a
-        // successful Phase 2 has cloned it into the session) so derived
-        // session secret material does not linger in process memory.
-        zeroize::Zeroize::zeroize(&mut self.exported);
-    }
 }
 
 pub struct OpenSessionExResult {
@@ -88,12 +81,16 @@ pub struct OpenSessionExResult {
     pub session_type: SessionType,
     /// HPKE exported secret (`Nh = 48`) used to derive `param_key`
     /// and (for authenticated sessions) the MAC keys. Retained so
-    /// tests can re-derive labelled material on demand.
-    pub exported: Vec<u8>,
+    /// tests can re-derive labelled material on demand. Held in a
+    /// [`Zeroizing`] buffer so it is wiped on drop even when this
+    /// result is dropped directly (e.g. in tests) rather than moved
+    /// into a session.
+    pub exported: Zeroizing<Vec<u8>>,
     /// Per-session AES-256 wrap key derived from the HPKE export.
     pub param_key: AesKey,
     /// FW-emitted wrapped masking-key blob — opaque to the host.
-    pub bmk_session: Vec<u8>,
+    /// Held in a [`Zeroizing`] buffer so it is wiped on drop.
+    pub bmk_session: Zeroizing<Vec<u8>>,
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
@@ -200,7 +197,7 @@ fn open_session_ex_init(
     // Phase-1 confirm MAC binds the negotiated role/type/suite.
     let info = build_hpke_info(psk_id, session_type.to_u8(), suite_id);
     let psk = default_psk(psk_id)?;
-    let exported = receive_exported(
+    let exported = Zeroizing::new(receive_exported(
         &eph.sk,
         &eph.pk,
         &pk_hsm_key,
@@ -208,7 +205,7 @@ fn open_session_ex_init(
         &info,
         psk,
         &[psk_id],
-    )?;
+    )?);
 
     verify_phase1_mac(
         &exported,
@@ -288,11 +285,12 @@ fn open_session_ex_finish(
         session_id: pending.session_id,
         psk_id: pending.psk_id,
         session_type: pending.session_type,
-        // Hand the session its own copy of the export secret; the
-        // original in `pending` is wiped by its `Drop` impl.
+        // Hand the session its own copy of the export secret; the copy
+        // in `pending` is wiped when `pending` drops (its `exported`
+        // is a `Zeroizing` buffer).
         exported: pending.exported.clone(),
         param_key,
-        bmk_session: resp.bmk_session,
+        bmk_session: Zeroizing::new(resp.bmk_session),
     })
 }
 
