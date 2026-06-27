@@ -4,7 +4,7 @@
 //! Host-side wrapper for the TBOR `FinalizePart` command.
 //!
 //! `FinalizePart` is the CO-session command that completes partition
-//! provisioning begun by [`crate::part_init`].  The caller supplies the
+//! provisioning begun by [`crate::TborPartInitReq`].  The caller supplies the
 //! PTA certificate chain rooted at the POTA the partition was initialized
 //! under (and, on re-provisioning, the partition's previous local backup
 //! masked key); the device returns the partition-local backup masked key.

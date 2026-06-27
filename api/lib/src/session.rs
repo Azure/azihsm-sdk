@@ -297,11 +297,23 @@ impl Drop for HsmSessionInner {
         };
 
         // Wipe sensitive session material from process memory once the
-        // session is closed: `seed` for V1 and the HPKE `exported`
-        // secret for V2. `bmk_session` is an opaque device-wrapped blob.
+        // session is closed: `seed` for V1, the HPKE `exported` secret
+        // for V2, and the device-wrapped `bmk_session` blob for both.
         match &mut self.kind {
-            SessionKind::Ver1 { seed, .. } => seed.zeroize(),
-            SessionKind::Ver2 { exported, .. } => exported.zeroize(),
+            SessionKind::Ver1 {
+                seed, bmk_session, ..
+            } => {
+                seed.zeroize();
+                bmk_session.zeroize();
+            }
+            SessionKind::Ver2 {
+                exported,
+                bmk_session,
+                ..
+            } => {
+                exported.zeroize();
+                bmk_session.zeroize();
+            }
         }
     }
 }

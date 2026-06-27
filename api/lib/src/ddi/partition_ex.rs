@@ -3,7 +3,7 @@
 
 //! Partition provisioning over the TBOR transport at the DDI layer.
 //!
-//! This module hosts the host-side dispatch for the three in-session
+//! This module hosts the host-side dispatch for the two in-session
 //! Crypto-Officer partition commands, mirroring the firmware handlers:
 //!
 //! * **`PartInit`** (opcode `0x30`) — derive the partition PTA keypair,
@@ -12,7 +12,7 @@
 //! * **`FinalizePart`** (opcode `0x31`) — complete provisioning begun by
 //!   `PartInit`; returns the partition-local backup masked key.
 //!
-//! All three run **inside an already-open CO session** established by
+//! Both run **inside an already-open CO session** established by
 //! [`super::session_ex::open_session_ex`]: each request carries the
 //! active session id, and `PartInit` additionally seals its `mach_seed`
 //! under the session `param_key`. The caller therefore supplies the
