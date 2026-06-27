@@ -99,14 +99,19 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     let msp = cortex_m::register::msp::read();
 
     let forced = scb.hfsr.is_set(HFSR::FORCED);
+    // Exception-entry stacking can fail via either a MemManage fault
+    // (MSTKERR, e.g. an MPU stack-guard hit on overflow) or a BusFault
+    // (STKERR); both escalate to HardFault and leave the pushed register
+    // frame unreliable.
     let mstkerr = scb.cfsr.is_set(CFSR::MSTKERR);
+    let stkerr = scb.cfsr.is_set(CFSR::STKERR);
 
     println_fault!("");
     println_fault!("#### HardFault ####");
 
-    if forced && mstkerr {
-        // MemManage stacking failed and escalated to HardFault: the CPU
-        // could not push {R0-R3,R12,LR,PC,xPSR}, so `ef` is garbage. The
+    if forced && (mstkerr || stkerr) {
+        // Exception-entry stacking failed and escalated to HardFault: the
+        // CPU could not push {R0-R3,R12,LR,PC,xPSR}, so `ef` is garbage. The
         // faulting PC/LR are unrecoverable on ARMv7-M; only MSP locates
         // where the stack was when it overran its guard region.
         println_fault!("cause: stack overflow (exception frame unreliable)");
@@ -156,9 +161,13 @@ unsafe fn DefaultHandler(irqn: i16) -> ! {
 #[cfg(feature = "fault-stackdump")]
 unsafe fn stack_dump(sp: u32) {
     const WORDS: usize = 32;
-    println_fault!("stack dump @ {:#010x}:", sp);
+    // `read_volatile::<u32>` requires a 4-byte-aligned pointer; `sp` may be
+    // corrupted or misaligned at the fault, so align the base down first to
+    // avoid undefined behaviour while keeping the dump word-oriented.
+    let base = sp & !0b11;
+    println_fault!("stack dump @ {:#010x}:", base);
     for i in 0..WORDS {
-        let addr = sp.wrapping_add((i * 4) as u32);
+        let addr = base.wrapping_add((i * 4) as u32);
         let val = unsafe { core::ptr::read_volatile(addr as *const u32) };
         if i % 4 == 0 {
             print_fault!("\n  {:#010x}:", addr);
