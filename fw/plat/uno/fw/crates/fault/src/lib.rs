@@ -63,7 +63,8 @@ fn scb() -> &'static ScbRegs {
 /// host stops; on silicon it spins forever (the core is already wedged).
 fn halt() -> ! {
     #[cfg(feature = "semihosting")]
-    azihsm_fw_uno_drivers_semihosting::sys_exit(-1i32 as u32);
+    // Semihosting SYS_EXIT status -1 (failure).
+    azihsm_fw_uno_drivers_semihosting::sys_exit(u32::MAX);
 
     loop {
         cortex_m::asm::nop();
