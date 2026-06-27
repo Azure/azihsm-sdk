@@ -71,7 +71,12 @@ impl UnoHsmPal {
     /// "set the resources to this mask" operation.
     ///
     /// [`part_enable`]: Self::part_enable
-    pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128, is_pf: bool) -> HsmResult<()> {
+    pub(crate) async fn part_alloc(
+        &self,
+        pid: HsmPartId,
+        mask: u128,
+        is_pf: bool,
+    ) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
 
         // A PF enabled before its resources were assigned is `Enabled` with no
@@ -96,7 +101,7 @@ impl UnoHsmPal {
             return Err(e);
         }
 
-         if pre_enabled {
+        if pre_enabled {
             // PF pre-enable: PfnEnable preceded SetResource, so the enabled keys were
             // deferred from `part_enable`; provision them now that `res_mask`
             // exists and leave the partition `Enabled`.
@@ -224,7 +229,7 @@ impl UnoHsmPal {
                 pct,
             )
             .await?;
-        
+
         if pub_len != ID_PUB_KEY_LEN {
             return Err(HsmError::InternalError);
         }
@@ -428,9 +433,7 @@ impl UnoHsmPal {
             }
             // Idempotent re-enable (e.g. an Admin/driver retry).
             PartState::Enabled => Ok(()),
-            _ => {
-                Err(HsmError::InvalidArg)
-            }
+            _ => Err(HsmError::InvalidArg),
         }
     }
 
