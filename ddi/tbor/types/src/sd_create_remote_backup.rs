@@ -17,8 +17,10 @@
 
 use alloc::vec::Vec;
 
+use crate::evidence::ReportDescriptor;
 use crate::policy::PartPolicy;
 use crate::tbor;
+use crate::CertDescriptor;
 
 /// TBOR opcode for `SdCreateRemoteBackup`.
 pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
@@ -37,6 +39,28 @@ pub struct TborSdCreateRemoteBackupReq {
     /// SQE-carried session id by the dispatcher.
     #[tbor(session_id)]
     pub session_id: u16,
+
+    /// Sender key id (`KeyId`, inline TOC entry type 1) the masked
+    /// security domain is wrapped under.
+    #[tbor(key_id)]
+    pub sender_key: u16,
+
+    /// Receiver manufacturer certificate-chain descriptors.  Flattened
+    /// from the firmware `receiver_evidence` field group (first of its
+    /// four TOC entries); the DER bytes travel out of band.
+    #[tbor(max_len = 8)]
+    pub receiver_mfgr_cert_chain: Vec<CertDescriptor>,
+
+    /// Receiver owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub receiver_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Receiver partition-owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub receiver_part_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Receiver attestation-report (COSE_Sign1) descriptor.
+    pub receiver_report: ReportDescriptor,
 
     /// Unified [`PartPolicy`] describing the security domain to create.
     /// Encoded as its 484-byte little-endian image.
@@ -63,7 +87,9 @@ mod tests {
     fn request_encodes_session_and_policy() {
         let req = TborSdCreateRemoteBackupReq {
             session_id: 9,
+            sender_key: 0x1234,
             policy: PartPolicy::zeroed(),
+            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];

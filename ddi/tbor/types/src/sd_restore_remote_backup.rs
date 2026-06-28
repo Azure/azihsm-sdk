@@ -20,8 +20,10 @@
 
 use alloc::vec::Vec;
 
+use crate::evidence::ReportDescriptor;
 use crate::policy::PartPolicy;
 use crate::tbor;
+use crate::CertDescriptor;
 
 /// TBOR opcode for `SdRestoreRemoteBackup`.
 pub const TBOR_OP_SD_RESTORE_REMOTE_BACKUP: u8 = 0x0C;
@@ -40,6 +42,23 @@ pub struct TborSdRestoreRemoteBackupReq {
     /// represented here as the raw `u16` handle.
     #[tbor(key_id)]
     pub sealing_key_id: u16,
+
+    /// Sender manufacturer certificate-chain descriptors.  Flattened from
+    /// the firmware `sender_evidence` field group (its four TOC entries);
+    /// the DER bytes travel out of band.
+    #[tbor(max_len = 8)]
+    pub sender_mfgr_cert_chain: Vec<CertDescriptor>,
+
+    /// Sender owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub sender_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Sender partition-owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub sender_part_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Sender attestation-report (COSE_Sign1) descriptor.
+    pub sender_report: ReportDescriptor,
 
     /// Unified [`PartPolicy`] describing the security domain being
     /// restored.  Encoded as its 484-byte little-endian image.
@@ -91,6 +110,7 @@ mod tests {
             policy: PartPolicy::zeroed(),
             pok_remote_backup: alloc::vec![0xABu8; MASKED_SD_LEN],
             sd_mk_backup: alloc::vec![0xCDu8; SD_MK_BACKUP_LEN],
+            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];
@@ -112,6 +132,7 @@ mod tests {
             policy: PartPolicy::zeroed(),
             pok_remote_backup: alloc::vec![0xABu8; MASKED_SD_LEN],
             sd_mk_backup: Vec::new(),
+            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];

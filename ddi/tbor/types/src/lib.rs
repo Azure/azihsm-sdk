@@ -79,6 +79,7 @@ impl From<SessionControlKind> for u8 {
 }
 
 mod api_rev;
+mod evidence;
 mod part_final;
 mod part_info;
 mod part_init;
@@ -96,6 +97,7 @@ mod session_open_finish;
 mod session_open_init;
 mod status;
 pub use api_rev::*;
+pub use evidence::*;
 pub use part_final::*;
 pub use part_info::*;
 pub use part_init::*;

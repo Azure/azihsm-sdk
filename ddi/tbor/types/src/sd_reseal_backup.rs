@@ -20,8 +20,10 @@
 
 use alloc::vec::Vec;
 
+use crate::evidence::ReportDescriptor;
 use crate::policy::PartPolicy;
 use crate::tbor;
+use crate::CertDescriptor;
 
 /// TBOR opcode for `SdResealBackup`.
 pub const TBOR_OP_SD_RESEAL_BACKUP: u8 = 0x0B;
@@ -44,6 +46,40 @@ pub struct TborSdResealBackupReq {
     /// Unified [`PartPolicy`] describing the security domain being
     /// resealed.  Encoded as its 484-byte little-endian image.
     pub policy: PartPolicy,
+
+    /// Source manufacturer certificate-chain descriptors.  Flattened from
+    /// the firmware `src_evidence` field group (its four TOC entries); the
+    /// DER bytes travel out of band.
+    #[tbor(max_len = 8)]
+    pub src_mfgr_cert_chain: Vec<CertDescriptor>,
+
+    /// Source owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub src_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Source partition-owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub src_part_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Source attestation-report (COSE_Sign1) descriptor.
+    pub src_report: ReportDescriptor,
+
+    /// Destination manufacturer certificate-chain descriptors.  Flattened
+    /// from the firmware `dest_evidence` field group (its four TOC
+    /// entries).
+    #[tbor(max_len = 8)]
+    pub dest_mfgr_cert_chain: Vec<CertDescriptor>,
+
+    /// Destination owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub dest_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Destination partition-owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub dest_part_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Destination attestation-report (COSE_Sign1) descriptor.
+    pub dest_report: ReportDescriptor,
 
     /// Source masked security-domain blob to reseal (exactly
     /// [`MASKED_SD_LEN`](crate::sd_create_remote_backup::MASKED_SD_LEN) =
@@ -76,6 +112,7 @@ mod tests {
             sealing_key_handle: 0x1234,
             policy: PartPolicy::zeroed(),
             pok_remote_backup: alloc::vec![0xABu8; MASKED_SD_LEN],
+            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];

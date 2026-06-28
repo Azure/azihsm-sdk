@@ -13,6 +13,12 @@
 //! * `session_id` — TOC-carried CO session id; cross-checked against the
 //!   SQE-carried session id by the dispatcher (parity with the other
 //!   in-session commands).
+//! * `sender_key` — sender key id ([`KeyId`](azihsm_fw_ddi_tbor_api::KeyId),
+//!   TOC entry type 1) the masked security domain is wrapped under.
+//! * `receiver_evidence` — receiver side-band attestation evidence
+//!   ([`Evidence`](crate::evidence::Evidence) field group: manufacturer /
+//!   owner / partition-owner certificate chains plus the attestation
+//!   report).
 //! * `policy` — the unified [`PartPolicy`] describing the security domain
 //!   to create.  Length pinned to [`PART_POLICY_LEN`] (484 B).
 //!

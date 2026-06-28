@@ -13,15 +13,19 @@
 //! Both wire schemas are shared with the firmware handler via
 //! `azihsm_fw_ddi_tbor_types::sd_restore_peer_backup`; this module adds
 //! the host-facing value types so [`exec_op_tbor`] returns owned response
-//! values.  The source attestation `Evidence` TOC entries are carried by
-//! the firmware schema and are not modelled by this host value wrapper.
+//! values.  The firmware splices the source attestation evidence in as an
+//! `Evidence` field group; the host derive has no field-group support, so
+//! this wrapper spells those four TOC entries out explicitly as the
+//! `src_*` cert-chain / report descriptor fields.
 //!
 //! [`exec_op_tbor`]: ../../azihsm_ddi_interface/trait.DdiDev.html#method.exec_op_tbor
 
 use alloc::vec::Vec;
 
+use crate::evidence::ReportDescriptor;
 use crate::policy::PartPolicy;
 use crate::tbor;
+use crate::CertDescriptor;
 
 /// TBOR opcode for `SdRestorePeerBackup`.
 pub const TBOR_OP_SD_RESTORE_PEER_BACKUP: u8 = 0x0F;
@@ -40,6 +44,23 @@ pub struct TborSdRestorePeerBackupReq {
     /// represented here as the raw `u16` handle.
     #[tbor(key_id)]
     pub sealing_key_id: u16,
+
+    /// Source manufacturer certificate-chain descriptors.  Flattened from
+    /// the firmware `src_evidence` field group (its four TOC entries); the
+    /// DER bytes travel out of band.
+    #[tbor(max_len = 8)]
+    pub src_mfgr_cert_chain: Vec<CertDescriptor>,
+
+    /// Source owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub src_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Source partition-owner certificate-chain descriptors.
+    #[tbor(max_len = 8)]
+    pub src_part_owner_cert_chain: Vec<CertDescriptor>,
+
+    /// Source attestation-report (COSE_Sign1) descriptor.
+    pub src_report: ReportDescriptor,
 
     /// Unified [`PartPolicy`] describing the security domain being
     /// restored.  Encoded as its 484-byte little-endian image.
@@ -90,6 +111,7 @@ mod tests {
             policy: PartPolicy::zeroed(),
             pok_peer_backup: alloc::vec![0xABu8; POK_BACKUP_LEN],
             sd_mk_backup: alloc::vec![0xCDu8; SD_MK_BACKUP_LEN],
+            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];
