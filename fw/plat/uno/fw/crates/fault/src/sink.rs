@@ -52,7 +52,7 @@ impl Write for FaultWriter {
         #[cfg(not(feature = "semihosting"))]
         {
             let mut uart = Uart::new();
-            uart.write_bytes(s.as_bytes());
+            uart.write(s);
         }
         Ok(())
     }
