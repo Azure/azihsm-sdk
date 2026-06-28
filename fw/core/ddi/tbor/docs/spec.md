@@ -29,6 +29,7 @@
 - [Schema Features](#schema-features)
   - [Optional Fields](#optional-fields)
   - [Alignment Padding](#alignment-padding)
+  - [Typed Slices](#typed-slices)
   - [Fixed-Size Arrays](#fixed-size-arrays)
   - [Length Constraints](#length-constraints)
   - [Field Groups](#field-groups)
@@ -472,6 +473,12 @@ A schema field may be declared optional. When an optional field is absent from a
 ### Alignment Padding
 
 A schema field may request alignment to a power-of-two boundary within the variable-length data section. When alignment is specified, a `padding` TOC entry (Entry Type `9`) is inserted immediately before the field's TOC entry. The padding entry references zero-filled bytes that advance the data offset to the requested alignment boundary. Padding entries are always present (even with zero length) to maintain a fixed TOC count.
+
+Alignment is requested **explicitly** via a fixed power-of-two boundary annotation on the field. Typed-slice fields (see [Typed Slices](#typed-slices)) are **not** auto-aligned: their element type is required to be `Unaligned` (alignment 1), so the borrow is sound at any offset and no padding entry is inserted.
+
+### Typed Slices
+
+A variable-length `buffer` field may be declared as a typed slice `&[T]` (where `T` is a `#[repr(C)]` POD with no padding) instead of a raw `&[u8]`. The wire encoding is identical — raw little-endian bytes whose length is a multiple of `size_of::<T>()` — but the generated decoder borrows the bytes directly as `&[T]` (zero-copy) and the encoder accepts `&[T]`. `T` MUST be `Unaligned` (alignment 1) — use little-endian wire integer types (e.g. `tbor_int::U16`/`U32`/`U64`) rather than native `u16`/`u32`/`u64` — so the borrow is sound at any data-section offset with no alignment padding; a length that is not a whole number of elements yields an empty slice rather than a panic.
 
 ### Fixed-Size Arrays
 

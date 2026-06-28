@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `OpenSessionInit` handler — Phase 1 of session establishment.
+//! TBOR `SessionOpenInit` handler — Phase 1 of session establishment.
 //!
 //! Validates the request, looks up the partition's PSK and identity
 //! key, runs HPKE `mode_auth_psk` `send_export` to derive the shared
@@ -24,7 +24,7 @@ use azihsm_fw_core_crypto_hpke::*;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
 
-/// Validated `OpenSessionInit` request fields.
+/// Validated `SessionOpenInit` request fields.
 struct ParsedRequest<'a> {
     /// Roles
     role: SessionRole,
@@ -64,10 +64,10 @@ const DEFAULT_HPKE_SUITE: HpkeSuite = hpke_suite_for(SessionSuite::P384HkdfSha38
 /// `exported (Nh) ‖ pk_init (Npk) ‖ pk_resp (Npk) ‖ session_type (1 B)
 /// ‖ suite_id (1 B)`.
 ///
-/// The trailing `session_type` byte tells [`open_session_finish`]
+/// The trailing `session_type` byte tells [`session_open_finish`]
 /// which derived-key schedule to run (PlainText: param+masking only;
 /// Authenticated: param+masking+mac_tx+mac_rx).  The `suite_id` byte
-/// lets `open_session_finish` recover the negotiated cryptographic
+/// lets `session_open_finish` recover the negotiated cryptographic
 /// suite without trusting any client-side state.
 pub(super) const PENDING_BLOB_LEN: usize =
     DEFAULT_HPKE_SUITE.nh() + DEFAULT_HPKE_SUITE.npk() + DEFAULT_HPKE_SUITE.npk() + 1 + 1;
@@ -77,7 +77,7 @@ pub(super) const PENDING_BLOB_LEN: usize =
 /// assertion fires at build time rather than at runtime.
 const _: () = assert!(PENDING_BLOB_LEN <= SESSION_PENDING_BLOB_MAX);
 
-/// Handle a TBOR `OpenSessionInit` request.
+/// Handle a TBOR `SessionOpenInit` request.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -155,23 +155,19 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
 /// Decode and validate the wire request.
 fn parse_request<'a>(req_buf: &'a DmaBuf) -> HsmResult<ParsedRequest<'a>> {
-    let req = TborOpenSessionInitReq::decode(req_buf)?;
-    let psk_id = req.psk_id();
+    let req = TborSessionOpenInitReq::decode(req_buf)?;
 
-    if psk_id > 1 {
-        return Err(HsmError::InvalidPskId);
-    }
-
-    let role = if psk_id == 0 {
-        SessionRole::CryptoOfficer
-    } else {
-        SessionRole::CryptoUser
+    let role = match req.psk_id() {
+        PskId::CryptoOfficer => SessionRole::CryptoOfficer,
+        PskId::CryptoUser => SessionRole::CryptoUser,
+        _ => return Err(HsmError::InvalidPskId),
     };
+    let psk_id = req.psk_id().0;
 
-    let session_type = SessionType::from_u8(req.session_type())?;
+    let session_type = SessionType::from_u8(req.session_type().0)?;
     session_type.validate_for_role(role)?;
 
-    let suite = SessionSuite::from_u8(req.suite_id())?;
+    let suite = SessionSuite::from_u8(req.suite_id().0)?;
     let hpke_suite = hpke_suite_for(suite);
 
     let pk_init: &DmaBuf = req.pk_init();
@@ -366,7 +362,7 @@ async fn compute_phase1_mac<'a, P: HsmPal>(
     Ok(mac_resp)
 }
 
-/// Encode the `OpenSessionInit` response into a fresh IO-scoped DmaBuf.
+/// Encode the `SessionOpenInit` response into a fresh IO-scoped DmaBuf.
 fn encode_response<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -375,7 +371,7 @@ fn encode_response<'p, P: HsmPal>(
     mac_resp: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
-        let frame = TborOpenSessionInitResp::encode(buf, 0, false)?
+        let frame = TborSessionOpenInitResp::encode(buf, 0, false)?
             .session_id(SessionId(session_id))?
             .pk_resp(pk_resp)?
             .mac_resp(mac_resp)?

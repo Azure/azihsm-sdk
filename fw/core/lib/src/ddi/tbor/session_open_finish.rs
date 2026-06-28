@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `OpenSessionFinish` handler — Phase 2 of session establishment.
+//! TBOR `SessionOpenFinish` handler — Phase 2 of session establishment.
 //!
 //! Loads the Pending slot's handshake state, verifies the client's
 //! Phase-2 confirmation MAC in constant time, derives the per-session
@@ -32,7 +32,7 @@ use azihsm_fw_hsm_pal_traits::*;
 
 /// Map a [`SessionSuite`] to the concrete [`HpkeSuite`] used by the
 /// session-establishment handshake.  Mirrors the function of the same
-/// name in [`super::open_session_init`]; kept duplicated to avoid
+/// name in [`super::session_open_init`]; kept duplicated to avoid
 /// pulling that module's internals into a public surface.
 const fn hpke_suite_for(suite: SessionSuite) -> HpkeSuite {
     match suite {
@@ -47,7 +47,7 @@ const fn hpke_suite_for(suite: SessionSuite) -> HpkeSuite {
 const DEFAULT_HPKE_SUITE: HpkeSuite = hpke_suite_for(SessionSuite::P384HkdfSha384AesGcm256);
 
 /// Length of the Pending blob; mirrors the layout written by
-/// [`super::open_session_init`]:
+/// [`super::session_open_init`]:
 /// `exported ‖ pk_init ‖ pk_resp ‖ session_type ‖ suite_id`.
 const PENDING_BLOB_LEN: usize =
     DEFAULT_HPKE_SUITE.nh() + DEFAULT_HPKE_SUITE.npk() + DEFAULT_HPKE_SUITE.npk() + 1 + 1;
@@ -67,7 +67,7 @@ const AEAD_ALG: AeadAlg = AeadAlg::AesGcm256;
 /// per-session boot-masking key recovered on resume.
 const BMK_SESSION_KEY_LABEL: &[u8] = b"SESSION_BMK";
 
-/// Validated `OpenSessionFinish` request fields.
+/// Validated `SessionOpenFinish` request fields.
 struct ParsedRequest<'a> {
     /// Session Id
     sess_id: HsmSessId,
@@ -83,7 +83,7 @@ struct ParsedRequest<'a> {
 ///
 /// * `param_key` — 32 B AES-256 key used to AEAD-open `seed_envelope`
 ///   (this handler) and to authenticate per-parameter envelopes in
-///   in-session commands like `ChangePsk`.  Always populated.
+///   in-session commands like `PskChange`.  Always populated.
 /// * `masking_key` — 80 B `aes32 ‖ hmac48` used by the `cbc::mask`
 ///   masked-key system.  Always populated.
 /// * `mac_tx_key` — 48 B HMAC-SHA-384 key for outbound (HSM → host)
@@ -111,7 +111,7 @@ struct HandshakeState<'a> {
     suite: HpkeSuite,
 }
 
-/// Handle a TBOR `OpenSessionFinish` request.
+/// Handle a TBOR `SessionOpenFinish` request.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -183,7 +183,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
 /// Decode and validate the wire request.
 fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
-    let req = TborOpenSessionFinishReq::decode_mut(req_buf)?;
+    let req = TborSessionOpenFinishReq::decode_mut(req_buf)?;
     let id = HsmSessId::from(u16::from(req.session_id));
     // `mac_fin` length is checked once the negotiated suite is known
     // (see [`handle`]); the schema already pins the wire field to 48 B.
@@ -484,7 +484,7 @@ async fn derive_bk_session<'a, P: HsmPal>(
     Ok(bk_session)
 }
 
-/// Encode the `OpenSessionFinish` response (carrying `bmk_session`)
+/// Encode the `SessionOpenFinish` response (carrying `bmk_session`)
 /// into a fresh IO-scoped DmaBuf.
 fn encode_response<'p, P: HsmPal>(
     pal: &'p P,
@@ -492,7 +492,7 @@ fn encode_response<'p, P: HsmPal>(
     bmk_session: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
-        let frame = TborOpenSessionFinishResp::encode(buf, 0, false)?
+        let frame = TborSessionOpenFinishResp::encode(buf, 0, false)?
             .bmk_session(bmk_session)?
             .finish();
         Ok(frame.as_bytes().len())

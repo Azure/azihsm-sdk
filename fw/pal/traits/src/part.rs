@@ -110,7 +110,7 @@ use super::*;
 pub type PartId<'a> = &'a [u8];
 
 /// Canonical byte length of a TBOR PartPolicy blob.
-pub const PART_POLICY_LEN: usize = 167;
+pub const PART_POLICY_LEN: usize = 484;
 
 /// Byte length of the persisted partition policy hash (SHA-384 digest of
 /// the [`PART_POLICY_LEN`]-byte PartPolicy blob).
@@ -856,6 +856,16 @@ impl PartPropId {
     /// POTA thumbprint (48 B).  Set by `PartInit`.
     pub const POTA_THUMBPRINT: PartPropId = PartPropId(0x0035);
 
+    /// SATA (Sealing Authority Trust Anchor) thumbprint (48 B).  Set by
+    /// `PartInit` when configuring the partition for its security
+    /// domain.
+    pub const SATA_THUMBPRINT: PartPropId = PartPropId(0x0037);
+
+    /// SAPOTA (Sealing Authority's POTA) thumbprint (48 B).  Optional;
+    /// set by `PartInit` only when the request carries a SAPOTA
+    /// thumbprint.
+    pub const SAPOTA_THUMBPRINT: PartPropId = PartPropId(0x0038);
+
     /// BK3 session key (48 B).  Sensitive.  Set by EstablishCredential
     /// once per session.
     pub const BK3_SESSION: PartPropId = PartPropId(0x0036);
@@ -950,6 +960,8 @@ impl PartPropId {
             Self::VM_LAUNCH_GUID => PartPropMeta::fixed(16, Ro, Abs, false),
             Self::POLICY_HASH => PartPropMeta::fixed(POLICY_HASH_LEN as u16, Rw, Abs, false),
             Self::POTA_THUMBPRINT => PartPropMeta::fixed(48, Rw, Abs, false),
+            Self::SATA_THUMBPRINT => PartPropMeta::fixed(48, Rw, Abs, false),
+            Self::SAPOTA_THUMBPRINT => PartPropMeta::fixed(48, Rw, Abs, false),
             Self::BK3_SESSION => PartPropMeta::fixed(48, Rw, Abs, true),
 
             _ => return None,
