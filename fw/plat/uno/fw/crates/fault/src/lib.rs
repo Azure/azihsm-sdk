@@ -89,8 +89,15 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
 /// Reads the SCB fault-status registers, classifies the fault, and dumps:
 /// decoded `CFSR` bits, the faulting address when valid, the stacked
 /// [`ExceptionFrame`] (R0-R3, R12, LR, PC, xPSR), and `MSP`. A stack
-/// overflow (`HFSR.FORCED` + `CFSR.MSTKERR`) is reported specially because
-/// exception stacking failed and the frame is unreliable.
+/// overflow (`HFSR.FORCED` + `CFSR.MSTKERR`/`STKERR`) is reported specially
+/// because exception stacking failed and the frame is unreliable.
+///
+/// # Safety
+///
+/// Required to be an `unsafe fn` by `cortex-m-rt`. Invoked only by the
+/// hardware exception mechanism on a HardFault and must never be called
+/// directly; it reads fixed architectural SCB registers and the
+/// hardware-supplied exception frame, then halts.
 #[exception]
 unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     let scb = scb();
@@ -141,6 +148,12 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
 /// Catch-all handler for any exception/interrupt without a dedicated
 /// handler. Reports the offending exception number so an unexpected or
 /// spurious interrupt is no longer silent, then halts.
+///
+/// # Safety
+///
+/// Required to be an `unsafe fn` by `cortex-m-rt`. Invoked only by the
+/// hardware exception mechanism for an otherwise-unhandled exception/IRQ
+/// and must never be called directly.
 #[exception]
 unsafe fn DefaultHandler(irqn: i16) -> ! {
     println_fault!("");
