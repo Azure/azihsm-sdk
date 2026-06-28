@@ -72,7 +72,7 @@ pub struct TborPartInitReq {
     #[tbor(max_len = 160)]
     pub mach_seed_envelope: Vec<u8>,
 
-    /// Caller-asserted unified [`PartPolicy`], encoded as its 483-byte
+    /// Caller-asserted unified [`PartPolicy`], encoded as its 484-byte
     /// alignment-1 little-endian image pinned by the FW schema.
     pub part_policy: PartPolicy,
 

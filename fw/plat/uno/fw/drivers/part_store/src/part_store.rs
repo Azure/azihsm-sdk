@@ -35,18 +35,20 @@ const GUID_LEN: usize = 16;
 const SESSION_TABLE_LEN: usize = 18;
 const POLICY_HASH_LEN: usize = 48;
 const POTA_THUMBPRINT_LEN: usize = 48;
+const SATA_THUMBPRINT_LEN: usize = 48;
+const SAPOTA_THUMBPRINT_LEN: usize = 48;
 const PUB_KEY_LEN: usize = 96;
 const PSK_LEN: usize = 32;
 const CREDENTIAL_LEN: usize = 32;
 const RES_MASK_LEN: usize = 16;
 /// Trailing reserved tail = reference `reserved3` (626) minus the appended
-/// Uno fields (policy_hash + pota_thumbprint + the flat working-state
-/// fields below).
+/// Uno fields (policy_hash + pota/sata/sapota thumbprints + the flat
+/// working-state fields below).
 const RESERVED3_LEN: usize = 626
     - POLICY_HASH_LEN
     - POTA_THUMBPRINT_LEN
-    - POTA_THUMBPRINT_LEN  // sata_thumbprint
-    - POTA_THUMBPRINT_LEN  // sapota_thumbprint
+    - SATA_THUMBPRINT_LEN
+    - SAPOTA_THUMBPRINT_LEN
     - 4  // state
     - 4  // generation
     - RES_MASK_LEN
@@ -214,8 +216,8 @@ struct Storage {
     credential: [u8; CREDENTIAL_LEN],
     policy_hash: [u8; POLICY_HASH_LEN],
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
-    sata_thumbprint: [u8; POTA_THUMBPRINT_LEN],
-    sapota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
+    sata_thumbprint: [u8; SATA_THUMBPRINT_LEN],
+    sapota_thumbprint: [u8; SAPOTA_THUMBPRINT_LEN],
     id_key_id: [u8; 2],
     ec_key_id: [u8; 2],
     se_key_id: [u8; 2],
@@ -814,12 +816,12 @@ impl Partition {
     ///
     /// # Errors
     ///
-    /// - [`HsmError::InvalidArg`] — `v` is not exactly `POTA_THUMBPRINT_LEN`
+    /// - [`HsmError::InvalidArg`] — `v` is not exactly `SATA_THUMBPRINT_LEN`
     ///   bytes.
     #[inline(never)]
     pub fn set_sata_thumbprint(mut self, v: &DmaBuf) -> HsmResult<()> {
         let src: &[u8] = v;
-        if src.len() != POTA_THUMBPRINT_LEN {
+        if src.len() != SATA_THUMBPRINT_LEN {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
@@ -838,7 +840,7 @@ impl Partition {
     #[inline(never)]
     pub fn clear_sata_thumbprint(mut self) {
         let slot = self.slot_mut();
-        slot.sata_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
+        slot.sata_thumbprint = [0u8; SATA_THUMBPRINT_LEN];
         slot.sata_thumbprint_valid = false;
     }
 
@@ -853,12 +855,12 @@ impl Partition {
     ///
     /// # Errors
     ///
-    /// - [`HsmError::InvalidArg`] — `v` is not exactly `POTA_THUMBPRINT_LEN`
+    /// - [`HsmError::InvalidArg`] — `v` is not exactly `SAPOTA_THUMBPRINT_LEN`
     ///   bytes.
     #[inline(never)]
     pub fn set_sapota_thumbprint(mut self, v: &DmaBuf) -> HsmResult<()> {
         let src: &[u8] = v;
-        if src.len() != POTA_THUMBPRINT_LEN {
+        if src.len() != SAPOTA_THUMBPRINT_LEN {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
@@ -877,7 +879,7 @@ impl Partition {
     #[inline(never)]
     pub fn clear_sapota_thumbprint(mut self) {
         let slot = self.slot_mut();
-        slot.sapota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
+        slot.sapota_thumbprint = [0u8; SAPOTA_THUMBPRINT_LEN];
         slot.sapota_thumbprint_valid = false;
     }
 

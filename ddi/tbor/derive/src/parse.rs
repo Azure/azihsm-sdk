@@ -210,6 +210,12 @@ fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
     // Promote `u16 + #[tbor(session_id)]` to SessionId, or
     // `u16 + #[tbor(key_id)]` to KeyId.  The flags are invalid on any
     // other type and mutually exclusive.
+    if flags.session_id && flags.key_id {
+        return Err(syn::Error::new(
+            f.span(),
+            "#[tbor(session_id)] and #[tbor(key_id)] are mutually exclusive",
+        ));
+    }
     let shape = if flags.session_id {
         if matches!(base, FieldShape::U16) {
             FieldShape::SessionId

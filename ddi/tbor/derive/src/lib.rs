@@ -411,8 +411,10 @@ fn gen_decode_step(idx: usize, f: &ParsedField) -> TokenStream2 {
             quote! {
                 match __raw.toc_entry(#idx) {
                     ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => {
-                        <#ty as ::zerocopy::TryFromBytes>::try_ref_from_bytes(__b)
-                            .map(::core::clone::Clone::clone)
+                        // Copy into an owned value via `try_read_from_bytes`
+                        // (no alignment requirement), since TBOR buffer
+                        // payloads can start at arbitrary offsets.
+                        <#ty as ::zerocopy::TryFromBytes>::try_read_from_bytes(__b)
                             .map_err(|_| ::azihsm_ddi_tbor_codec::DecodeError::InvalidFixedLength)?
                     }
                     #unexpected

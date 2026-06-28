@@ -265,9 +265,10 @@ impl HsmKeyScope {
 /// The PKCS#11 usage bits (`private` … `derive`) keep the bit positions
 /// of the prior reference firmware's `EntryAttributeFlags` so a
 /// little-endian serialization of those bits stays byte-compatible with
-/// host tooling.  The former `internal` and `session` booleans (bits 0
-/// and 1) have been folded into the [`scope`](Self::scope) field; their
-/// old bit positions are now reserved.
+/// host tooling.  The [`scope`](Self::scope) field (bits 17–19) is an
+/// **additive** [`HsmKeyScope`] that complements — and is independent of
+/// — the legacy `internal` (bit 0) and `session` (bit 1) flags, which
+/// remain in place for backward compatibility.
 ///
 /// ## Bit layout
 ///

@@ -1342,7 +1342,7 @@ impl PartitionEntry {
                 if self.pota_thumbprint.is_some() {
                     return Err(HsmError::InvalidArg);
                 }
-                let mut buf = [0u8; 48];
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
                 buf.copy_from_slice(data);
                 self.pota_thumbprint = Some(buf);
                 Ok(())
@@ -1351,7 +1351,7 @@ impl PartitionEntry {
                 if self.sata_thumbprint.is_some() {
                     return Err(HsmError::InvalidArg);
                 }
-                let mut buf = [0u8; 48];
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
                 buf.copy_from_slice(data);
                 self.sata_thumbprint = Some(buf);
                 Ok(())
@@ -1360,7 +1360,7 @@ impl PartitionEntry {
                 if self.sapota_thumbprint.is_some() {
                     return Err(HsmError::InvalidArg);
                 }
-                let mut buf = [0u8; 48];
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
                 buf.copy_from_slice(data);
                 self.sapota_thumbprint = Some(buf);
                 Ok(())

@@ -59,13 +59,14 @@ usual way: the caller's CO PSK must already have been rotated by
 6. **Commit:** vault-allocate the UMS (`PartitionUniqueMachineSecret`)
    and the PTA private key (`PartitionTrustAnchor`), then write the
    write-once partition fields `(pta_pub, pta_key_id, ums_key_id,
-   policy, pota_thumb)` and mark the partition `Initializing`.  All
+   policy, pota_thumb, sata_thumb, sapota_thumb)` and mark the partition
+   `Initializing`.  All
    commits are atomic — a failure before the final
    `part_mark_initializing` rolls back both vault entries.
 
 ## Request
 
-Wire layout: 4-byte header, four TOC entries, then the variable-length
+Wire layout: 4-byte header, six TOC entries, then the variable-length
 data section.
 
 ### TOC entries
@@ -77,8 +78,10 @@ spec](../../../fw/core/ddi/tbor/docs/spec.md).
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | CO session whose `param_key` wraps `mach_seed_envelope`; cross-checked against the SQE-carried session id. |
 | 8  | `mach_seed_envelope` | `buffer` (fixed 100 B) | AEAD-GCM envelope (see below) carrying the 32-byte `mach_seed`. Length is pinned to exactly 100 B (`MACH_SEED_ENVELOPE_LEN`); a wrong length is rejected at decode. |
-| 12 | `part_policy` | `fixed` (167 B) | `PartPolicy` blob bound into the partition's attested state. |
-| 16 | `pota_thumbprint` | `fixed` (48 B) | SHA-384 thumbprint of the POTA certificate the partition is being provisioned under. |
+| 12 | `part_policy` | `buffer` (fixed 484 B) | Unified `PartPolicy` blob bound into the partition's attested state. Length pinned to `PART_POLICY_LEN` (484 B); a wrong length is rejected at decode. |
+| 16 | `pota_thumbprint` | `buffer` (fixed 48 B) | SHA-384 thumbprint of the POTA certificate the partition is being provisioned under. |
+| 20 | `sata_thumbprint` | `buffer` (fixed 48 B) | SHA-384 thumbprint of the SATA certificate bound to the security domain. |
+| 24 | `sapota_thumbprint` | `buffer` (offset/len) | Optional SHA-384 thumbprint of the SAPOTA certificate. An **empty** field means absent; when present it is exactly 48 B. |
 
 ### `mach_seed_envelope` contents
 
