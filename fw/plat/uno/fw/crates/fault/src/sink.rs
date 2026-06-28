@@ -51,6 +51,8 @@ impl Write for FaultWriter {
         }
         #[cfg(not(feature = "semihosting"))]
         {
+            // `write` filters non-printable bytes (control chars / embedded
+            // NUL -> 0xFE) so the fault log stays readable on the console.
             let mut uart = Uart::new();
             uart.write(s);
         }
@@ -63,7 +65,7 @@ impl Write for FaultWriter {
 macro_rules! print_fault {
     ($($arg:tt)*) => {{
         let _ = ::core::fmt::Write::write_fmt(
-            &mut $crate::sink::FaultWriter,
+            &mut $crate::FaultWriter,
             ::core::format_args!($($arg)*),
         );
     }};
@@ -75,7 +77,7 @@ macro_rules! println_fault {
     () => {{ $crate::print_fault!("\n"); }};
     ($($arg:tt)*) => {{
         let _ = ::core::fmt::Write::write_fmt(
-            &mut $crate::sink::FaultWriter,
+            &mut $crate::FaultWriter,
             ::core::format_args!($($arg)*),
         );
         $crate::print_fault!("\n");
