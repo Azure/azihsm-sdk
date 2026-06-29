@@ -9,7 +9,7 @@
 //! under (and, on re-provisioning, the partition's previous local backup
 //! masked key); the device returns the partition-local backup masked key.
 //!
-//! Host-side mirror of the MBOR `FinalizePart` command.  The opcode and
+//! Host-side mirror of the TBOR `FinalizePart` command.  The opcode and
 //! in-session semantics are pinned here pending the firmware TBOR schema.
 
 use alloc::vec::Vec;

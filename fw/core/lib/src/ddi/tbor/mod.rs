@@ -79,11 +79,6 @@ pub(crate) mod opcode {
     /// `PartInit` — bind PTA, policy, and POTA thumbprint.
     pub(crate) const PART_INIT: u8 = 0x30;
 
-    /// `FinalizePart` — complete partition provisioning begun by
-    /// `PartInit`.  In-session CO command carrying the targeted slot's
-    /// `session_id`.
-    pub(crate) const FINALIZE_PART: u8 = 0x31;
-
     /// `PartInfo` — out-of-session info command reporting device kind /
     /// FIPS status plus the bound partition's lifecycle and identity
     /// (state, generation, owner/manufacturer SVN, PID, identity public
@@ -210,9 +205,7 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::OPEN_SESSION_INIT
         | opcode::OPEN_SESSION_FINISH
         | opcode::PART_INFO => false,
-        opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT | opcode::FINALIZE_PART => {
-            true
-        }
+        opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -245,8 +238,7 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         opcode::OPEN_SESSION_FINISH
         | opcode::CLOSE_SESSION
         | opcode::CHANGE_PSK
-        | opcode::PART_INIT
-        | opcode::FINALIZE_PART => true,
+        | opcode::PART_INIT => true,
         _ => true,
     }
 }
@@ -355,7 +347,7 @@ mod tests {
 
     #[test]
     fn part_commands_are_in_session_and_cross_checked() {
-        for op in [opcode::PART_INIT, opcode::FINALIZE_PART] {
+        for op in [opcode::PART_INIT] {
             assert!(is_in_session(op), "{op:#04x} must be in-session");
             assert!(
                 needs_session_id_cross_check(op),
