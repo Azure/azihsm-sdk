@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -19,7 +20,7 @@ class azihsm_rsa_keyattest : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
-bool buffer_has_non_zero(const std::vector<uint8_t> &buffer, uint32_t len)
+static bool buffer_has_non_zero(const std::vector<uint8_t> &buffer, uint32_t len)
 {
     const size_t end = std::min(buffer.size(), static_cast<size_t>(len));
 
@@ -34,7 +35,7 @@ bool buffer_has_non_zero(const std::vector<uint8_t> &buffer, uint32_t len)
     return false;
 }
 
-azihsm_status generate_rsa_private_key_for_attest(
+static azihsm_status generate_rsa_private_key_for_attest(
     azihsm_handle session,
     auto_key &priv_key,
     auto_key &pub_key
