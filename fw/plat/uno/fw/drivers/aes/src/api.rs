@@ -12,7 +12,6 @@ use azihsm_fw_uno_error::HsmResult;
 use azihsm_fw_uno_pac::interrupt::Interrupt;
 use azihsm_fw_uno_reg_soc::aes::regs::AesRegs;
 use azihsm_fw_uno_reg_soc::aes::AES_BASE;
-use azihsm_fw_uno_reg_soc::aes::STATUS_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::*;
 use bitfield_struct::bitfield;
@@ -29,20 +28,8 @@ const AES: StaticRef<AesRegs> = unsafe { StaticRef::new(AES_BASE as *const AesRe
 const AES_Q: StaticRef<IoGsramRegs> =
     unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
-/// W1C status flag mask: COMPLETE, ERROR_CMD, ERROR_BUS, ERROR_FAULT.
+/// Status flag mask (read-side decode): COMPLETE, ERROR_CMD, ERROR_BUS, ERROR_FAULT.
 const STATUS_FLAGS_MASK: u32 = 0x1E;
-
-fn clear_status(flags: u32) {
-    // SAFETY: STATUS is a W1C MMIO register at AES_BASE + STATUS_OFFSET.
-    // The mask guarantees we only attempt to clear documented flag bits,
-    // protecting against accidental writes to reserved bits or BUSY.
-    unsafe {
-        core::ptr::write_volatile(
-            (AES_BASE + STATUS_OFFSET) as *mut u32,
-            flags & STATUS_FLAGS_MASK,
-        );
-    }
-}
 
 /// AES block size in bytes.
 pub const AES_BLOCK_SIZE: usize = 16;
@@ -307,13 +294,15 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
     /// main poll loop (polling mode).
     pub fn wake(&self) {
         let status = AES.status.get();
-        if (status & 0x1E) == 0 {
+        let flags = status & STATUS_FLAGS_MASK;
+        if flags == 0 {
             // No flag set — spurious wake.
             return;
         }
 
-        // Clear the flag bits (W1C).
-        clear_status(status & 0x1E);
+        // STATUS (AES_BASE + 0x4) is read-only (RO32): the flag bits auto-clear
+        // when the next command doorbell sets BUSY. Writing it bus-faults the
+        // engine and hard-faults the CPU, so only clear the NVIC pending bit.
         Nvic::unpend(Interrupt::AES_DONE);
 
         self.state.with(|s| {
@@ -321,7 +310,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
             if s.active != s.tail {
                 let idx = (s.active & Self::MASK) as usize;
                 let slot = &mut s.slots[idx];
-                slot.status = status as u8;
+                slot.status = flags as u8;
                 slot.waker.wake();
 
                 // Advance past the completed slot and submit the next
@@ -486,10 +475,12 @@ impl<const DEPTH: usize> AesExclusive<'_, DEPTH> {
 
         loop {
             let status = AES.status.get();
-            if (status & 0x1E) != 0 {
-                clear_status(status & 0x1E);
+            let flags = status & STATUS_FLAGS_MASK;
+            if flags != 0 {
+                // STATUS is read-only; do not write it (bus-faults). It
+                // auto-clears on the next command doorbell.
                 Nvic::unpend(Interrupt::AES_DONE);
-                return Ok((status & 0x1E) as u8);
+                return Ok(flags as u8);
             }
         }
     }

@@ -52,24 +52,44 @@ const P384_PRIV_LEN: usize = 48;
 const ENABLE_KEY_LEN: usize = ID_PUB_KEY_LEN + P384_PRIV_LEN;
 
 impl UnoHsmPal {
-    /// Allocates partition `pid` with resource `mask`, transitioning to
-    /// [`PartState::Allocated`] (mirrors the reference firmware's
+    /// Allocates partition `pid` with resource `mask`: assigns the key-vault
+    /// tables, generates the random ID and ECC P-384 identity key, and
+    /// provisions the masked boot key (mirrors the reference firmware's
     /// `part_alloc`; identity only — no certs).
     ///
-    /// The listed key-vault tables are assigned, the random ID and ECC
-    /// P-384 identity key are generated, and the partition moves to
-    /// [`PartState::Allocated`]. A separate [`part_enable`] is required to
-    /// reach [`PartState::Enabled`] before host IO is accepted.
+    /// The final state depends on the admin's PF/VF ordering:
+    /// - **VF** (`is_pf == false`): `SetResource` precedes `PfnEnable`, so the
+    ///   partition is left [`PartState::Allocated`]; a later [`part_enable`]
+    ///   provisions the enable-time keys and reaches [`PartState::Enabled`].
+    /// - **PF** (`is_pf == true`): `PfnEnable` already ran (the partition is
+    ///   [`PartState::Enabled`] with `res_mask == 0` and deferred keys), so
+    ///   this provisions the deferred enable-time keys too and leaves the
+    ///   partition [`PartState::Enabled`], ready for host IO.
     ///
-    /// Any existing allocation is freed first so `SetResource` is a
-    /// declarative "set the resources to this mask" operation.
+    /// Any existing allocation is freed first — except the PF pre-enable case,
+    /// which must preserve the enable — so `SetResource` is a declarative
+    /// "set the resources to this mask" operation.
     ///
     /// [`part_enable`]: Self::part_enable
-    pub(crate) async fn part_alloc(&self, pid: HsmPartId, mask: u128) -> HsmResult<()> {
+    pub(crate) async fn part_alloc(
+        &self,
+        pid: HsmPartId,
+        mask: u128,
+        is_pf: bool,
+    ) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
 
-        // Free any prior allocation so keygen starts from a clean slate.
-        self.part_free(pid).await?;
+        // A PF enabled before its resources were assigned is `Enabled` with no
+        // resource mask yet (its identity/enabled keys are deferred); freeing
+        // it would tear the enable down, so skip the free only in that exact
+        // PF pre-enable case. Every other prior state — a VF, or a
+        // fully-provisioned `Enabled` partition being reallocated — is freed so
+        // keygen starts from a clean slate (no leaked vault keys, no stale
+        // resource mask).
+        let pre_enabled = is_pf && part.state()? == PartState::Enabled && part.res_mask() == 0;
+        if !pre_enabled {
+            self.part_free(pid).await?;
+        }
         part.set_res_mask(mask);
 
         // Provision the identity then the masked boot key; on any failure
@@ -80,7 +100,20 @@ impl UnoHsmPal {
             self.rollback_alloc(pid).await;
             return Err(e);
         }
-        part.set_state(PartState::Allocated);
+
+        if pre_enabled {
+            // PF pre-enable: PfnEnable preceded SetResource, so the enabled keys were
+            // deferred from `part_enable`; provision them now that `res_mask`
+            // exists and leave the partition `Enabled`.
+            if let Err(e) = self.provision_enabled_keys(pid).await {
+                self.rollback_alloc(pid).await;
+                return Err(e);
+            }
+            part.set_state(PartState::Enabled);
+        } else {
+            // VF (or PF SetResource-before-enable): PfnEnable follows and provisions the enabled keys.
+            part.set_state(PartState::Allocated);
+        }
         Ok(())
     }
 
@@ -196,6 +229,7 @@ impl UnoHsmPal {
                 pct,
             )
             .await?;
+
         if pub_len != ID_PUB_KEY_LEN {
             return Err(HsmError::InternalError);
         }
@@ -364,14 +398,24 @@ impl UnoHsmPal {
     }
 
     /// Enables partition `pid` (mirrors the reference firmware's
-    /// `part_enable`): `Allocated` | `Disabled` → `Enabled`.
+    /// `part_enable`). The accepted transitions depend on the PF/VF ordering:
     ///
-    /// Generates the establish-credential and session-encryption ECC P-384
-    /// key pairs, then accepts host IO. Certificates, nonce, and BK_BOOT
-    /// are out of scope.
+    /// - **VF / re-enable** (`Allocated | Disabled → Enabled`): the
+    ///   establish-credential and session-encryption ECC P-384 key pairs are
+    ///   generated here, then host IO is accepted.
+    /// - **PF enable-before-SetResource** (`Unallocated → Enabled`, only when
+    ///   `is_pf`): `res_mask` is not yet assigned, so the enable-time keys
+    ///   cannot be provisioned (the vault has no table). The enable is
+    ///   recorded and key provisioning is *deferred* to [`part_alloc`], which
+    ///   runs when `SetResource` arrives.
+    ///
+    /// Re-enabling an already-`Enabled` partition is idempotent. Certificates,
+    /// nonce, and BK_BOOT are out of scope.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
-    pub(crate) async fn part_enable(&self, pid: HsmPartId) -> HsmResult<()> {
+    ///
+    /// [`part_alloc`]: Self::part_alloc
+    pub(crate) async fn part_enable(&self, pid: HsmPartId, is_pf: bool) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Allocated | PartState::Disabled => {
@@ -379,6 +423,16 @@ impl UnoHsmPal {
                 part.set_state(PartState::Enabled);
                 Ok(())
             }
+            // PF (PcieFunction::Pf) is enabled before SetResource assigns its
+            // `res_mask`, so the enabled keys cannot be provisioned here (the
+            // vault has no table yet). Record the enable; `part_alloc`
+            // provisions the keys once the resources arrive.
+            PartState::Unallocated if is_pf => {
+                part.set_state(PartState::Enabled);
+                Ok(())
+            }
+            // Idempotent re-enable (e.g. an Admin/driver retry).
+            PartState::Enabled => Ok(()),
             _ => Err(HsmError::InvalidArg),
         }
     }

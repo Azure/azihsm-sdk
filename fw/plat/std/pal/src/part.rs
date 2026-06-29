@@ -164,14 +164,21 @@ pub(crate) struct PartitionEntry {
     /// `None` before enable or after one-time clear.
     establish_cred_key_id: Option<HsmKeyId>,
 
-    /// DER-encoded public key for establish-credential encryption.
+    /// Raw establish-credential encryption public key, stored as
+    /// little-endian `x ∥ y` (the DDI wire format).  This key is
+    /// wire-only — it is returned verbatim by
+    /// `GetEstablishCredEncryptionKey` and never consumed internally,
+    /// so it is kept in wire (LE) form rather than the big-endian form
+    /// used for internally-consumed keys (e.g. the identity key).
     establish_cred_pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// Vault key ID for the session encryption ECC-384 key.
     /// `None` before enable.
     session_enc_key_id: Option<HsmKeyId>,
 
-    /// Raw public key coordinates (x ∥ y) for session encryption.
+    /// Raw session-encryption public key, stored as little-endian
+    /// `x ∥ y` (the DDI wire format).  Wire-only — returned verbatim by
+    /// `GetSessionEncryptionKey` and never consumed internally.
     session_enc_pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// 32-byte random nonce, generated on enable and refreshable.
@@ -582,6 +589,7 @@ impl StdHsmPal {
                 HsmVaultKeyKind::Ecc384Private,
                 id_attrs,
                 HsmEccPct::SignVerify,
+                true,
                 &mut id_pub,
             )
             .await;
@@ -693,6 +701,7 @@ impl StdHsmPal {
                     HsmVaultKeyKind::Ecc384Private,
                     id_attrs,
                     HsmEccPct::SignVerify,
+                    true,
                     &mut id_pub,
                 )
                 .await?;
@@ -709,6 +718,7 @@ impl StdHsmPal {
         }
 
         // Generate establish-credential encryption ECC-384 key pair.
+        // Wire-only key: exported in little-endian DDI wire order.
         let mut ec_pub = [0u8; P384_PUB_KEY_LEN];
         let ec_kid = self
             .create_internal_ecc384_key(
@@ -716,6 +726,7 @@ impl StdHsmPal {
                 HsmVaultKeyKind::EstablishCred,
                 attrs,
                 HsmEccPct::KeyAgreement,
+                false,
                 &mut ec_pub,
             )
             .await?;
@@ -726,6 +737,7 @@ impl StdHsmPal {
         entry.establish_cred_pub_key = ec_pub;
 
         // Generate session encryption ECC-384 key pair.
+        // Wire-only key: exported in little-endian DDI wire order.
         let mut se_pub = [0u8; P384_PUB_KEY_LEN];
         let se_result = self
             .create_internal_ecc384_key(
@@ -733,6 +745,7 @@ impl StdHsmPal {
                 HsmVaultKeyKind::SessionEncryption,
                 attrs,
                 HsmEccPct::KeyAgreement,
+                false,
                 &mut se_pub,
             )
             .await;
@@ -840,8 +853,14 @@ impl StdHsmPal {
     // -----------------------------------------------------------------------
 
     /// Generate an ECC P-384 key pair, store the raw HSM-format private
-    /// key (scalar `d`, 48 bytes) in the vault, and write raw public key
-    /// coordinates (x ∥ y) into `pub_key_out`.
+    /// key (scalar `d`, 48 bytes) in the vault, and write the raw public
+    /// key coordinates (x ∥ y) into `pub_key_out`.
+    ///
+    /// `big_endian` selects the public-key byte order (the BE↔LE flip is
+    /// the driver's responsibility): `true` yields OpenSSL big-endian
+    /// coordinates for internally-consumed keys (cert generation / POTA
+    /// hashing); `false` yields the little-endian DDI wire form (matching
+    /// real PKA hardware) for wire-only keys.
     ///
     /// Bypasses [`HsmEcc::ecc_gen_keypair`] (which now requires an
     /// `HsmIo` and a scoped allocator) and drives the
@@ -856,27 +875,23 @@ impl StdHsmPal {
         kind: HsmVaultKeyKind,
         attrs: HsmVaultKeyAttrs,
         _pct: HsmEccPct,
+        big_endian: bool,
         pub_key_out: &mut [u8; P384_PUB_KEY_LEN],
     ) -> HsmResult<HsmKeyId> {
-        let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
+        // Generate the keypair; the driver owns the public-key byte
+        // order, so this layer stays free of byte-shuffling boilerplate.
+        let (pk, pub_key) = self.ecc.gen_keypair(EccCurve::P384).await?;
+        self.ecc
+            .pub_coords(&pub_key, big_endian, pub_key_out)
+            .await?;
 
-        // Export private key as raw HSM scalar bytes (48 B for P-384).
+        // Export private key as raw HSM scalar bytes (48 B for P-384)
+        // and store them in the vault.
         let priv_len = pk.hsm_bytes_len();
         let mut priv_buf = vec![0u8; priv_len];
         pk.to_hsm_bytes(&mut priv_buf[..priv_len])
             .map_err(|_| HsmError::EccExportError)?;
 
-        // Export raw P-384 public key coordinates (x ∥ y) in big-endian
-        // form — matches OpenSSL conventions and is the form expected by
-        // internal consumers (cert generation, POTA hash).  Wire-facing
-        // PAL accessors (e.g. [`part_establish_cred_pub_key`]) handle
-        // BE→LE conversion at the response boundary.
-        let half = P384_PUB_KEY_LEN / 2;
-        let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
-        pubk.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::EccExportError)?;
-
-        // Store raw HSM private-key bytes in vault.
         let table = self.table_mut();
         let entry = &mut table.entries[pid as usize];
         entry.vault.create(&priv_buf[..priv_len], kind, None, attrs)

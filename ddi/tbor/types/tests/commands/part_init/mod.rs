@@ -41,12 +41,12 @@ mod crypto_rejects;
 mod fw_rejects;
 mod happy_path;
 
-pub(super) const CO: u8 = 0;
+pub(crate) const CO: u8 = 0;
 
 /// Non-default 32-byte CO PSK used so PartInit clears the
 /// default-PSK-gate.  Pinned to a fixed value so the smoke test is
 /// fully deterministic.
-pub(super) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
+pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
@@ -55,7 +55,7 @@ pub(super) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
 /// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`.  Layout mirrors
 /// the canonical wire format defined in
 /// `fw/core/ddi/tbor/types/src/policy.rs`.
-pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
+pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     const OFF_VERSION_MAJOR: usize = 0;
     const OFF_VERSION_MINOR: usize = 1;
     const OFF_KIND: usize = 2;
@@ -78,7 +78,7 @@ pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     bytes
 }
 
-pub(super) fn mach_seed() -> [u8; MACH_SEED_LEN] {
+pub(crate) fn mach_seed() -> [u8; MACH_SEED_LEN] {
     let mut v = [0u8; MACH_SEED_LEN];
     for (i, b) in v.iter_mut().enumerate() {
         *b = 0x40 + i as u8;
@@ -86,7 +86,7 @@ pub(super) fn mach_seed() -> [u8; MACH_SEED_LEN] {
     v
 }
 
-pub(super) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
+pub(crate) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     let mut v = [0u8; POTA_THUMBPRINT_LEN];
     for (i, b) in v.iter_mut().enumerate() {
         *b = 0x80 ^ i as u8;
@@ -140,7 +140,7 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
 /// drop the bootstrap session, and return a fresh CO session opened
 /// under the rotated PSK — ready for the in-session command under
 /// test.
-pub(super) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
     ctx.change_psk(bootstrap.handshake(), target_psk)
         .expect("rotate CO PSK");
