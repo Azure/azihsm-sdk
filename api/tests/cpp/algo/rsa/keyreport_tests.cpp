@@ -116,7 +116,7 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(invalid_key, &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
