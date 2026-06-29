@@ -232,18 +232,19 @@ regfile osq_entry_t {
 // -- OCQ Entry - 16 bytes (4 DWORDs) --
 
 reg ocq_info_t {
-    name = "OCQ Info";
-    desc = "Outbound Completion Queue info.";
-    field { sw = rw; hw = r; } STATUS[7:0] = 0x0;
-    field { sw = rw; hw = r; } RSVD[31:8] = 0x0;
+    name = "OCQ Info (DW2)";
+    desc = "Routing info: queue_index, queue_id, axi_id.";
+    field { sw = rw; hw = r; } QUEUE_INDEX[15:0] = 0x0;
+    field { sw = rw; hw = r; } QUEUE_ID[23:16] = 0x0;
+    field { sw = rw; hw = r; } AXI_ID[31:24] = 0x0;
 };
 
 reg ocq_tag_t {
-    name = "OCQ Tag";
-    desc = "16-bit tag + status echoed from the OSQ entry.";
+    name = "OCQ Tag (DW3)";
+    desc = "Tag and completion status.";
     field { sw = rw; hw = r; } TAG[15:0] = 0x0;
-    field { sw = rw; hw = r; } STATUS[23:16] = 0x0;
-    field { sw = rw; hw = r; } RSVD[31:24] = 0x0;
+    field { sw = rw; hw = r; } RSVD0[23:16] = 0x0;
+    field { sw = rw; hw = r; } STATUS[31:24] = 0x0;
 };
 
 regfile ocq_entry_t {
@@ -305,11 +306,11 @@ regfile gdma_sq_entry_t {
 };
 
 reg gdma_cq_status_t {
-    name = "GDMA CQ Status";
-    desc = "GDMA completion status and tag.";
-    field { sw = rw; hw = rw; } TAG[15:0] = 0x0;
-    field { sw = rw; hw = rw; } SUCCESS[16:16] = 0x0;
-    field { sw = rw; hw = rw; } RSVD[31:17] = 0x0;
+    name = "CQ Status (DW0)";
+    desc = "Completion status and TAG echoed from SQ entry.";
+    field { sw = rw; hw = rw; } SUCCESS[0:0] = 0x0;
+    field { sw = rw; hw = rw; } RSVD0[15:1] = 0x0;
+    field { sw = rw; hw = rw; } TAG[31:16] = 0x0;
 };
 
 reg gdma_cq_rsvd_t {
