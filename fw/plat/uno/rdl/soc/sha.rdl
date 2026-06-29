@@ -63,9 +63,10 @@ reg sha_status_t {                                          // SHA: status
         sw = r;
         hw = w;
         desc = "Engine successfully finished the most recent command.
-                Mutually exclusive with the ERROR_* bits. Cleared by
-                firmware via write-1-to-clear before submitting the
-                next command.";
+                Mutually exclusive with the ERROR_* bits. STATUS is
+                read-only; this bit is cleared by hardware when the next
+                command's doorbell sets BUSY (firmware must NOT write
+                STATUS).";
     } COMPLETE[1:1] = 0x0;                              // SHA: complete
 
     field {

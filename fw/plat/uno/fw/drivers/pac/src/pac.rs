@@ -23,81 +23,81 @@ pub mod interrupt {
         #[allow(non_camel_case_types)]
         GDMA_CQ = 66,
 
-        /// AES completion (IRQ5, ISPR0 bit 5).
+        /// AES completion (IRQ57, ISPR1 bit 25).
         #[allow(non_camel_case_types)]
-        AES_DONE = 5,
+        AES_DONE = 57,
 
-        /// SHA completion (IRQ6, ISPR0 bit 6).
+        /// SHA completion (IRQ56, ISPR1 bit 24).
         #[allow(non_camel_case_types)]
-        SHA_DONE = 6,
+        SHA_DONE = 56,
 
-        /// PKA engine Done interrupts (IRQ192–207, ISPR6 bits 0–15).
+        /// PKA engine Done interrupts (IRQ32–47, ISPR1 bits 0–15).
         #[allow(non_camel_case_types)]
-        UPKA_0_DONE = 192,
+        UPKA_0_DONE = 32,
         #[allow(non_camel_case_types)]
-        UPKA_1_DONE = 193,
+        UPKA_1_DONE = 33,
         #[allow(non_camel_case_types)]
-        UPKA_2_DONE = 194,
+        UPKA_2_DONE = 34,
         #[allow(non_camel_case_types)]
-        UPKA_3_DONE = 195,
+        UPKA_3_DONE = 35,
         #[allow(non_camel_case_types)]
-        UPKA_4_DONE = 196,
+        UPKA_4_DONE = 36,
         #[allow(non_camel_case_types)]
-        UPKA_5_DONE = 197,
+        UPKA_5_DONE = 37,
         #[allow(non_camel_case_types)]
-        UPKA_6_DONE = 198,
+        UPKA_6_DONE = 38,
         #[allow(non_camel_case_types)]
-        UPKA_7_DONE = 199,
+        UPKA_7_DONE = 39,
         #[allow(non_camel_case_types)]
-        UPKA_8_DONE = 200,
+        UPKA_8_DONE = 40,
         #[allow(non_camel_case_types)]
-        UPKA_9_DONE = 201,
+        UPKA_9_DONE = 41,
         #[allow(non_camel_case_types)]
-        UPKA_10_DONE = 202,
+        UPKA_10_DONE = 42,
         #[allow(non_camel_case_types)]
-        UPKA_11_DONE = 203,
+        UPKA_11_DONE = 43,
         #[allow(non_camel_case_types)]
-        UPKA_12_DONE = 204,
+        UPKA_12_DONE = 44,
         #[allow(non_camel_case_types)]
-        UPKA_13_DONE = 205,
+        UPKA_13_DONE = 45,
         #[allow(non_camel_case_types)]
-        UPKA_14_DONE = 206,
+        UPKA_14_DONE = 46,
         #[allow(non_camel_case_types)]
-        UPKA_15_DONE = 207,
+        UPKA_15_DONE = 47,
 
-        /// PKA engine Error interrupts (IRQ208–223, ISPR6 bits 16–31).
+        /// PKA engine Error interrupts (IRQ0–15, ISPR0 bits 0–15).
         #[allow(non_camel_case_types)]
-        UPKA_0_ERROR = 208,
+        UPKA_0_ERROR = 0,
         #[allow(non_camel_case_types)]
-        UPKA_1_ERROR = 209,
+        UPKA_1_ERROR = 1,
         #[allow(non_camel_case_types)]
-        UPKA_2_ERROR = 210,
+        UPKA_2_ERROR = 2,
         #[allow(non_camel_case_types)]
-        UPKA_3_ERROR = 211,
+        UPKA_3_ERROR = 3,
         #[allow(non_camel_case_types)]
-        UPKA_4_ERROR = 212,
+        UPKA_4_ERROR = 4,
         #[allow(non_camel_case_types)]
-        UPKA_5_ERROR = 213,
+        UPKA_5_ERROR = 5,
         #[allow(non_camel_case_types)]
-        UPKA_6_ERROR = 214,
+        UPKA_6_ERROR = 6,
         #[allow(non_camel_case_types)]
-        UPKA_7_ERROR = 215,
+        UPKA_7_ERROR = 7,
         #[allow(non_camel_case_types)]
-        UPKA_8_ERROR = 216,
+        UPKA_8_ERROR = 8,
         #[allow(non_camel_case_types)]
-        UPKA_9_ERROR = 217,
+        UPKA_9_ERROR = 9,
         #[allow(non_camel_case_types)]
-        UPKA_10_ERROR = 218,
+        UPKA_10_ERROR = 10,
         #[allow(non_camel_case_types)]
-        UPKA_11_ERROR = 219,
+        UPKA_11_ERROR = 11,
         #[allow(non_camel_case_types)]
-        UPKA_12_ERROR = 220,
+        UPKA_12_ERROR = 12,
         #[allow(non_camel_case_types)]
-        UPKA_13_ERROR = 221,
+        UPKA_13_ERROR = 13,
         #[allow(non_camel_case_types)]
-        UPKA_14_ERROR = 222,
+        UPKA_14_ERROR = 14,
         #[allow(non_camel_case_types)]
-        UPKA_15_ERROR = 223,
+        UPKA_15_ERROR = 15,
 
         /// IPC interrupt controller (IRQ129, ISPR4 bit 1).
         #[allow(non_camel_case_types)]
@@ -136,8 +136,8 @@ extern "C" {
 #[no_mangle]
 pub static __INTERRUPTS: [Option<unsafe extern "C" fn()>; 224] = {
     let mut table: [Option<unsafe extern "C" fn()>; 224] = [None; 224];
-    table[5] = Some(AES_DONE);
-    table[6] = Some(SHA_DONE);
+    table[57] = Some(AES_DONE);
+    table[56] = Some(SHA_DONE);
     table[66] = Some(GDMA_CQ);
     table[103] = Some(IIC_ICQ);
     table[110] = Some(OIC_OCQ);

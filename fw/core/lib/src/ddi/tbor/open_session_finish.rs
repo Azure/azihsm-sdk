@@ -174,7 +174,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         let bmk_session = build_bmk_session(pal, io, alloc, seed, derived.masking_key).await?;
 
         // ── Promote Pending → Active ──────────────────────────────
-        promote_to_active(pal, io, alloc, sess_id, derived)?;
+        promote_to_active(pal, io, alloc, sess_id, derived).await?;
 
         encode_response(pal, io, bmk_session)
     })
@@ -298,7 +298,7 @@ async fn verify_mac<P: HsmPal>(
     }
     let mac_verified = pal.hmac_finish_verify(io, hmac_ctx, mac_fin).await?;
     if !mac_verified {
-        let _ = pal.session_destroy(io, id);
+        let _ = pal.session_destroy(io, id).await;
         return Err(HsmError::SessionAuthFailure);
     }
     Ok(())
@@ -329,13 +329,13 @@ async fn open_seed_envelope<'a, P: HsmPal>(
         Err(_) => {
             // Destroy the Pending slot before returning so the
             // tampered envelope is not retry-probeable.
-            let _ = pal.session_destroy(io, id);
+            let _ = pal.session_destroy(io, id).await;
             return Err(HsmError::SessionAuthFailure);
         }
     };
 
     if view.payload.len() != SEED_LEN {
-        let _ = pal.session_destroy(io, id);
+        let _ = pal.session_destroy(io, id).await;
         return Err(HsmError::SessionAuthFailure);
     }
     // Hand the caller the AEAD plaintext view directly: it borrows
@@ -502,7 +502,7 @@ fn encode_response<'p, P: HsmPal>(
 
 /// Materialise the api-rev tag in a scoped DmaBuf and call
 /// `session_promote` to flip the slot from Pending to Active.
-fn promote_to_active<P: HsmPal>(
+async fn promote_to_active<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &impl HsmScopedAlloc,
@@ -520,4 +520,5 @@ fn promote_to_active<P: HsmPal>(
         derived.mac_tx_key.as_deref().map(|b| &**b),
         derived.mac_rx_key.as_deref().map(|b| &**b),
     )
+    .await
 }

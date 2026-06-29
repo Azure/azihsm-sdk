@@ -15,7 +15,6 @@ use azihsm_fw_uno_reg_soc::io_gsram::ShaCmdEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::*;
 use azihsm_fw_uno_reg_soc::sha::regs::ShaRegs;
 use azihsm_fw_uno_reg_soc::sha::SHA_BASE;
-use azihsm_fw_uno_reg_soc::sha::STATUS_OFFSET;
 use bitfield_struct::bitfield;
 use embassy_sync::waitqueue::WakerRegistration;
 use tock_registers::interfaces::Readable;
@@ -30,20 +29,8 @@ const SHA: StaticRef<ShaRegs> = unsafe { StaticRef::new(SHA_BASE as *const ShaRe
 const SHA_Q: StaticRef<IoGsramRegs> =
     unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
-/// W1C status flag mask: COMPLETE, ERROR_*, DIGEST_MATCH.
+/// Status flag mask (read-side decode): COMPLETE, ERROR_*, DIGEST_MATCH.
 const STATUS_FLAGS_MASK: u32 = 0x5E;
-
-fn clear_status(flags: u32) {
-    // SAFETY: STATUS is a W1C MMIO register at SHA_BASE + STATUS_OFFSET.
-    // The mask guarantees we only attempt to clear documented flag bits,
-    // protecting against accidental writes to reserved bits or BUSY.
-    unsafe {
-        core::ptr::write_volatile(
-            (SHA_BASE + STATUS_OFFSET) as *mut u32,
-            flags & STATUS_FLAGS_MASK,
-        );
-    }
-}
 
 #[bitfield(u32)]
 struct ShaCmdCode {
@@ -414,7 +401,10 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
             return;
         }
 
-        clear_status(flags);
+        // STATUS (SHA_BASE + 0x4) is read-only (RO32): the COMPLETE/ERROR bits
+        // auto-clear when the next command doorbell sets BUSY. Writing it
+        // bus-faults the engine and hard-faults the CPU, so only clear the
+        // NVIC pending bit here.
         Nvic::unpend(Interrupt::SHA_DONE);
 
         self.state.with(|s| {
@@ -586,7 +576,8 @@ impl<const DEPTH: usize> ShaExclusive<'_, DEPTH> {
             let status = SHA.status.get();
             let flags = status & STATUS_FLAGS_MASK;
             if flags != 0 {
-                clear_status(flags);
+                // STATUS is read-only; do not write it (bus-faults). It
+                // auto-clears on the next command doorbell.
                 Nvic::unpend(Interrupt::SHA_DONE);
                 return Ok(flags as u8);
             }
