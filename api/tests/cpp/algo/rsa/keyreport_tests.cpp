@@ -21,7 +21,9 @@ class azihsm_rsa_keyattest : public ::testing::Test
 
 bool buffer_has_non_zero(const std::vector<uint8_t> &buffer, uint32_t len)
 {
-    for (uint32_t i = 0; i < len; ++i)
+    const size_t end = std::min(buffer.size(), static_cast<size_t>(len));
+
+    for (size_t i = 0; i < end; ++i)
     {
         if (buffer[i] != 0)
         {
@@ -32,16 +34,24 @@ bool buffer_has_non_zero(const std::vector<uint8_t> &buffer, uint32_t len)
     return false;
 }
 
-void generate_rsa_private_key_for_attest(
+azihsm_status generate_rsa_private_key_for_attest(
     azihsm_handle session,
     auto_key &priv_key,
     auto_key &pub_key
 )
 {
     auto err = generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(priv_key.get(), 0);
-    ASSERT_NE(pub_key.get(), 0);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return err;
+    }
+
+    if (priv_key.get() == 0 || pub_key.get() == 0)
+    {
+        return AZIHSM_STATUS_INVALID_HANDLE;
+    }
+
+    return AZIHSM_STATUS_SUCCESS;
 }
 
 // Verifies that RSA 2048 private key attestation succeeds and returns a populated report.
@@ -141,7 +151,10 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_max_report_data_size)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(128, 0x5A);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -169,7 +182,10 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_larger_than_max)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(129, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -179,7 +195,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_larger_than_max)
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -189,7 +205,10 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_empty_report_data)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_buffer report_data_buf{ nullptr, 0 };
         azihsm_buffer report_buf{ nullptr, 0 };
@@ -214,7 +233,10 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_small_report_buffer_and_sets_require
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -235,14 +257,17 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_buffer)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, nullptr);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -252,7 +277,10 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_output_pointer_with_nonz
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -261,7 +289,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_output_pointer_with_nonz
         azihsm_buffer report_buf{ nullptr, 512 };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -271,7 +299,10 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_data_pointer_with_nonzer
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_buffer report_data_buf{ nullptr, 64 };
 
@@ -279,7 +310,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_data_pointer_with_nonzer
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -289,7 +320,10 @@ TEST_F(azihsm_rsa_keyattest, attest_same_key_multiple_times_succeeds)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -323,13 +357,16 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_data_buffer)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report(512);
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), nullptr, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -348,7 +385,7 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle_size_query_fails)
         azihsm_buffer report_buf{ nullptr, 0 };
 
         auto attest_err = azihsm_generate_key_report(invalid_key, &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -358,7 +395,10 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_private_key_fails)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_handle deleted_key = priv_key.get();
 
@@ -374,7 +414,7 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_private_key_fails)
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(deleted_key, &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -384,7 +424,10 @@ TEST_F(azihsm_rsa_keyattest, attest_succeeds_with_exact_required_report_size)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x7B);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -414,7 +457,10 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<std::vector<uint8_t>> report_data_cases = {
             std::vector<uint8_t>(1, 0x00),
@@ -455,7 +501,10 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(127, 0x33);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -483,7 +532,10 @@ TEST_F(azihsm_rsa_keyattest, attest_public_key_size_query_fails)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -502,7 +554,10 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_public_key_fails)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_handle deleted_key = pub_key.get();
 
@@ -518,7 +573,7 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_public_key_fails)
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
         auto attest_err = azihsm_generate_key_report(deleted_key, &report_data_buf, &report_buf);
-        ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -528,7 +583,10 @@ TEST_F(azihsm_rsa_keyattest, attest_retry_after_small_buffer_succeeds)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -557,7 +615,10 @@ TEST_F(azihsm_rsa_keyattest, attest_size_query_returns_stable_required_size)
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
         auto_key pub_key;
-        generate_rsa_private_key_for_attest(session, priv_key, pub_key);
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         std::vector<uint8_t> report_data(64, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
