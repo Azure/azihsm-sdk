@@ -1023,7 +1023,7 @@ fn test_live_migration_concurrent_separate_sessions() {
 
     // Function to handle session management operations with separate device and session
     fn session_management_worker_with_own_session(
-        thread_session_info: ThreadSessionInfo,
+        thread_session_info: &ThreadSessionInfo,
         barrier: Arc<Barrier>,
     ) -> Result<(), String> {
         let thread_id = thread_session_info.thread_id;
@@ -1119,88 +1119,96 @@ fn test_live_migration_concurrent_separate_sessions() {
 
     let barrier = Arc::new(Barrier::new(1 + NUM_SESSION_THREADS)); // 1 migration thread + session threads
 
-    let barrier_clone = Arc::clone(&barrier);
-    let credential_lock_clone = Arc::clone(&credential_lock);
+    // Use scoped threads to allow workers to borrow `session_infos` safely. Since each `dev` is
+    // held by `session_infos` for the lifetime of the scope, it cannot be dropped while an NSSR is
+    // in flight. This prevents a race between device-close-triggered `FlushSession` and NSSR
+    // processing that could leak the firmware session.
+    let (migration_result, all_session_results) = thread::scope(|s| {
+        let barrier_clone = Arc::clone(&barrier);
+        let credential_lock_clone = Arc::clone(&credential_lock);
 
-    // Thread 1: Live migration loop
-    let migration_thread = thread::spawn(move || {
-        info!("Migration Thread: About to wait at barrier");
-        barrier_clone.wait(); // Wait for all threads to be ready
-        info!("Migration Thread: Passed barrier, starting migrations");
+        // Thread 1: Live migration loop
+        let migration_thread = s.spawn(move || {
+            info!("Migration Thread: About to wait at barrier");
+            barrier_clone.wait(); // Wait for all threads to be ready
+            info!("Migration Thread: Passed barrier, starting migrations");
 
-        for i in 1..=5 {
-            info!("Migration Thread: Starting live migration cycle {}", i);
+            for i in 1..=5 {
+                info!("Migration Thread: Starting live migration cycle {}", i);
 
-            {
-                let _write_lock = credential_lock_clone.write();
+                {
+                    let _write_lock = credential_lock_clone.write();
 
-                let result = migration_dev.erase();
-                if result.is_err() {
-                    eprintln!(
-                        "Migration Thread: Migration simulation failed on cycle {}: {:?}",
-                        i, result
+                    let result = migration_dev.erase();
+                    if result.is_err() {
+                        eprintln!(
+                            "Migration Thread: Migration simulation failed on cycle {}: {:?}",
+                            i, result
+                        );
+                        return Err(format!("Migration failed on cycle {}: {:?}", i, result));
+                    }
+
+                    // Re-establish credentials once for all threads
+                    info!(
+                        "Migration Thread: Re-establishing credentials after migration {}",
+                        i
                     );
-                    return Err(format!("Migration failed on cycle {}: {:?}", i, result));
+                    let _partition_bmk = helper_common_establish_credential_with_bmk(
+                        &mut migration_dev,
+                        TEST_CRED_ID,
+                        TEST_CRED_PIN,
+                        setup_res.masked_bk3,
+                        setup_res.partition_bmk,
+                        MborByteArray::from_slice(&[]).expect("Failed to create empty Mbor array"),
+                    );
+                    info!(
+                        "Migration Thread: Successfully re-established credentials after migration {}",
+                        i
+                    );
                 }
 
-                // Re-establish credentials once for all threads
-                info!(
-                    "Migration Thread: Re-establishing credentials after migration {}",
-                    i
-                );
-                let _partition_bmk = helper_common_establish_credential_with_bmk(
-                    &mut migration_dev,
-                    TEST_CRED_ID,
-                    TEST_CRED_PIN,
-                    setup_res.masked_bk3,
-                    setup_res.partition_bmk,
-                    MborByteArray::from_slice(&[]).expect("Failed to create empty Mbor array"),
-                );
-                info!(
-                    "Migration Thread: Successfully re-established credentials after migration {}",
-                    i
-                );
+                info!("Migration Thread: Completed live migration cycle {}", i);
+                thread::sleep(Duration::from_millis(500));
             }
+            Ok(())
+        });
 
-            info!("Migration Thread: Completed live migration cycle {}", i);
-            thread::sleep(Duration::from_millis(500));
-        }
-        Ok(())
-    });
+        // Create 5 session management threads, each with their own device and session
+        let mut session_threads = Vec::new();
+        for thread_session_info in &session_infos {
+            let barrier_clone = Arc::clone(&barrier);
 
-    // Create 5 session management threads, each with their own device and session
-    let mut session_threads = Vec::new();
-    for thread_session_info in session_infos {
-        let barrier_clone = Arc::clone(&barrier);
-
-        println!(
-            "Creating thread {} with session ID {}",
-            thread_session_info.thread_id, thread_session_info.session_id
-        );
-        let session_thread = thread::spawn(move || {
             println!(
-                "Thread {} started with session ID {}",
+                "Creating thread {} with session ID {}",
                 thread_session_info.thread_id, thread_session_info.session_id
             );
-            println!(
-                "Thread {} using owned device handle",
-                thread_session_info.thread_id
-            );
+            let session_thread = s.spawn(move || {
+                println!(
+                    "Thread {} started with session ID {}",
+                    thread_session_info.thread_id, thread_session_info.session_id
+                );
+                println!(
+                    "Thread {} using owned device handle",
+                    thread_session_info.thread_id
+                );
 
-            session_management_worker_with_own_session(thread_session_info, barrier_clone)
-        });
-        session_threads.push(session_thread);
-    }
+                session_management_worker_with_own_session(thread_session_info, barrier_clone)
+            });
+            session_threads.push(session_thread);
+        }
 
-    // Wait for migration thread to complete
-    let migration_result = migration_thread.join().unwrap();
+        // Wait for migration thread to complete
+        let migration_result = migration_thread.join().unwrap();
 
-    // Wait for all session threads to complete
-    let mut all_session_results = Vec::new();
-    for (i, session_thread) in session_threads.into_iter().enumerate() {
-        let result = session_thread.join().unwrap();
-        all_session_results.push((i + 2, result)); // Thread IDs start from 2
-    }
+        // Wait for all session threads to complete
+        let mut all_session_results = Vec::new();
+        for (i, session_thread) in session_threads.into_iter().enumerate() {
+            let result = session_thread.join().unwrap();
+            all_session_results.push((i + 2, result)); // Thread IDs start from 2
+        }
+
+        (migration_result, all_session_results)
+    });
 
     // Check results
     assert!(
