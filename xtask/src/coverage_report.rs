@@ -68,10 +68,11 @@ impl Xtask for CoverageReport {
         }
 
         // collect all object paths to append to LLVM_COV_FLAGS
-        let mut all_obj_paths: Vec<path::PathBuf> = self.additional_obj_paths
-             .iter()
-             .map(path::PathBuf::from)
-             .collect();
+        let mut all_obj_paths: Vec<path::PathBuf> = self
+            .additional_obj_paths
+            .iter()
+            .map(path::PathBuf::from)
+            .collect();
         if let Some(native_obj_path) = native_obj_path {
             all_obj_paths.push(native_obj_path);
         }
