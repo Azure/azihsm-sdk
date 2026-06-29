@@ -523,9 +523,9 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_tampered_hmac_data)
                 .len = static_cast<uint32_t>(data.size()),
             };
 
-            ASSERT_NE(
+            ASSERT_EQ(
                 azihsm_crypt_verify(&algo, hmac_key.get(), &tampered_data_buf, &sig_buf),
-                AZIHSM_STATUS_SUCCESS
+                AZIHSM_STATUS_INVALID_SIGNATURE
             );
         });
     }
@@ -592,9 +592,9 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_signature_from_different_hmac_key
                 AZIHSM_STATUS_SUCCESS
             );
 
-            ASSERT_NE(
+            ASSERT_EQ(
                 azihsm_crypt_verify(&algo, verifying_hmac_key.get(), &data_buf, &sig_buf),
-                AZIHSM_STATUS_SUCCESS
+                AZIHSM_STATUS_INVALID_SIGNATURE
             );
         });
     }
@@ -725,9 +725,9 @@ TEST_F(azihsm_hmac_sign_verify, verify_rejects_truncated_hmac_signature)
             ASSERT_GT(sig_buf.len, 1);
             sig_buf.len -= 1;
 
-            ASSERT_NE(
+            ASSERT_EQ(
                 azihsm_crypt_verify(&algo, hmac_key.get(), &data_buf, &sig_buf),
-                AZIHSM_STATUS_SUCCESS
+                AZIHSM_STATUS_INVALID_SIGNATURE
             );
         });
     }
@@ -821,14 +821,14 @@ TEST_F(azihsm_hmac_sign_verify, verify_fails_for_wrong_tag_length_all_algorithms
                 .len = static_cast<uint32_t>(extended.size()),
             };
 
-            ASSERT_NE(
+            ASSERT_EQ(
                 azihsm_crypt_verify(&algo, hmac_key.get(), &data_buf, &truncated_buf),
-                AZIHSM_STATUS_SUCCESS
+                AZIHSM_STATUS_INVALID_SIGNATURE
             );
 
-            ASSERT_NE(
+            ASSERT_EQ(
                 azihsm_crypt_verify(&algo, hmac_key.get(), &data_buf, &extended_buf),
-                AZIHSM_STATUS_SUCCESS
+                AZIHSM_STATUS_INVALID_SIGNATURE
             );
         });
     }
