@@ -76,7 +76,7 @@ impl Xtask for Coverage {
         }
         let filterset_val = self.filterset.clone().unwrap_or_default();
         if self.filterset.is_some() {
-            command_args.push("--filterset");
+            command_args.push("-E");
             command_args.push(&filterset_val);
         }
         let profile_val = self.profile.clone().unwrap_or_default();
