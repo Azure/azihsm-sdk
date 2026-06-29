@@ -27,7 +27,7 @@
 //! ## Partition lifecycle
 //!
 //! ```text
-//! Disabled ──► part_alloc ──► Uninitialized ──► (future: Initialized)
+//! Disabled ──► part_alloc ──► Uninitialized ──► Initialized
 //!    ▲                              │
 //!    └────────── part_free ─────────┘
 //! ```
@@ -258,6 +258,14 @@ pub(crate) struct PartitionEntry {
     /// `part_disable`.
     ups_key_id: Option<HsmKeyId>,
 
+    /// Vault key ID of the partition-local key masking key
+    /// (`PartLocalMK`), bound by `PartFinal`.
+    local_mk_key_id: Option<HsmKeyId>,
+
+    /// Vault key ID of the partition ephemeral key masking key
+    /// (`EphemeralMK`), bound by `PartFinal`.
+    ephemeral_mk_key_id: Option<HsmKeyId>,
+
     /// SEC1 uncompressed P-384 public key for the Partition Trust Anchor.
     pta_pub_key: Option<[u8; P384_PUB_KEY_LEN]>,
 
@@ -310,6 +318,8 @@ impl Default for PartitionEntry {
             psk_cu: None,
             pta_key_id: None,
             ups_key_id: None,
+            local_mk_key_id: None,
+            ephemeral_mk_key_id: None,
             pta_pub_key: None,
             policy_hash: None,
             pota_thumbprint: None,
@@ -534,7 +544,10 @@ impl StdHsmPal {
     /// leak across the allocate/enable boundary.
     fn serving_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
         self.part_if(pid, |s| {
-            matches!(s, PartState::Enabled | PartState::Initializing)
+            matches!(
+                s,
+                PartState::Enabled | PartState::Initializing | PartState::Initialized
+            )
         })
     }
 
@@ -542,7 +555,10 @@ impl StdHsmPal {
     #[allow(clippy::mut_from_ref)]
     fn serving_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
         self.part_if_mut(pid, |s| {
-            matches!(s, PartState::Enabled | PartState::Initializing)
+            matches!(
+                s,
+                PartState::Enabled | PartState::Initializing | PartState::Initialized
+            )
         })
     }
 }
@@ -800,7 +816,7 @@ impl StdHsmPal {
         }
         if !matches!(
             table.entries[idx].state,
-            PartState::Enabled | PartState::Initializing
+            PartState::Enabled | PartState::Initializing | PartState::Initialized
         ) {
             return Err(HsmError::InvalidArg);
         }
@@ -831,7 +847,10 @@ impl StdHsmPal {
         entry.gen = entry.gen.wrapping_add(1);
 
         // If enabled, clear internal keys/nonce/vault/sessions first.
-        if matches!(entry.state, PartState::Enabled | PartState::Initializing) {
+        if matches!(
+            entry.state,
+            PartState::Enabled | PartState::Initializing | PartState::Initialized
+        ) {
             Self::clear_enabled_state(entry);
         }
 
@@ -949,6 +968,8 @@ impl StdHsmPal {
         drop_key(&mut entry.vault, &mut entry.unwrapping_key_id);
         drop_key(&mut entry.vault, &mut entry.pta_key_id);
         drop_key(&mut entry.vault, &mut entry.ups_key_id);
+        drop_key(&mut entry.vault, &mut entry.local_mk_key_id);
+        drop_key(&mut entry.vault, &mut entry.ephemeral_mk_key_id);
         entry.id_key_id = None;
 
         // Public-key mirrors and other non-secret fixed buffers.
@@ -1086,11 +1107,12 @@ impl PartitionEntry {
     /// The internal device-command lifecycle (`part_alloc_internal`,
     /// `part_enable_internal`, `part_disable_internal`,
     /// `part_free_internal`) drives all other transitions; the prop
-    /// API only exposes the single caller-facing one:
-    /// `Enabled → Initializing`, which additionally requires the four
-    /// write-once provisioning fields (PTA key, UMS key, policy,
-    /// POTA thumbprint) to be present.  Any other source/target pair
-    /// is rejected with [`HsmError::InvalidArg`].
+    /// API exposes the two caller-facing ones: `Enabled → Initializing`
+    /// (`PartInit`, which additionally requires the four write-once
+    /// provisioning fields — PTA key, UMS key, policy, POTA thumbprint —
+    /// to be present) and `Initializing → Initialized` (`PartFinal`).
+    /// Any other source/target pair is rejected with
+    /// [`HsmError::InvalidArg`].
     fn transition_state_via_prop(&mut self, target: PartState) -> HsmResult<()> {
         match (self.state, target) {
             (PartState::Enabled, PartState::Initializing) => {
@@ -1102,6 +1124,12 @@ impl PartitionEntry {
                     return Err(HsmError::InvalidArg);
                 }
                 self.state = PartState::Initializing;
+                Ok(())
+            }
+            // `PartFinal` finalizes the partition: the one caller-facing
+            // transition out of `Initializing`.
+            (PartState::Initializing, PartState::Initialized) => {
+                self.state = PartState::Initialized;
                 Ok(())
             }
             // No-op writes (same state) are accepted as a convenience.
@@ -1128,6 +1156,8 @@ impl PartitionEntry {
             PartPropId::RSA_UNWRAPPING_KEY_ID => key_id_to_u32(self.unwrapping_key_id),
             PartPropId::SESSION_ENC_KEY_ID => key_id_to_u32(self.session_enc_key_id),
             PartPropId::ESTABLISH_CRED_KEY_ID => key_id_to_u32(self.establish_cred_key_id),
+            PartPropId::LOCAL_MK_KEY_ID => key_id_to_u32(self.local_mk_key_id),
+            PartPropId::EPHEMERAL_MK_KEY_ID => key_id_to_u32(self.ephemeral_mk_key_id),
             _ => Err(HsmError::InvalidArg),
         }
     }
@@ -1160,6 +1190,14 @@ impl PartitionEntry {
             }
             PartPropId::SESSION_ENC_KEY_ID => {
                 self.session_enc_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::LOCAL_MK_KEY_ID => {
+                self.local_mk_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::EPHEMERAL_MK_KEY_ID => {
+                self.ephemeral_mk_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
             PartPropId::ESTABLISH_CRED_KEY_ID => {
@@ -1409,6 +1447,14 @@ impl PartitionEntry {
             }
             PartPropId::SESSION_ENC_KEY_ID => {
                 self.session_enc_key_id = None;
+                Ok(())
+            }
+            PartPropId::LOCAL_MK_KEY_ID => {
+                self.local_mk_key_id = None;
+                Ok(())
+            }
+            PartPropId::EPHEMERAL_MK_KEY_ID => {
+                self.ephemeral_mk_key_id = None;
                 Ok(())
             }
             PartPropId::ESTABLISH_CRED_KEY_ID => {

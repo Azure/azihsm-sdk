@@ -59,7 +59,7 @@ pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
 /// `fw/core/ddi/tbor/types/src/policy.rs`: POTA + SATA trust anchors are
 /// populated Ecc384 keys; SAPOTA + backing-partition keys are left
 /// absent (zero `len`); flags are clear; `info` is filled.
-pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
+pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
     const OFF_SATA: usize = 102;
     const OFF_FLAGS: usize = 418;

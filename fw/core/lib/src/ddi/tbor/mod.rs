@@ -21,6 +21,7 @@
 //! per-IO allocator scope).
 
 pub(crate) mod api_rev;
+pub(crate) mod part_final;
 pub mod part_info;
 pub mod part_init;
 pub mod policy;
@@ -78,6 +79,11 @@ pub(crate) mod opcode {
 
     /// `PartInit` — bind PTA, policy, and POTA thumbprint.
     pub(crate) const PART_INIT: u8 = 0x07;
+
+    /// `PartFinal` — finalize the partition (FinalizePart + ConfigPartSD):
+    /// derive partition local masking keys and generate or restore the
+    /// `local_mk` backup.  See [`super::part_final`].
+    pub(crate) const PART_FINAL: u8 = 0x08;
 
     /// `PartInfo` — out-of-session info command reporting device kind /
     /// FIPS status plus the bound partition's lifecycle and identity
@@ -164,6 +170,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
         opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf).await,
         opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
+        opcode::PART_FINAL => part_final::handle(pal, io, req_buf).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         _ => Err(HsmError::UnsupportedCmd),
     }
@@ -182,6 +189,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::SESSION_CLOSE
             | opcode::PSK_CHANGE
             | opcode::PART_INIT
+            | opcode::PART_FINAL
             | opcode::PART_INFO
     )
 }
@@ -205,7 +213,7 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SESSION_OPEN_INIT
         | opcode::SESSION_OPEN_FINISH
         | opcode::PART_INFO => false,
-        opcode::SESSION_CLOSE | opcode::PSK_CHANGE | opcode::PART_INIT => true,
+        opcode::SESSION_CLOSE | opcode::PSK_CHANGE | opcode::PART_INIT | opcode::PART_FINAL => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -238,7 +246,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         opcode::SESSION_OPEN_FINISH
         | opcode::SESSION_CLOSE
         | opcode::PSK_CHANGE
-        | opcode::PART_INIT => true,
+        | opcode::PART_INIT
+        | opcode::PART_FINAL => true,
         _ => true,
     }
 }

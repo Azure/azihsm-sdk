@@ -95,7 +95,12 @@ impl<P: HsmPal> Hsm<P> {
     #[inline]
     fn partition_enabled(&self, io: &P::Io) -> bool {
         crate::part_state::part_state(self.pal(), io)
-            .map(|s| matches!(s, PartState::Enabled | PartState::Initializing))
+            .map(|s| {
+                matches!(
+                    s,
+                    PartState::Enabled | PartState::Initializing | PartState::Initialized
+                )
+            })
             .unwrap_or(false)
     }
 

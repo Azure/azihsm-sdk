@@ -5,19 +5,38 @@ Licensed under the MIT License.
 
 # PartFinal (Opcode 0x08)
 
-**Handler:** _Not yet landed — wire schema only._
+**Handler:** Implemented (`fw/core/lib/src/ddi/tbor/part_final.rs`) —
+manticore `FinalizePart`. Cert-chain walking and the SD-local key
+material of `ConfigPartSD` are **not yet implemented** (`cert_descriptors`
+is ignored).
 **Session:** InSession (Crypto Officer)
 
 ## Description
 
-Finalizes a partition after [`PartInit`](./part_init.md) by installing
-the POTA-endorsed PTA certificate chain and deriving the partition's
-local masking keys.  The caller re-supplies the unified `PartPolicy`
-(so the handler can recover `POTAPubKey` for cert-chain validation),
-the PTA cert-chain descriptor list (pointing into the **side-band**
-data buffer), and an optional prior `local_mk` backup to restore.  It
+Finalizes a partition after [`PartInit`](./part_init.md): derives the
+partition-local masking keys and returns the current `local_mk` backup.
+The caller re-supplies the unified `PartPolicy`, the PTA cert-chain
+descriptor list (pointing into the **side-band** data buffer; currently
+ignored), and an optional prior `local_mk` backup to restore.  It
 returns the current `local_mk` backup envelope, which the host persists
 and replays as `prev_local_mk_backup` on subsequent launches.
+
+## Handler steps
+
+1. **Gate:** CO-only; partition must be in `Initializing`; reject otherwise.
+2. **Integrity:** verify `SHA-384(part_policy) == ` the stored
+   `policy_hash` (bound at `PartInit`); validate the typed policy.
+3. **UPS:** read the partition root (UMS) from the `ups_key_id` slot and
+   derive `UPS = KBKDF(UMS, "AZIHSM-PartFinal-UPS-v1")` (cert-chain hash
+   deferred → empty context).
+4. **PartLocalMK:** derive `PartLocalBMK` (svn/owner-bound); generate a
+   fresh 32 B `PartLocalMK` (no prior backup) or restore it by unmasking
+   `prev_local_mk_backup` and re-mask under the current SVN.
+5. **EphemeralMK:** sample a fresh 32 B random masking key.
+6. **Commit:** vault `PartLocalMK` (Local scope) + `EphemeralMK`
+   (Ephemeral scope) recording their ids; replace UMS → UPS in the root
+   slot (free the old UMS key); transition `Initializing → Initialized`.
+7. **Respond:** return the 164 B `local_mk_backup`.
 
 ## Request
 
@@ -53,7 +72,7 @@ section.
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `local_mk_backup` | `buffer` (offset/len) | Current `local_mk` backup envelope (`CurrPartLocalKMKBackup`). Always exactly 164 B. |
+| 8 | `local_mk_backup` | `buffer` (offset/len) | Current `local_mk` backup envelope (`CurrPartLocalMKBackup`). Always exactly 164 B. |
 
 ### Data section
 
