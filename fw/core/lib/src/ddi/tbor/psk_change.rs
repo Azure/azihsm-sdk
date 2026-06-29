@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `ChangePsk` handler.
+//! TBOR `PskChange` handler.
 //!
 //! Changes the active session's own partition PSK to a new value
 //! delivered encrypted in an AEAD-GCM envelope under the session's
@@ -18,15 +18,14 @@
 //!
 //! Intra-session replay is bounded to **one successful change per
 //! session**: the handler marks the session as "change used" on
-//! success; a second `ChangePsk` on the same session is rejected
+//! success; a second `PskChange` on the same session is rejected
 //! with `InvalidPermissions`.
 
 use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
 use azihsm_fw_ddi_tbor_types::build_psk_change_aad;
-use azihsm_fw_ddi_tbor_types::TborChangePskReq;
-use azihsm_fw_ddi_tbor_types::TborChangePskResp;
+use azihsm_fw_ddi_tbor_types::TborPskChangeReq;
+use azihsm_fw_ddi_tbor_types::TborPskChangeResp;
 use azihsm_fw_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
-use azihsm_fw_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -41,7 +40,7 @@ const PSK_ID_CO: u8 = 0;
 /// PSK slot id written when the active session is a Crypto User.
 const PSK_ID_CU: u8 = 1;
 
-/// Handle a TBOR `ChangePsk` request.
+/// Handle a TBOR `PskChange` request.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -51,20 +50,23 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // destructured view: scalar `session_id` by value, plus
     // `psk_envelope` as `&mut DmaBuf` so `aead_open` can decrypt the
     // envelope in place — no scratch copy.
-    let req = TborChangePskReq::decode_mut(req_buf)?;
+    let req = TborPskChangeReq::decode_mut(req_buf)?;
     let sess_id = HsmSessId::from(u16::from(req.session_id));
 
     // Target slot is implicit in the session role; no cross-role
     // rotation is permitted.
     let target_psk_id = target_psk_for_role(sess_id.role());
 
-    if req.psk_envelope.is_empty() || req.psk_envelope.len() > PSK_CHANGE_ENVELOPE_MAX_LEN {
-        return Err(HsmError::InvalidArg);
-    }
+    // The `psk_envelope` length is pinned by the schema
+    // (`PSK_CHANGE_ENVELOPE_LEN` = 100 B); a malformed length was
+    // already rejected at decode with `TborInvalidFixedLength`. The
+    // AEAD-open below plus the AAD/payload-length checks remain the
+    // load-bearing validation for a correctly-sized but crafted
+    // envelope.
 
     // Reserve the session's one-shot PSK-change budget **before** any
     // crypto work, so replayed-after-success envelopes are rejected
-    // cheaply.  A successful return here means no further `ChangePsk`
+    // cheaply.  A successful return here means no further `PskChange`
     // can succeed on this session; if the subsequent crypto/persist
     // steps fail, the session is "burned" — the caller must
     // renegotiate to retry.  Cross-session replay is already
@@ -123,11 +125,11 @@ fn target_psk_for_role(role: SessionRole) -> u8 {
     }
 }
 
-/// Encode the `ChangePsk` empty acknowledgement into a fresh
+/// Encode the `PskChange` empty acknowledgement into a fresh
 /// IO-scoped DmaBuf.
 fn encode_response<'p, P: HsmPal>(pal: &'p P, io: &impl HsmIo) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
-        let frame = TborChangePskResp::encode(buf, 0, false)?.finish();
+        let frame = TborPskChangeResp::encode(buf, 0, false)?.finish();
         Ok(frame.as_bytes().len())
     })?;
     Ok(resp)

@@ -37,6 +37,7 @@
 //! | Attr | Meaning |
 //! |---|---|
 //! | `#[tbor(session_id)]` | field is a `u16` carried as `SessionId` on the wire |
+//! | `#[tbor(key_id)]` | field is a `u16` carried as `KeyId` on the wire |
 //! | `#[tbor(min_len = N)]` | accepted for parity with FW; not host-side enforced — the FW codec validates |
 //! | `#[tbor(max_len = N)]` | accepted for parity with FW; not host-side enforced — the FW encoder validates |
 //!
@@ -46,6 +47,7 @@
 //! |---|---|
 //! | `u8`/`u16`/`u32`/`u64` | inline primitive |
 //! | `u16` + `#[tbor(session_id)]` | typed inline as `SessionId` |
+//! | `u16` + `#[tbor(key_id)]` | typed inline as `KeyId` |
 //! | `[u8; N]` | fixed-length buffer |
 //! | `Vec<u8>` | variable buffer |
 //! | `Option<Vec<u8>>` | optional variable buffer |
@@ -216,15 +218,20 @@ fn gen_request(
 fn gen_response(item: &ItemStruct, fields: &[ParsedField]) -> TokenStream2 {
     let name = &item.ident;
 
+    // Compute the TOC layout. Typed-slice elements are `Unaligned`, so no
+    // alignment padding entry precedes them — every field maps to a single
+    // sequential TOC slot, matching the firmware derive's layout.
+    let mut toc_idx = 0usize;
+    let mut decode_steps_vec: Vec<TokenStream2> = Vec::with_capacity(fields.len());
+    for f in fields {
+        decode_steps_vec.push(gen_decode_step(toc_idx, f));
+        toc_idx += 1;
+    }
+    let decode_steps: TokenStream2 = decode_steps_vec.into_iter().collect();
+
     // Empty bodies still carry one synthetic `None` TOC entry (see
     // `gen_request` encode chain), so toc_count is always `>= 1`.
-    let expected_toc = fields.len().max(1);
-
-    let decode_steps: TokenStream2 = fields
-        .iter()
-        .enumerate()
-        .map(|(i, f)| gen_decode_step(i, f))
-        .collect();
+    let expected_toc = toc_idx.max(1);
 
     let construct = if fields.is_empty() {
         quote! { Self }
@@ -277,11 +284,37 @@ fn gen_encode_step(f: &ParsedField) -> TokenStream2 {
         FieldShape::U64 => quote! {
             let __enc = __enc.uint64(self.#name)?;
         },
+        FieldShape::LeU16 => quote! {
+            let __enc = __enc.uint16(self.#name.get())?;
+        },
+        FieldShape::LeU32 => quote! {
+            let __enc = __enc.uint32(self.#name.get())?;
+        },
+        FieldShape::LeU64 => quote! {
+            let __enc = __enc.uint64(self.#name.get())?;
+        },
         FieldShape::SessionId => quote! {
             let __enc = __enc.session_id(self.#name)?;
         },
+        FieldShape::KeyId => quote! {
+            let __enc = __enc.key_id(self.#name)?;
+        },
         FieldShape::FixedBuf | FieldShape::VarBuf => quote! {
             let __enc = __enc.buffer(&self.#name)?;
+        },
+        FieldShape::TypedVarBuf(_) => quote! {
+            // `CertDescriptor`-style typed slice elements are `Unaligned`
+            // (alignment 1), so the data needs no alignment padding — the
+            // packed little-endian element bytes encode 1:1 with the
+            // firmware derive's zero-copy layout.
+            let __enc = __enc.buffer(
+                ::zerocopy::IntoBytes::as_bytes(&self.#name[..]),
+            )?;
+        },
+        FieldShape::TypedFixed(_) => quote! {
+            let __enc = __enc.buffer(
+                ::zerocopy::IntoBytes::as_bytes(&self.#name),
+            )?;
         },
         FieldShape::OptVarBuf => quote! {
             let __enc = match self.#name.as_deref() {
@@ -317,10 +350,23 @@ fn gen_decode_step(idx: usize, f: &ParsedField) -> TokenStream2 {
 
     let body = match &f.shape {
         FieldShape::SessionId => primitive(format_ident!("SessionId")),
+        FieldShape::KeyId => primitive(format_ident!("KeyId")),
         FieldShape::U8 => primitive(format_ident!("Uint8")),
         FieldShape::U16 => primitive(format_ident!("Uint16")),
         FieldShape::U32 => primitive(format_ident!("Uint32")),
         FieldShape::U64 => primitive(format_ident!("Uint64")),
+        FieldShape::LeU16 => {
+            let inner = primitive(format_ident!("Uint16"));
+            quote! { <#ty>::new(#inner) }
+        }
+        FieldShape::LeU32 => {
+            let inner = primitive(format_ident!("Uint32"));
+            quote! { <#ty>::new(#inner) }
+        }
+        FieldShape::LeU64 => {
+            let inner = primitive(format_ident!("Uint64"));
+            quote! { <#ty>::new(#inner) }
+        }
         FieldShape::FixedBuf => quote! {
             match __raw.toc_entry(#idx) {
                 ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => {
@@ -336,6 +382,45 @@ fn gen_decode_step(idx: usize, f: &ParsedField) -> TokenStream2 {
                 #unexpected
             }
         },
+        FieldShape::TypedVarBuf(elem) => {
+            let elem = &**elem;
+            quote! {
+                match __raw.toc_entry(#idx) {
+                    ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => {
+                        let __sz = ::core::mem::size_of::<#elem>();
+                        if __sz == 0 || __b.len() % __sz != 0 {
+                            return ::core::result::Result::Err(
+                                ::azihsm_ddi_tbor_codec::DecodeError::InvalidFixedLength,
+                            );
+                        }
+                        let mut __v = ::alloc::vec::Vec::with_capacity(__b.len() / __sz);
+                        for __c in __b.chunks_exact(__sz) {
+                            __v.push(
+                                <#elem as ::zerocopy::FromBytes>::read_from_bytes(__c)
+                                    .map_err(|_| ::azihsm_ddi_tbor_codec::DecodeError::InvalidFixedLength)?,
+                            );
+                        }
+                        __v
+                    }
+                    #unexpected
+                }
+            }
+        }
+        FieldShape::TypedFixed(ty) => {
+            let ty = &**ty;
+            quote! {
+                match __raw.toc_entry(#idx) {
+                    ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) => {
+                        // Copy into an owned value via `try_read_from_bytes`
+                        // (no alignment requirement), since TBOR buffer
+                        // payloads can start at arbitrary offsets.
+                        <#ty as ::zerocopy::TryFromBytes>::try_read_from_bytes(__b)
+                            .map_err(|_| ::azihsm_ddi_tbor_codec::DecodeError::InvalidFixedLength)?
+                    }
+                    #unexpected
+                }
+            }
+        }
         FieldShape::OptVarBuf => quote! {
             match __raw.toc_entry(#idx) {
                 ::azihsm_ddi_tbor_codec::TocEntry::Buffer(__b) =>

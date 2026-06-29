@@ -10,7 +10,7 @@
 //! canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
-//! * [`happy_path`] — the full `OpenSession → ChangePsk → PartInit`
+//! * [`happy_path`] — the full `OpenSession → PskChange → PartInit`
 //!   flow, plus the cold-restart determinism test.
 //! * [`fw_rejects`] — dispatcher/handler gates that reject **before**
 //!   any partition-state mutation (default PSK, role, malformed
@@ -32,14 +32,16 @@ use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
+use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
-use crate::harness::OpenSessionInitOptions;
 use crate::harness::SessionHandshake;
+use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
 mod crypto_rejects;
 mod fw_rejects;
 mod happy_path;
+mod sd_config;
 
 pub(crate) const CO: u8 = 0;
 
@@ -51,27 +53,34 @@ pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
-/// Build a 167-byte `PartPolicy` blob that passes
+/// Build a 484-byte unified `PartPolicy` blob that passes
 /// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`.  Layout mirrors
 /// the canonical wire format defined in
-/// `fw/core/ddi/tbor/types/src/policy.rs`.
-pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
-    const OFF_VERSION_MAJOR: usize = 0;
-    const OFF_VERSION_MINOR: usize = 1;
-    const OFF_KIND: usize = 2;
-    const OFF_LEN: usize = 4;
-    const OFF_DATA: usize = 6;
-    const OFF_INFO: usize = 103;
+/// `fw/core/ddi/tbor/types/src/policy.rs`: POTA + SATA trust anchors are
+/// populated Ecc384 keys; SAPOTA + backing-partition keys are left
+/// absent (zero `len`); flags are clear; `info` is filled.
+pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
+    const OFF_POTA: usize = 2;
+    const OFF_SATA: usize = 102;
+    const OFF_FLAGS: usize = 418;
+    const OFF_INFO: usize = 419;
+
+    // Write an Ecc384 (kind 0) raw X‖Y pubkey at `off` (no SEC1 prefix).
+    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
+        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
+        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
+        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
+            *b = (fill.wrapping_add(i as u8)) | 0x80;
+        }
+    }
 
     let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[OFF_VERSION_MAJOR] = 1;
-    bytes[OFF_VERSION_MINOR] = 0;
-    bytes[OFF_KIND..OFF_KIND + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-    bytes[OFF_LEN..OFF_LEN + 2].copy_from_slice(&97u16.to_le_bytes());
-    bytes[OFF_DATA] = 0x04;
-    for (i, b) in bytes[OFF_DATA + 1..OFF_DATA + 97].iter_mut().enumerate() {
-        *b = (0x10 + (i as u8)) | 0x80;
-    }
+    bytes[0] = 1; // version major
+    bytes[1] = 0; // version minor
+    write_pubkey(&mut bytes, OFF_POTA, 0x10);
+    write_pubkey(&mut bytes, OFF_SATA, 0x20);
+    // SAPOTA + backup-part pubkeys left absent (len 0).
+    bytes[OFF_FLAGS] = 0;
     for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
         *b = 0xAB;
     }
@@ -94,11 +103,19 @@ pub(crate) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     v
 }
 
+pub(super) fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
+    let mut v = [0u8; SATA_THUMBPRINT_LEN];
+    for (i, b) in v.iter_mut().enumerate() {
+        *b = 0x40 ^ i as u8;
+    }
+    v
+}
+
 /// Seal an AEAD-GCM envelope under `param_key` with a caller-controlled
 /// AAD and plaintext. Used by `crypto_rejects` to build envelopes the
 /// canonical `encrypt_mach_seed_envelope` helper can't produce (wrong
 /// AAD length, wrong plaintext length, mismatched session id, etc.).
-/// Mirrors the `build_envelope` helper in `commands/change_psk.rs`.
+/// Mirrors the `build_envelope` helper in `commands/psk_change.rs`.
 pub(super) fn build_envelope(
     param_key: &azihsm_crypto::AesKey,
     aad: &[u8],
@@ -128,12 +145,12 @@ pub(super) fn build_envelope(
 /// Open a CO session under the supplied PSK (bypassing the partition
 /// default).
 pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandshake {
-    let opts = OpenSessionInitOptions::new(CO, SessionType::Authenticated).with_psk(psk);
+    let opts = SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(psk);
     let pending = ctx
-        .open_session_init_with_options(opts)
-        .expect("open_session_init under PSK");
-    ctx.open_session_finish(pending)
-        .expect("open_session_finish under PSK")
+        .session_open_init_with_options(opts)
+        .expect("session_open_init under PSK");
+    ctx.session_open_finish(pending)
+        .expect("session_open_finish under PSK")
 }
 
 /// Bootstrap: open CO under the default PSK, rotate to `target_psk`,
@@ -142,7 +159,7 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
 /// test.
 pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
-    ctx.change_psk(bootstrap.handshake(), target_psk)
+    ctx.psk_change(bootstrap.handshake(), target_psk)
         .expect("rotate CO PSK");
     bootstrap.close().expect("close bootstrap CO session");
     open_co_with(ctx, target_psk)

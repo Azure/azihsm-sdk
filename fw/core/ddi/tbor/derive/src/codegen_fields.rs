@@ -28,6 +28,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
     let n_fields = schema.fields.len();
     let local_toc_count = layout.total_toc_count;
     let worst_data = schema.worst_case_data_size();
+    let align_assertions = schema.align_assertions();
 
     // TOC_COUNT expression includes nested group contributions.
     let group_toc_addends: Vec<_> = schema
@@ -139,8 +140,8 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
 
                 if f.optional {
                     methods.push(quote! {
-                        pub fn #field_name<F>(mut self, f: Option<F>) -> Result<#enc_name<'a, #target_state>, azihsm_fw_ddi_tbor::EncodeError>
-                        where F: FnOnce(#inner_enc_name<'a, #inner_s0>) -> Result<#inner_enc_name<'a, #inner_done>, azihsm_fw_ddi_tbor::EncodeError>
+                        pub fn #field_name<F>(mut self, f: Option<F>) -> Result<#enc_name<'a, #target_state>, azihsm_fw_hsm_pal_traits::HsmError>
+                        where F: FnOnce(#inner_enc_name<'a, #inner_s0>) -> Result<#inner_enc_name<'a, #inner_done>, azihsm_fw_hsm_pal_traits::HsmError>
                         {
                             let toc_offset: usize = #inner_toc_offset;
                             #skip_nones
@@ -166,8 +167,8 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                     });
                 } else {
                     methods.push(quote! {
-                        pub fn #field_name<F>(mut self, f: F) -> Result<#enc_name<'a, #target_state>, azihsm_fw_ddi_tbor::EncodeError>
-                        where F: FnOnce(#inner_enc_name<'a, #inner_s0>) -> Result<#inner_enc_name<'a, #inner_done>, azihsm_fw_ddi_tbor::EncodeError>
+                        pub fn #field_name<F>(mut self, f: F) -> Result<#enc_name<'a, #target_state>, azihsm_fw_hsm_pal_traits::HsmError>
+                        where F: FnOnce(#inner_enc_name<'a, #inner_s0>) -> Result<#inner_enc_name<'a, #inner_done>, azihsm_fw_hsm_pal_traits::HsmError>
                         {
                             let toc_offset: usize = #inner_toc_offset;
                             #skip_nones
@@ -184,7 +185,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
             }
 
             let has_padding = padding_field_indices.contains(&j);
-            let align = f.align;
+            let align = f.align_expr().unwrap_or_else(|| quote! { 1 });
             let pad_toc_idx: TokenStream = if has_padding {
                 let local_pad = layout
                     .padding_positions
@@ -214,9 +215,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                     let pad_len = (#align - (self.data_offset % #align)) % #align;
                     let pad_end = data_start + self.data_offset + pad_len;
                     if pad_end > self.buf.len() {
-                        return Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall {
-                            needed: pad_end, available: self.buf.len(),
-                        });
+                        return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
                     }
                     for j in 0..pad_len { self.buf[data_start + self.data_offset + j] = 0; }
                     let pad_word = azihsm_fw_ddi_tbor::toc::build_toc_offset_len(9, pad_len, self.data_offset);
@@ -227,29 +226,59 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                 quote! {}
             };
 
-            let param_type = match f.wire_type {
-                WireType::Uint8 => quote! { u8 },
-                WireType::Uint16 => quote! { u16 },
-                WireType::SessionId => quote! { azihsm_fw_ddi_tbor_api::SessionId },
-                WireType::KeyId => quote! { azihsm_fw_ddi_tbor_api::KeyId },
-                WireType::Uint32 => quote! { u32 },
-                WireType::Uint64 => quote! { u64 },
-                WireType::Buffer | WireType::SealedKey => {
-                    if let Some(n) = f.fixed_len {
-                        quote! { &[u8; #n] }
-                    } else {
-                        quote! { &[u8] }
+            let param_type = if let Some(ty) = &f.scalar_newtype {
+                quote! { #ty }
+            } else if let Some(ty) = &f.le_scalar {
+                quote! { #ty }
+            } else {
+                match f.wire_type {
+                    WireType::Uint8 => quote! { u8 },
+                    WireType::Uint16 => quote! { u16 },
+                    WireType::SessionId => quote! { azihsm_fw_ddi_tbor_api::SessionId },
+                    WireType::KeyId => quote! { azihsm_fw_ddi_tbor_api::KeyId },
+                    WireType::Uint32 => quote! { u32 },
+                    WireType::Uint64 => quote! { u64 },
+                    WireType::Buffer | WireType::SealedKey => {
+                        if let Some(ty) = &f.single_pod {
+                            quote! { &#ty }
+                        } else if let Some(n) = f.fixed_len {
+                            quote! { &[u8; #n] }
+                        } else if let Some(elem) = &f.elem_type {
+                            quote! { &[#elem] }
+                        } else {
+                            quote! { &[u8] }
+                        }
                     }
                 }
             };
 
-            let val_bind = match f.wire_type {
-                WireType::SessionId => quote! { let v = v.0; },
-                WireType::KeyId => quote! { let v = v.0; },
-                WireType::Buffer | WireType::SealedKey if f.fixed_len.is_some() => {
-                    quote! { let v: &[u8] = v.as_slice(); }
+            let val_bind = if f.scalar_newtype.is_some() {
+                quote! { let v = v.0; }
+            } else if f.le_scalar.is_some() {
+                if f.le_scalar_is_byte {
+                    quote! {}
+                } else {
+                    quote! { let v = v.get(); }
                 }
-                _ => quote! {},
+            } else {
+                match f.wire_type {
+                    WireType::SessionId => quote! { let v = v.0; },
+                    WireType::KeyId => quote! { let v = v.0; },
+                    // Single typed-POD reference (`&T`): serialize to bytes.
+                    WireType::Buffer if f.single_pod.is_some() => {
+                        quote! { let v: &[u8] = ::zerocopy::IntoBytes::as_bytes(v); }
+                    }
+                    WireType::Buffer | WireType::SealedKey if f.fixed_len.is_some() => {
+                        quote! { let v: &[u8] = v.as_slice(); }
+                    }
+                    // Typed-slice buffer (`&[T]`): serialize to its raw
+                    // little-endian bytes so the shared write path operates
+                    // on `&[u8]`.
+                    WireType::Buffer if f.elem_type.is_some() => {
+                        quote! { let v: &[u8] = ::zerocopy::IntoBytes::as_bytes(v); }
+                    }
+                    _ => quote! {},
+                }
             };
 
             let write_code = gen_field_write_group(f, &field_toc_idx, &pad_write);
@@ -268,7 +297,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                 };
 
                 methods.push(quote! {
-                    pub fn #field_name(mut self, v: Option<#param_type>) -> Result<#enc_name<'a, #target_state>, azihsm_fw_ddi_tbor::EncodeError> {
+                    pub fn #field_name(mut self, v: Option<#param_type>) -> Result<#enc_name<'a, #target_state>, azihsm_fw_hsm_pal_traits::HsmError> {
                         let data_start = self.header_len + self.total_toc_count * 4;
                         #skip_nones
                         match v {
@@ -280,7 +309,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                 });
             } else {
                 methods.push(quote! {
-                    pub fn #field_name(mut self, v: #param_type) -> Result<#enc_name<'a, #target_state>, azihsm_fw_ddi_tbor::EncodeError> {
+                    pub fn #field_name(mut self, v: #param_type) -> Result<#enc_name<'a, #target_state>, azihsm_fw_hsm_pal_traits::HsmError> {
                         let data_start = self.header_len + self.total_toc_count * 4;
                         #skip_nones
                         #val_bind
@@ -336,11 +365,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                         azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
                     );
                     if actual != #toc_type_id && actual != #none_type_id {
-                        return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                            entry_index: toc_offset + #toc_idx,
-                            expected: #toc_type_id,
-                            actual,
-                        });
+                        return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                     }
                 }
             }
@@ -351,11 +376,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                         azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #toc_idx)
                     );
                     if actual != #toc_type_id {
-                        return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                            entry_index: toc_offset + #toc_idx,
-                            expected: #toc_type_id,
-                            actual,
-                        });
+                        return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                     }
                 }
             }
@@ -378,11 +399,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
                     azihsm_fw_ddi_tbor::toc::read_toc_word(buf, header_len, toc_offset + #eff_toc_idx)
                 );
                 if actual != #padding_type_id {
-                    return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                        entry_index: toc_offset + #eff_toc_idx,
-                        expected: #padding_type_id,
-                        actual,
-                    });
+                    return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                 }
             }
         }
@@ -390,6 +407,8 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
 
     quote! {
         #vis struct #name;
+
+        #align_assertions
 
         impl #name {
             /// Number of TOC entries this field group contributes.
@@ -399,7 +418,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
             pub const WORST_CASE_DATA_SIZE: usize = #worst_data_expr;
 
             /// Validate TOC entries for this group at the given offset.
-            pub fn validate(buf: &[u8], header_len: usize, toc_offset: usize) -> Result<(), azihsm_fw_ddi_tbor::DecodeError> {
+            pub fn validate(buf: &[u8], header_len: usize, toc_offset: usize) -> Result<(), azihsm_fw_hsm_pal_traits::HsmError> {
                 #(#padding_checks)*
                 #(#type_checks)*
                 Ok(())
@@ -439,7 +458,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
 
         /// Zero-copy sub-view over an encoded field group.
         #vis struct #view_name<'a> {
-            buf: &'a [u8],
+            buf: &'a azihsm_fw_hsm_pal_traits::DmaBuf,
             header_len: usize,
             toc_offset: usize,
         }
@@ -447,7 +466,7 @@ pub fn gen_field_group(schema: &Schema) -> TokenStream {
         impl<'a> #view_name<'a> {
             /// Construct from a validated buffer at the given TOC offset.
             #[doc(hidden)]
-            pub fn __new(buf: &'a [u8], header_len: usize, toc_offset: usize) -> Self {
+            pub fn __new(buf: &'a azihsm_fw_hsm_pal_traits::DmaBuf, header_len: usize, toc_offset: usize) -> Self {
                 Self { buf, header_len, toc_offset }
             }
 
@@ -477,7 +496,7 @@ fn gen_field_write_group(
             let off = self.data_offset;
             let end = data_start + off + 4;
             if end > self.buf.len() {
-                return Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { needed: end, available: self.buf.len() });
+                return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
             }
             self.buf[data_start + off..end].copy_from_slice(&v.to_le_bytes());
             self.data_offset += 4;
@@ -489,7 +508,7 @@ fn gen_field_write_group(
             let off = self.data_offset;
             let end = data_start + off + 8;
             if end > self.buf.len() {
-                return Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { needed: end, available: self.buf.len() });
+                return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
             }
             self.buf[data_start + off..end].copy_from_slice(&v.to_le_bytes());
             self.data_offset += 8;
@@ -504,7 +523,7 @@ fn gen_field_write_group(
                 let effective_max = f.fixed_len.unwrap_or(max_l);
                 quote! {
                     if !(#effective_min..=#effective_max).contains(&len) {
-                        return Err(azihsm_fw_ddi_tbor::EncodeError::DataTooLarge { size: len });
+                        return Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge);
                     }
                 }
             } else {
@@ -517,7 +536,7 @@ fn gen_field_write_group(
                 #len_check
                 let end = data_start + off + len;
                 if end > self.buf.len() {
-                    return Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { needed: end, available: self.buf.len() });
+                    return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
                 }
                 self.buf[data_start + off..end].copy_from_slice(v);
                 self.data_offset += len;
@@ -561,7 +580,37 @@ fn gen_group_view_accessor(field: &SchemaField, toc_idx: &TokenStream) -> TokenS
                     quote! { azihsm_fw_ddi_tbor::toc::read_toc_uint64(self.buf, self.header_len, self.toc_offset + #toc_idx, #ds) }
                 }
                 _ => {
-                    quote! { azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, self.header_len, self.toc_offset + #toc_idx, #ds) }
+                    if let Some(elem) = &field.elem_type {
+                        // Typed-slice buffer: zero-copy cast the raw bytes
+                        // to `&[T]`; a ragged blob falls back to `&[]`.
+                        quote! {
+                            {
+                                let __b: &azihsm_fw_hsm_pal_traits::DmaBuf =
+                                    azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, self.header_len, self.toc_offset + #toc_idx, #ds);
+                                <[#elem] as ::zerocopy::TryFromBytes>::try_ref_from_bytes(&__b[..]).unwrap_or(&[])
+                            }
+                        }
+                    } else if let Some(ty) = &field.single_pod {
+                        // Single typed-POD buffer: borrow the
+                        // `size_of::<T>()`-byte image as `&T`; an ill-sized
+                        // blob falls back to a zeroed static.
+                        quote! {
+                            {
+                                let __b: &azihsm_fw_hsm_pal_traits::DmaBuf =
+                                    azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, self.header_len, self.toc_offset + #toc_idx, #ds);
+                                match <#ty as ::zerocopy::TryFromBytes>::try_ref_from_bytes(&__b[..]) {
+                                    ::core::result::Result::Ok(__r) => __r,
+                                    ::core::result::Result::Err(_) => {
+                                        static __ZERO: [u8; ::core::mem::size_of::<#ty>()] =
+                                            [0u8; ::core::mem::size_of::<#ty>()];
+                                        ::zerocopy::transmute_ref!(&__ZERO)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        quote! { azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, self.header_len, self.toc_offset + #toc_idx, #ds) }
+                    }
                 }
             }
         }
@@ -575,20 +624,24 @@ fn gen_group_view_accessor(field: &SchemaField, toc_idx: &TokenStream) -> TokenS
         WireType::SessionId => quote! { azihsm_fw_ddi_tbor_api::SessionId },
         WireType::KeyId => quote! { azihsm_fw_ddi_tbor_api::KeyId },
         WireType::Buffer | WireType::SealedKey => {
-            if let Some(n) = field.fixed_len {
+            if let Some(ty) = &field.single_pod {
+                quote! { &'a #ty }
+            } else if let Some(n) = field.fixed_len {
                 quote! { &'a [u8; #n] }
+            } else if let Some(elem) = &field.elem_type {
+                quote! { &'a [#elem] }
             } else {
-                quote! { &'a [u8] }
+                quote! { &'a azihsm_fw_hsm_pal_traits::DmaBuf }
             }
         }
     };
 
-    let body = if let Some(n) = field.fixed_len {
+    let body = if let Some(n) = field.fixed_len.filter(|_| field.single_pod.is_none()) {
         let base = body;
         quote! {
             {
                 let slice = #base;
-                match <&[u8; #n]>::try_from(slice) {
+                match <&[u8; #n]>::try_from(&slice[..]) {
                     Ok(arr) => arr,
                     Err(_) => { static ZERO: [u8; #n] = [0u8; #n]; &ZERO }
                 }
@@ -671,7 +724,7 @@ fn emit_none_range(schema: &Schema, layout: &TocLayout, from: usize, to: usize) 
             quote! { (#local_idx #(#group_addends)*) }
         };
 
-        if f.align > 0 {
+        if f.has_padding() {
             let local_pad = layout
                 .padding_positions
                 .iter()
