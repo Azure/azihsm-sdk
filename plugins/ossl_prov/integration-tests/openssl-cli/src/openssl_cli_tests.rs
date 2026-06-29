@@ -249,6 +249,42 @@ fn test_hkdf_key_derivation() {
 
 #[test]
 #[serial]
+fn test_kbkdf_key_derivation() {
+    let curves = vec!["256".to_string(), "384".to_string(), "521".to_string()];
+    let dgst_algos = vec![
+        "1".to_string(),
+        "256".to_string(),
+        "384".to_string(),
+        "512".to_string(),
+    ];
+    let test_withcontext = [true, false];
+
+    for curve in &curves {
+        for dgst in &dgst_algos {
+            for withcontext_bool in test_withcontext {
+                lit::run::tests(lit::event_handler::Default::default(), |config| {
+                    config.add_search_path(search_path("testfiles/ec/kbkdf_key_derivation"));
+                    config.add_extension("sh");
+                    config
+                        .constants
+                        .insert("bash".to_owned(), "/bin/bash".to_string());
+                    config.constants.insert("curve".to_owned(), curve.clone());
+                    config.constants.insert("dgst".to_owned(), dgst.clone());
+                    config
+                        .constants
+                        .insert("withcontext".to_owned(), withcontext_bool.to_string());
+                    config
+                        .constants
+                        .insert("cleanup".to_owned(), CLEANUP.to_string());
+                })
+                .expect("Lit test failed");
+            }
+        }
+    }
+}
+
+#[test]
+#[serial]
 fn test_hmac() {
     let curves = vec!["256".to_string(), "384".to_string(), "521".to_string()];
     let dgst_algos = vec!["256".to_string(), "384".to_string(), "512".to_string()];
