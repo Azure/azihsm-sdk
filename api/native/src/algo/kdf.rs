@@ -54,6 +54,28 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
     }
 }
 
+/// SP 800-108 Counter Mode KDF parameter structure matching C API
+#[repr(C)]
+pub struct AzihsmAlgoKbkdfCounterParams {
+    hmac_algo_id: AzihsmAlgoId,
+    label: *const AzihsmBuffer,
+    context: *const AzihsmBuffer,
+}
+
+impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoKbkdfCounterParams {
+    type Error = AzihsmStatus;
+
+    /// Extracts a reference to KBKDF parameters from the algorithm specification.
+    ///
+    /// # Safety
+    /// The caller must ensure that `algo.params` points to valid `AzihsmAlgoKbkdfCounterParams`
+    /// data when the algorithm ID is KBKDF Counter Derive.
+    #[allow(unsafe_code)]
+    fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
+        validate_and_cast_algo_params::<AzihsmAlgoKbkdfCounterParams>(algo)
+    }
+}
+
 /// Derives a shared secret using Elliptic Curve Diffie-Hellman (ECDH)
 ///
 /// Performs key agreement between a private key and a peer's public key
@@ -169,6 +191,89 @@ pub(crate) fn hkdf_derive_key(
             HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(aes_key))
         }
 
+        HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
+            let hmac_key: HsmHmacKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::HmacKey, Box::new(hmac_key))
+        }
+        _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
+    };
+
+    Ok(handle)
+}
+
+/// Derives keying material using the SP 800-108 Counter Mode KDF (KBKDF)
+///
+/// Derives keying material from a base key using NIST SP 800-108 Counter Mode
+/// with an HMAC PRF.
+///
+/// # Arguments
+/// * `session` - HSM session for the operation
+/// * `algo` - KBKDF algorithm parameters (HMAC algorithm, label, context)
+/// * `base_key_handle` - Handle to the base key (key-derivation key)
+/// * `derived_key_props` - Properties for the derived key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the derived key
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid parameters, unsupported algorithm)
+pub(crate) fn kbkdf_counter_derive_key(
+    session: &HsmSession,
+    algo: &AzihsmAlgo,
+    base_key_handle: AzihsmHandle,
+    derived_key_props: HsmKeyProps,
+) -> Result<AzihsmHandle, AzihsmStatus> {
+    // Extract KBKDF parameters
+    let kbkdf_params: &AzihsmAlgoKbkdfCounterParams = algo.try_into()?;
+
+    // Convert HMAC algo ID to hash algo
+    let hash_algo = match kbkdf_params.hmac_algo_id {
+        AzihsmAlgoId::HmacSha1 => HsmHashAlgo::Sha1,
+        AzihsmAlgoId::HmacSha256 => HsmHashAlgo::Sha256,
+        AzihsmAlgoId::HmacSha384 => HsmHashAlgo::Sha384,
+        AzihsmAlgoId::HmacSha512 => HsmHashAlgo::Sha512,
+        _ => Err(AzihsmStatus::InvalidArgument)?,
+    };
+
+    // Extract optional label and context
+    let label = if kbkdf_params.label.is_null() {
+        None
+    } else {
+        let label_buf = deref_ptr(kbkdf_params.label)?;
+        let label_slice: &[u8] = label_buf.try_into()?;
+        Some(label_slice)
+    };
+
+    let context = if kbkdf_params.context.is_null() {
+        None
+    } else {
+        let context_buf = deref_ptr(kbkdf_params.context)?;
+        let context_slice: &[u8] = context_buf.try_into()?;
+        Some(context_slice)
+    };
+
+    // Get the base secret key
+    let base_secret: &HsmGenericSecretKey =
+        HANDLE_TABLE.as_ref(base_key_handle, HandleType::GenericSecretKey)?;
+
+    // Create KBKDF algorithm
+    let mut kbkdf_algo = HsmKbkdfAlgo::new(hash_algo, label, context)?;
+
+    // Derive the key
+    let derived_key = HsmKeyManager::derive_key(
+        session,
+        &mut kbkdf_algo,
+        base_secret,
+        derived_key_props.clone(),
+    )?;
+
+    // Determine the handle type based on the derived key kind.
+    // KBKDF derives generic-secret keys; `api/lib` validation
+    // (HsmGenericSecretKey::validate_props) only admits AES and HMAC kinds, so no
+    // AES-GCM arm is needed here.
+    let handle = match derived_key_props.kind() {
+        HsmKeyKind::Aes => {
+            let aes_key: HsmAesKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+        }
         HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
             let hmac_key: HsmHmacKey = derived_key.try_into()?;
             HANDLE_TABLE.alloc_handle(HandleType::HmacKey, Box::new(hmac_key))

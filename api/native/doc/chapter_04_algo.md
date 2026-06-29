@@ -1211,16 +1211,19 @@ SP 800-108 KDF Counter mode derivation implements the KDF as specified in
 |                            |                                                                          |
 | -------------------------- | ------------------------------------------------------------------------ |
 | **Algorithm ID**           | `AZIHSM_ALGO_ID_KBKDF_COUNTER_DERIVE`                                    |
-| **Params**                 | [azihsm_algo_kbdf_counter_params](#azihsm_algo_kbdf_counter_params)      |
+| **Params**                 | [azihsm_algo_kbkdf_counter_params](#azihsm_algo_kbkdf_counter_params)      |
 | **Required Properties**    | None                                                                     |
 | **Contributed Properties** | None                                                                     |
 | **Supported Operations**   | [azihsm_key_derive](#azihsm_key_derive)                                  |
 | **PKCS#11 Mechanism**      | CKM_SP800_108_COUNTER_KDF                                         &nbsp; |
 
+At least one of `label` / `context` must be provided; deriving with both absent is
+rejected.
+
 **Example**
 
 ```cpp
-struct azihsm_algo_kbdf_counter_params params = {
+struct azihsm_algo_kbkdf_counter_params params = {
     .hmac_algo_id = AZIHSM_ALGO_ID_HMAC_SHA512,
     .label = NULL,
     .context = NULL,
@@ -1229,7 +1232,7 @@ struct azihsm_algo_kbdf_counter_params params = {
 struct azihsm_algo algo = {
     .id = AZIHSM_ALGO_ID_KBKDF_COUNTER_DERIVE,
     .params = &params,
-    .len = sizeof(azihsm_algo_kbdf_counter_params),
+    .len = sizeof(azihsm_algo_kbkdf_counter_params),
 };
 ```
 

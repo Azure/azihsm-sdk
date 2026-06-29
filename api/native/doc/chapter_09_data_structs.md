@@ -803,12 +803,15 @@ struct azihsm_algo_hkdf_params {
 | salt         | [azihsm_buffer *](#azihsm_buffer) | salt                                             |
 | info         | [azihsm_buffer *](#azihsm_buffer) | info                                             |
 
-### azihsm_algo_kbdf_counter_params
+### azihsm_algo_kbkdf_counter_params
 
 Parameters for SP 800-108 Counter KDF Algorithm
 
+At least one of `label` / `context` must be provided; deriving with both absent is
+rejected.
+
 ```cpp
-struct azihsm_algo_kbdf_counter_params {
+struct azihsm_algo_kbkdf_counter_params {
     azihsm_algo_id hmac_algo_id;
     azihsm_buffer *label;
     azihsm_buffer *context;
@@ -818,5 +821,5 @@ struct azihsm_algo_kbdf_counter_params {
 | Field        | Type                              | Description                                      |
 | ------------ | --------------------------------- | ------------------------------------------------ |
 | hmac_algo_id | [azihsm_algo_id](#azihsm_algo_id) | HMAC algorithm                            &nbsp; |
-| label        | [azihsm_buffer *](#azihsm_buffer) | label                                            |
-| context      | [azihsm_buffer *](#azihsm_buffer) | context                                          |
+| label        | [azihsm_buffer *](#azihsm_buffer) | Optional label (at least one of label/context)   |
+| context      | [azihsm_buffer *](#azihsm_buffer) | Optional context (at least one of label/context) |
