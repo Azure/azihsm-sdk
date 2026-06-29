@@ -151,10 +151,11 @@ pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmV
 
 /// Build vault attrs for a derived variable-length HMAC key.
 ///
-/// HMAC keys produced by HKDF / KBKDF can sign / verify MACs or act
-/// as a key-derivation key (`derive`) for a further KDF.  Exactly one
-/// of those two usage groups must be set; `encrypt_decrypt`, `wrap`,
-/// and `unwrap` are rejected with [`HsmError::InvalidPermissions`].
+/// HMAC keys produced by HKDF / KBKDF may only sign / verify MACs
+/// (PKCS#11 `C_Sign` / `C_Verify`), so `sign`+`verify` is the sole
+/// valid usage group.  `derive`, `encrypt_decrypt`, `wrap`, and
+/// `unwrap` are rejected with [`HsmError::InvalidPermissions`] — a
+/// `derive`-only HMAC key is not a supported key-derivation key.
 pub(crate) fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
     validate_pairs(metadata)?;
     let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
@@ -174,15 +175,12 @@ pub(crate) fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaul
         return Err(HsmError::InvalidPermissions);
     }
 
-    if encrypt_decrypt || wrap || unwrap {
+    if encrypt_decrypt || wrap || unwrap || derive {
         return Err(HsmError::InvalidPermissions);
     }
 
     if sign_verify {
         attrs = attrs.with_sign(true).with_verify(true);
-    }
-    if derive {
-        attrs = attrs.with_derive(true);
     }
 
     if metadata.session() {
