@@ -80,7 +80,7 @@ impl Xtask for CoverageReport {
         // generate string to append to LLVM_COV_FLAGS
         let mut new_flags = String::new();
         for obj_path in &all_obj_paths {
-            if obj_path.exists() {
+            if obj_path.is_file() {
                 new_flags.push_str(&format!("-object {} ", obj_path.display()));
             } else {
                 return Err(anyhow::anyhow!(
