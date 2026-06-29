@@ -76,7 +76,7 @@ typedef struct
 } AZIHSM_HKDF_CTX;
 
 /* Helper: Convert EVP_MD to HMAC algorithm ID */
-static azihsm_algo_id evp_md_to_hmac_algo_id(const EVP_MD *md)
+static azihsm_algo_id evp_md_to_hmac_algo_id(const EVP_MD *md, bool allow_sha1)
 {
     if (md == NULL)
     {
@@ -86,7 +86,9 @@ static azihsm_algo_id evp_md_to_hmac_algo_id(const EVP_MD *md)
     switch (EVP_MD_type(md))
     {
     case NID_sha1:
-        return AZIHSM_ALGO_ID_HMAC_SHA1;
+        /* SHA-1 is exposed only for KBKDF (SP 800-108), matching the API/firmware.
+         * HKDF keeps its SHA-256/384/512 surface, so callers opt in via allow_sha1. */
+        return allow_sha1 ? AZIHSM_ALGO_ID_HMAC_SHA1 : 0;
     case NID_sha256:
         return AZIHSM_ALGO_ID_HMAC_SHA256;
     case NID_sha384:
@@ -431,7 +433,7 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
             return OSSL_FAILURE;
         }
 
-        ctx->hmac_algo_id = evp_md_to_hmac_algo_id(ctx->md);
+        ctx->hmac_algo_id = evp_md_to_hmac_algo_id(ctx->md, false);
         if (ctx->hmac_algo_id == 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_DIGEST);
@@ -1305,7 +1307,7 @@ static int azihsm_ossl_kbkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[
             return OSSL_FAILURE;
         }
 
-        ctx->hmac_algo_id = evp_md_to_hmac_algo_id(ctx->md);
+        ctx->hmac_algo_id = evp_md_to_hmac_algo_id(ctx->md, true);
         if (ctx->hmac_algo_id == 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_DIGEST);
