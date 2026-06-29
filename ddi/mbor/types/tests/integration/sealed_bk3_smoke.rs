@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SetSealedBk3 / GetSealedBk3 smoke tests for the emu backend.
+//! SetSealedBk3 / GetSealedBk3 smoke tests for the emu/mock backend.
 
 #![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]

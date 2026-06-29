@@ -101,6 +101,7 @@ fn test_hmac_unknown_key_smoke() {
     );
 }
 
+#[cfg(not(feature = "mock"))]
 #[test]
 fn test_hmac_requires_sign_permission_smoke() {
     ddi_dev_test(
@@ -127,7 +128,7 @@ fn test_hmac_requires_sign_permission_smoke() {
                 key_props,
                 Some(32),
             )
-            .expect_err("derive-only var-HMAC key should be created");
+            .expect_err("derive-only var-HMAC key should not be created");
         },
     );
 }
