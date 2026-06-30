@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `OpenSessionFinish` wire schema (session-establishment Phase 2).
+//! TBOR `SessionOpenFinish` wire schema (session-establishment Phase 2).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
@@ -29,17 +29,18 @@ pub const SEED_ENVELOPE_LEN: usize = 8 + 12 + SEED_LEN + 16;
 /// without breaking the schema.
 pub const BMK_SESSION_MAX_LEN: usize = 512;
 
-/// `OpenSessionFinish` request schema.
-#[tbor(opcode = 0x11)]
-pub struct TborOpenSessionFinishReq<'a> {
+/// `SessionOpenFinish` request schema.
+#[tbor(opcode = 0x04)]
+pub struct TborSessionOpenFinishReq<'a> {
     /// Pending session identifier the handshake reserved in Phase 1.
-    /// 16-bit on the wire (`#[tbor(session_id)]`) for parity with
-    /// MBOR.
+    /// Typed [`SessionId`](azihsm_fw_ddi_tbor_api::SessionId); marked
+    /// `#[tbor(session_id)]` to select the 16-bit session-id TOC encoding
+    /// (parity with MBOR).
     #[tbor(session_id)]
-    pub session_id: u16,
+    pub session_id: SessionId,
 
     /// Phase-2 confirmation MAC.
-    #[tbor(len = 48)]
+    #[tbor(buffer, len = 48)]
     pub mac_fin: &'a [u8],
 
     /// AEAD-GCM `seed_envelope` (`SEED_ENVELOPE_LEN` B fixed) wrapping
@@ -51,12 +52,12 @@ pub struct TborOpenSessionFinishReq<'a> {
     /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
     /// envelope in place — the field is exposed as the
     /// `seed_envelope` member of the generated
-    /// `TborOpenSessionFinishReqViewMut` destructured view.
-    #[tbor(len = 68, mutable)]
+    /// `TborSessionOpenFinishReqViewMut` destructured view.
+    #[tbor(buffer, len = 68, mutable)]
     pub seed_envelope: &'a [u8],
 }
 
-/// `OpenSessionFinish` response schema.
+/// `SessionOpenFinish` response schema.
 ///
 /// Carries the `bmk_session` blob: an AEAD-GCM envelope of the
 /// 80-byte session `masking_key`, wrapped under
@@ -65,9 +66,9 @@ pub struct TborOpenSessionFinishReq<'a> {
 /// `ReopenSession` command to recover masked-key compatibility
 /// after the device resets or the slot is destroyed.
 #[tbor(response)]
-pub struct TborOpenSessionFinishResp<'a> {
+pub struct TborSessionOpenFinishResp<'a> {
     /// Wrapped session-key blob.  Variable length up to
     /// [`BMK_SESSION_MAX_LEN`].
-    #[tbor(max_len = 512)]
+    #[tbor(buffer, max_len = 512)]
     pub bmk_session: &'a [u8],
 }

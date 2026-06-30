@@ -266,6 +266,14 @@ pub(crate) struct PartitionEntry {
 
     /// POTA SHA-384 thumbprint bound by PartInit.
     pota_thumbprint: Option<[u8; POTA_THUMBPRINT_LEN]>,
+
+    /// SATA SHA-384 thumbprint bound by PartInit (security-domain
+    /// configuration).
+    sata_thumbprint: Option<[u8; POTA_THUMBPRINT_LEN]>,
+
+    /// SAPOTA SHA-384 thumbprint bound by PartInit.  Optional — `None`
+    /// when the request carried no SAPOTA thumbprint.
+    sapota_thumbprint: Option<[u8; POTA_THUMBPRINT_LEN]>,
 }
 
 impl Default for PartitionEntry {
@@ -305,6 +313,8 @@ impl Default for PartitionEntry {
             pta_pub_key: None,
             policy_hash: None,
             pota_thumbprint: None,
+            sata_thumbprint: None,
+            sapota_thumbprint: None,
         }
     }
 }
@@ -974,6 +984,8 @@ impl StdHsmPal {
         drop_secret(&mut entry.pta_pub_key);
         drop_secret(&mut entry.policy_hash);
         drop_secret(&mut entry.pota_thumbprint);
+        drop_secret(&mut entry.sata_thumbprint);
+        drop_secret(&mut entry.sapota_thumbprint);
 
         // Rotated PSK material.
         drop_secret(&mut entry.psk_co);
@@ -1242,6 +1254,16 @@ impl PartitionEntry {
                 .as_ref()
                 .map(|a| a.as_slice())
                 .ok_or(HsmError::PartPropNotFound),
+            PartPropId::SATA_THUMBPRINT => self
+                .sata_thumbprint
+                .as_ref()
+                .map(|a| a.as_slice())
+                .ok_or(HsmError::PartPropNotFound),
+            PartPropId::SAPOTA_THUMBPRINT => self
+                .sapota_thumbprint
+                .as_ref()
+                .map(|a| a.as_slice())
+                .ok_or(HsmError::PartPropNotFound),
             _ => Err(HsmError::InvalidArg),
         }
     }
@@ -1320,9 +1342,27 @@ impl PartitionEntry {
                 if self.pota_thumbprint.is_some() {
                     return Err(HsmError::InvalidArg);
                 }
-                let mut buf = [0u8; 48];
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
                 buf.copy_from_slice(data);
                 self.pota_thumbprint = Some(buf);
+                Ok(())
+            }
+            PartPropId::SATA_THUMBPRINT => {
+                if self.sata_thumbprint.is_some() {
+                    return Err(HsmError::InvalidArg);
+                }
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
+                buf.copy_from_slice(data);
+                self.sata_thumbprint = Some(buf);
+                Ok(())
+            }
+            PartPropId::SAPOTA_THUMBPRINT => {
+                if self.sapota_thumbprint.is_some() {
+                    return Err(HsmError::InvalidArg);
+                }
+                let mut buf = [0u8; POTA_THUMBPRINT_LEN];
+                buf.copy_from_slice(data);
+                self.sapota_thumbprint = Some(buf);
                 Ok(())
             }
             PartPropId::PTA_PUB_KEY => {
@@ -1411,6 +1451,14 @@ impl PartitionEntry {
             }
             PartPropId::POTA_THUMBPRINT => {
                 self.pota_thumbprint = None;
+                Ok(())
+            }
+            PartPropId::SATA_THUMBPRINT => {
+                self.sata_thumbprint = None;
+                Ok(())
+            }
+            PartPropId::SAPOTA_THUMBPRINT => {
+                self.sapota_thumbprint = None;
                 Ok(())
             }
             PartPropId::PTA_PUB_KEY => {

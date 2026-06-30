@@ -16,9 +16,12 @@
 //! 2. **PartPolicy decode** — re-uses [`super::policy::from_bytes`]
 //!    to reject malformed policies before any cryptographic work.
 //!
-//! 3. **KDF cascade** — [`kdf::derive_ums`] produces the per-
-//!    partition Unique Material Secret (UMS); [`kdf::derive_pta_keypair`]
-//!    derives the deterministic PTA P-384 keypair from the UMS.
+//! 3. **Single-root derivation** — [`kdf::derive_part_root`] produces
+//!    the per-partition root secret (`PartRoot`) binding every request
+//!    input; [`kdf::derive_pta_keypair`] derives the deterministic PTA
+//!    P-384 keypair from it.  (The security-domain local masking keys
+//!    are *not* derived here — they belong in a future part-final
+//!    command that binds them to the POTA-endorsed PTA cert chain.)
 //!
 //! 4. **PTACSR build** — assembles a PKCS#10 CertificationRequest
 //!    for the PTA public key.  The subject `serialNumber` is the
@@ -28,22 +31,17 @@
 //!    reversed to BE for DER encoding.
 //!
 //! 5. **PTAReport build** — produces a COSE_Sign1 key-attestation
-//!    report signed by the per-partition identity key (PID, owned
-//!    by `alloc_part`).  Claims bind the PTA public key, the
-//!    partition policy, and the POTA thumbprint via the
-//!    `report_data` field:
-//!    `SHA-384("AZIHSM-PTAReport-v1" || u16_be(|policy|) || policy
-//!    || u16_be(|thumb|) || thumb) || zeros[..80]`.
+//!    report signed by the per-partition identity key (PID).  Claims
+//!    bind the PTA public key, the unified partition policy, and the
+//!    POTA / SATA / SAPOTA thumbprints via the `report_data` field.
 //!
 //! 6. **Commit** — write-once persistence of PTA pubkey + key ID,
-//!    `PartPolicy`, and POTA thumbprint into partition state; vault
-//!    the PTA private key as a [`HsmVaultKeyKind::PartitionTrustAnchor`].
+//!    policy hash, and POTA/SATA/SAPOTA thumbprints into partition
+//!    state; vault the PartRoot and PTA private keys.
 //!    `part_mark_initializing` transitions `Enabled → Initializing`
-//!    only after the three setters succeed.  PartInit deliberately
-//!    does **not** call `part_mark_initialized` — that transition
-//!    is owned by the follow-up partition-finalization handler (TBD),
-//!    which runs once POTA validation of the returned PTAReport /
-//!    PTACSR succeeds.
+//!    only after the setters succeed.  PartInit deliberately does
+//!    **not** call `part_mark_initialized` — that transition is owned
+//!    by the follow-up partition-finalization handler (TBD).
 //!
 //! 7. **Response encode** — emits [`TborPartInitResp`] with the
 //!    DER-encoded PTACSR and the COSE_Sign1 PTAReport.
@@ -60,13 +58,12 @@ use azihsm_fw_core_crypto_x509_builder::csr_builder;
 use azihsm_fw_core_crypto_x509_builder::padding;
 use azihsm_fw_ddi_tbor_types::TborPartInitReq;
 use azihsm_fw_ddi_tbor_types::TborPartInitResp;
-use azihsm_fw_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_fw_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
 use azihsm_fw_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
-use azihsm_fw_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_fw_ddi_tbor_types::PTA_CSR_MAX_LEN;
 use azihsm_fw_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+use azihsm_fw_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
@@ -74,7 +71,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
-use azihsm_fw_hsm_pal_traits::PART_POLICY_LEN;
 
 use super::*;
 
@@ -121,12 +117,12 @@ const PTA_VAULT_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
     .with_never_extractable(true)
     .with_sign(true);
 
-/// Vault attributes for the partition's Unique Machine Secret (UMS):
+/// Vault attributes for the partition's root secret (PartRoot):
 /// on-device generated (`local`), firmware-internal (`internal`),
-/// never extractable.  UMS is consumed only by further on-device KDF
-/// derivations (PTA keypair, future FinalizePart secrets), so no
-/// signing / encryption / wrapping bits are set.
-const UMS_VAULT_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
+/// never extractable.  PartRoot is consumed only by further on-device
+/// KDF derivations (PTA keypair, and future part-final local keys), so
+/// no signing / encryption / wrapping bits are set.
+const PART_ROOT_VAULT_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
     .with_local(true)
     .with_internal(true)
     .with_never_extractable(true);
@@ -142,23 +138,35 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let req = parse_request(req_buf)?;
 
     pal.alloc_scoped_async(io, async |alloc| {
-        // `policy` and `pota_thumb` are read-only request fields; the
-        // codec already hands them out as `&DmaBuf` sub-views of the
-        // inbound request buffer, so they can flow directly into PAL
-        // crypto primitives and the write-once partition setters
-        // without an extra copy.  `mach_seed_envelope` is decrypted
-        // **in place** by `aead_open` on the same inbound buffer —
-        // the destructured `&mut DmaBuf` carved by `decode_mut`
-        // replaces the previous scratch-copy step.
+        // Read-only request fields are codec sub-views of the inbound
+        // buffer, so they flow directly into PAL crypto and the
+        // write-once setters without copying.  `mach_seed_envelope` is
+        // AEAD-opened **in place** on the same inbound buffer.
         let policy_dma = req.policy;
         let _ = super::policy::from_bytes(policy_dma)?;
         let mach_seed_dma =
             open_mach_seed_envelope(pal, io, req.sess_id, req.mach_seed_envelope).await?;
         let pota_thumb_dma = req.pota_thumb;
+        let sata_thumb_dma = req.sata_thumb;
+        let sapota_thumb_dma = req.sapota_thumb;
 
-        // Deterministic key derivation.
-        let ums_dma = derive_ums(pal, io, alloc, mach_seed_dma, policy_dma, pota_thumb_dma).await?;
-        let pta = derive_pta_keypair(pal, io, alloc, ums_dma).await?;
+        // ── Single-root derivation ────────────────────────────────
+        // PartRoot binds every request input; the PTA keypair fans out
+        // from it.  (The security-domain local masking keys are derived
+        // later in part-final, bound to the POTA-endorsed PTA cert
+        // chain — see the module docs.)
+        let root_dma = derive_part_root(
+            pal,
+            io,
+            alloc,
+            mach_seed_dma,
+            policy_dma,
+            pota_thumb_dma,
+            sata_thumb_dma,
+            sapota_thumb_dma,
+        )
+        .await?;
+        let pta = derive_pta_keypair_buf(pal, io, alloc, root_dma).await?;
 
         // PTACSR + PTAReport: build everything before any partition-
         // state mutation so failures roll back cleanly.
@@ -172,12 +180,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             pta.pub_sec1,
             policy_dma,
             pota_thumb_dma,
+            sata_thumb_dma,
+            sapota_thumb_dma,
         )
         .await?;
 
         // Persist only the SHA-384 hash of the policy blob; the full
-        // PartPolicy is consumed transiently during UMS derivation (above)
-        // and is never stored in the partition.
+        // PartPolicy is consumed transiently during PartRoot derivation
+        // (above) and is never stored in the partition.
         let policy_hash_dma = alloc.dma_alloc(SHA384_LEN)?;
         pal.hash(io, HsmHashAlgo::Sha384, policy_dma, policy_hash_dma, true)
             .await?;
@@ -186,11 +196,15 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         commit_partition_state(
             pal,
             io,
-            ums_dma,
-            pta.priv_scalar,
-            pta.pub_sec1,
-            policy_hash_dma,
-            pota_thumb_dma,
+            CommitInputs {
+                root: root_dma,
+                pta_priv: pta.priv_scalar,
+                pta_pub_sec1: pta.pub_sec1,
+                policy_hash: policy_hash_dma,
+                pota_thumb: pota_thumb_dma,
+                sata_thumb: sata_thumb_dma,
+                sapota_thumb: sapota_thumb_dma,
+            },
         )
         .await?;
         encode_response(pal, io, &csr_dma[..csr_len], &report_dma[..report_len])
@@ -203,12 +217,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 /// as sub-views of the inbound request buffer so they can be handed
 /// straight to PAL crypto primitives without copying.
 /// `mach_seed_envelope` is held as `&mut DmaBuf` so the FW handler
-/// can AEAD-open it in place; `policy` and `pota_thumb` are shared.
+/// can AEAD-open it in place; the remaining fields are shared.
 struct ParsedRequest<'a> {
     sess_id: HsmSessId,
     mach_seed_envelope: &'a mut DmaBuf,
     policy: &'a DmaBuf,
     pota_thumb: &'a DmaBuf,
+    sata_thumb: &'a DmaBuf,
+    sapota_thumb: Option<&'a DmaBuf>,
 }
 
 /// Decode the wire request, enforce the CO-only role gate, and
@@ -224,19 +240,31 @@ fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
         return Err(HsmError::InvalidPermissions);
     }
 
-    if req.mach_seed_envelope.is_empty()
-        || req.mach_seed_envelope.len() > MACH_SEED_ENVELOPE_MAX_LEN
-        || req.part_policy.len() != PART_POLICY_LEN
-        || req.pota_thumbprint.len() != POTA_THUMBPRINT_LEN
-    {
-        return Err(HsmError::InvalidArg);
-    }
+    // The fixed-length fields (`mach_seed_envelope` = 100 B,
+    // `part_policy` = 484 B, `pota_thumbprint` / `sata_thumbprint` =
+    // 48 B) are pinned by the schema, so a malformed length was already
+    // rejected at decode with `TborInvalidFixedLength`. Only the
+    // optional `sapota_thumbprint` (variable, empty = absent) needs a
+    // handler-side length check.
+
+    // SAPOTA thumbprint is optional: an empty field means absent;
+    // when present it must be exactly the fixed size.
+    let sapota_thumb = if req.sapota_thumbprint.is_empty() {
+        None
+    } else {
+        if req.sapota_thumbprint.len() != SAPOTA_THUMBPRINT_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        Some(req.sapota_thumbprint)
+    };
 
     Ok(ParsedRequest {
         sess_id,
         mach_seed_envelope: req.mach_seed_envelope,
         policy: req.part_policy,
         pota_thumb: req.pota_thumbprint,
+        sata_thumb: req.sata_thumbprint,
+        sapota_thumb,
     })
 }
 
@@ -300,51 +328,64 @@ async fn open_mach_seed_envelope<'a, P: HsmPal>(
     Ok(view.payload)
 }
 
-/// Run the SP 800-108 / RFC 5869 UMS derivation with UDS plus the
-/// three request-side inputs.  `kdf::derive_ums` always emits
-/// [`kdf::UMS_LEN`] bytes, so the caller can size the output buffer
-/// directly without a query roundtrip.
-async fn derive_ums<'a, P: HsmPal>(
+/// Run the single-root PartRoot derivation with UDS plus all
+/// request-side inputs.  `kdf::derive_part_root` always emits
+/// [`kdf::PART_ROOT_LEN`] bytes, so the caller can size the output
+/// buffer directly without a query roundtrip.
+#[allow(clippy::too_many_arguments)]
+async fn derive_part_root<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
     mach_seed: &DmaBuf,
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
+    sata_thumb: &DmaBuf,
+    sapota_thumb: Option<&DmaBuf>,
 ) -> HsmResult<&'a mut DmaBuf> {
     let src = crate::part_state::part_uds(pal);
-    let uds = alloc.dma_alloc(src.len())?;
-    uds.copy_from_slice(src);
 
-    let ums = alloc.dma_alloc(kdf::UMS_LEN)?;
-    let _ = kdf::derive_ums(
-        pal,
-        io,
-        alloc,
-        uds,
-        mach_seed,
-        policy,
-        pota_thumb,
-        Some(ums),
-    )
+    let root = alloc.dma_alloc(kdf::PART_ROOT_LEN)?;
+    // Run the KBKDF in a nested allocator scope so its large transient
+    // inputs (the UDS copy and the policy-bearing context buffer) are
+    // freed before the rest of the handler — keeping the per-IO DMA
+    // arena available for the CSR / report / response.
+    pal.alloc_scoped_async(io, async |inner| -> HsmResult<()> {
+        let uds = inner.dma_alloc(src.len())?;
+        uds.copy_from_slice(src);
+        let _ = kdf::derive_part_root(
+            pal,
+            io,
+            inner,
+            uds,
+            mach_seed,
+            policy,
+            pota_thumb,
+            sata_thumb,
+            sapota_thumb,
+            Some(root),
+        )
+        .await?;
+        Ok(())
+    })
     .await?;
-    Ok(ums)
+    Ok(root)
 }
 
 /// Derive the deterministic PTA P-384 keypair directly into a
 /// scoped SEC1 buffer (with the `0x04` uncompressed-point tag
 /// already in place), avoiding any later reshape.
-async fn derive_pta_keypair<'a, P: HsmPal>(
+async fn derive_pta_keypair_buf<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
-    ums: &DmaBuf,
+    root: &DmaBuf,
 ) -> HsmResult<PtaKeypair<'a>> {
     let priv_scalar = alloc.dma_alloc(P384_PRIV_LEN)?;
     let pub_sec1 = alloc.dma_alloc(P384_PUB_SEC1_LEN)?;
     pub_sec1[0] = 0x04;
     let pub_xy = pub_sec1.split_at_mut(1).1;
-    let _ = kdf::derive_pta_keypair(pal, io, alloc, ums, Some((priv_scalar, pub_xy))).await?;
+    let _ = kdf::derive_pta_keypair(pal, io, alloc, root, Some((priv_scalar, pub_xy))).await?;
     // `ecc_gen_keypair_from_okm` returns each coordinate in PAL-LE
     // wire form, but every downstream consumer here (CSR SPKI,
     // PTAID hash, KeyReport `pk_x`/`pk_y`) expects standard SEC1
@@ -404,7 +445,8 @@ async fn build_signed_csr<'a, P: HsmPal>(
 }
 
 /// Build the PID-signed COSE_Sign1 PTAReport binding the PTA pubkey
-/// to the partition policy and POTA thumbprint.
+/// to the unified partition policy and the POTA / SATA / SAPOTA
+/// thumbprints.
 #[allow(clippy::too_many_arguments)]
 async fn build_pta_report<'a, P: HsmPal>(
     pal: &P,
@@ -414,6 +456,8 @@ async fn build_pta_report<'a, P: HsmPal>(
     pub_sec1: &DmaBuf,
     policy: &DmaBuf,
     pota_thumb: &DmaBuf,
+    sata_thumb: &DmaBuf,
+    sapota_thumb: Option<&DmaBuf>,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let pid_priv = pal.vault_key(io, crate::part_state::part_id_key_id(pal, io)?)?;
     let app_uuid = super::super::super::session::session_app_id(pal, io, sess_id)?;
@@ -427,7 +471,8 @@ async fn build_pta_report<'a, P: HsmPal>(
         vm_launch_id.copy_from_slice(&guid[..VM_LAUNCH_ID_LEN]);
     }
 
-    let report_data = build_report_data(pal, io, alloc, policy, pota_thumb).await?;
+    let report_data =
+        build_report_data(pal, io, alloc, policy, pota_thumb, sata_thumb, sapota_thumb).await?;
 
     // PTA's only declared capability inside the attestation report
     // is `is_generated`; downstream policy uses the PartPolicy bytes
@@ -454,8 +499,10 @@ async fn build_pta_report<'a, P: HsmPal>(
 }
 
 /// Build the 128-byte `report_data` field:
-/// `SHA-384(label || u16_be(|policy|) || policy || u16_be(|thumb|)
-/// || thumb) || zeros[..80]`.
+/// `SHA-384(label ‖ lp(policy) ‖ lp(pota) ‖ lp(sata) ‖ lp(sapota))
+/// ‖ zeros[..80]`, where `lp(f) = u16_be(|f|) ‖ f` is a
+/// length-injective prefix and an absent SAPOTA contributes a
+/// zero-length field.
 ///
 /// The returned DmaBuf is zero-initialised and sized to
 /// [`REPORT_DATA_LEN`]; `pal.hash` only writes the leading
@@ -466,11 +513,21 @@ async fn build_report_data<'a, P: HsmPal>(
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
     policy: &DmaBuf,
-    thumb: &DmaBuf,
+    pota_thumb: &DmaBuf,
+    sata_thumb: &DmaBuf,
+    sapota_thumb: Option<&DmaBuf>,
 ) -> HsmResult<&'a mut DmaBuf> {
-    let input = alloc.dma_alloc(
-        REPORT_DATA_LABEL.len() + size_of::<u16>() + policy.len() + size_of::<u16>() + thumb.len(),
-    )?;
+    let sapota_bytes: &[u8] = match sapota_thumb {
+        Some(t) => t,
+        None => &[],
+    };
+    let fields: [&[u8]; 4] = [policy, pota_thumb, sata_thumb, sapota_bytes];
+    let input_len = REPORT_DATA_LABEL.len()
+        + fields
+            .iter()
+            .map(|f| size_of::<u16>() + f.len())
+            .sum::<usize>();
+    let input = alloc.dma_alloc(input_len)?;
 
     {
         fn push<'a>(rest: &'a mut [u8], bytes: &[u8]) -> &'a mut [u8] {
@@ -481,10 +538,10 @@ async fn build_report_data<'a, P: HsmPal>(
 
         let mut rest: &mut [u8] = &mut input[..];
         rest = push(rest, REPORT_DATA_LABEL);
-        rest = push(rest, &(policy.len() as u16).to_be_bytes());
-        rest = push(rest, policy);
-        rest = push(rest, &(thumb.len() as u16).to_be_bytes());
-        let _ = push(rest, thumb);
+        for f in fields {
+            rest = push(rest, &(f.len() as u16).to_be_bytes());
+            rest = push(rest, f);
+        }
     }
 
     let report_data = alloc.dma_alloc_zeroed(REPORT_DATA_LEN)?;
@@ -493,54 +550,63 @@ async fn build_report_data<'a, P: HsmPal>(
     Ok(report_data)
 }
 
-/// Vault the PTA and UMS private keys, register the partition
-/// write-once fields, and publish the `Enabled → Initializing`
-/// transition.
+/// Write-once inputs committed by [`commit_partition_state`].
+struct CommitInputs<'a> {
+    root: &'a DmaBuf,
+    pta_priv: &'a DmaBuf,
+    pta_pub_sec1: &'a DmaBuf,
+    policy_hash: &'a DmaBuf,
+    pota_thumb: &'a DmaBuf,
+    sata_thumb: &'a DmaBuf,
+    sapota_thumb: Option<&'a DmaBuf>,
+}
+
+/// Vault the PartRoot and PTA private keys, register the partition
+/// write-once fields (including the security-domain thumbprints), and
+/// publish the `Enabled → Initializing` transition.
 ///
 /// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
-/// (all four write-once fields — PTA key, UMS key, policy hash, POTA
-/// thumbprint — must be set first).  Vault entries are committed as
-/// soon as they are created (`vault_key_create` is awaited), and the
-/// returned `key_id`s then flow into the partition setters.  There is
-/// no provisional / `dismiss()` rollback stage anymore; undoing a
-/// partially-applied `PartInit` is a future undo-log TODO (see the body
-/// comment below).
+/// (the write-once fields must be set first).  Vault entries are
+/// committed as soon as they are created (`vault_key_create` is
+/// awaited), and the returned `key_id`s then flow into the partition
+/// setters.  There is no provisional / `dismiss()` rollback stage;
+/// undoing a partially-applied `PartInit` is a future undo-log TODO.
 async fn commit_partition_state<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    ums: &DmaBuf,
-    pta_priv: &DmaBuf,
-    pta_pub_sec1: &DmaBuf,
-    policy_hash: &DmaBuf,
-    pota_thumb: &DmaBuf,
+    inputs: CommitInputs<'_>,
 ) -> HsmResult<()> {
     // The keys are committed as they are created; the partition-state
     // setters below run afterwards (a future undo log will handle
     // rollback of a partially-applied PartInit).
-    let ums_key_id = pal
+    let root_key_id = pal
         .vault_key_create(
             io,
-            ums,
+            inputs.root,
             HsmVaultKeyKind::PartitionUniqueMachineSecret,
             None,
-            UMS_VAULT_ATTRS,
+            PART_ROOT_VAULT_ATTRS,
         )
         .await?;
 
     let pta_key_id = pal
         .vault_key_create(
             io,
-            pta_priv,
+            inputs.pta_priv,
             HsmVaultKeyKind::PartitionTrustAnchor,
             None,
             PTA_VAULT_ATTRS,
         )
         .await?;
 
-    crate::part_state::part_set_pta_key(pal, io, pta_key_id, pta_pub_sec1)?;
-    crate::part_state::part_set_ups_key_id(pal, io, ums_key_id)?;
-    crate::part_state::part_set_policy_hash(pal, io, policy_hash)?;
-    crate::part_state::part_set_pota_thumbprint(pal, io, pota_thumb)?;
+    crate::part_state::part_set_pta_key(pal, io, pta_key_id, inputs.pta_pub_sec1)?;
+    crate::part_state::part_set_ups_key_id(pal, io, root_key_id)?;
+    crate::part_state::part_set_policy_hash(pal, io, inputs.policy_hash)?;
+    crate::part_state::part_set_pota_thumbprint(pal, io, inputs.pota_thumb)?;
+    crate::part_state::part_set_sata_thumbprint(pal, io, inputs.sata_thumb)?;
+    if let Some(sapota) = inputs.sapota_thumb {
+        crate::part_state::part_set_sapota_thumbprint(pal, io, sapota)?;
+    }
     crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
     Ok(())
 }
@@ -620,32 +686,37 @@ mod tests {
 pub(crate) mod kdf {
     //! Deterministic partition KDF for TBOR `PartInit`.
     //!
-    //! Produces the per-partition **Unique Master Secret (UMS)** and,
-    //! later, per-partition keypairs (PTA / PID) from the device's
-    //! Unique Device Secret (UDS) plus operator-supplied binding inputs
-    //! (`MachineSeed`, `PartPolicy` thumbprint, and `POTA` thumbprint).
+    //! Produces the per-partition **root secret (`PartRoot`)** and,
+    //! from it, the per-partition PTA keypair, from the device's Unique
+    //! Device Secret (UDS) plus operator-supplied binding inputs
+    //! (`MachineSeed`, the unified `PartPolicy`, and the POTA / SATA /
+    //! SAPOTA thumbprints).
     //! All derivations are deterministic: identical inputs yield
     //! identical outputs, so a partition's identity keys can be
     //! reconstructed across reboots and NSSR cycles without persisting
     //! plaintext key material.
     //!
-    //! # KDF cascade
+    //! # Single-root derivation
     //!
     //! ```text
-    //!   UDS  ──KBKDF-CTR-HMAC-SHA384(label, ctx)──►  UMS  (48 B)
-    //!   UMS  ──HKDF-Expand-SHA384(info)──────────►   OKM  (curve-dep.)
+    //!   UDS  ──KBKDF-CTR-HMAC-SHA384(label, ctx)──►  PartRoot (48 B)
+    //!   PartRoot ──HKDF-Expand-SHA384(info)───────►  OKM
     //!   OKM  ──FIPS 186-5 §A.2.1 (Extra Random Bits)─►  (d, Q)
     //! ```
     //!
     //! - The first stage uses **NIST SP 800-108** Counter Mode KBKDF
-    //!   with HMAC-SHA384 as the PRF.  Label
-    //!   `b"AZIHSM-PartInit-UMS-v1"` ties the derivation to this version
-    //!   of the PartInit protocol; rotating the label (e.g. `v2`) is the
-    //!   intended way to retire all derived material.
+    //!   with HMAC-SHA384 as the PRF to derive a single per-partition
+    //!   root secret (`PartRoot`) binding *all* request inputs: the
+    //!   machine seed, the unified `PartPolicy`, and the POTA / SATA /
+    //!   SAPOTA certificate thumbprints.  Label
+    //!   `b"AZIHSM-PartInit-PartRoot-v1"` ties the derivation to this
+    //!   version of the PartInit protocol; rotating the label (e.g.
+    //!   `v2`) retires all derived material.
     //! - The second stage uses **RFC 5869 HKDF-Expand** (HMAC-SHA384)
-    //!   keyed by the UMS so that multiple per-partition keys (PTA, PID,
-    //!   future keys) can be derived from a single UMS without
-    //!   re-running the expensive UDS-touching KBKDF.
+    //!   keyed by `PartRoot` so the PTA keypair fans out from the single
+    //!   root via a distinct domain-separation label, without re-running
+    //!   the expensive UDS-touching KBKDF.  (Future part-final local
+    //!   keys will fan out from `PartRoot` the same way.)
     //! - The third stage delegates to
     //!   [`azihsm_crypto::EccPrivateKey::from_okm_a2_1`] via the
     //!   PAL trait
@@ -653,10 +724,9 @@ pub(crate) mod kdf {
     //!
     //! # Public surface
     //!
-    //! [`derive_ums`] computes the per-partition UMS; [`derive_pta_keypair`]
-    //! consumes that UMS to derive the deterministic PTA P-384 keypair.
-    //! Additional per-partition keypair wrappers (e.g. `derive_pid_keypair`)
-    //! will land alongside future PartInit phases and reuse the same UMS.
+    //! [`derive_part_root`] computes the per-partition root secret;
+    //! [`derive_pta_keypair`] consumes that root to derive the
+    //! deterministic PTA P-384 keypair.
     //!
     //! # Compliance notes
     //!
@@ -685,16 +755,16 @@ pub(crate) mod kdf {
     use azihsm_fw_hsm_pal_traits::HsmResult;
     use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 
-    /// Domain-separation label for the UDS → UMS derivation
+    /// Domain-separation label for the UDS → PartRoot derivation
     /// (SP 800-108 KBKDF input).  Version suffix `v1` reserved for
     /// future protocol revisions.
-    pub const UMS_LABEL: &[u8] = b"AZIHSM-PartInit-UMS-v1";
+    pub const PART_ROOT_LABEL: &[u8] = b"AZIHSM-PartInit-PartRoot-v1";
 
-    /// Length of the derived Unique Master Secret, in bytes.
+    /// Length of the derived per-partition root secret, in bytes.
     ///
     /// 48 bytes = 384 bits, matching SHA-384's output and providing the
     /// full security margin needed to seed P-384 partition keys.
-    pub const UMS_LEN: usize = 48;
+    pub const PART_ROOT_LEN: usize = 48;
 
     /// Minimum acceptable `MachineSeed` length.  Below 128 bits the seed
     /// cannot contribute enough entropy to bind the derivation to the
@@ -705,20 +775,23 @@ pub(crate) mod kdf {
     /// input so the context buffer remains small and predictable.
     pub const MACHINE_SEED_MAX_LEN: usize = 256;
 
-    /// Derive the per-partition Unique Master Secret (UMS) from the
-    /// device's UDS and the operator-supplied binding inputs.
+    /// Derive the per-partition root secret (`PartRoot`) from the
+    /// device's UDS and *all* the operator-supplied binding inputs.
     ///
-    /// Implements the first stage of the PartInit KDF cascade
-    /// (UDS → UMS) via SP 800-108 Counter Mode KBKDF with HMAC-SHA384.
+    /// Implements the single-root first stage of the PartInit KDF
+    /// (UDS → PartRoot) via SP 800-108 Counter Mode KBKDF with
+    /// HMAC-SHA384.  Every per-partition key is later fanned out from
+    /// this root, so the root binds the machine seed, the unified
+    /// `PartPolicy`, and the POTA / SATA / SAPOTA thumbprints.
     ///
     /// Follows the PAL query/copy convention:
     ///
-    /// 1. **Query** — call with `ums_out = None`.  No derivation
-    ///    happens; the method returns [`UMS_LEN`], the byte count the
-    ///    caller must allocate.  Input length validation still runs.
+    /// 1. **Query** — call with `root_out = None`.  No derivation
+    ///    happens; the method returns [`PART_ROOT_LEN`], the byte count
+    ///    the caller must allocate.  Input length validation still runs.
     /// 2. **Alloc** — caller allocates a DMA buffer of that size.
-    /// 3. **Use** — call with `ums_out = Some(buf)`.  The method
-    ///    derives the UMS and writes [`UMS_LEN`] bytes into the
+    /// 3. **Use** — call with `root_out = Some(buf)`.  The method
+    ///    derives `PartRoot` and writes [`PART_ROOT_LEN`] bytes into the
     ///    caller's buffer.
     ///
     /// # Parameters
@@ -732,27 +805,26 @@ pub(crate) mod kdf {
     ///   strength ≥ 192 bits per SP 800-133r2 §6.2.3.
     /// - `machine_seed` — host-bound entropy.  Length must be in
     ///   `MACHINE_SEED_MIN_LEN..=MACHINE_SEED_MAX_LEN`.
-    /// - `part_policy` — `PartPolicy` thumbprint bytes (any length up
-    ///   to `u16::MAX`).
-    /// - `pota_thumb` — `POTA` thumbprint bytes (any length up to
+    /// - `part_policy` — unified `PartPolicy` bytes (any length up to
     ///   `u16::MAX`).
-    /// - `ums_out` — `None` to query the required buffer size;
-    ///   `Some(buf)` to derive.  When `Some`, `buf.len()` must be
-    ///   at least [`UMS_LEN`].
+    /// - `pota_thumb` / `sata_thumb` — POTA / SATA thumbprint bytes.
+    /// - `sapota_thumb` — optional SAPOTA thumbprint bytes; `None`
+    ///   contributes a zero-length field (the length-prefix keeps the
+    ///   absent and empty-present cases unambiguous).
+    /// - `root_out` — `None` to query the required buffer size;
+    ///   `Some(buf)` to derive.  When `Some`, `buf.len()` must be at
+    ///   least [`PART_ROOT_LEN`].
     ///
     /// # Returns
     ///
-    /// - `Ok(UMS_LEN)` — in query mode, the buffer size the caller
-    ///   must allocate; in use mode, the number of bytes written into
-    ///   `ums_out`.
+    /// - `Ok(PART_ROOT_LEN)` — query/use byte count.
     /// - `Err(HsmError::InvalidArg)` — `machine_seed` length out of
-    ///   range, any single input exceeds `u16::MAX` bytes (the
-    ///   length-prefix limit), or `ums_out` is `Some` and shorter than
-    ///   [`UMS_LEN`].
+    ///   range, any single input exceeds `u16::MAX` bytes, or
+    ///   `root_out` is `Some` and shorter than [`PART_ROOT_LEN`].
     /// - `Err(HsmError::NotEnoughSpace)` — scoped alloc exhausted.
     /// - `Err(HsmError)` — PAL KDF driver failure.
     #[allow(clippy::too_many_arguments)]
-    pub async fn derive_ums(
+    pub async fn derive_part_root(
         pal: &impl HsmPal,
         io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
@@ -760,28 +832,46 @@ pub(crate) mod kdf {
         machine_seed: &DmaBuf,
         part_policy: &DmaBuf,
         pota_thumb: &DmaBuf,
-        ums_out: Option<&mut DmaBuf>,
+        sata_thumb: &DmaBuf,
+        sapota_thumb: Option<&DmaBuf>,
+        root_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize> {
         if !(MACHINE_SEED_MIN_LEN..=MACHINE_SEED_MAX_LEN).contains(&machine_seed.len()) {
             return Err(HsmError::InvalidArg);
         }
+        let sapota_len = sapota_thumb.map_or(0, |t| t.len());
         // Each field is u16-BE length-prefixed in the KBKDF context.
-        if part_policy.len() > u16::MAX as usize || pota_thumb.len() > u16::MAX as usize {
+        if part_policy.len() > u16::MAX as usize
+            || pota_thumb.len() > u16::MAX as usize
+            || sata_thumb.len() > u16::MAX as usize
+            || sapota_len > u16::MAX as usize
+        {
             return Err(HsmError::InvalidArg);
         }
 
-        let Some(ums_out) = ums_out else {
-            return Ok(UMS_LEN);
+        let Some(root_out) = root_out else {
+            return Ok(PART_ROOT_LEN);
         };
-        if ums_out.len() < UMS_LEN {
+        if root_out.len() < PART_ROOT_LEN {
             return Err(HsmError::InvalidArg);
         }
 
-        let label = alloc.dma_alloc(UMS_LABEL.len())?;
-        label.copy_from_slice(UMS_LABEL);
+        let label = alloc.dma_alloc(PART_ROOT_LABEL.len())?;
+        label.copy_from_slice(PART_ROOT_LABEL);
 
         // Length-injective context: u16_be(|f|) ‖ f, for each field.
-        let fields: [&DmaBuf; 3] = [machine_seed, part_policy, pota_thumb];
+        // SAPOTA is bound as a zero-length field when absent.
+        let sapota_bytes: &[u8] = match sapota_thumb {
+            Some(t) => t,
+            None => &[],
+        };
+        let fields: [&[u8]; 5] = [
+            machine_seed,
+            part_policy,
+            pota_thumb,
+            sata_thumb,
+            sapota_bytes,
+        ];
         let ctx_len: usize = fields.iter().map(|f| 2 + f.len()).sum();
         let context = alloc.dma_alloc(ctx_len)?;
         let mut off = 0usize;
@@ -798,21 +888,21 @@ pub(crate) mod kdf {
             uds,
             Some(label),
             Some(context),
-            &mut ums_out[..UMS_LEN],
+            &mut root_out[..PART_ROOT_LEN],
         )
         .await?;
-        Ok(UMS_LEN)
+        Ok(PART_ROOT_LEN)
     }
 
-    /// Domain-separation label for the UMS → PTA keypair derivation
-    /// (HKDF-Expand info prefix).  Mirrors [`UMS_LABEL`] versioning:
-    /// rotating the suffix retires the associated key.  Exposed as a
-    /// `pub` constant so integration tests can construct alternate
-    /// labels and assert domain separation.
+    /// Domain-separation label for the PartRoot → PTA keypair derivation
+    /// (HKDF-Expand info prefix).  Mirrors [`PART_ROOT_LABEL`]
+    /// versioning: rotating the suffix retires the associated key.
+    /// Exposed as a `pub` constant so integration tests can construct
+    /// alternate labels and assert domain separation.
     pub const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
 
     /// Derive the deterministic per-partition PTA key pair (P-384) from
-    /// a UMS produced by [`derive_ums`], composing RFC 5869
+    /// a `PartRoot` produced by [`derive_part_root`], composing RFC 5869
     /// HKDF-Expand-SHA384 with FIPS 186-5 §A.2.1 (Extra Random Bits)
     /// keypair generation.
     ///
@@ -821,13 +911,13 @@ pub(crate) mod kdf {
     /// length) can never share an OKM, and so that increasing `okm_len`
     /// in a future protocol revision is a domain-separating change.
     ///
-    /// Same query/copy convention as [`derive_ums`] and as the
+    /// Same query/copy convention as [`derive_part_root`] and as the
     /// underlying PAL primitives
     /// ([`HsmEcc::ecc_gen_keypair_from_okm`]):
     ///
     /// 1. **Query** — call with `out = None`.  No derivation happens;
     ///    returns the per-curve `(priv_len, pub_len)` byte counts the
-    ///    caller must allocate.  `ums` is still validated.
+    ///    caller must allocate.  `root` is still validated.
     /// 2. **Alloc** — caller allocates two DMA buffers of those sizes.
     /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.  The
     ///    method runs HKDF-Expand to produce 56 B OKM, then dispatches
@@ -839,8 +929,8 @@ pub(crate) mod kdf {
     ///   [`HsmEcc::ecc_gen_keypair_from_okm`].
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `alloc` — scoped allocator for HKDF info and OKM scratch.
-    /// - `ums` — Unique Master Secret from [`derive_ums`].  Length
-    ///   must equal [`UMS_LEN`].
+    /// - `root` — `PartRoot` from [`derive_part_root`].  Length
+    ///   must equal [`PART_ROOT_LEN`].
     /// - `out` — `None` to query buffer sizes; `Some((priv_out,
     ///   pub_out))` to derive.  Each buffer must hold at least the
     ///   length returned by an earlier query call.
@@ -850,15 +940,15 @@ pub(crate) mod kdf {
     /// - `Ok((priv_len, pub_len))` — in query mode, the required
     ///   buffer sizes (48, 96 for P-384); in use mode, the actual
     ///   bytes written.
-    /// - `Err(HsmError::InvalidArg)` — `ums.len() != UMS_LEN` or an
-    ///   output buffer too small.
+    /// - `Err(HsmError::InvalidArg)` — `root.len() != PART_ROOT_LEN` or
+    ///   an output buffer too small.
     /// - `Err(HsmError::NotEnoughSpace)` — scoped alloc exhausted.
     /// - `Err(HsmError)` — PAL KDF / ECC driver failure.
     pub async fn derive_pta_keypair(
         pal: &impl HsmPal,
         io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
-        ums: &DmaBuf,
+        root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
     ) -> HsmResult<(usize, usize)> {
         let curve = HsmEccCurve::P384;
@@ -866,7 +956,7 @@ pub(crate) mod kdf {
         let pub_len = curve.wire_pub_key_len();
         let okm_len = curve.a2_1_okm_len();
 
-        if ums.len() != UMS_LEN {
+        if root.len() != PART_ROOT_LEN {
             return Err(HsmError::InvalidArg);
         }
 
@@ -884,7 +974,7 @@ pub(crate) mod kdf {
 
         // ── HKDF-Expand → OKM (curve-specific length) ─────────────
         let okm = alloc.dma_alloc(okm_len)?;
-        pal.hkdf_expand(io, HsmHashAlgo::Sha384, ums, Some(info), okm)
+        pal.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(info), okm)
             .await?;
 
         // ── §A.2.1 keypair derivation via PAL primitive ────────────

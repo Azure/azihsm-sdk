@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for the TBOR `CloseSession` command.
+//! Integration tests for the TBOR `SessionClose` command.
 //!
-//! `CloseSession` is a thin pass-through to
+//! `SessionClose` is a thin pass-through to
 //! `HsmSessionManager::session_destroy`, which (a) tears down any
 //! vault state bound to the session and (b) frees the logical slot.
 //! It is valid for both `Active` and `Pending` slots; closing an
@@ -13,7 +13,7 @@
 //! RAII type: it opens, the test exercises, and either an explicit
 //! `.close()` returns the `DdiResult` or `Drop` performs panic-safe
 //! cleanup. Negative-path tests intentionally drive the low-level
-//! [`TestCtx::open_session_init`] / [`TestCtx::close_session`]
+//! [`TestCtx::session_open_init`] / [`TestCtx::session_close`]
 //! methods so they can call close twice, close an unknown id, or
 //! close a pending-only slot.
 //!
@@ -34,14 +34,14 @@ const CU: u8 = 1;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn close_session_cu_plaintext_active_emu() {
+fn session_close_cu_plaintext_active_emu() {
     let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     session.close().expect("close active CU session");
 }
 
 #[test]
-fn close_session_co_authenticated_active_emu() {
+fn session_close_co_authenticated_active_emu() {
     let ctx = TestCtx::new();
     let session = ctx.open_session(CO, SessionType::Authenticated);
     session.close().expect("close active CO session");
@@ -53,12 +53,12 @@ fn close_session_co_authenticated_active_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn close_session_pending_slot_emu() {
+fn session_close_pending_slot_emu() {
     let ctx = TestCtx::new();
     let pending = ctx
-        .open_session_init(CU, SessionType::PlainText)
+        .session_open_init(CU, SessionType::PlainText)
         .expect("phase 1 init reserves a pending slot");
-    ctx.close_session(pending.session_id)
+    ctx.session_close(pending.session_id)
         .expect("close pending slot");
 }
 
@@ -68,10 +68,10 @@ fn close_session_pending_slot_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn close_session_unknown_id_emu() {
+fn session_close_unknown_id_emu() {
     let ctx = TestCtx::new();
     let err = ctx
-        .close_session(0xFFFF)
+        .session_close(0xFFFF)
         .expect_err("close of unknown id must fail");
     assert!(
         matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
@@ -80,7 +80,7 @@ fn close_session_unknown_id_emu() {
 }
 
 #[test]
-fn close_session_double_close_emu() {
+fn session_close_double_close_emu() {
     let ctx = TestCtx::new();
     // Take the `SessionHandshake` out of the guard via `.close()` so
     // we own the lifecycle for the second (failing) call. The first
@@ -89,7 +89,7 @@ fn close_session_double_close_emu() {
     let session_id = session.session_id();
     session.close().expect("first close succeeds");
     let err = ctx
-        .close_session(session_id)
+        .session_close(session_id)
         .expect_err("second close against the same id must fail");
     assert!(
         matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
@@ -102,7 +102,7 @@ fn close_session_double_close_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn close_session_then_reopen_emu() {
+fn session_close_then_reopen_emu() {
     let ctx = TestCtx::new();
     let first = ctx.open_session(CU, SessionType::PlainText);
     first.close().expect("close first");

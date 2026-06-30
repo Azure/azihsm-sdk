@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Phase 1 of the TBOR session handshake — `OpenSessionInit`.
+//! Phase 1 of the TBOR session handshake — `SessionOpenInit`.
 //!
 //! Generates the VM's per-handshake ephemeral keypair, ships the
 //! request, runs HPKE `receive_export` on the FW response, and
 //! verifies the Phase-1 confirm MAC. Returns a [`PendingHandshake`]
-//! that [`super::finish::open_session_finish`] consumes to complete
+//! that [`super::finish::session_open_finish`] consumes to complete
 //! Phase 2.
 //!
-//! The convenience entry point [`open_session_init`] runs the happy
+//! The convenience entry point [`session_open_init`] runs the happy
 //! path with fresh ephemeral and the canonical default PSK. Negative
-//! -path tests reach for [`OpenSessionInitOptions`] +
-//! [`open_session_init_with_options`] to override individual knobs
+//! -path tests reach for [`SessionOpenInitOptions`] +
+//! [`session_open_init_with_options`] to override individual knobs
 //! (PSK, ephemeral keypair).
 
 use azihsm_crypto::EccPrivateKey;
@@ -21,8 +21,8 @@ use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborOpenSessionInitReq;
-use azihsm_ddi_tbor_types::TborOpenSessionInitResp;
+use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
+use azihsm_ddi_tbor_types::TborSessionOpenInitResp;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
@@ -32,7 +32,7 @@ use super::crypto::VmEphemeralKey;
 /// State carried between Phase 1 and Phase 2 of the handshake.
 /// The caller may construct this directly to drive negative-path
 /// tests (e.g., tamper `exported` to force a Phase-2 MAC mismatch);
-/// the happy-path helper [`open_session_init`] populates it from a
+/// the happy-path helper [`session_open_init`] populates it from a
 /// real round-trip.
 #[derive(Debug)]
 pub struct PendingHandshake {
@@ -54,12 +54,12 @@ pub struct PendingHandshake {
     pub pk_hsm: [u8; PK_INIT_LEN],
 }
 
-/// Override knobs for [`open_session_init_with_options`].
+/// Override knobs for [`session_open_init_with_options`].
 ///
 /// `None` fields use the happy-path default (fresh ephemeral,
 /// partition default PSK). Tests set only the fields they need to
 /// override.
-pub struct OpenSessionInitOptions<'a> {
+pub struct SessionOpenInitOptions<'a> {
     /// PSK id (0 = CO, 1 = CU). Required.
     pub psk_id: u8,
     /// Channel integrity profile. Required.
@@ -81,7 +81,7 @@ pub struct OpenSessionInitOptions<'a> {
     pub psk: Option<&'a [u8]>,
 }
 
-impl<'a> OpenSessionInitOptions<'a> {
+impl<'a> SessionOpenInitOptions<'a> {
     /// Construct an options block with happy-path defaults for the
     /// given `psk_id` and `session_type`.
     pub fn new(psk_id: u8, session_type: SessionType) -> Self {
@@ -114,24 +114,24 @@ impl<'a> OpenSessionInitOptions<'a> {
     }
 }
 
-/// Convenience wrapper: happy-path `OpenSessionInit` with fresh
+/// Convenience wrapper: happy-path `SessionOpenInit` with fresh
 /// ephemeral and partition default PSK.
 ///
 /// Equivalent to
-/// `open_session_init_with_options(dev, OpenSessionInitOptions::new(psk_id, session_type))`.
-pub fn open_session_init(
+/// `session_open_init_with_options(dev, SessionOpenInitOptions::new(psk_id, session_type))`.
+pub fn session_open_init(
     dev: &<AzihsmDdi as Ddi>::Dev,
     psk_id: u8,
     session_type: SessionType,
 ) -> Result<PendingHandshake, DdiError> {
-    open_session_init_with_options(dev, OpenSessionInitOptions::new(psk_id, session_type))
+    session_open_init_with_options(dev, SessionOpenInitOptions::new(psk_id, session_type))
 }
 
 /// Full-control entry point. Honours every override in `opts`;
 /// fills in happy-path defaults for the rest.
-pub fn open_session_init_with_options(
+pub fn session_open_init_with_options(
     dev: &<AzihsmDdi as Ddi>::Dev,
-    opts: OpenSessionInitOptions<'_>,
+    opts: SessionOpenInitOptions<'_>,
 ) -> Result<PendingHandshake, DdiError> {
     let (sk_init, pk_init_sec1, pk_init_key) = match opts.ephemeral {
         Some((sk, pk_sec1)) => {
@@ -146,14 +146,14 @@ pub fn open_session_init_with_options(
 
     let (pk_hsm_key, pk_hsm_sec1) = crypto::fetch_pk_hsm(dev)?;
 
-    let req = TborOpenSessionInitReq {
+    let req = TborSessionOpenInitReq {
         psk_id: opts.psk_id,
         session_type: opts.session_type.to_u8(),
         suite_id: opts.suite_id,
         pk_init: pk_init_sec1,
     };
     let mut cookie = None;
-    let resp: TborOpenSessionInitResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let resp: TborSessionOpenInitResp = dev.exec_op_tbor(&req, &mut cookie)?;
 
     let info = crypto::build_hpke_info(opts.psk_id, opts.session_type.to_u8(), opts.suite_id);
     let default_psk = crypto::default_psk(opts.psk_id)?;

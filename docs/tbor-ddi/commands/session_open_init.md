@@ -3,9 +3,9 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# OpenSessionInit (Opcode 0x10)
+# SessionOpenInit (Opcode 0x03)
 
-**Handler:** `fw/core/lib/src/ddi/tbor/open_session_init.rs`
+**Handler:** `fw/core/lib/src/ddi/tbor/session_open_init.rs`
 **Session:** NoSession
 
 ## Description
@@ -34,7 +34,7 @@ AEAD-GCM encryption under [`aead_envelope`](
 ../../../fw/core/crypto/aead-envelope/src/lib.rs)) and `masking_key`.
 An `Authenticated` session also derives `mac_tx_key` / `mac_rx_key`
 so subsequent command and response bodies carry an outer per-message
-HMAC envelope (see [`open_session_finish.md`](./open_session_finish.md)
+HMAC envelope (see [`session_open_finish.md`](./session_open_finish.md)
 for the full key schedule).
 
 The HPKE suite is `DHKEM(P-384, HKDF-SHA-384) + AES-256-GCM`, with
@@ -50,7 +50,7 @@ the host.
 
 The `suite_id` byte selects every other cryptographic primitive used
 by the handshake (KEM, KDF, AEAD, MAC).  It is also persisted in the
-HSM's Pending slot so `OpenSessionFinish` can recover the negotiated
+HSM's Pending slot so `SessionOpenFinish` can recover the negotiated
 suite without trusting any client-side state.
 
 | `suite_id` | Suite | KEM | KDF | AEAD | MAC |
@@ -66,7 +66,7 @@ is added it will receive its own row above, and its `pk_init` /
 
 Resume is **not** a TBOR concern: a host that wants to reuse a prior
 session's masking-key blob does so via the MBOR `ReopenSession`
-command.  Every `OpenSessionInit` here is therefore a fresh open.
+command.  Every `SessionOpenInit` here is therefore a fresh open.
 
 ## Request
 
@@ -142,5 +142,5 @@ the correct PSK.
 ## See also
 
 - Wire encoding: [TBOR specification](../../../fw/core/ddi/tbor/docs/spec.md)
-- Wire schema: `fw/core/ddi/tbor/types/src/open_session_init.rs`
-- Phase 2: [`open_session_finish.md`](./open_session_finish.md)
+- Wire schema: `fw/core/ddi/tbor/types/src/session_open_init.rs`
+- Phase 2: [`session_open_finish.md`](./session_open_finish.md)
