@@ -21,4 +21,4 @@ runs:
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo xtask setup
+      run: cargo xtask precheck --setup
