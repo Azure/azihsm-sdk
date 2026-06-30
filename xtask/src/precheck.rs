@@ -188,8 +188,8 @@ impl Xtask for Precheck {
                 #[cfg(not(target_os = "windows"))]
                 {
                     // Run azihsm_ddi mock tests
-                    let ddi_tests = ddi_tests(&self.exclude, self.profile.clone());
-                    run_tests(ddi_tests, false, self.skip_clean, ctx.clone())?;
+                    let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
+                    run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
                 }
             } else {
                 Nextest {
