@@ -90,6 +90,50 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  test_ubuntu_smoke:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libbsd-dev
+
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      run: cargo xtask setup
+    - name: Run MBOR types smoke tests against emu backend
+      id: test-mbor-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mbor-smoke.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mbor-smoke.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   build_windows:
 
     runs-on: windows-2025-vs2026
@@ -142,6 +186,45 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_smoke:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      run: cargo xtask setup
+    - name: Run MBOR types smoke tests against emu backend
+      id: test-mbor-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mbor-smoke.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mbor-smoke.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1

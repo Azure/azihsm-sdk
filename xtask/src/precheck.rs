@@ -6,6 +6,8 @@
 
 //! Xtask to run various repo-specific checks
 
+use std::vec;
+
 use clap::Parser;
 
 use crate::audit::Audit;
@@ -180,6 +182,8 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: self.exclude.clone(),
+                    test: None,
+                    filter: vec![],
                 }
                 .run(ctx.clone())?;
 
@@ -193,6 +197,23 @@ impl Xtask for Precheck {
                         filterset: Some("test(resiliency::fault_injection::)".to_string()),
                         profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
                         exclude: self.exclude.clone(),
+                        test: None,
+                        filter: vec![],
+                    }
+                    .run(ctx.clone())?;
+                }
+
+                // Run MBOR types smoke tests against emu backend
+                if !self.exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
+                    Nextest {
+                        features: Some("emu".to_string()),
+                        package: Some("azihsm_ddi_mbor_types".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self.profile.clone().or(Some("ci-mbor-smoke".to_string())),
+                        exclude: self.exclude.clone(),
+                        test: None,
+                        filter: vec![],
                     }
                     .run(ctx.clone())?;
                 }
@@ -207,6 +228,8 @@ impl Xtask for Precheck {
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
                         exclude: self.exclude.clone(),
+                        test: None,
+                        filter: vec![],
                     }
                     .run(ctx.clone())?;
 
@@ -221,6 +244,8 @@ impl Xtask for Precheck {
                             .clone()
                             .or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
+                        test: None,
+                        filter: vec![],
                     }
                     .run(ctx.clone())?;
 
@@ -233,6 +258,8 @@ impl Xtask for Precheck {
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
                         exclude: self.exclude.clone(),
+                        test: None,
+                        filter: vec![],
                     }
                     .run(ctx.clone())?;
                 }
@@ -244,6 +271,8 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: self.profile,
                     exclude: self.exclude,
+                    test: None,
+                    filter: vec![],
                 }
                 .run(ctx.clone())?;
             }
