@@ -13,7 +13,10 @@ shared headers below).  Wire framing, TOC entry layout, alignment, and
 schema features are defined in the
 [TBOR encoding specification](../../fw/core/ddi/tbor/docs/spec.md).
 
-Only commands with a landed firmware handler are listed.
+Every command with a defined wire schema is listed.  Commands whose
+firmware handler has not yet landed are marked **schema-only** in the
+table below (and in their per-command document); they are not yet
+dispatchable.
 
 ## Request header
 
@@ -46,12 +49,15 @@ single `none` TOC placeholder and no typed body fields.
 
 | Opcode | Command | Session | Doc |
 |---|---|---|---|
-| `0x01` | `GetApiRev` | NoSession | [`commands/get_api_rev.md`](./commands/get_api_rev.md) |
-| `0x10` | `OpenSessionInit` | NoSession | [`commands/open_session_init.md`](./commands/open_session_init.md) |
-| `0x11` | `OpenSessionFinish` | NoSession | [`commands/open_session_finish.md`](./commands/open_session_finish.md) |
-| `0x12` | `CloseSession` | InSession | [`commands/close_session.md`](./commands/close_session.md) |
-| `0x20` | `ChangePsk` | InSession | [`commands/change_psk.md`](./commands/change_psk.md) |
-| `0x30` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
+| `0x01` | `ApiRev` | NoSession | [`commands/api_rev.md`](./commands/api_rev.md) |
+| `0x02` | `PartInfo` | NoSession | [`commands/part_info.md`](./commands/part_info.md) |
+| `0x03` | `SessionOpenInit` | NoSession | [`commands/session_open_init.md`](./commands/session_open_init.md) |
+| `0x04` | `SessionOpenFinish` | NoSession | [`commands/session_open_finish.md`](./commands/session_open_finish.md) |
+| `0x05` | `SessionClose` | InSession | [`commands/session_close.md`](./commands/session_close.md) |
+| `0x06` | `PskChange` | InSession | [`commands/psk_change.md`](./commands/psk_change.md) |
+| `0x07` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
+| `0x08` | `PartFinal` (schema-only) | InSession | [`commands/part_final.md`](./commands/part_final.md) |
+| `0x09` | `SdSealingKeyGen` (schema-only) | InSession | [`commands/sd_sealing_key_gen.md`](./commands/sd_sealing_key_gen.md) |
 
 ## Default-PSK gate
 
@@ -67,21 +73,21 @@ only in-session commands permitted are:
 
 | Opcode | Command | Why it's allowed |
 |---|---|---|
-| `0x12` | `CloseSession` | Tear-down has no security impact |
-| `0x20` | `ChangePsk` | The rotation itself |
+| `0x05` | `SessionClose` | Tear-down has no security impact |
+| `0x06` | `PskChange` | The rotation itself |
 
 Any other in-session opcode returns `DefaultPskMustRotate`
 (`0x087000E6`).  The gate is **per role**: rotating the CO PSK
 unlocks CO sessions but does not affect CU; rotating the CU PSK is a
-separate operation.  Out-of-session opcodes (`GetApiRev`,
-`OpenSessionInit`, `OpenSessionFinish`) are never gated so a client
-can always open the bootstrap session.
+separate operation.  Out-of-session opcodes (`ApiRev`,
+`SessionOpenInit`, `SessionOpenFinish`, `PartInfo`) are never gated so a
+client can always open the bootstrap session.
 
 **Bootstrap sequence (mandatory on first provisioning):**
 
 1. Open a session for the role under the default PSK.
-2. Issue `ChangePsk` as the first in-session command.
-3. (Optional) `CloseSession`; subsequent sessions are unrestricted.
+2. Issue `PskChange` as the first in-session command.
+3. (Optional) `SessionClose`; subsequent sessions are unrestricted.
 
 The gate is **safe-by-default** in code: future opcodes added to the
 dispatcher are gated unless explicitly placed on the
@@ -91,15 +97,15 @@ dispatcher are gated unless explicitly placed on the
 ## Session establishment flows
 
 Session establishment is a two-message handshake driven by
-[`OpenSessionInit`](./commands/open_session_init.md) and
-[`OpenSessionFinish`](./commands/open_session_finish.md).  The flow is
+[`SessionOpenInit`](./commands/session_open_init.md) and
+[`SessionOpenFinish`](./commands/session_open_finish.md).  The flow is
 the same shape for both roles, but the negotiated `session_type` pins
 which keys the schedule derives and therefore which envelope
 subsequent in-session commands carry.
 
 Resume is **not** a TBOR concern.  A host that wants to restore a
 prior session's `masking_key` blob across resets uses the MBOR
-`ReopenSession` command instead; every `OpenSessionInit` here opens
+`ReopenSession` command instead; every `SessionOpenInit` here opens
 a fresh session.
 
 ### Crypto Officer (Authenticated, `psk_id = 0`, `session_type = 1`)
@@ -116,14 +122,14 @@ sequenceDiagram
     participant HSM
 
     Note over Host: generate ephemeral P-384 keypair (sk_init, pk_init)
-    Host->>HSM: OpenSessionInit { psk_id=0, session_type=1, suite_id=1, pk_init }
+    Host->>HSM: SessionOpenInit { psk_id=0, session_type=1, suite_id=1, pk_init }
     Note over HSM: HPKE auth_psk send_export against partition identity<br/>info = "azihsm-session-v2" ‖ 0 ‖ 1 ‖ 1<br/>reserve Pending slot, stash (exported, psk_id, session_type, suite_id)<br/>compute mac_resp = HMAC-SHA-384(exported, pk_init ‖ pk_hsm ‖ pk_resp ‖ session_id)
-    HSM-->>Host: OpenSessionInitResp { session_id, pk_resp, mac_resp }
+    HSM-->>Host: SessionOpenInitResp { session_id, pk_resp, mac_resp }
 
     Note over Host: HPKE recv_export → exported<br/>verify mac_resp (binds role/type — downgrade flips exported)<br/>derive param_key, generate fresh 32 B seed<br/>seed_envelope = aead_envelope::seal(param_key, iv, [], seed)<br/>mac_fin = HMAC-SHA-384(exported, "phase2-confirm" ‖ session_id ‖ pk_init ‖ pk_hsm ‖ pk_resp)
-    Host->>HSM: OpenSessionFinish { session_id, mac_fin, seed_envelope }
+    Host->>HSM: SessionOpenFinish { session_id, mac_fin, seed_envelope }
     Note over HSM: verify mac_fin against stashed exported<br/>derive param_key, AEAD-open seed_envelope → seed<br/>HKDF-derive: masking_key, mac_tx_key, mac_rx_key<br/>BK_SESSION = KBKDF(BK_BOOT, "SESSION_BK", seed)<br/>wrap masking_key as aead_envelope under BK_SESSION → bmk_session<br/>promote slot Pending → Active
-    HSM-->>Host: OpenSessionFinishResp { bmk_session }
+    HSM-->>Host: SessionOpenFinishResp { bmk_session }
 
     Note over Host,HSM: Active session<br/>commands: AEAD-GCM per-parameter + outer HMAC envelope<br/>responses: outer HMAC envelope
 ```
@@ -144,14 +150,14 @@ sequenceDiagram
     participant HSM
 
     Note over Host: generate ephemeral P-384 keypair (sk_init, pk_init)
-    Host->>HSM: OpenSessionInit { psk_id=1, session_type=0, suite_id=1, pk_init }
+    Host->>HSM: SessionOpenInit { psk_id=1, session_type=0, suite_id=1, pk_init }
     Note over HSM: HPKE auth_psk send_export against partition identity<br/>info = "azihsm-session-v2" ‖ 1 ‖ 0 ‖ 1<br/>reserve Pending slot, stash (exported, psk_id, session_type, suite_id)<br/>compute mac_resp = HMAC-SHA-384(exported, pk_init ‖ pk_hsm ‖ pk_resp ‖ session_id)
-    HSM-->>Host: OpenSessionInitResp { session_id, pk_resp, mac_resp }
+    HSM-->>Host: SessionOpenInitResp { session_id, pk_resp, mac_resp }
 
     Note over Host: HPKE recv_export → exported<br/>verify mac_resp<br/>derive param_key, generate fresh 32 B seed<br/>seed_envelope = aead_envelope::seal(param_key, iv, [], seed)<br/>mac_fin = HMAC-SHA-384(exported, "phase2-confirm" ‖ session_id ‖ pk_init ‖ pk_hsm ‖ pk_resp)
-    Host->>HSM: OpenSessionFinish { session_id, mac_fin, seed_envelope }
+    Host->>HSM: SessionOpenFinish { session_id, mac_fin, seed_envelope }
     Note over HSM: verify mac_fin against stashed exported<br/>derive param_key, AEAD-open seed_envelope → seed<br/>HKDF-derive: masking_key (no mac_tx/rx)<br/>BK_SESSION = KBKDF(BK_BOOT, "SESSION_BK", seed)<br/>wrap masking_key as aead_envelope under BK_SESSION → bmk_session<br/>promote slot Pending → Active
-    HSM-->>Host: OpenSessionFinishResp { bmk_session }
+    HSM-->>Host: SessionOpenFinishResp { bmk_session }
 
     Note over Host,HSM: Active session<br/>commands: AEAD-GCM per-parameter, no outer envelope<br/>responses: no outer envelope
 ```
@@ -159,9 +165,9 @@ sequenceDiagram
 ### Teardown
 
 Either party can end an active session: the host issues
-[`CloseSession`](./commands/close_session.md) (which the HSM
+[`SessionClose`](./commands/session_close.md) (which the HSM
 acknowledges and zeroizes the slot), and the HSM unilaterally
 zeroizes any session whose slot it needs to reclaim (`bmk_session`
 may still be re-presented later via the resume path on a fresh
-`OpenSessionInit`).
+`SessionOpenInit`).
 

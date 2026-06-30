@@ -59,6 +59,7 @@ fn on_struct(
         return Ok(codegen_fields::gen_field_group(&schema));
     }
 
+    let align_assertions = schema.align_assertions();
     let view_tokens = codegen_view::gen_view(&schema);
     let view_mut_tokens = codegen_view_mut::gen_view_mut(&schema);
     let enc_tokens = codegen_enc::gen_encoder_and_frame(&schema);
@@ -73,7 +74,7 @@ fn on_struct(
     let validation = codegen_view::gen_validation_standalone(&schema);
 
     let decode_fn = quote! {
-        pub fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<#view_name<'_>, azihsm_fw_ddi_tbor::DecodeError> {
+        pub fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<#view_name<'_>, azihsm_fw_hsm_pal_traits::HsmError> {
             #validation
             Ok(#view_name::from_validated(buf))
         }
@@ -86,7 +87,7 @@ fn on_struct(
     // per-field borrows at the parent buffer's lifetime.
     let decode_mut_fn = if let Some(body) = codegen_view_mut::gen_decode_mut_body(&schema) {
         quote! {
-            pub fn decode_mut(buf: &mut azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<#view_mut_name<'_>, azihsm_fw_ddi_tbor::DecodeError> {
+            pub fn decode_mut(buf: &mut azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<#view_mut_name<'_>, azihsm_fw_hsm_pal_traits::HsmError> {
                 #body
             }
         }
@@ -96,12 +97,12 @@ fn on_struct(
 
     let encode_fn = match schema.kind {
         schema::MessageKind::Request { .. } => quote! {
-            pub fn encode<'a>(buf: &'a mut [u8]) -> Result<#enc_name<'a, #s0>, azihsm_fw_ddi_tbor::EncodeError> {
+            pub fn encode<'a>(buf: &'a mut [u8]) -> Result<#enc_name<'a, #s0>, azihsm_fw_hsm_pal_traits::HsmError> {
                 #enc_name::new(buf)
             }
         },
         schema::MessageKind::Response => quote! {
-            pub fn encode<'a>(buf: &'a mut [u8], status: u32, fips_approved: bool) -> Result<#enc_name<'a, #s0>, azihsm_fw_ddi_tbor::EncodeError> {
+            pub fn encode<'a>(buf: &'a mut [u8], status: u32, fips_approved: bool) -> Result<#enc_name<'a, #s0>, azihsm_fw_hsm_pal_traits::HsmError> {
                 #enc_name::new(buf, status, fips_approved)
             }
         },
@@ -117,7 +118,7 @@ fn on_struct(
                 const OPCODE: u8 = #opcode;
                 type View<'a> = #view_name<'a>;
 
-                fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<Self::View<'_>, azihsm_fw_ddi_tbor::DecodeError> {
+                fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<Self::View<'_>, azihsm_fw_hsm_pal_traits::HsmError> {
                     #name::decode(buf)
                 }
             }
@@ -126,7 +127,7 @@ fn on_struct(
             impl azihsm_fw_ddi_tbor::TborResponse for #name {
                 type View<'a> = #view_name<'a>;
 
-                fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<Self::View<'_>, azihsm_fw_ddi_tbor::DecodeError> {
+                fn decode(buf: &azihsm_fw_hsm_pal_traits::DmaBuf) -> Result<Self::View<'_>, azihsm_fw_hsm_pal_traits::HsmError> {
                     #name::decode(buf)
                 }
             }
@@ -136,6 +137,8 @@ fn on_struct(
 
     Ok(quote! {
         #vis struct #name;
+
+        #align_assertions
 
         impl #name {
             /// Maximum possible encoded message size for this type.

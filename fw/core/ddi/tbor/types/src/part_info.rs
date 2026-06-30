@@ -16,9 +16,52 @@
 //! store straight to the encoder.
 
 use azihsm_fw_ddi_tbor_api::tbor;
+use open_enum::open_enum;
+
+use crate::tbor_int::U32;
+use crate::tbor_int::U64;
+
+/// Device kind reported in a `PartInfo` response — the TBOR analogue of
+/// MBOR `DdiDeviceKind`.  [`open_enum`] so an unrecognized kind
+/// round-trips as `DeviceKind(x)` rather than failing to decode.
+#[repr(u8)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceKind {
+    /// Virtual (simulated) device.
+    Virtual = 1,
+
+    /// Physical device.
+    Physical = 2,
+}
+
+/// Partition lifecycle state on the `PartInfo` wire — a wire-side mirror
+/// of the firmware `PartState` enum
+/// ([`azihsm_fw_hsm_pal_traits::PartState`]).  Kept as a dedicated
+/// [`open_enum`] so the closed domain `PartState` stays untouched and an
+/// unrecognized discriminant round-trips as `PartStateId(x)`.
+#[repr(u8)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartStateId {
+    /// Slot is free.
+    Unallocated = 0,
+
+    /// Resources + identity key present; provisioning incomplete.
+    Allocated = 1,
+
+    /// Fully provisioned and ready for DDI operations.
+    Enabled = 2,
+
+    /// Previously enabled, then disabled by the host.
+    Disabled = 3,
+
+    /// `PartInit` bound; finalization pending.
+    Initializing = 4,
+}
 
 /// TBOR opcode for `PartInfo`.
-pub const TBOR_OP_PART_INFO: u8 = 0x32;
+pub const TBOR_OP_PART_INFO: u8 = 0x02;
 
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;
@@ -37,8 +80,8 @@ pub const PID_PUB_KEY_LEN: usize = 96;
 ///
 /// The `tbor` derive requires an integer literal here, so the opcode is
 /// spelled out rather than referencing [`TBOR_OP_PART_INFO`]; the two
-/// MUST stay in sync (both `0x32`).
-#[tbor(opcode = 0x32)]
+/// MUST stay in sync (both `0x02`).
+#[tbor(opcode = 0x02)]
 pub struct TborPartInfoReq;
 
 /// `PartInfo` response schema.
@@ -52,25 +95,27 @@ pub struct TborPartInfoReq;
 #[tbor(response)]
 pub struct TborPartInfoResp<'a> {
     /// Device kind, matching MBOR `DdiDeviceKind` (`2` = Physical).
-    pub device_kind: u8,
+    #[tbor(U8)]
+    pub device_kind: DeviceKind,
 
-    /// Partition lifecycle state (`PartState` discriminant).
-    pub part_state: u8,
+    /// Partition lifecycle state (mirror of the firmware `PartState`).
+    #[tbor(U8)]
+    pub part_state: PartStateId,
 
     /// Monotonic partition generation counter.
-    pub generation: u32,
+    pub generation: U32,
 
     /// Owner-seed (BKS2) selector currently in effect.
-    pub owner_svn: u64,
+    pub owner_svn: U64,
 
     /// Manufacturer-seed (BKS1) selector — the current firmware SVN.
-    pub mfgr_svn: u64,
+    pub mfgr_svn: U64,
 
     /// Opaque 16-byte partition identity (PID).
-    #[tbor(len = 16)]
+    #[tbor(buffer, len = 16)]
     pub pid: &'a [u8],
 
     /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B).
-    #[tbor(len = 96)]
+    #[tbor(buffer, len = 96)]
     pub pid_pub_key: &'a [u8],
 }

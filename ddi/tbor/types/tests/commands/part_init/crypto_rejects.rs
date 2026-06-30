@@ -9,6 +9,7 @@
 //! partition in `Enabled`.  Cross-test isolation is provided by
 //! [`TestCtx::new`].
 
+use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -35,7 +36,7 @@ fn part_init_envelope_tampered_emu() {
     let seed = mach_seed();
     let mut envelope =
         encrypt_mach_seed_envelope(&session, &seed).expect("seal mach_seed envelope");
-    // Envelope layout matches `change_psk`'s ciphertext-tamper test:
+    // Envelope layout matches `psk_change`'s ciphertext-tamper test:
     // HEADER(4) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16).  Flip a byte in
     // the middle so AEAD tag verification fails.
     let target = envelope.len() / 2;
@@ -46,7 +47,10 @@ fn part_init_envelope_tampered_emu() {
         mach_seed_envelope: envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(&known_good_part_policy());
+    req.part_policy =
+        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+            .ok()
+            .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
@@ -57,7 +61,7 @@ fn part_init_envelope_tampered_emu() {
 /// FW uses B's `param_key` for AEAD-GCM verification, so the tag
 /// mismatches and the handler surfaces
 /// [`TborStatus::AeadEnvelopeAuthFailed`]. Mirrors the equivalent
-/// `change_psk_envelope_from_other_session_emu` test.
+/// `psk_change_envelope_from_other_session_emu` test.
 #[test]
 fn part_init_envelope_from_other_session_emu() {
     let ctx = TestCtx::new();
@@ -69,11 +73,11 @@ fn part_init_envelope_from_other_session_emu() {
     // doesn't trip `VaultSessionLimitReached` (the FW caps
     // concurrent CO + Authenticated sessions tighter than CU
     // PlainText, so the equivalent two-CU pattern used by
-    // `change_psk_envelope_from_other_session_emu` can't be reused
+    // `psk_change_envelope_from_other_session_emu` can't be reused
     // here verbatim).
     let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let param_key_a = session_a.param_key.clone();
-    ctx.close_session(session_a.session_id)
+    ctx.session_close(session_a.session_id)
         .expect("close session A before opening B");
 
     // Session B: a fresh rotated-CO session. FW assigns its own
@@ -90,23 +94,21 @@ fn part_init_envelope_from_other_session_emu() {
         mach_seed_envelope: envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(&known_good_part_policy());
+    req.part_policy =
+        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+            .ok()
+            .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
 
 /// AAD bytes of arbitrary but valid AEAD granularity (64 bytes —
-/// double the canonical [`PART_INIT_MACH_SEED_AAD_LEN`] of 32).
-/// AEAD-open succeeds (the FW recomputes the tag over these bytes),
-/// but the FW collapses any post-auth wire-shape mismatch (AAD
-/// length / layout / payload length) into
-/// [`TborStatus::AeadEnvelopeAuthFailed`] — see
-/// `open_mach_seed_envelope` in the FW part_init handler: once
-/// authentication has succeeded the only way the shape can diverge
-/// is a sender that constructed the envelope against a different
-/// protocol contract, which is operationally indistinguishable from
-/// a forgery attempt.
+/// double the canonical [`PART_INIT_MACH_SEED_AAD_LEN`] of 32).  A
+/// 64-byte AAD inflates the envelope past the fixed
+/// [`MACH_SEED_ENVELOPE_LEN`] (100 B), so the FW schema's fixed-length
+/// check rejects it at decode with
+/// [`TborStatus::TborInvalidFixedLength`] before any AEAD work.
 #[test]
 fn part_init_wrong_aad_length_emu() {
     let ctx = TestCtx::new();
@@ -119,25 +121,28 @@ fn part_init_wrong_aad_length_emu() {
         mach_seed_envelope: envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(&known_good_part_policy());
+    req.part_policy =
+        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+            .ok()
+            .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
-    ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
+    ctx.expect_fw_reject(&req, TborStatus::TborInvalidFixedLength);
 }
 
-/// `mach_seed` plaintext length ≠ [`MACH_SEED_LEN`] (32). AEAD-open
-/// succeeds, but the FW collapses the post-auth length mismatch into
-/// [`TborStatus::AeadEnvelopeAuthFailed`] (see
-/// `part_init_wrong_aad_length_emu` for the rationale). Loop over
-/// `MACH_SEED_LEN ± 1` to cover the shortest excursions on either
-/// side of the canonical length. Mirrors
-/// `change_psk_wrong_plaintext_length_emu`.
+/// `mach_seed` plaintext length ≠ [`MACH_SEED_LEN`] (32) yields a wrong
+/// *envelope* length (ciphertext tracks plaintext for GCM), so the FW
+/// schema's fixed [`MACH_SEED_ENVELOPE_LEN`] (100 B) rejects both at
+/// decode with [`TborStatus::TborInvalidFixedLength`]. Loop over
+/// `MACH_SEED_LEN ± 1` to cover the shortest excursions on either side
+/// of the canonical length. Mirrors
+/// `psk_change_wrong_plaintext_length_emu`.
 #[test]
 fn part_init_wrong_mach_seed_length_emu() {
     let ctx = TestCtx::new();
-    // Hoist bootstrap out of the loop: PartInit's plaintext-length
-    // check rejects before any partition-state mutation, so the
-    // same rotated-CO session can drive both iterations.
+    // Hoist bootstrap out of the loop: PartInit's length check rejects
+    // before any partition-state mutation, so the same rotated-CO
+    // session can drive both iterations.
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let aad = build_part_init_mach_seed_aad(session.session_id);
 
@@ -150,13 +155,16 @@ fn part_init_wrong_mach_seed_length_emu() {
             mach_seed_envelope: envelope,
             ..Default::default()
         };
-        req.part_policy.copy_from_slice(&known_good_part_policy());
+        req.part_policy =
+            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+                .ok()
+                .expect("known-good policy parses");
         req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed length {len} (\u{2260} MACH_SEED_LEN={MACH_SEED_LEN}) must be rejected",
         ));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
     }
 }
 
@@ -179,7 +187,10 @@ fn part_init_wrong_session_id_in_aad_emu() {
         mach_seed_envelope: envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(&known_good_part_policy());
+    req.part_policy =
+        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+            .ok()
+            .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);

@@ -9,7 +9,9 @@ version = "0.1.0"
 [dependencies]
 azihsm_ddi_tbor_codec.workspace = true
 azihsm_ddi_tbor_derive.workspace = true
+bitfield-struct.workspace = true
 open-enum.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
 
 [dev-dependencies]
 azihsm_crypto.workspace = true
