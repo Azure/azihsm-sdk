@@ -8,10 +8,10 @@
 //! [`codec::DecodeError::FwError`] *before* attempting schema decode.
 //!
 //! Two shapes are covered:
-//!   * Empty-response (`TborCloseSessionResp`): without the gate, an
+//!   * Empty-response (`TborSessionCloseResp`): without the gate, an
 //!     error envelope would silently decode to `Ok(Self)` because the
 //!     placeholder `None` TOC entry matches the empty schema.
-//!   * Fields-response (`TborGetApiRevResp`): without the gate, the
+//!   * Fields-response (`TborApiRevResp`): without the gate, the
 //!     schema decoder would fail with a generic `UnexpectedTocType`
 //!     and lose the FW status code.
 //!
@@ -21,9 +21,9 @@
 use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
-use azihsm_ddi_tbor_types::TborCloseSessionResp;
-use azihsm_ddi_tbor_types::TborGetApiRevResp;
+use azihsm_ddi_tbor_types::TborApiRevResp;
 use azihsm_ddi_tbor_types::TborResp;
+use azihsm_ddi_tbor_types::TborSessionCloseResp;
 
 /// Build an FW error envelope: header with the given status and a
 /// single placeholder `None` TOC entry (the wire format requires
@@ -45,7 +45,7 @@ fn empty_response_surfaces_fw_status() {
     let mut buf = [0u8; 64];
     let len = encode_err_envelope(AEAD_ENVELOPE_AUTH_FAILED, &mut buf);
 
-    let err = TborCloseSessionResp::decode_response(&buf[..len])
+    let err = TborSessionCloseResp::decode_response(&buf[..len])
         .expect_err("non-zero status must not decode to Ok on empty-response types");
     assert_eq!(
         err,
@@ -59,7 +59,7 @@ fn fields_response_surfaces_fw_status_before_schema_decode() {
     let mut buf = [0u8; 64];
     let len = encode_err_envelope(SESSION_NOT_FOUND, &mut buf);
 
-    let err = TborGetApiRevResp::decode_response(&buf[..len])
+    let err = TborApiRevResp::decode_response(&buf[..len])
         .expect_err("non-zero status must short-circuit schema decode");
     assert_eq!(
         err,
@@ -75,6 +75,6 @@ fn zero_status_with_valid_body_still_decodes() {
     let mut buf = [0u8; 64];
     let len = encode_err_envelope(0, &mut buf);
 
-    TborCloseSessionResp::decode_response(&buf[..len])
+    TborSessionCloseResp::decode_response(&buf[..len])
         .expect("status=0 envelope must decode to Ok on empty response");
 }

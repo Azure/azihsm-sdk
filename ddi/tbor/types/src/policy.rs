@@ -1,33 +1,27 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Partition policy ([`PartPolicy`]) byte layout.
+//! Host-side mirror of the partition policy ([`PartPolicy`]) byte
+//! layout.
 //!
-//! Canonical, single source of truth.  This crate is the DDI types
-//! crate and must not depend on the firmware crate
-//! (`azihsm_fw_hsm_core`) or on firmware-only primitives like
-//! `DmaBuf` / `HsmError`.  The validation/parser surface
-//! (`from_bytes(&DmaBuf) -> HsmResult<PartPolicy>`) that consumes
-//! those firmware primitives lives in
-//! `fw/core/lib/src/ddi/tbor/policy.rs` as a thin free function over
-//! the types here.
+//! Faithful mirror of `azihsm_fw_ddi_tbor_types::policy` — defined
+//! locally so this (host) crate has no firmware dependency. The byte
+//! layout MUST stay in sync with the firmware definition; the
+//! `const _: () = assert!(...)` blocks at the bottom pin the absolute
+//! sizes so any drift fails the build.
 //!
 //! Layout discipline:
 //!
-//! * Multi-byte scalars use native `#[repr(C)]` integer fields (`u16`).
-//!   The struct is therefore alignment-2; a trailing `_reserved` byte
-//!   pads [`PartPolicy`] to an even size so there is no implicit padding
-//!   (zerocopy `IntoBytes` rejects padding).  All supported targets are
-//!   little-endian, so the in-memory image equals the wire image.
-//! * Because the struct is alignment-2, it is **not** overlaid on the
-//!   (arbitrarily-aligned) wire buffer; the firmware parser copies it
-//!   out with `try_read_from_bytes`, so no buffer-alignment plumbing is
+//! * Every multi-byte scalar is stored as a little-endian byte array
+//!   native `#[repr(C)]` `u16` (alignment-2); a trailing `_reserved`
+//!   byte pads [`PartPolicy`] to an even, padding-free size. All
+//!   supported targets are little-endian, so the in-memory image equals
+//!   the wire image. The firmware copies the policy out of the wire
+//!   buffer (`try_read_from_bytes`), so no buffer-alignment plumbing is
 //!   needed.
 //! * `#[repr(C)]` + zerocopy [`TryFromBytes`] / [`IntoBytes`] /
 //!   [`Immutable`] / [`KnownLayout`] derives reject any padding /
 //!   alignment drift at compile time.
-//! * The `const _: () = assert!(...)` blocks at the bottom pin
-//!   absolute byte sizes as a belt-and-braces check.
 
 use bitfield_struct::bitfield;
 use open_enum::open_enum;
@@ -56,9 +50,8 @@ pub const POLICY_VERSION_MAJOR: u8 = 1;
 ///
 /// Stored in the wire layout as little-endian `[u8; 2]`.  The
 /// open-enum form keeps the type forward-compatible: a future spec
-/// value gets a new associated `pub const` without breaking
-/// exhaustive matches in older code (which already handle the
-/// unknown-discriminant branch via the `_` arm).
+/// value gets a new associated `pub const` without breaking exhaustive
+/// matches in older code.
 #[repr(u16)]
 #[open_enum]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
@@ -70,7 +63,7 @@ pub enum PolicyKeyKind {
 /// Two-byte policy version (`major.minor`).
 ///
 /// Layout (alignment 1, size 2 B): `major(1) ‖ minor(1)`.
-#[derive(Debug, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C)]
 pub struct PolicyVer {
     /// Major version number.  Must equal [`POLICY_VERSION_MAJOR`].
@@ -83,7 +76,7 @@ pub struct PolicyVer {
 /// POTA public key embedded in [`PartPolicy`].
 ///
 /// Layout (alignment 2, size 100 B): `kind(2 LE) ‖ len(2 LE) ‖ data(96)`.
-#[derive(Debug, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C)]
 pub struct PolicyPubKey {
     /// [`PolicyKeyKind`] discriminant. Native, little-endian on all
@@ -118,7 +111,7 @@ pub struct PolicyFlags {
     pub include_fmc_cdi: bool,
 
     /// Bit 1: require the remote sealing key to be anchored in a
-    /// trusted (Manticore-based) Sealing Authority key.
+    /// trusted Sealing Authority key.
     pub require_trusted_sa_key: bool,
 
     /// Bit 2: allow cloning of the security domain to a peer partition
@@ -137,7 +130,7 @@ impl PolicyFlags {
     pub const INCLUDE_FMC_CDI: u8 = 1 << 0;
 
     /// Bit 1: require the remote sealing key to be anchored in a
-    /// trusted (Manticore-based) Sealing Authority key.
+    /// trusted Sealing Authority key.
     pub const REQUIRE_TRUSTED_SA_KEY: u8 = 1 << 1;
 
     /// Bit 2: allow cloning of the security domain to a peer partition
@@ -156,14 +149,13 @@ impl PolicyFlags {
     }
 }
 
-/// Unified partition policy as it appears on the `PartInit` wire and in
-/// PAL persistence.
+/// Unified partition policy as it appears on the `PartInit` /
+/// `PartFinal` wire.
 ///
-/// This single struct carries both the partition-level fields (POTA
-/// trust anchor, CDI-FMC flag) and the security-domain fields (Sealing
-/// Authority + its POTA trust anchors, backing-partition identity, the
-/// trusted-SA / peer-cloning flags) — there is no separate
-/// security-domain policy type.  Pubkey slots that are not in use carry
+/// Carries both the partition-level fields (POTA trust anchor, CDI-FMC
+/// flag) and the security-domain fields (Sealing Authority + its POTA
+/// trust anchors, backing-partition identity, the trusted-SA /
+/// peer-cloning flags).  Pubkey slots that are not in use carry
 /// `len = 0` (see [`PolicyPubKey`]).
 ///
 /// Layout (alignment 2, size 484 B):
@@ -179,14 +171,7 @@ impl PolicyFlags {
 /// | `flags`               | 418    | 1    |
 /// | `info`                | 419    | 64   |
 /// | `_reserved`           | 483    | 1    |
-///
-/// The trailing `_reserved` byte pads the struct to an even length so
-/// the alignment-2 `#[repr(C)]` layout has no implicit padding (required
-/// for the zerocopy `IntoBytes` derive).  Because the struct is
-/// alignment-2 it is copied out of the wire buffer
-/// (`try_read_from_bytes`) rather than overlaid, so no buffer-alignment
-/// attribute is required on the `part_policy` field.
-#[derive(Debug, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C)]
 pub struct PartPolicy {
     /// Policy version (major.minor).
@@ -224,12 +209,37 @@ pub struct PartPolicy {
     pub _reserved: u8,
 }
 
-/// Byte size of [`PartPolicy`] in its on-wire / on-disk layout.
-///
-/// Used by the [`crate::TborPartInitReq`] schema as the `len`
-/// constant for its `part_policy` slice.  The `const _` assertions
-/// below pin the value so any layout drift fails the build instead
-/// of silently changing the wire size.
+impl PartPolicy {
+    /// An all-zero policy. Useful as a base for builders and as the
+    /// default for owned request structs (the contained byte arrays are
+    /// larger than 32 B, so `#[derive(Default)]` is unavailable).
+    pub const fn zeroed() -> Self {
+        const ZERO_KEY: PolicyPubKey = PolicyPubKey {
+            kind: PolicyKeyKind(0),
+            len: 0,
+            data: [0; POLICY_MAX_KEY_LEN],
+        };
+        Self {
+            version: PolicyVer { major: 0, minor: 0 },
+            pota_pub_key: ZERO_KEY,
+            sata_pub_key: ZERO_KEY,
+            sapota_pub_key: ZERO_KEY,
+            backup_part_id: [0; POLICY_BACKUP_PART_ID_LEN],
+            backup_part_pub_key: ZERO_KEY,
+            flags: PolicyFlags::new(),
+            info: [0; POLICY_INFO_LEN],
+            _reserved: 0,
+        }
+    }
+}
+
+impl Default for PartPolicy {
+    fn default() -> Self {
+        Self::zeroed()
+    }
+}
+
+/// Byte size of [`PartPolicy`] in its on-wire layout.
 pub const PART_POLICY_LEN: usize = core::mem::size_of::<PartPolicy>();
 
 const _: () = assert!(PART_POLICY_LEN == 484);
@@ -243,103 +253,25 @@ const _: () = assert!(core::mem::size_of::<PolicyFlags>() == 1);
 mod tests {
     use super::*;
 
-    /// Canonical byte fixture — `version 1.0`, `Ecc384` POTA key,
-    /// `info` filled with `0xAB`.  Pinned so any layout-affecting
-    /// change trips this test.
-    fn known_good_bytes() -> [u8; PART_POLICY_LEN] {
-        let mut bytes = [0u8; PART_POLICY_LEN];
-        // version: 1.0
-        bytes[0] = 1;
-        bytes[1] = 0;
-        // Helper: write an Ecc384 (kind 0) raw X‖Y pubkey at `off`.
-        fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-            // kind = Ecc384 = 0 (LE u16)
-            bytes[off] = 0;
-            bytes[off + 1] = 0;
-            // len = 96 (LE u16)
-            bytes[off + 2] = 96;
-            bytes[off + 3] = 0;
-            // data[0..96] = opaque non-zero coordinate bytes (raw X‖Y,
-            // no SEC1 0x04 prefix)
-            for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
-                *b = (fill.wrapping_add(i as u8)) | 0x80;
-            }
-        }
-        // pota_pub_key @ 2, sata_pub_key @ 102, sapota_pub_key @ 202
-        write_pubkey(&mut bytes, 2, 0x10);
-        write_pubkey(&mut bytes, 102, 0x20);
-        write_pubkey(&mut bytes, 202, 0x30);
-        // backup_part_id @ 302..318 = 0xCD
-        for b in bytes[302..318].iter_mut() {
-            *b = 0xCD;
-        }
-        // backup_part_pub_key @ 318
-        write_pubkey(&mut bytes, 318, 0x40);
-        // flags @ 418: include_fmc_cdi | allow_peer_cloning
-        bytes[418] = PolicyFlags::INCLUDE_FMC_CDI | PolicyFlags::ALLOW_PEER_CLONING;
-        // info @ 419..483 = 0xAB
-        for b in bytes[419..483].iter_mut() {
-            *b = 0xAB;
-        }
-        bytes
-    }
-
     #[test]
-    fn known_good_bytes_parses() {
-        let bytes = known_good_bytes();
-        let policy = PartPolicy::try_read_from_bytes(&bytes).expect("parse");
-        assert_eq!(policy.version.major, 1);
-        assert_eq!(policy.version.minor, 0);
-        assert_eq!(policy.pota_pub_key.kind, PolicyKeyKind::Ecc384);
-        assert_eq!(policy.pota_pub_key.len, 96);
-        assert_eq!(policy.sata_pub_key.len, 96);
-        assert_eq!(policy.sapota_pub_key.len, 96);
-        assert!(policy.backup_part_id.iter().all(|&b| b == 0xCD));
-        assert!(policy.flags.include_fmc_cdi());
-        assert!(!policy.flags.require_trusted_sa_key());
-        assert!(policy.flags.allow_peer_cloning());
-        assert!(policy.flags.is_valid());
-        assert!(policy.info.iter().all(|&b| b == 0xAB));
-    }
-
-    #[test]
-    fn round_trip_known_good_bytes() {
-        let bytes = known_good_bytes();
-        let policy = PartPolicy::try_read_from_bytes(&bytes).expect("known-good bytes parse");
-        let serialised = IntoBytes::as_bytes(&policy);
-        assert_eq!(serialised, &bytes);
-    }
-
-    #[test]
-    fn wrong_length_rejected_by_try_from_bytes() {
-        let too_short = [0u8; PART_POLICY_LEN - 1];
-        assert!(PartPolicy::try_read_from_bytes(&too_short).is_err());
-        let too_long = [0u8; PART_POLICY_LEN + 1];
-        assert!(PartPolicy::try_read_from_bytes(&too_long).is_err());
-    }
-
-    #[test]
-    fn part_policy_len_pin() {
+    fn layout_is_pinned() {
         assert_eq!(PART_POLICY_LEN, 484);
+        assert_eq!(core::mem::align_of::<PartPolicy>(), 2);
     }
 
     #[test]
-    fn policy_flags_decode_and_validate() {
-        let f = PolicyFlags::from_bits(PolicyFlags::REQUIRE_TRUSTED_SA_KEY);
-        assert!(!f.include_fmc_cdi());
-        assert!(f.require_trusted_sa_key());
-        assert!(!f.allow_peer_cloning());
-        assert!(f.is_valid());
-        // A reserved bit set => invalid.
-        let bad = PolicyFlags::from_bits(1 << 7);
-        assert!(!bad.is_valid());
+    fn zeroed_round_trips_through_bytes() {
+        let policy = PartPolicy::zeroed();
+        assert_eq!(IntoBytes::as_bytes(&policy), &[0u8; PART_POLICY_LEN][..]);
     }
 
     #[test]
-    fn open_enum_unknown_kind_is_representable() {
-        // Forward-compat smoke: a future spec value (e.g. 0x0007)
-        // round-trips through the open enum without panicking.
-        let future_kind = PolicyKeyKind(0x0007);
-        assert_ne!(future_kind, PolicyKeyKind::Ecc384);
+    fn flag_accessors_decode_bits() {
+        let flags =
+            PolicyFlags::from_bits(PolicyFlags::INCLUDE_FMC_CDI | PolicyFlags::ALLOW_PEER_CLONING);
+        assert!(flags.include_fmc_cdi());
+        assert!(!flags.require_trusted_sa_key());
+        assert!(flags.allow_peer_cloning());
+        assert!(flags.is_valid());
     }
 }

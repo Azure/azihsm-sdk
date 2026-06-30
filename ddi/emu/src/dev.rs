@@ -490,8 +490,8 @@ mod tests {
     use azihsm_ddi_mbor_types::DdiGetApiRevReq;
     use azihsm_ddi_mbor_types::DdiOp;
     use azihsm_ddi_mbor_types::DdiReqHdr;
-    use azihsm_ddi_tbor_types::TborGetApiRevReq;
-    use azihsm_ddi_tbor_types::TborGetApiRevResp;
+    use azihsm_ddi_tbor_types::TborApiRevReq;
+    use azihsm_ddi_tbor_types::TborApiRevResp;
 
     use crate::DdiEmu;
     use crate::EMU_DEVICE_PATH;
@@ -534,7 +534,7 @@ mod tests {
         let ddi = DdiEmu::default();
         let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open emu device");
 
-        let req = TborGetApiRevReq::new();
+        let req = TborApiRevReq::new();
         let mut cookie = None;
         let resp = dev
             .exec_op_tbor(&req, &mut cookie)
@@ -542,9 +542,9 @@ mod tests {
 
         assert_eq!(
             resp,
-            TborGetApiRevResp {
-                min_protocol_version: 1,
-                max_protocol_version: 1,
+            TborApiRevResp {
+                min_ver: 1,
+                max_ver: 1,
             }
         );
     }

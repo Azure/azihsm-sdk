@@ -3,9 +3,9 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# ChangePsk (Opcode 0x20)
+# PskChange (Opcode 0x06)
 
-**Handler:** `fw/core/lib/src/ddi/tbor/change_psk.rs`
+**Handler:** `fw/core/lib/src/ddi/tbor/psk_change.rs`
 **Session:** InSession
 
 ## Description
@@ -38,7 +38,7 @@ spec](../../../fw/core/ddi/tbor/docs/spec.md).
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | Session whose `param_key` wraps `psk_envelope`. |
-| 8 | `psk_envelope` | `varlen` (1..=160 B) | AEAD-GCM envelope (see below); points into the data section. |
+| 8 | `psk_envelope` | `buffer` (fixed 100 B) | AEAD-GCM envelope (see below); points into the data section. Length is pinned to exactly 100 B (`PSK_CHANGE_ENVELOPE_LEN`); a wrong length is rejected at decode. |
 
 ### Data section
 
@@ -62,7 +62,7 @@ Built by the host with [`aead_envelope::seal`](
   | 15 | 17 B | `rsv0` | Zero padding so AAD length is a multiple of 32 (the `aead_envelope` granularity invariant) |
 
   The shared helper [`build_psk_change_aad`](
-    ../../../fw/core/ddi/tbor/types/src/change_psk.rs) — re-exported
+    ../../../fw/core/ddi/tbor/types/src/psk_change.rs) — re-exported
   from the host wrapper — produces these bytes; the FW handler
   reconstructs the identical buffer via the same helper and rejects
   any contents mismatch with `AeadEnvelopeAuthFailed`.
@@ -87,9 +87,10 @@ Built by the host with [`aead_envelope::seal`](
 | Error | Cause |
 |---|---|
 | `SessionNotFound` | `session_id` does not refer to an Active slot in the calling partition (slot free, destroyed, or still Pending) |
-| `InvalidArg` | `psk_envelope` length is 0 or > 160; decrypted plaintext length ≠ 32; AAD length on the envelope ≠ 32 |
+| `TborInvalidFixedLength` | `psk_envelope` is not exactly 100 B (rejected at decode before the handler runs) |
+| `InvalidArg` | Decrypted plaintext length ≠ 32; AAD length on the envelope ≠ 32 |
 | `AeadEnvelopeAuthFailed` | Envelope AEAD-GCM tag verification failed (wrong `param_key`, tampering, or AAD **contents** do not match the expected layout) |
-| `InvalidPermissions` | A `ChangePsk` has already succeeded on this session (one-rotation-per-session bound) |
+| `InvalidPermissions` | A `PskChange` has already succeeded on this session (one-rotation-per-session bound) |
 | `InternalError` | Session vault blob shorter than expected; indicates internal corruption |
 
 ## Replay model
@@ -100,7 +101,7 @@ Built by the host with [`aead_envelope::seal`](
   any plaintext is produced).
 * **Intra-session replay** is bounded to **one successful change per
   session**: the handler atomically marks the session as "change
-  used" on success.  A second `ChangePsk` on the same session is
+  used" on success.  A second `PskChange` on the same session is
   rejected with `InvalidPermissions`.  The flag resets whenever the
   slot is rebound to fresh key material — closing and re-opening the
   session, letting it expire, or a successful renegotiation
@@ -118,21 +119,21 @@ persisted:
 | `0` (CO) | `AZIHSM-DEFAULT-CO-PSK-v1--------` |
 | `1` (CU) | `AZIHSM-DEFAULT-CU-PSK-v1--------` |
 
-Deployments **must** rotate both via `ChangePsk` on first
+Deployments **must** rotate both via `PskChange` on first
 provisioning; the defaults are public by design.
 
 Until rotation completes, the TBOR dispatcher refuses to run any
 other in-session command on a session authenticated against the
-default PSK — only `ChangePsk` and `CloseSession` are permitted.
+default PSK — only `PskChange` and `SessionClose` are permitted.
 See the [Default-PSK gate](../README.md#default-psk-gate) section in
 the TBOR DDI README for the full bootstrap sequence.
 
 ## See also
 
 - Wire encoding: [TBOR specification](../../../fw/core/ddi/tbor/docs/spec.md)
-- FW schema: `fw/core/ddi/tbor/types/src/change_psk.rs`
-- Host wrapper + AAD helper: `ddi/tbor/types/src/change_psk.rs`
+- FW schema: `fw/core/ddi/tbor/types/src/psk_change.rs`
+- Host wrapper + AAD helper: `ddi/tbor/types/src/psk_change.rs`
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
-- Session lifecycle: [`open_session_init.md`](./open_session_init.md),
-  [`open_session_finish.md`](./open_session_finish.md),
-  [`close_session.md`](./close_session.md)
+- Session lifecycle: [`session_open_init.md`](./session_open_init.md),
+  [`session_open_finish.md`](./session_open_finish.md),
+  [`session_close.md`](./session_close.md)

@@ -3,16 +3,16 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# OpenSessionFinish (Opcode 0x11)
+# SessionOpenFinish (Opcode 0x04)
 
-**Handler:** `fw/core/lib/src/ddi/tbor/open_session_finish.rs`
+**Handler:** `fw/core/lib/src/ddi/tbor/session_open_finish.rs`
 **Session:** NoSession
 
 ## Description
 
 Phase 2 of the session-establishment handshake.  The host VM submits
 its Phase-2 confirmation MAC for the slot reserved by
-[`OpenSessionInit`](./open_session_init.md) together with a
+[`SessionOpenInit`](./session_open_init.md) together with a
 fresh 32-byte `seed` sealed as an AEAD-GCM envelope under the
 HPKE-derived `param_key`.  The HSM verifies the MAC, AEAD-opens the
 seed envelope, derives the per-session key schedule selected by the
@@ -145,7 +145,7 @@ mac_fin = HMAC-SHA-384(
 ```
 
 Identical input layout to
-[`mac_resp`](./open_session_init.md#phase-1-confirmation-mac-mac_resp);
+[`mac_resp`](./session_open_init.md#phase-1-confirmation-mac-mac_resp);
 only the 14-byte domain-separation label differs.
 
 ## Derived keys
@@ -153,7 +153,7 @@ only the 14-byte domain-separation label differs.
 After MAC verify, the HSM expands `exported` (48 B) into per-session
 key material via HKDF-SHA-384-Expand.  The set of keys derived
 depends on the `session_type` chosen in
-[`OpenSessionInit`](./open_session_init.md):
+[`SessionOpenInit`](./session_open_init.md):
 
 | Key | HKDF label | Length | Derived for |
 |---|---|---|---|
@@ -190,7 +190,7 @@ input.
 | `SessionAuthFailure` | MAC verify failed, or `seed_envelope` AEAD-open failed; the Pending slot is destroyed in either case |
 | `PartitionNotProvisioned` | Identity key not present |
 
-A late `OpenSessionFinish` arriving against an evicted-and-reused slot
+A late `SessionOpenFinish` arriving against an evicted-and-reused slot
 fails MAC verification because the slot now carries a different
 `exported` value.  This is the replay/late-arrival defence; no wire
 sequence number is needed.
@@ -198,7 +198,7 @@ sequence number is needed.
 ## See also
 
 - Wire encoding: [TBOR specification](../../../fw/core/ddi/tbor/docs/spec.md)
-- Wire schema: `fw/core/ddi/tbor/types/src/open_session_finish.rs`
+- Wire schema: `fw/core/ddi/tbor/types/src/session_open_finish.rs`
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
-- Phase 1: [`open_session_init.md`](./open_session_init.md)
-- Cleanup: [`close_session.md`](./close_session.md)
+- Phase 1: [`session_open_init.md`](./session_open_init.md)
+- Cleanup: [`session_close.md`](./session_close.md)

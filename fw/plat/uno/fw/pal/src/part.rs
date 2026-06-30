@@ -607,11 +607,17 @@ impl HsmPartitionManager for UnoHsmPal {
             // AbsentUntilSet fields — `PartPropNotFound` until provisioned.
             PartPropId::CREDENTIAL if p.credential_valid() => Ok(p.credential()),
             PartPropId::POTA_THUMBPRINT if p.pota_thumbprint_valid() => Ok(p.pota_thumbprint()),
+            PartPropId::SATA_THUMBPRINT if p.sata_thumbprint_valid() => Ok(p.sata_thumbprint()),
+            PartPropId::SAPOTA_THUMBPRINT if p.sapota_thumbprint_valid() => {
+                Ok(p.sapota_thumbprint())
+            }
             PartPropId::BK3_SESSION if p.bk3_session_valid() => Ok(p.bk3_session()),
             PartPropId::PTA_PUB_KEY if p.pta_pub_key_valid() => Ok(p.pta_pub_key()),
             PartPropId::POLICY_HASH if p.policy_hash_valid() => Ok(p.policy_hash()),
             PartPropId::CREDENTIAL
             | PartPropId::POTA_THUMBPRINT
+            | PartPropId::SATA_THUMBPRINT
+            | PartPropId::SAPOTA_THUMBPRINT
             | PartPropId::BK3_SESSION
             | PartPropId::PTA_PUB_KEY
             | PartPropId::POLICY_HASH => Err(HsmError::PartPropNotFound),
@@ -647,6 +653,8 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::MASKED_BK_BOOT => p.set_masked_bk_boot(data),
             PartPropId::BK3_SESSION => p.set_bk3_session(data),
             PartPropId::POTA_THUMBPRINT => p.set_pota_thumbprint(data),
+            PartPropId::SATA_THUMBPRINT => p.set_sata_thumbprint(data),
+            PartPropId::SAPOTA_THUMBPRINT => p.set_sapota_thumbprint(data),
             PartPropId::PTA_PUB_KEY => p.set_pta_pub_key(data),
             PartPropId::POLICY_HASH => p.set_policy_hash(data),
             _ => Err(HsmError::UnsupportedCmd),
@@ -665,6 +673,8 @@ impl HsmPartitionManager for UnoHsmPal {
             // AbsentUntilSet byte fields zeroize and reset to absent.
             PartPropId::CREDENTIAL => p.clear_credential(),
             PartPropId::POTA_THUMBPRINT => p.clear_pota_thumbprint(),
+            PartPropId::SATA_THUMBPRINT => p.clear_sata_thumbprint(),
+            PartPropId::SAPOTA_THUMBPRINT => p.clear_sapota_thumbprint(),
             PartPropId::BK3_SESSION => p.clear_bk3_session(),
             PartPropId::SEALED_BK3 => p.clear_sealed_bk3(),
             PartPropId::MASKED_BK_BOOT => p.clear_masked_bk_boot(),

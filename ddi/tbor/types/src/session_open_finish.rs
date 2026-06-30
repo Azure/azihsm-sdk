@@ -1,15 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Host-side wrapper for the TBOR `OpenSessionFinish` command
+//! Host-side wrapper for the TBOR `SessionOpenFinish` command
 //! (session-establishment Phase 2).
 
 use alloc::vec::Vec;
 
 use crate::tbor;
 
-/// TBOR opcode for `OpenSessionFinish`.
-pub const TBOR_OP_OPEN_SESSION_FINISH: u8 = 0x11;
+/// TBOR opcode for `SessionOpenFinish`.
+pub const TBOR_OP_SESSION_OPEN_FINISH: u8 = 0x04;
 
 /// Length of the Phase-2 confirmation MAC (HMAC-SHA-384).
 pub const MAC_FIN_LEN: usize = 48;
@@ -32,7 +32,7 @@ pub const SESSION_PHASE2_LABEL: &[u8] = b"phase2-confirm";
 /// HKDF-Expand label producing the per-session **param key** — a raw
 /// 32-byte AES-256 key consumed by the AEAD-envelope crate to
 /// AEAD-seal/open the `seed_envelope` and per-parameter envelopes
-/// carried by in-session commands such as `ChangePsk` / `PartInit`.
+/// carried by in-session commands such as `PskChange` / `PartInit`.
 ///
 /// Mirror of `azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LABEL`.
 pub const SESSION_PARAM_KEY_LABEL: &[u8] = b"azihsm-session-param-v1";
@@ -66,10 +66,10 @@ pub const SESSION_MAC_DIR_KEY_LEN: usize = 48;
 ///  IV(12) ‖ seed(32) ‖ TAG(16)` = 68 B.
 pub const SEED_ENVELOPE_LEN: usize = 8 + 12 + SEED_LEN + 16;
 
-/// Host-facing TBOR `OpenSessionFinish` request.
-#[tbor(opcode = TBOR_OP_OPEN_SESSION_FINISH, session_ctrl = in_session)]
+/// Host-facing TBOR `SessionOpenFinish` request.
+#[tbor(opcode = TBOR_OP_SESSION_OPEN_FINISH, session_ctrl = in_session)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TborOpenSessionFinishReq {
+pub struct TborSessionOpenFinishReq {
     /// Pending session identifier reserved in Phase 1.
     #[tbor(session_id)]
     pub session_id: u16,
@@ -81,7 +81,7 @@ pub struct TborOpenSessionFinishReq {
     pub seed_envelope: [u8; SEED_ENVELOPE_LEN],
 }
 
-impl Default for TborOpenSessionFinishReq {
+impl Default for TborSessionOpenFinishReq {
     fn default() -> Self {
         Self {
             session_id: 0,
@@ -91,14 +91,14 @@ impl Default for TborOpenSessionFinishReq {
     }
 }
 
-/// Host-facing TBOR `OpenSessionFinish` response.
+/// Host-facing TBOR `SessionOpenFinish` response.
 ///
 /// `bmk_session` is owned and right-sized — the host has `alloc`
 /// available, so we avoid carrying a fixed-size padding buffer and
 /// a separate length field.
 #[tbor(response)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct TborOpenSessionFinishResp {
+pub struct TborSessionOpenFinishResp {
     /// Wrapped session-key blob (AEAD-GCM envelope of `masking_key`).
     pub bmk_session: Vec<u8>,
 }

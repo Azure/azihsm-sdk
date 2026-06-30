@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `CloseSession` wire schema.
+//! TBOR `SessionClose` wire schema.
 //!
 //! Sent inside the established session's AEAD framing — payload is
 //! just the target slot index.  Authentication is implicit via the
@@ -10,18 +10,20 @@
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
-/// `CloseSession` request schema.
-#[tbor(opcode = 0x12)]
-pub struct TborCloseSessionReq {
-    /// Session identifier to tear down.  16-bit on the wire
-    /// (`#[tbor(session_id)]`) for parity with MBOR.
+/// `SessionClose` request schema.
+#[tbor(opcode = 0x05)]
+pub struct TborSessionCloseReq {
+    /// Session identifier to tear down.  Typed
+    /// [`SessionId`](azihsm_fw_ddi_tbor_api::SessionId); marked
+    /// `#[tbor(session_id)]` to select the 16-bit session-id TOC encoding
+    /// (parity with MBOR).
     #[tbor(session_id)]
-    pub session_id: u16,
+    pub session_id: SessionId,
 }
 
-/// `CloseSession` response schema.
+/// `SessionClose` response schema.
 ///
 /// No semantic payload — the wire derive emits a `none` TOC entry to
 /// satisfy the `toc_count >= 1` codec requirement.
 #[tbor(response)]
-pub struct TborCloseSessionResp;
+pub struct TborSessionCloseResp;

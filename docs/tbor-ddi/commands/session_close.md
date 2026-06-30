@@ -3,9 +3,9 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# CloseSession (Opcode 0x12)
+# SessionClose (Opcode 0x05)
 
-**Handler:** `fw/core/lib/src/ddi/tbor/close_session.rs`
+**Handler:** `fw/core/lib/src/ddi/tbor/session_close.rs`
 **Session:** InSession
 
 ## Description
@@ -13,7 +13,7 @@ Licensed under the MIT License.
 Tears down an Active or Pending session slot, releasing the slot's
 session vault blob and any session-scoped keys.  Slot 0 (the Crypto
 Officer slot) may be closed and later reopened via a fresh
-`OpenSessionInit` with `psk_id = 0`.
+`SessionOpenInit` with `psk_id = 0`.
 
 ## Request
 
@@ -43,6 +43,6 @@ _Empty — `session_id` is carried inline within its TOC entry._
 ## See also
 
 - Wire encoding: [TBOR specification](../../../fw/core/ddi/tbor/docs/spec.md)
-- Wire schema: `fw/core/ddi/tbor/types/src/close_session.rs`
-- Session lifecycle: [`open_session_init.md`](./open_session_init.md),
-  [`open_session_finish.md`](./open_session_finish.md)
+- Wire schema: `fw/core/ddi/tbor/types/src/session_close.rs`
+- Session lifecycle: [`session_open_init.md`](./session_open_init.md),
+  [`session_open_finish.md`](./session_open_finish.md)
