@@ -120,9 +120,11 @@ impl EncryptOp for OsslAesEcbAlgo {
                 return Err(CryptoError::AesBufferTooSmall);
             }
             let mut ctx = CipherCtx::new().map_err(|_| CryptoError::AesEncryptError)?;
-            ctx.set_padding(false);
             ctx.encrypt_init(Some(cipher), Some(key_bytes), None)
                 .map_err(|_| CryptoError::AesEncryptError)?;
+            // After init: EVP_*Init resets padding to its default (on), which
+            // OpenSSL 1.1 honors, so disable padding last.
+            ctx.set_padding(false);
             let mut count = ctx
                 .cipher_update(input, Some(output))
                 .map_err(|_| CryptoError::AesEncryptError)?;

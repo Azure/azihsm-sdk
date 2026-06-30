@@ -156,6 +156,17 @@ impl<'a> DeriveOp for OsslHkdfAlgo<'a> {
         // Extract key bytes
         let key_bytes = key.to_vec()?;
 
+        // Reject a zero-length output (invalid per RFC 5869); the 3.x backend
+        // errors on this too.
+        if derive_len == 0 {
+            return Err(CryptoError::HkdfDeriveError);
+        }
+        // Extract-only yields the PRK (one digest block); reject a mismatched
+        // requested length so behavior matches the 3.x / CNG backends.
+        if matches!(self.mode, HkdfMode::Extract) && derive_len != self.md.size() {
+            return Err(CryptoError::HmacInvalidDerivedKeyLength);
+        }
+
         // Create and configure HKDF context
         let mut ctx = openssl::pkey_ctx::PkeyCtx::new_id(openssl::pkey::Id::HKDF)
             .map_err(|_| CryptoError::HkdfError)?;
