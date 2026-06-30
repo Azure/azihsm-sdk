@@ -419,6 +419,15 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     fn part_prop_get_u16(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<u16> {
+        // The partition's RSA-2048 unwrapping key is provisioned lazily
+        // the first time its id is read.  Real PKA hardware generates it
+        // in the background from partition init (reporting
+        // `PendingKeyGeneration` until ready); the emulator generates it
+        // synchronously here so that only a GetUnwrappingKey request pays
+        // the (expensive) keygen cost, never partition enable.
+        if id == PartPropId::RSA_UNWRAPPING_KEY_ID {
+            self.provision_unwrapping_key(io.pid())?;
+        }
         self.prop_get_u16(io, id)
     }
 
@@ -452,52 +461,6 @@ impl HsmPartitionManager for StdHsmPal {
 
     fn part_prop_clear(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<()> {
         self.prop_clear(io, id)
-    }
-
-    async fn part_ensure_unwrapping_key(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-        let pid = io.pid();
-        // Fast path: already materialised this enable cycle.
-        if let Some(kid) = self.active_part(pid)?.unwrapping_key_id {
-            return Ok(kid);
-        }
-
-        // Generate the RSA-2048 key pair without holding a borrow into
-        // the partition table across the keygen await.  Only the private
-        // key is persisted in the vault (as DER — the std PAL's
-        // representation; real firmware stores raw key material); the
-        // public key is later derived from it on demand (matching the
-        // reference firmware), so nothing extra is cached in partition
-        // state.
-        let (pk, _pubk) = self.rsa.gen_keypair(2048).await?;
-        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
-        let mut priv_buf = vec![0u8; priv_len];
-        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
-            .map_err(|_| HsmError::RsaToDerError)?;
-        let attrs = HsmVaultKeyAttrs::new()
-            .with_internal(true)
-            .with_local(true)
-            .with_unwrap(true);
-
-        // Store the private key in the vault and record its id.  The
-        // `active_part_mut` borrow through to setting `unwrapping_key_id`
-        // is await-free, so on the single-threaded executor it is atomic.
-        // Re-check here: a concurrent caller may have generated and
-        // stored the key while this task was awaiting keygen above.  If
-        // so, drop our freshly generated key (it was never inserted into
-        // the vault) and return the existing id, so the partition only
-        // ever materialises a single unwrapping key.
-        let entry = self.active_part_mut(pid)?;
-        if let Some(kid) = entry.unwrapping_key_id {
-            return Ok(kid);
-        }
-        let kid = entry.vault.create(
-            &priv_buf[..priv_len],
-            HsmVaultKeyKind::Rsa2kPrivate,
-            None,
-            attrs,
-        )?;
-        entry.unwrapping_key_id = Some(kid);
-        Ok(kid)
     }
 }
 
@@ -568,6 +531,49 @@ impl StdHsmPal {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn active_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
         self.part_if_mut(pid, |s| s != PartState::Unallocated)
+    }
+
+    /// Provision the partition's RSA-2048 unwrapping key on demand,
+    /// generating it if it does not yet exist (emulator only).
+    ///
+    /// Real PKA hardware generates this key in the background from
+    /// partition init and reports [`HsmError::PendingKeyGeneration`]
+    /// until it is ready.  The emulator instead generates it lazily and
+    /// synchronously the first time the
+    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID)
+    /// property is read, so only a GetUnwrappingKey request pays the
+    /// keygen cost (never partition enable).  The whole routine is
+    /// `await`-free, so on the single-threaded executor it runs
+    /// atomically — concurrent reads cannot race to generate two keys.
+    ///
+    /// Only the private key is persisted (as DER — the std PAL's
+    /// representation; real firmware stores raw key material); the public
+    /// key is derived from it on demand (matching the reference
+    /// firmware).
+    fn provision_unwrapping_key(&self, pid: HsmPartId) -> HsmResult<()> {
+        if self.active_part(pid)?.unwrapping_key_id.is_some() {
+            return Ok(());
+        }
+
+        let pk = RsaPrivateKey::generate(256).map_err(|_| HsmError::RsaGenerateError)?;
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
+        let mut priv_buf = vec![0u8; priv_len];
+        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+            .map_err(|_| HsmError::RsaToDerError)?;
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_unwrap(true);
+
+        let entry = self.active_part_mut(pid)?;
+        let kid = entry.vault.create(
+            &priv_buf[..priv_len],
+            HsmVaultKeyKind::Rsa2kPrivate,
+            None,
+            attrs,
+        )?;
+        entry.unwrapping_key_id = Some(kid);
+        Ok(())
     }
 
     /// Borrow a partition that is actively serving host traffic.

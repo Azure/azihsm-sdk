@@ -414,36 +414,6 @@ pub trait HsmPartitionManager {
     /// [`HsmResult<()>`] — `Ok(())` on success.  Idempotent on an
     /// already-absent slot (also returns `Ok(())`).
     fn part_prop_clear(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<()>;
-
-    /// Obtain the partition's RSA-2048 unwrapping key, returning its
-    /// vault key id once the key is available.
-    ///
-    /// The key is materialised once per enabled partition incarnation:
-    /// the private key lives in the vault (with `internal`/`local`/
-    /// `unwrap` attributes) and its id in
-    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID).
-    /// It is dropped when the partition is disabled or freed and
-    /// regenerated on the next request after a re-enable.  No public key
-    /// is cached — callers derive it on demand from the vault private
-    /// key via
-    /// [`HsmRsa::rsa_priv_pub_key`](crate::HsmRsa::rsa_priv_pub_key),
-    /// matching the reference firmware.
-    ///
-    /// RSA key generation is expensive, so PALs never generate it at
-    /// partition enable.  Implementations differ in *when* they
-    /// generate:
-    /// - The std (emulator) PAL generates lazily on the first call and
-    ///   returns the id synchronously.
-    /// - Hardware PALs kick generation off in the background at
-    ///   partition init; while it is still in flight they return
-    ///   [`HsmError::PendingKeyGeneration`] so the host retries until
-    ///   the key is ready.
-    ///
-    /// # Errors
-    /// - [`HsmError::PendingKeyGeneration`] — generation is still in
-    ///   progress; the host should retry.
-    /// - Propagated PKA / vault failures.
-    async fn part_ensure_unwrapping_key(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId>;
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.
