@@ -10,11 +10,25 @@
 //! peripheral register) escalates to HardFault and hangs the core with no
 //! output. These handlers instead dump the fault cause — decoded `CFSR`
 //! bits, the faulting address (`BFAR`/`MMFAR`), the stacked register frame,
-//! and `MSP` — so a future fault is diagnosable from the serial log alone.
+//! and `MSP` — so a fault is diagnosable from the serial log.
 //!
-//! Output goes through [`sink::FaultWriter`] (the SoC UART today), which is
-//! compiled unconditionally and therefore works even in production builds
-//! that ship without a trace backend.
+//! # Output via the tracing facade
+//!
+//! Diagnostics are emitted through `azihsm_fw_hsm_core_tracing` (`error!`),
+//! the same facade the rest of the firmware uses, rather than a bespoke
+//! sink. This keeps faults on one logging path: they share the backend,
+//! formatting, and (future) debug-log/token routing as every other trace.
+//! As with all tracing, the messages are present only when a trace level is
+//! enabled in the final image (e.g. the `trace-uart` bring-up build); a
+//! trace-disabled production build emits nothing here until an always-on
+//! logging backend (HSP debug-log) is brought up — at which point faults
+//! gain it uniformly with the rest of the firmware.
+//!
+//! Each handler logs at error level with an exception-specific `HsmError`
+//! code — [`HsmError::Panic`], [`HsmError::HardFault`], or
+//! [`HsmError::UnexpectedException`] — so fault output is greppable by code
+//! and exception type. The `trace-uart` / `trace-semihosting` features select
+//! `level-info`, which compiles `error!` in.
 //!
 //! # Linking
 //!
@@ -34,15 +48,18 @@
 #![allow(unsafe_code)]
 
 mod decode;
-mod sink;
 
+use azihsm_fw_hsm_core_tracing::error;
+// `HsmError` is referenced only inside `error!`, which compiles out when no
+// trace level is enabled (production); the import is then unused.
+#[allow(unused_imports)]
+use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_reg_cortex_m::scb::regs::ScbRegs;
 use azihsm_fw_uno_reg_cortex_m::scb::CFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::HFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::SCB_BASE;
 use cortex_m_rt::exception;
 use cortex_m_rt::ExceptionFrame;
-pub use sink::FaultWriter;
 use tock_registers::interfaces::Readable;
 
 /// Borrow the System Control Block MMIO register block.
@@ -75,12 +92,15 @@ fn halt() -> ! {
 ///
 /// Emits the panic location and message (via [`core::panic::PanicInfo`]'s
 /// `Display`, which already includes `file:line:col` plus the formatted
-/// message) to the fault sink, then halts.
+/// message) through the tracing facade, then halts.
+//
+// `info` is consumed only by `error!`, which compiles out when no trace
+// level is enabled (production builds); allow that case to stay warning-free.
+#[allow(unused_variables)]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
-    println_fault!("");
-    println_fault!("#### PANIC ####");
-    println_fault!("{}", info);
+    error!("panic", HsmError::Panic, "#### PANIC ####");
+    error!("panic", HsmError::Panic, "{}", info);
     halt();
 }
 
@@ -98,6 +118,11 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
 /// hardware exception mechanism on a HardFault and must never be called
 /// directly; it reads fixed architectural SCB registers and the
 /// hardware-supplied exception frame, then halts.
+//
+// The captured registers are consumed only by `error!`, which compiles out
+// when no trace level is enabled (production builds); allow keeps that build
+// warning-free.
+#[allow(unused_variables)]
 #[exception]
 unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     let scb = scb();
@@ -113,28 +138,55 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     let mstkerr = scb.cfsr.is_set(CFSR::MSTKERR);
     let stkerr = scb.cfsr.is_set(CFSR::STKERR);
 
-    println_fault!("");
-    println_fault!("#### HardFault ####");
+    error!("fault", HsmError::HardFault, "#### HardFault ####");
 
     if forced && (mstkerr || stkerr) {
         // Exception-entry stacking failed and escalated to HardFault: the
         // CPU could not push {R0-R3,R12,LR,PC,xPSR}, so `ef` is garbage. The
         // faulting PC/LR are unrecoverable on ARMv7-M; only MSP locates
         // where the stack was when it overran its guard region.
-        println_fault!("cause: stack overflow (exception frame unreliable)");
-        println_fault!("MSP={:#010x} CFSR={:#010x} HFSR={:#010x}", msp, cfsr, hfsr);
+        error!(
+            "fault",
+            HsmError::HardFault,
+            "cause: stack overflow (exception frame unreliable)"
+        );
+        error!(
+            "fault",
+            HsmError::HardFault,
+            "MSP={:#010x} CFSR={:#010x} HFSR={:#010x}",
+            msp,
+            cfsr,
+            hfsr
+        );
     } else {
-        decode::report_cfsr(scb);
+        decode::report_cfsr(scb, HsmError::HardFault);
 
         if scb.cfsr.is_set(CFSR::BFARVALID) {
-            println_fault!("BFAR={:#010x}  (faulting bus address)", scb.bfar.get());
+            error!(
+                "fault",
+                HsmError::HardFault,
+                "BFAR={:#010x}  (faulting bus address)",
+                scb.bfar.get()
+            );
         }
         if scb.cfsr.is_set(CFSR::MMARVALID) {
-            println_fault!("MMFAR={:#010x} (faulting memory address)", scb.mmfar.get());
+            error!(
+                "fault",
+                HsmError::HardFault,
+                "MMFAR={:#010x} (faulting memory address)",
+                scb.mmfar.get()
+            );
         }
 
-        println_fault!("CFSR={:#010x} HFSR={:#010x} MSP={:#010x}", cfsr, hfsr, msp);
-        println_fault!("frame: {:#?}", ef);
+        error!(
+            "fault",
+            HsmError::HardFault,
+            "CFSR={:#010x} HFSR={:#010x} MSP={:#010x}",
+            cfsr,
+            hfsr,
+            msp
+        );
+        error!("fault", HsmError::HardFault, "frame: {:#?}", ef);
 
         #[cfg(feature = "fault-stackdump")]
         unsafe {
@@ -154,14 +206,22 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
 /// Required to be an `unsafe fn` by `cortex-m-rt`. Invoked only by the
 /// hardware exception mechanism for an otherwise-unhandled exception/IRQ
 /// and must never be called directly.
+//
+// `irqn` is consumed only by `error!`, which compiles out when no trace level
+// is enabled (production builds); allow keeps that build warning-free.
+#[allow(unused_variables)]
 #[exception]
 unsafe fn DefaultHandler(irqn: i16) -> ! {
-    println_fault!("");
-    println_fault!("#### Unexpected exception/IRQ: {} ####", irqn);
+    error!(
+        "fault",
+        HsmError::UnexpectedException,
+        "#### Unexpected exception/IRQ: {} ####",
+        irqn
+    );
     halt();
 }
 
-/// Dump `WORDS` 32-bit words of raw stack memory starting at `sp`.
+/// Dump 32 words of raw stack memory (four per line) starting at `sp`.
 ///
 /// Development aid behind the `fault-stackdump` feature — useful for
 /// eyeballing return addresses and locals near the fault, at the cost of
@@ -171,21 +231,34 @@ unsafe fn DefaultHandler(irqn: i16) -> ! {
 ///
 /// Performs volatile reads of arbitrary stack addresses; the range may run
 /// past valid RAM. Intended for debug builds on hardware only.
+//
+// Reads are consumed only by `error!`, which compiles out when no trace level
+// is enabled; allow keeps a `fault-stackdump`-without-trace build clean.
 #[cfg(feature = "fault-stackdump")]
+#[allow(unused_variables)]
 unsafe fn stack_dump(sp: u32) {
-    const WORDS: usize = 32;
+    const ROWS: u32 = 8;
     // `read_volatile::<u32>` requires a 4-byte-aligned pointer; `sp` may be
     // corrupted or misaligned at the fault, so align the base down first to
     // avoid undefined behaviour while keeping the dump word-oriented.
     let base = sp & !0b11;
-    println_fault!("stack dump @ {:#010x}:", base);
-    for i in 0..WORDS {
-        let addr = base.wrapping_add((i * 4) as u32);
-        let val = unsafe { core::ptr::read_volatile(addr as *const u32) };
-        if i % 4 == 0 {
-            print_fault!("\n  {:#010x}:", addr);
-        }
-        print_fault!(" {:08x}", val);
+    error!("fault", HsmError::HardFault, "stack dump @ {:#010x}:", base);
+    for row in 0..ROWS {
+        let addr = base.wrapping_add(row * 16);
+        let p = addr as *const u32;
+        let w0 = unsafe { core::ptr::read_volatile(p) };
+        let w1 = unsafe { core::ptr::read_volatile(p.add(1)) };
+        let w2 = unsafe { core::ptr::read_volatile(p.add(2)) };
+        let w3 = unsafe { core::ptr::read_volatile(p.add(3)) };
+        error!(
+            "fault",
+            HsmError::HardFault,
+            "  {:#010x}: {:08x} {:08x} {:08x} {:08x}",
+            addr,
+            w0,
+            w1,
+            w2,
+            w3
+        );
     }
-    println_fault!("");
 }
