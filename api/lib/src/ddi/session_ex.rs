@@ -181,7 +181,7 @@ fn open_session_ex_init(
     let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev, rev)?;
 
     let suite_id = SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
-    let req = TborOpenSessionInitReq {
+    let req = TborSessionOpenInitReq {
         psk_id,
         session_type: session_type.to_u8(),
         suite_id,
@@ -271,7 +271,7 @@ fn open_session_ex_finish(
         &pending.pk_resp,
     )?;
 
-    let req = TborOpenSessionFinishReq {
+    let req = TborSessionOpenFinishReq {
         session_id: pending.session_id,
         mac_fin,
         seed_envelope,
@@ -315,7 +315,7 @@ pub(crate) fn close_session_ex(partition: &HsmPartition, session_id: u16) -> Hsm
     let inner = partition.inner().read();
     let dev = inner.dev();
 
-    let req = TborCloseSessionReq { session_id };
+    let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
     dev.exec_op_tbor(&req, &mut cookie)
         .map_err(HsmError::from)

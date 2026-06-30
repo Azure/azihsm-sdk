@@ -3,18 +3,17 @@
 
 //! Partition provisioning over the TBOR transport at the DDI layer.
 //!
-//! This module hosts the host-side dispatch for the two in-session
-//! Crypto-Officer partition commands, mirroring the firmware handlers:
+//! This module hosts the host-side dispatch for the in-session
+//! Crypto-Officer `PartInit` command, mirroring the firmware handler:
 //!
-//! * **`PartInit`** (opcode `0x30`) — derive the partition PTA keypair,
-//!   persist the caller-asserted `PartPolicy` + POTA thumbprint, and
-//!   return the PTA CSR + COSE_Sign1 attestation report.
-//! * **`FinalizePart`** (opcode `0x31`) — complete provisioning begun by
-//!   `PartInit`; returns the partition-local backup masked key.
+//! * **`PartInit`** (opcode `0x07`) — derive the partition PTA keypair,
+//!   persist the caller-asserted unified `PartPolicy` plus the POTA /
+//!   SATA / optional SAPOTA thumbprints, and return the PTA CSR +
+//!   COSE_Sign1 attestation report.
 //!
-//! Both run **inside an already-open CO session** established by
-//! [`super::session_ex::open_session_ex`]: each request carries the
-//! active session id, and `PartInit` additionally seals its `mach_seed`
+//! It runs **inside an already-open CO session** established by
+//! [`super::session_ex::open_session_ex`]: the request carries the
+//! active session id and seals its `mach_seed`
 //! under the session `param_key`. The caller therefore supplies the
 //! active session id (and, for `PartInit`, the session `param_key`)
 //! alongside the partition handle.
@@ -47,24 +46,6 @@ impl From<TborPartInitResp> for PartInitResult {
         Self {
             pta_csr: resp.pta_csr,
             pta_report: resp.pta_report,
-        }
-    }
-}
-
-/// API-layer result of a TBOR `FinalizePart` provisioning command.
-///
-/// Mirrors [`TborFinalizePartResp`] so the wire response type stays
-/// confined to the DDI layer.
-#[derive(Debug, Clone, Default)]
-pub struct FinalizePartResult {
-    /// Partition-local backup masked key produced by finalization.
-    pub part_local_bmk: Vec<u8>,
-}
-
-impl From<TborFinalizePartResp> for FinalizePartResult {
-    fn from(resp: TborFinalizePartResp) -> Self {
-        Self {
-            part_local_bmk: resp.part_local_bmk,
         }
     }
 }
@@ -133,12 +114,12 @@ fn seal_mach_seed_envelope(
     Ok(envelope)
 }
 
-/// Issue `PartInit` (opcode `0x30`) on the active CO session.
+/// Issue `PartInit` (opcode `0x07`) on the active CO session.
 ///
 /// Seals `mach_seed` under the session `param_key` (AAD-bound to the
-/// session id), then ships it alongside `part_policy` and
-/// `pota_thumbprint`. Returns the PTA CSR + attestation report the
-/// firmware produced.
+/// session id), then ships it alongside the unified `part_policy` and
+/// the POTA / SATA / optional SAPOTA thumbprints. Returns the PTA CSR +
+/// attestation report the firmware produced.
 ///
 /// # Arguments
 ///
@@ -147,17 +128,22 @@ fn seal_mach_seed_envelope(
 /// * `param_key` - The session's per-session AES wrap key used to seal
 ///   `mach_seed`.
 /// * `mach_seed` - 32-byte machine seed ([`MACH_SEED_LEN`]).
-/// * `part_policy` - Caller-asserted `PartPolicy` bytes
-///   ([`PART_POLICY_LEN`]).
+/// * `part_policy` - Caller-asserted unified [`PartPolicy`] image
+///   ([`PART_POLICY_LEN`] bytes).
 /// * `pota_thumbprint` - SHA-384 POTA thumbprint
 ///   ([`POTA_THUMBPRINT_LEN`]).
+/// * `sata_thumbprint` - SHA-384 SATA thumbprint
+///   ([`SATA_THUMBPRINT_LEN`]).
+/// * `sapota_thumbprint` - Optional SHA-384 SAPOTA thumbprint
+///   ([`SAPOTA_THUMBPRINT_LEN`]); `None` when the security domain has
+///   no SAPOTA binding.
 ///
 /// # Errors
 ///
 /// Returns [`HsmError::InvalidArgument`] when any fixed-size input has
-/// the wrong length, propagates [`HsmError::InternalError`] on a
-/// `mach_seed` seal failure, and surfaces DDI/device failures from the
-/// round-trip.
+/// the wrong length or `part_policy` fails to decode, propagates
+/// [`HsmError::InternalError`] on a `mach_seed` seal failure, and
+/// surfaces DDI/device failures from the round-trip.
 pub(crate) fn init_part_ex(
     partition: &HsmPartition,
     session_id: u16,
@@ -165,8 +151,16 @@ pub(crate) fn init_part_ex(
     mach_seed: &[u8],
     part_policy: &[u8],
     pota_thumbprint: &[u8],
+    sata_thumbprint: &[u8],
+    sapota_thumbprint: Option<&[u8]>,
 ) -> HsmResult<PartInitResult> {
-    if part_policy.len() != PART_POLICY_LEN || pota_thumbprint.len() != POTA_THUMBPRINT_LEN {
+    if part_policy.len() != PART_POLICY_LEN
+        || pota_thumbprint.len() != POTA_THUMBPRINT_LEN
+        || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
+    {
+        return Err(HsmError::InvalidArgument);
+    }
+    if sapota_thumbprint.is_some_and(|s| s.len() != SAPOTA_THUMBPRINT_LEN) {
         return Err(HsmError::InvalidArgument);
     }
 
@@ -177,62 +171,19 @@ pub(crate) fn init_part_ex(
         mach_seed_envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(part_policy);
+    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| HsmError::InvalidArgument)?;
     req.pota_thumbprint.copy_from_slice(pota_thumbprint);
+    req.sata_thumbprint.copy_from_slice(sata_thumbprint);
+    if let Some(s) = sapota_thumbprint {
+        req.sapota_thumbprint = s.to_vec();
+    }
 
     let inner = partition.inner().read();
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, &mut cookie)
         .map(PartInitResult::from)
-        .map_err(HsmError::from)
-}
-
-/// Issue `FinalizePart` (opcode `0x31`) on the active CO session.
-///
-/// Supplies the PTA certificate chain rooted at the provisioning POTA
-/// (and, when re-provisioning, the partition's previous local backup
-/// masked key) and returns the partition-local backup masked key.
-///
-/// # Arguments
-///
-/// * `partition` - The HSM partition handle.
-/// * `session_id` - The active CO session id this request binds to.
-/// * `pta_cert_chain` - DER PTA certificate chain
-///   (≤ [`PTA_CERT_CHAIN_MAX_LEN`]).
-/// * `prev_part_local_bmk` - Previous partition-local backup masked
-///   key (≤ [`PART_LOCAL_BMK_MAX_LEN`]), present only when
-///   re-provisioning an already-finalized partition.
-///
-/// # Errors
-///
-/// Returns [`HsmError::InvalidArgument`] when a variable-length input
-/// exceeds its wire maximum, and surfaces DDI/device failures from the
-/// round-trip.
-pub(crate) fn finalize_part_ex(
-    partition: &HsmPartition,
-    session_id: u16,
-    pta_cert_chain: &[u8],
-    prev_part_local_bmk: Option<&[u8]>,
-) -> HsmResult<FinalizePartResult> {
-    if pta_cert_chain.len() > PTA_CERT_CHAIN_MAX_LEN {
-        return Err(HsmError::InvalidArgument);
-    }
-    if prev_part_local_bmk.is_some_and(|b| b.len() > PART_LOCAL_BMK_MAX_LEN) {
-        return Err(HsmError::InvalidArgument);
-    }
-
-    let req = TborFinalizePartReq {
-        session_id,
-        pta_cert_chain: pta_cert_chain.to_vec(),
-        prev_part_local_bmk: prev_part_local_bmk.map(<[u8]>::to_vec),
-    };
-
-    let inner = partition.inner().read();
-    let dev = inner.dev();
-    let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
-        .map(FinalizePartResult::from)
         .map_err(HsmError::from)
 }
 

@@ -135,17 +135,19 @@ impl HsmSession {
         self.inner.write().set_bmk_session(bmk_session);
     }
 
-    /// Issues TBOR `PartInit` (opcode `0x30`) on this CO session.
+    /// Issues TBOR `PartInit` (opcode `0x07`) on this CO session.
     ///
     /// Seals `mach_seed` under the session `param_key` and ships it
-    /// alongside `part_policy` + `pota_thumbprint`. Only valid on a
-    /// V2 session; a V1 session returns
-    /// [`HsmError::InvalidSession`].
+    /// alongside the unified `part_policy` and the POTA / SATA /
+    /// optional SAPOTA thumbprints. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
     pub fn part_init(
         &self,
         mach_seed: &[u8],
         part_policy: &[u8],
         pota_thumbprint: &[u8],
+        sata_thumbprint: &[u8],
+        sapota_thumbprint: Option<&[u8]>,
     ) -> HsmResult<PartInitResult> {
         let inner = self.inner.read();
         match &inner.kind {
@@ -156,27 +158,8 @@ impl HsmSession {
                 mach_seed,
                 part_policy,
                 pota_thumbprint,
-            ),
-            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
-        }
-    }
-
-    /// Issues TBOR `FinalizePart` (opcode `0x31`) on this CO session.
-    ///
-    /// Only valid on a V2 session; a V1 session returns
-    /// [`HsmError::InvalidSession`].
-    pub fn finalize_part(
-        &self,
-        pta_cert_chain: &[u8],
-        prev_part_local_bmk: Option<&[u8]>,
-    ) -> HsmResult<FinalizePartResult> {
-        let inner = self.inner.read();
-        match &inner.kind {
-            SessionKind::Ver2 { .. } => ddi::finalize_part_ex(
-                &inner.partition,
-                inner.id,
-                pta_cert_chain,
-                prev_part_local_bmk,
+                sata_thumbprint,
+                sapota_thumbprint,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
