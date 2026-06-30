@@ -18,6 +18,7 @@ use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborPartInitResp;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -25,6 +26,7 @@ use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
 use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
 use super::finish::SessionHandshake;
 
@@ -32,9 +34,10 @@ use super::finish::SessionHandshake;
 ///
 /// `mach_seed` is sealed client-side under `session.param_key` using
 /// the canonical `part-init-seed-v1 ‖ session_id_le ‖ rsv0` AAD; the
-/// device decrypts it inside the handler.  All three byte-bundle
-/// inputs must be exactly the size pinned by the wire schema or
-/// firmware constants; anything else surfaces
+/// device decrypts it inside the handler.  `part_policy`,
+/// `pota_thumbprint`, and `sata_thumbprint` must be exactly the size
+/// pinned by the wire schema; `sapota_thumbprint` (when `Some`) must be
+/// `SATA_THUMBPRINT_LEN`.  Any size violation surfaces
 /// [`DdiError::InvalidParameter`] before the request reaches the
 /// device.
 pub fn part_init(
@@ -43,12 +46,20 @@ pub fn part_init(
     mach_seed: &[u8],
     part_policy: &[u8],
     pota_thumbprint: &[u8],
+    sata_thumbprint: &[u8],
+    sapota_thumbprint: Option<&[u8]>,
 ) -> Result<TborPartInitResp, DdiError> {
     if mach_seed.len() != MACH_SEED_LEN
         || part_policy.len() != PART_POLICY_LEN
         || pota_thumbprint.len() != POTA_THUMBPRINT_LEN
+        || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
     {
         return Err(DdiError::InvalidParameter);
+    }
+    if let Some(s) = sapota_thumbprint {
+        if s.len() != SATA_THUMBPRINT_LEN {
+            return Err(DdiError::InvalidParameter);
+        }
     }
 
     let envelope = encrypt_mach_seed_envelope(session, mach_seed)?;
@@ -57,8 +68,13 @@ pub fn part_init(
         mach_seed_envelope: envelope,
         ..Default::default()
     };
-    req.part_policy.copy_from_slice(part_policy);
+    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| DdiError::InvalidParameter)?;
     req.pota_thumbprint.copy_from_slice(pota_thumbprint);
+    req.sata_thumbprint.copy_from_slice(sata_thumbprint);
+    if let Some(s) = sapota_thumbprint {
+        req.sapota_thumbprint = s.to_vec();
+    }
 
     dev.exec_op_tbor(&req, &mut None)
 }

@@ -8,6 +8,13 @@
 
 use azihsm_fw_ddi_tbor_api::tbor;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use zerocopy::little_endian::U16 as Le16;
+use zerocopy::FromBytes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zerocopy::TryFromBytes;
+use zerocopy::Unaligned;
 
 // SAFETY: test-only branding. Host-side tests have no real DMA engine,
 // so the DMA-reachability contract is moot; the brand is needed purely
@@ -225,13 +232,7 @@ fn decode_wrong_opcode() {
         .unwrap();
 
     let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
-        err,
-        azihsm_fw_ddi_tbor::DecodeError::OpcodeMismatch {
-            expected: 0x09,
-            actual: 0xFF
-        }
-    ));
+    assert_eq!(err, azihsm_fw_hsm_pal_traits::HsmError::TborOpcodeMismatch);
 }
 
 #[test]
@@ -248,10 +249,10 @@ fn decode_wrong_toc_count() {
         .unwrap();
 
     let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::MessageTruncated { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborMessageTruncated
+    );
 }
 
 #[test]
@@ -266,14 +267,10 @@ fn decode_wrong_toc_type() {
         .unwrap();
 
     let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-            entry_index: 0,
-            expected: 3,
-            actual: 0
-        }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType
+    );
 }
 
 // ── Optional fields ───────────────────────────────────────────────────
@@ -544,6 +541,46 @@ fn optional_display() {
     assert!(output.contains("None"));
 }
 
+// ── Typed u8 newtype field (#[tbor(U8)]) ──────────────────────────────
+
+/// Plain single-field newtype over `u8`, used to exercise a typed
+/// inline-`u8` schema field. No validation — any byte round-trips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WireTag(pub u8);
+
+#[tbor(opcode = 0x41)]
+pub struct TypedU8Req {
+    psk_id: u8,
+    // Carried as an inline `Uint8` on the wire; the accessor/encoder are
+    // typed `WireTag` rather than a bare `u8`. `#[tbor(U8)]` declares the
+    // wire width (the macro cannot see that `WireTag` is u8-wide).
+    #[tbor(U8)]
+    suite_id: WireTag,
+}
+
+#[test]
+fn typed_u8_newtype_round_trips() {
+    let mut buf = [0u8; 256];
+    let frame = TypedU8Req::encode(&mut buf)
+        .unwrap()
+        .psk_id(1)
+        .unwrap()
+        .suite_id(WireTag(0x07))
+        .unwrap()
+        .finish();
+
+    // Wire is identical to two inline u8 fields: 4 header + 2*4 TOC.
+    assert_eq!(frame.len(), 12);
+    // Typed accessor returns the newtype.
+    assert_eq!(frame.suite_id(), WireTag(0x07));
+
+    let view = TypedU8Req::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.psk_id(), 1);
+    assert_eq!(view.suite_id(), WireTag(0x07));
+    // The wire byte is the raw inner value (no validation/transform).
+    assert_eq!(view.suite_id().0, 0x07);
+}
+
 // ── Alignment padding ─────────────────────────────────────────────────
 
 #[tbor(opcode = 0x30)]
@@ -662,7 +699,69 @@ fn multiple_aligned_fields() {
     assert_eq!(view.checksum(), 0xABCD1234);
 }
 
-// ── Optional + aligned ────────────────────────────────────────────────
+// ── Unaligned typed slice ─────────────────────────────────────────────
+
+/// `#[repr(C)]` POD with `Unaligned` little-endian `U16` fields →
+/// alignment 1.  Exercises a typed-slice `&[T]` field: because `T` is
+/// `Unaligned`, the derive inserts **no** alignment padding, and the
+/// zero-copy `&[Pair]` cast is sound even when the slice lands on an odd
+/// data offset.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
+#[repr(C)]
+struct Pair {
+    a: Le16,
+    b: Le16,
+}
+
+#[tbor(opcode = 0x40)]
+pub struct TypedSliceReq<'a> {
+    // An odd-length leading buffer forces the following typed slice to a
+    // misaligned data offset. Because `Pair` is `Unaligned`, the slice
+    // still decodes correctly with no padding entry.
+    #[tbor(max_len = 64)]
+    lead: &'a [u8],
+    #[tbor(min_len = 1, max_len = 16)]
+    items: &'a [Pair],
+}
+
+#[test]
+fn typed_slice_unaligned_needs_no_padding() {
+    #[repr(align(8))]
+    struct AlignedBuf([u8; 512]);
+
+    let pairs = [
+        Pair {
+            a: Le16::new(0x0102),
+            b: Le16::new(0x0304),
+        },
+        Pair {
+            a: Le16::new(0x0506),
+            b: Le16::new(0x0708),
+        },
+    ];
+
+    let mut backing = AlignedBuf([0u8; 512]);
+    let frame = TypedSliceReq::encode(&mut backing.0)
+        .unwrap()
+        // 5 bytes → odd, so `items` lands on an odd offset. An `Unaligned`
+        // element type means no padding entry is inserted, yet the cast
+        // is still sound.
+        .lead(b"ABCDE")
+        .unwrap()
+        .items(&pairs)
+        .unwrap()
+        .finish();
+
+    assert_eq!(frame.lead(), b"ABCDE");
+
+    let view = TypedSliceReq::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.lead(), b"ABCDE");
+    // A non-empty, correct slice proves the `Unaligned` cast succeeded at
+    // an odd offset with no `#[tbor(align)]` and no padding entry.
+    assert_eq!(view.items(), &pairs[..]);
+}
 
 #[tbor(opcode = 0x33)]
 pub struct OptAlignReq<'a> {
@@ -727,7 +826,7 @@ fn encode_buffer_too_small() {
     let result = GetCertificateReq::encode(&mut buf);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall)
     ));
 }
 
@@ -777,10 +876,10 @@ fn fixed_array_wrong_length_rejected() {
         .unwrap();
 
     let err = FixedArrayReq::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength
+    );
 }
 
 // ── Length constraints on slices ──────────────────────────────────────
@@ -819,7 +918,7 @@ fn len_constraint_too_short() {
     let result = ConstrainedReq::encode(&mut buf).unwrap().tag(b"");
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::DataTooLarge { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge)
     ));
 }
 
@@ -830,7 +929,7 @@ fn len_constraint_too_long() {
     let result = ConstrainedReq::encode(&mut buf).unwrap().tag(&long_tag);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::DataTooLarge { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge)
     ));
 }
 
@@ -847,10 +946,10 @@ fn len_constraint_decode_too_short() {
         .unwrap();
 
     let err = ConstrainedReq::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength
+    );
 }
 
 // ── All-optional struct (finish from State0) ──────────────────────────
@@ -996,7 +1095,7 @@ fn response_encode_buffer_too_small() {
     let result = GetCertificateResp::encode(&mut buf, 0, false);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall)
     ));
 }
 
@@ -1039,10 +1138,10 @@ fn derive_response_wrong_toc_count() {
 
     // DeviceInfoResp expects 2 TOC entries, not 3.
     let err = DeviceInfoResp::decode(brand(msg)).unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::MessageTruncated { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborMessageTruncated
+    );
 }
 
 // ── Include field groups ──────────────────────────────────────────────
@@ -1275,4 +1374,106 @@ fn decode_mut_with_uint32_uint64_siblings() {
     assert_eq!(view.epoch, 0xCAFEBABE);
     assert_eq!(view.serial, 0x0011_2233_4455_6677);
     assert_eq!(&**view.payload, b"hello-payload");
+}
+
+// ── Field group with typed-slice + buffer fields (include) ────────────
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
+#[repr(C)]
+struct GrpPair {
+    a: zerocopy::little_endian::U16,
+    b: zerocopy::little_endian::U16,
+}
+
+#[tbor(fields)]
+pub struct EvidenceLikeGroup<'a> {
+    #[tbor(session_id)]
+    session: u16,
+    #[tbor(buffer, max_len = 64)]
+    items: &'a [GrpPair],
+    #[tbor(buffer, len = 4)]
+    one: &'a GrpPair,
+    #[tbor(buffer, max_len = 64)]
+    blob: &'a [u8],
+}
+
+#[tbor(opcode = 0x7B)]
+pub struct GroupBufReq<'a> {
+    #[tbor(include)]
+    ev: EvidenceLikeGroup<'a>,
+    #[tbor(max_len = 32)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn field_group_typed_slice_and_buffer_round_trip() {
+    let pairs = [
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0102),
+            b: zerocopy::little_endian::U16::new(0x0304),
+        },
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0506),
+            b: zerocopy::little_endian::U16::new(0x0708),
+        },
+    ];
+
+    let one = GrpPair {
+        a: zerocopy::little_endian::U16::new(0xAABB),
+        b: zerocopy::little_endian::U16::new(0xCCDD),
+    };
+
+    let mut buf = [0u8; 512];
+    let frame = GroupBufReq::encode(&mut buf)
+        .unwrap()
+        .ev(|g| {
+            g.session(azihsm_fw_ddi_tbor_api::SessionId(42))?
+                .items(&pairs)?
+                .one(&one)?
+                .blob(b"BLOB")
+        })
+        .unwrap()
+        .tail(b"TAIL")
+        .unwrap()
+        .finish();
+
+    let view = GroupBufReq::decode(brand(frame.as_bytes())).unwrap();
+    let ev = view.ev();
+    assert_eq!(ev.session(), azihsm_fw_ddi_tbor_api::SessionId(42));
+    assert_eq!(ev.items(), &pairs[..]);
+    // Single typed-POD ref (`&GrpPair`) borrowed zero-copy from the group.
+    assert_eq!(ev.one(), &one);
+    assert_eq!(&**ev.blob(), b"BLOB");
+    // The field after the included group must read at the group-adjusted
+    // TOC offset.
+    assert_eq!(&**view.tail(), b"TAIL");
+}
+
+#[tbor(opcode = 0x7C)]
+pub struct SinglePodReq<'a> {
+    #[tbor(buffer, len = 4)]
+    pair: &'a GrpPair,
+    #[tbor(max_len = 16)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn single_typed_pod_ref_top_level_round_trip() {
+    let p = GrpPair {
+        a: zerocopy::little_endian::U16::new(0x1234),
+        b: zerocopy::little_endian::U16::new(0x5678),
+    };
+    let mut buf = [0u8; 256];
+    let frame = SinglePodReq::encode(&mut buf)
+        .unwrap()
+        .pair(&p)
+        .unwrap()
+        .tail(b"z")
+        .unwrap()
+        .finish();
+    let view = SinglePodReq::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.pair(), &p);
+    assert_eq!(&**view.tail(), b"z");
 }

@@ -1,17 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Phase 2 of the TBOR session handshake — `OpenSessionFinish`.
+//! Phase 2 of the TBOR session handshake — `SessionOpenFinish`.
 //!
 //! Generates a fresh 32-byte `seed`, derives `param_key` from the
 //! HPKE export, AEAD-seals the seed under `param_key`, computes the
 //! Phase-2 confirm MAC from the [`PendingHandshake`] produced by
-//! [`super::init::open_session_init`], ships both to the FW, and
+//! [`super::init::session_open_init`], ships both to the FW, and
 //! folds the response into a [`SessionHandshake`] carrier that
 //! downstream tests use to drive in-session commands.
 //!
 //! Negative-path tests reach for [`build_mac_fin`] +
-//! [`open_session_finish_with_mac`] to ship a tampered or otherwise
+//! [`session_open_finish_with_mac`] to ship a tampered or otherwise
 //! caller-controlled `mac_fin`.
 
 use azihsm_crypto::AesKey;
@@ -21,8 +21,8 @@ use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborOpenSessionFinishReq;
-use azihsm_ddi_tbor_types::TborOpenSessionFinishResp;
+use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
+use azihsm_ddi_tbor_types::TborSessionOpenFinishResp;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
 
@@ -33,8 +33,8 @@ use super::init::PendingHandshake;
 ///
 /// `param_key` is the per-session AES-256 key the host uses to seal
 /// per-command parameter blobs as `aead_envelope` envelopes (e.g.,
-/// the new PSK in `ChangePsk`). `bmk_session` is the FW's wrapped
-/// masking-key envelope returned by `OpenSessionFinish`; it is
+/// the new PSK in `PskChange`). `bmk_session` is the FW's wrapped
+/// masking-key envelope returned by `SessionOpenFinish`; it is
 /// opaque to the host today (MBOR `ReopenSession` consumes it).
 ///
 /// `exported` is retained so tests that need to re-derive
@@ -91,7 +91,7 @@ impl core::fmt::Debug for SessionHandshake {
 /// Compute the Phase-2 confirm MAC the host normally ships in
 /// `mac_fin`. Exposed so negative-path tests can compute the canonical
 /// MAC, tamper with it, and ship the result via
-/// [`open_session_finish_with_mac`].
+/// [`session_open_finish_with_mac`].
 pub fn build_mac_fin(pending: &PendingHandshake) -> Result<[u8; 48], DdiError> {
     crypto::build_phase2_mac(
         &pending.exported,
@@ -111,21 +111,21 @@ fn fresh_seed() -> Result<[u8; SESSION_SEED_LEN], DdiError> {
 
 /// Run Phase 2 of the handshake. Consumes the [`PendingHandshake`]
 /// so callers cannot accidentally reuse stale state for a second
-/// `OpenSessionFinish` against the same Pending slot.
-pub fn open_session_finish(
+/// `SessionOpenFinish` against the same Pending slot.
+pub fn session_open_finish(
     dev: &<AzihsmDdi as Ddi>::Dev,
     pending: PendingHandshake,
 ) -> Result<SessionHandshake, DdiError> {
     let mac_fin = build_mac_fin(&pending)?;
-    open_session_finish_with_mac(dev, pending, mac_fin)
+    session_open_finish_with_mac(dev, pending, mac_fin)
 }
 
-/// Ship a caller-supplied `mac_fin` in `OpenSessionFinish`. The
+/// Ship a caller-supplied `mac_fin` in `SessionOpenFinish`. The
 /// `PendingHandshake` is still consumed.
 ///
 /// On Phase-2 MAC mismatch the FW returns an error that surfaces here
 /// as a [`DdiError`] from `exec_op_tbor`.
-pub fn open_session_finish_with_mac(
+pub fn session_open_finish_with_mac(
     dev: &<AzihsmDdi as Ddi>::Dev,
     pending: PendingHandshake,
     mac_fin: [u8; 48],
@@ -138,13 +138,13 @@ pub fn open_session_finish_with_mac(
         .try_into()
         .map_err(|_| DdiError::TborDecodeError)?;
 
-    let req = TborOpenSessionFinishReq {
+    let req = TborSessionOpenFinishReq {
         session_id: pending.session_id,
         mac_fin,
         seed_envelope,
     };
     let mut cookie = None;
-    let resp: TborOpenSessionFinishResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let resp: TborSessionOpenFinishResp = dev.exec_op_tbor(&req, &mut cookie)?;
 
     Ok(SessionHandshake {
         session_id: pending.session_id,

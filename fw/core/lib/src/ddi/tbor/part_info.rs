@@ -16,6 +16,10 @@
 //! public key) is always present; the identity reads use `?` purely as
 //! defense-in-depth.
 
+use azihsm_fw_ddi_tbor_types::tbor_int::U32;
+use azihsm_fw_ddi_tbor_types::tbor_int::U64;
+use azihsm_fw_ddi_tbor_types::DeviceKind;
+use azihsm_fw_ddi_tbor_types::PartStateId;
 use azihsm_fw_ddi_tbor_types::TborPartInfoResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -23,11 +27,6 @@ use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
 use crate::part_state;
-
-/// Device kind reported by uno firmware — a physical device.  Matches
-/// the MBOR `DdiDeviceKind::Physical` discriminant returned by
-/// `get_device_info`.
-const DEVICE_KIND_PHYSICAL: u8 = 2;
 
 /// Module FIPS approval status carried in the TBOR response header flag.
 /// `false` matches the MBOR `get_device_info` handler — uno firmware is
@@ -55,11 +54,11 @@ pub(crate) fn handle<'p, P: HsmPal>(
 
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborPartInfoResp::encode(buf, 0, FIPS_APPROVED)?
-            .device_kind(DEVICE_KIND_PHYSICAL)?
-            .part_state(part_state_val)?
-            .generation(generation)?
-            .owner_svn(owner_svn)?
-            .mfgr_svn(mfgr_svn)?
+            .device_kind(DeviceKind::Physical)?
+            .part_state(PartStateId(part_state_val))?
+            .generation(U32::new(generation))?
+            .owner_svn(U64::new(owner_svn))?
+            .mfgr_svn(U64::new(mfgr_svn))?
             .pid(pid)?
             .pid_pub_key(pid_pub_key)?
             .finish();

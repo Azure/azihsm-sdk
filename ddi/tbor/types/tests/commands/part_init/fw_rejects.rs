@@ -20,8 +20,8 @@ use super::pota_thumbprint;
 use super::CO;
 use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::OpenSessionInitOptions;
 use crate::harness::SessionHandshake;
+use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
 const CU: u8 = 1;
@@ -42,12 +42,12 @@ fn open_role_with(
     sty: SessionType,
     psk: &[u8; PSK_LEN],
 ) -> SessionHandshake {
-    let opts = OpenSessionInitOptions::new(role, sty).with_psk(psk);
+    let opts = SessionOpenInitOptions::new(role, sty).with_psk(psk);
     let pending = ctx
-        .open_session_init_with_options(opts)
-        .expect("open_session_init under custom PSK");
-    ctx.open_session_finish(pending)
-        .expect("open_session_finish under custom PSK")
+        .session_open_init_with_options(opts)
+        .expect("session_open_init under custom PSK");
+    ctx.session_open_finish(pending)
+        .expect("session_open_finish under custom PSK")
 }
 
 /// Default-PSK CO session: the TBOR dispatcher must reject `PartInit`
@@ -81,7 +81,7 @@ fn part_init_reject_cu_session_emu() {
     // not the default-PSK gate.  CU sessions are pinned to
     // `SessionType::PlainText` (CO-only is `Authenticated`).
     let bootstrap = ctx.open_session(CU, SessionType::PlainText);
-    ctx.change_psk(bootstrap.handshake(), &ROTATED_CU_PSK)
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
         .expect("rotate CU PSK");
     bootstrap.close().expect("close bootstrap CU session");
 

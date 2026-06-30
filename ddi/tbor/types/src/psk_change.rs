@@ -1,21 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Host-side wrapper for the TBOR `ChangePsk` command.
+//! Host-side wrapper for the TBOR `PskChange` command.
 //!
 //! Construction of the inner AEAD-GCM envelope is the caller's
 //! responsibility: pass the wire-ready envelope bytes (already wrapped
 //! under the active session's `param_key`, with the
 //! `"psk-change-v1" ‖ session_id` AAD) in `psk_envelope`.  See the FW
-//! schema docs at `azihsm_fw_ddi_tbor_types::change_psk` for the
+//! schema docs at `azihsm_fw_ddi_tbor_types::psk_change` for the
 //! AAD layout and the implicit (session-role-driven) target selection.
 
 use alloc::vec::Vec;
 
 use crate::tbor;
 
-/// TBOR opcode for `ChangePsk`.
-pub const TBOR_OP_CHANGE_PSK: u8 = 0x20;
+/// TBOR opcode for `PskChange`.
+pub const TBOR_OP_PSK_CHANGE: u8 = 0x06;
 
 /// Length in bytes of a partition pre-shared key (PSK).
 ///
@@ -26,7 +26,7 @@ pub const PSK_LEN: usize = 32;
 /// Well-known default Crypto Officer (CO) PSK.
 ///
 /// Mirror of `azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CO`.  Returned by
-/// the FW for `psk_id = 0` until rotated via `ChangePsk`.  Public by
+/// the FW for `psk_id = 0` until rotated via `PskChange`.  Public by
 /// design so partitions are usable immediately at bring-up.
 pub const DEFAULT_PSK_CO: [u8; PSK_LEN] = [
     0x41, 0x5a, 0x49, 0x48, 0x53, 0x4d, 0x2d, 0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0x2d, 0x43,
@@ -50,7 +50,7 @@ pub const PSK_CHANGE_AAD_LEN: usize = 32;
 /// Maximum on-the-wire length of the `psk_envelope`.
 pub const PSK_CHANGE_ENVELOPE_MAX_LEN: usize = 160;
 
-/// Builds the 32-byte AEAD AAD bound into a `ChangePsk` envelope.
+/// Builds the 32-byte AEAD AAD bound into a `PskChange` envelope.
 ///
 /// Layout: [`PSK_CHANGE_AAD_LABEL`] (13 B) `‖ session_id` (2 B LE)
 /// `‖ rsv0` (17 B).
@@ -67,14 +67,14 @@ pub fn build_psk_change_aad(session_id: u16) -> [u8; PSK_CHANGE_AAD_LEN] {
     aad
 }
 
-/// Host-facing TBOR `ChangePsk` request.
+/// Host-facing TBOR `PskChange` request.
 ///
 /// The target PSK slot is derived HSM-side from the session role
 /// (CO session → CO slot, CU session → CU slot); the request does
 /// not carry a slot-selection field.
-#[tbor(opcode = TBOR_OP_CHANGE_PSK, session_ctrl = in_session)]
+#[tbor(opcode = TBOR_OP_PSK_CHANGE, session_ctrl = in_session)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct TborChangePskReq {
+pub struct TborPskChangeReq {
     /// Logical session id the request is bound to.  Same value must
     /// appear in the AEAD-GCM envelope's AAD; see
     /// [`build_psk_change_aad`].
@@ -87,7 +87,7 @@ pub struct TborChangePskReq {
     pub psk_envelope: Vec<u8>,
 }
 
-/// Host-facing TBOR `ChangePsk` response (empty ack).
+/// Host-facing TBOR `PskChange` response (empty ack).
 #[tbor(response)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct TborChangePskResp;
+pub struct TborPskChangeResp;

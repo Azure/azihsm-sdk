@@ -23,7 +23,7 @@
 //! data-section field offsets to be monotonically non-decreasing in
 //! schema (TOC) order. The canonical encoder always produces this
 //! layout; any wire message that violates the invariant is rejected
-//! with [`azihsm_fw_ddi_tbor::DecodeError::NonMonotonicTocOffsets`].
+//! with [`azihsm_fw_hsm_pal_traits::HsmError::TborNonMonotonicTocOffsets`].
 //!
 //! Schemas using `#[tbor(align = N)]` (which inject Padding TOC
 //! entries between fields) are currently unsupported in combination
@@ -157,17 +157,12 @@ pub fn gen_decode_mut_body(schema: &Schema) -> Option<TokenStream> {
     let monotonic_checks: Vec<TokenStream> = data_fields
         .windows(2)
         .map(|w| {
-            let prev_toc = w[0].0;
-            let curr_toc = w[1].0;
             let prev_off = format_ident!("__off_{}", w[0].1.name);
             let prev_len = format_ident!("__len_{}", w[0].1.name);
             let curr_off = format_ident!("__off_{}", w[1].1.name);
             quote! {
                 if #prev_off.checked_add(#prev_len).is_none_or(|end| end > #curr_off) {
-                    return Err(azihsm_fw_ddi_tbor::DecodeError::NonMonotonicTocOffsets {
-                        prev_entry: #prev_toc,
-                        curr_entry: #curr_toc,
-                    });
+                    return Err(azihsm_fw_hsm_pal_traits::HsmError::TborNonMonotonicTocOffsets);
                 }
             }
         })

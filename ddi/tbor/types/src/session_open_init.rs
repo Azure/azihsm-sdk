@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Host-side wrapper for the TBOR `OpenSessionInit` command.
+//! Host-side wrapper for the TBOR `SessionOpenInit` command.
 
 use crate::tbor;
+use crate::tbor_int::U8;
 
-/// TBOR opcode for `OpenSessionInit`.
-pub const TBOR_OP_OPEN_SESSION_INIT: u8 = 0x10;
+/// TBOR opcode for `SessionOpenInit`.
+pub const TBOR_OP_SESSION_OPEN_INIT: u8 = 0x03;
 
 /// Length of the VM's per-handshake ephemeral public key
 /// (HPKE `Npk` for the P-384 KEM: SEC1 uncompressed `0x04 ‖ X ‖ Y`
@@ -75,31 +76,31 @@ impl SessionType {
     }
 }
 
-/// Host-facing TBOR `OpenSessionInit` request.
+/// Host-facing TBOR `SessionOpenInit` request.
 ///
 /// Always starts a fresh HPKE handshake.  The 32-byte session seed
 /// is now generated client-side in
-/// [`TborOpenSessionFinishReq`](crate::TborOpenSessionFinishReq) and
+/// [`TborSessionOpenFinishReq`](crate::TborSessionOpenFinishReq) and
 /// shipped AEAD-encrypted in Phase 2.  Resume is handled by the MBOR
 /// `ReopenSession` command, not by this opcode.
-#[tbor(opcode = TBOR_OP_OPEN_SESSION_INIT, session_ctrl = open)]
+#[tbor(opcode = TBOR_OP_SESSION_OPEN_INIT, session_ctrl = open)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TborOpenSessionInitReq {
+pub struct TborSessionOpenInitReq {
     /// PSK identifier asserting the caller role.
-    pub psk_id: u8,
+    pub psk_id: U8,
 
     /// Channel-level integrity profile (0 = PlainText, 1 = Authenticated).
     ///
     /// CO (`psk_id = 0`) must use `Authenticated (1)`; CU (`psk_id = 1`)
     /// must use `PlainText (0)`.  Any other pairing is rejected by
     /// the HSM with `InvalidSessionType`.
-    pub session_type: u8,
+    pub session_type: U8,
 
     /// Cryptographic suite identifier.  See `SessionSuite` in the PAL
     /// traits crate for the registered values.  Today only `0x01`
     /// (`P384HkdfSha384AesGcm256`) is accepted; any other value is
     /// rejected by the HSM with `UnsupportedSessionSuite`.
-    pub suite_id: u8,
+    pub suite_id: U8,
 
     /// Per-handshake ephemeral public key supplied by the VM.  The
     /// encoding and length are dictated by `suite_id`; for `0x01`
@@ -108,7 +109,7 @@ pub struct TborOpenSessionInitReq {
     pub pk_init: [u8; PK_INIT_LEN],
 }
 
-impl Default for TborOpenSessionInitReq {
+impl Default for TborSessionOpenInitReq {
     fn default() -> Self {
         // Default to a valid CO/Authenticated pairing: CO sessions
         // (psk_id=0) must use the Authenticated session type
@@ -122,10 +123,10 @@ impl Default for TborOpenSessionInitReq {
     }
 }
 
-/// Host-facing TBOR `OpenSessionInit` response.
+/// Host-facing TBOR `SessionOpenInit` response.
 #[tbor(response)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TborOpenSessionInitResp {
+pub struct TborSessionOpenInitResp {
     /// Reserved session identifier.
     #[tbor(session_id)]
     pub session_id: u16,
