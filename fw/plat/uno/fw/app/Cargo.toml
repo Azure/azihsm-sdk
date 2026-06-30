@@ -40,8 +40,11 @@ default = []
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the
 #     emulator host loop (which snoops the semihosting trap) learns the
 #     firmware is ready to accept IO.
-#   - The panic handler reports the panic via `SYS_WRITE0` and exits with
-#     `SYS_EXIT(-1)` so the emulator stops on firmware panic.
+#   - The fault/panic handlers (in `azihsm_fw_uno_fault`) call `SYS_EXIT(-1)`
+#     so the emulator stops on a firmware fault. The fault *diagnostics*
+#     themselves are emitted through the tracing facade, so they appear only
+#     when a `trace-*` backend is also enabled (with `trace-semihosting` they
+#     reach the host via `SYS_WRITE0`).
 # Disable on targets (e.g. production silicon) that cannot snoop semihosting.
 semihosting = [
   "azihsm_fw_uno_fault/semihosting",
