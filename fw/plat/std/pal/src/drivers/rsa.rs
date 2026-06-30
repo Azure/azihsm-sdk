@@ -86,8 +86,16 @@ pub fn rsa_pub_wire(pubk: &RsaPublicKey, out: Option<&mut [u8]>) -> HsmResult<us
     if out.len() < wire_len {
         return Err(HsmError::RsaInvalidKeyLength);
     }
-    // Modulus: big-endian -> little-endian into the leading `n_len` bytes.
-    let mut n_be = [0u8; 512];
+    // Modulus: big-endian -> little-endian into the leading `n_len`
+    // bytes.  `pubk` is derived from untrusted vault data, so guard the
+    // fixed-size scratch buffer against an out-of-range modulus length
+    // (e.g. a larger DER-imported modulus) rather than panicking on the
+    // slice.
+    const MAX_MODULUS_LEN: usize = 512; // RSA-4096
+    if n_len > MAX_MODULUS_LEN {
+        return Err(HsmError::RsaInvalidKeyLength);
+    }
+    let mut n_be = [0u8; MAX_MODULUS_LEN];
     pubk.n(Some(&mut n_be[..n_len]))
         .map_err(|_| HsmError::RsaGenerateError)?;
     super::reverse_copy(&mut out[..n_len], &n_be[..n_len]);

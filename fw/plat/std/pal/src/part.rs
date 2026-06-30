@@ -478,8 +478,18 @@ impl HsmPartitionManager for StdHsmPal {
             .with_local(true)
             .with_unwrap(true);
 
-        // Store the private key in the vault and record its id.
+        // Store the private key in the vault and record its id.  The
+        // `active_part_mut` borrow through to setting `unwrapping_key_id`
+        // is await-free, so on the single-threaded executor it is atomic.
+        // Re-check here: a concurrent caller may have generated and
+        // stored the key while this task was awaiting keygen above.  If
+        // so, drop our freshly generated key (it was never inserted into
+        // the vault) and return the existing id, so the partition only
+        // ever materialises a single unwrapping key.
         let entry = self.active_part_mut(pid)?;
+        if let Some(kid) = entry.unwrapping_key_id {
+            return Ok(kid);
+        }
         let kid = entry.vault.create(
             &priv_buf[..priv_len],
             HsmVaultKeyKind::Rsa2kPrivate,

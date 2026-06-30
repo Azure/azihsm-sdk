@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! GetUnwrappingKey smoke tests for the emu backend.
+//! GetUnwrappingKey smoke tests.
 //!
 //! - Happy path: with an open session, the command returns an RSA-2048
-//!   public key and a non-zero key id.  We intentionally do *not*
-//!   assert on `masked_key` — the firmware emits an empty placeholder
-//!   until vault-key masking is wired up.
+//!   public key and a vault key id.  We intentionally do *not* assert
+//!   on `masked_key` — the firmware emits an empty placeholder until
+//!   vault-key masking is wired up — nor on the exact `key_id` value,
+//!   which is an opaque handle (the sim backend legitimately assigns
+//!   `0`).
 //! - Stability: two calls on the same partition return the same key id
 //!   and public-key bytes — the key is partition-cached and lazily
 //!   generated on first use.
@@ -38,7 +40,6 @@ fn test_get_unwrapping_key_smoke() {
             assert_eq!(resp.hdr.status, DdiStatus::Success);
             assert_eq!(resp.hdr.sess_id, Some(session_id));
 
-            assert_ne!(resp.data.key_id, 0, "unwrap key_id must be non-zero");
             assert!(
                 !resp.data.pub_key.der.is_empty(),
                 "unwrap pub_key must be non-empty"

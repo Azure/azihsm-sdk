@@ -418,12 +418,16 @@ pub trait HsmPartitionManager {
     /// Obtain the partition's RSA-2048 unwrapping key, returning its
     /// vault key id once the key is available.
     ///
-    /// The key is materialised once per partition and cached: the
-    /// private key lives in the vault (with `internal`/`local`/`unwrap`
-    /// attributes), its id in
-    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID), and
-    /// the wire-format public key in
-    /// [`RSA_UNWRAPPING_PUB_KEY`](PartPropId::RSA_UNWRAPPING_PUB_KEY).
+    /// The key is materialised once per enabled partition incarnation:
+    /// the private key lives in the vault (with `internal`/`local`/
+    /// `unwrap` attributes) and its id in
+    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID).
+    /// It is dropped when the partition is disabled or freed and
+    /// regenerated on the next request after a re-enable.  No public key
+    /// is cached — callers derive it on demand from the vault private
+    /// key via
+    /// [`HsmRsa::rsa_priv_pub_key`](crate::HsmRsa::rsa_priv_pub_key),
+    /// matching the reference firmware.
     ///
     /// RSA key generation is expensive, so PALs never generate it at
     /// partition enable.  Implementations differ in *when* they

@@ -9,11 +9,14 @@
 //! [`RsaUnwrap`](super::DdiOp::RsaUnwrap).
 //!
 //! The unwrapping key is materialised by the PAL and cached for the
-//! lifetime of the partition.  RSA key generation is expensive, so it
-//! is never done at partition enable: the std (emulator) PAL generates
-//! it lazily on the first call, while hardware PALs generate it in the
-//! background from partition init and report `PendingKeyGeneration`
-//! until it is ready, prompting the host to retry.
+//! partition's current enabled incarnation — it is dropped (and its
+//! vault slot deleted) when the partition is disabled or freed, and
+//! regenerated on the next request after a re-enable.  RSA key
+//! generation is expensive, so it is never done at partition enable:
+//! the std (emulator) PAL generates it lazily on the first call, while
+//! hardware PALs generate it in the background from partition init and
+//! report `PendingKeyGeneration` until it is ready, prompting the host
+//! to retry.
 
 use azihsm_fw_ddi_mbor_types::get_unwrapping_key::DdiGetUnwrappingKeyReq;
 use azihsm_fw_ddi_mbor_types::get_unwrapping_key::DdiGetUnwrappingKeyResp;
