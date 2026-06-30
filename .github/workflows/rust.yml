@@ -118,18 +118,18 @@ jobs:
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run MBOR types smoke tests against emu backend
-      id: test-mbor-smoke
+    - name: Run emu smoke tests
+      id: test-emu-smoke
       run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
-      if: ${{ steps.test-mbor-smoke.outcome == 'success' }}
+      if: ${{ steps.test-emu-smoke.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mbor-smoke.outcome == 'failure' }}
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -213,18 +213,18 @@ jobs:
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
       run: cargo xtask setup
-    - name: Run MBOR types smoke tests against emu backend
-      id: test-mbor-smoke
+    - name: Run emu smoke tests
+      id: test-emu-smoke
       run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
-      if: ${{ steps.test-mbor-smoke.outcome == 'success' }}
+      if: ${{ steps.test-emu-smoke.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mbor-smoke.outcome == 'failure' }}
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
