@@ -684,4 +684,13 @@ impl HsmPartitionManager for UnoHsmPal {
         }
         Ok(())
     }
+
+    async fn part_ensure_unwrapping_key(&self, _io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        // On Uno the RSA-2048 unwrapping key is generated in the
+        // background, started at partition init, and can take a while.
+        // Until that upka-backed generation (and its completion check)
+        // is wired up here, report it as still in progress so the host
+        // retries — mirroring the reference firmware's behaviour.
+        Err(HsmError::PendingKeyGeneration)
+    }
 }

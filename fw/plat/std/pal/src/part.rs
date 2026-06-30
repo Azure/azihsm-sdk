@@ -453,6 +453,42 @@ impl HsmPartitionManager for StdHsmPal {
     fn part_prop_clear(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<()> {
         self.prop_clear(io, id)
     }
+
+    async fn part_ensure_unwrapping_key(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        let pid = io.pid();
+        // Fast path: already materialised this enable cycle.
+        if let Some(kid) = self.active_part(pid)?.unwrapping_key_id {
+            return Ok(kid);
+        }
+
+        // Generate the RSA-2048 key pair without holding a borrow into
+        // the partition table across the keygen await.  Only the private
+        // key is persisted in the vault (as DER — the std PAL's
+        // representation; real firmware stores raw key material); the
+        // public key is later derived from it on demand (matching the
+        // reference firmware), so nothing extra is cached in partition
+        // state.
+        let (pk, _pubk) = self.rsa.gen_keypair(2048).await?;
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
+        let mut priv_buf = vec![0u8; priv_len];
+        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+            .map_err(|_| HsmError::RsaToDerError)?;
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_unwrap(true);
+
+        // Store the private key in the vault and record its id.
+        let entry = self.active_part_mut(pid)?;
+        let kid = entry.vault.create(
+            &priv_buf[..priv_len],
+            HsmVaultKeyKind::Rsa2kPrivate,
+            None,
+            attrs,
+        )?;
+        entry.unwrapping_key_id = Some(kid);
+        Ok(kid)
+    }
 }
 
 // ---------------------------------------------------------------------------
