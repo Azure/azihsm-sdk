@@ -295,7 +295,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_empty_masked_key_buffer)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
