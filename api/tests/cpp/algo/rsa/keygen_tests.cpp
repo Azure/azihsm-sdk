@@ -188,7 +188,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_key_handle)
         auto err = azihsm_key_get_prop(static_cast<azihsm_handle>(0), &prop);
 
         // Avoid depending on the exact invalid-handle status name.
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -652,7 +652,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_deleted_private_key_handle)
         azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         err = azihsm_key_get_prop(deleted_key, &prop);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -677,7 +677,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_deleted_public_key_handle)
         azihsm_key_prop prop{ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &kind, .len = sizeof(kind) };
 
         err = azihsm_key_get_prop(deleted_key, &prop);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -699,7 +699,7 @@ TEST_F(azihsm_rsa_keygen, delete_rsa_key_twice_fails_second_delete)
         priv_key.release();
 
         err = azihsm_key_delete(deleted_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -751,7 +751,7 @@ TEST_F(azihsm_rsa_keygen, generate_rsa_keypair_rejects_invalid_session_handle)
         pub_key.get_ptr()
     );
 
-    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     ASSERT_EQ(priv_key.get(), 0);
     ASSERT_EQ(pub_key.get(), 0);
 }
