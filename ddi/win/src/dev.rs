@@ -26,6 +26,8 @@ use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
+use azihsm_ddi_tbor_types::TborOpReq;
+use azihsm_ddi_tbor_types::TborResp;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use winapi::ctypes::c_void;
@@ -861,6 +863,168 @@ impl DdiDev for DdiWinDev {
         let resp = <T::OpResp>::mbor_decode(&mut decoder)
             .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
         Ok(resp)
+    }
+
+    /// Execute a TBOR-encoded DDI command on the real Windows device.
+    ///
+    /// Mirrors [`Self::exec_op_mbor`] but:
+    ///
+    ///   * encodes the request via [`TborOpReq::encode_request`];
+    ///   * sets the SQE opcode field `opc` to [`OP_TBOR`] so the
+    ///     firmware routes the request through its TBOR dispatcher
+    ///     (`fw/core/lib/src/op.rs::OP_TBOR`);
+    ///   * decodes the response with [`TborResp::decode_response`],
+    ///     which already maps embedded fw-error status into
+    ///     [`DdiError::DdiError`] / [`DdiError::TborDecodeError`].
+    ///
+    /// The Windows kernel driver is wire-agnostic — it forwards the
+    /// `opc` and `cmdset` ioctl fields verbatim into the SQE — so
+    /// no driver change is required to route TBOR.
+    fn exec_op_tbor<T: TborOpReq>(
+        &self,
+        req: &T,
+        _cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        /// SQE opcode that routes the command through the firmware's
+        /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
+        const OP_TBOR: u16 = 2;
+
+        const REQ_BUF_LEN: usize = 8192;
+        const RESP_BUF_LEN: usize = 8192;
+
+        // -- 1. Encode the TBOR request --------------------------------
+        let mut req_buf = [0u8; REQ_BUF_LEN];
+        let req_bytes = req.encode_request(&mut req_buf)?;
+        let req_len = req_bytes.len();
+
+        tracing::debug!(
+            opcode = T::OPCODE,
+            "TBOR Request Buffer (in hex): {:02x?}",
+            &req_buf[..req_len]
+        );
+
+        let mut resp_buf = Box::<[u8; RESP_BUF_LEN]>::new([0u8; RESP_BUF_LEN]);
+
+        // -- 2. Build the ioctl command --------------------------------
+        let mut ioctl_in_buffer = McrCpGenericIoctlIndata::default();
+        let ioctl_out_buffer = McrCpGenericIoctlOutData::default();
+
+        ioctl_in_buffer.ioctl_hdr.ioctl_data_size =
+            mem::size_of::<McrCpGenericIoctlIndata>() as u32;
+        ioctl_in_buffer.ioctl_hdr.app_cmd_id = 0xCD1DDEAD;
+        ioctl_in_buffer.ioctl_hdr.timeout = 100; // in ms
+        ioctl_in_buffer.ioctl_hdr.flags = 0;
+
+        ioctl_in_buffer.context = 0;
+        // OP_TBOR is THE flag the firmware uses to route the request
+        // through the TBOR dispatcher instead of `handle_mbor_op`.
+        ioctl_in_buffer.opc = OP_TBOR;
+        ioctl_in_buffer.cmdset = MCR_CP_CMD_SESSION_GENERIC;
+
+        ioctl_in_buffer.user_buffers.src_length = req_len as u32;
+        ioctl_in_buffer.user_buffers.src_buf = req_buf.as_ptr();
+        ioctl_in_buffer.user_buffers.dst_length = resp_buf.len() as u32;
+        ioctl_in_buffer.user_buffers.dst_buf = resp_buf.as_mut_ptr();
+
+        // Session control flags come from the TBOR request type;
+        // each request declares its own kind so the transport layer
+        // doesn't need a central opcode->ctrl table.
+        let session_ctrl = req.session_ctrl();
+        ioctl_in_buffer
+            .session_control
+            .set_kind(u8::from(session_ctrl));
+        if let Some(sid) = req.get_session_id() {
+            ioctl_in_buffer.session_id = sid;
+            ioctl_in_buffer
+                .session_control
+                .set_session_id_is_valid(true);
+        }
+
+        // -- 3. Issue the ioctl (overlapped, same as MBOR) ----------------
+        let ioctl_code: DWORD = CTL_CODE(
+            0x3F,
+            0x201,
+            METHOD_BUFFERED,
+            FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+        );
+
+        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
+        // debugging as well as code reviews.
+        let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
+        let mut bytes_returned: DWORD = 0;
+        let in_ptr = ptr::addr_of!(ioctl_in_buffer);
+        let out_ptr = ptr::addr_of!(ioctl_out_buffer);
+        let overlapped_ptr: *mut OVERLAPPED = &mut overlapped;
+
+        let event = IoEvent::new()?;
+        overlapped.hEvent = event.handle();
+
+        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
+        // debugging as well as code reviews.
+        let _ioctl_ret = unsafe {
+            DeviceIoControl(
+                self.file.read().as_raw_handle() as HANDLE,
+                ioctl_code,
+                in_ptr as *mut c_void,
+                mem::size_of::<McrCpGenericIoctlIndata>() as DWORD,
+                out_ptr as *mut c_void,
+                mem::size_of::<McrCpGenericIoctlOutData>() as DWORD,
+                ptr::null_mut(),
+                overlapped_ptr,
+            )
+        };
+
+        let last_error = std::io::Error::last_os_error();
+        if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            tracing::warn!(
+                ?last_error,
+                "DeviceIoControl returned error after exec_op_tbor"
+            );
+            Err(DdiError::IoError(last_error))?;
+        }
+
+        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
+        // debugging as well as code reviews.
+        let result = unsafe {
+            GetOverlappedResult(
+                self.file.read().as_raw_handle() as HANDLE,
+                overlapped_ptr,
+                &mut bytes_returned,
+                1,
+            )
+        };
+
+        if result == 0 {
+            // WinApi failure path: driver does not copy any data,
+            // so the extended ioctl status is unreliable here.
+            let last_error = std::io::Error::last_os_error();
+            tracing::warn!(
+                ?last_error,
+                "GetOverlappedResult returned error after exec_op_tbor"
+            );
+            Err(DdiError::IoError(last_error))?;
+        }
+
+        self.map_ioctl_status(ioctl_out_buffer.ioctl_status)?;
+
+        if ioctl_out_buffer.ioctl_status != 0 {
+            Err(DdiError::WinError(ioctl_out_buffer.ioctl_status))?;
+        }
+
+        if ioctl_out_buffer.status != 0 {
+            Err(DdiError::DdiError(ioctl_out_buffer.status))?;
+        }
+
+        // -- 4. Decode the typed TBOR response --------------------
+        let resp_len = ioctl_out_buffer.byte_count as usize;
+        let resp_bytes = &resp_buf[..resp_len];
+        tracing::debug!(
+            opcode = T::OPCODE,
+            "TBOR Response Buffer (in hex): {:02x?}",
+            resp_bytes
+        );
+
+        Ok(<T::OpResp>::decode_response(resp_bytes)?)
     }
 
     /// Execute AES GCM operation (encryption/decryption) with slice-based buffers

@@ -13,6 +13,7 @@ doctest = false
 azihsm_ddi_interface.workspace = true
 azihsm_ddi_mbor_codec.workspace = true
 azihsm_ddi_mbor_types.workspace = true
+azihsm_ddi_tbor_types.workspace = true
 bitfield-struct.workspace = true
 cfg-if.workspace = true
 libc.workspace = true
