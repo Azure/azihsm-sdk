@@ -270,6 +270,8 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
         filterset: None,
         profile: profile.clone().or(Some("ci-mock".to_string())),
         exclude: mock_exclude,
+        test: None,
+        filter: vec![],
     });
 
     // SDK Run resiliency fault-injection tests (requires res-test
@@ -282,6 +284,8 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             filterset: Some("test(resiliency::fault_injection::)".to_string()),
             profile: profile.clone().or(Some("ci-mock-res".to_string())),
             exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
         });
     }
 
@@ -295,9 +299,7 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             profile: profile.clone().or(Some("ci-mbor-smoke".to_string())),
             exclude: exclude.to_owned(),
             test: Some("azihsm_ddi_tests".to_string()),
-            filter: Some(vec![
-                "smoke".to_string(),
-            ]),
+            filter: vec!["smoke".to_string()],
         });
     }
 
@@ -318,6 +320,8 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
             exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
         });
 
         // SDK Run azihsm_ddi_mbor_types mock tests table-64
@@ -328,6 +332,8 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
             exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
         });
     }
 
@@ -341,6 +347,8 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             filterset: None,
             profile: profile.clone().or(Some("ci-tbor-emu".to_string())),
             exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
         });
     }
 
