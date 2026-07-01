@@ -186,7 +186,12 @@ impl Xtask for Precheck {
         }
 
         if stage.nextest || stage.all {
-            if self.package.is_none() && self.features.is_none() {
+            if self.package.is_none()
+                && self.features.is_none()
+                && self.filterset.is_none()
+                && self.test.is_none()
+                && self.filter.is_empty()
+            {
                 // Run default tests
                 let tests = default_tests(&self.exclude, self.profile.clone());
                 run_tests(tests, false, self.skip_clean, ctx.clone())?;
@@ -214,7 +219,12 @@ impl Xtask for Precheck {
 
         // Run code coverage
         if stage.coverage || stage.all {
-            if self.package.is_none() && self.features.is_none() {
+            if self.package.is_none()
+                && self.features.is_none()
+                && self.filterset.is_none()
+                && self.test.is_none()
+                && self.filter.is_empty()
+            {
                 // Run default tests with coverage
                 let tests = default_tests(&self.exclude, self.profile.clone());
                 run_tests(tests, true, self.skip_clean, ctx.clone())?;
@@ -226,6 +236,8 @@ impl Xtask for Precheck {
                     filterset: self.filterset.clone(),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
+                    test: self.test.clone(),
+                    filter: self.filter.clone(),
                     skip_clean: self.skip_clean,
                 }
                 .run(ctx.clone())?;

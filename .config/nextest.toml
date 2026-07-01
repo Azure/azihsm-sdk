@@ -43,7 +43,7 @@ path = "junit.xml"
 [profile.ci-api.junit]
 path = "junit.xml"
 
-# profile for running the MBOR types smoke tests against the emu backend
+# profile for running emu smoke tests
 # (in-process firmware).
-[profile.ci-mbor-smoke.junit]
+[profile.ci-emu-smoke.junit]
 path = "junit.xml"
