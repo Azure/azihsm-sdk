@@ -1,0 +1,19 @@
+name: Windows Setup
+description: Restore Cargo cache and run setup on cache miss
+runs:
+  using: composite
+  steps:
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Setup on cache miss
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: cargo xtask precheck --setup
