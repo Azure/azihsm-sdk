@@ -276,6 +276,7 @@ pub enum TborStatus {
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
     UndoLogFull = 0x08700101,
+    UnsupportedKeyScope = 0x08700102,
 }
 
 impl core::fmt::Debug for TborStatus {

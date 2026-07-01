@@ -66,6 +66,10 @@ use super::*;
 /// | 28–30 | HMAC fixed-length | `_HmacSha256`, `_HmacSha384`, `_HmacSha512` |
 /// | 31 | Masking key | `MaskingKey` |
 /// | 32–34 | HMAC variable-length | `VarLenHmacSha256` .. `VarLenHmacSha512` |
+/// | 35–36 | TBOR session blobs | `SessionExPending`, `SessionEx` |
+/// | 37–38 | Partition incarnation keys | `PartitionTrustAnchor`, `PartitionUniqueSecret` |
+/// | 39–40 | PartFinal masking keys | `PartitionLocalMaskingKey`, `PartitionEphemeralMaskingKey` |
+/// | 41 | Security-domain sealing key | `SdSealing` |
 #[repr(u8)]
 #[open_enum]
 #[derive(Clone, Copy, Debug)]
@@ -200,6 +204,17 @@ pub enum HsmVaultKeyKind {
     /// implicitly revoked (along with everything it masked) on the next
     /// partition reset.
     PartitionEphemeralMaskingKey = 40,
+
+    /// Security-domain sealing key — ECC-P384 private key.
+    ///
+    /// Written by the TBOR `SdSealingKeyGen` handler.  Generated on
+    /// device for ECDH key agreement (ECIES-style seal / unseal); the
+    /// matching public key is returned to the caller in the response and
+    /// is not persisted.  Tagged [`HsmKeyScope::SecurityDomain`] via its
+    /// attribute `scope` field.  Stored as the 48-byte raw private
+    /// scalar, mirroring
+    /// [`PartitionTrustAnchor`](Self::PartitionTrustAnchor).
+    SdSealing = 41,
 }
 
 /// Key scope: the lifecycle / visibility domain a vault key belongs

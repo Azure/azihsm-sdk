@@ -17,11 +17,17 @@
 //!   discriminant.  Mirrors the firmware
 //!   [`HsmKeyScope`](azihsm_fw_hsm_pal_traits::HsmKeyScope).
 //!
-//! Output:
+//! Outputs:
 //!
-//! * `key_handle` — the new key's vault id
-//!   ([`HsmKeyId`](azihsm_fw_hsm_pal_traits::HsmKeyId) value), carried
-//!   as a [`KeyId`](azihsm_fw_ddi_tbor_api::KeyId) (TOC entry type 1).
+//! * `masked_key` — the new sealing key's ECC-P384 **private** half,
+//!   masked (AEAD-GCM-256) under the requested scope's masking key, as a
+//!   fixed [`MASKED_SEALING_KEY_LEN`] (180 B) envelope.  The private key
+//!   is **not** stored on the device: the caller holds the masked blob
+//!   and re-imports it (unmask-on-use) when the key is later needed.
+//! * `pub_key` — the SEC1 raw P-384 public key (`x ‖ y`, 96 bytes) of
+//!   the new sealing key, in wire (little-endian) byte order as emitted
+//!   by the PAL.  The caller uses it as the ECDH peer for ECIES-style
+//!   seal / unseal.
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
@@ -29,6 +35,20 @@ use crate::key_props::KeyScope;
 
 /// TBOR opcode for `SdSealingKeyGen`.
 pub const TBOR_OP_SD_SEALING_KEY_GEN: u8 = 0x09;
+
+/// Wire length of the returned sealing public key: a raw P-384 point
+/// (`x ‖ y`, 48 + 48 bytes).  Pinned into the `#[tbor(buffer, len =
+/// 96)]` literal on [`TborSdSealingKeyGenResp::pub_key`] (see the
+/// `pub_key_len_matches_pinned_value` test).
+pub const SD_SEALING_PUB_KEY_LEN: usize = 96;
+
+/// Wire length of the masked sealing private key: an AEAD-GCM-256
+/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖
+/// tag(16)`) whose plaintext is the 48-byte raw P-384 private scalar and
+/// whose AAD is the 96-byte `MaskedKeyMetadata`.  Pinned into the
+/// `#[tbor(buffer, len = 180)]` literal on
+/// [`TborSdSealingKeyGenResp::masked_key`].
+pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 96 + 48 + 16;
 
 /// `SdSealingKeyGen` request schema.
 ///
@@ -49,19 +69,24 @@ pub struct TborSdSealingKeyGenReq {
 
 /// `SdSealingKeyGen` response schema.
 #[tbor(response)]
-pub struct TborSdSealingKeyGenResp {
-    /// Vault id (`HsmKeyId`) of the newly generated sealing key. Carried
-    /// as a [`KeyId`](azihsm_fw_ddi_tbor_api::KeyId) (inline 16-bit, TOC
-    /// entry type 1).
-    #[tbor(key_id)]
-    pub key_handle: KeyId,
+pub struct TborSdSealingKeyGenResp<'a> {
+    /// The new sealing key's ECC-P384 private half, masked (AEAD-GCM-256)
+    /// under the requested scope's masking key.  Always exactly
+    /// [`MASKED_SEALING_KEY_LEN`] (180 B).  The private key is not stored
+    /// on the device; the caller re-imports this blob when needed.
+    #[tbor(buffer, len = 180)]
+    pub masked_key: &'a [u8],
+
+    /// SEC1 raw P-384 public key (`x ‖ y`, 96 bytes) of the new sealing
+    /// key, in wire (little-endian) byte order as emitted by the PAL.
+    #[tbor(buffer, len = 96)]
+    pub pub_key: &'a [u8],
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use azihsm_fw_ddi_tbor_api::KeyId;
     use azihsm_fw_ddi_tbor_api::SessionId;
 
     use super::*;
@@ -82,13 +107,28 @@ mod tests {
     }
 
     #[test]
-    fn response_round_trips_key_handle() {
-        let mut buf = [0u8; 256];
+    fn response_round_trips_masked_key_and_pub_key() {
+        let mut buf = [0u8; 512];
+        let masked = [0xCDu8; MASKED_SEALING_KEY_LEN];
+        let pub_key = [0xABu8; SD_SEALING_PUB_KEY_LEN];
         let frame = TborSdSealingKeyGenResp::encode(&mut buf, 0, true)
             .unwrap()
-            .key_handle(KeyId(0x1234))
+            .masked_key(&masked)
+            .unwrap()
+            .pub_key(&pub_key)
             .unwrap()
             .finish();
-        assert_eq!(frame.key_handle(), KeyId(0x1234));
+        assert_eq!(frame.masked_key(), &masked[..]);
+        assert_eq!(frame.pub_key(), &pub_key[..]);
+    }
+
+    #[test]
+    fn response_lengths_match_pinned_values() {
+        // The `#[tbor(buffer, len = N)]` attributes must remain numeric
+        // literals; pin them against the exported consts.
+        const _: () = assert!(96 == SD_SEALING_PUB_KEY_LEN);
+        const _: () = assert!(180 == MASKED_SEALING_KEY_LEN);
+        assert_eq!(SD_SEALING_PUB_KEY_LEN, 96);
+        assert_eq!(MASKED_SEALING_KEY_LEN, 180);
     }
 }
