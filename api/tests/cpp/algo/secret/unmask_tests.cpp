@@ -184,6 +184,8 @@ static void get_masked_shared_secret(
     err = azihsm_key_get_prop(original_secret.get(), &masked_prop);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_GT(masked_prop.len, 0u);
+
+    masked_key_data.resize(static_cast<size_t>(masked_prop.len));
 }
 
 TEST_F(azihsm_secret_unmask, unmask_shared_secret_p256)
