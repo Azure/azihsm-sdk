@@ -15,8 +15,8 @@
 //!   without lifetime gymnastics around the IO scratch buffer.
 //!
 //! Concrete request/response pairs are added as DDI commands are
-//! migrated from MBOR to TBOR; the first pair is [`TborGetApiRevReq`] /
-//! [`TborGetApiRevResp`].
+//! migrated from MBOR to TBOR; the first pair is [`TborApiRevReq`] /
+//! [`TborApiRevResp`].
 //!
 //! [`exec_op_tbor`]: ../../azihsm_ddi_interface/trait.DdiDev.html#method.exec_op_tbor
 
@@ -27,6 +27,25 @@ extern crate self as azihsm_ddi_tbor_types;
 
 pub use azihsm_ddi_tbor_codec as codec;
 pub use azihsm_ddi_tbor_derive::*;
+
+/// Little-endian, alignment-1 integer aliases for TBOR POD fields.
+///
+/// Host-side mirror of `azihsm_fw_ddi_tbor_types::tbor_int`.  Wire-facing
+/// structs that are zero-copy cast to/from the data section (e.g.
+/// typed-slice elements like [`CertDescriptor`](crate::part_final::CertDescriptor)) must be
+/// `Unaligned`; use these [`zerocopy`] little-endian types instead of the
+/// native `u16`/`u32`/`u64` so such structs stay alignment-1 and fixed
+/// little-endian on the wire.
+pub mod tbor_int {
+    /// 8-bit field. A single byte has no endianness and is already
+    /// alignment-1, so this aliases the native `u8` for naming
+    /// consistency with the multi-byte little-endian wire types.
+    pub use core::primitive::u8 as U8;
+
+    pub use zerocopy::little_endian::U16;
+    pub use zerocopy::little_endian::U32;
+    pub use zerocopy::little_endian::U64;
+}
 
 /// Session-control kind carried in the SQE `session_flags.ctrl` byte
 /// for a TBOR request.  The four variants encode as `u8` 0-3.
@@ -59,21 +78,27 @@ impl From<SessionControlKind> for u8 {
     }
 }
 
-mod change_psk;
-mod close_session;
-mod get_api_rev;
-mod open_session_finish;
-mod open_session_init;
+mod api_rev;
+mod part_final;
 mod part_info;
 mod part_init;
+mod policy;
+mod psk_change;
+mod sd_sealing_key_gen;
+mod session_close;
+mod session_open_finish;
+mod session_open_init;
 mod status;
-pub use change_psk::*;
-pub use close_session::*;
-pub use get_api_rev::*;
-pub use open_session_finish::*;
-pub use open_session_init::*;
+pub use api_rev::*;
+pub use part_final::*;
 pub use part_info::*;
 pub use part_init::*;
+pub use policy::*;
+pub use psk_change::*;
+pub use sd_sealing_key_gen::*;
+pub use session_close::*;
+pub use session_open_finish::*;
+pub use session_open_init::*;
 pub use status::*;
 
 /// Trait implemented by host-side TBOR request value types.

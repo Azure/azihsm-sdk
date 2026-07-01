@@ -846,6 +846,40 @@ pub const fn part_pota_thumbprint_prop_id() -> PartPropId {
     PartPropId::POTA_THUMBPRINT
 }
 
+/// Read the SATA (Sealing Authority Trust Anchor) thumbprint.
+pub fn part_sata_thumbprint<'a>(
+    pal: &'a impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<&'a DmaBuf> {
+    pal.part_prop_get_bytes(io, PartPropId::SATA_THUMBPRINT)
+}
+
+/// Write the SATA thumbprint.  `data` must be exactly 48 bytes.
+pub fn part_set_sata_thumbprint(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    data: &DmaBuf,
+) -> HsmResult<()> {
+    pal.part_prop_set_bytes(io, PartPropId::SATA_THUMBPRINT, data)
+}
+
+/// Read the SAPOTA (Sealing Authority's POTA) thumbprint.
+pub fn part_sapota_thumbprint<'a>(
+    pal: &'a impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<&'a DmaBuf> {
+    pal.part_prop_get_bytes(io, PartPropId::SAPOTA_THUMBPRINT)
+}
+
+/// Write the SAPOTA thumbprint.  `data` must be exactly 48 bytes.
+pub fn part_set_sapota_thumbprint(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    data: &DmaBuf,
+) -> HsmResult<()> {
+    pal.part_prop_set_bytes(io, PartPropId::SAPOTA_THUMBPRINT, data)
+}
+
 /// Whether the PSK selected by `psk_id` is still the well-known
 /// default value.
 ///

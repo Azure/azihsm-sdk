@@ -16,9 +16,9 @@
 //! Negative-path tests that need to intercept the handshake mid-flight
 //! (e.g. ship a tampered `mac_fin`, double-close the same id, exercise
 //! a pending-only slot) keep using
-//! [`TestCtx::open_session_init`](crate::harness::TestCtx::open_session_init) /
-//! [`TestCtx::open_session_finish`](crate::harness::TestCtx::open_session_finish) /
-//! [`TestCtx::close_session`](crate::harness::TestCtx::close_session)
+//! [`TestCtx::session_open_init`](crate::harness::TestCtx::session_open_init) /
+//! [`TestCtx::session_open_finish`](crate::harness::TestCtx::session_open_finish) /
+//! [`TestCtx::session_close`](crate::harness::TestCtx::session_close)
 //! directly. The guard exists for the well-behaved 90% case, not for
 //! those intentional misuses.
 
@@ -66,10 +66,10 @@ impl<'ctx> SessionGuard<'ctx> {
     /// Consuming `self` makes double-close a *compile* error rather
     /// than a runtime one — tests that *want* to assert the FW
     /// rejects a double-close must drive the second
-    /// [`TestCtx::close_session`] call themselves.
+    /// [`TestCtx::session_close`] call themselves.
     pub fn close(mut self) -> DdiResult<()> {
         self.closed = true;
-        self.ctx.close_session(self.handshake.session_id)
+        self.ctx.session_close(self.handshake.session_id)
     }
 }
 
@@ -82,9 +82,9 @@ impl Drop for SessionGuard<'_> {
         // slot corrupts the next serial test's starting state.
         // Drop never panics — failure is logged so the original panic
         // (if any) keeps its place at the top of the stack trace.
-        if let Err(e) = self.ctx.close_session(self.handshake.session_id) {
+        if let Err(e) = self.ctx.session_close(self.handshake.session_id) {
             eprintln!(
-                "SessionGuard: close_session({}) failed during drop: {e:?}",
+                "SessionGuard: session_close({}) failed during drop: {e:?}",
                 self.handshake.session_id,
             );
         }
@@ -96,7 +96,7 @@ impl TestCtx {
     /// return a [`SessionGuard`] that will close it on `Drop`.
     ///
     /// Panics on any FW or transport error; negative-path tests must
-    /// call [`TestCtx::open_session_init`] (etc.) directly so they
+    /// call [`TestCtx::session_open_init`] (etc.) directly so they
     /// can inspect the failure mode.
     pub fn open_session(&self, psk_id: u8, session_type: SessionType) -> SessionGuard<'_> {
         let handshake = self

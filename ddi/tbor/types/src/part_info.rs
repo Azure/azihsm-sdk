@@ -19,9 +19,12 @@
 //! [`exec_op_tbor`]: ../../azihsm_ddi_interface/trait.DdiDev.html#method.exec_op_tbor
 
 use crate::tbor;
+use crate::tbor_int::U32;
+use crate::tbor_int::U64;
+use crate::tbor_int::U8;
 
 /// TBOR opcode for `PartInfo`.
-pub const TBOR_OP_PART_INFO: u8 = 0x32;
+pub const TBOR_OP_PART_INFO: u8 = 0x02;
 
 /// Length of the opaque partition identity blob (PID).
 pub const PID_LEN: usize = 16;
@@ -56,22 +59,22 @@ impl TborPartInfoReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborPartInfoResp {
     /// Device kind, matching MBOR `DdiDeviceKind` (`2` = Physical).
-    pub device_kind: u8,
+    pub device_kind: U8,
 
     /// Partition lifecycle state, matching the firmware `PartState`
     /// discriminant (`0` = Unallocated, `1` = Allocated, `2` = Enabled,
     /// …).
-    pub part_state: u8,
+    pub part_state: U8,
 
     /// Monotonic partition generation counter, incremented on every
     /// allocate/free cycle.
-    pub generation: u32,
+    pub generation: U32,
 
     /// Owner-seed (BKS2) selector currently in effect.
-    pub owner_svn: u64,
+    pub owner_svn: U64,
 
     /// Manufacturer-seed (BKS1) selector — the current firmware SVN.
-    pub mfgr_svn: u64,
+    pub mfgr_svn: U64,
 
     /// Opaque 16-byte partition identity (PID).
     pub pid: [u8; PID_LEN],

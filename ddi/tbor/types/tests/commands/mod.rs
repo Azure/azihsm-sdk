@@ -5,13 +5,13 @@
 //! backend feature(s) that can satisfy it (e.g., TBOR commands require
 //! `emu` for a real round-trip).
 
-pub mod change_psk;
-pub mod close_session;
+pub mod api_rev;
 pub mod default_psk_gate;
 pub mod forward_compat;
 pub mod fw_error_decode;
-pub mod get_api_rev;
 pub mod open_session;
 pub mod part_info;
 pub mod part_init;
+pub mod psk_change;
+pub mod session_close;
 pub mod unexpected_toc_type;

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR `ChangePsk` wire schema.
+//! TBOR `PskChange` wire schema.
 //!
 //! Changes the active session's own partition PSK to a new value
 //! supplied encrypted inside an AEAD-GCM envelope under the session's
@@ -30,7 +30,7 @@
 //! plaintext is produced).
 //!
 //! Intra-session replay is bounded to **one successful change per
-//! session**: a second `ChangePsk` on the same session is rejected
+//! session**: a second `PskChange` on the same session is rejected
 //! with [`HsmError::InvalidPermissions`].
 //!
 //! ## AEAD envelope contents
@@ -51,8 +51,8 @@
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
-/// TBOR opcode for `ChangePsk`.
-pub const TBOR_OP_CHANGE_PSK: u8 = 0x20;
+/// TBOR opcode for `PskChange`.
+pub const TBOR_OP_PSK_CHANGE: u8 = 0x06;
 
 /// Domain/version label embedded in the AEAD envelope's AAD.
 pub const PSK_CHANGE_AAD_LABEL: &[u8; 13] = b"psk-change-v1";
@@ -64,46 +64,58 @@ pub const PSK_CHANGE_AAD_LABEL: &[u8; 13] = b"psk-change-v1";
 /// invariant.  Layout: `label(13) ‖ session_id(2 LE) ‖ rsv0(17)`.
 pub const PSK_CHANGE_AAD_LEN: usize = 32;
 
+/// Exact on-the-wire length of the wrapped `psk_envelope`.
+///
+/// The envelope is fully deterministic for the current scheme:
+/// AEAD-GCM around a 32-byte plaintext with a 32-byte AAD —
+/// `header(8) + iv(12) + aad(32) + ct(32) + tag(16)` = 100 B. Pinned as
+/// a fixed-length field so a malformed length is rejected at decode.
+pub const PSK_CHANGE_ENVELOPE_LEN: usize = 8 + 12 + PSK_CHANGE_AAD_LEN + 32 + 16;
+
 /// Maximum bytes the wrapped `psk_envelope` may occupy on the wire.
 ///
-/// AEAD-GCM envelope around a 32-byte plaintext with a 32-byte AAD:
-/// `header(8) + iv(12) + aad(32) + ct(32) + tag(16)` = 100 B.
-/// Rounded up to 160 to leave headroom.
+/// Retained as the documented upper bound (and for the host encoder,
+/// which keeps a permissive `max_len` so negative tests can ship
+/// wrong-length envelopes). The firmware schema itself pins the exact
+/// [`PSK_CHANGE_ENVELOPE_LEN`].
 pub const PSK_CHANGE_ENVELOPE_MAX_LEN: usize = 160;
 
-/// `ChangePsk` request schema.
+/// `PskChange` request schema.
 ///
 /// The new PSK value is delivered encrypted inside `psk_envelope`; the
 /// HSM authenticates and decrypts under the active session's
 /// `param_key`.  The target PSK slot is derived from the session role
 /// (CO session → CO slot, CU session → CU slot); there is no
 /// slot-selection field on the wire.
-#[tbor(opcode = 0x20)]
-pub struct TborChangePskReq<'a> {
-    /// Logical session id the request is bound to.  Pulled out as a
-    /// TOC field (`#[tbor(session_id)]`) for parity with MBOR and
-    /// `CloseSession`; the FW handler must also see this value as
-    /// part of the AEAD AAD.
+#[tbor(opcode = 0x06)]
+pub struct TborPskChangeReq<'a> {
+    /// Logical session id the request is bound to.  Typed
+    /// [`SessionId`](azihsm_fw_ddi_tbor_api::SessionId) and pulled out as
+    /// a TOC field (`#[tbor(session_id)]`) for parity with MBOR and
+    /// `SessionClose`; the FW handler must also see this value as part of
+    /// the AEAD AAD.
     #[tbor(session_id)]
-    pub session_id: u16,
+    pub session_id: SessionId,
 
     /// AEAD envelope wrapping the 32-byte new PSK under the active
-    /// session's `param_key`.  See module docs for AAD layout.
+    /// session's `param_key`.  Fixed length [`PSK_CHANGE_ENVELOPE_LEN`]
+    /// (100 B); a malformed length is rejected at decode with
+    /// `TborInvalidFixedLength`.  See module docs for AAD layout.
     ///
     /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open the
     /// envelope in place — the field is exposed as the
     /// `psk_envelope` member of the generated
-    /// `TborChangePskReqViewMut` destructured view.
-    #[tbor(max_len = 160, mutable)]
+    /// `TborPskChangeReqViewMut` destructured view.
+    #[tbor(buffer, len = 100, mutable)]
     pub psk_envelope: &'a [u8],
 }
 
-/// `ChangePsk` response schema (empty acknowledgement; status
+/// `PskChange` response schema (empty acknowledgement; status
 /// lives in the TBOR response header).
 #[tbor(response)]
-pub struct TborChangePskResp;
+pub struct TborPskChangeResp;
 
-/// Builds the 32-byte AEAD AAD bound into a `ChangePsk` envelope.
+/// Builds the 32-byte AEAD AAD bound into a `PskChange` envelope.
 ///
 /// Layout: [`PSK_CHANGE_AAD_LABEL`] (13 B) `‖ session_id` (2 B LE)
 /// `‖ rsv0` (17 B).

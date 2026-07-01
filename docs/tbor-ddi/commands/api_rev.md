@@ -3,9 +3,9 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# GetApiRev (Opcode 0x01)
+# ApiRev (Opcode 0x01)
 
-**Handler:** `fw/core/lib/src/ddi/tbor/get_api_rev.rs`
+**Handler:** `fw/core/lib/src/ddi/tbor/api_rev.rs`
 **Session:** NoSession
 
 ## Description
@@ -45,4 +45,4 @@ The shipping firmware currently returns `min = max = 1`.
 ## See also
 
 - Wire encoding: [TBOR specification](../../../fw/core/ddi/tbor/docs/spec.md)
-- Wire schema: `fw/core/ddi/tbor/types/src/get_api_rev.rs`
+- Wire schema: `fw/core/ddi/tbor/types/src/api_rev.rs`

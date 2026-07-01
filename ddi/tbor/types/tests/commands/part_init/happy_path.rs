@@ -3,7 +3,7 @@
 
 //! Happy-path `PartInit` tests:
 //!
-//! * [`part_init_smoke_roundtrip_emu`] — `OpenSession → ChangePsk →
+//! * [`part_init_smoke_roundtrip_emu`] — `OpenSession → PskChange →
 //!   PartInit` returns a parseable PKCS#10 CSR and a verifiable
 //!   COSE_Sign1 PTAReport that cross-binds to the CSR pubkey; a
 //!   second `PartInit` on a fresh session surfaces the one-shot
@@ -111,7 +111,7 @@ fn part_init_smoke_roundtrip_emu() {
     // 2. Second PartInit on a freshly-opened session must be rejected
     //    by the one-shot `part_set_pta_key` guard with
     //    `TborStatus::PtaKeyAlreadySet`.
-    ctx.close_session(session.session_id)
+    ctx.session_close(session.session_id)
         .expect("close first PartInit session");
     let session2 = open_co_with(&ctx, &ROTATED_CO_PSK);
     let err = ctx
@@ -247,15 +247,15 @@ fn run_part_init_capture_pta_pub(
     let bootstrap = ctx
         .open_session_raw(CO, SessionType::Authenticated)
         .expect("open CO default");
-    ctx.change_psk(&bootstrap, &ROTATED_CO_PSK)
+    ctx.psk_change(&bootstrap, &ROTATED_CO_PSK)
         .expect("rotate CO PSK");
-    let _ = ctx.close_session(bootstrap.session_id);
+    let _ = ctx.session_close(bootstrap.session_id);
 
     let session = open_co_with(ctx, &ROTATED_CO_PSK);
     let resp = ctx
         .part_init(&session, seed, policy, thumb)
         .expect("PartInit roundtrip");
-    let _ = ctx.close_session(session.session_id);
+    let _ = ctx.session_close(session.session_id);
 
     let csr = X509Csr::from_der(&resp.pta_csr).expect("PTACSR parses");
     csr.get_public_key_der().expect("CSR SPKI extracts")
