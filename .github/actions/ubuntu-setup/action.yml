@@ -1,5 +1,9 @@
 name: Ubuntu Setup
 description: Install apt packages, restore Cargo cache, and run setup on cache miss
+outputs:
+  cache-hit:
+    description: Whether the Cargo cache was restored
+    value: ${{ steps.cargo-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
