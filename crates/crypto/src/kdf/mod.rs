@@ -3,6 +3,10 @@
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
+        #[cfg(ossl300)]
+        mod hkdf_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "hkdf_ossl11.rs"]
         mod hkdf_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod hkdf_cng;
