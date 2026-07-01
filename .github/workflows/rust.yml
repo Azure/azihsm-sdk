@@ -120,7 +120,7 @@ jobs:
       run: cargo xtask setup
     - name: Run emu smoke tests
       id: test-emu-smoke
-      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-mbor-smoke
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
@@ -208,11 +208,11 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' 
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask setup
     - name: Run emu smoke tests
       id: test-emu-smoke
-      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-mbor-smoke
       continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
