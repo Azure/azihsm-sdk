@@ -214,7 +214,11 @@ impl EncryptOp for OsslAesCbcAlgo {
             count += crypter
                 .finalize(&mut output[count..])
                 .map_err(|_| CryptoError::AesEncryptError)?;
-            iv.copy_from_slice(&output[count - iv.len()..count]);
+            // Only advance the chaining IV when a full block was produced;
+            // empty input with padding off gives count == 0 and would underflow.
+            if count >= iv.len() {
+                iv.copy_from_slice(&output[count - iv.len()..count]);
+            }
         } else {
             // The required output buffer size for OpenSSL's `update` is
             // `input.len() + block_size` regardless of whether padding is enabled.
@@ -474,7 +478,11 @@ impl DecryptOp for OsslAesCbcAlgo {
             count += crypter
                 .finalize(&mut output[count..])
                 .map_err(|_| CryptoError::AesDecryptError)?;
-            iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            // Only advance the chaining IV when there is a full block; an empty
+            // ciphertext would underflow input.len() - iv.len().
+            if input.len() >= iv.len() {
+                iv.copy_from_slice(&input[input.len() - iv.len()..]);
+            }
         } else {
             count = input.len() + cipher.block_size();
         }

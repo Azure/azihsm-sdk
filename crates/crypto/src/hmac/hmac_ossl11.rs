@@ -313,7 +313,7 @@ impl VerifyOp for OsslHmacAlgo {
             .sign_oneshot(&mut result, data)
             .map_err(|_| CryptoError::HmacVerifyError)?;
 
-        Ok(result == signature)
+        Ok(result.len() == signature.len() && openssl::memcmp::eq(&result, signature))
     }
 }
 
@@ -419,7 +419,7 @@ impl<'a> VerifyStreamingOpContext<'a> for OsslHmacAlgoVerifyContext<'a> {
             .sign(&mut result)
             .map_err(|_| CryptoError::HmacVerifyFinishError)?;
 
-        Ok(result == signature)
+        Ok(result.len() == signature.len() && openssl::memcmp::eq(&result, signature))
     }
 
     /// Returns a reference to the underlying hash algorithm.

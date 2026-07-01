@@ -416,7 +416,11 @@ impl OsslRsaHashSignAlgo {
         pkey.set_rsa_padding(self.padding)
             .map_err(|_| CryptoError::RsaSetPropertyError)?;
         if self.padding == Padding::PKCS1_PSS {
-            pkey.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::custom(self.salt_len as i32))
+            // RsaPssSaltlen::custom takes an i32; reject lengths that don't fit
+            // rather than truncating with `as`.
+            let saltlen =
+                i32::try_from(self.salt_len).map_err(|_| CryptoError::RsaSetPropertyError)?;
+            pkey.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::custom(saltlen))
                 .map_err(|_| CryptoError::RsaSetPropertyError)?;
             pkey.set_rsa_mgf1_md(self.hash.md())
                 .map_err(|_| CryptoError::RsaSetPropertyError)?;
