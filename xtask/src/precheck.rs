@@ -84,11 +84,14 @@ pub struct Precheck {
     #[clap(long = "exclude")]
     exclude: Vec<String>,
     /// Package to run tests for
-    #[clap(long)]
+    #[clap(long, short = 'p')]
     package: Option<String>,
     /// Features to enable when running tests
-    #[clap(long)]
+    #[clap(long, short = 'F')]
     features: Option<String>,
+    /// Test filterset (see https://nexte.st/docs/filtersets)
+    #[clap(long, short = 'E')]
+    filterset: Option<String>,
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
@@ -97,6 +100,12 @@ pub struct Precheck {
     /// Only used for --setup ignored otherwise.
     #[clap(long)]
     pub config: Option<String>,
+    /// Do not append the default build location of the azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub no_default_native: bool,
+    /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub additional_obj_paths: Vec<String>,
 }
 
 impl Xtask for Precheck {
@@ -172,78 +181,24 @@ impl Xtask for Precheck {
 
         if stage.nextest || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // SDK Run all mock tests
-                Nextest {
-                    features: Some("mock".to_string()),
-                    package: None,
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                    exclude: self.exclude.clone(),
-                }
-                .run(ctx.clone())?;
-
-                // SDK Run resiliency fault-injection tests (requires res-test
-                // feature for the fault-injection DDI device)
-                if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
-                    Nextest {
-                        features: Some("mock,res-test".to_string()),
-                        package: Some("azihsm_api_tests".to_string()),
-                        no_default_features: false,
-                        filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-                }
+                // Run default tests
+                let tests = default_tests(&self.exclude, self.profile.clone());
+                run_tests(tests, false, self.skip_clean, ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
-                    // SDK Run azihsm_ddi_mbor_types mock tests table-4
-                    Nextest {
-                        features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi_mbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi_mbor_types mock tests table-64
-                    Nextest {
-                        features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi_mbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self
-                            .profile
-                            .clone()
-                            .or(Some("ci-mock-table-64".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi_tbor_types tests through the emu
-                    // backend (in-process firmware).
-                    Nextest {
-                        features: Some("emu".to_string()),
-                        package: Some("azihsm_ddi_tbor_types".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-tbor-emu".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
+                    // Run azihsm_ddi mock tests
+                    let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
+                    run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
                 }
             } else {
                 Nextest {
-                    features: self.features,
-                    package: self.package,
+                    features: self.features.clone(),
+                    package: self.package.clone(),
                     no_default_features: false,
-                    filterset: None,
-                    profile: self.profile,
-                    exclude: self.exclude,
+                    filterset: self.filterset.clone(),
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
             }
@@ -251,10 +206,22 @@ impl Xtask for Precheck {
 
         // Run code coverage
         if stage.coverage || stage.all {
-            Coverage {
-                skip_clean: self.skip_clean,
+            if self.package.is_none() && self.features.is_none() {
+                // Run default tests with coverage
+                let tests = default_tests(&self.exclude, self.profile.clone());
+                run_tests(tests, true, self.skip_clean, ctx.clone())?;
+            } else {
+                Coverage {
+                    features: self.features.clone(),
+                    package: self.package.clone(),
+                    no_default_features: false,
+                    filterset: self.filterset.clone(),
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
+                    skip_clean: self.skip_clean,
+                }
+                .run(ctx.clone())?;
             }
-            .run(ctx.clone())?;
         }
 
         // Run nextest report
@@ -264,10 +231,119 @@ impl Xtask for Precheck {
 
         // Run code coverage report
         if stage.coverage_report || stage.all {
-            CoverageReport {}.run(ctx)?;
+            CoverageReport {
+                no_default_native: self.no_default_native,
+                additional_obj_paths: self.additional_obj_paths.clone(),
+            }
+            .run(ctx.clone())?;
         }
 
         log::trace!("done precheck");
         Ok(())
     }
+}
+
+// Helper function to define default test parameters for --nextest and --coverage
+fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    let mut mock_exclude = exclude.to_owned();
+
+    mock_exclude.extend(vec![
+        "provider-integration-tests-cli".to_string(),
+        "provider-integration-tests-capi".to_string(),
+    ]);
+
+    // SDK Run all mock tests
+    tests.push(Nextest {
+        features: Some("mock".to_string()),
+        package: None,
+        no_default_features: false,
+        filterset: None,
+        profile: profile.clone().or(Some("ci-mock".to_string())),
+        exclude: mock_exclude,
+    });
+
+    // SDK Run resiliency fault-injection tests (requires res-test
+    // feature for the fault-injection DDI device)
+    if !exclude.iter().any(|e| e == "azihsm_api_tests") {
+        tests.push(Nextest {
+            features: Some("mock,res-test".to_string()),
+            package: Some("azihsm_api_tests".to_string()),
+            no_default_features: false,
+            filterset: Some("test(resiliency::fault_injection::)".to_string()),
+            profile: profile.clone().or(Some("ci-mock-res".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
+#[cfg(not(target_os = "windows"))]
+fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    if !exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
+        // SDK Run azihsm_ddi_mbor_types mock tests table-4
+        tests.push(Nextest {
+            features: Some("mock,table-4".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
+            exclude: exclude.to_owned(),
+        });
+
+        // SDK Run azihsm_ddi_mbor_types mock tests table-64
+        tests.push(Nextest {
+            features: Some("mock,table-64".to_string()),
+            package: Some("azihsm_ddi_mbor_types".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    if !exclude.iter().any(|e| e == "azihsm_ddi_tbor_types") {
+        // SDK Run azihsm_ddi_tbor_types tests through the emu
+        // backend (in-process firmware).
+        tests.push(Nextest {
+            features: Some("emu".to_string()),
+            package: Some("azihsm_ddi_tbor_types".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-tbor-emu".to_string())),
+            exclude: exclude.to_owned(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to run tests defined by other helper functions
+fn run_tests(
+    tests: Vec<Nextest>,
+    coverage: bool,
+    skip_clean: bool,
+    ctx: XtaskCtx,
+) -> anyhow::Result<()> {
+    let mut first_run = true;
+    for test in tests {
+        if coverage {
+            let mut cov = Coverage::from(test);
+            if !first_run {
+                cov.skip_clean = true;
+            } else {
+                cov.skip_clean = skip_clean;
+            }
+            first_run = false;
+            cov.run(ctx.clone())?;
+        } else {
+            test.run(ctx.clone())?;
+        }
+    }
+    Ok(())
 }

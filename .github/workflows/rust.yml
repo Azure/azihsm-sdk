@@ -24,24 +24,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
-    - name: Install apt packages
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' 
-      run: cargo xtask setup
+    - uses: ./.github/actions/ubuntu-setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -54,38 +37,87 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
-    - name: SDK Run all mock tests table-4
-      id: test-mock-table-4
-      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-4 --profile ci-mock-table-4
+
+  test_ubuntu_mock:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
-    - name: SDK Run all mock tests table-64
-      id: test-mock-table-64
-      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features mock,table-64 --profile ci-mock-table-64
-      continue-on-error: true
-    - name: SDK Run TBOR types tests against emu backend
-      id: test-tbor-emu
-      run: cargo xtask precheck --nextest --package azihsm_ddi_tbor_types --features emu --profile ci-tbor-emu
-      continue-on-error: true
-    - name: Free target/ before coverage build
-      # Freeing target/ directory to ensure disk space for coverage report generation
-      run: rm -rf target/debug target/tmp
-    - name: Run all mock tests with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage
-      continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-ubuntu
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
+      if: ${{ steps.test-mock.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_api:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-api.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_misc:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: SDK Run all mock tests table-4
+      id: test-mock-table-4
+      run: cargo xtask precheck --nextest -p azihsm_ddi_mbor_types -F mock,table-4 --profile ci-mock-table-4
+      continue-on-error: true
+    - name: SDK Run all mock tests table-64
+      id: test-mock-table-64
+      run: cargo xtask precheck --nextest -p azihsm_ddi_mbor_types -F mock,table-64 --profile ci-mock-table-64
+      continue-on-error: true
+    - name: SDK Run TBOR types tests against emu backend
+      id: test-tbor-emu
+      run: cargo xtask precheck --nextest -p azihsm_ddi_tbor_types -F emu --profile ci-tbor-emu
+      continue-on-error: true
+    - name: Run resiliency fault injection tests
+      id: test-res-fault
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' || steps.test-tbor-emu.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -100,19 +132,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
-    - name: Restore Cargo cache
-      id: cargo-cache
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - uses: ./.github/actions/windows-setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -125,23 +145,75 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
-    - name: Run all mock tests with code coverage
-      id: test-mock-coverage
-      run: cargo xtask precheck --coverage
+
+  test_windows_mock:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-windows
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
-    - name: Code Coverage Summary Report
-      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
-      run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+      if: ${{ steps.test-mock.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_api:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-api.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_misc:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run resiliency fault injection tests
+      id: test-res-fault
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-res-fault.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
