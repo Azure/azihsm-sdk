@@ -308,7 +308,7 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             package: Some("azihsm_ddi_mbor_types".to_string()),
             no_default_features: false,
             filterset: None,
-            profile: profile.clone().or(Some("ci-mbor-smoke".to_string())),
+            profile: profile.clone().or(Some("ci-emu-smoke".to_string())),
             exclude: exclude.to_owned(),
             test: Some("azihsm_ddi_tests".to_string()),
             filter: vec!["smoke".to_string()],
