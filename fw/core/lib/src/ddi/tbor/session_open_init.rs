@@ -23,6 +23,7 @@
 use azihsm_fw_core_crypto_hpke::*;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
+use azihsm_fw_hsm_undo::UndoLog;
 
 /// Validated `SessionOpenInit` request fields.
 struct ParsedRequest<'a> {
@@ -82,6 +83,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &DmaBuf,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     let ParsedRequest {
         role,
@@ -139,6 +141,10 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             pk_resp,
         )
         .await?;
+        // Record the just-created Pending session's teardown inverse, so a
+        // failure below (MAC, response encode, or the CQE post) reverts it
+        // via the dispatcher's undo walk rather than leaking the slot.
+        undo.push_session_destroy(slot)?;
         let session_id = u16::from(slot);
 
         // ── Phase-1 confirm MAC ────────────────────────────────────

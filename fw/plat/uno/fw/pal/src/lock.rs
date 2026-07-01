@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! [`HsmPartitionLock`] no-op implementation for the Uno PAL.
+//! [`HsmPartitionLock`] implementation for the Uno PAL.
 //!
-//! The Uno firmware is single-threaded with cooperative async
-//! scheduling, so partition-level mutual exclusion is not required.
-//! [`partition_lock`](HsmPartitionLock::partition_lock) returns a
-//! unit-typed guard that performs no action on drop.
-
-#![allow(clippy::unused_async)]
+//! The Uno PAL is **lock-free**: per-partition serialization is unnecessary.
+//! Admin teardown cannot race in-flight host IOs (a partition can't be
+//! disabled/freed while host IOs are outstanding), and host↔host overlap is
+//! resolved by the handlers' guards-first sync commit.  Legacy MBOR handlers
+//! still call [`partition_lock`](HsmPartitionLock::partition_lock), so the
+//! trait is implemented as a no-op guard.
 
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPartitionLock;
@@ -17,20 +17,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use crate::UnoHsmPal;
 
 impl HsmPartitionLock for UnoHsmPal {
-    /// No-op guard. The unit type carries no state and its `Drop` impl
-    /// is also a no-op.
-    type PartitionGuard<'a>
-        = ()
-    where
-        Self: 'a;
+    type PartitionGuard<'a> = ();
 
-    /// Acquire the (logical) lock for the given partition.
-    ///
-    /// # Parameters
-    /// * `_io` — IO context associated with the request (ignored).
-    ///
-    /// # Returns
-    /// * `Ok(())` — the unit guard, which holds no resources.
+    /// No-op: the Uno PAL needs no partition lock (see module docs).
     async fn partition_lock(&self, _io: &impl HsmIo) -> HsmResult<Self::PartitionGuard<'_>> {
         Ok(())
     }

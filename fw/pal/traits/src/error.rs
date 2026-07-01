@@ -349,6 +349,16 @@ pub enum HsmError {
     /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
     /// carries the requested selector (SVN / owner id).
     SeedNotFound = 0x08700100,
+
+    /// A per-command undo-log push failed because the fixed
+    /// per-command log buffer is full (its entry slots would overrun
+    /// the byte-pre-image arena).  Distinct from
+    /// [`NotEnoughSpace`](Self::NotEnoughSpace), which signals genuine
+    /// vault/resource exhaustion: an `UndoLogFull` instead indicates a
+    /// firmware sizing bug — the handler records more inverse actions
+    /// than its opcode's `UNDO_LOG_SIZE` budget allows — and should
+    /// never occur in a correctly-sized handler.
+    UndoLogFull = 0x08700101,
 }
 
 impl core::fmt::Debug for HsmError {

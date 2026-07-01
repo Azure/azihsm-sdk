@@ -34,6 +34,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_pal_traits::PSK_LEN;
+use azihsm_fw_hsm_undo::UndoLog;
 
 /// PSK slot id written when the active session is the Crypto Officer.
 const PSK_ID_CO: u8 = 0;
@@ -45,6 +46,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &mut DmaBuf,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     // `decode_mut` validates the wire frame and hands back a
     // destructured view: scalar `session_id` by value, plus
@@ -72,6 +74,15 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // renegotiate to retry.  Cross-session replay is already
     // structurally impossible (HPKE-derived per-session `param_key`).
     pal.session_try_consume_psk_change(io, sess_id)?;
+
+    // Record the prior PSK *before* overwriting it, so any later failure
+    // — the crypto below, the response DMA, or the CQE post — restores it
+    // via the dispatcher's undo walk.  The rotation is therefore
+    // all-or-nothing as the host observes it.  (The budget burn above is
+    // intentionally *not* reverted: one attempt per session.)
+    let prior = crate::part_state::part_psk(pal, io, target_psk_id)?;
+    let psk_prop = crate::part_state::part_psk_prop_id(target_psk_id)?;
+    undo.push_prop_restore_bytes(psk_prop, prior)?;
 
     pal.alloc_scoped_async(io, async |_alloc| {
         // Fetch the session's `param_key` schedule (the PAL hides the

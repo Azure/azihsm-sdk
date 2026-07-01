@@ -29,6 +29,7 @@ use azihsm_fw_core_crypto_key_masking::aead::masked_blob_len;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::*;
 use azihsm_fw_hsm_pal_traits::*;
+use azihsm_fw_hsm_undo::UndoLog;
 
 /// Map a [`SessionSuite`] to the concrete [`HpkeSuite`] used by the
 /// session-establishment handshake.  Mirrors the function of the same
@@ -116,6 +117,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &mut DmaBuf,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     let ParsedRequest {
         sess_id,
@@ -133,6 +135,12 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             session_type,
             suite,
         } = load_pending_state(pal, io, alloc, sess_id)?;
+
+        // Record the session's teardown inverse up front: any failure below
+        // (MAC/envelope auth, key derivation, promote, response, or the CQE
+        // post) reverts the session via the dispatcher's undo walk — the
+        // same "destroy on failure" the bespoke rollback did, now uniform.
+        undo.push_session_destroy(sess_id)?;
         let pk_hsm = load_pk_hsm(pal, io, alloc)?;
 
         // The `mac_fin` length is dictated by the suite recorded in
@@ -161,16 +169,16 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         )
         .await?;
 
-        let seed = open_seed_envelope(pal, io, sess_id, param_key, seed_envelope).await?;
+        let seed = open_seed_envelope(pal, io, param_key, seed_envelope).await?;
 
         // ── Derive remaining per-session keys ─────────────────────
         let derived =
             derive_remaining_keys(pal, io, alloc, exported, session_type, param_key).await?;
 
         // ── Build bmk_session (BK_SESSION-wrapped masking-key blob)
-        //    BEFORE promote, so a wrap failure leaves the slot Pending
-        //    (caller may retry; eviction reclaims it eventually) and
-        //    no active session is created without a recovery blob.
+        //    BEFORE promote, so no active session is ever created without a
+        //    recovery blob.  A failure at this step (or any later one) tears
+        //    the still-Pending session down via the dispatcher's undo walk.
         let bmk_session = build_bmk_session(pal, io, alloc, seed, derived.masking_key).await?;
 
         // ── Promote Pending → Active ──────────────────────────────
@@ -270,8 +278,8 @@ fn load_pk_hsm<'a, P: HsmPal>(
 /// Recompute and constant-time-verify the Phase-2 confirm MAC:
 /// `HMAC-SHA384(exported, (label ‖ session_id_be) ‖ pk_init ‖ pk_hsm ‖ pk_resp)`.
 ///
-/// On failure the Pending slot is destroyed and
-/// `HsmError::SessionAuthFailure` is returned.
+/// On failure `HsmError::SessionAuthFailure` is returned; the caller's
+/// undo log tears the session down.
 #[allow(clippy::too_many_arguments)]
 async fn verify_mac<P: HsmPal>(
     pal: &P,
@@ -298,7 +306,6 @@ async fn verify_mac<P: HsmPal>(
     }
     let mac_verified = pal.hmac_finish_verify(io, hmac_ctx, mac_fin).await?;
     if !mac_verified {
-        let _ = pal.session_destroy(io, id).await;
         return Err(HsmError::SessionAuthFailure);
     }
     Ok(())
@@ -309,13 +316,12 @@ async fn verify_mac<P: HsmPal>(
 /// sub-view of the envelope buffer (which was decrypted in place).
 ///
 /// Any AEAD failure (bad magic, unsupported alg, tag mismatch) is
-/// treated as a session-establishment authentication failure: the
-/// Pending slot is destroyed before returning so a tampered envelope
+/// treated as a session-establishment authentication failure; the
+/// caller's undo log tears the session down so a tampered envelope
 /// cannot be probed repeatedly.
 async fn open_seed_envelope<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    id: HsmSessId,
     param_key: &DmaBuf,
     seed_envelope: &'a mut DmaBuf,
 ) -> HsmResult<&'a DmaBuf> {
@@ -326,16 +332,10 @@ async fn open_seed_envelope<'a, P: HsmPal>(
     let result = aead_open(pal, io, param_key, seed_envelope).await;
     let view = match result {
         Ok(v) => v,
-        Err(_) => {
-            // Destroy the Pending slot before returning so the
-            // tampered envelope is not retry-probeable.
-            let _ = pal.session_destroy(io, id).await;
-            return Err(HsmError::SessionAuthFailure);
-        }
+        Err(_) => return Err(HsmError::SessionAuthFailure),
     };
 
     if view.payload.len() != SEED_LEN {
-        let _ = pal.session_destroy(io, id).await;
         return Err(HsmError::SessionAuthFailure);
     }
     // Hand the caller the AEAD plaintext view directly: it borrows

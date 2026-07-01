@@ -275,6 +275,7 @@ pub enum TborStatus {
     PtaKeyAlreadySet = 0x087000FC,
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
+    UndoLogFull = 0x08700101,
 }
 
 impl core::fmt::Debug for TborStatus {

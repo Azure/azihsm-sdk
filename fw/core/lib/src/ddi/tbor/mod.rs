@@ -38,6 +38,7 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
 
@@ -121,6 +122,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     req_buf: &mut DmaBuf,
     opcode: u8,
     sqe_session_id: u16,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
@@ -165,12 +167,12 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
 
     match opcode {
         opcode::API_REV => api_rev::handle(pal, io, req_buf),
-        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf).await,
-        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf).await,
+        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf, undo).await,
+        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf, undo).await,
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
-        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf).await,
-        opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
-        opcode::PART_FINAL => part_final::handle(pal, io, req_buf).await,
+        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf, undo).await,
+        opcode::PART_INIT => part_init::handle(pal, io, req_buf, undo).await,
+        opcode::PART_FINAL => part_final::handle(pal, io, req_buf, undo).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         _ => Err(HsmError::UnsupportedCmd),
     }

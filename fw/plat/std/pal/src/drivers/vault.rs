@@ -159,6 +159,11 @@ struct VaultEntry {
     session_key_id: Option<HsmKeyId>,
     /// Firmware-equivalent storage cost (for capacity tracking).
     cost: usize,
+    /// Soft-delete flag: a disabled entry is present (slot + bytes
+    /// reserved) but hidden from lookups.  The staging state for the undo
+    /// log's reversible delete (disable → enable rolls back, delete
+    /// commits).  Mirrors the Uno key-vault `Entry.disabled` bit.
+    disabled: bool,
 }
 
 /// One vault sub-table emulating a single firmware table.
@@ -226,6 +231,7 @@ impl KeyVault {
                 attrs,
                 session_key_id,
                 cost,
+                disabled: false,
             });
             table.used_bytes += cost;
 
@@ -251,6 +257,29 @@ impl KeyVault {
         table.used_bytes -= entry.cost;
         // Key material in entry.key is dropped (Vec deallocated).
         // In a real zeroize implementation we'd use zeroize crate.
+        Ok(())
+    }
+
+    /// Mark a live key as disabled (soft-delete): hidden from lookups but
+    /// slot and material retained.  The undo log's reversible-delete
+    /// staging step — `enable` rolls it back, `delete` commits (frees) it.
+    ///
+    /// Returns [`HsmError::KeyNotFound`] for a free or already-disabled
+    /// slot (disable is once-only).
+    pub fn disable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        let entry = self.entry_mut_present(key_id)?;
+        if entry.disabled {
+            return Err(HsmError::KeyNotFound);
+        }
+        entry.disabled = true;
+        Ok(())
+    }
+
+    /// Re-enable a disabled key — the inverse of [`disable`](Self::disable).
+    ///
+    /// Returns [`HsmError::KeyNotFound`] for a free slot.
+    pub fn enable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        self.entry_mut_present(key_id)?.disabled = false;
         Ok(())
     }
 
@@ -316,10 +345,31 @@ impl KeyVault {
     fn get_entry(&self, key_id: HsmKeyId) -> HsmResult<&VaultEntry> {
         let (table_idx, entry_idx) = split_key_id(key_id);
         let table = self.tables.get(table_idx).ok_or(HsmError::KeyNotFound)?;
-        table
+        let entry = table
             .entries
             .get(entry_idx)
             .and_then(|s| s.as_ref())
+            .ok_or(HsmError::KeyNotFound)?;
+        // A disabled (soft-deleted) entry is present but hidden from lookups.
+        if entry.disabled {
+            return Err(HsmError::KeyNotFound);
+        }
+        Ok(entry)
+    }
+
+    /// Mutable access to a *present* entry (live or disabled), ignoring the
+    /// disabled flag — only a free slot is rejected.  Backs
+    /// [`disable`](Self::disable) / [`enable`](Self::enable).
+    fn entry_mut_present(&mut self, key_id: HsmKeyId) -> HsmResult<&mut VaultEntry> {
+        let (table_idx, entry_idx) = split_key_id(key_id);
+        let table = self
+            .tables
+            .get_mut(table_idx)
+            .ok_or(HsmError::KeyNotFound)?;
+        table
+            .entries
+            .get_mut(entry_idx)
+            .and_then(|s| s.as_mut())
             .ok_or(HsmError::KeyNotFound)
     }
 }
@@ -367,6 +417,61 @@ mod tests {
         // Both in table 0, entries 0 and 1.
         assert_eq!(u16::from(k0), 0x0000);
         assert_eq!(u16::from(k1), 0x0001);
+    }
+
+    #[test]
+    fn disable_hides_then_enable_restores() {
+        let mut vault = KeyVault::new(1);
+        let key_data = [0xCD; 32];
+        let kid = vault
+            .create(&key_data, HsmVaultKeyKind::Aes256, None, aes256_attrs())
+            .unwrap();
+        assert!(vault.key(kid).is_ok());
+        // Disable hides it from lookups without freeing.
+        vault.disable(kid).unwrap();
+        assert_eq!(vault.key(kid).unwrap_err(), HsmError::KeyNotFound);
+        // Enable (the undo side) restores it with material intact.
+        vault.enable(kid).unwrap();
+        assert_eq!(vault.key(kid).unwrap(), &key_data);
+    }
+
+    #[test]
+    fn disable_then_delete_commits() {
+        let mut vault = KeyVault::new(1);
+        let kid = vault
+            .create(&[0x11; 32], HsmVaultKeyKind::Aes256, None, aes256_attrs())
+            .unwrap();
+        vault.disable(kid).unwrap();
+        // The commit side: delete frees even a disabled key; slot reusable.
+        vault.delete(kid).unwrap();
+        assert_eq!(vault.key(kid).unwrap_err(), HsmError::KeyNotFound);
+        let kid2 = vault
+            .create(&[0x22; 32], HsmVaultKeyKind::Aes256, None, aes256_attrs())
+            .unwrap();
+        assert_eq!(u16::from(kid2), u16::from(kid));
+    }
+
+    #[test]
+    fn disable_enable_reject_non_present() {
+        let mut vault = KeyVault::new(1);
+        // A free slot can be neither disabled nor enabled.
+        assert_eq!(
+            vault.disable(HsmKeyId::from(0u16)).unwrap_err(),
+            HsmError::KeyNotFound
+        );
+        assert_eq!(
+            vault.enable(HsmKeyId::from(0u16)).unwrap_err(),
+            HsmError::KeyNotFound
+        );
+        let kid = vault
+            .create(&[0x33; 32], HsmVaultKeyKind::Aes256, None, aes256_attrs())
+            .unwrap();
+        vault.disable(kid).unwrap();
+        // Disable is once-only — an already-disabled key is not "live".
+        assert_eq!(vault.disable(kid).unwrap_err(), HsmError::KeyNotFound);
+        // Enable is disabled-aware and still finds it.
+        vault.enable(kid).unwrap();
+        assert!(vault.key(kid).is_ok());
     }
 
     #[test]

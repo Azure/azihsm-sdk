@@ -22,15 +22,18 @@ impl StdOic {
 
     /// Send a completion response.
     ///
-    /// Takes ownership of the IO work item, consuming the reply channel
-    /// and CQE.
-    pub async fn send(&self, io: StdHsmIo) {
+    /// Borrows the IO work item by `&mut` and `take()`s its oneshot reply
+    /// sender (consumed on send) so the slot stays alive for the caller's
+    /// post-completion work; the CQE is a `Copy` value.
+    pub async fn send(&self, io: &mut StdHsmIo) {
         debug!(
             "oic",
             "send part={:?} qid={} qidx={}", io.pid, io.qid, io.qidx
         );
 
-        // Reply to submitter with just the CQE.
-        let _ = io.tx.send(io.cqe);
+        // Reply to submitter with just the CQE (oneshot — fires at most once).
+        if let Some(tx) = io.tx.take() {
+            let _ = tx.send(io.cqe);
+        }
     }
 }
