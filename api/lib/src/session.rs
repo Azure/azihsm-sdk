@@ -11,6 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use azihsm_crypto::AesKey;
+use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
@@ -151,7 +152,7 @@ impl HsmSession {
     ) -> HsmResult<PartInitResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Ver2 { param_key, .. } => ddi::init_part_ex(
+            SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
                 &inner.partition,
                 inner.id,
                 param_key,
@@ -160,6 +161,31 @@ impl HsmSession {
                 pota_thumbprint,
                 sata_thumbprint,
                 sapota_thumbprint,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `PartFinal` (opcode `0x08`) on this CO session.
+    ///
+    /// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+    /// and the PTA cert-chain descriptors, optionally restoring a prior
+    /// `local_mk` backup. Only valid on a V2 session; a V1 session
+    /// returns [`HsmError::InvalidSession`].
+    pub fn part_final(
+        &self,
+        part_policy: &[u8],
+        cert_descriptors: &[CertDescriptor],
+        prev_local_mk_backup: Option<&[u8]>,
+    ) -> HsmResult<PartFinalResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::part_final_ex(
+                &inner.partition,
+                inner.id,
+                part_policy,
+                cert_descriptors,
+                prev_local_mk_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
