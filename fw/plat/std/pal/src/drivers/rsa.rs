@@ -103,7 +103,7 @@ pub fn rsa_pub_wire(pubk: &RsaPublicKey, out: Option<&mut [u8]>) -> HsmResult<us
     // reverse the whole field to little-endian.
     let e_len = pubk.e(None).map_err(|_| HsmError::RsaGenerateError)?;
     if e_len > RSA_PUB_EXP_WIRE_LEN {
-        return Err(HsmError::RsaGenerateError);
+        return Err(HsmError::RsaInvalidKeyLength);
     }
     let mut e_be = [0u8; RSA_PUB_EXP_WIRE_LEN];
     pubk.e(Some(&mut e_be[RSA_PUB_EXP_WIRE_LEN - e_len..]))

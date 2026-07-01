@@ -282,7 +282,12 @@ pub trait HsmRsa {
     /// - `Ok(len)` — wire byte length (`modulus_len + 4`); in `Some`
     ///   mode those bytes are written into `pub_out`.
     /// - `Err(HsmError::InvalidArg)` — `priv_key` is not valid vault
-    ///   format or `pub_out` is too small.
+    ///   format.
+    /// - `Err(HsmError::RsaInvalidKeyLength)` — `pub_out` is too small
+    ///   or the derived public-key components do not fit the wire
+    ///   format.
+    /// - `Err(HsmError::RsaGenerateError)` — deriving or reading the
+    ///   public key failed for another reason.
     fn rsa_priv_pub_key(
         &self,
         io: &impl HsmIo,

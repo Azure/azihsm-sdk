@@ -558,22 +558,26 @@ impl StdHsmPal {
         let pk = RsaPrivateKey::generate(256).map_err(|_| HsmError::RsaGenerateError)?;
         let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
         let mut priv_buf = vec![0u8; priv_len];
-        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
-            .map_err(|_| HsmError::RsaToDerError)?;
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
+        let result = (|| {
+            pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+                .map_err(|_| HsmError::RsaToDerError)?;
 
-        let entry = self.active_part_mut(pid)?;
-        let kid = entry.vault.create(
-            &priv_buf[..priv_len],
-            HsmVaultKeyKind::Rsa2kPrivate,
-            None,
-            attrs,
-        )?;
-        entry.unwrapping_key_id = Some(kid);
-        Ok(())
+            let entry = self.active_part_mut(pid)?;
+            let kid = entry.vault.create(
+                &priv_buf[..priv_len],
+                HsmVaultKeyKind::Rsa2kPrivate,
+                None,
+                attrs,
+            )?;
+            entry.unwrapping_key_id = Some(kid);
+            Ok(())
+        })();
+        priv_buf.fill(0);
+        result
     }
 
     /// Borrow a partition that is actively serving host traffic.

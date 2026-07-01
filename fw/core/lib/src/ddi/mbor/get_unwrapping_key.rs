@@ -81,7 +81,10 @@ pub(crate) async fn get_unwrapping_key<'p, P: HsmPal>(
     // reserved slot — the PAL converts its vault representation into the
     // wire form (incl. any big-endian↔little-endian flip).
     let frame = DdiGetUnwrappingKeyResp::from_layout(resp, &layout);
-    pal.rsa_priv_pub_key(io, priv_key, Some(frame.pub_key.raw))?;
+    let actual_pub_len = pal.rsa_priv_pub_key(io, priv_key, Some(frame.pub_key.raw))?;
+    if actual_pub_len != pub_len {
+        return Err(HsmError::InvalidArg);
+    }
 
     Ok(resp)
 }
