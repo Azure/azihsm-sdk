@@ -48,9 +48,11 @@
 
 use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
 use azihsm_fw_core_crypto_key_report::key_report;
+use azihsm_fw_core_crypto_key_report::AttestedPubKey;
 use azihsm_fw_core_crypto_key_report::KeyFlags;
 use azihsm_fw_core_crypto_key_report::KeyReportParams;
-use azihsm_fw_core_crypto_key_report::COSE_SIGN1_MAX_LEN;
+use azihsm_fw_core_crypto_key_report::APP_UUID_LEN;
+use azihsm_fw_core_crypto_key_report::KEY_REPORT_MAX_LEN;
 use azihsm_fw_core_crypto_key_report::REPORT_DATA_LEN;
 use azihsm_fw_core_crypto_key_report::VM_LAUNCH_ID_LEN;
 use azihsm_fw_core_crypto_x509_builder::csr;
@@ -76,11 +78,6 @@ use super::*;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-// Cross-crate invariant: the TBOR wire cap must remain ≥ the COSE
-// worst case advertised by the key-report builder.  Anchored here
-// because this is the only crate that depends on both.
-const _: () = assert!(PTA_REPORT_MAX_LEN >= COSE_SIGN1_MAX_LEN);
-
 /// Length of a P-384 raw private scalar in bytes (LE on the PAL wire).
 const P384_PRIV_LEN: usize = 48;
 
@@ -92,6 +89,14 @@ const P384_PUB_SEC1_LEN: usize = 1 + 2 * P384_COORD_LEN;
 
 /// Length of a SHA-384 digest in bytes.
 const SHA384_LEN: usize = 48;
+
+// Pin the response cap to the key-report crate's worst case at build
+// time. `azihsm_fw_ddi_tbor_types` can't depend on the key-report crate
+// directly (layering), so anchor the cross-crate invariant in the
+// handler, which depends on both. The report size is still computed and
+// checked at runtime below; this guards against a future key-report
+// size increase silently exceeding the advertised response field.
+const _: () = assert!(PTA_REPORT_MAX_LEN >= KEY_REPORT_MAX_LEN);
 
 /// Subject Common Name fixed for every PTACSR (24 ASCII chars;
 /// space-padded to [`csr::SUBJECT_CN_LEN`] by the builder).
@@ -460,15 +465,20 @@ async fn build_pta_report<'a, P: HsmPal>(
     sapota_thumb: Option<&DmaBuf>,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
     let pid_priv = pal.vault_key(io, crate::part_state::part_id_key_id(pal, io)?)?;
-    let app_uuid = super::super::super::session::session_app_id(pal, io, sess_id)?;
 
-    let mut vm_launch_id = [0u8; VM_LAUNCH_ID_LEN];
-    {
-        let guid = crate::part_state::part_vm_launch_guid(pal, io)?;
-        if guid.len() != VM_LAUNCH_ID_LEN {
-            return Err(HsmError::InternalError);
-        }
-        vm_launch_id.copy_from_slice(&guid[..VM_LAUNCH_ID_LEN]);
+    // Copy the session app id into DMA scratch so every report input is a
+    // `DmaBuf` (the report builder takes `&DmaBuf` throughout).
+    let app_id = super::super::super::session::session_app_id(pal, io, sess_id)?;
+    if app_id.len() != APP_UUID_LEN {
+        return Err(HsmError::InternalError);
+    }
+    let app_uuid = alloc.dma_alloc(APP_UUID_LEN)?;
+    app_uuid.copy_from_slice(&app_id);
+
+    // The VM launch GUID is already a DMA-backed partition property.
+    let vm_launch_id = crate::part_state::part_vm_launch_guid(pal, io)?;
+    if vm_launch_id.len() != VM_LAUNCH_ID_LEN {
+        return Err(HsmError::InternalError);
     }
 
     let report_data =
@@ -480,19 +490,31 @@ async fn build_pta_report<'a, P: HsmPal>(
     let flags: u32 = KeyFlags::new().with_is_generated(true).into();
     let pub_xy = &pub_sec1[1..];
     let params = KeyReportParams {
-        pk_x: &pub_xy[..P384_COORD_LEN],
-        pk_y: &pub_xy[P384_COORD_LEN..],
+        key: AttestedPubKey::Ecc {
+            curve: azihsm_fw_hsm_pal_traits::HsmEccCurve::P384,
+            x: &pub_xy[..P384_COORD_LEN],
+            y: &pub_xy[P384_COORD_LEN..],
+        },
         flags,
-        app_uuid: &app_uuid,
-        report_data: &report_data[..],
-        vm_launch_id: &vm_launch_id,
+        app_uuid,
+        report_data,
+        vm_launch_id,
     };
 
-    // Allocate at max size and build in a single pass — avoids the
-    // size-query await that would add an extra state machine variant.
-    let report = alloc.dma_alloc(COSE_SIGN1_MAX_LEN)?;
-    let report_len = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
+    // Two-pass query/copy: the `None` pass computes the exact report size
+    // (via `minicbor::len`, freeing its scratch), so we allocate only what
+    // the report needs. The runtime bound check replaces the former
+    // compile-time assert now that the size is computed dynamically.
+    let report_len = key_report(pal, io, alloc, &params, pid_priv, None).await?;
     if report_len > PTA_REPORT_MAX_LEN {
+        return Err(HsmError::InternalError);
+    }
+    let report = alloc.dma_alloc(report_len)?;
+    // Enforce that the copy pass writes exactly the queried size. The
+    // buffer is uninitialised DMA memory, so a shorter write would leak
+    // stale bytes in `report[written..report_len]` to the host.
+    let written = key_report(pal, io, alloc, &params, pid_priv, Some(report)).await?;
+    if written != report_len {
         return Err(HsmError::InternalError);
     }
     Ok((report, report_len))

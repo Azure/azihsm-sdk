@@ -14,8 +14,10 @@ test = false
 [dependencies]
 azihsm_fw_hsm_pal_traits = { workspace = true }
 bitfield-struct.workspace = true
+minicbor = { features = ["derive"], workspace = true }
 
 [dev-dependencies]
+azihsm_ddi_mbor_sim = { workspace = true }
 minicbor = { features = ["derive", "std"], workspace = true }
 
 [lints]

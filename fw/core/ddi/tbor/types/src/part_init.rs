@@ -114,9 +114,11 @@ pub const PTA_CSR_MAX_LEN: usize = 512;
 /// Sized for the worst-case PTAReport produced by
 /// `azihsm_fw_core_crypto_key_report` (COSE_Sign1 fixed overhead +
 /// max payload).  A cross-crate `const _` static assert in the
-/// firmware handler module pins this to `COSE_SIGN1_MAX_LEN` from the
-/// key-report crate (which `azihsm_fw_ddi_tbor_types` cannot depend
-/// on directly due to layering).
+/// firmware handler module pins this `>= KEY_REPORT_MAX_LEN` from the
+/// key-report crate (which `azihsm_fw_ddi_tbor_types` cannot depend on
+/// directly due to layering); the handler additionally computes the
+/// report size at runtime and rejects any report exceeding this cap
+/// with `InternalError`.
 pub const PTA_REPORT_MAX_LEN: usize = 1024;
 
 /// `PartInit` request schema.
