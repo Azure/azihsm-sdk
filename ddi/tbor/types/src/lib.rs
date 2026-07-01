@@ -79,22 +79,36 @@ impl From<SessionControlKind> for u8 {
 }
 
 mod api_rev;
+mod evidence;
 mod part_final;
 mod part_info;
 mod part_init;
 mod policy;
 mod psk_change;
+mod sd_create_peer_backup;
+mod sd_create_remote_backup;
+mod sd_reseal_backup;
+mod sd_restore_local_backup;
+mod sd_restore_peer_backup;
+mod sd_restore_remote_backup;
 mod sd_sealing_key_gen;
 mod session_close;
 mod session_open_finish;
 mod session_open_init;
 mod status;
 pub use api_rev::*;
+pub use evidence::*;
 pub use part_final::*;
 pub use part_info::*;
 pub use part_init::*;
 pub use policy::*;
 pub use psk_change::*;
+pub use sd_create_peer_backup::*;
+pub use sd_create_remote_backup::*;
+pub use sd_reseal_backup::*;
+pub use sd_restore_local_backup::*;
+pub use sd_restore_peer_backup::*;
+pub use sd_restore_remote_backup::*;
 pub use sd_sealing_key_gen::*;
 pub use session_close::*;
 pub use session_open_finish::*;
