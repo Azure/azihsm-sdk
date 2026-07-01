@@ -21,6 +21,7 @@
 //! per-IO allocator scope).
 
 pub(crate) mod api_rev;
+pub(crate) mod key_report;
 pub(crate) mod part_final;
 pub mod part_info;
 pub mod part_init;
@@ -37,11 +38,17 @@ use azihsm_fw_ddi_tbor::TocEntry;
 use azihsm_fw_ddi_tbor::PROTOCOL_VERSION;
 use azihsm_fw_hsm_oob::OobPtr;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmIo;
+use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmPal;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
+use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 
 use super::*;
+use crate::part_state;
 
 /// TBOR opcodes recognised by the firmware dispatcher.
 ///
@@ -100,6 +107,44 @@ pub(crate) mod opcode {
     /// masking key (nothing is persisted on-device) plus the public key.
     /// See [`super::sd_sealing_key_gen`].
     pub(crate) const SD_SEALING_KEY_GEN: u8 = 0x09;
+
+    /// `KeyReport` — attest a masked key: unmask it, derive its public
+    /// component on-device, and return a PID-signed COSE_Sign1
+    /// key-attestation report over it.  See [`super::key_report`].
+    ///
+    /// `0x0A..=0x0F` are reserved by the Security-Domain backup schema
+    /// family, so `KeyReport` takes the next free opcode, `0x10`.
+    pub(crate) const KEY_REPORT: u8 = 0x10;
+}
+
+/// Validate that `sess_id` belongs to an active Crypto-Officer session.
+fn validate_crypto_officer_active_session<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    sess_id: HsmSessId,
+) -> HsmResult<()> {
+    if sess_id.role() != SessionRole::CryptoOfficer {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    if !matches!(pal.session_state(io, sess_id), HsmSessionState::Active) {
+        return Err(HsmError::SessionNotFound);
+    }
+
+    Ok(())
+}
+
+/// Resolve the vault id of the masking key associated with `scope`.
+fn masking_key_id_for_scope<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    scope: HsmKeyScope,
+) -> HsmResult<HsmKeyId> {
+    match scope {
+        HsmKeyScope::Ephemeral => part_state::part_ephemeral_mk_key_id(pal, io),
+        HsmKeyScope::Local => part_state::part_local_mk_key_id(pal, io),
+        _ => Err(HsmError::UnsupportedKeyScope),
+    }
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -183,6 +228,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::PART_FINAL => part_final::handle(pal, io, req_buf, oob).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         opcode::SD_SEALING_KEY_GEN => sd_sealing_key_gen::handle(pal, io, req_buf).await,
+        opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -203,6 +249,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::PART_FINAL
             | opcode::PART_INFO
             | opcode::SD_SEALING_KEY_GEN
+            | opcode::KEY_REPORT
     )
 }
 
@@ -229,7 +276,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::PSK_CHANGE
         | opcode::PART_INIT
         | opcode::PART_FINAL
-        | opcode::SD_SEALING_KEY_GEN => true,
+        | opcode::SD_SEALING_KEY_GEN
+        | opcode::KEY_REPORT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -264,7 +312,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::PSK_CHANGE
         | opcode::PART_INIT
         | opcode::PART_FINAL
-        | opcode::SD_SEALING_KEY_GEN => true,
+        | opcode::SD_SEALING_KEY_GEN
+        | opcode::KEY_REPORT => true,
         _ => true,
     }
 }
@@ -351,6 +400,7 @@ mod tests {
             opcode::PART_INFO,
             opcode::PART_FINAL,
             opcode::SD_SEALING_KEY_GEN,
+            opcode::KEY_REPORT,
         ] {
             assert!(is_known_opcode(op), "{op:#04x} should be known");
         }
@@ -378,6 +428,11 @@ mod tests {
     #[test]
     fn sd_sealing_key_gen_is_in_session() {
         assert!(is_in_session(opcode::SD_SEALING_KEY_GEN));
+    }
+
+    #[test]
+    fn key_report_is_in_session() {
+        assert!(is_in_session(opcode::KEY_REPORT));
     }
 
     #[test]

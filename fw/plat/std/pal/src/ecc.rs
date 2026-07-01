@@ -236,6 +236,32 @@ impl HsmEcc for StdHsmPal {
         Ok(())
     }
 
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Delegates to the driver's `pub_from_priv_le`, which runs the
+    /// OpenSSL key reconstruction and public-point derivation on the
+    /// worker pool and emits the little-endian DDI wire form.
+    async fn ecc_pub_from_priv(
+        &self,
+        _io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let wire_priv_len = curve.wire_priv_key_len();
+        let wire_pub_len = curve.wire_pub_key_len();
+        if priv_key.len() != wire_priv_len || pub_key.len() < wire_pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+        self.ecc
+            .pub_from_priv_le(
+                to_ecc_curve(curve),
+                &priv_key[..wire_priv_len],
+                &mut pub_key[..wire_pub_len],
+            )
+            .await
+    }
+
     /// ECDH key agreement — derives a shared secret.
     ///
     /// Parses the local raw HSM-format private into an OpenSSL

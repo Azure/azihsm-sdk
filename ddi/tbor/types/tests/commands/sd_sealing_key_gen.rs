@@ -67,7 +67,7 @@ const ROTATED_CU_PSK: [u8; PSK_LEN] = [
 /// POTA trust anchor bound into the policy, so this mints a POTA CA, binds
 /// its public key into the policy, and issues a POTA-anchored PTA chain
 /// from the `PartInit` CSR (mirrors the `part_final` happy-path setup).
-fn finalized_co_session(ctx: &TestCtx) -> SessionHandshake {
+pub(crate) fn finalized_co_session(ctx: &TestCtx) -> SessionHandshake {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
     let pota = CaKey::generate();

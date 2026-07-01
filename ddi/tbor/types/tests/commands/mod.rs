@@ -9,6 +9,7 @@ pub mod api_rev;
 pub mod default_psk_gate;
 pub mod forward_compat;
 pub mod fw_error_decode;
+pub mod key_report;
 pub mod open_session;
 pub mod part_final;
 pub mod part_info;

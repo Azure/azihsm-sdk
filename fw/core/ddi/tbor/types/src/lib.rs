@@ -37,6 +37,7 @@ pub mod tbor_int {
 pub mod api_rev;
 pub mod evidence;
 pub mod key_props;
+pub mod key_report;
 pub mod part_final;
 pub mod part_info;
 pub mod part_init;
@@ -56,6 +57,7 @@ pub mod session_open_init;
 pub use api_rev::*;
 pub use evidence::*;
 pub use key_props::*;
+pub use key_report::*;
 pub use part_final::*;
 pub use part_info::*;
 pub use part_init::*;
