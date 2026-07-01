@@ -178,12 +178,14 @@ pub trait HsmIoController {
     ///   unrecoverable).
     async fn poll_io(&self) -> HsmResult<Self::Io>;
 
-    /// Posts the completion entry for `io` and frees its queue slot.
+    /// Posts the completion entry (CQE) for `io` to the host.
     ///
-    /// Consumes the [`Self::Io`] handle.  Callers must have written
-    /// the desired CQE contents via [`HsmIo::cqe`] before invoking
-    /// this method; the contents are flushed to the host as part of
-    /// completion.
+    /// Borrows `io` by `&mut` and leaves its queue slot **allocated**, so
+    /// the caller can run post-completion work — e.g. an undo/commit walk
+    /// that DMAs through `io` — before releasing the slot with
+    /// [`drop_io`](Self::drop_io).  Callers must have written the desired
+    /// CQE contents via [`HsmIo::cqe`] before invoking this method; the
+    /// contents are flushed to the host as part of the post.
     ///
     /// # Parameters
     ///
@@ -193,16 +195,19 @@ pub trait HsmIoController {
     /// # Returns
     ///
     /// - `Ok(())` — completion was successfully posted.
-    /// - `Err(HsmError)` — failed to enqueue the CQE; the slot is
-    ///   still freed, but the host will not see this completion.
-    async fn complete_io(&self, io: Self::Io) -> HsmResult<()>;
+    /// - `Err(HsmError)` — failed to enqueue the CQE; the host will not
+    ///   see this completion.  The slot is still owned and must be freed
+    ///   via [`drop_io`](Self::drop_io).
+    async fn complete_io(&self, io: &mut Self::Io) -> HsmResult<()>;
 
-    /// Frees the queue slot **without** posting a CQE.
+    /// Frees the queue slot, releasing `io`.
     ///
-    /// Used when the IO must be silently discarded — for example
-    /// when it arrived for a non-[`PartState::Enabled`](crate::PartState::Enabled)
-    /// partition and core wants to drop it without surfacing
-    /// anything to the host.
+    /// Posts no CQE of its own.  Called either to silently discard an IO
+    /// — for example one that arrived for a
+    /// non-[`PartState::Enabled`](crate::PartState::Enabled) partition and
+    /// core wants to drop without surfacing anything to the host — or to
+    /// release the slot after [`complete_io`](Self::complete_io) has
+    /// already posted the completion.
     ///
     /// # Parameters
     ///

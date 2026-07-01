@@ -47,6 +47,20 @@ impl HsmVault for StdHsmPal {
         entry.vault.delete(key_id)
     }
 
+    /// Disable (soft-delete) a key — the undo log's reversible-delete
+    /// staging step.  Hidden from lookups; `enable` rolls back, `delete`
+    /// commits.
+    fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let entry = self.active_part_mut(io.pid())?;
+        entry.vault.disable(key_id)
+    }
+
+    /// Re-enable a disabled key — the undo side of a reversible delete.
+    fn vault_key_enable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let entry = self.active_part_mut(io.pid())?;
+        entry.vault.enable(key_id)
+    }
+
     /// Delete all session-scoped keys for the given logical session.
     ///
     /// Maps the logical session ID to the physical vault key ID, then

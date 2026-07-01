@@ -276,6 +276,10 @@ pub enum TborStatus {
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
 
+    /// A per-command undo-log push failed (mirror of
+    /// `HsmError::UndoLogFull`).
+    UndoLogFull = 0x08700101,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed (mirror of `HsmError::IoChannelInvalidOobLen`).
     IoChannelInvalidOobLen = 0x08700104,

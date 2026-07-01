@@ -1190,44 +1190,6 @@ fn dma(buf: &[u8]) -> &DmaBuf {
 // ─── PartitionEntry property dispatch ────────────────────────────────────
 
 impl PartitionEntry {
-    /// Apply a caller-driven STATE transition through the property API.
-    ///
-    /// The internal device-command lifecycle (`part_alloc_internal`,
-    /// `part_enable_internal`, `part_disable_internal`,
-    /// `part_free_internal`) drives all other transitions; the prop
-    /// API exposes the two caller-facing ones: `Enabled → Initializing`
-    /// (`PartInit`, which additionally requires the four write-once
-    /// provisioning fields — PTA key, UMS key, policy, POTA thumbprint —
-    /// to be present) and `Initializing → Initialized` (`PartFinal`).
-    /// Any other source/target pair is rejected with
-    /// [`HsmError::InvalidArg`].
-    fn transition_state_via_prop(&mut self, target: PartState) -> HsmResult<()> {
-        match (self.state, target) {
-            (PartState::Enabled, PartState::Initializing) => {
-                if self.pta_key_id.is_none()
-                    || self.ups_key_id.is_none()
-                    || self.policy_hash.is_none()
-                    || self.pota_thumbprint.is_none()
-                {
-                    return Err(HsmError::InvalidArg);
-                }
-                self.state = PartState::Initializing;
-                Ok(())
-            }
-            // `PartFinal` finalizes the partition: the one caller-facing
-            // transition out of `Initializing`.
-            (PartState::Initializing, PartState::Initialized) => {
-                self.state = PartState::Initialized;
-                Ok(())
-            }
-            // No-op writes (same state) are accepted as a convenience.
-            (cur, tgt) if cur == tgt => Ok(()),
-            // All other transitions are PAL-internal — reject from the
-            // prop API.
-            _ => Err(HsmError::InvalidArg),
-        }
-    }
-
     /// Translate `id` to the matching scalar field on this entry.
     /// All values are widened to `u32` for a uniform return type;
     /// the trait wrapper narrows back to the requested kind.
@@ -1255,24 +1217,26 @@ impl PartitionEntry {
     fn prop_set_scalar(&mut self, id: PartPropId, value: u32) -> HsmResult<()> {
         match id {
             PartPropId::STATE => {
-                let target = PartState::from_u8(value as u8).ok_or(HsmError::InvalidArg)?;
-                self.transition_state_via_prop(target)
+                // Raw mechanism: write the discriminant directly. Transition
+                // validation + the `PartInit` provisioning gate are upper-layer
+                // policy (`part_state::part_set_state`); the undo log restores
+                // prior states through this raw path.
+                self.state = PartState::from_u8(value as u8).ok_or(HsmError::InvalidArg)?;
+                Ok(())
             }
             PartPropId::MK_KEY_ID => {
                 self.mk_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
             PartPropId::UPS_KEY_ID => {
-                if self.ups_key_id.is_some() {
-                    return Err(HsmError::UpsKeyAlreadySet);
-                }
+                // Raw mechanism; write-once is upper-layer policy
+                // (`part_state::part_set_ups_key_id`).
                 self.ups_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
             PartPropId::PTA_KEY_ID => {
-                if self.pta_key_id.is_some() {
-                    return Err(HsmError::PtaKeyAlreadySet);
-                }
+                // Raw mechanism; write-once is upper-layer policy
+                // (`part_state::part_set_pta_key_id`).
                 self.pta_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
@@ -1852,36 +1816,29 @@ mod tests {
     fn scalar_state_round_trip() {
         let mut e = fresh_entry();
         assert_eq!(e.prop_get_scalar(PartPropId::STATE).unwrap(), 0); // Unallocated
-                                                                      // No-op writes (same → same) are accepted.
-        e.prop_set_scalar(PartPropId::STATE, PartState::Unallocated as u32)
+                                                                      // The generic prop setter is a raw mechanism: any valid state byte
+                                                                      // is written directly (transition policy lives in
+                                                                      // `part_state::part_set_state`, exercised by the PartInit emu tests).
+        e.prop_set_scalar(PartPropId::STATE, PartState::Enabled as u32)
             .unwrap();
-        // Invalid state byte rejected.
+        assert_eq!(
+            e.prop_get_scalar(PartPropId::STATE).unwrap(),
+            PartState::Enabled as u32
+        );
+        // An invalid state byte is still rejected.
         assert!(matches!(
             e.prop_set_scalar(PartPropId::STATE, 250),
-            Err(HsmError::InvalidArg)
-        ));
-        // Caller-facing transition Unallocated → Enabled is rejected
-        // (must go through PAL-internal lifecycle methods).
-        assert!(matches!(
-            e.prop_set_scalar(PartPropId::STATE, PartState::Enabled as u32),
             Err(HsmError::InvalidArg)
         ));
     }
 
     #[test]
-    fn scalar_state_enabled_to_initializing_requires_provisioning_fields() {
+    fn scalar_state_set_is_raw_no_transition_gate() {
         let mut e = fresh_entry();
         e.state = PartState::Enabled;
-        // Missing all four write-once fields → reject.
-        assert!(matches!(
-            e.prop_set_scalar(PartPropId::STATE, PartState::Initializing as u32),
-            Err(HsmError::InvalidArg)
-        ));
-        // Set the four required fields then transition.
-        e.pta_key_id = Some(HsmKeyId::from(1u16));
-        e.ups_key_id = Some(HsmKeyId::from(2u16));
-        e.policy_hash = Some([0u8; POLICY_HASH_LEN]);
-        e.pota_thumbprint = Some([0u8; 48]);
+        // Raw mechanism: `Enabled → Initializing` is accepted WITHOUT the
+        // four provisioning fields — the gate moved to the upper-layer
+        // `part_state::part_set_state` (covered by the PartInit emu tests).
         e.prop_set_scalar(PartPropId::STATE, PartState::Initializing as u32)
             .unwrap();
         assert_eq!(
@@ -1891,19 +1848,20 @@ mod tests {
     }
 
     #[test]
-    fn scalar_state_other_transitions_rejected_via_prop() {
+    fn scalar_state_arbitrary_transitions_accepted_raw() {
         let mut e = fresh_entry();
         e.state = PartState::Enabled;
-        // Enabled → Disabled must go through part_disable_internal.
-        assert!(matches!(
-            e.prop_set_scalar(PartPropId::STATE, PartState::Disabled as u32),
-            Err(HsmError::InvalidArg)
-        ));
-        // Enabled → Allocated is nonsense.
-        assert!(matches!(
-            e.prop_set_scalar(PartPropId::STATE, PartState::Allocated as u32),
-            Err(HsmError::InvalidArg)
-        ));
+        // The raw setter accepts any valid state (transition policy is
+        // enforced above the PAL); the undo log relies on this to restore a
+        // prior state on rollback.
+        e.prop_set_scalar(PartPropId::STATE, PartState::Disabled as u32)
+            .unwrap();
+        assert_eq!(
+            e.prop_get_scalar(PartPropId::STATE).unwrap(),
+            PartState::Disabled as u32
+        );
+        e.prop_set_scalar(PartPropId::STATE, PartState::Allocated as u32)
+            .unwrap();
     }
 
     #[test]

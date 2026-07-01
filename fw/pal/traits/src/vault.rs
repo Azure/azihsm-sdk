@@ -443,6 +443,39 @@ pub trait HsmVault {
     ///   is unset (e.g. internal device keys).
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
 
+    /// Marks a key as **disabled** without freeing its slot or zeroizing
+    /// its material — the staging half of a reversible delete.
+    ///
+    /// A disabled key is invisible to all lookups
+    /// ([`vault_key`](Self::vault_key), [`vault_key_kind`](Self::vault_key_kind),
+    /// …) which return [`HsmError::KeyNotFound`], but its slot and bytes
+    /// remain reserved.  It can be re-enabled with
+    /// [`vault_key_enable`](Self::vault_key_enable) or finalized (zeroized)
+    /// with [`vault_key_delete`](Self::vault_key_delete).
+    ///
+    /// This is the vault primitive the upper-layer undo log drives for a
+    /// reversible delete: `disable` at mutation time, `enable` to roll
+    /// back on failure, `delete` to commit on success.  The PAL itself
+    /// stays undo-unaware.  Unlike `vault_key_delete` it performs no
+    /// zeroize, so it is synchronous and cannot fail beyond the liveness
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a live
+    ///   (present, not-already-disabled) key in the caller's partition.
+    fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Re-enables a [`vault_key_disable`](Self::vault_key_disable)d key,
+    /// making it visible to lookups again.  The inverse of
+    /// `vault_key_disable`.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a present
+    ///   slot in the caller's partition.
+    fn vault_key_enable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
     /// Deletes every key whose `session_id` matches `session_id`.
     ///
     /// Used during session teardown to reap session-scoped keys in
