@@ -532,7 +532,7 @@ TEST_F(azihsm_hkdf, hkdf_rejects_aes_key_without_usage_flags)
             session,
             AZIHSM_ALGO_ID_HMAC_SHA256,
             props,
-            AZIHSM_STATUS_DDI_CMD_FAILURE
+            AZIHSM_STATUS_INVALID_KEY_PROPS
         );
     });
 }
@@ -548,19 +548,11 @@ TEST_F(azihsm_hkdf, hkdf_with_only_salt)
         uint8_t salt[] = { 'h', 'k', 'd', 'f', '-', 's', 'a', 'l', 't' };
         azihsm_buffer salt_buf = { .ptr = salt, .len = static_cast<uint32_t>(sizeof(salt)) };
 
-        azihsm_buffer info_buf = { .ptr = nullptr, .len = 0 };
-
         for (uint32_t bits : { 128u, 192u, 256u })
         {
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
-            build_hkdf_algo(
-                hkdf_params,
-                hkdf_algo,
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                &salt_buf,
-                &info_buf
-            );
+            build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, nullptr);
 
             auto_key key_a;
             derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), bits, key_a);
@@ -587,8 +579,6 @@ TEST_F(azihsm_hkdf, hkdf_with_only_info)
         auto_key secret_b;
         derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
 
-        azihsm_buffer salt_buf = { .ptr = nullptr, .len = 0 };
-
         uint8_t info[] = { 'h', 'k', 'd', 'f', '-', 'i', 'n', 'f', 'o' };
         azihsm_buffer info_buf = { .ptr = info, .len = static_cast<uint32_t>(sizeof(info)) };
 
@@ -596,13 +586,7 @@ TEST_F(azihsm_hkdf, hkdf_with_only_info)
         {
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
-            build_hkdf_algo(
-                hkdf_params,
-                hkdf_algo,
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                &salt_buf,
-                &info_buf
-            );
+            build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, nullptr, &info_buf);
 
             auto_key key_a;
             derive_aes_key_from_shared_secret(session, &hkdf_algo, secret_a.get(), bits, key_a);
