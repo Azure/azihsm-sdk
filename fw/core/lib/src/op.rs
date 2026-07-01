@@ -260,7 +260,8 @@ impl SessionCtrl {
             opcode::SESSION_OPEN_FINISH
             | opcode::PSK_CHANGE
             | opcode::PART_INIT
-            | opcode::PART_FINAL => Self::InSession,
+            | opcode::PART_FINAL
+            | opcode::SD_SEALING_KEY_GEN => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

@@ -350,6 +350,16 @@ pub enum HsmError {
     /// carries the requested selector (SVN / owner id).
     SeedNotFound = 0x08700100,
 
+    /// A command was asked to operate on a [`HsmKeyScope`](crate::HsmKeyScope)
+    /// whose backing key material does not (yet) exist on the partition.
+    /// Returned by `SdSealingKeyGen` for the `Session` and
+    /// `SecurityDomain` scopes: their masking keys are provisioned by
+    /// commands that are not yet implemented (session-key masking /
+    /// `CreateSD`'s `SDKMK`).  Distinct from
+    /// [`InvalidArg`](Self::InvalidArg) (a malformed request) — the
+    /// request is well-formed, the scope is simply unsupported for now.
+    UnsupportedKeyScope = 0x08700102,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed: not a whole number of 16-byte SGL descriptors, or
     /// larger than a single descriptor page.

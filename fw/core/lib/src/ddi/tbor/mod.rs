@@ -26,6 +26,7 @@ pub mod part_info;
 pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
+pub(crate) mod sd_sealing_key_gen;
 pub(crate) mod session_close;
 pub(crate) mod session_open_finish;
 pub(crate) mod session_open_init;
@@ -92,6 +93,13 @@ pub(crate) mod opcode {
     /// key).  TBOR analogue of MBOR `GetDeviceInfo` + the Manticore
     /// `GetPartID` primitive.
     pub(crate) const PART_INFO: u8 = 0x02;
+
+    /// `SdSealingKeyGen` — generate a security-domain sealing key (a
+    /// P-384 ECC keypair for ECDH) under the active session's partition;
+    /// return the private half **masked** under the requested scope's
+    /// masking key (nothing is persisted on-device) plus the public key.
+    /// See [`super::sd_sealing_key_gen`].
+    pub(crate) const SD_SEALING_KEY_GEN: u8 = 0x09;
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -174,6 +182,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
         opcode::PART_FINAL => part_final::handle(pal, io, req_buf, oob).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
+        opcode::SD_SEALING_KEY_GEN => sd_sealing_key_gen::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -193,6 +202,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::PART_INIT
             | opcode::PART_FINAL
             | opcode::PART_INFO
+            | opcode::SD_SEALING_KEY_GEN
     )
 }
 
@@ -215,7 +225,11 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SESSION_OPEN_INIT
         | opcode::SESSION_OPEN_FINISH
         | opcode::PART_INFO => false,
-        opcode::SESSION_CLOSE | opcode::PSK_CHANGE | opcode::PART_INIT | opcode::PART_FINAL => true,
+        opcode::SESSION_CLOSE
+        | opcode::PSK_CHANGE
+        | opcode::PART_INIT
+        | opcode::PART_FINAL
+        | opcode::SD_SEALING_KEY_GEN => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -249,7 +263,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::SESSION_CLOSE
         | opcode::PSK_CHANGE
         | opcode::PART_INIT
-        | opcode::PART_FINAL => true,
+        | opcode::PART_FINAL
+        | opcode::SD_SEALING_KEY_GEN => true,
         _ => true,
     }
 }
@@ -332,6 +347,10 @@ mod tests {
             opcode::SESSION_OPEN_FINISH,
             opcode::SESSION_CLOSE,
             opcode::PSK_CHANGE,
+            opcode::PART_INIT,
+            opcode::PART_INFO,
+            opcode::PART_FINAL,
+            opcode::SD_SEALING_KEY_GEN,
         ] {
             assert!(is_known_opcode(op), "{op:#04x} should be known");
         }
@@ -357,6 +376,11 @@ mod tests {
     }
 
     #[test]
+    fn sd_sealing_key_gen_is_in_session() {
+        assert!(is_in_session(opcode::SD_SEALING_KEY_GEN));
+    }
+
+    #[test]
     fn unknown_opcode_defaults_to_in_session() {
         // Default-deny: an unknown future opcode is treated as
         // in-session so the default-PSK gate applies to it until it
@@ -373,6 +397,7 @@ mod tests {
             opcode::API_REV,
             opcode::SESSION_OPEN_INIT,
             opcode::SESSION_OPEN_FINISH,
+            opcode::SD_SEALING_KEY_GEN,
             SYNTHETIC_FUTURE_OPCODE,
             0x00,
             0xFF,

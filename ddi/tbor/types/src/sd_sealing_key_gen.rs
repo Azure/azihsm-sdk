@@ -3,21 +3,33 @@
 
 //! Host-side wrapper for the TBOR `SdSealingKeyGen` command.
 //!
-//! `SdSealingKeyGen` is an **in-session** command that generates a new
-//! security-domain sealing key in the partition's vault and returns its
-//! key handle.
+//! `SdSealingKeyGen` is an **in-session** Crypto-Officer command that
+//! generates a new security-domain sealing key (ECC-P384) and returns
+//! the **masked** private key plus its public key.  The private key is
+//! not stored on the device; the caller holds the masked blob and
+//! re-imports it (unmask-on-use) when the key is later needed.
 //!
 //! The request carries the requested key `scope` (lifecycle / visibility
 //! domain) as its 1-byte discriminant.  The firmware-side schema
 //! (`azihsm_fw_ddi_tbor_types::sd_sealing_key_gen`) types it as the
 //! `KeyScope` open-enum (mirror of the PAL `HsmKeyScope`); this host
 //! crate is firewalled from the firmware PAL types, so it carries the
-//! same byte as a raw `u8`.
+//! same byte as a raw `u8`.  The private key is masked under the masking
+//! key associated with the scope.
 
 use crate::tbor;
 
 /// TBOR opcode for `SdSealingKeyGen`.
 pub const TBOR_OP_SD_SEALING_KEY_GEN: u8 = 0x09;
+
+/// Wire length of the returned sealing public key: a raw P-384 point
+/// (`x ‖ y`, 48 + 48 bytes).
+pub const SD_SEALING_PUB_KEY_LEN: usize = 96;
+
+/// Wire length of the masked sealing private key: an AEAD-GCM-256
+/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖
+/// tag(16)`) over the 48-byte raw P-384 private scalar.
+pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 96 + 48 + 16;
 
 /// Host-facing TBOR `SdSealingKeyGen` request.
 #[tbor(opcode = TBOR_OP_SD_SEALING_KEY_GEN, session_ctrl = in_session)]
@@ -35,13 +47,17 @@ pub struct TborSdSealingKeyGenReq {
 
 /// Host-facing TBOR `SdSealingKeyGen` response.
 #[tbor(response)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborSdSealingKeyGenResp {
-    /// Vault id (`HsmKeyId`) of the newly generated sealing key. Carried
-    /// as a `KeyId` (inline 16-bit, TOC entry type 1); represented here
-    /// as the raw `u16`.
-    #[tbor(key_id)]
-    pub key_handle: u16,
+    /// The new sealing key's ECC-P384 private half, masked
+    /// (AEAD-GCM-256) under the requested scope's masking key.  Always
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B); not stored on-device.
+    pub masked_key: [u8; MASKED_SEALING_KEY_LEN],
+
+    /// Raw P-384 public key (`x ‖ y` affine coordinates, 96 bytes,
+    /// little-endian per coordinate) of the new sealing key.  Not a SEC1
+    /// point encoding (no `0x04` prefix).
+    pub pub_key: [u8; SD_SEALING_PUB_KEY_LEN],
 }
 
 #[cfg(test)]

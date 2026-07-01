@@ -45,7 +45,7 @@ use super::*;
 /// Types of keys that can be managed by the HSM key vault.
 ///
 /// Each variant corresponds to a specific cryptographic algorithm and
-/// key size.  The discriminant values (`0..34`) match the firmware's
+/// key size.  The discriminant values (`0..=41`) match the firmware's
 /// `EntryKind` enum so that key type information is wire-compatible
 /// across the DDI protocol.
 ///
@@ -66,6 +66,10 @@ use super::*;
 /// | 28–30 | HMAC fixed-length | `_HmacSha256`, `_HmacSha384`, `_HmacSha512` |
 /// | 31 | Masking key | `MaskingKey` |
 /// | 32–34 | HMAC variable-length | `VarLenHmacSha256` .. `VarLenHmacSha512` |
+/// | 35–36 | TBOR session blobs | `SessionExPending`, `SessionEx` |
+/// | 37–38 | Partition incarnation keys | `PartitionTrustAnchor`, `UniquePartitionSecret` |
+/// | 39–40 | PartFinal masking keys | `PartitionLocalMaskingKey`, `PartitionEphemeralMaskingKey` |
+/// | 41 | Security-domain sealing key | `SdSealing` |
 #[repr(u8)]
 #[open_enum]
 #[derive(Clone, Copy, Debug)]
@@ -200,6 +204,19 @@ pub enum HsmVaultKeyKind {
     /// implicitly revoked (along with everything it masked) on the next
     /// partition reset.
     PartitionEphemeralMaskingKey = 40,
+
+    /// Security-domain sealing key — ECC-P384 private key.
+    ///
+    /// Generated on device by the TBOR `SdSealingKeyGen` handler for ECDH
+    /// key agreement (ECIES-style seal / unseal).  The private half is
+    /// **not** stored on-device: it is returned to the caller masked under
+    /// the requested scope's masking key, and this kind is recorded only
+    /// as the masked blob's `key_kind` metadata.  Tagged with the caller's
+    /// requested [`HsmKeyScope`] (currently `Ephemeral` or `Local`;
+    /// `SecurityDomain` is not yet supported) via its attribute `scope`
+    /// field.  Represented as the 48-byte raw private scalar, mirroring
+    /// [`PartitionTrustAnchor`](Self::PartitionTrustAnchor).
+    SdSealing = 41,
 }
 
 /// Key scope: the lifecycle / visibility domain a vault key belongs

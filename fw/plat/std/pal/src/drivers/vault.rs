@@ -102,6 +102,7 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         // PartFinal AES-256-GCM masking keys (v2 AEAD envelope).
         HsmVaultKeyKind::PartitionLocalMaskingKey
         | HsmVaultKeyKind::PartitionEphemeralMaskingKey => 32,
+        HsmVaultKeyKind::SdSealing => 48,
         // SessionEx is length-discriminated by session type
         // (PlainText=120, Authenticated=216); reported as variable
         // length, same handling as VarLenHmac*.
@@ -585,6 +586,7 @@ mod tests {
             (HsmVaultKeyKind::UniquePartitionSecret, 48),
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
+            (HsmVaultKeyKind::SdSealing, 48),
         ];
         for &(kind, expected) in cases {
             assert_eq!(

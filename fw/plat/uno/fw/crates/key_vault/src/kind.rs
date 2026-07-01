@@ -82,7 +82,7 @@ impl KeyLen {
 /// and var-HMAC min/max. `SessionEx` is length-discriminated by session
 /// type (PlainText=120, Authenticated=216) and modelled as variable;
 /// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
-static KIND_LEN: [KeyLen; 41] = [
+static KIND_LEN: [KeyLen; 42] = [
     /* 0  Free                         */ KeyLen::Invalid,
     /* 1  Rsa2kPublic                  */ KeyLen::Fixed(260),
     /* 2  Rsa3kPublic                  */ KeyLen::Fixed(388),
@@ -124,6 +124,7 @@ static KIND_LEN: [KeyLen; 41] = [
     /* 38 UniquePartitionSecret */ KeyLen::Fixed(48),
     /* 39 PartitionLocalMaskingKey     */ KeyLen::Fixed(32),
     /* 40 PartitionEphemeralMaskingKey */ KeyLen::Fixed(32),
+    /* 41 SdSealing                    */ KeyLen::Fixed(48),
 ];
 
 /// Resolves the length contract for `kind` in O(1).
@@ -188,6 +189,7 @@ mod tests {
             (HsmVaultKeyKind::UniquePartitionSecret, 48),
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
+            (HsmVaultKeyKind::SdSealing, 48),
         ];
         for (kind, len) in table {
             assert_eq!(key_len(kind), Ok(KeyLen::Fixed(len)), "{kind:?}");
@@ -201,7 +203,7 @@ mod tests {
 
     #[test]
     fn unknown_discriminant_is_invalid_key_type() {
-        // 200 is well outside the named 0..=40 range.
+        // 200 is well outside the named 0..=41 range.
         assert_eq!(key_len(HsmVaultKeyKind(200)), Err(HsmError::InvalidKeyType));
     }
 

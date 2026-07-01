@@ -276,6 +276,11 @@ pub enum TborStatus {
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
 
+    /// A command was asked to operate on a `HsmKeyScope` whose backing
+    /// key material does not yet exist (mirror of
+    /// `HsmError::UnsupportedKeyScope`).
+    UnsupportedKeyScope = 0x08700102,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed (mirror of `HsmError::IoChannelInvalidOobLen`).
     IoChannelInvalidOobLen = 0x08700104,
