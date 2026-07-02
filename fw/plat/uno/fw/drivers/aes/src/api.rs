@@ -290,8 +290,10 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
 
     /// Wake the driver on AES completion.
     ///
-    /// Call from the `AES_DONE` IRQ handler (interrupt mode) or the
-    /// main poll loop (polling mode).
+    /// Call from the `AES_DONE` or `AES_ERROR` IRQ handler (interrupt
+    /// mode) or the main poll loop (polling mode). The engine raises
+    /// exactly one of the two vectors per command completion; both are
+    /// serviced here.
     pub fn wake(&self) {
         let status = AES.status.get();
         let flags = status & STATUS_FLAGS_MASK;

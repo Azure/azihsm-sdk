@@ -392,8 +392,10 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
 
     /// Wake the driver on SHA completion.
     ///
-    /// Call from the `SHA_DONE` IRQ handler (interrupt mode) or the main
-    /// poll loop (polling mode).
+    /// Call from the `SHA_DONE` or `SHA_ERROR` IRQ handler (interrupt
+    /// mode) or the main poll loop (polling mode). The engine raises
+    /// exactly one of the two vectors per command completion; both are
+    /// serviced here.
     pub fn wake(&self) {
         let status = SHA.status.get();
         let flags = status & STATUS_FLAGS_MASK;

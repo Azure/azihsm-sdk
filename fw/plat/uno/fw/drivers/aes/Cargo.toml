@@ -11,7 +11,6 @@ doctest = false
 test = false
 
 [dependencies]
-cortex-m = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_ref = { workspace = true }
@@ -20,6 +19,7 @@ azihsm_fw_uno_error = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 bitfield-struct = { workspace = true }
+cortex-m = { workspace = true }
 embassy-sync = { workspace = true }
 tock-registers = { workspace = true }
 zerocopy = { features = ["derive"], workspace = true }
