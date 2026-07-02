@@ -526,8 +526,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_invalid_session_handle)
             unmasked_key.get_ptr()
         );
 
-         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-                 ASSERT_EQ(unmasked_key.get(), 0u);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
@@ -552,8 +552,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_masked_key_with_extra_trailing_byte)
             unmasked_key.get_ptr()
         );
 
-         ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
-                 ASSERT_EQ(unmasked_key.get(), 0u);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+        ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
@@ -616,8 +616,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_corrupted_first_byte)
             unmasked_key.get_ptr()
         );
 
-         ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
-                 ASSERT_EQ(unmasked_key.get(), 0u);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+        ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
