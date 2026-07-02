@@ -25,8 +25,10 @@ use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishResp;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
+use azihsm_session_ex_crypto::build_phase2_mac;
+use azihsm_session_ex_crypto::derive_param_key;
+use azihsm_session_ex_crypto::seal_seed_envelope;
 
-use super::crypto;
 use super::init::PendingHandshake;
 
 /// Active session state carried through downstream in-session tests.
@@ -64,13 +66,15 @@ impl SessionHandshake {
     /// returns the bytes regardless of whether the FW actually
     /// installed them — `PlainText` sessions discard them.
     pub fn derive_mac_tx_key(&self) -> Result<Vec<u8>, DdiError> {
-        crypto::derive_mac_tx_key(&self.exported)
+        azihsm_session_ex_crypto::derive_mac_tx_key(&self.exported)
+            .map_err(|_| DdiError::TborDecodeError)
     }
 
     /// Re-derive the authenticated-session MAC RX key
     /// (`SESSION_MAC_RX_LABEL`). See [`Self::derive_mac_tx_key`].
     pub fn derive_mac_rx_key(&self) -> Result<Vec<u8>, DdiError> {
-        crypto::derive_mac_rx_key(&self.exported)
+        azihsm_session_ex_crypto::derive_mac_rx_key(&self.exported)
+            .map_err(|_| DdiError::TborDecodeError)
     }
 }
 
@@ -93,13 +97,14 @@ impl core::fmt::Debug for SessionHandshake {
 /// MAC, tamper with it, and ship the result via
 /// [`session_open_finish_with_mac`].
 pub fn build_mac_fin(pending: &PendingHandshake) -> Result<[u8; 48], DdiError> {
-    crypto::build_phase2_mac(
+    build_phase2_mac(
         &pending.exported,
         pending.session_id,
         &pending.pk_init,
         &pending.pk_hsm,
         &pending.pk_resp,
     )
+    .map_err(|_| DdiError::TborDecodeError)
 }
 
 /// Generate a fresh 32-byte handshake seed.
@@ -130,9 +135,9 @@ pub fn session_open_finish_with_mac(
     pending: PendingHandshake,
     mac_fin: [u8; 48],
 ) -> Result<SessionHandshake, DdiError> {
-    let param_key = crypto::derive_param_key(&pending.exported)?;
+    let param_key = derive_param_key(&pending.exported).map_err(|_| DdiError::TborDecodeError)?;
     let seed = fresh_seed()?;
-    let envelope = crypto::seal_seed_envelope(&param_key, &seed)?;
+    let envelope = seal_seed_envelope(&param_key, &seed).map_err(|_| DdiError::TborDecodeError)?;
     let seed_envelope: [u8; SEED_ENVELOPE_LEN] = envelope
         .as_slice()
         .try_into()

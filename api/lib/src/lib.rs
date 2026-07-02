@@ -12,6 +12,8 @@ mod shared_types;
 pub mod traits;
 
 pub use algo::*;
+pub use azihsm_ddi_tbor_types::SessionType;
+pub use ddi::PartInitResult;
 pub use error::*;
 pub use op::*;
 pub use partition::*;

@@ -20,6 +20,7 @@ azihsm_ddi_interface.workspace = true
 azihsm_ddi_mbor_sim.workspace = true
 azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_mbor_types.workspace = true
+azihsm_session_ex_crypto.workspace = true
 minicbor = { features = ["derive"], workspace = true }
 parking_lot.workspace = true
 x509.workspace = true
