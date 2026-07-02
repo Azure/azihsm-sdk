@@ -39,3 +39,6 @@ test-threads = 1
 
 [profile.ci-provider-integration.junit]
 path = "junit.xml"
+
+[profile.ci-api.junit]
+path = "junit.xml"

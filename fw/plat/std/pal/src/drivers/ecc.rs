@@ -41,30 +41,8 @@ use azihsm_crypto::SignOp;
 use azihsm_crypto::VerifyOp;
 use azihsm_fw_hsm_pal_traits::*;
 
+use super::reverse_copy;
 use crate::worker::WorkerPool;
-
-// On-wire-format helpers
-//
-// The std PAL accepts inputs and produces outputs in the wire-LE
-// convention that real PKA hardware emits natively (`x_le || y_le`
-// for public keys, `r_le || s_le` for signatures, with P-521
-// components padded from 66 to 68 bytes per word).  The single
-// `reverse_copy` helper centralizes the BE↔LE byte reversal so the
-// `_le`-suffixed driver methods can stay free of byte-shuffling
-// boilerplate.
-
-/// Reverse-copy `src` into `dst[..src.len()]`.  Used for BE↔LE
-/// component swaps; the direction is symmetric.  Trailing pad bytes
-/// in `dst` (e.g. the 2-byte pad after a 66-byte P-521 coordinate
-/// inside a 68-byte word) are left untouched — callers that need
-/// them zeroed should pre-`fill(0)` the full `dst` slot.
-fn reverse_copy(dst: &mut [u8], src: &[u8]) {
-    let len = src.len();
-    debug_assert!(dst.len() >= len);
-    for (d, s) in dst[..len].iter_mut().zip(src.iter().rev()) {
-        *d = *s;
-    }
-}
 
 /// Std ECC driver — software ECC via OpenSSL with async worker dispatch.
 pub struct StdEcc {

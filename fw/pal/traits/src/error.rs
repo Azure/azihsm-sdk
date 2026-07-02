@@ -349,6 +349,20 @@ pub enum HsmError {
     /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
     /// carries the requested selector (SVN / owner id).
     SeedNotFound = 0x08700100,
+
+    // Firmware-internal diagnostic codes logged by the CPU fault and panic
+    // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
+    // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
+    // the DDI status range, and are emitted to the trace log only (never
+    // returned over the wire).
+    /// A Rust `panic!` reached the firmware panic handler.
+    Panic = 0x08F00001,
+    /// A CPU `HardFault` exception was taken (an escalated bus/usage/mem
+    /// fault, or a stack overflow).
+    HardFault = 0x08F00002,
+    /// An exception or interrupt with no dedicated handler reached the
+    /// `DefaultHandler`.
+    UnexpectedException = 0x08F00003,
 }
 
 impl core::fmt::Debug for HsmError {

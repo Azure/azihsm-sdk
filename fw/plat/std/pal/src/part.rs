@@ -419,6 +419,15 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     fn part_prop_get_u16(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<u16> {
+        // The partition's RSA-2048 unwrapping key is provisioned lazily
+        // the first time its id is read.  Real PKA hardware generates it
+        // in the background from partition init (reporting
+        // `PendingKeyGeneration` until ready); the emulator generates it
+        // synchronously here so that only a GetUnwrappingKey request pays
+        // the (expensive) keygen cost, never partition enable.
+        if id == PartPropId::RSA_UNWRAPPING_KEY_ID {
+            self.provision_unwrapping_key(io.pid())?;
+        }
         self.prop_get_u16(io, id)
     }
 
@@ -522,6 +531,53 @@ impl StdHsmPal {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn active_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
         self.part_if_mut(pid, |s| s != PartState::Unallocated)
+    }
+
+    /// Provision the partition's RSA-2048 unwrapping key on demand,
+    /// generating it if it does not yet exist (emulator only).
+    ///
+    /// Real PKA hardware generates this key in the background from
+    /// partition init and reports [`HsmError::PendingKeyGeneration`]
+    /// until it is ready.  The emulator instead generates it lazily and
+    /// synchronously the first time the
+    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID)
+    /// property is read, so only a GetUnwrappingKey request pays the
+    /// keygen cost (never partition enable).  The whole routine is
+    /// `await`-free, so on the single-threaded executor it runs
+    /// atomically — concurrent reads cannot race to generate two keys.
+    ///
+    /// Only the private key is persisted (as DER — the std PAL's
+    /// representation; real firmware stores raw key material); the public
+    /// key is derived from it on demand (matching the reference
+    /// firmware).
+    fn provision_unwrapping_key(&self, pid: HsmPartId) -> HsmResult<()> {
+        if self.active_part(pid)?.unwrapping_key_id.is_some() {
+            return Ok(());
+        }
+
+        let pk = RsaPrivateKey::generate(256).map_err(|_| HsmError::RsaGenerateError)?;
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
+        let mut priv_buf = vec![0u8; priv_len];
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_unwrap(true);
+        let result = (|| {
+            pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+                .map_err(|_| HsmError::RsaToDerError)?;
+
+            let entry = self.active_part_mut(pid)?;
+            let kid = entry.vault.create(
+                &priv_buf[..priv_len],
+                HsmVaultKeyKind::Rsa2kPrivate,
+                None,
+                attrs,
+            )?;
+            entry.unwrapping_key_id = Some(kid);
+            Ok(())
+        })();
+        priv_buf.fill(0);
+        result
     }
 
     /// Borrow a partition that is actively serving host traffic.
