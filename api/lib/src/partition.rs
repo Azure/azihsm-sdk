@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
+use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::*;
 use resiliency_macro::resiliency_open_part;
 use tracing::*;
@@ -566,6 +567,27 @@ impl HsmPartition {
         ))
     }
 
+    /// Opens a session over the TBOR transport (security-domain).
+    ///
+    /// Runs the two-phase `open_session_ex` HPKE handshake and wraps
+    /// the result in an [`HsmSession`] (`SessionKind::Ver2`).
+    ///
+    /// # Arguments
+    ///
+    /// * `api_rev` - The negotiated API revision.
+    /// * `psk_id` - PSK identity selecting the role (0 = CO, 1 = CU).
+    /// * `session_type` - Channel integrity profile to pin.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn open_session_ex(
+        &self,
+        api_rev: HsmApiRev,
+        psk_id: u8,
+        session_type: SessionType,
+    ) -> HsmResult<HsmSession> {
+        let result = ddi::open_session_ex(self, api_rev, psk_id, session_type)?;
+        Ok(HsmSession::new_ex(api_rev, self.clone(), result))
+    }
+
     /// Restores partition state after a resiliency event.
     ///
     /// Called from the retry loops (`open_session`, `key_gen`, `key_op`)
@@ -1009,7 +1031,12 @@ impl HsmPartition {
         // Read session material directly from the session itself.
         let sess_id = session.id();
         let rev = session.api_rev();
-        let seed = session.seed();
+        // V2 sessions have no V1 reopen path: their stale state must
+        // be re-established via a fresh handshake. Fail fast rather than
+        // attempting a `reopen_session` with bogus material.
+        let Some(seed) = session.seed() else {
+            return Err(HsmError::SessionNeedsRenegotiation);
+        };
         let bmk_session = session.bmk_session();
 
         // Hold the session write lock across the DDI call so that only

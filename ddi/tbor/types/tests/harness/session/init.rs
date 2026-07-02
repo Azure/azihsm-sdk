@@ -25,9 +25,15 @@ use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitResp;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
+use azihsm_session_ex_crypto::build_hpke_info;
+use azihsm_session_ex_crypto::default_psk;
+use azihsm_session_ex_crypto::ec_pub_from_sec1;
+use azihsm_session_ex_crypto::generate_vm_ephemeral;
+use azihsm_session_ex_crypto::receive_exported;
+use azihsm_session_ex_crypto::verify_phase1_mac;
+use azihsm_session_ex_crypto::VmEphemeralKey;
 
 use super::crypto;
-use super::crypto::VmEphemeralKey;
 
 /// State carried between Phase 1 and Phase 2 of the handshake.
 /// The caller may construct this directly to drive negative-path
@@ -135,11 +141,12 @@ pub fn session_open_init_with_options(
 ) -> Result<PendingHandshake, DdiError> {
     let (sk_init, pk_init_sec1, pk_init_key) = match opts.ephemeral {
         Some((sk, pk_sec1)) => {
-            let pk = crypto::ec_pub_from_sec1(&pk_sec1)?;
+            let pk = ec_pub_from_sec1(&pk_sec1).map_err(|_| DdiError::InvalidParameter)?;
             (sk, pk_sec1, pk)
         }
         None => {
-            let VmEphemeralKey { sk, pk_sec1, pk } = crypto::generate_vm_ephemeral()?;
+            let VmEphemeralKey { sk, pk_sec1, pk } =
+                generate_vm_ephemeral().map_err(|_| DdiError::InvalidParameter)?;
             (sk, pk_sec1, pk)
         }
     };
@@ -155,10 +162,10 @@ pub fn session_open_init_with_options(
     let mut cookie = None;
     let resp: TborSessionOpenInitResp = dev.exec_op_tbor(&req, &mut cookie)?;
 
-    let info = crypto::build_hpke_info(opts.psk_id, opts.session_type.to_u8(), opts.suite_id);
-    let default_psk = crypto::default_psk(opts.psk_id)?;
+    let info = build_hpke_info(opts.psk_id, opts.session_type.to_u8(), opts.suite_id);
+    let default_psk = default_psk(opts.psk_id).map_err(|_| DdiError::InvalidParameter)?;
     let psk: &[u8] = opts.psk.unwrap_or(default_psk.as_slice());
-    let exported = crypto::receive_exported(
+    let exported = receive_exported(
         &sk_init,
         &pk_init_key,
         &pk_hsm_key,
@@ -166,16 +173,18 @@ pub fn session_open_init_with_options(
         &info,
         psk,
         &[opts.psk_id],
-    )?;
+    )
+    .map_err(|_| DdiError::TborDecodeError)?;
 
-    crypto::verify_phase1_mac(
+    verify_phase1_mac(
         &exported,
         resp.session_id,
         &pk_init_sec1,
         &pk_hsm_sec1,
         &resp.pk_resp,
         &resp.mac_resp,
-    )?;
+    )
+    .map_err(|_| DdiError::TborDecodeError)?;
 
     Ok(PendingHandshake {
         session_id: resp.session_id,

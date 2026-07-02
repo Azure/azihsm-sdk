@@ -22,12 +22,26 @@ use super::*;
 ///
 /// # Security
 ///
-/// The key material is stored in a `Vec<u8>` which should be properly zeroized
-/// when dropped to prevent key material from remaining in memory.
+/// The key material is stored in a `Vec<u8>` that is zeroized on drop
+/// (see the [`Drop`] impl) so key bytes do not remain in process memory
+/// after the key is released.
 #[derive(Clone)]
 pub struct OsslAesKey {
     /// Raw key bytes
     key: Vec<u8>,
+}
+
+/// Wipes the raw key bytes when the key is dropped.
+///
+/// `OsslAesKey` holds secret key material in a heap `Vec<u8>`; without
+/// this the bytes would linger in process memory after the key (and any
+/// containing structure, e.g. a session's per-session wrap key) is
+/// dropped. Each `Clone` owns its own buffer, so every copy is wiped
+/// independently.
+impl Drop for OsslAesKey {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.key);
+    }
 }
 
 /// Marks this type as a cryptographic key.

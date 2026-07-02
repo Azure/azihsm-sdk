@@ -25,9 +25,12 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - uses: ./.github/actions/ubuntu-setup
+      id: ubuntu-setup
     - name: Install nightly rustfmt
+      if: steps.ubuntu-setup.outputs.cache-hit == 'true'
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
+      if: steps.ubuntu-setup.outputs.cache-hit == 'true'
       run: cargo xtask rustup-component-add --component clippy
     - name: Run Copyright
       run: cargo xtask precheck --copyright
@@ -133,9 +136,12 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - uses: ./.github/actions/windows-setup
+      id: windows-setup
     - name: Install nightly rustfmt
+      if: steps.windows-setup.outputs.cache-hit == 'true'
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
+      if: steps.windows-setup.outputs.cache-hit == 'true'
       run: cargo xtask rustup-component-add --component clippy
     - name: Run Copyright
       run: cargo xtask precheck --copyright

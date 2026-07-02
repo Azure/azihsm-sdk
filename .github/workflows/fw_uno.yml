@@ -40,13 +40,31 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
 
-    - name: Setup (full)
+    - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
-      run: cargo xtask setup
+      run: cargo xtask precheck --setup
 
-    - name: Setup (skip-audit)
-      if: steps.cargo-cache.outputs.cache-hit == 'true' 
-      run: cargo xtask setup --skip-audit
+    - name: Add required cross-compilation targets
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: |
+        rustup target add thumbv7em-none-eabi
+        rustup +nightly target add thumbv7em-none-eabi
+
+    - name: Install nightly rustfmt
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+
+    - name: Install clippy
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component clippy
+
+    - name: Install nightly clippy
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component clippy --toolchain nightly
+
+    - name: Install nightly rust-src
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component rust-src --toolchain nightly
 
     - name: Run reggen check
       run: cargo xtask precheck --reggen
