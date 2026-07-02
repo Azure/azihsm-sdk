@@ -157,6 +157,8 @@ impl Xtask for IntegrationTest {
                     filterset: None,
                     profile: Some("ci-provider-integration".to_string()),
                     exclude: vec![],
+                    test: None,
+                    filter: vec![],
                 };
 
                 if self.coverage {
