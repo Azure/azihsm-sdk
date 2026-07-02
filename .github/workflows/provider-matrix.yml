@@ -284,7 +284,7 @@ jobs:
       - name: Run cli suite with coverage
         if: ${{ matrix.cov }}
         run: |
-          cargo xtask precheck --coverage --skip-clean --features integration \
+          cargo xtask precheck --coverage --features integration \
             -p provider-integration-tests-cli \
             --profile ci-provider-integration
 
