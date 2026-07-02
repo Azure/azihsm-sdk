@@ -25,6 +25,7 @@
 
 mod aes_cbc;
 mod kdf;
+mod pka;
 mod vectors;
 
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -41,5 +42,8 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
     aes_cbc::run_aes_cbc(pal, io).await?;
     kdf::run_hkdf(pal, io).await?;
     kdf::run_kbkdf(pal, io).await?;
+    for engine in 0..pka::PKA_ENGINES {
+        pka::run_rsa_mod_exp_on_engine(pal, io, engine).await?;
+    }
     Ok(())
 }

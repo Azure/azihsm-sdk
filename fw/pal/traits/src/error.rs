@@ -345,6 +345,7 @@ pub enum HsmError {
     /// Distinct from [`HsmError::InvalidArg`], which signals a
     /// caller bug (unknown id, kind mismatch, etc.).
     PartPropNotFound = 0x087000FF,
+
     /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
     /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
     /// carries the requested selector (SVN / owner id).
