@@ -362,7 +362,7 @@ impl OsslRsaHashSignAlgo {
     ///
     /// # Returns
     ///
-    /// A new `OsslRsaSigning` instance configured for PKCS#1 v1.5 padding.
+    /// A new `OsslRsaHashSignAlgo` instance configured for PKCS#1 v1.5 padding.
     ///
     /// # Security Considerations
     ///
@@ -389,7 +389,7 @@ impl OsslRsaHashSignAlgo {
     ///
     /// # Returns
     ///
-    /// A new `OsslRsaSigning` instance configured for PSS padding.
+    /// A new `OsslRsaHashSignAlgo` instance configured for PSS padding.
     ///
     /// # Security Considerations
     ///

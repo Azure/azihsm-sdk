@@ -81,15 +81,14 @@ impl<'a> OsslHkdfAlgo<'a> {
     ///
     /// # Arguments
     ///
-    /// * `hash` - The hash instance specifying the algorithm to use for HKDF
     /// * `mode` - The HKDF mode (Extract, Expand, or ExtractAndExpand)
+    /// * `hash` - The hash instance specifying the algorithm to use for HKDF
     /// * `salt` - Optional salt for Extract phase (recommended for Extract modes)
     /// * `info` - Optional context/application-specific info for Expand phase
-    /// * `derived_length` - Desired output length (defaults to hash output size)
     ///
     /// # Returns
     ///
-    /// A new `OsslHkdf` instance configured for the specified parameters.
+    /// A new `OsslHkdfAlgo` instance configured for the specified parameters.
     pub fn new(
         mode: HkdfMode,
         hash: &'a HashAlgo,

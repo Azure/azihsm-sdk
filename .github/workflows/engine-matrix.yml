@@ -103,9 +103,10 @@ jobs:
             --features engine --all-targets -- -D warnings
 
       # cargo-nextest isn't in the base image and building it from source is
-      # unreliable here; fetch the prebuilt binary.
+      # unreliable here; fetch the prebuilt binary, pinned to the version xtask
+      # installs elsewhere (xtask/src/setup.rs CARGO_NEXTEST_VERSION).
       - name: Install cargo-nextest
-        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+        run: curl -LsSf https://get.nexte.st/0.9.132/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
       # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
       # only on the 1.1 FFI, so they run here. The azihsm_engine mock lifecycle

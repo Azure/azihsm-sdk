@@ -16,9 +16,9 @@
 //!
 //! # Implementation Strategy
 //!
-//! The module uses a generic approach with the `OsslHmacKey<Algo>` type that wraps
-//! algorithm-specific implementations. Each algorithm implements the `OsslHmacAlgo`
-//! trait to provide its OpenSSL `MessageDigest` configuration and key size limits.
+//! The module provides the `OsslHmacAlgo` type, which drives an OpenSSL
+//! `Signer` configured with the selected `MessageDigest` to compute and
+//! verify HMACs.
 //!
 //! # Platform Integration
 //!
