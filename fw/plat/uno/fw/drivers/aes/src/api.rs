@@ -303,7 +303,10 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
         // STATUS (AES_BASE + 0x4) is read-only (RO32): the flag bits auto-clear
         // when the next command doorbell sets BUSY. Writing it bus-faults the
         // engine and hard-faults the CPU, so only clear the NVIC pending bit.
+        // Clear BOTH Done and Error: the engine fires exactly one of them per
+        // completion and this handler services either vector (mirrors UPKA).
         Nvic::unpend(Interrupt::AES_DONE);
+        Nvic::unpend(Interrupt::AES_ERROR);
 
         self.state.with(|s| {
             // The active slot is at `active`.
@@ -480,6 +483,7 @@ impl<const DEPTH: usize> AesExclusive<'_, DEPTH> {
                 // STATUS is read-only; do not write it (bus-faults). It
                 // auto-clears on the next command doorbell.
                 Nvic::unpend(Interrupt::AES_DONE);
+                Nvic::unpend(Interrupt::AES_ERROR);
                 return Ok(flags as u8);
             }
         }
@@ -488,6 +492,11 @@ impl<const DEPTH: usize> AesExclusive<'_, DEPTH> {
 
 fn submit_cmd(slot: usize) {
     let desc_addr = IO_GSRAM_BASE + AES_CMD_OFFSET + (slot as u32) * AES_CMD_STRIDE;
+    // Ensure the descriptor stores to GSRAM are globally visible before the
+    // doorbell triggers the engine's AXI descriptor fetch. Mirrors the
+    // GDMA/IIC/OIC/IPC drivers and the reference AES driver's dmb(); without
+    // it the engine can fetch a stale descriptor and raise ERROR_BUS.
+    cortex_m::asm::dmb();
     AES.command.set(desc_addr);
 }
 

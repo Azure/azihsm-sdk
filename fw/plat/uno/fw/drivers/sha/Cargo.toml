@@ -11,6 +11,7 @@ doctest = false
 test = false
 
 [dependencies]
+cortex-m = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_ref = { workspace = true }
