@@ -31,6 +31,22 @@ pub mod interrupt {
         #[allow(non_camel_case_types)]
         SHA_DONE = 56,
 
+        /// AES error (IRQ25, ISPR0 bit 25). Mutually exclusive with
+        /// `AES_DONE`: the engine fires exactly one of Done/Error on every
+        /// command completion (see aes.rdl). A completion that also trips
+        /// `NOT_OWNER` is reported here, so this vector MUST be serviced or
+        /// the awaiter hangs.
+        #[allow(non_camel_case_types)]
+        AES_ERROR = 25,
+
+        /// SHA error (IRQ24, ISPR0 bit 24). Mutually exclusive with
+        /// `SHA_DONE`: the engine fires exactly one of Done/Error on every
+        /// command completion (see sha.rdl). A completion that also trips
+        /// `NOT_OWNER` is reported here, so this vector MUST be serviced or
+        /// the awaiter hangs.
+        #[allow(non_camel_case_types)]
+        SHA_ERROR = 24,
+
         /// PKA engine Done interrupts (IRQ32–47, ISPR1 bits 0–15).
         #[allow(non_camel_case_types)]
         UPKA_0_DONE = 32,

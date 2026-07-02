@@ -392,8 +392,10 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
 
     /// Wake the driver on SHA completion.
     ///
-    /// Call from the `SHA_DONE` IRQ handler (interrupt mode) or the main
-    /// poll loop (polling mode).
+    /// Call from the `SHA_DONE` or `SHA_ERROR` IRQ handler (interrupt
+    /// mode) or the main poll loop (polling mode). The engine raises
+    /// exactly one of the two vectors per command completion; both are
+    /// serviced here.
     pub fn wake(&self) {
         let status = SHA.status.get();
         let flags = status & STATUS_FLAGS_MASK;
@@ -404,8 +406,11 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
         // STATUS (SHA_BASE + 0x4) is read-only (RO32): the COMPLETE/ERROR bits
         // auto-clear when the next command doorbell sets BUSY. Writing it
         // bus-faults the engine and hard-faults the CPU, so only clear the
-        // NVIC pending bit here.
+        // NVIC pending bit here. Clear BOTH Done and Error: the engine
+        // fires exactly one of them per completion and this handler
+        // services either vector (mirrors the UPKA done/error wake path).
         Nvic::unpend(Interrupt::SHA_DONE);
+        Nvic::unpend(Interrupt::SHA_ERROR);
 
         self.state.with(|s| {
             if s.active != s.tail {
@@ -579,6 +584,7 @@ impl<const DEPTH: usize> ShaExclusive<'_, DEPTH> {
                 // STATUS is read-only; do not write it (bus-faults). It
                 // auto-clears on the next command doorbell.
                 Nvic::unpend(Interrupt::SHA_DONE);
+                Nvic::unpend(Interrupt::SHA_ERROR);
                 return Ok(flags as u8);
             }
         }
@@ -587,6 +593,11 @@ impl<const DEPTH: usize> ShaExclusive<'_, DEPTH> {
 
 fn submit_cmd(slot: usize) {
     let desc_addr = IO_GSRAM_BASE + SHA_CMD_OFFSET + (slot as u32) * SHA_CMD_STRIDE;
+    // Ensure the descriptor stores to GSRAM are globally visible before the
+    // doorbell triggers the engine's AXI descriptor fetch. Mirrors the
+    // GDMA/IIC/OIC/IPC drivers and the reference SHA driver's dmb(); without
+    // it the engine can fetch a stale descriptor and raise ERROR_BUS.
+    cortex_m::asm::dmb();
     SHA.command.set(desc_addr);
 }
 

@@ -51,3 +51,21 @@ pub mod oic;
 pub mod rsa;
 pub mod session;
 pub mod vault;
+
+/// Reverse-copy `src` into `dst[..src.len()]`.
+///
+/// Centralizes the big-endian↔little-endian byte reversal shared by the
+/// crypto drivers: their wire convention is little-endian (what real PKA
+/// hardware emits natively), while the OpenSSL backend produces
+/// big-endian components.  The reversal is symmetric, so the same helper
+/// serves both directions.  Trailing pad bytes in `dst` beyond
+/// `src.len()` (e.g. the 2-byte pad after a 66-byte P-521 coordinate
+/// inside a 68-byte word) are left untouched — callers that need them
+/// zeroed should pre-`fill(0)` the full `dst` slot.
+pub(crate) fn reverse_copy(dst: &mut [u8], src: &[u8]) {
+    let len = src.len();
+    debug_assert!(dst.len() >= len);
+    for (d, s) in dst[..len].iter_mut().zip(src.iter().rev()) {
+        *d = *s;
+    }
+}
