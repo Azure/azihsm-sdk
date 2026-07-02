@@ -135,7 +135,7 @@ pub fn session_open_finish_with_mac(
     pending: PendingHandshake,
     mac_fin: [u8; 48],
 ) -> Result<SessionHandshake, DdiError> {
-    let param_key = derive_param_key(&pending.exported).map_err(|_| DdiError::InvalidParameter)?;
+    let param_key = derive_param_key(&pending.exported).map_err(|_| DdiError::TborDecodeError)?;
     let seed = fresh_seed()?;
     let envelope = seal_seed_envelope(&param_key, &seed).map_err(|_| DdiError::TborDecodeError)?;
     let seed_envelope: [u8; SEED_ENVELOPE_LEN] = envelope
