@@ -114,8 +114,7 @@ fn test_hmac_requires_sign_permission_smoke() {
             // must be rejected.
             let (secret_id, _) = create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::Session);
-            //hmac derive should fail if the key type is not supported by HKDF in this layer
-            let _err = helper_hkdf_derive(
+            let derived = helper_hkdf_derive(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
@@ -128,7 +127,14 @@ fn test_hmac_requires_sign_permission_smoke() {
                 key_props,
                 Some(32),
             )
-            .expect_err("derive-only var-HMAC key should not be created");
+            .expect("derive-only var-HMAC key should be created");
+
+            let err = hmac_msg(dev, session_id, derived.data.key_id)
+                .expect_err("MAC with a derive-only key must be rejected");
+            assert!(
+                matches!(err, DdiError::DdiStatus(DdiStatus::InvalidPermissions)),
+                "expected InvalidPermissions, got {err:?}"
+            );
         },
     );
 }
