@@ -18,9 +18,10 @@
 //!
 //! # Status
 //!
-//! AES-256-CBC is implemented as the initial test. Further tests (HKDF, KBKDF,
-//! per-engine ECDSA / ECDH / RSA, and the RNG/DRBG FW-mode KAT) extend the
-//! [`SelfTest`] enum and the [`run_one`] dispatch.
+//! AES-256-CBC, HKDF, and KBKDF are implemented. Further tests (per-engine
+//! ECDSA / ECDH / RSA, and the RNG/DRBG FW-mode KAT) are appended to
+//! [`run_pre_op`] as they are added — each is a direct call, with per-PKA-engine
+//! tests wrapped in a `for engine in 0..PKA_ENGINES` loop.
 
 mod aes_cbc;
 mod kdf;
@@ -31,48 +32,6 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use crate::UnoHsmIo;
 use crate::UnoHsmPal;
 
-/// Identifies a single cryptographic algorithm self-test.
-// Variants beyond `AesCbc` (and their constructors) land with the boot gate
-// and per-engine tests in a later milestone.
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[non_exhaustive]
-pub enum SelfTest {
-    /// AES-256-CBC known-answer test (HSM AES engine).
-    AesCbc,
-}
-
-/// One scheduled self-test unit: a [`SelfTest`] optionally pinned to a specific
-/// hardware engine instance.
-///
-/// `engine` is `None` for tests that are not engine-scoped (such as
-/// [`SelfTest::AesCbc`]); per-PKA-engine tests (added later) carry
-/// `Some(index)` to validate each engine individually.
-//
-// `engine` is read once per-engine tests are wired (later milestone).
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-pub struct SelfTestItem {
-    /// Which self-test to run.
-    pub test: SelfTest,
-    /// Target PKA engine instance, if the test is engine-scoped.
-    pub engine: Option<u8>,
-}
-
-/// Runs a single self-test item to completion.
-///
-/// The caller decides which items to run; `run_one` itself is
-/// context-agnostic.
-//
-// Wired into the boot gate and the periodic self-test task in a later
-// milestone; retained here as the dispatch entry point.
-#[allow(dead_code)]
-pub(crate) async fn run_one(pal: &UnoHsmPal, io: &UnoHsmIo, item: SelfTestItem) -> HsmResult<()> {
-    match item.test {
-        SelfTest::AesCbc => aes_cbc::run_aes_cbc(pal, io).await,
-    }
-}
-
 /// Runs the full pre-operational self-test suite.
 ///
 /// Returns `Err` on the first failing test, leaving it to the caller (the boot
@@ -81,5 +40,6 @@ pub(crate) async fn run_one(pal: &UnoHsmPal, io: &UnoHsmIo, item: SelfTestItem) 
 pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> {
     aes_cbc::run_aes_cbc(pal, io).await?;
     kdf::run_hkdf(pal, io).await?;
+    kdf::run_kbkdf(pal, io).await?;
     Ok(())
 }

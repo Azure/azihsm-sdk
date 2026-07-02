@@ -17,7 +17,6 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_trace::tracing::error;
-use azihsm_fw_uno_trace::tracing::info;
 
 use super::vectors::AES_CBC_256_KAT;
 use crate::UnoHsmIo;
@@ -45,10 +44,8 @@ pub(super) async fn run_aes_cbc(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()>
         let pt = scope.dma_alloc(v.plaintext.len())?;
         pt.copy_from_slice(v.plaintext);
         let ct_out = scope.dma_alloc_zeroed(v.ciphertext.len())?;
-        info!("selftest", "AES-CBC encrypt 64B: submit");
         pal.aes_cbc_enc_dec(io, AesOp::Encrypt, &*key, &*pt, &*iv, &mut *ct_out, None)
             .await?;
-        info!("selftest", "AES-CBC encrypt: engine ok");
         // KAT vectors are public, fixed test data — a plain slice comparison is
         // correct; no constant-time compare is needed.
         if &ct_out[..] != v.ciphertext {
@@ -59,16 +56,13 @@ pub(super) async fn run_aes_cbc(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()>
             );
             return Err(HsmError::SelfTestKatMismatch);
         }
-        info!("selftest", "AES-CBC encrypt: verified");
 
         // ── Decrypt: ciphertext → plaintext, verify against the vector ──
         let ct = scope.dma_alloc(v.ciphertext.len())?;
         ct.copy_from_slice(v.ciphertext);
         let pt_out = scope.dma_alloc_zeroed(v.plaintext.len())?;
-        info!("selftest", "AES-CBC decrypt 64B: submit");
         pal.aes_cbc_enc_dec(io, AesOp::Decrypt, &*key, &*ct, &*iv, &mut *pt_out, None)
             .await?;
-        info!("selftest", "AES-CBC decrypt: engine ok");
         if &pt_out[..] != v.plaintext {
             error!(
                 "selftest",
@@ -77,7 +71,6 @@ pub(super) async fn run_aes_cbc(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()>
             );
             return Err(HsmError::SelfTestKatMismatch);
         }
-        info!("selftest", "AES-CBC decrypt: verified");
 
         Ok::<(), HsmError>(())
     })
