@@ -112,6 +112,7 @@ impl Xtask for Coverage {
             command_args.push(&test_val);
         }
         if !self.filter.is_empty() {
+            command_args.push("--");
             command_args.extend(self.filter.iter().map(|s| s.as_str()));
         }
 
