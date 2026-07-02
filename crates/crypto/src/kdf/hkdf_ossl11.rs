@@ -182,8 +182,12 @@ impl<'a> DeriveOp for OsslHkdfAlgo<'a> {
             .derive(Some(&mut derived_key))
             .map_err(|_| CryptoError::HkdfDeriveError)?;
 
-        // Return only the actual derived bytes
-        GenericSecretKey::from_bytes(&derived_key[..derived_size])
+        // OpenSSL must fill the whole buffer; a short read would otherwise be
+        // returned as a silently truncated key.
+        if derived_size != derive_len {
+            return Err(CryptoError::HkdfDeriveError);
+        }
+        GenericSecretKey::from_bytes(&derived_key)
     }
 }
 

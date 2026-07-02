@@ -327,7 +327,7 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                     .map_err(|_| CryptoError::RsaSetPropertyError)?;
                 decrypter
                     .set_rsa_mgf1_md(hash.message_digest())
-                    .map_err(|_| CryptoError::RsaError)?;
+                    .map_err(|_| CryptoError::RsaSetPropertyError)?;
             }
             if let Some(label) = self.label {
                 decrypter

@@ -384,7 +384,7 @@ impl OsslRsaHashSignAlgo {
     ///
     /// # Arguments
     ///
-    /// * `hash_algo` - The hash algorithm to use (SHA-256 or stronger recommended)
+    /// * `hash` - The hash algorithm to use (SHA-256 or stronger recommended)
     /// * `salt_len` - The salt length in bytes (typically matches hash output length)
     ///
     /// # Returns
