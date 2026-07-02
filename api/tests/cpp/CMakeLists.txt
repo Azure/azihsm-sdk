@@ -67,6 +67,7 @@ set(SOURCE
     utils/resiliency_config.cpp
     partition_tests.cpp 
     session_tests.cpp 
+    session_ex_tests.cpp 
     handle_mgmt_tests.cpp
     multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp

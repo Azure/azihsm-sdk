@@ -139,3 +139,21 @@ pub enum HsmPotaEndorsementSource {
     /// TPM-generated endorsement.
     Tpm = 2,
 }
+
+/// Channel-level integrity profile for a security-domain (TBOR) session,
+/// selected by the caller when opening a session via `open_session_ex`.
+///
+/// API-layer mirror of `azihsm_ddi_tbor_types::SessionType`; kept as a
+/// separate `#[open_enum]` so the public API surface does not leak the
+/// DDI-layer wire type.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmSessionExType {
+    /// Channel transports bodies without per-message MAC.
+    PlainText = 0,
+
+    /// Channel transports bodies wrapped in an outer per-message HMAC
+    /// envelope.
+    Authenticated = 1,
+}

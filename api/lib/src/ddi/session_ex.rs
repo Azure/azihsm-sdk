@@ -49,6 +49,23 @@ impl From<SessionExCryptoError> for HsmError {
     }
 }
 
+impl TryFrom<HsmSessionExType> for SessionType {
+    type Error = HsmError;
+
+    /// Maps the API-layer [`HsmSessionExType`] onto the wire-level
+    /// [`SessionType`]. `HsmSessionExType` is an `#[open_enum]`, so an
+    /// unrecognized discriminant (anything beyond `PlainText` /
+    /// `Authenticated`) surfaces as [`HsmError::InvalidArgument`]
+    /// rather than silently mapping to a default channel profile.
+    fn try_from(session_type: HsmSessionExType) -> Result<Self, Self::Error> {
+        match session_type {
+            HsmSessionExType::PlainText => Ok(SessionType::PlainText),
+            HsmSessionExType::Authenticated => Ok(SessionType::Authenticated),
+            _ => Err(HsmError::InvalidArgument),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct PendingHandshake {
     /// Reserved session identifier returned by the FW.
@@ -131,13 +148,16 @@ pub(super) fn fetch_pk_hsm(
 ///
 /// # Errors
 ///
-/// Propagates transport-specific failures from the handshake.
+/// Returns [`HsmError::InvalidArgument`] when `session_type` is not a
+/// recognized [`HsmSessionExType`] value; otherwise propagates
+/// transport-specific failures from the handshake.
 pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
-    session_type: SessionType,
+    session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
+    let session_type = SessionType::try_from(session_type)?;
     let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
     open_session_ex_finish(partition, pending)
 }

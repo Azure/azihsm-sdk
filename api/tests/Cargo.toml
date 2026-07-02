@@ -25,6 +25,7 @@ azihsm_crypto = { features = ["testvectors"], workspace = true }
 azihsm_resiliency_test_helpers.workspace = true
 hex.workspace = true
 libtest-mimic.workspace = true
+parking_lot.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-tree.workspace = true
@@ -32,6 +33,7 @@ x509.workspace = true
 
 [features]
 default = []
+emu = ["azihsm_api/emu"]
 mock = ["azihsm_api/mock"]
 res-test = ["azihsm_api/res-test", "dep:azihsm_res_test_dev"]
 
