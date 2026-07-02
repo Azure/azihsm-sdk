@@ -261,14 +261,14 @@ pub fn derive_param_key(exported: &[u8]) -> SessionExCryptoResult<AesKey> {
 
 /// Seal a 32-byte `seed` under `param_key` as a no-AAD AEAD-GCM
 /// envelope. Returns the exact `SEED_ENVELOPE_LEN`-byte wire blob that
-/// occupies the `seed_envelope` field of `TborOpenSessionFinishReq`.
+/// occupies the `seed_envelope` field of `TborSessionOpenFinishReq`.
 pub fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> SessionExCryptoResult<Vec<u8>> {
-    //check seed length
+    // Check seed length
     if seed.len() != SESSION_SEED_LEN {
         return Err(SessionExCryptoError::InvalidInput);
     }
 
-    //generate a random 12-byte IV and seal the seed under param_key with no AAD.
+    // Generate a random 12-byte IV and seal the seed under param_key with no AAD.
     let iv = Rng::rand_vec(12).map_err(|_| SessionExCryptoError::Crypto)?;
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, &[], seed, None)
         .map_err(|_| SessionExCryptoError::Crypto)?;

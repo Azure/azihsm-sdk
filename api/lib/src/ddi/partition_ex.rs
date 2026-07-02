@@ -144,7 +144,7 @@ fn seal_mach_seed_envelope(
 /// the wrong length or `part_policy` fails to decode, propagates
 /// [`HsmError::InternalError`] on a `mach_seed` seal failure, and
 /// surfaces DDI/device failures from the round-trip.
-pub(crate) fn init_part_ex(
+pub(crate) fn part_init_ex(
     partition: &HsmPartition,
     session_id: u16,
     param_key: &AesKey,
@@ -202,5 +202,101 @@ mod tests {
         assert_eq!(&aad[label_len..label_len + 2], &[0x34, 0x12]);
         assert!(aad[label_len + 2..].iter().all(|&b| b == 0));
         assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
+    }
+}
+
+#[cfg(all(test, feature = "emu"))]
+mod emu_tests {
+    use parking_lot::Mutex;
+
+    use super::*;
+    use crate::partition::HsmPartitionManager;
+
+    /// PSK id selecting the Crypto Officer role (`PartInit` is CO-only).
+    const CO: u8 = 0;
+
+    /// Serialises tests against the process-global FW emulator
+    /// singleton. `cargo-nextest` runs each test in its own process, but
+    /// this keeps a plain `cargo test` (single process, multi-threaded)
+    /// correct too.
+    static EMU_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Open the emu partition at its maximum revision, factory-reset it,
+    /// and bring up a Crypto-Officer V2 session ready for `PartInit`.
+    fn fresh_co_session() -> HsmSession {
+        let info = HsmPartitionManager::partition_info_list()
+            .into_iter()
+            .next()
+            .expect("emu backend should advertise a partition");
+        let rev = info
+            .api_rev_range
+            .expect("emu partition should report an api-rev range")
+            .max();
+        let part =
+            HsmPartitionManager::open_partition(&info.path, rev).expect("open emu partition");
+        part.reset().expect("factory-reset emu partition");
+        part.open_session_ex(rev, CO, SessionType::Authenticated)
+            .expect("open CO session")
+    }
+
+    /// Well-formed fixed-size inputs for the non-`part_policy` fields.
+    fn valid_inputs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        (
+            vec![0u8; MACH_SEED_LEN],
+            vec![0u8; POTA_THUMBPRINT_LEN],
+            vec![0u8; SATA_THUMBPRINT_LEN],
+        )
+    }
+
+    /// A wrong-length `part_policy` is rejected up front, before any
+    /// device round-trip.
+    #[test]
+    fn part_init_rejects_bad_part_policy_len() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let (mach_seed, pota, sata) = valid_inputs();
+        let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
+
+        let res = session.part_init_ex(&mach_seed, &bad_policy, &pota, &sata, None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// A wrong-length `pota_thumbprint` is rejected.
+    #[test]
+    fn part_init_rejects_bad_pota_thumbprint_len() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let (mach_seed, _pota, sata) = valid_inputs();
+        let policy = vec![0u8; PART_POLICY_LEN];
+        let bad_pota = vec![0u8; POTA_THUMBPRINT_LEN + 1];
+
+        let res = session.part_init_ex(&mach_seed, &policy, &bad_pota, &sata, None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// A wrong-length `sata_thumbprint` is rejected.
+    #[test]
+    fn part_init_rejects_bad_sata_thumbprint_len() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let (mach_seed, pota, _sata) = valid_inputs();
+        let policy = vec![0u8; PART_POLICY_LEN];
+        let bad_sata = vec![0u8; SATA_THUMBPRINT_LEN + 1];
+
+        let res = session.part_init_ex(&mach_seed, &policy, &pota, &bad_sata, None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// A present-but-wrong-length `sapota_thumbprint` is rejected.
+    #[test]
+    fn part_init_rejects_bad_sapota_thumbprint_len() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let (mach_seed, pota, sata) = valid_inputs();
+        let policy = vec![0u8; PART_POLICY_LEN];
+        let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
+
+        let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, Some(&bad_sapota));
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 }

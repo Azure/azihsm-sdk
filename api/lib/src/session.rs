@@ -141,7 +141,7 @@ impl HsmSession {
     /// alongside the unified `part_policy` and the POTA / SATA /
     /// optional SAPOTA thumbprints. Only valid on a V2 session; a V1
     /// session returns [`HsmError::InvalidSession`].
-    pub fn part_init(
+    pub fn part_init_ex(
         &self,
         mach_seed: &[u8],
         part_policy: &[u8],
@@ -151,7 +151,7 @@ impl HsmSession {
     ) -> HsmResult<PartInitResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Ver2 { param_key, .. } => ddi::init_part_ex(
+            SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
                 &inner.partition,
                 inner.id,
                 param_key,
