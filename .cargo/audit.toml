@@ -12,6 +12,13 @@
 # RUSTSEC-2026-0173: proc-macro-error2 - unmaintained. Pulled in transitively
 #   via defmt-macros -> defmt -> jiff -> env_logger. A build-time proc-macro
 #   crate only; not reachable in library or production code.
+# RUSTSEC-2026-0194, RUSTSEC-2026-0195: quick-xml 0.38.4 - XML-parsing DoS
+#   (quadratic run time / unbounded namespace allocation). Pulled in
+#   transitively via junit-parser -> xtask. Used only by `xtask` to parse the
+#   JUnit XML that xtask itself generates from nextest runs (trusted input, not
+#   attacker-controlled), never in library or production code. The fix is in
+#   quick-xml >=0.41, but junit-parser 1.5.0 (latest) pins `quick-xml = "^0.38"`
+#   so no upgrade is available yet.
 [advisories]
 ignore = [
   "RUSTSEC-2018-0015", # term - unmaintained (via lit)
@@ -19,4 +26,6 @@ ignore = [
   "RUSTSEC-2021-0145", # atty - potential unaligned read (via clap 2.x)
   "RUSTSEC-2024-0375", # atty - unmaintained (via clap 2.x)
   "RUSTSEC-2026-0173", # proc-macro-error2 - unmaintained (via defmt-macros)
+  "RUSTSEC-2026-0194", # quick-xml - XML DoS, xtask-only (via junit-parser)
+  "RUSTSEC-2026-0195", # quick-xml - XML DoS, xtask-only (via junit-parser)
 ]
