@@ -1,0 +1,91 @@
+name: Coverage
+
+on:
+  push:
+    branches: [ main, dev, fw-main ]
+  pull_request:
+    branches: [ main, dev, fw-main ]
+  merge_group:
+    branches: [ main, dev, fw-main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
+env:
+  CARGO_TERM_COLOR: always
+  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+
+jobs:
+
+  coverage_ubuntu:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run all mock tests with code coverage
+      id: test-mock-coverage
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-report-ubuntu
+        path: ./target/reports/
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  coverage_windows:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run all mock tests with code coverage
+      id: test-mock-coverage
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-report-windows
+        path: ./target/reports/
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1

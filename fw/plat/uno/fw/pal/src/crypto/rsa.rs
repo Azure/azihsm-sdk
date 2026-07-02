@@ -94,7 +94,7 @@ impl UnoHsmPal {
 }
 
 impl HsmRsa for UnoHsmPal {
-    async fn ras_gen_keypair(
+    async fn rsa_gen_keypair(
         &self,
         _io: &impl HsmIo,
         _key_size: HsmRsaKey,
@@ -127,6 +127,17 @@ impl HsmRsa for UnoHsmPal {
     ) -> HsmResult<()> {
         let upka_key_type = rsa_key_to_upka_key_type(key_size);
         self.pka.rsa_mod_exp_pub(upka_key_type, key, x, y).await
+    }
+
+    fn rsa_priv_pub_key(
+        &self,
+        _io: &impl HsmIo,
+        _priv_key: &DmaBuf,
+        _pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        // TODO: convert the raw vault-format RSA private key into the
+        // wire public key on Uno PKA (GetUnwrappingKey / RsaUnwrap).
+        Err(HsmError::UnsupportedCmd)
     }
 
     // ── PKCS#1 v1.5 encryption ─────────────────────────────────────

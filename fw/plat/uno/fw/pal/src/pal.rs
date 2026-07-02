@@ -152,11 +152,16 @@ fn wake_pka(pal: &UnoHsmPal, irq: u16) {
 /// distinguish between multiple IRQs routed to the same driver — used
 /// by [`wake_pka`] to derive the engine index from the IRQ.
 const WAKE_ENTRIES: &[(u16, WakeFn)] = &[
-    // Per-peripheral wakers — one IRQ per peripheral.
+    // Per-peripheral wakers. Most peripherals register a single IRQ, but
+    // AES and SHA each route two vectors (Done and Error) to the same
+    // driver wake handler — the engine fires exactly one of them per
+    // command completion.
     (Interrupt::IIC_ICQ as u16, |pal, irq| pal.iic.wake(irq)),
     (Interrupt::OIC_OCQ as u16, |pal, irq| pal.oic.wake(irq)),
     (Interrupt::AES_DONE as u16, |pal, _| pal.aes.wake()),
     (Interrupt::SHA_DONE as u16, |pal, _| pal.sha.wake()),
+    (Interrupt::AES_ERROR as u16, |pal, _| pal.aes.wake()),
+    (Interrupt::SHA_ERROR as u16, |pal, _| pal.sha.wake()),
     (Interrupt::GDMA_CQ as u16, |pal, irq| pal.gdma.wake(irq)),
     (Interrupt::INTC_IPC as u16, |pal, irq| pal.ipc.wake(irq)),
     // PKA done IRQs (32..=47) — `wake_pka` derives the engine index.

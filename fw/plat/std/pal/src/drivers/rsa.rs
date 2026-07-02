@@ -52,11 +52,65 @@ use azihsm_crypto::EncryptOp;
 use azihsm_crypto::KeyGenerationOp;
 use azihsm_crypto::PrivateKey;
 use azihsm_crypto::RsaEncryptAlgo;
+use azihsm_crypto::RsaKeyOp;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_fw_hsm_pal_traits::*;
 
 use crate::worker::WorkerPool;
+
+/// Fixed width (bytes) of the public exponent `e` in the raw wire
+/// public-key encoding (`n_le || e_le`).
+pub const RSA_PUB_EXP_WIRE_LEN: usize = 4;
+
+/// Serialize an RSA public-key handle into the raw wire form
+/// `n_le || e_le` — the little-endian modulus followed by a fixed
+/// 4-byte little-endian exponent, the raw layout the host's
+/// `DdiDerPublicKey` post-decode turns into DER.
+///
+/// The big-endian↔little-endian flip lives here in the driver (real
+/// PKA hardware is little-endian native; the OpenSSL backend produces
+/// big-endian components, reversed below).
+///
+/// Follows the query/alloc/use convention: pass `out = None` to query
+/// the wire length (`n_len + RSA_PUB_EXP_WIRE_LEN`) the caller must
+/// allocate, then `out = Some(buf)` to serialize.  Returns the wire
+/// length in both modes.
+pub fn rsa_pub_wire(pubk: &RsaPublicKey, out: Option<&mut [u8]>) -> HsmResult<usize> {
+    let n_len = pubk.n(None).map_err(|_| HsmError::RsaGenerateError)?;
+    let wire_len = n_len + RSA_PUB_EXP_WIRE_LEN;
+    // Query mode: report the buffer size the caller must allocate.
+    let Some(out) = out else {
+        return Ok(wire_len);
+    };
+    if out.len() < wire_len {
+        return Err(HsmError::RsaInvalidKeyLength);
+    }
+    // Modulus: big-endian -> little-endian into the leading `n_len`
+    // bytes.  `pubk` is derived from untrusted vault data, so guard the
+    // fixed-size scratch buffer against an out-of-range modulus length
+    // (e.g. a larger DER-imported modulus) rather than panicking on the
+    // slice.
+    const MAX_MODULUS_LEN: usize = 512; // RSA-4096
+    if n_len > MAX_MODULUS_LEN {
+        return Err(HsmError::RsaInvalidKeyLength);
+    }
+    let mut n_be = [0u8; MAX_MODULUS_LEN];
+    pubk.n(Some(&mut n_be[..n_len]))
+        .map_err(|_| HsmError::RsaGenerateError)?;
+    super::reverse_copy(&mut out[..n_len], &n_be[..n_len]);
+    // Exponent: right-align big-endian in the fixed wire field, then
+    // reverse the whole field to little-endian.
+    let e_len = pubk.e(None).map_err(|_| HsmError::RsaGenerateError)?;
+    if e_len > RSA_PUB_EXP_WIRE_LEN {
+        return Err(HsmError::RsaInvalidKeyLength);
+    }
+    let mut e_be = [0u8; RSA_PUB_EXP_WIRE_LEN];
+    pubk.e(Some(&mut e_be[RSA_PUB_EXP_WIRE_LEN - e_len..]))
+        .map_err(|_| HsmError::RsaGenerateError)?;
+    super::reverse_copy(&mut out[n_len..wire_len], &e_be);
+    Ok(wire_len)
+}
 
 /// Std RSA driver — software RSA via OpenSSL with async worker dispatch.
 ///
