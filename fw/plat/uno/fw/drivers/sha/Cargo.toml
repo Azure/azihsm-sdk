@@ -19,6 +19,7 @@ azihsm_fw_uno_error = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 bitfield-struct = { workspace = true }
+cortex-m = { workspace = true }
 embassy-sync = { workspace = true }
 tock-registers = { workspace = true }
 zerocopy = { features = ["derive"], workspace = true }

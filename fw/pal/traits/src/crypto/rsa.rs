@@ -191,7 +191,7 @@ pub trait HsmRsa {
     /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError)` — PKA / RNG failure or PCT failed (the key
     ///   pair is rejected).
-    async fn ras_gen_keypair(
+    async fn rsa_gen_keypair(
         &self,
         io: &impl HsmIo,
         key_size: HsmRsaKey,
@@ -256,6 +256,44 @@ pub trait HsmRsa {
         x: &DmaBuf,
         y: &mut DmaBuf,
     ) -> Result<(), HsmError>;
+
+    /// Derive the raw wire-format public key (`n_le || e_le`) from a
+    /// vault-stored RSA private key.
+    ///
+    /// Used to recover the public key of a vault-stored private key
+    /// (e.g. the partition unwrapping key) without persisting a
+    /// separate copy.
+    ///
+    /// `priv_key` is in the PAL's own vault representation — raw key
+    /// material on real PKA hardware, DER in the std/OpenSSL PAL — and
+    /// this method converts it into the wire form: the little-endian
+    /// modulus followed by a fixed 4-byte little-endian exponent (the
+    /// raw layout the host's `DdiDerPublicKey` post-decode turns into
+    /// DER).  The PAL owns the whole vault-format → wire-format
+    /// conversion, including any big-endian↔little-endian flip (real
+    /// PKA is little-endian native; an OpenSSL backend holds big-endian
+    /// components and reverses them).
+    ///
+    /// Follows the query/alloc/use convention: pass `pub_out = None` to
+    /// query the wire length the caller must allocate, then
+    /// `pub_out = Some(buf)` to serialize.
+    ///
+    /// # Returns
+    /// - `Ok(len)` — wire byte length (`modulus_len + 4`); in `Some`
+    ///   mode those bytes are written into `pub_out`.
+    /// - `Err(HsmError::InvalidArg)` — `priv_key` is not valid vault
+    ///   format.
+    /// - `Err(HsmError::RsaInvalidKeyLength)` — `pub_out` is too small
+    ///   or the derived public-key components do not fit the wire
+    ///   format.
+    /// - `Err(HsmError::RsaGenerateError)` — deriving or reading the
+    ///   public key failed for another reason.
+    fn rsa_priv_pub_key(
+        &self,
+        io: &impl HsmIo,
+        priv_key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
 
     /// PKCS#1 v1.5 encrypt (EME-PKCS1-v1_5).
     ///

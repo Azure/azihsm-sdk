@@ -69,6 +69,7 @@ enum Commands {
     Filt(filt::Filt),
     Audit(audit::Audit),
     Setup(setup::Setup),
+    RustupComponentAdd(rustup_component_add::RustupComponentAdd),
 }
 
 fn main() {
@@ -107,5 +108,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Filt(task) => task.run(ctx),
         Commands::Audit(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
+        Commands::RustupComponentAdd(task) => task.run(ctx),
     }
 }
