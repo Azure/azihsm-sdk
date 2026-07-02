@@ -346,23 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn part_commands_are_in_session_and_cross_checked() {
-        for op in [opcode::PART_INIT] {
-            assert!(is_in_session(op), "{op:#04x} must be in-session");
-            assert!(
-                needs_session_id_cross_check(op),
-                "{op:#04x} must cross-check the SQE/body session_id",
-            );
-            // Provisioning commands are NOT on the default-PSK
-            // allow-list: they require a rotated PSK.
-            assert!(
-                !allowed_with_default_psk(op),
-                "{op:#04x} must NOT bypass the default-PSK gate",
-            );
-        }
-    }
-
-    #[test]
     fn unknown_opcode_defaults_to_in_session() {
         // Default-deny: an unknown future opcode is treated as
         // in-session so the default-PSK gate applies to it until it

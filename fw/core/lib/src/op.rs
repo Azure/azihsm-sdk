@@ -203,11 +203,11 @@ impl SessionCtrl {
     /// session-open flow; the SQE carries no session id (the FW
     /// allocates a pending slot and returns its id in the response).
     ///
-    /// `OpenSessionFinish`, `ChangePsk`, and `PartInit`
-    /// reference the pending/active slot, so the SQE
-    /// must carry the slot's `session_id` (`InSession`).
-    /// `CloseSession` carries the slot id and is classified as `Close`
-    /// so the CQE flags signal the slot transition to the host.
+    /// `OpenSessionFinish`, `ChangePsk`, and `PartInit` reference the
+    /// pending/active slot, so the SQE must carry the slot's
+    /// `session_id` (`InSession`).  `CloseSession` carries the slot
+    /// id and is classified as `Close` so the CQE flags signal the
+    /// slot transition to the host.
     ///
     /// Unknown opcodes default to `NoSession` so that dispatch can
     /// surface `HsmError::UnsupportedCmd` from the handler layer
