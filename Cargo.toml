@@ -62,6 +62,7 @@ members = [
   "fw/plat/std/x509",
   "fw/plat/std/x509/gen",
   "plugins/ossl_engine/engine",
+  "plugins/ossl_engine/engine-resiliency",
   "plugins/ossl_engine/openssl-engine",
   "plugins/ossl_engine/openssl-sys-engine",
   "plugins/ossl_prov",

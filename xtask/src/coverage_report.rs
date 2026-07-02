@@ -68,15 +68,26 @@ impl Xtask for CoverageReport {
         }
 
         // collect all object paths to append to LLVM_COV_FLAGS
-        let mut all_obj_paths = self.additional_obj_paths.clone();
-        if let Some(native_obj_path) = &native_obj_path {
-            all_obj_paths.push(native_obj_path.to_string_lossy().to_string());
+        let mut all_obj_paths: Vec<path::PathBuf> = self
+            .additional_obj_paths
+            .iter()
+            .map(path::PathBuf::from)
+            .collect();
+        if let Some(native_obj_path) = native_obj_path {
+            all_obj_paths.push(native_obj_path);
         }
 
         // generate string to append to LLVM_COV_FLAGS
         let mut new_flags = String::new();
         for obj_path in &all_obj_paths {
-            new_flags.push_str(&format!("-object {obj_path} "));
+            if obj_path.is_file() {
+                new_flags.push_str(&format!("-object {} ", obj_path.display()));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Object file path does not exist: {}. Check that build artifacts are present.",
+                    obj_path.display()
+                ));
+            }
         }
 
         // append string to LLVM_COV_FLAGS env var

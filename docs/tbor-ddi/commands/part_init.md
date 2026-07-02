@@ -3,7 +3,7 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# PartInit (Opcode 0x30)
+# PartInit (Opcode 0x07)
 
 **Handler:** `fw/core/lib/src/ddi/tbor/part_init.rs`
 **Session:** InSession (Crypto Officer only)
@@ -27,7 +27,7 @@ Only **Crypto Officer** sessions may issue `PartInit`; CU callers
 receive `InvalidPermissions`.  The default-PSK gate ([README →
 Default-PSK gate](../README.md#default-psk-gate)) applies in the
 usual way: the caller's CO PSK must already have been rotated by
-[`ChangePsk`](./change_psk.md).
+[`PskChange`](./psk_change.md).
 
 ## Cryptographic pipeline
 
@@ -59,13 +59,14 @@ usual way: the caller's CO PSK must already have been rotated by
 6. **Commit:** vault-allocate the UMS (`PartitionUniqueMachineSecret`)
    and the PTA private key (`PartitionTrustAnchor`), then write the
    write-once partition fields `(pta_pub, pta_key_id, ums_key_id,
-   policy, pota_thumb)` and mark the partition `Initializing`.  All
+   policy, pota_thumb, sata_thumb, sapota_thumb)` and mark the partition
+   `Initializing`.  All
    commits are atomic — a failure before the final
    `part_mark_initializing` rolls back both vault entries.
 
 ## Request
 
-Wire layout: 4-byte header, four TOC entries, then the variable-length
+Wire layout: 4-byte header, six TOC entries, then the variable-length
 data section.
 
 ### TOC entries
@@ -76,9 +77,11 @@ spec](../../../fw/core/ddi/tbor/docs/spec.md).
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | CO session whose `param_key` wraps `mach_seed_envelope`; cross-checked against the SQE-carried session id. |
-| 8  | `mach_seed_envelope` | `varlen` (1..=160 B) | AEAD-GCM envelope (see below) carrying the 32-byte `mach_seed`. |
-| 12 | `part_policy` | `fixed` (167 B) | `PartPolicy` blob bound into the partition's attested state. |
-| 16 | `pota_thumbprint` | `fixed` (48 B) | SHA-384 thumbprint of the POTA certificate the partition is being provisioned under. |
+| 8  | `mach_seed_envelope` | `buffer` (fixed 100 B) | AEAD-GCM envelope (see below) carrying the 32-byte `mach_seed`. Length is pinned to exactly 100 B (`MACH_SEED_ENVELOPE_LEN`); a wrong length is rejected at decode. |
+| 12 | `part_policy` | `buffer` (fixed 484 B) | Unified `PartPolicy` blob bound into the partition's attested state. Length pinned to `PART_POLICY_LEN` (484 B); a wrong length is rejected at decode. |
+| 16 | `pota_thumbprint` | `buffer` (fixed 48 B) | SHA-384 thumbprint of the POTA certificate the partition is being provisioned under. |
+| 20 | `sata_thumbprint` | `buffer` (fixed 48 B) | SHA-384 thumbprint of the SATA certificate bound to the security domain. |
+| 24 | `sapota_thumbprint` | `buffer` (offset/len) | Optional SHA-384 thumbprint of the SAPOTA certificate. An **empty** field means absent; when present it is exactly 48 B. |
 
 ### `mach_seed_envelope` contents
 
@@ -135,7 +138,8 @@ back to the partition in the upcoming `FinalizePart` opcode.
 |---|---|
 | `InvalidPermissions` | Calling session is not Crypto Officer. |
 | `SessionNotFound` | `session_id` does not refer to an Active CO slot in the calling partition. |
-| `InvalidArg` | `mach_seed_envelope` length is 0 or > 160; decrypted plaintext length ≠ 32; AAD length on the envelope ≠ 32; `part_policy` fails schema validation. |
+| `TborInvalidFixedLength` | `mach_seed_envelope` is not exactly 100 B, or `part_policy` is not 484 B (rejected at decode before the handler runs). |
+| `InvalidArg` | Decrypted plaintext length ≠ 32; AAD length on the envelope ≠ 32; `part_policy` fails schema validation. |
 | `AeadEnvelopeAuthFailed` | Envelope AEAD-GCM tag verification failed (wrong `param_key`, tampering, or AAD **contents** do not match the expected layout / `session_id`). |
 | `PartStateInvalid` | Partition is not in `Enabled`; e.g. already `Initializing` or `Initialized` (write-once gate via `part_mark_initializing`). |
 | `PtaKeyAlreadySet` / `UmsKeyAlreadySet` | A prior `PartInit` already committed PTA or UMS material; write-once setters reject the duplicate. |
@@ -175,6 +179,6 @@ deterministic via RFC 6979 in the PAL) and byte-identical
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
 - Key-report (PTAReport) crate: `fw/core/crypto/key-report/src/lib.rs`
 - X.509 CSR builder (PTACSR): `fw/core/crypto/x509-builder/src/csr_builder.rs`
-- Session lifecycle: [`open_session_init.md`](./open_session_init.md),
-  [`open_session_finish.md`](./open_session_finish.md),
-  [`change_psk.md`](./change_psk.md)
+- Session lifecycle: [`session_open_init.md`](./session_open_init.md),
+  [`session_open_finish.md`](./session_open_finish.md),
+  [`psk_change.md`](./psk_change.md)

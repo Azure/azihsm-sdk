@@ -54,6 +54,7 @@ set(SOURCE
     algo/ec/keyexch_tests.cpp
     algo/ec/ecdh_hkdf_hmac_tests.cpp
     algo/kdf/hkdf_tests.cpp
+    algo/kdf/kbkdf_tests.cpp
     algo/mac/hmac_tests.cpp
     algo/rsa/sign_verify_tests.cpp
     algo/rsa/enc_dec_tests.cpp

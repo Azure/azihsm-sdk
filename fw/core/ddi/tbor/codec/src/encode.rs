@@ -11,7 +11,8 @@
 //! This results in one copy of each payload into the output buffer and
 //! zero heap allocations.
 
-use crate::error::EncodeError;
+use azihsm_fw_hsm_pal_traits::HsmError;
+
 use crate::toc::*;
 
 // ── RequestEncoder ─────────────────────────────────────────────────────
@@ -44,31 +45,31 @@ impl<'a> RequestEncoder<'a> {
     }
 
     /// Add a `session_id` TOC entry (type 0, inline 16-bit).
-    pub fn session_id(mut self, id: u16) -> Result<Self, EncodeError> {
+    pub fn session_id(mut self, id: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::SessionId as u8, id))?;
         Ok(self)
     }
 
     /// Add a `key_id` TOC entry (type 1, inline 16-bit).
-    pub fn key_id(mut self, id: u16) -> Result<Self, EncodeError> {
+    pub fn key_id(mut self, id: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::KeyId as u8, id))?;
         Ok(self)
     }
 
     /// Add a `uint8` TOC entry (type 3, inline 8-bit).
-    pub fn uint8(mut self, value: u8) -> Result<Self, EncodeError> {
+    pub fn uint8(mut self, value: u8) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u8(TocType::Uint8 as u8, value))?;
         Ok(self)
     }
 
     /// Add a `uint16` TOC entry (type 4, inline 16-bit).
-    pub fn uint16(mut self, value: u16) -> Result<Self, EncodeError> {
+    pub fn uint16(mut self, value: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::Uint16 as u8, value))?;
         Ok(self)
     }
 
     /// Add a `uint32` TOC entry (type 5, offset/length).
-    pub fn uint32(mut self, value: u32) -> Result<Self, EncodeError> {
+    pub fn uint32(mut self, value: u32) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         self.push_toc(build_toc_offset_len(TocType::Uint32 as u8, 4, offset))?;
         self.stage_data(&value.to_le_bytes())?;
@@ -76,7 +77,7 @@ impl<'a> RequestEncoder<'a> {
     }
 
     /// Add a `uint64` TOC entry (type 6, offset/length).
-    pub fn uint64(mut self, value: u64) -> Result<Self, EncodeError> {
+    pub fn uint64(mut self, value: u64) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         self.push_toc(build_toc_offset_len(TocType::Uint64 as u8, 8, offset))?;
         self.stage_data(&value.to_le_bytes())?;
@@ -84,10 +85,10 @@ impl<'a> RequestEncoder<'a> {
     }
 
     /// Add a `buffer` TOC entry (type 7, offset/length).
-    pub fn buffer(mut self, data: &[u8]) -> Result<Self, EncodeError> {
+    pub fn buffer(mut self, data: &[u8]) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if data.len() > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: data.len() });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(
             TocType::Buffer as u8,
@@ -100,10 +101,10 @@ impl<'a> RequestEncoder<'a> {
 
     /// Add a `buffer` TOC entry reserving `len` bytes (for fill-later).
     /// Returns the byte range in the final message where data should be written.
-    pub fn buffer_reserve(mut self, len: usize) -> Result<Self, EncodeError> {
+    pub fn buffer_reserve(mut self, len: usize) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if len > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: len });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(TocType::Buffer as u8, len, offset))?;
         self.data_offset += len;
@@ -111,10 +112,10 @@ impl<'a> RequestEncoder<'a> {
     }
 
     /// Add a `sealed_key` TOC entry (type 2, offset/length).
-    pub fn sealed_key(mut self, data: &[u8]) -> Result<Self, EncodeError> {
+    pub fn sealed_key(mut self, data: &[u8]) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if data.len() > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: data.len() });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(
             TocType::SealedKey as u8,
@@ -126,16 +127,16 @@ impl<'a> RequestEncoder<'a> {
     }
 
     /// Add a `none` TOC entry (type 8, placeholder for absent optional field).
-    pub fn none(mut self) -> Result<Self, EncodeError> {
+    pub fn none(mut self) -> Result<Self, HsmError> {
         self.push_toc(build_toc_none())?;
         Ok(self)
     }
 
     /// Add a `padding` TOC entry (type 9, alignment padding in data section).
-    pub fn padding(mut self, len: usize) -> Result<Self, EncodeError> {
+    pub fn padding(mut self, len: usize) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if len > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: len });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(TocType::Padding as u8, len, offset))?;
         // Zero-fill the padding bytes.
@@ -144,10 +145,7 @@ impl<'a> RequestEncoder<'a> {
             let dst_start = stage_base + self.data_offset;
             let dst_end = dst_start + len;
             if dst_end > self.buf.len() {
-                return Err(EncodeError::BufferTooSmall {
-                    needed: dst_end,
-                    available: self.buf.len(),
-                });
+                return Err(HsmError::TborBufferTooSmall);
             }
             for i in dst_start..dst_end {
                 self.buf[i] = 0;
@@ -159,19 +157,16 @@ impl<'a> RequestEncoder<'a> {
 
     /// Finalize the message. Writes header + TOC entries, shifts staged
     /// data into place, returns the complete message as a sub-slice.
-    pub fn finish(self) -> Result<&'a [u8], EncodeError> {
+    pub fn finish(self) -> Result<&'a [u8], HsmError> {
         if self.toc_count == 0 {
-            return Err(EncodeError::TooManyTocEntries); // at least 1 required
+            return Err(HsmError::TborTooManyTocEntries); // at least 1 required
         }
 
         let data_start = REQ_HEADER_LEN + self.toc_count * 4;
         let total = data_start + self.data_offset;
 
         if total > self.buf.len() {
-            return Err(EncodeError::BufferTooSmall {
-                needed: total,
-                available: self.buf.len(),
-            });
+            return Err(HsmError::TborBufferTooSmall);
         }
 
         // Shift staged data from max-TOC position to actual data_start.
@@ -200,34 +195,29 @@ impl<'a> RequestEncoder<'a> {
 
     // ── Internal helpers ───────────────────────────────────────────
 
-    fn push_toc(&mut self, word: u32) -> Result<(), EncodeError> {
+    fn push_toc(&mut self, word: u32) -> Result<(), HsmError> {
         if self.toc_count >= MAX_TOC_ENTRIES {
-            return Err(EncodeError::TooManyTocEntries);
+            return Err(HsmError::TborTooManyTocEntries);
         }
         self.toc_words[self.toc_count] = word;
         self.toc_count += 1;
         Ok(())
     }
 
-    fn stage_data(&mut self, data: &[u8]) -> Result<(), EncodeError> {
+    fn stage_data(&mut self, data: &[u8]) -> Result<(), HsmError> {
         let stage_base = REQ_HEADER_LEN + MAX_TOC_ENTRIES * 4; // = 132
         let dst_start = stage_base + self.data_offset;
         let dst_end = dst_start + data.len();
 
         if dst_end > self.buf.len() {
-            return Err(EncodeError::BufferTooSmall {
-                needed: dst_end,
-                available: self.buf.len(),
-            });
+            return Err(HsmError::TborBufferTooSmall);
         }
 
         self.buf[dst_start..dst_end].copy_from_slice(data);
         self.data_offset += data.len();
 
         if self.data_offset > MAX_DATA_SIZE {
-            return Err(EncodeError::DataOffsetOverflow {
-                offset: self.data_offset,
-            });
+            return Err(HsmError::TborDataOffsetOverflow);
         }
 
         Ok(())
@@ -263,31 +253,31 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `session_id` TOC entry.
-    pub fn session_id(mut self, id: u16) -> Result<Self, EncodeError> {
+    pub fn session_id(mut self, id: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::SessionId as u8, id))?;
         Ok(self)
     }
 
     /// Add a `key_id` TOC entry.
-    pub fn key_id(mut self, id: u16) -> Result<Self, EncodeError> {
+    pub fn key_id(mut self, id: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::KeyId as u8, id))?;
         Ok(self)
     }
 
     /// Add a `uint8` TOC entry.
-    pub fn uint8(mut self, value: u8) -> Result<Self, EncodeError> {
+    pub fn uint8(mut self, value: u8) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u8(TocType::Uint8 as u8, value))?;
         Ok(self)
     }
 
     /// Add a `uint16` TOC entry.
-    pub fn uint16(mut self, value: u16) -> Result<Self, EncodeError> {
+    pub fn uint16(mut self, value: u16) -> Result<Self, HsmError> {
         self.push_toc(build_toc_inline_u16(TocType::Uint16 as u8, value))?;
         Ok(self)
     }
 
     /// Add a `uint32` TOC entry.
-    pub fn uint32(mut self, value: u32) -> Result<Self, EncodeError> {
+    pub fn uint32(mut self, value: u32) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         self.push_toc(build_toc_offset_len(TocType::Uint32 as u8, 4, offset))?;
         self.stage_data(&value.to_le_bytes())?;
@@ -295,7 +285,7 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `uint64` TOC entry.
-    pub fn uint64(mut self, value: u64) -> Result<Self, EncodeError> {
+    pub fn uint64(mut self, value: u64) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         self.push_toc(build_toc_offset_len(TocType::Uint64 as u8, 8, offset))?;
         self.stage_data(&value.to_le_bytes())?;
@@ -303,10 +293,10 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `buffer` TOC entry with data (fill-now).
-    pub fn buffer(mut self, data: &[u8]) -> Result<Self, EncodeError> {
+    pub fn buffer(mut self, data: &[u8]) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if data.len() > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: data.len() });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(
             TocType::Buffer as u8,
@@ -318,10 +308,10 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `buffer` TOC entry reserving `len` bytes (fill-later).
-    pub fn buffer_reserve(mut self, len: usize) -> Result<Self, EncodeError> {
+    pub fn buffer_reserve(mut self, len: usize) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if len > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: len });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(TocType::Buffer as u8, len, offset))?;
         self.data_offset += len;
@@ -329,10 +319,10 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `sealed_key` TOC entry.
-    pub fn sealed_key(mut self, data: &[u8]) -> Result<Self, EncodeError> {
+    pub fn sealed_key(mut self, data: &[u8]) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if data.len() > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: data.len() });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(
             TocType::SealedKey as u8,
@@ -344,16 +334,16 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Add a `none` TOC entry (type 8, placeholder for absent optional field).
-    pub fn none(mut self) -> Result<Self, EncodeError> {
+    pub fn none(mut self) -> Result<Self, HsmError> {
         self.push_toc(build_toc_none())?;
         Ok(self)
     }
 
     /// Add a `padding` TOC entry (type 9, alignment padding in data section).
-    pub fn padding(mut self, len: usize) -> Result<Self, EncodeError> {
+    pub fn padding(mut self, len: usize) -> Result<Self, HsmError> {
         let offset = self.data_offset;
         if len > MAX_DATA_SIZE {
-            return Err(EncodeError::DataTooLarge { size: len });
+            return Err(HsmError::TborDataTooLarge);
         }
         self.push_toc(build_toc_offset_len(TocType::Padding as u8, len, offset))?;
         if len > 0 {
@@ -361,10 +351,7 @@ impl<'a> ResponseEncoder<'a> {
             let dst_start = stage_base + self.data_offset;
             let dst_end = dst_start + len;
             if dst_end > self.buf.len() {
-                return Err(EncodeError::BufferTooSmall {
-                    needed: dst_end,
-                    available: self.buf.len(),
-                });
+                return Err(HsmError::TborBufferTooSmall);
             }
             for i in dst_start..dst_end {
                 self.buf[i] = 0;
@@ -375,19 +362,16 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     /// Finalize the response message.
-    pub fn finish(self) -> Result<&'a [u8], EncodeError> {
+    pub fn finish(self) -> Result<&'a [u8], HsmError> {
         if self.toc_count == 0 {
-            return Err(EncodeError::TooManyTocEntries);
+            return Err(HsmError::TborTooManyTocEntries);
         }
 
         let data_start = RESP_HEADER_LEN + self.toc_count * 4;
         let total = data_start + self.data_offset;
 
         if total > self.buf.len() {
-            return Err(EncodeError::BufferTooSmall {
-                needed: total,
-                available: self.buf.len(),
-            });
+            return Err(HsmError::TborBufferTooSmall);
         }
 
         // Shift staged data from max-TOC position to actual data_start.
@@ -417,34 +401,29 @@ impl<'a> ResponseEncoder<'a> {
 
     // ── Internal helpers ───────────────────────────────────────────
 
-    fn push_toc(&mut self, word: u32) -> Result<(), EncodeError> {
+    fn push_toc(&mut self, word: u32) -> Result<(), HsmError> {
         if self.toc_count >= MAX_TOC_ENTRIES {
-            return Err(EncodeError::TooManyTocEntries);
+            return Err(HsmError::TborTooManyTocEntries);
         }
         self.toc_words[self.toc_count] = word;
         self.toc_count += 1;
         Ok(())
     }
 
-    fn stage_data(&mut self, data: &[u8]) -> Result<(), EncodeError> {
+    fn stage_data(&mut self, data: &[u8]) -> Result<(), HsmError> {
         let stage_base = RESP_HEADER_LEN + MAX_TOC_ENTRIES * 4; // = 136
         let dst_start = stage_base + self.data_offset;
         let dst_end = dst_start + data.len();
 
         if dst_end > self.buf.len() {
-            return Err(EncodeError::BufferTooSmall {
-                needed: dst_end,
-                available: self.buf.len(),
-            });
+            return Err(HsmError::TborBufferTooSmall);
         }
 
         self.buf[dst_start..dst_end].copy_from_slice(data);
         self.data_offset += data.len();
 
         if self.data_offset > MAX_DATA_SIZE {
-            return Err(EncodeError::DataOffsetOverflow {
-                offset: self.data_offset,
-            });
+            return Err(HsmError::TborDataOffsetOverflow);
         }
 
         Ok(())

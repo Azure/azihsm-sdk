@@ -87,8 +87,11 @@ pub struct Precheck {
     #[clap(long, short = 'p')]
     package: Option<String>,
     /// Features to enable when running tests
-    #[clap(long)]
+    #[clap(long, short = 'F')]
     features: Option<String>,
+    /// Test filterset (see https://nexte.st/docs/filtersets)
+    #[clap(long, short = 'E')]
+    filterset: Option<String>,
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
@@ -179,22 +182,22 @@ impl Xtask for Precheck {
         // Run nextest tests
         if stage.nextest || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // run default tests
+                // Run default tests
                 let tests = default_tests(&self.exclude, self.profile.clone());
                 run_tests(tests, false, self.skip_clean, ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
                     // Run azihsm_ddi mock tests
-                    let ddi_tests = ddi_tests(&self.exclude, self.profile.clone());
-                    run_tests(ddi_tests, false, self.skip_clean, ctx.clone())?;
+                    let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
+                    run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
                 }
             } else {
                 Nextest {
                     features: self.features.clone(),
                     package: self.package.clone(),
                     no_default_features: false,
-                    filterset: None,
+                    filterset: self.filterset.clone(),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
                 }
@@ -213,7 +216,7 @@ impl Xtask for Precheck {
                     features: self.features.clone(),
                     package: self.package.clone(),
                     no_default_features: false,
-                    filterset: None,
+                    filterset: self.filterset.clone(),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
                     skip_clean: self.skip_clean,
@@ -233,7 +236,7 @@ impl Xtask for Precheck {
                 no_default_native: self.no_default_native,
                 additional_obj_paths: self.additional_obj_paths.clone(),
             }
-            .run(ctx)?;
+            .run(ctx.clone())?;
         }
 
         log::trace!("done precheck");
@@ -245,6 +248,13 @@ impl Xtask for Precheck {
 fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
+    let mut mock_exclude = exclude.to_owned();
+
+    mock_exclude.extend(vec![
+        "provider-integration-tests-cli".to_string(),
+        "provider-integration-tests-capi".to_string(),
+    ]);
+
     // SDK Run all mock tests
     tests.push(Nextest {
         features: Some("mock".to_string()),
@@ -252,7 +262,7 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
         no_default_features: false,
         filterset: None,
         profile: profile.clone().or(Some("ci-mock".to_string())),
-        exclude: exclude.to_owned(),
+        exclude: mock_exclude,
     });
 
     // SDK Run resiliency fault-injection tests (requires res-test

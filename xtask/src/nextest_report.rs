@@ -21,20 +21,21 @@ pub struct NextestReport {
 fn profile_to_command(profile_name: &str) -> String {
     // Map known profile names to their corresponding commands
     match profile_name {
-        "ci-mock" => "cargo nextest run --no-fail-fast --features mock --profile ci-mock".to_string(),
-        "ci-mock-res" => "cargo nextest run --no-fail-fast -E test(resiliency::fault_injection::) --features mock,res-test --package azihsm_api_tests --profile ci-mock-res".to_string(),
+        "ci-mock" => "cargo nextest run --no-fail-fast -F mock --profile ci-mock".to_string(),
+        "ci-mock-res" => "cargo nextest run --no-fail-fast -E test(resiliency::fault_injection::) -p azihsm_api_tests -F mock,res-test --profile ci-mock-res".to_string(),
         "ci-mock-table-4" => {
-            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi_mbor_types --profile ci-mock-table-4"
+            "cargo nextest run --no-fail-fast -p azihsm_ddi_mbor_types -F mock,table-4 --profile ci-mock-table-4"
                 .to_string()
         }
         "ci-mock-table-64" => {
-            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi_mbor_types --profile ci-mock-table-64"
+            "cargo nextest run --no-fail-fast -p azihsm_ddi_mbor_types -F mock,table-64 --profile ci-mock-table-64"
                 .to_string()
         }
         "ci-tbor-emu" => {
-            "cargo nextest run --no-fail-fast --features emu --package azihsm_ddi_tbor_types --profile ci-tbor-emu"
+            "cargo nextest run --no-fail-fast -p azihsm_ddi_tbor_types -F emu --profile ci-tbor-emu"
                 .to_string()
         }
+        "ci-api" => "cargo nextest run --no-fail-fast -p azihsm_api_tests -F mock --profile ci-api".to_string(),
         // For unknown profiles, construct a generic command showing the profile
         _ => format!("cargo nextest run --profile {}", profile_name),
     }

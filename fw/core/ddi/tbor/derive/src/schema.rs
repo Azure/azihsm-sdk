@@ -40,6 +40,83 @@ pub struct SchemaField {
     /// parallel `decode_mut` entry point and a `ViewMut` accessor
     /// type whose mut-marked fields hand out `&mut DmaBuf`.
     pub mutable: bool,
+    /// For a typed-slice `Buffer` field declared as `&[T]` (T != u8),
+    /// the element type `T`.  `None` for a plain `&[u8]` buffer.  The
+    /// wire encoding is identical (raw bytes); `T` only drives the
+    /// generated accessor/encoder typing, which zero-copy-cast the
+    /// bytes to/from `&[T]`.  `T` MUST be `Unaligned` (alignment 1) so
+    /// the cast is sound at any data-section offset — enforced at compile
+    /// time via [`Schema::align_assertions`]. No padding entry is
+    /// inserted for typed slices.
+    pub elem_type: Option<syn::Type>,
+
+    /// For a single typed-POD reference field declared as `&T` (T a
+    /// fixed-size `Unaligned` zerocopy POD, e.g. `&ReportDescriptor`) with
+    /// `#[tbor(buffer, len = size_of::<T>())]`, the referent type `T`.
+    /// `None` otherwise.  The wire encoding is the raw little-endian
+    /// `size_of::<T>()`-byte image; the generated accessor borrows it
+    /// zero-copy as `&T` and the encoder takes `&T`.  `T` must be
+    /// `Unaligned` (alignment 1) — enforced by [`Schema::align_assertions`].
+    pub single_pod: Option<syn::Type>,
+
+    /// For an inline scalar field declared with a non-primitive newtype
+    /// (e.g. `#[tbor(U8)] suite_id: SuiteId`), the wrapper type `T`.
+    /// `None` for plain `u8`/`u16`/… fields. The wire encoding is the
+    /// underlying inline integer; `T` only drives the generated
+    /// accessor (returns `T(raw)`) and encoder (writes `v.0`). `T` MUST
+    /// be a single-field tuple newtype over the matching primitive
+    /// (constructible as `T(int)` with a public `.0`), e.g. an
+    /// `#[open_enum]` type or a plain `pub struct T(pub u8)`.
+    pub scalar_newtype: Option<syn::Type>,
+
+    /// For an inline scalar field whose Rust type is a `tbor_int`
+    /// little-endian wrapper (`U16`/`U32`/`U64`, or the `U8` alias),
+    /// the wrapper type `T`. `None` for plain `u8`/`u16`/… primitives
+    /// or for `#[tbor(uN)]` tuple newtypes (see `scalar_newtype`). The
+    /// wire encoding is the underlying inline integer; `T` drives the
+    /// generated accessor (returns `T`) and encoder (takes `T`). For the
+    /// multi-byte wrappers the bridge is `T::new(raw)` / `v.get()`; for
+    /// the `U8` alias (which *is* `u8`) it is the identity (see
+    /// `le_scalar_is_byte`).
+    pub le_scalar: Option<syn::Type>,
+
+    /// `true` when `le_scalar` is the `U8` alias (`== u8`): the accessor
+    /// bridge is the identity (no `::new()` / `.get()` call) since the
+    /// type already is the primitive.
+    pub le_scalar_is_byte: bool,
+}
+
+impl SchemaField {
+    /// Returns `true` if a padding TOC entry must precede this field.
+    ///
+    /// Padding is emitted only when alignment is requested explicitly via
+    /// `#[tbor(align = N)]`. Typed slices `&[T]` do **not** auto-pad:
+    /// their element `T` is required to be `Unaligned` (see
+    /// [`Schema::align_assertions`]), so the zero-copy cast is sound at
+    /// any offset. Keeping an explicit padding entry (rather than folding
+    /// the offset into the field entry) lets the decoder validate every
+    /// byte of the data section.
+    pub fn has_padding(&self) -> bool {
+        self.align > 0
+    }
+
+    /// Token expression yielding this field's alignment, evaluated at
+    /// compile time in generated code.
+    ///
+    /// Only an explicit `#[tbor(align = N)]` produces an alignment
+    /// requirement (emitting the literal `N`). Typed slices `&[T]` no
+    /// longer auto-align: their element `T` must be `Unaligned`
+    /// (alignment 1, enforced by [`Schema::align_assertions`]), so the
+    /// zero-copy cast is sound at any offset without padding. Returns
+    /// `None` when the field has no alignment requirement.
+    pub fn align_expr(&self) -> Option<proc_macro2::TokenStream> {
+        if self.align > 0 {
+            let a = self.align;
+            Some(quote::quote! { #a })
+        } else {
+            None
+        }
+    }
 }
 
 /// The wire encoding for a field.
@@ -114,7 +191,9 @@ pub struct TocLayout {
 
 impl TocLayout {
     /// Compute the TOC layout for a list of schema fields.
-    /// Fields with `align > 0` get a padding TOC entry before them.
+    /// Fields that require padding (see [`SchemaField::has_padding`]) —
+    /// an explicit `#[tbor(align = N)]` — get a padding TOC entry before
+    /// them. Typed slices `&[T]` (with `Unaligned` `T`) do not pad.
     ///
     /// For an empty schema (`fields.is_empty()`), the layout reserves
     /// a single synthetic `None` TOC entry. This satisfies the codec's
@@ -143,7 +222,7 @@ impl TocLayout {
                 // Don't increment toc_index — group's TOC_COUNT is added dynamically.
                 continue;
             }
-            if field.align > 0 {
+            if field.has_padding() {
                 padding_positions.push((toc_index, i));
                 toc_index += 1;
             }
@@ -165,7 +244,9 @@ impl Schema {
     pub fn worst_case_data_size(&self) -> usize {
         let mut size = 0usize;
         for f in &self.fields {
-            // Worst-case padding: align - 1.
+            // Worst-case padding before an explicitly aligned field: an
+            // `align = N` needs up to `N - 1` pad bytes. Typed slices
+            // `&[T]` are `Unaligned` and never pad.
             if f.align > 0 {
                 size += f.align - 1;
             }
@@ -191,6 +272,38 @@ impl Schema {
     /// point and a `ViewMut` accessor type.
     pub fn has_mutable_fields(&self) -> bool {
         self.fields.iter().any(|f| f.mutable)
+    }
+
+    /// Emit compile-time assertions that every typed-slice element type
+    /// is `Unaligned` (alignment 1). A typed slice `&[T]` is borrowed
+    /// zero-copy from the data section at a byte offset that has no
+    /// alignment guarantee; requiring `align_of::<T>() == 1` makes the
+    /// cast sound at any offset without inserting padding. A `T` with
+    /// stronger alignment is rejected at compile time — use the
+    /// `little_endian` integer aliases (`tbor_int::U16`/`U32`/`U64`) to
+    /// keep wire POD structs `Unaligned`.
+    pub fn align_assertions(&self) -> proc_macro2::TokenStream {
+        let slice_asserts = self.fields.iter().filter_map(|f| {
+            f.elem_type.as_ref().map(|elem| {
+                quote::quote! {
+                    const _: () = assert!(
+                        ::core::mem::align_of::<#elem>() == 1,
+                        "TBOR typed-slice element must be Unaligned (alignment 1); use little-endian wire types (tbor_int::U16/U32/U64) instead of native integers"
+                    );
+                }
+            })
+        });
+        let pod_asserts = self.fields.iter().filter_map(|f| {
+            f.single_pod.as_ref().map(|ty| {
+                quote::quote! {
+                    const _: () = assert!(
+                        ::core::mem::align_of::<#ty>() == 1,
+                        "TBOR single typed-POD field (`&T`) must be Unaligned (alignment 1); use little-endian wire types (tbor_int::U16/U32/U64) for its fields"
+                    );
+                }
+            })
+        });
+        quote::quote! { #(#slice_asserts)* #(#pod_asserts)* }
     }
 
     /// Compute MAX_ENCODED_SIZE (header + TOC + worst-case data).
@@ -340,6 +453,11 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
             max_len: 0,
             include_group: Some(group_name),
             mutable: false,
+            elem_type: None,
+            single_pod: None,
+            scalar_newtype: None,
+            le_scalar: None,
+            le_scalar_is_byte: false,
         });
     }
 
@@ -412,6 +530,57 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
         }
     }
 
+    // For a typed-slice buffer `&[T]`, capture the element type.
+    let elem_type = if matches!(wire_type, WireType::Buffer) && fixed_len.is_none() {
+        detect_typed_slice_elem(actual_ty)
+    } else {
+        None
+    };
+
+    // For a single typed-POD reference buffer `&T`, capture the referent
+    // type so the accessor borrows it as `&T`.  (`&[u8]` / `&[T]` slice
+    // references are handled above as buffers / typed slices.)
+    let single_pod = if matches!(wire_type, WireType::Buffer) {
+        detect_single_pod_ref(actual_ty)
+    } else {
+        None
+    };
+
+    // For an inline scalar field whose Rust type is a `tbor_int`
+    // little-endian wrapper (`U16`/`U32`/`U64`, or `U8` which aliases the
+    // native `u8`), capture the wrapper type so the generated accessors
+    // bridge via `::new()` / `.get()` (identity for `U8`). This keeps the
+    // wire format identical (inline `Uint*`) while the public API speaks
+    // `tbor_int` types, mirroring the host value structs.
+    let (le_scalar, le_scalar_is_byte) = if matches!(
+        wire_type,
+        WireType::Uint8 | WireType::Uint16 | WireType::Uint32 | WireType::Uint64
+    ) && fixed_len.is_none()
+        && (is_le_wrapper_type(actual_ty) || is_le_byte_type(actual_ty))
+    {
+        (Some(actual_ty.clone()), is_le_byte_type(actual_ty))
+    } else {
+        (None, false)
+    };
+
+    // For an inline scalar field whose Rust type is a non-primitive
+    // newtype (e.g. `#[tbor(U8)] suite_id: SuiteId`), capture the
+    // wrapper type. Inference alone would have errored on the
+    // non-primitive path, so reaching an inline `Uint*` wire here means
+    // an explicit `#[tbor(uN)]` attribute selected it; the type is the
+    // newtype to construct/destructure around the raw integer.
+    let scalar_newtype = if matches!(
+        wire_type,
+        WireType::Uint8 | WireType::Uint16 | WireType::Uint32 | WireType::Uint64
+    ) && fixed_len.is_none()
+        && !is_primitive_uint_type(actual_ty)
+        && le_scalar.is_none()
+    {
+        Some(actual_ty.clone())
+    } else {
+        None
+    };
+
     Ok(SchemaField {
         name,
         wire_type,
@@ -423,7 +592,47 @@ fn parse_single_field(field: &syn::Field) -> syn::Result<SchemaField> {
         max_len,
         include_group: None,
         mutable,
+        elem_type,
+        single_pod,
+        scalar_newtype,
+        le_scalar,
+        le_scalar_is_byte,
     })
+}
+
+/// Returns `true` iff `ty` is a bare primitive unsigned integer
+/// (`u8`/`u16`/`u32`/`u64`) — i.e. an inline scalar carried as a raw
+/// value rather than a typed newtype wrapper.
+fn is_primitive_uint_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            return matches!(seg.ident.to_string().as_str(), "u8" | "u16" | "u32" | "u64");
+        }
+    }
+    false
+}
+
+/// Returns `true` iff `ty`'s last path segment is a multi-byte
+/// `tbor_int` little-endian wrapper (`U16`/`U32`/`U64`) requiring
+/// `::new()` / `.get()` bridging in the generated accessors.
+fn is_le_wrapper_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            return matches!(seg.ident.to_string().as_str(), "U16" | "U32" | "U64");
+        }
+    }
+    false
+}
+
+/// Returns `true` iff `ty`'s last path segment is the `tbor_int` `U8`
+/// alias (which *is* the native `u8`): bridged by the identity.
+fn is_le_byte_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            return seg.ident == "U8";
+        }
+    }
+    false
 }
 
 /// Returns `true` iff the field carries `#[tbor(mutable)]`.
@@ -496,13 +705,15 @@ fn infer_wire_type(ty: &syn::Type, attrs: &[syn::Attribute]) -> syn::Result<Wire
         if attr.path().is_ident("tbor") {
             let mut found = None;
             attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("uint8") {
+                // Wire-type selectors are the `tbor_int`-style
+                // `U8`/`U16`/`U32`/`U64`.
+                if meta.path.is_ident("U8") {
                     found = Some(WireType::Uint8);
-                } else if meta.path.is_ident("uint16") {
+                } else if meta.path.is_ident("U16") {
                     found = Some(WireType::Uint16);
-                } else if meta.path.is_ident("uint32") {
+                } else if meta.path.is_ident("U32") {
                     found = Some(WireType::Uint32);
-                } else if meta.path.is_ident("uint64") {
+                } else if meta.path.is_ident("U64") {
                     found = Some(WireType::Uint64);
                 } else if meta.path.is_ident("session_id") {
                     found = Some(WireType::SessionId);
@@ -547,6 +758,14 @@ fn infer_wire_type_from_rust_type(ty: &syn::Type) -> syn::Result<WireType> {
                     "u16" => return Ok(WireType::Uint16),
                     "u32" => return Ok(WireType::Uint32),
                     "u64" => return Ok(WireType::Uint64),
+                    // `tbor_int` little-endian wrappers. `U8` aliases the
+                    // native `u8`; `U16`/`U32`/`U64` are zerocopy
+                    // little-endian POD ints. All encode as the matching
+                    // inline `Uint*` wire type.
+                    "U8" => return Ok(WireType::Uint8),
+                    "U16" => return Ok(WireType::Uint16),
+                    "U32" => return Ok(WireType::Uint32),
+                    "U64" => return Ok(WireType::Uint64),
                     "SessionId" => return Ok(WireType::SessionId),
                     "KeyId" => return Ok(WireType::KeyId),
                     _ => {}
@@ -554,19 +773,18 @@ fn infer_wire_type_from_rust_type(ty: &syn::Type) -> syn::Result<WireType> {
             }
             Err(syn::Error::new(
                 ty.span(),
-                "cannot infer wire type; use #[tbor(uint8)], #[tbor(buffer)], etc.",
+                "cannot infer wire type; use #[tbor(U8)], #[tbor(buffer)], etc.",
             ))
         }
         syn::Type::Reference(type_ref) => {
-            // &[u8] → Buffer, &'a [u8] → Buffer
-            if let syn::Type::Slice(slice) = &*type_ref.elem {
-                if is_u8_type(&slice.elem) {
-                    return Ok(WireType::Buffer);
-                }
+            // &[u8] → Buffer, &'a [u8] → Buffer; &[T] (T != u8) → typed
+            // Buffer (same wire, typed accessor — see SchemaField::elem_type).
+            if let syn::Type::Slice(_) = &*type_ref.elem {
+                return Ok(WireType::Buffer);
             }
             Err(syn::Error::new(
                 ty.span(),
-                "only &[u8] references are supported; use #[tbor(buffer)] explicitly",
+                "only slice references (&[u8] or &[T]) are supported; use #[tbor(buffer)] explicitly",
             ))
         }
         syn::Type::Array(arr) => {
@@ -581,7 +799,7 @@ fn infer_wire_type_from_rust_type(ty: &syn::Type) -> syn::Result<WireType> {
         }
         _ => Err(syn::Error::new(
             ty.span(),
-            "cannot infer wire type; use #[tbor(uint8)], #[tbor(buffer)], etc.",
+            "cannot infer wire type; use #[tbor(U8)], #[tbor(buffer)], etc.",
         )),
     }
 }
@@ -593,6 +811,32 @@ fn is_u8_type(ty: &syn::Type) -> bool {
         }
     }
     false
+}
+
+/// If `ty` is a slice reference `&[T]` with `T` *not* `u8`, returns the
+/// element type `T`; otherwise `None` (plain `&[u8]` or non-slice).
+fn detect_typed_slice_elem(ty: &syn::Type) -> Option<syn::Type> {
+    if let syn::Type::Reference(type_ref) = ty {
+        if let syn::Type::Slice(slice) = &*type_ref.elem {
+            if !is_u8_type(&slice.elem) {
+                return Some((*slice.elem).clone());
+            }
+        }
+    }
+    None
+}
+
+/// Detect a single typed-POD reference field `&T` (a reference whose
+/// referent is a non-slice path type, e.g. `&ReportDescriptor`).  Returns
+/// the referent type `T`.  Plain `&[u8]` / `&[T]` (slice references) are
+/// **not** matched (they are buffers / typed slices).
+fn detect_single_pod_ref(ty: &syn::Type) -> Option<syn::Type> {
+    if let syn::Type::Reference(type_ref) = ty {
+        if let syn::Type::Path(_) = &*type_ref.elem {
+            return Some((*type_ref.elem).clone());
+        }
+    }
+    None
 }
 
 /// Check if a field has `#[tbor(include)]`.

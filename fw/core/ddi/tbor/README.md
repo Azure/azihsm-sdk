@@ -12,7 +12,8 @@ A compact, `#![no_std]` binary protocol for host ↔ device communication, with 
 - **`#![no_std]`** — runs on bare-metal (Cortex-M) with no heap
 - **Optional fields** — `Option<T>` with `None` TOC entries, skip-ahead, early `finish()`
 - **Alignment padding** — `#[tbor(align = N)]` for DMA-friendly data layout
-- **Field groups** — `#[tbor(fields)]` + `#[tbor(include)]` for shared field definitions
+- **Typed slices** — borrow `&[T]` POD slices zero-copy; `T` must be `Unaligned` (use `tbor_int::U16`/`U32`/`U64`)
+- **Field groups** — `#[tbor(fields)]` + `#[tbor(include)]` for shared field definitions (scalars, buffers, and typed slices)
 - **Dispatch traits** — `TborRequest::OPCODE` for opcode-based routing
 
 ## Quick Start
@@ -49,7 +50,7 @@ pub struct MyResponse<'a> {
 ### Encode
 
 ```rust
-fn encode_request(buf: &mut [u8]) -> Result<&[u8], EncodeError> {
+fn encode_request(buf: &mut [u8]) -> Result<&[u8], HsmError> {
     let frame = MyRequest::encode(buf)?
         .session(SessionId(43))?
         .data(b"Hello")?
@@ -62,7 +63,7 @@ fn encode_request(buf: &mut [u8]) -> Result<&[u8], EncodeError> {
 ### Decode
 
 ```rust
-fn decode_request(wire: &[u8]) -> Result<(), DecodeError> {
+fn decode_request(wire: &[u8]) -> Result<(), HsmError> {
     let view = MyRequest::decode(wire)?;
 
     let session = view.session();   // SessionId(43)
@@ -161,13 +162,13 @@ EncryptReq::encode(&mut buf)?
 ```rust
 use azihsm_tbor::{TborRequest, RequestView};
 
-fn dispatch(wire: &[u8]) -> Result<(), DecodeError> {
+fn dispatch(wire: &[u8]) -> Result<(), HsmError> {
     let raw = RequestView::parse(wire)?;
 
     match raw.opcode() {
         EncryptReq::OPCODE  => handle_encrypt(EncryptReq::decode(wire)?),
         DecryptReq::OPCODE  => handle_decrypt(DecryptReq::decode(wire)?),
-        _ => Err(DecodeError::OpcodeMismatch { expected: 0, actual: raw.opcode() })
+        _ => Err(HsmError::TborOpcodeMismatch)
     }
 }
 ```
@@ -203,9 +204,29 @@ let frame = EncryptReq::encode(&mut buf)?
 | `#[tbor(session_id)]` | field | Wire type: inline 16-bit session ID |
 | `#[tbor(key_id)]` | field | Wire type: inline 16-bit key ID |
 | `#[tbor(sealed_key)]` | field | Wire type: sealed key blob |
-| `#[tbor(align = N)]` | field | Align data to N-byte boundary (power of 2) |
+| `#[tbor(align = N)]` | field | Align data to N-byte boundary (power of 2). Typed-slice `&[T]` fields require `T` to be `Unaligned` (alignment 1) and are never padded |
 | `#[tbor(max_len = N)]` | field | Maximum buffer length (required on `&[u8]`) |
 | `#[tbor(min_len = N)]` | field | Minimum buffer length |
+
+## Wire integer types (`tbor_int`)
+
+Inline scalar fields use the little-endian aliases from
+`azihsm_fw_ddi_tbor_types::tbor_int` (mirrored host-side in
+`azihsm_ddi_tbor_types::tbor_int`) instead of native integers:
+
+| Alias | Underlying type | Notes |
+|-------|-----------------|-------|
+| `U8`  | `u8`            | A byte has no endianness; identity alias |
+| `U16` | `zerocopy::little_endian::U16` | alignment-1, fixed little-endian |
+| `U32` | `zerocopy::little_endian::U32` | alignment-1, fixed little-endian |
+| `U64` | `zerocopy::little_endian::U64` | alignment-1, fixed little-endian |
+
+The wire encoding is the matching inline `Uint*` TOC entry either way.
+On the firmware view/encoder the accessors speak the alias type
+(`view.generation() -> U32`, `.generation(U32::new(..))`); on the host
+value structs the field *is* the alias, read/written via `.get()` /
+`U32::new(..)`. The same `tbor_int` types keep zero-copy-borrowed POD
+structs (typed-slice elements like `CertDescriptor`) `Unaligned`.
 
 ## License
 

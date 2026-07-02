@@ -20,14 +20,14 @@
 //! and returns the resulting `&DmaBuf` slice (lifetime tied to the
 //! per-IO allocator scope).
 
-pub(crate) mod change_psk;
-pub(crate) mod close_session;
-pub(crate) mod get_api_rev;
-pub(crate) mod open_session_finish;
-pub(crate) mod open_session_init;
+pub(crate) mod api_rev;
 pub mod part_info;
 pub mod part_init;
 pub mod policy;
+pub(crate) mod psk_change;
+pub(crate) mod session_close;
+pub(crate) mod session_open_finish;
+pub(crate) mod session_open_init;
 
 use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor::ResponseEncoder;
@@ -46,45 +46,45 @@ use super::*;
 /// the host-side `azihsm_ddi_tbor_types` crate) so that firmware can be
 /// built `no_std` without host-side feature flags.
 pub(crate) mod opcode {
-    /// `GetApiRev` — bootstrap TBOR command. Reports the firmware's
+    /// `ApiRev` — bootstrap TBOR command. Reports the firmware's
     /// supported TBOR wire-protocol version range.
-    pub(crate) const GET_API_REV: u8 = 0x01;
+    pub(crate) const API_REV: u8 = 0x01;
 
-    /// `OpenSessionInit` — Phase 1 of the session-establishment
+    /// `SessionOpenInit` — Phase 1 of the session-establishment
     /// handshake.  Client sends `(psk_id, pk_init, seed,
     /// bmk_session?)`; HSM responds with `(session_id, pk_resp,
     /// mac_resp)`.  The optional `bmk_session` selects the resume
     /// variant (preserves `masking_key` continuity from a prior
     /// session); fresh keys are always derived from the HPKE
     /// handshake, so every promoted session has forward secrecy.
-    pub(crate) const OPEN_SESSION_INIT: u8 = 0x10;
+    pub(crate) const SESSION_OPEN_INIT: u8 = 0x03;
 
-    /// `OpenSessionFinish` — Phase 2 of the session-establishment
+    /// `SessionOpenFinish` — Phase 2 of the session-establishment
     /// handshake.  Client sends `(session_id, mac_fin)`; on success
     /// the slot transitions Pending → Active and the response carries
     /// a fresh `bmk_session` envelope the host may persist for a
     /// future resume.
-    pub(crate) const OPEN_SESSION_FINISH: u8 = 0x11;
+    pub(crate) const SESSION_OPEN_FINISH: u8 = 0x04;
 
-    /// `CloseSession` — destroys an Active or Pending session slot.
-    pub(crate) const CLOSE_SESSION: u8 = 0x12;
+    /// `SessionClose` — destroys an Active or Pending session slot.
+    pub(crate) const SESSION_CLOSE: u8 = 0x05;
 
-    /// `ChangePsk` — rotate the CO or CU partition PSK to a
+    /// `PskChange` — rotate the CO or CU partition PSK to a
     /// new value supplied encrypted inside an AEAD-GCM envelope wrapped
     /// under the active session's `param_key`.  See
-    /// [`super::change_psk`] for the authorization matrix and
+    /// [`super::psk_change`] for the authorization matrix and
     /// AAD layout.
-    pub(crate) const CHANGE_PSK: u8 = 0x20;
+    pub(crate) const PSK_CHANGE: u8 = 0x06;
 
     /// `PartInit` — bind PTA, policy, and POTA thumbprint.
-    pub(crate) const PART_INIT: u8 = 0x30;
+    pub(crate) const PART_INIT: u8 = 0x07;
 
     /// `PartInfo` — out-of-session info command reporting device kind /
     /// FIPS status plus the bound partition's lifecycle and identity
     /// (state, generation, owner/manufacturer SVN, PID, identity public
     /// key).  TBOR analogue of MBOR `GetDeviceInfo` + the Manticore
     /// `GetPartID` primitive.
-    pub(crate) const PART_INFO: u8 = 0x32;
+    pub(crate) const PART_INFO: u8 = 0x02;
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -106,9 +106,9 @@ pub(crate) mod opcode {
 /// so, only commands listed in [`allowed_with_default_psk`] are
 /// permitted; anything else returns
 /// [`HsmError::DefaultPskMustRotate`].  Out-of-session commands
-/// (`GetApiRev`, `OpenSessionInit`, `OpenSessionFinish`) are never
+/// (`ApiRev`, `SessionOpenInit`, `SessionOpenFinish`) are never
 /// gated — the client must always be able to bring up a session in
-/// order to issue [`change_psk`] in the first place.
+/// order to issue [`psk_change`] in the first place.
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -158,11 +158,11 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     }
 
     match opcode {
-        opcode::GET_API_REV => get_api_rev::handle(pal, io, req_buf),
-        opcode::OPEN_SESSION_INIT => open_session_init::handle(pal, io, req_buf).await,
-        opcode::OPEN_SESSION_FINISH => open_session_finish::handle(pal, io, req_buf).await,
-        opcode::CLOSE_SESSION => close_session::handle(pal, io, req_buf).await,
-        opcode::CHANGE_PSK => change_psk::handle(pal, io, req_buf).await,
+        opcode::API_REV => api_rev::handle(pal, io, req_buf),
+        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf).await,
+        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf).await,
+        opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
+        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf).await,
         opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         _ => Err(HsmError::UnsupportedCmd),
@@ -176,11 +176,11 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
 fn is_known_opcode(opcode: u8) -> bool {
     matches!(
         opcode,
-        opcode::GET_API_REV
-            | opcode::OPEN_SESSION_INIT
-            | opcode::OPEN_SESSION_FINISH
-            | opcode::CLOSE_SESSION
-            | opcode::CHANGE_PSK
+        opcode::API_REV
+            | opcode::SESSION_OPEN_INIT
+            | opcode::SESSION_OPEN_FINISH
+            | opcode::SESSION_CLOSE
+            | opcode::PSK_CHANGE
             | opcode::PART_INIT
             | opcode::PART_INFO
     )
@@ -190,8 +190,8 @@ fn is_known_opcode(opcode: u8) -> bool {
 /// an Active session slot to operate on, identified by an inline
 /// `session_id` TOC field).
 ///
-/// Out-of-session opcodes (`GetApiRev`) and session-establishment
-/// opcodes (`OpenSessionInit`, `OpenSessionFinish`) return `false` —
+/// Out-of-session opcodes (`ApiRev`) and session-establishment
+/// opcodes (`SessionOpenInit`, `SessionOpenFinish`) return `false` —
 /// they either need no session at all or they bring a Pending slot to
 /// life, and the default-PSK gate would have nothing meaningful to
 /// check for them.
@@ -201,11 +201,11 @@ fn is_known_opcode(opcode: u8) -> bool {
 /// default-PSK gate via [`allowed_with_default_psk`].
 fn is_in_session(opcode: u8) -> bool {
     match opcode {
-        opcode::GET_API_REV
-        | opcode::OPEN_SESSION_INIT
-        | opcode::OPEN_SESSION_FINISH
+        opcode::API_REV
+        | opcode::SESSION_OPEN_INIT
+        | opcode::SESSION_OPEN_FINISH
         | opcode::PART_INFO => false,
-        opcode::CLOSE_SESSION | opcode::CHANGE_PSK | opcode::PART_INIT => true,
+        opcode::SESSION_CLOSE | opcode::PSK_CHANGE | opcode::PART_INIT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -219,11 +219,11 @@ fn is_in_session(opcode: u8) -> bool {
 /// Equivalent to "the opcode's [`SessionCtrl`] requires
 /// `id_valid = true`" (see
 /// [`SessionCtrl::from_tbor_opcode`](crate::op::SessionCtrl::from_tbor_opcode)):
-/// `OpenSessionFinish`, `CloseSession`, and `ChangePsk` all carry
+/// `SessionOpenFinish`, `SessionClose`, and `PskChange` all carry
 /// the targeted slot id both in the SQE header and in the body's
 /// `SessionId` TOC entry, and the two MUST agree.
 ///
-/// Out-of-session opcodes (`GetApiRev`, `OpenSessionInit`) carry no
+/// Out-of-session opcodes (`ApiRev`, `SessionOpenInit`) carry no
 /// body `session_id` and are not cross-checked here;
 /// `validate_tbor_session_flags` already rejects them if the SQE
 /// `id_valid` bit is set.
@@ -234,10 +234,10 @@ fn is_in_session(opcode: u8) -> bool {
 /// same change that wires it into `dispatch`.
 fn needs_session_id_cross_check(opcode: u8) -> bool {
     match opcode {
-        opcode::GET_API_REV | opcode::OPEN_SESSION_INIT | opcode::PART_INFO => false,
-        opcode::OPEN_SESSION_FINISH
-        | opcode::CLOSE_SESSION
-        | opcode::CHANGE_PSK
+        opcode::API_REV | opcode::SESSION_OPEN_INIT | opcode::PART_INFO => false,
+        opcode::SESSION_OPEN_FINISH
+        | opcode::SESSION_CLOSE
+        | opcode::PSK_CHANGE
         | opcode::PART_INIT => true,
         _ => true,
     }
@@ -253,15 +253,15 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
 /// the public default PSK.
 ///
 /// The two members are the minimum needed for the bootstrap flow:
-/// `ChangePsk` rotates the PSK; `CloseSession` lets the client tear
+/// `PskChange` rotates the PSK; `SessionClose` lets the client tear
 /// the bootstrap session down cleanly.
 fn allowed_with_default_psk(opcode: u8) -> bool {
-    matches!(opcode, opcode::CHANGE_PSK | opcode::CLOSE_SESSION)
+    matches!(opcode, opcode::PSK_CHANGE | opcode::SESSION_CLOSE)
 }
 
 /// Maps a session role to the partition PSK slot id it authenticates
 /// against: CO sessions → slot 0, CU sessions → slot 1.  Matches the
-/// convention used by [`change_psk`] and the session-establishment
+/// convention used by [`psk_change`] and the session-establishment
 /// handlers.
 fn psk_id_for_role(role: SessionRole) -> u8 {
     match role {
@@ -316,11 +316,11 @@ mod tests {
     #[test]
     fn known_opcodes_match_dispatch_arms() {
         for op in [
-            opcode::GET_API_REV,
-            opcode::OPEN_SESSION_INIT,
-            opcode::OPEN_SESSION_FINISH,
-            opcode::CLOSE_SESSION,
-            opcode::CHANGE_PSK,
+            opcode::API_REV,
+            opcode::SESSION_OPEN_INIT,
+            opcode::SESSION_OPEN_FINISH,
+            opcode::SESSION_CLOSE,
+            opcode::PSK_CHANGE,
         ] {
             assert!(is_known_opcode(op), "{op:#04x} should be known");
         }
@@ -331,18 +331,18 @@ mod tests {
     #[test]
     fn out_of_session_opcodes_are_not_in_session() {
         for op in [
-            opcode::GET_API_REV,
-            opcode::OPEN_SESSION_INIT,
-            opcode::OPEN_SESSION_FINISH,
+            opcode::API_REV,
+            opcode::SESSION_OPEN_INIT,
+            opcode::SESSION_OPEN_FINISH,
         ] {
             assert!(!is_in_session(op), "{op:#04x} must be out-of-session");
         }
     }
 
     #[test]
-    fn close_and_change_psk_are_in_session() {
-        assert!(is_in_session(opcode::CLOSE_SESSION));
-        assert!(is_in_session(opcode::CHANGE_PSK));
+    fn close_and_psk_change_are_in_session() {
+        assert!(is_in_session(opcode::SESSION_CLOSE));
+        assert!(is_in_session(opcode::PSK_CHANGE));
     }
 
     #[test]
@@ -354,14 +354,14 @@ mod tests {
     }
 
     #[test]
-    fn allow_list_is_exactly_change_psk_and_close_session() {
-        assert!(allowed_with_default_psk(opcode::CHANGE_PSK));
-        assert!(allowed_with_default_psk(opcode::CLOSE_SESSION));
+    fn allow_list_is_exactly_psk_change_and_session_close() {
+        assert!(allowed_with_default_psk(opcode::PSK_CHANGE));
+        assert!(allowed_with_default_psk(opcode::SESSION_CLOSE));
         // Everything else — known or unknown — is NOT allowed.
         for op in [
-            opcode::GET_API_REV,
-            opcode::OPEN_SESSION_INIT,
-            opcode::OPEN_SESSION_FINISH,
+            opcode::API_REV,
+            opcode::SESSION_OPEN_INIT,
+            opcode::SESSION_OPEN_FINISH,
             SYNTHETIC_FUTURE_OPCODE,
             0x00,
             0xFF,

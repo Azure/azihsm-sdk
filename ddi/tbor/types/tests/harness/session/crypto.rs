@@ -18,7 +18,7 @@
 //! * Phase-1 / Phase-2 confirm MAC computation
 //!   (`HMAC-SHA-384(exported, label ‖ id_be ‖ pk_init ‖ pk_hsm ‖ pk_resp)`).
 //! * HKDF-Expand-labeled (`HKDF-Expand(exported, label ‖ len_be, len)`)
-//!   to derive `param_key`, mirroring [`open_session_finish`].
+//!   to derive `param_key`, mirroring [`session_open_finish`].
 //!
 //! Every helper here is sync — it never touches the device. Device
 //! IO lives in [`init`](super::init) and [`finish`](super::finish).
@@ -66,7 +66,7 @@ use azihsm_ddi_tbor_types::SESSION_PHASE1_LABEL;
 use azihsm_ddi_tbor_types::SESSION_PHASE2_LABEL;
 
 /// HPKE suite used by the TBOR session protocol — must match
-/// `azihsm_fw_core::ddi::tbor::open_session_init::SUITE`.
+/// `azihsm_fw_core::ddi::tbor::session_open_init::SUITE`.
 pub(super) const SUITE: HpkeSuite = HpkeSuite::DHKemP384Sha384AesGcm256;
 
 /// P-384 coordinate length in bytes.
@@ -159,10 +159,10 @@ fn extract_subject_public_key_der(cert_der: &[u8]) -> Result<Vec<u8>, DdiError> 
 }
 
 /// Build the HPKE `info` block:
-/// Build the HPKE info string used by `OpenSessionInit`:
+/// Build the HPKE info string used by `SessionOpenInit`:
 /// `SESSION_HPKE_INFO ‖ psk_id ‖ session_type ‖ suite_id`.
 ///
-/// Bytes match `azihsm_fw_core::ddi::tbor::open_session_init::build_hpke_info`.
+/// Bytes match `azihsm_fw_core::ddi::tbor::session_open_init::build_hpke_info`.
 pub(super) fn build_hpke_info(psk_id: u8, session_type: u8, suite_id: u8) -> Vec<u8> {
     let mut info = Vec::with_capacity(SESSION_HPKE_INFO.len() + 3);
     info.extend_from_slice(SESSION_HPKE_INFO);
@@ -191,7 +191,7 @@ pub(super) fn default_psk(psk_id: u8) -> Result<&'static [u8; PSK_LEN], DdiError
 ///
 /// * `sk_init` / `pk_init` — host (recipient) keypair.
 /// * `pk_hsm` — FW (sender) identity, retrieved via [`fetch_pk_hsm`].
-/// * `pk_resp` — KEM `enc` returned by `OpenSessionInit` (the FW's
+/// * `pk_resp` — KEM `enc` returned by `SessionOpenInit` (the FW's
 ///   per-handshake ephemeral encapsulation).
 /// * `info` — output of [`build_hpke_info`].
 /// * `psk` / `psk_id_byte` — partition PSK and its 1-byte id.
@@ -226,9 +226,9 @@ pub(super) fn receive_exported(
 ///
 /// Used in two places:
 /// * Phase-1 verify on the host (`label = SESSION_PHASE1_LABEL`,
-///   compares against `mac_resp` from `OpenSessionInit`).
+///   compares against `mac_resp` from `SessionOpenInit`).
 /// * Phase-2 compute on the host (`label = SESSION_PHASE2_LABEL`,
-///   produces `mac_fin` sent to `OpenSessionFinish`).
+///   produces `mac_fin` sent to `SessionOpenFinish`).
 pub(super) fn confirm_mac(
     exported: &[u8],
     label: &[u8],
@@ -299,7 +299,7 @@ pub(super) fn build_phase2_mac(
 
 /// `HKDF-Expand(prk, label ‖ len_be, len)` — mirrors the FW
 /// `hkdf_expand_labeled` helper in
-/// `azihsm_fw_core::ddi::tbor::open_session_finish`.
+/// `azihsm_fw_core::ddi::tbor::session_open_finish`.
 pub(super) fn hkdf_expand_labeled(
     prk: &[u8],
     label: &[u8],
@@ -331,7 +331,7 @@ pub(super) fn derive_param_key(exported: &[u8]) -> Result<AesKey, DdiError> {
 
 /// Seal a 32-byte `seed` under `param_key` as a no-AAD AEAD-GCM
 /// envelope. Returns the exact 68-byte wire blob that occupies the
-/// `seed_envelope` field of `TborOpenSessionFinishReq`.
+/// `seed_envelope` field of `TborSessionOpenFinishReq`.
 pub(super) fn seal_seed_envelope(param_key: &AesKey, seed: &[u8]) -> Result<Vec<u8>, DdiError> {
     let iv = Rng::rand_vec(12).map_err(|_| DdiError::InvalidParameter)?;
     let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, &iv, &[], seed, None)

@@ -19,7 +19,7 @@ use syn::Type;
 const STRUCT_OPTS: &str = "`response`, `resp = T`, `opcode = N`, `session_ctrl = variant`";
 
 /// Allowed field-level option names, for error messages.
-const FIELD_OPTS: &str = "`session_id`, `min_len = N`, `max_len = N`";
+const FIELD_OPTS: &str = "`session_id`, `key_id`, `min_len = N`, `max_len = N`";
 
 /// Whether the annotated struct is a request or a response.
 pub enum StructKind {
@@ -140,14 +140,34 @@ pub enum FieldShape {
     U16,
     U32,
     U64,
+    /// `tbor_int` little-endian wrappers (`U16`/`U32`/`U64`): a zerocopy
+    /// `little_endian::U*` value. Same inline `Uint*` wire encoding as
+    /// the primitives, but the in-memory field is the wrapper, so
+    /// encode/decode bridge via `.get()` / `::new()`. (`U8` aliases the
+    /// native `u8`, so it maps to `U8` above with no bridging.)
+    LeU16,
+    LeU32,
+    LeU64,
     /// `u16` + `#[tbor(session_id)]`.
     SessionId,
+    /// `u16` + `#[tbor(key_id)]`.
+    KeyId,
     /// `[u8; N]`.  N is not tracked here — the FW codec is the length
     /// authority; we just need to know the value is a fixed-size byte
     /// array so we can use `try_into()` in the decode codegen.
     FixedBuf,
     /// `Vec<u8>`.
     VarBuf,
+    /// `Vec<T>` where `T` is a fixed-layout element type (not `u8`).
+    /// The wire form is the packed little-endian byte image of the
+    /// elements; encode/decode go through `zerocopy`.  Carries the
+    /// element type for codegen (boxed to keep the enum small).
+    TypedVarBuf(Box<Type>),
+    /// A fixed-size typed value `T` (e.g. `PartPolicy`): a `#[repr(C)]`
+    /// zerocopy struct serialized as its raw little-endian byte image.
+    /// Carries the value type for codegen (boxed to keep the enum
+    /// small).
+    TypedFixed(Box<Type>),
     /// `Option<Vec<u8>>`.
     OptVarBuf,
 }
@@ -183,12 +203,19 @@ fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
         syn::Error::new(
             f.ty.span(),
             "#[tbor] field type must be one of: u8, u16, u32, u64, \
-             [u8; N], Vec<u8>, Option<Vec<u8>>",
+             [u8; N], Vec<u8>, Vec<T>, Option<Vec<u8>>",
         )
     })?;
 
-    // Promote `u16 + #[tbor(session_id)]` to SessionId.  The flag is
-    // invalid on any other type.
+    // Promote `u16 + #[tbor(session_id)]` to SessionId, or
+    // `u16 + #[tbor(key_id)]` to KeyId.  The flags are invalid on any
+    // other type and mutually exclusive.
+    if flags.session_id && flags.key_id {
+        return Err(syn::Error::new(
+            f.span(),
+            "#[tbor(session_id)] and #[tbor(key_id)] are mutually exclusive",
+        ));
+    }
     let shape = if flags.session_id {
         if matches!(base, FieldShape::U16) {
             FieldShape::SessionId
@@ -198,6 +225,15 @@ fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
                 "#[tbor(session_id)] requires a `u16` field",
             ));
         }
+    } else if flags.key_id {
+        if matches!(base, FieldShape::U16) {
+            FieldShape::KeyId
+        } else {
+            return Err(syn::Error::new(
+                f.span(),
+                "#[tbor(key_id)] requires a `u16` field",
+            ));
+        }
     } else {
         base
     };
@@ -205,12 +241,15 @@ fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
     // `min_len` / `max_len` are documentation parity only; reject
     // if put on a non-variable field.
     if (flags.has_max_len || flags.has_min_len)
-        && !matches!(shape, FieldShape::VarBuf | FieldShape::OptVarBuf)
+        && !matches!(
+            shape,
+            FieldShape::VarBuf | FieldShape::TypedVarBuf(_) | FieldShape::OptVarBuf
+        )
     {
         return Err(syn::Error::new(
             f.span(),
             "#[tbor(min_len = N)] / #[tbor(max_len = N)] are only valid \
-             on `Vec<u8>` / `Option<Vec<u8>>` fields",
+             on `Vec<u8>` / `Vec<T>` / `Option<Vec<u8>>` fields",
         ));
     }
 
@@ -220,6 +259,7 @@ fn resolve_shape(f: &Field, flags: &FieldFlags) -> syn::Result<FieldShape> {
 #[derive(Default)]
 struct FieldFlags {
     session_id: bool,
+    key_id: bool,
     has_max_len: bool,
     has_min_len: bool,
 }
@@ -234,6 +274,9 @@ impl FieldFlags {
             a.parse_nested_meta(|m| {
                 if m.path.is_ident("session_id") {
                     out.session_id = true;
+                    Ok(())
+                } else if m.path.is_ident("key_id") {
+                    out.key_id = true;
                     Ok(())
                 } else if m.path.is_ident("max_len") {
                     out.has_max_len = true;
@@ -302,15 +345,30 @@ fn classify_type(ty: &Type) -> Option<FieldShape> {
         "u16" if no_args => Some(FieldShape::U16),
         "u32" if no_args => Some(FieldShape::U32),
         "u64" if no_args => Some(FieldShape::U64),
+        // `tbor_int` little-endian wrappers. `U8` aliases the native
+        // `u8`; `U16`/`U32`/`U64` are zerocopy `little_endian::U*` values
+        // bridged via `.get()` / `::new()`.
+        "U8" if no_args => Some(FieldShape::U8),
+        "U16" if no_args => Some(FieldShape::LeU16),
+        "U32" if no_args => Some(FieldShape::LeU32),
+        "U64" if no_args => Some(FieldShape::LeU64),
         "Vec" => {
             let inner = single_generic_type(&last.arguments)?;
-            is_u8(inner).then_some(FieldShape::VarBuf)
+            if is_u8(inner) {
+                Some(FieldShape::VarBuf)
+            } else {
+                Some(FieldShape::TypedVarBuf(Box::new(inner.clone())))
+            }
         }
         "Option" => {
             let inner = single_generic_type(&last.arguments)?;
             matches!(classify_type(inner), Some(FieldShape::VarBuf))
                 .then_some(FieldShape::OptVarBuf)
         }
+        // Any other no-generics path type (e.g. `PartPolicy`) is treated
+        // as a fixed-size typed buffer: a `#[repr(C)]` zerocopy value
+        // serialized as its raw little-endian byte image.
+        _ if no_args => Some(FieldShape::TypedFixed(Box::new(ty.clone()))),
         _ => None,
     }
 }
