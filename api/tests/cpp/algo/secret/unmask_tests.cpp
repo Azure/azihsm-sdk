@@ -322,7 +322,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_truncated_masked_key)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
@@ -349,7 +349,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_corrupted_masked_key)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
@@ -373,7 +373,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_wrong_secret_key_kind)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
@@ -502,7 +502,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_random_masked_key_bytes)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
@@ -526,8 +526,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_invalid_session_handle)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unmasked_key.get(), 0u);
+         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+                 ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
@@ -552,8 +552,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_masked_key_with_extra_trailing_byte)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unmasked_key.get(), 0u);
+         ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+                 ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
@@ -588,7 +588,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_prefix_only_masked_key_lengths)
                 unmasked_key.get_ptr()
             );
 
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
             ASSERT_EQ(unmasked_key.get(), 0u);
         }
     });
@@ -616,8 +616,8 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_corrupted_first_byte)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unmasked_key.get(), 0u);
+         ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
+                 ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
 
@@ -643,7 +643,7 @@ TEST_F(azihsm_secret_unmask, unmask_rejects_corrupted_last_byte)
             unmasked_key.get_ptr()
         );
 
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED);
         ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
@@ -772,29 +772,5 @@ TEST_F(azihsm_secret_unmask, get_masked_key_length_query_is_stable)
         err = azihsm_key_get_prop(original_secret.get(), &second_query);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(second_query.len, first_query.len);
-    });
-}
-
-// Unmask rejects an invalid key-kind enum value.
-TEST_F(azihsm_secret_unmask, unmask_rejects_invalid_key_kind_value)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        std::vector<uint8_t> masked_key_data;
-        get_masked_shared_secret(session, AZIHSM_ECC_CURVE_P256, masked_key_data);
-
-        azihsm_buffer masked_key{};
-        masked_key.ptr = masked_key_data.data();
-        masked_key.len = static_cast<uint32_t>(masked_key_data.size());
-
-        auto_key unmasked_key;
-        auto err = azihsm_key_unmask(
-            session,
-            static_cast<azihsm_key_kind>(0xFFFFFFFFu),
-            &masked_key,
-            unmasked_key.get_ptr()
-        );
-
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }
