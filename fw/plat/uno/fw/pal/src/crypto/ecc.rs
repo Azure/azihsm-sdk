@@ -248,4 +248,26 @@ impl HsmEcc for UnoHsmPal {
             .ecdh_derive(pka_curve, priv_key, pub_key, secret)
             .await
     }
+
+    fn ecc_priv_der_to_vault(
+        &self,
+        _io: &impl HsmIo,
+        _der: &DmaBuf,
+        _out: Option<&mut DmaBuf>,
+    ) -> HsmResult<(usize, HsmEccCurve)> {
+        // TODO: parse the recovered PKCS#8 ECC private key on Uno and
+        // re-export it in the vault representation (RsaUnwrap ECC import).
+        Err(HsmError::UnsupportedCmd)
+    }
+
+    async fn ecc_priv_pub_key(
+        &self,
+        _io: &impl HsmIo,
+        _priv_key: &DmaBuf,
+        _pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        // TODO: derive the wire public key from a vault-stored ECC private
+        // key on Uno PKA (RsaUnwrap ECC import).
+        Err(HsmError::UnsupportedCmd)
+    }
 }

@@ -245,11 +245,11 @@ impl HsmAes for StdHsmPal {
     async fn aes_kwp_unwrap(
         &self,
         _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _input: &DmaBuf,
-        _output: &mut DmaBuf,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<usize> {
-        todo!()
+        self.aes.kwp_unwrap(key, input, output).await
     }
 
     // AES-XTS support is currently disabled; the stub entry points are
