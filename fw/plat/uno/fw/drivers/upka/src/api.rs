@@ -266,9 +266,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
+        prime: &DmaBuf,
+        mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
-        self.with_engine(async |eng| eng.ecdh_derive(curve, priv_key, pub_key, secret).await)
-            .await
+        self.with_engine(async |eng| {
+            eng.ecdh_derive(curve, priv_key, pub_key, secret, prime, mont_result)
+                .await
+        })
+        .await
     }
 
     /// Run an RSA private-key modular exponentiation.

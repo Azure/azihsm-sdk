@@ -79,7 +79,14 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     check_fail_fast(pal, io, &body)?;
 
     // ── Step 2: POTA signature verification ──────────────────────────
-    verify_pota_signature(pal, io, body.pota_pub_key.raw, body.pota_sig).await?;
+    //
+    // TODO(bringup): The host can only obtain the partition identity public
+    // key (needed to produce a valid POTA signature) via the certificate-chain
+    // DDIs (`GetCertChainInfo`/`GetCertificate`), which are not yet
+    // implemented. Restore this call once a partition-identity read path
+    // (e.g. tbor `part_info`) lands.
+    //
+    // verify_pota_signature(pal, io, body.pota_pub_key.raw, body.pota_sig).await?;
 
     // ── Steps 3-4: ECDH + HKDF → 80-byte OKM (aes_key ‖ hmac_key) ────
     let okm = pal.dma_alloc(io, BK_LEN)?;
@@ -266,6 +273,7 @@ fn check_fail_fast<P: HsmPal>(
 /// partition identity P-384 public key (big-endian).  We materialize
 /// the same 97-byte form locally and verify the supplied signature
 /// against it.
+#[allow(dead_code)]
 async fn verify_pota_signature<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -329,7 +337,11 @@ async fn derive_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        let priv_key = pal.vault_key(io, est_cred_key_id)?;
+        // The EstablishCred vault blob stores `pub(96) ‖ priv(48)`; ECDH
+        // needs the trailing private scalar, not the leading public key.
+        let est_cred_blob = pal.vault_key(io, est_cred_key_id)?;
+        let (_pub_key, priv_key) =
+            est_cred_blob.split_at(HsmEccCurve::P384.pub_key_len());
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

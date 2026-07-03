@@ -27,6 +27,7 @@ use azihsm_fw_hsm_pal_traits::HsmEccPct;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
@@ -59,6 +60,38 @@ fn map_ecc_curve(curve: HsmEccCurve) -> HsmResult<UpkaEccCurve> {
         HsmEccCurve::P384 => Ok(UpkaEccCurve::P384),
         HsmEccCurve::P521 => Ok(UpkaEccCurve::P521),
         _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// NIST P-256 prime modulus in PKA little-endian operand order.
+const PRIME256_LE: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-384 prime modulus in PKA little-endian operand order.
+const PRIME384_LE: [u8; 48] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+    0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-521 prime modulus in PKA little-endian operand order (68-byte,
+/// DWORD-aligned per PKA hardware requirement).
+const PRIME521_LE: [u8; 68] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0x01, 0x00, 0x00,
+];
+
+/// Curve prime modulus (PKA little-endian) for the Montgomery-constant setup.
+fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
+    match curve {
+        UpkaEccCurve::P256 => &PRIME256_LE,
+        UpkaEccCurve::P384 => &PRIME384_LE,
+        UpkaEccCurve::P521 => &PRIME521_LE,
     }
 }
 
@@ -237,15 +270,35 @@ impl HsmEcc for UnoHsmPal {
     ///   public-key point, undersized buffer, hardware fault).
     async fn ecdh_derive(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
+        let cs = hsm_point_size(pka_curve);
+
+        // The PKA point-multiply requires a per-call Montgomery constant
+        // computed from the curve prime; provide the prime and a scratch
+        // buffer for its result.
+        let prime_le = curve_prime_le(pka_curve);
+        let prime = self.dma_alloc(io, prime_le.len())?;
+        prime.copy_from_slice(prime_le);
+        let mont_result = self.dma_alloc(io, prime_le.len())?;
+
         self.pka
-            .ecdh_derive(pka_curve, priv_key, pub_key, secret)
-            .await
+            .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
+            .await?;
+
+        // The host DDI serde delivers the peer public key and receives the
+        // firmware output already in PKA-native little-endian (see
+        // `pub_key_der_pre_encode`/`post_decode`), and the local private key
+        // is stored little-endian in the vault, so both pass through
+        // unconverted. The shared secret, however, is consumed internally by
+        // HKDF and never crosses the DDI boundary; the host derives it in
+        // big-endian (openssl), so reverse the PKA's little-endian secret.
+        secret[..cs].reverse();
+        Ok(())
     }
 }

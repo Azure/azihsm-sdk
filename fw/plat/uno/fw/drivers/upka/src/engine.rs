@@ -193,6 +193,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
+        prime: &DmaBuf,
+        mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
         Self::ensure_cmd_input(
             priv_key.len() >= hsm_point_size(curve)
@@ -200,11 +202,26 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
                 && secret.len() >= point_size(curve),
         )?;
 
+        // Required PKA setup: compute the Montgomery constant for the curve
+        // prime on this engine before the point multiplication. This leaves
+        // engine state the point-mul consumes; both run on the same engine
+        // acquisition (execute_cmd does not wipe between commands).
+        self.execute_cmd(
+            mont_const_calc_opcode(curve),
+            mont_result.as_mut_ptr() as u32,
+            prime.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await?;
+
+        // ECDH point multiply: result = shared secret X (LE);
+        // arg1 = peer public point (X || Y, LE); arg2 = private scalar (LE).
         self.execute_cmd(
             ecc_point_mul_opcode(curve),
             secret.as_mut_ptr() as u32,
-            priv_key.as_ptr() as u32,
             pub_key.as_ptr() as u32,
+            priv_key.as_ptr() as u32,
             0,
         )
         .await

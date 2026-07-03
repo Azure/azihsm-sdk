@@ -22,6 +22,9 @@ pub(crate) const ECC_POINT_VALIDATE_521: u32 = 0x1005_0008;
 pub(crate) const ECC_KEY_GEN_256: u32 = 0x1006_0000;
 pub(crate) const ECC_KEY_GEN_384: u32 = 0x1006_0001;
 pub(crate) const ECC_KEY_GEN_521: u32 = 0x1006_0008;
+pub(crate) const MONT_CONST_CALC_256: u32 = 0x500c_0000;
+pub(crate) const MONT_CONST_CALC_384: u32 = 0x500c_0001;
+pub(crate) const MONT_CONST_CALC_521: u32 = 0x500c_0008;
 pub(crate) const RSA_PRIV_2K: u32 = 0x5000_0003;
 pub(crate) const RSA_PRIV_3K: u32 = 0x5000_0004;
 pub(crate) const RSA_PRIV_4K: u32 = 0x5000_0005;
@@ -115,6 +118,19 @@ pub(crate) fn ecc_key_gen_opcode(curve: UpkaEccCurve) -> u32 {
         UpkaEccCurve::P256 => ECC_KEY_GEN_256,
         UpkaEccCurve::P384 => ECC_KEY_GEN_384,
         UpkaEccCurve::P521 => ECC_KEY_GEN_521,
+    }
+}
+
+/// Return the Montgomery-constant-calculation opcode for the selected curve.
+///
+/// The PKA engine requires a per-call `mont_const_calc(curve_prime)` before an
+/// ECC point-multiplication / verify; it leaves engine state the subsequent
+/// command consumes (same engine acquisition).
+pub(crate) fn mont_const_calc_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MONT_CONST_CALC_256,
+        UpkaEccCurve::P384 => MONT_CONST_CALC_384,
+        UpkaEccCurve::P521 => MONT_CONST_CALC_521,
     }
 }
 
