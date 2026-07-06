@@ -3,8 +3,10 @@
 
 #include <array>
 #include <azihsm_api.h>
+#include <cstdio>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 #include "handle/part_handle.hpp"
@@ -101,17 +103,24 @@ struct ShaTestParams
     const char *test_name;
 };
 
-#include <string>
-
 static std::vector<uint8_t> hex_to_bytes(const char *hex)
 {
     std::vector<uint8_t> bytes;
+
     for (size_t i = 0; hex[i] != '\0'; i += 2)
     {
         unsigned int value = 0;
-        sscanf(hex + i, "%2x", &value);
+        int parsed_count = std::sscanf(hex + i, "%2x", &value);
+
+        if (parsed_count != 1)
+        {
+            ADD_FAILURE() << "Failed to parse hex string at offset " << i;
+            return {};
+        }
+
         bytes.push_back(static_cast<uint8_t>(value));
     }
+
     return bytes;
 }
 
@@ -656,9 +665,6 @@ TEST_F(azihsm_sha_digest, one_shot_rejects_null_digest_ptr_with_nonzero_len)
 
         auto err = azihsm_crypt_digest(session, &algo, &data_buf, &digest_buf);
 
-        // If API treats nullptr output as size-query regardless of len,
-        // this may return BUFFER_TOO_SMALL instead. Use strict expectation
-        // only if native validation requires ptr when len > 0.
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
