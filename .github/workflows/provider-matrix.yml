@@ -223,7 +223,6 @@ jobs:
         if: ${{ matrix.cov }}
         env:
           RUSTFLAGS: -C instrument-coverage
-          LLVM_PROFILE_FILE: ${{ github.workspace }}/target/llvm-cov-target/azihsm-sdk-%p-%14m.profraw
         run: |
           cargo build -p azihsm_api_native --features mock
           cargo build -p azihsm_ossl_provider --features mock
