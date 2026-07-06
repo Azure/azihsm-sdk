@@ -100,14 +100,16 @@ impl EncryptOp for OsslRsaEncryptAlgo<'_> {
         let len = encrypter
             .encrypt_len(input)
             .map_err(|_| CryptoError::RsaError)?;
-        if let Some(output) = output {
+        let len = if let Some(output) = output {
             if output.len() < len {
                 return Err(CryptoError::RsaBufferTooSmall);
             }
             encrypter
                 .encrypt(input, output)
-                .map_err(|_| CryptoError::RsaEncryptError)?;
-        }
+                .map_err(|_| CryptoError::RsaEncryptError)?
+        } else {
+            len
+        };
         Ok(len)
     }
 }
