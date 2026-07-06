@@ -690,8 +690,6 @@ TEST_F(azihsm_sha_digest, streaming_finish_rejects_null_digest_ptr_with_nonzero_
 
         auto err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
 
-        // Same note as one-shot: this depends on whether nullptr means
-        // size-query even when len is non-zero.
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
