@@ -284,7 +284,9 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                     .set_rsa_mgf1_md(hash.message_digest())
                     .map_err(|_| CryptoError::RsaSetPropertyError)?;
             }
-            if let Some(label) = self.label {
+            // An empty label is equivalent to no label (OAEP's default), so
+            // filter it out to keep None and Some(b"") equivalent (matches 3.x).
+            if let Some(label) = self.label.filter(|l| !l.is_empty()) {
                 encrypter
                     .set_rsa_oaep_label(label)
                     .map_err(|_| CryptoError::RsaSetPropertyError)?;
@@ -328,7 +330,9 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
                     .set_rsa_mgf1_md(hash.message_digest())
                     .map_err(|_| CryptoError::RsaSetPropertyError)?;
             }
-            if let Some(label) = self.label {
+            // An empty label is equivalent to no label (OAEP's default), so
+            // filter it out to keep None and Some(b"") equivalent (matches 3.x).
+            if let Some(label) = self.label.filter(|l| !l.is_empty()) {
                 decrypter
                     .set_rsa_oaep_label(label)
                     .map_err(|_| CryptoError::RsaSetPropertyError)?;

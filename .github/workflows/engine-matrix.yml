@@ -102,6 +102,11 @@ jobs:
           cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
             --features engine --all-targets -- -D warnings
 
+      # azihsm_crypto's *_ossl11.rs backends only compile under cfg(not(ossl300)),
+      # so the 3.x workspace clippy in rust.yml never lints them; lint them here.
+      - name: Clippy azihsm_crypto
+        run: cargo clippy -p azihsm_crypto --all-targets -- -D warnings
+
       # cargo-nextest isn't in the base image and building it from source is
       # unreliable here; fetch the prebuilt binary, pinned to the version xtask
       # installs elsewhere (xtask/src/setup.rs CARGO_NEXTEST_VERSION).
