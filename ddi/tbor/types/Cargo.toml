@@ -9,7 +9,9 @@ version = "0.1.0"
 [dependencies]
 azihsm_ddi_tbor_codec.workspace = true
 azihsm_ddi_tbor_derive.workspace = true
+bitfield-struct.workspace = true
 open-enum.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
 
 [dev-dependencies]
 azihsm_crypto.workspace = true
@@ -18,6 +20,7 @@ azihsm_ddi_interface.workspace = true
 azihsm_ddi_mbor_sim.workspace = true
 azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_mbor_types.workspace = true
+azihsm_session_ex_crypto.workspace = true
 minicbor = { features = ["derive"], workspace = true }
 parking_lot.workspace = true
 x509.workspace = true
@@ -31,10 +34,11 @@ path = "tests/azihsm_ddi_tbor_tests.rs"
 
 [features]
 # Forward backend selection to the azihsm_ddi facade so the integration
-# test binary picks up the right backend (emu vs mock). Mirrors the
-# pattern used in ddi/mbor/types/Cargo.toml.
+# test binary picks up the right backend. The same tests run across every
+# transport — choose one with `--features emu` / `mock` / `sock`.
 emu = ["azihsm_ddi/emu"]
 mock = ["azihsm_ddi/mock"]
+sock = ["azihsm_ddi/sock"]
 table-4 = ["azihsm_ddi/table-4"]
 table-64 = ["azihsm_ddi/table-64"]
 

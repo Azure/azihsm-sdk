@@ -39,6 +39,7 @@ include = [
   "AzihsmAlgoAesXtsParams",
   "AzihsmAlgoEcdhParams",
   "AzihsmAlgoHkdfParams",
+  "AzihsmAlgoKbkdfCounterParams",
   "AzihsmAlgoRsaAesKeyWrapParams",
   "AzihsmAlgoRsaAesWrapParams",
   "AzihsmAlgoRsaPkcsOaepParams",
@@ -67,6 +68,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
 "AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
 "AzihsmAlgoId" = "azihsm_algo_id"
+"AzihsmAlgoKbkdfCounterParams" = "azihsm_algo_kbkdf_counter_params"
 "AzihsmAlgoRsaAesKeyWrapParams" = "azihsm_algo_rsa_aes_key_wrap_params"
 "AzihsmAlgoRsaAesWrapParams" = "azihsm_algo_rsa_aes_wrap_params"
 "AzihsmAlgoRsaPkcsOaepParams" = "azihsm_algo_rsa_pkcs_oaep_params"

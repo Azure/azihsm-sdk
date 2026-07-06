@@ -59,6 +59,14 @@ pub struct CngAesKey {
     gcm_handle: CngAesGcmKeyHandle,
 }
 
+#[allow(unsafe_code)]
+// SAFETY: CngAesKey wraps Windows CNG handles which are thread-safe and can be sent across threads
+unsafe impl Send for CngAesKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngAesKey wraps Windows CNG handles which are thread-safe and can be shared across threads
+unsafe impl Sync for CngAesKey {}
+
 /// Marker trait implementation indicating this is a cryptographic key.
 impl Key for CngAesKey {
     /// Returns the size of the AES key in bytes.

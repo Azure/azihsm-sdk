@@ -1,0 +1,72 @@
+// Copyright (c) Microsoft Corporation.
+//
+// NVIC — ARMv7-M Nested Vectored Interrupt Controller
+//
+// Reference: DDI0403E §B3.4
+// Base address: 0xE000_E100 (PPB)
+// STIR at: 0xE000_EF00
+
+reg irq_bits_t {
+    name = "Interrupt Bit-Set/Clear Register";
+    desc = "32-bit register where each bit corresponds to one interrupt.
+             For ISERn, bit m controls interrupt (32n + m).
+             ISER/ISPR: write-1-to-set. ICER/ICPR: write-1-to-clear.
+             IABR: read-only active bits.";
+
+    field {} BITS[31:0] = 0x0;
+    BITS->desc = "Interrupt bits. Behavior depends on register type.";
+};
+
+reg iabr_t {
+    name = "Interrupt Active Bit Register";
+    desc = "Read-only. Each bit indicates whether the corresponding interrupt is active.";
+
+    field {} BITS[31:0] = 0x0;
+    BITS->desc = "Active bits. Read-only.";
+    BITS->sw = r;
+};
+
+reg ipr_t {
+    name = "Interrupt Priority Register";
+    desc = "Contains 4 packed 8-bit priority fields. Only upper bits
+             (implementation-defined, typically bits[7:4]) are used.";
+
+    field {} PRI_0[7:0] = 0x0;
+    PRI_0->desc = "Priority of interrupt at position 4n+0.";
+
+    field {} PRI_1[15:8] = 0x0;
+    PRI_1->desc = "Priority of interrupt at position 4n+1.";
+
+    field {} PRI_2[23:16] = 0x0;
+    PRI_2->desc = "Priority of interrupt at position 4n+2.";
+
+    field {} PRI_3[31:24] = 0x0;
+    PRI_3->desc = "Priority of interrupt at position 4n+3.";
+};
+
+reg stir_t {
+    name = "Software Trigger Interrupt Register";
+    desc = "Write-only. Triggers the specified interrupt.";
+
+    field {} INTID[8:0] = 0x0;
+    INTID->desc = "Interrupt ID to trigger (ExceptionNumber - 16).";
+};
+
+addrmap nvic {
+    name = "NVIC";
+    desc = "ARMv7-M Nested Vectored Interrupt Controller.
+             Supports up to 240 external interrupts with 8-bit priority.
+             Array sizes: 8 registers cover 256 interrupts (ISERn, etc.),
+             60 IPR registers cover 240 interrupt priorities.";
+
+    default hw = na;
+    default sw = rw;
+
+    irq_bits_t ISER[8]  @ 0x000 += 0x04;
+    irq_bits_t ICER[8]  @ 0x080 += 0x04;
+    irq_bits_t ISPR[8]  @ 0x100 += 0x04;
+    irq_bits_t ICPR[8]  @ 0x180 += 0x04;
+    iabr_t     IABR[8]  @ 0x200 += 0x04;
+    ipr_t      IPR[60]  @ 0x300 += 0x04;
+    stir_t     STIR     @ 0xE00;
+};

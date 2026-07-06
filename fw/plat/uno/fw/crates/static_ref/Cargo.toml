@@ -1,0 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2024"
+name = "azihsm_fw_static_ref"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false

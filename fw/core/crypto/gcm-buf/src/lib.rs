@@ -3,13 +3,14 @@
 
 #![no_std]
 
-//! GCM buffer layout helpers for the BCP `pad_aad` convention.
+//! GCM buffer layout helpers for the PAL `pad_aad` convention.
 //!
-//! The Ocelot BCP hardware accepts AES-GCM input buffers laid out as
-//! `[padded_AAD | text]`. The AAD region is padded to a multiple of
-//! 32 bytes per the table below. The prepended (or trailing) zero
-//! bytes form a GHASH-transparent block, so the real AAD content
-//! occupies the same GHASH-block positions as standard GCM.
+//! The PAL GCM buffer layout convention uses AES-GCM input buffers
+//! laid out as `[padded_AAD | text]`. The AAD region is padded to a
+//! multiple of 32 bytes per the table below. The prepended (or
+//! trailing) zero bytes form a GHASH-transparent block, so the real
+//! AAD content occupies the same GHASH-block positions as standard
+//! GCM.
 //!
 //! | `aad_len % 32` | Padded layout                              |
 //! |----------------|--------------------------------------------|
@@ -24,11 +25,11 @@
 // Constants
 // =============================================================================
 
-/// AAD-padding granularity (bytes). Every BCP GCM submission's AAD
+/// AAD-padding granularity (bytes). Every PAL GCM submission's AAD
 /// region length is a multiple of this value.
 const AAD_PAD: usize = 32;
 
-/// Threshold at which the BCP convention switches from the "prefix
+/// Threshold at which the PAL convention switches from the "prefix
 /// 16 zeros" layout to the "trailing-only" layout. Inclusive upper
 /// bound for the prefix layout.
 const PREFIX_LAYOUT_THRESHOLD: usize = 16;
@@ -103,7 +104,7 @@ pub const fn gcm_buf_len(aad_len: usize, text_len: usize) -> usize {
     padded_aad_len(aad_len) + text_len
 }
 
-/// Format AAD and text into a GCM buffer using the BCP `pad_aad`
+/// Format AAD and text into a GCM buffer using the PAL `pad_aad`
 /// convention.
 ///
 /// Writes `[padded_aad | text]` into `buf` and returns the unpadded

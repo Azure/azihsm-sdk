@@ -104,7 +104,7 @@ impl HsmHmac for StdHsmPal {
         &self,
         _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        key: &mut [u8],
+        key: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.hmac.gen_key(key).await
     }

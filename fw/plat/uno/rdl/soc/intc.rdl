@@ -1,0 +1,114 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// IPC Interrupt Controller (INTC) — doorbell-based inter-processor communication
+//
+// Register map for the INTC.
+// 6 interrupt control blocks + 32 descriptor registers.
+//
+// Internal layout:
+//   block[6]   @ 0x00  stride 0x18   per-block interrupt control
+//   desc[32]   @ 0x90  stride 0x04   doorbell/value registers
+//
+// Firmware flow:
+//   Init:  block[b].PEND_CLR = 0xFFFF_FFFF
+//          block[b].ENABLE_SET |= (1 << recv_desc)
+//   Send:  desc[N].VALUE = doorbell
+//   ISR:   N = trailing_zeros(block[b].PEND_SET)
+//          block[b].PEND_CLR = (1 << N)
+//   Drop:  block[b].ENABLE_CLR |= (1 << N)
+
+// ── Block Registers (stride 0x18) ──
+
+reg intc_pend_clr_t {
+    name = "INTC Pending Clear";
+    desc = "Write 1 to bit N to clear descriptor N's pending status.
+            Original: pend_clr";
+
+    field {} BITS[31:0] = 0x0;
+};
+
+reg intc_pend_set_t {
+    name = "INTC Pending Set (Read-Only)";
+    desc = "Read pending status. Bit N = 1 means descriptor N is pending.
+            Original: pend_set";
+
+    field {} BITS[31:0] = 0x0;
+    BITS->sw = r;
+    BITS->hw = w;
+};
+
+reg intc_mask_clr_t {
+    name = "INTC Mask Clear";
+    desc = "Write 1 to bit N to unmask descriptor N.
+            Original: mask_clr";
+
+    field {} BITS[31:0] = 0x0;
+};
+
+reg intc_mask_set_t {
+    name = "INTC Mask Set";
+    desc = "Write 1 to bit N to mask descriptor N.
+            Original: mask_set";
+
+    field {} BITS[31:0] = 0x0;
+};
+
+reg intc_enable_clr_t {
+    name = "INTC Enable Clear";
+    desc = "Write 1 to bit N to disable descriptor N's IRQ.
+            Original: enable_clr";
+
+    field {} BITS[31:0] = 0x0;
+};
+
+reg intc_enable_set_t {
+    name = "INTC Enable Set";
+    desc = "Write 1 to bit N to enable descriptor N's IRQ.
+            Original: enable_set";
+
+    field {} BITS[31:0] = 0x0;
+};
+
+regfile intc_block_t {
+    desc = "One interrupt control block (0x18 bytes).
+            All registers are 32-bit bitmasks (bit N = descriptor N).
+            Original: int_block_t";
+
+    intc_pend_clr_t     PEND_CLR    @ 0x00;
+    intc_pend_set_t     PEND_SET    @ 0x04;
+    intc_mask_clr_t     MASK_CLR    @ 0x08;
+    intc_mask_set_t     MASK_SET    @ 0x0C;
+    intc_enable_clr_t   ENABLE_CLR  @ 0x10;
+    intc_enable_set_t   ENABLE_SET  @ 0x14;
+};
+
+// ── Descriptor Register ──
+
+reg intc_desc_t {
+    name = "INTC Descriptor";
+    desc = "Doorbell + value register. Writing triggers pending IRQ on
+            all blocks that have this descriptor enabled.
+            Original: desc_t";
+
+    field {} VALUE[31:0] = 0x0;
+};
+
+// ── Top-level Address Map ──
+
+addrmap intc {
+    name = "IPC Interrupt Controller";
+    desc = "IPC Interrupt Controller with 6 interrupt control blocks and 32
+            doorbell descriptor registers. Total register space: 0x110 bytes.";
+
+    default hw = na;
+    default sw = rw;
+
+    intc_pend_clr_t     PEND_CLR[6]		@ 0x00;
+    intc_pend_set_t     PEND_SET[6]		@ 0x18;
+    intc_mask_clr_t     MASK_CLR[6]		@ 0x30;
+    intc_mask_set_t     MASK_SET[6]		@ 0x48;
+    intc_enable_clr_t   ENABLE_CLR[6]	@ 0x60;
+    intc_enable_set_t   ENABLE_SET[6]	@ 0x78;
+    intc_desc_t   DESC[32]   @ 0x110 += 0x04;
+};

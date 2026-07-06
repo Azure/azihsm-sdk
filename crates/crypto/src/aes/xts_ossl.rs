@@ -23,9 +23,23 @@
 //! - **No Authentication**: XTS mode does not provide authentication; it only provides confidentiality
 //! - **Sector-based**: Designed for disk encryption, not for general-purpose data encryption
 
-use openssl::symm::*;
+use openssl::cipher::Cipher;
+use openssl::cipher::CipherRef;
+use openssl::cipher_ctx::CipherCtx;
 
 use super::*;
+
+/// Cipher operation direction for AES-XTS.
+///
+/// Replaces the previously-used `openssl::symm::Mode`. The AES-XTS backend now
+/// runs in the crate-private libctx via `Cipher::fetch` + `CipherCtx`, so it no
+/// longer depends on the legacy `openssl::symm` API. The variants and their use
+/// in error-variant selection are unchanged.
+#[derive(Clone, Copy)]
+enum Mode {
+    Encrypt,
+    Decrypt,
+}
 
 /// OpenSSL AES-XTS encryption/decryption operation.
 ///
@@ -126,13 +140,17 @@ impl OsslAesXtsAlgo {
     ///
     /// # Errors
     ///
-    /// Returns `CryptoError::AesXtsInvalidKeySize` if the key size is not 32 or 64 bytes.
+    /// Returns `CryptoError::AesXtsInvalidKeySize` if the key size is not 32 or 64 bytes,
+    /// or `CryptoError::AesXtsConfigError` if the XTS cipher cannot be fetched (e.g. the
+    /// private libctx's default provider does not offer it).
     fn cipher(key_size: usize) -> Result<Cipher, CryptoError> {
-        match key_size {
-            32 => Ok(Cipher::aes_128_xts()),
-            64 => Ok(Cipher::aes_256_xts()),
-            _ => Err(CryptoError::AesXtsInvalidKeySize),
-        }
+        let name = match key_size {
+            32 => "AES-128-XTS",
+            64 => "AES-256-XTS",
+            _ => return Err(CryptoError::AesXtsInvalidKeySize),
+        };
+        Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
+            .map_err(|_| CryptoError::AesXtsConfigError)
     }
 
     /// Increments the tweak value for the next data unit.
@@ -162,50 +180,61 @@ impl OsslAesXtsAlgo {
         Ok(())
     }
 
-    /// Creates and configures an OpenSSL Crypter for AES-XTS operations.
+    /// Creates and configures an OpenSSL `CipherCtx` for AES-XTS operations.
     ///
     /// # Arguments
     ///
-    /// * `cipher` - The OpenSSL cipher to use
+    /// * `cipher` - The OpenSSL cipher to use (fetched from the crate-private libctx)
     /// * `mode` - Encryption or decryption mode
     /// * `key_bytes` - The key material
     ///
     /// The tweak used for the operation is taken from `self.tweak` and expanded to 16 bytes.
     /// The lower 8 bytes come from the little-endian `u64`; the upper 8 bytes are zero.
+    /// For AES-XTS the 16-byte tweak is supplied to OpenSSL as the IV.
     ///
     /// # Returns
     ///
-    /// A configured `Crypter` with padding disabled (required for XTS mode).
+    /// A configured `CipherCtx` with padding disabled (required for XTS mode).
     ///
     /// # Errors
     ///
     /// Returns `CryptoError::AesXtsEncryptError` or `CryptoError::AesXtsDecryptError`
-    /// depending on the mode if crypter creation fails.
+    /// depending on the mode if context creation fails.
     fn init_crypter(
         &self,
-        cipher: Cipher,
+        cipher: &CipherRef,
         mode: Mode,
         key_bytes: &[u8],
-    ) -> Result<Crypter, CryptoError> {
+    ) -> Result<CipherCtx, CryptoError> {
         // get tweak expanded to block size
         let full_tweak = (self.tweak as u128).to_le_bytes();
 
-        // Initialize and configure OpenSSL Crypter for AES-XTS
-        let mut crypter =
-            Crypter::new(cipher, mode, key_bytes, Some(&full_tweak)).map_err(|_| match mode {
-                Mode::Encrypt => CryptoError::AesXtsEncryptError,
-                Mode::Decrypt => CryptoError::AesXtsDecryptError,
-            })?;
-        // Disable padding for XTS mode
-        crypter.pad(false);
+        let err = || match mode {
+            Mode::Encrypt => CryptoError::AesXtsEncryptError,
+            Mode::Decrypt => CryptoError::AesXtsDecryptError,
+        };
 
-        Ok(crypter)
+        // Initialize and configure OpenSSL CipherCtx for AES-XTS. The 16-byte
+        // tweak is passed as the IV.
+        let mut ctx = CipherCtx::new().map_err(|_| err())?;
+        match mode {
+            Mode::Encrypt => ctx
+                .encrypt_init(Some(cipher), Some(key_bytes), Some(&full_tweak))
+                .map_err(|_| err())?,
+            Mode::Decrypt => ctx
+                .decrypt_init(Some(cipher), Some(key_bytes), Some(&full_tweak))
+                .map_err(|_| err())?,
+        }
+        // Disable padding for XTS mode
+        ctx.set_padding(false);
+
+        Ok(ctx)
     }
 
     /// Encrypts or decrypts one data block (chunk) using AES-XTS.
     ///
-    /// This helper exists to share the common OpenSSL `Crypter` setup and
-    /// `update`/`finalize` flow between encrypt and decrypt.
+    /// This helper exists to share the common OpenSSL `CipherCtx` setup and
+    /// `cipher_update`/`cipher_final` flow between encrypt and decrypt.
     ///
     /// # Arguments
     ///
@@ -225,20 +254,22 @@ impl OsslAesXtsAlgo {
     /// depending on the mode if the OpenSSL operation fails.
     fn crypt_chunk(
         &self,
-        cipher: Cipher,
+        cipher: &CipherRef,
         mode: Mode,
         key_bytes: &[u8],
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        let mut crypter = self.init_crypter(cipher, mode, key_bytes)?;
+        let mut ctx = self.init_crypter(cipher, mode, key_bytes)?;
 
-        let mut count = crypter.update(input, output).map_err(|_| match mode {
-            Mode::Encrypt => CryptoError::AesXtsEncryptError,
-            Mode::Decrypt => CryptoError::AesXtsDecryptError,
-        })?;
-        count += crypter
-            .finalize(&mut output[count..])
+        let mut count = ctx
+            .cipher_update(input, Some(output))
+            .map_err(|_| match mode {
+                Mode::Encrypt => CryptoError::AesXtsEncryptError,
+                Mode::Decrypt => CryptoError::AesXtsDecryptError,
+            })?;
+        count += ctx
+            .cipher_final(&mut output[count..])
             .map_err(|_| match mode {
                 Mode::Encrypt => CryptoError::AesXtsEncryptError,
                 Mode::Decrypt => CryptoError::AesXtsDecryptError,
@@ -316,9 +347,9 @@ impl OsslAesXtsAlgo {
             for unit in input.chunks(self.dul) {
                 let out_end = offset + unit.len();
 
-                // OpenSSL does not expose the evolving tweak, so we create a new Crypter
+                // OpenSSL does not expose the evolving tweak, so we create a new CipherCtx
                 // per data unit with the current tweak.
-                self.crypt_chunk(cipher, mode, key_bytes, unit, &mut output[offset..out_end])?;
+                self.crypt_chunk(&cipher, mode, key_bytes, unit, &mut output[offset..out_end])?;
 
                 offset = out_end;
                 self.increment_tweak(1)?;

@@ -1,0 +1,66 @@
+// Copyright (c) Microsoft Corporation.
+//
+// Uno SoC — top-level address map
+//
+// Memory map:
+//   0x0000_0000  ITCM            512 KB  (code + vector table)
+//   0x2000_0000  DTCM            189 KB  (stack + .bss, CPU-only)
+//     0x2002_F400  DTCM_IO_BUF[32] (64 KB per-IO NonDma scratch)
+//     0x2003_F400  CRASHDUMP_BASE + CORE_RUN_STATUS
+//   0x6100_0000  SRAM              2 MB  (GSRAM: queues, DMA, key vault)
+//   0x4000_2000  TraceMailbox      4 KB  (debug-only)
+//   0xA000_0000  GDMA              4 KB
+//   0xA020_0000  AES               4 KB
+//   0xA030_0000  RNG               4 KB
+//   0xA040_0000  SHA               4 KB
+//   0xA128_0000  IIC              16 KB  (controller 0)
+//   0xA12C_0000  OIC              16 KB  (controller 0)
+//   0xB000_6000  INTC            272 B   (IPC interrupt controller)
+//   0xB000_9000  UART            4 KB    (debug console; silicon-only)
+//   0xB020_0000  DualCpM7        4 B     (CP_ID core identification)
+//   0xC000_0000  UPKA             64 KB  (16 PKA engines × 4 KB)
+//   0xE000_0000  PPB (NVIC, SCB, SysTick, TCM)
+
+`include "trace_mailbox.rdl"
+`include "iic.rdl"
+`include "oic.rdl"
+`include "gdma.rdl"
+`include "aes.rdl"
+`include "sha.rdl"
+`include "upka.rdl"
+`include "rng.rdl"
+`include "intc.rdl"
+`include "dual_cp_m7.rdl"
+`include "uart.rdl"
+`include "gsram_map.rdl"
+`include "dtcm_map.rdl"
+
+addrmap uno {
+    name = "Uno SoC";
+    desc = "Cortex-M7 SoC with 512KB ITCM, 253KB usable DTCM, 2MB GSRAM.
+             GSRAM holds IIC/OIC/GDMA queues, crypto command buffers,
+             DMA heap, partition store, and key vault.
+             No Flash — all code resides in ITCM.";
+
+    default hw = na;
+    default sw = rw;
+
+    // Peripheral registers (MMIO)
+    trace_mailbox TRACE_MAILBOX @ 0x4000_2000;
+    gdma   GDMA            @ 0xA000_0000;
+    aes    AES             @ 0xA020_0000;
+    rng    RNG             @ 0xA030_0000;
+    sha    SHA             @ 0xA040_0000;
+    iic    IIC             @ 0xA128_0000;
+    oic    OIC             @ 0xA12C_0000;
+    intc   INTC            @ 0xB000_6000;
+    dual_cp_m7 DUAL_CP_M7  @ 0xB020_0000;
+    uart   UART            @ 0xB000_9000;
+    upka   UPKA            @ 0xC000_0000;
+
+    // GSRAM — all queues, buffers, stores, vault
+    io_gsram IO_GSRAM       @ 0x6100_0000;
+
+    // DTCM — IO buffers, crashdump, heartbeat
+    hsm_dtcm HSM_DTCM      @ 0x2000_0000;
+};

@@ -1,0 +1,137 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+// uart.rdl — UART registers used by the HSM driver
+//
+// Base address: 0xB000_9000
+//
+// Only registers accessed by drivers/uart/src/uart.rs are included:
+//   RX_BUF     @ 0x00  (read-only)
+//   TX_HOLD    @ 0x04  (write-only)
+//   STATUS     @ 0x0C  (read/write)
+
+
+// ── Receiver Buffer (read-only) ──
+
+reg rx_buf_t {                                         // UART: receiver_buffer
+    desc = "RX data register. Read when RX_READY is set.
+            Reading also clears the RX_READY status bit.";
+
+    field { sw = r; hw = w;
+        desc = "Received data byte.";
+    } DATA[7:0] = 0x0;                                // UART: uart_rcvr_bfr
+
+    field { sw = r; } RSVD_1[11:8] = 0x0;
+
+    field { sw = r; hw = w;
+        desc = "Overrun error mirror (when st_mirror_en=1).";
+    } OVRUN_ERR_MIRR[12:12] = 0x0;                    // UART: ovrun_err_mirr_uart
+
+    field { sw = r; hw = w;
+        desc = "Parity error detect mirror (when st_mirror_en=1).";
+    } PARITY_ERR_DET[13:13] = 0x0;                    // UART: parity_err_det_uart
+
+    field { sw = r; hw = w;
+        desc = "Frame error detect mirror (when st_mirror_en=1).";
+    } FRAME_ERR_DET[14:14] = 0x0;                     // UART: frame_err_det_uart
+
+    field { sw = r; hw = w;
+        desc = "Break detect mirror (when st_mirror_en=1).";
+    } BREAK_DET[15:15] = 0x0;                         // UART: break_det_uart
+
+    field { sw = r; } RSVD_0[31:16] = 0x0;
+};
+
+
+// ── Transmitter Holding (write-only) ──
+
+reg tx_hold_t {                                        // UART: transmitter_holding
+    desc = "TX data register. Write when TX_READY is set.
+            Writing clears the TX_READY status bit.";
+
+    field { sw = w; hw = r;
+        desc = "Byte to transmit.";
+    } DATA[7:0] = 0x0;                                // UART: uart_trans_hld_uart
+
+    field { sw = w; } RSVD_0[31:8] = 0x0;
+};
+
+
+// ── Status ──
+
+reg status_t {                                         // UART: status
+    desc = "UART status — TX/RX ready, FIFO, and error flags.";
+
+    field { sw = r; hw = w;
+        desc = "Overrun error. Cleared on RX buffer read.";
+    } OVRUN_ERR[0:0] = 0x0;                           // UART: ovrun_err_uart
+
+    field { sw = r; hw = w;
+        desc = "Parity error. Cleared on RX buffer read.";
+    } PARITY_ERR[1:1] = 0x0;                          // UART: parity_err_uart
+
+    field { sw = r; hw = w;
+        desc = "Frame error. Cleared on RX buffer read.";
+    } FRAME_ERR[2:2] = 0x0;                           // UART: frame_err_uart
+
+    field { sw = r; hw = w;
+        desc = "Break sequence detected.";
+    } BREAK_DET[3:3] = 0x0;                           // UART: brk_det_uart
+
+    field { sw = r; hw = w;
+        desc = "RX ready — new byte available in RX buffer.";
+    } RX_READY[4:4] = 0x0;                            // UART: rx_ready_uart
+
+    field { sw = r; hw = w;
+        desc = "TX ready — TX holding register empty.";
+    } TX_READY[5:5] = 0x0;                            // UART: tx_ready_uart
+
+    field { sw = r; hw = w;
+        desc = "TX empty — holding register and shift register both empty.";
+    } TX_EMPTY[6:6] = 0x0;                            // UART: tx_empty_uart
+
+    field { sw = r; hw = w; } RXFIFO_HFULL[7:7] = 0x0;
+    field { sw = r; hw = w; } RXFIFO_FULL[8:8] = 0x0;
+
+    field { sw = rw; hw = w;
+        desc = "RX toggle — write 1 to clear.";
+    } RX_TOGGLE[9:9] = 0x0;                           // UART: rx_toggle_uart
+
+    field { sw = r; hw = w; } TXFIFO_HFULL[10:10] = 0x0;
+    field { sw = r; hw = w; } TXFIFO_FULL[11:11] = 0x0;
+    field { sw = r; hw = w; } RXFIFO_EMPTY[12:12] = 0x0;
+    field { sw = r; hw = w; } TXFIFO_EMPTY[13:13] = 0x0;
+
+    field { sw = r; } RSVD_1[17:14] = 0x0;
+
+    field { sw = r; hw = w; } RTSN_THRESHOLD_MET[18:18] = 0x0;
+
+    field { sw = r; } RSVD_0[20:19] = 0x0;
+
+    field { sw = r; hw = w; } RTSN_O[21:21] = 0x0;
+    field { sw = r; hw = w; } CTSN_I[22:22] = 0x0;
+
+    field { sw = r; } RSVD_TOP[31:23] = 0x0;
+};
+
+
+// ── Top-level ──
+
+addrmap uart {
+    desc = "UART registers used by the HSM driver.
+
+            Base address: 0xB000_9000
+
+            Driver uses:
+              RX_BUF.DATA       — read received byte
+              STATUS.RX_READY   — poll before reading
+              TX_HOLD.DATA      — write byte to transmit
+              STATUS.TX_READY   — poll before writing";
+
+    default hw = na;
+    default sw = rw;
+
+    rx_buf_t     RX_BUF    @ 0x00;
+    tx_hold_t    TX_HOLD   @ 0x04;
+    status_t     STATUS    @ 0x0C;
+};

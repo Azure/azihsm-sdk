@@ -15,6 +15,7 @@ doctest = false
 azihsm_fw_ddi_tbor.workspace = true
 azihsm_fw_ddi_tbor_api.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
+bitfield-struct.workspace = true
 open-enum.workspace = true
 zerocopy.workspace = true
 

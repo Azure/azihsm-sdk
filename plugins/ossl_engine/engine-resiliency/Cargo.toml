@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "engine-resiliency"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+azihsm_api.workspace = true
+fs2.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+# The engine is Linux-only (see src/lib.rs crate gate); these deps pull
+# OpenSSL, which can't build on Windows without a system OpenSSL, so gate
+# them to Linux to keep the workspace `build_windows` clippy green.
+[target.'cfg(target_os = "linux")'.dependencies]
+azihsm_crypto.workspace = true
+openssl.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

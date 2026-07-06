@@ -1,0 +1,41 @@
+/* device.x — Uno SoC interrupt vector stubs */
+PROVIDE(IIC_ICQ = DefaultHandler);
+PROVIDE(OIC_OCQ = DefaultHandler);
+PROVIDE(GDMA_CQ = DefaultHandler);
+PROVIDE(AES_DONE = DefaultHandler);
+PROVIDE(SHA_DONE = DefaultHandler);
+PROVIDE(UPKA_0_DONE = DefaultHandler);
+PROVIDE(UPKA_1_DONE = DefaultHandler);
+PROVIDE(UPKA_2_DONE = DefaultHandler);
+PROVIDE(UPKA_3_DONE = DefaultHandler);
+PROVIDE(UPKA_4_DONE = DefaultHandler);
+PROVIDE(UPKA_5_DONE = DefaultHandler);
+PROVIDE(UPKA_6_DONE = DefaultHandler);
+PROVIDE(UPKA_7_DONE = DefaultHandler);
+PROVIDE(UPKA_8_DONE = DefaultHandler);
+PROVIDE(UPKA_9_DONE = DefaultHandler);
+PROVIDE(UPKA_10_DONE = DefaultHandler);
+PROVIDE(UPKA_11_DONE = DefaultHandler);
+PROVIDE(UPKA_12_DONE = DefaultHandler);
+PROVIDE(UPKA_13_DONE = DefaultHandler);
+PROVIDE(UPKA_14_DONE = DefaultHandler);
+PROVIDE(UPKA_15_DONE = DefaultHandler);
+PROVIDE(UPKA_0_ERROR = DefaultHandler);
+PROVIDE(UPKA_1_ERROR = DefaultHandler);
+PROVIDE(UPKA_2_ERROR = DefaultHandler);
+PROVIDE(UPKA_3_ERROR = DefaultHandler);
+PROVIDE(UPKA_4_ERROR = DefaultHandler);
+PROVIDE(UPKA_5_ERROR = DefaultHandler);
+PROVIDE(UPKA_6_ERROR = DefaultHandler);
+PROVIDE(UPKA_7_ERROR = DefaultHandler);
+PROVIDE(UPKA_8_ERROR = DefaultHandler);
+PROVIDE(UPKA_9_ERROR = DefaultHandler);
+PROVIDE(UPKA_10_ERROR = DefaultHandler);
+PROVIDE(UPKA_11_ERROR = DefaultHandler);
+PROVIDE(UPKA_12_ERROR = DefaultHandler);
+PROVIDE(UPKA_13_ERROR = DefaultHandler);
+PROVIDE(UPKA_14_ERROR = DefaultHandler);
+PROVIDE(UPKA_15_ERROR = DefaultHandler);
+PROVIDE(INTC_IPC = DefaultHandler);
+
+

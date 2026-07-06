@@ -1,0 +1,32 @@
+// Copyright (c) Microsoft Corporation.
+//
+// DualCpM7 — dual Cortex-M7 control block
+//
+// Base address: 0xB020_0000
+//
+// Only the CP_ID register is modeled here. It is the first register the
+// dual-core boot trampoline reads to discover which core it is running on.
+// The hardware returns a value that depends on the initiator of the read:
+// HSP = 1, CP0 (Admin) = 2, CP1 (HSM) = 3.
+
+reg cp_id_t {
+    name = "CP Identification Register";
+    desc = "Identifies the core (initiator) that issued the read. The
+             value returned depends on the read initiator:
+             HSP = 1, CP0 (Admin) = 2, CP1 (HSM) = 3.";
+
+    field { sw = r; hw = w;
+        desc = "Initiator ID of the core that performed the read.";
+    } INITIATOR_ID[5:0] = 0x0;
+};
+
+addrmap dual_cp_m7 {
+    name = "DualCpM7";
+    desc = "Dual Cortex-M7 control block. Exposes CP_ID for boot-time
+             core identification by the dual-core trampoline.";
+
+    default hw = na;
+    default sw = rw;
+
+    cp_id_t CP_ID @ 0x00;
+};

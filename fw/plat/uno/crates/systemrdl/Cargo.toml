@@ -1,0 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_systemrdl"
+version = "0.1.0"
+
+[dependencies]
+anyhow = { workspace = true }
+same-file = { workspace = true }
+winnow = { workspace = true }

@@ -26,12 +26,21 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
 
     // Generate accessor methods.
     let accessors = schema.fields.iter().enumerate().map(|(i, field)| {
-        gen_accessor(
-            field,
-            layout.field_toc_indices[i],
-            &header_len,
-            schema.needs_data_start,
-        )
+        let toc_idx = crate::codegen_enc::effective_toc_idx(i, &layout, &schema.fields);
+        if let Some(group) = &field.include_group {
+            // Included field group: expose a zero-copy sub-view
+            // (`{Group}View`) anchored at the group's TOC offset.
+            let name = &field.name;
+            let group_view = format_ident!("{}View", group);
+            quote! {
+                #[inline]
+                pub fn #name(&self) -> #group_view<'a> {
+                    #group_view::__new(self.buf, #header_len, #toc_idx)
+                }
+            }
+        } else {
+            gen_accessor(field, toc_idx, &header_len, schema.needs_data_start)
+        }
     });
 
     // Response-specific accessors.
@@ -99,7 +108,7 @@ pub fn gen_view(schema: &Schema) -> TokenStream {
 /// Generate a single field accessor method for the View type.
 fn gen_accessor(
     field: &SchemaField,
-    toc_index: usize,
+    toc_index: TokenStream,
     header_len: &TokenStream,
     needs_data_start: bool,
 ) -> TokenStream {
@@ -128,7 +137,39 @@ fn gen_accessor(
         }
         WireType::Buffer | WireType::SealedKey => {
             let ds = data_start_expr(header_len, needs_data_start);
-            quote! { azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, #header_len, #toc_index, #ds) }
+            if let Some(elem) = &field.elem_type {
+                // Typed-slice buffer: zero-copy cast the raw bytes to
+                // `&[T]`.  Length is validated to be a multiple of
+                // `size_of::<T>()` at decode time; a ragged blob falls
+                // back to an empty slice rather than panicking.
+                quote! {
+                    {
+                        let __b: &azihsm_fw_hsm_pal_traits::DmaBuf =
+                            azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, #header_len, #toc_index, #ds);
+                        <[#elem] as ::zerocopy::TryFromBytes>::try_ref_from_bytes(&__b[..]).unwrap_or(&[])
+                    }
+                }
+            } else if let Some(ty) = &field.single_pod {
+                // Single typed-POD buffer: zero-copy borrow the
+                // `size_of::<T>()`-byte image as `&T`; an ill-sized blob
+                // falls back to a zeroed static rather than panicking.
+                quote! {
+                    {
+                        let __b: &azihsm_fw_hsm_pal_traits::DmaBuf =
+                            azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, #header_len, #toc_index, #ds);
+                        match <#ty as ::zerocopy::TryFromBytes>::try_ref_from_bytes(&__b[..]) {
+                            ::core::result::Result::Ok(__r) => __r,
+                            ::core::result::Result::Err(_) => {
+                                static __ZERO: [u8; ::core::mem::size_of::<#ty>()] =
+                                    [0u8; ::core::mem::size_of::<#ty>()];
+                                ::zerocopy::transmute_ref!(&__ZERO)
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! { azihsm_fw_ddi_tbor::toc::read_toc_buffer(self.buf, #header_len, #toc_index, #ds) }
+            }
         }
     };
 
@@ -140,8 +181,31 @@ fn gen_accessor(
         WireType::SessionId => quote! { azihsm_fw_ddi_tbor_api::SessionId },
         WireType::KeyId => quote! { azihsm_fw_ddi_tbor_api::KeyId },
         WireType::Buffer | WireType::SealedKey => {
-            quote! { &'a azihsm_fw_hsm_pal_traits::DmaBuf }
+            if let Some(elem) = &field.elem_type {
+                quote! { &'a [#elem] }
+            } else if let Some(ty) = &field.single_pod {
+                quote! { &'a #ty }
+            } else {
+                quote! { &'a azihsm_fw_hsm_pal_traits::DmaBuf }
+            }
         }
+    };
+
+    // Inline scalar carried as a typed newtype (`#[tbor(U8)] f: T`):
+    // wrap the raw integer in `T(..)` and return `T`. `T` is a
+    // single-field tuple newtype over the matching primitive.
+    let (body, ret_type) = if let Some(ty) = &field.scalar_newtype {
+        (quote! { #ty(#body) }, quote! { #ty })
+    } else if let Some(ty) = &field.le_scalar {
+        if field.le_scalar_is_byte {
+            // `U8` aliases `u8`: identity body, typed return.
+            (body, quote! { #ty })
+        } else {
+            // `U16`/`U32`/`U64`: bridge the raw int via `T::new(..)`.
+            (quote! { #ty::new(#body) }, quote! { #ty })
+        }
+    } else {
+        (body, ret_type)
     };
 
     if field.optional {
@@ -200,10 +264,7 @@ fn gen_validation(schema: &Schema) -> TokenStream {
             quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },
             quote! {
                 if raw.opcode() != #opcode {
-                    return Err(azihsm_fw_ddi_tbor::DecodeError::OpcodeMismatch {
-                        expected: #opcode,
-                        actual: raw.opcode(),
-                    });
+                    return Err(azihsm_fw_hsm_pal_traits::HsmError::TborOpcodeMismatch);
                 }
             },
         ),
@@ -219,6 +280,15 @@ fn gen_validation(schema: &Schema) -> TokenStream {
     let padding_checks = gen_padding_checks(&layout);
     let len_checks = gen_len_checks(schema, &layout);
 
+    // Included field groups expand the TOC dynamically, so fold their
+    // `TOC_COUNT` constants into the expected total.
+    let group_toc_addends: Vec<_> = schema
+        .fields
+        .iter()
+        .filter_map(|f| f.include_group.as_ref().map(|g| quote! { + #g::TOC_COUNT }))
+        .collect();
+    let total_toc_count_expr = quote! { #total_toc_count #(#group_toc_addends)* };
+
     // Empty schemas synthesise a single `None` TOC placeholder; the
     // decoder must reject any other entry type at TOC[0]. See
     // [`crate::schema::TocLayout::compute`].
@@ -226,11 +296,7 @@ fn gen_validation(schema: &Schema) -> TokenStream {
         let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
         quote! {
             if raw.toc_entry_type(0) != #none_type_id {
-                return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                    entry_index: 0,
-                    expected: #none_type_id,
-                    actual: raw.toc_entry_type(0),
-                });
+                return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
             }
         }
     } else {
@@ -241,12 +307,9 @@ fn gen_validation(schema: &Schema) -> TokenStream {
         let raw = #parse_call;
         #opcode_check
 
-        // Exact TOC count validation (fields + padding entries).
-        if raw.toc_count() != #total_toc_count {
-            return Err(azihsm_fw_ddi_tbor::DecodeError::MessageTruncated {
-                needed: #total_toc_count,
-                available: raw.toc_count(),
-            });
+        // Exact TOC count validation (fields + padding + group entries).
+        if raw.toc_count() != #total_toc_count_expr {
+            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborMessageTruncated);
         }
 
         // Validate padding entries.
@@ -265,35 +328,39 @@ fn gen_validation(schema: &Schema) -> TokenStream {
 
 /// Generate TOC entry type checks for each schema field.
 fn gen_type_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
+    let header_len_val = match schema.kind {
+        MessageKind::Request { .. } => quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },
+        MessageKind::Response => quote! { azihsm_fw_ddi_tbor::RESP_HEADER_LEN },
+        MessageKind::Fields => unreachable!(),
+    };
     schema
         .fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            let toc_idx = crate::codegen_enc::effective_toc_idx(i, layout, &schema.fields);
+            // Included field group: delegate to the group's own validator,
+            // anchored at the group's TOC offset.
+            if let Some(group) = &field.include_group {
+                return quote! {
+                    #group::validate(buf, #header_len_val, #toc_idx)?;
+                };
+            }
             let toc_type_id = field.toc_type_id;
-            let toc_idx = layout.field_toc_indices[i];
             if field.optional {
                 let none_type_id = quote! { azihsm_fw_ddi_tbor::TocType::None as u8 };
                 quote! {
                     {
                         let actual = raw.toc_entry_type(#toc_idx);
                         if actual != #toc_type_id && actual != #none_type_id {
-                            return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                                entry_index: #toc_idx,
-                                expected: #toc_type_id,
-                                actual,
-                            });
+                            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                         }
                     }
                 }
             } else {
                 quote! {
                     if raw.toc_entry_type(#toc_idx) != #toc_type_id {
-                        return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                            entry_index: #toc_idx,
-                            expected: #toc_type_id,
-                            actual: raw.toc_entry_type(#toc_idx),
-                        });
+                        return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                     }
                 }
             }
@@ -310,11 +377,7 @@ fn gen_padding_checks(layout: &TocLayout) -> Vec<TokenStream> {
         .map(|&(toc_idx, _)| {
             quote! {
                 if raw.toc_entry_type(#toc_idx) != #padding_type_id {
-                    return Err(azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-                        entry_index: #toc_idx,
-                        expected: #padding_type_id,
-                        actual: raw.toc_entry_type(#toc_idx),
-                    });
+                    return Err(azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType);
                 }
             }
         })
@@ -342,7 +405,7 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
             if !has_constraint {
                 return None;
             }
-            let toc_idx = layout.field_toc_indices[i];
+            let toc_idx = crate::codegen_enc::effective_toc_idx(i, layout, &schema.fields);
             let min_l = field.fixed_len.unwrap_or(field.min_len);
             let max_l = field.fixed_len.unwrap_or(field.max_len);
 
@@ -354,12 +417,7 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
                             azihsm_fw_ddi_tbor::toc::read_toc_word(raw.as_bytes(), #header_len_val, #toc_idx)
                         );
                         if !(#min_l..=#max_l).contains(&len) {
-                            return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
-                                entry_index: #toc_idx,
-                                entry_type: 7,
-                                expected: #min_l,
-                                actual: len,
-                            });
+                            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength);
                         }
                     }
                 })
@@ -370,12 +428,7 @@ fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
                             azihsm_fw_ddi_tbor::toc::read_toc_word(raw.as_bytes(), #header_len_val, #toc_idx)
                         );
                         if !(#min_l..=#max_l).contains(&len) {
-                            return Err(azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength {
-                                entry_index: #toc_idx,
-                                entry_type: 7,
-                                expected: #min_l,
-                                actual: len,
-                            });
+                            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength);
                         }
                     }
                 })
@@ -394,8 +447,54 @@ fn gen_display(schema: &Schema, view_name: &syn::Ident) -> TokenStream {
         let pad = 16usize.saturating_sub(name_str.len());
         let padding = " ".repeat(pad);
 
+        if let Some(group) = &field.include_group {
+            // Included field group: print a summary line; the group's own
+            // fields are not recursed into here.
+            let group_str = group.to_string();
+            return quote! {
+                writeln!(f, "  {}{}: [group {}]", #name_str, #padding, #group_str)?;
+            };
+        }
+
         if field.optional {
             // Optional fields: display "None" or the value.
+            if field.scalar_newtype.is_some() {
+                return quote! {
+                    match self.#name() {
+                        Some(v) => writeln!(f, "  {}{}: {}", #name_str, #padding, v.0)?,
+                        None => writeln!(f, "  {}{}: None", #name_str, #padding)?,
+                    }
+                };
+            }
+            if let Some(_ty) = &field.le_scalar {
+                let val = if field.le_scalar_is_byte {
+                    quote! { v }
+                } else {
+                    quote! { v.get() }
+                };
+                return quote! {
+                    match self.#name() {
+                        Some(v) => writeln!(f, "  {}{}: {}", #name_str, #padding, #val)?,
+                        None => writeln!(f, "  {}{}: None", #name_str, #padding)?,
+                    }
+                };
+            }
+            if field.elem_type.is_some() {
+                return quote! {
+                    match self.#name() {
+                        Some(items) => writeln!(f, "  {}{}: [{} items]", #name_str, #padding, items.len())?,
+                        None => writeln!(f, "  {}{}: None", #name_str, #padding)?,
+                    }
+                };
+            }
+            if field.single_pod.is_some() {
+                return quote! {
+                    match self.#name() {
+                        Some(v) => writeln!(f, "  {}{}: {:?}", #name_str, #padding, v)?,
+                        None => writeln!(f, "  {}{}: None", #name_str, #padding)?,
+                    }
+                };
+            }
             match field.wire_type {
                 WireType::Buffer | WireType::SealedKey => quote! {
                     match self.#name() {
@@ -428,6 +527,31 @@ fn gen_display(schema: &Schema, view_name: &syn::Ident) -> TokenStream {
                 },
             }
         } else {
+            if field.scalar_newtype.is_some() {
+                return quote! {
+                    writeln!(f, "  {}{}: {}", #name_str, #padding, self.#name().0)?;
+                };
+            }
+            if let Some(_ty) = &field.le_scalar {
+                let val = if field.le_scalar_is_byte {
+                    quote! { self.#name() }
+                } else {
+                    quote! { self.#name().get() }
+                };
+                return quote! {
+                    writeln!(f, "  {}{}: {}", #name_str, #padding, #val)?;
+                };
+            }
+            if field.elem_type.is_some() {
+                return quote! {
+                    writeln!(f, "  {}{}: [{} items]", #name_str, #padding, self.#name().len())?;
+                };
+            }
+            if field.single_pod.is_some() {
+                return quote! {
+                    writeln!(f, "  {}{}: {:?}", #name_str, #padding, self.#name())?;
+                };
+            }
             match field.wire_type {
                 WireType::Buffer | WireType::SealedKey => quote! {
                     {

@@ -64,6 +64,7 @@ pub enum HsmError {
     DeviceNotAccessible = -39,
     InvalidContextState = -40,
     Bk3AlreadyInitialized = -41,
+    InvalidSession = -42,
     Panic = i32::MIN,
 }
 

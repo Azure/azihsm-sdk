@@ -64,3 +64,22 @@ void hkdf_derive_fails_common(
     key_props &props,
     azihsm_status expected_status
 );
+
+// Builds an azihsm_algo for SP 800-108 Counter Mode KBKDF with the given HMAC algo ID and
+// optional label/context. At least one of label/context must be present at derive time.
+void build_kbkdf_counter_algo(
+    azihsm_algo_kbkdf_counter_params &kbkdf_params,
+    azihsm_algo &kbkdf_algo,
+    azihsm_algo_id hmac_algo_id,
+    azihsm_buffer *label,
+    azihsm_buffer *context
+);
+
+void run_kbkdf_counter_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve);
+
+void kbkdf_derive_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id hmac_algo_id,
+    key_props &props,
+    azihsm_status expected_status
+);

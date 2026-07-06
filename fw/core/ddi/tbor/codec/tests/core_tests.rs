@@ -11,6 +11,7 @@ use std::vec::Vec;
 
 use azihsm_fw_ddi_tbor::*;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
 
 // SAFETY: test-only branding. Host-side tests have no real DMA engine,
 // so the DMA-reachability contract is moot; the brand is needed purely
@@ -384,14 +385,14 @@ fn max_toc_entries() {
 fn decode_buffer_too_short() {
     let wire = [0x01, 0x00];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(err, DecodeError::BufferTooShort { .. }));
+    assert_eq!(err, HsmError::TborBufferTooShort);
 }
 
 #[test]
 fn decode_unsupported_version() {
     let wire = [0x02, 0x00, 0x00, 0x0A, 0x0C, 0x00, 0x00, 0x00];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(err, DecodeError::UnsupportedVersion(0x02)));
+    assert_eq!(err, HsmError::TborUnsupportedVersion);
 }
 
 #[test]
@@ -401,7 +402,7 @@ fn decode_message_truncated() {
         0x00, 0x00, 0x00, 0x2B, // only 1 present
     ];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(err, DecodeError::MessageTruncated { .. }));
+    assert_eq!(err, HsmError::TborMessageTruncated);
 }
 
 #[test]
@@ -411,7 +412,7 @@ fn decode_offset_out_of_bounds() {
     let wb = word.to_be_bytes();
     let wire = [0x01, 0x00, 0x00, 0x0A, wb[0], wb[1], wb[2], wb[3]];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(err, DecodeError::OffsetLengthOutOfBounds { .. }));
+    assert_eq!(err, HsmError::TborOffsetLengthOutOfBounds);
 }
 
 #[test]
@@ -424,15 +425,7 @@ fn decode_invalid_uint32_length() {
         0x00, // 3 bytes of data
     ];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidFixedLength {
-            entry_type: 5,
-            expected: 4,
-            actual: 3,
-            ..
-        }
-    ));
+    assert_eq!(err, HsmError::TborInvalidFixedLength);
 }
 
 #[test]
@@ -443,7 +436,7 @@ fn encode_too_many_toc_entries() {
         enc = enc.uint8(0).unwrap();
     }
     let err = enc.uint8(0).unwrap_err();
-    assert!(matches!(err, EncodeError::TooManyTocEntries));
+    assert_eq!(err, HsmError::TborTooManyTocEntries);
 }
 
 #[test]
@@ -452,7 +445,7 @@ fn encode_buffer_too_small() {
     let err = RequestEncoder::new(&mut buf, 0x01, 0x0A)
         .buffer(b"this is way too long for the buffer")
         .unwrap_err();
-    assert!(matches!(err, EncodeError::BufferTooSmall { .. }));
+    assert_eq!(err, HsmError::TborBufferTooSmall);
 }
 
 // ── Unknown TOC types (forward compat) ─────────────────────────────────
@@ -666,10 +659,7 @@ fn none_entry_nonzero_payload_rejected() {
         bw[0], bw[1], bw[2], bw[3],
     ];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidNonePayload { entry_index: 0, .. }
-    ));
+    assert_eq!(err, HsmError::TborInvalidNonePayload);
 }
 
 #[test]
@@ -738,7 +728,7 @@ fn request_buffer_over_max_rejected() {
     let err = RequestEncoder::new(&mut buf, 0x01, 0x0A)
         .buffer(&big)
         .unwrap_err();
-    assert!(matches!(err, EncodeError::DataTooLarge { .. }));
+    assert_eq!(err, HsmError::TborDataTooLarge);
 }
 
 #[test]
@@ -838,13 +828,5 @@ fn decode_invalid_uint64_length() {
         0x01, 0x00, 0x00, 0x0A, wb[0], wb[1], wb[2], wb[3], 0x00, 0x00, 0x00, 0x00,
     ];
     let err = RequestView::parse(brand(&wire)).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidFixedLength {
-            entry_type: 6,
-            expected: 8,
-            actual: 4,
-            ..
-        }
-    ));
+    assert_eq!(err, HsmError::TborInvalidFixedLength);
 }

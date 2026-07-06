@@ -25,6 +25,26 @@ pub enum HsmError {
     UnsupportedCmd = 0x08000009,
     DdiEncodeFailed = 0x08680001,
     DdiDecodeFailed = 0x08680002,
+    // TBOR wire-decode failures. Each corresponds to a distinct
+    // structural fault detected by the zero-copy TBOR decoder; the
+    // decode path returns these directly (no intermediate error type).
+    TborBufferTooShort = 0x08680010,
+    TborUnsupportedVersion = 0x08680011,
+    TborMessageTruncated = 0x08680012,
+    TborOffsetLengthOutOfBounds = 0x08680013,
+    TborInvalidFixedLength = 0x08680014,
+    TborOpcodeMismatch = 0x08680015,
+    TborUnexpectedTocType = 0x08680016,
+    TborInvalidNonePayload = 0x08680017,
+    TborNonMonotonicTocOffsets = 0x08680018,
+    TborMissingField = 0x08680019,
+    TborDuplicateField = 0x0868001A,
+    TborInvalidEnumValue = 0x0868001B,
+    // TBOR wire-encode failures.
+    TborBufferTooSmall = 0x0868001C,
+    TborTooManyTocEntries = 0x0868001D,
+    TborDataTooLarge = 0x0868001E,
+    TborDataOffsetOverflow = 0x0868001F,
     VaultSessionLimitReached = 0x08700001,
     SessionNotExpected = 0x08700002,
     SessionExpected = 0x08700003,
@@ -319,12 +339,30 @@ pub enum HsmError {
     /// Returned by the property-based getters on
     /// [`HsmPartitionManager`](crate::HsmPartitionManager)
     /// (`part_prop_get_*` / `part_prop_get_bytes`) when the addressed
-    /// `(PartPropId, idx)` slot is absent (i.e. has not been
-    /// populated, or was last
+    /// [`PartPropId`](crate::PartPropId) slot is absent (i.e. has not
+    /// been populated, or was last
     /// [`part_prop_clear`](crate::HsmPartitionManager::part_prop_clear)ed).
     /// Distinct from [`HsmError::InvalidArg`], which signals a
-    /// caller bug (unknown id, out-of-range idx, kind mismatch, etc.).
+    /// caller bug (unknown id, kind mismatch, etc.).
     PartPropNotFound = 0x087000FF,
+    /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
+    /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
+    /// carries the requested selector (SVN / owner id).
+    SeedNotFound = 0x08700100,
+
+    // Firmware-internal diagnostic codes logged by the CPU fault and panic
+    // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
+    // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
+    // the DDI status range, and are emitted to the trace log only (never
+    // returned over the wire).
+    /// A Rust `panic!` reached the firmware panic handler.
+    Panic = 0x08F00001,
+    /// A CPU `HardFault` exception was taken (an escalated bus/usage/mem
+    /// fault, or a stack overflow).
+    HardFault = 0x08F00002,
+    /// An exception or interrupt with no dedicated handler reached the
+    /// `DefaultHandler`.
+    UnexpectedException = 0x08F00003,
 }
 
 impl core::fmt::Debug for HsmError {

@@ -7,8 +7,8 @@
 //! infallible accessor methods after a single upfront validation pass.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
 
-use crate::error::DecodeError;
 use crate::toc::*;
 
 // ── RequestView ───────────────────────────────────────────────────────
@@ -33,27 +33,21 @@ impl<'a> RequestView<'a> {
     /// - Fixed-size types have correct lengths (uint32=4, uint64=8)
     ///
     /// Reserved bits are silently ignored per spec.
-    pub fn parse(buf: &'a DmaBuf) -> Result<Self, DecodeError> {
+    pub fn parse(buf: &'a DmaBuf) -> Result<Self, HsmError> {
         // Minimum: 4-byte header + 1 TOC entry = 8 bytes.
         if buf.len() < REQ_HEADER_LEN + 4 {
-            return Err(DecodeError::BufferTooShort {
-                needed: REQ_HEADER_LEN + 4,
-                available: buf.len(),
-            });
+            return Err(HsmError::TborBufferTooShort);
         }
 
         let version = buf[0];
         if version != PROTOCOL_VERSION {
-            return Err(DecodeError::UnsupportedVersion(version));
+            return Err(HsmError::TborUnsupportedVersion);
         }
 
         let toc_count = (buf[2] & 0x1F) as usize + 1;
         let min_len = REQ_HEADER_LEN + toc_count * 4;
         if buf.len() < min_len {
-            return Err(DecodeError::MessageTruncated {
-                needed: min_len,
-                available: buf.len(),
-            });
+            return Err(HsmError::TborMessageTruncated);
         }
 
         let data_start = REQ_HEADER_LEN + toc_count * 4;
@@ -160,27 +154,21 @@ impl<'a> ResponseView<'a> {
     /// - Fixed-size types have correct lengths (uint32=4, uint64=8)
     ///
     /// Reserved bits are silently ignored per spec.
-    pub fn parse(buf: &'a DmaBuf) -> Result<Self, DecodeError> {
+    pub fn parse(buf: &'a DmaBuf) -> Result<Self, HsmError> {
         // Minimum: 8-byte header + 1 TOC entry = 12 bytes.
         if buf.len() < RESP_HEADER_LEN + 4 {
-            return Err(DecodeError::BufferTooShort {
-                needed: RESP_HEADER_LEN + 4,
-                available: buf.len(),
-            });
+            return Err(HsmError::TborBufferTooShort);
         }
 
         let version = buf[0];
         if version != PROTOCOL_VERSION {
-            return Err(DecodeError::UnsupportedVersion(version));
+            return Err(HsmError::TborUnsupportedVersion);
         }
 
         let toc_count = (buf[3] & 0x1F) as usize + 1;
         let min_len = RESP_HEADER_LEN + toc_count * 4;
         if buf.len() < min_len {
-            return Err(DecodeError::MessageTruncated {
-                needed: min_len,
-                available: buf.len(),
-            });
+            return Err(HsmError::TborMessageTruncated);
         }
 
         let data_start = RESP_HEADER_LEN + toc_count * 4;
@@ -289,7 +277,7 @@ fn validate_toc_entries(
     header_len: usize,
     toc_count: usize,
     data_size: usize,
-) -> Result<(), DecodeError> {
+) -> Result<(), HsmError> {
     for i in 0..toc_count {
         let word = read_toc_word(buf, header_len, i);
         let entry_type = raw_toc_entry_type(word);
@@ -301,10 +289,7 @@ fn validate_toc_entries(
             // None type (8): inline, all 26 payload bits must be zero.
             8 => {
                 if word & 0x03FF_FFFF != 0 {
-                    return Err(DecodeError::InvalidNonePayload {
-                        entry_index: i,
-                        raw_bits: word,
-                    });
+                    return Err(HsmError::TborInvalidNonePayload);
                 }
             }
 
@@ -314,31 +299,16 @@ fn validate_toc_entries(
                 let offset = raw_toc_offset(word);
 
                 if offset + length > data_size {
-                    return Err(DecodeError::OffsetLengthOutOfBounds {
-                        entry_index: i,
-                        offset,
-                        length,
-                        data_size,
-                    });
+                    return Err(HsmError::TborOffsetLengthOutOfBounds);
                 }
 
                 // Fixed-size type length checks.
                 match entry_type {
                     5 if length != 4 => {
-                        return Err(DecodeError::InvalidFixedLength {
-                            entry_index: i,
-                            entry_type: 5,
-                            expected: 4,
-                            actual: length,
-                        });
+                        return Err(HsmError::TborInvalidFixedLength);
                     }
                     6 if length != 8 => {
-                        return Err(DecodeError::InvalidFixedLength {
-                            entry_index: i,
-                            entry_type: 6,
-                            expected: 8,
-                            actual: length,
-                        });
+                        return Err(HsmError::TborInvalidFixedLength);
                     }
                     _ => {}
                 }

@@ -1,0 +1,90 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2024"
+name = "azihsm_fw_uno_app"
+version = "0.1.0"
+
+[[bin]]
+bench = false
+doctest = false
+name = "azihsm_fw_uno_app"
+test = false
+
+[dependencies]
+azihsm_fw_hsm_core = { workspace = true }
+azihsm_fw_hsm_core_tracing = { workspace = true }
+azihsm_fw_hsm_pal_traits = { workspace = true }
+azihsm_fw_uno_drivers_profile = { workspace = true }
+azihsm_fw_uno_drivers_systick = { workspace = true }
+azihsm_fw_uno_fault = { workspace = true }
+azihsm_fw_uno_pac = { workspace = true }
+azihsm_fw_uno_pal = { workspace = true }
+azihsm_fw_uno_trace = { workspace = true }
+cortex-m = { features = ["critical-section-single-core"], workspace = true }
+cortex-m-rt = { features = ["device"], workspace = true }
+embassy-executor = { features = [
+  "executor-thread",
+  "platform-cortex-m",
+  "trace",
+], workspace = true }
+embassy-futures = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+
+[features]
+#default = ["trace-uart"]
+default = []
+
+# Enable ARM semihosting integration for the emulator:
+#   - The PAL emits `SYS_READY` when the boot handshake completes, so the
+#     emulator host loop (which snoops the semihosting trap) learns the
+#     firmware is ready to accept IO.
+#   - The fault/panic handlers (in `azihsm_fw_uno_fault`) call `SYS_EXIT(-1)`
+#     so the emulator stops on a firmware fault. The fault *diagnostics*
+#     themselves are emitted through the tracing facade, so they appear only
+#     when a `trace-*` backend is also enabled (with `trace-semihosting` they
+#     reach the host via `SYS_WRITE0`).
+# Disable on targets (e.g. production silicon) that cannot snoop semihosting.
+semihosting = [
+  "azihsm_fw_uno_fault/semihosting",
+  "azihsm_fw_uno_pal/semihosting",
+]
+
+# Development aid: include a raw stack hexdump in the HardFault report.
+# Passed through to the fault crate; off by default.
+fault-stackdump = ["azihsm_fw_uno_fault/fault-stackdump"]
+
+# Trace output backend (mutually exclusive). Selecting one compiles the
+# trace emitter at INFO level and routes output to that backend. With
+# neither enabled, trace output is disabled.
+#
+# CODE SIZE: enabling a trace backend pulls in formatting code at every
+# `info!`/`error!`/`debug!` call site plus the `Debug` impls they format.
+# On the Uno firmware this costs ~43 KB of `.text` (~22% of the image).
+# Production / size-constrained builds should build WITHOUT any trace
+# backend (e.g. `--no-default-features --features semihosting` for the
+# emulator, or `--no-default-features` for silicon); the emulator only
+# needs `semihosting` (SYS_READY / SYS_EXIT) — trace is verbose output
+# only and all tests pass without it.
+trace-semihosting = [
+  "azihsm_fw_uno_trace/backend-semihosting",
+  "azihsm_fw_uno_trace/level-info",
+  "azihsm_fw_uno_trace/tracing",
+]
+trace-uart = [
+  "azihsm_fw_uno_trace/backend-uart",
+  "azihsm_fw_uno_trace/level-info",
+  "azihsm_fw_uno_trace/tracing",
+]
+
+# Enable per-task profiling: the profile driver writes the active Embassy
+# task ID to the TraceMailbox MMIO (via the embassy trace hooks) so the
+# emulator's `--profile` mode can attribute instructions to tasks. This is
+# just the mailbox writes — it does NOT pull in the trace emitter or
+# `Debug` formatting, so unlike `trace-semihosting` it stays cheap and can
+# be combined with a no-trace (production-like) build for profiling.
+profile = [
+  "azihsm_fw_uno_drivers_profile/backend-semihosting",
+  "azihsm_fw_uno_drivers_profile/trace",
+]

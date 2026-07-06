@@ -1,0 +1,553 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// GSRAM address map (io_gsram).
+//
+// Single unified address map at base 0x6100_0000 (2 MiB). Holds all
+// shared-memory queues, DMA buffers, persistent stores, and the key
+// vault. DTCM_IO_BUF is NOT here — it lives in dtcm_map.rdl.
+//
+// Region layout:
+//   0x01110 - 0x012FC  BKS table (device-global, 12 × 41-byte entries)
+//   0x07000            BOOT_STATUS (4 B)
+//   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
+//   0x0E440 - 0x0F580  IIC / OIC queues
+//   0x12840 - 0x15064  GDMA queues
+//   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
+//   0x20C58 - 0xB8C58  Heap (IO_META + SRAM_IO_BUF)
+//   0xBB000 - 0xEBC00  Partition store
+//   0xEBC00 - 0x200000 Key vault
+//
+// Hardware alignment: UCD and GDMA hardware expect queue base
+// addresses to be 32-byte (0x20) aligned.
+
+
+// ══════════════════════════════════════════════════════════════
+// BKS Table (device-global, SP-populated, read-only)
+// ══════════════════════════════════════════════════════════════
+//
+// Mirrors the reference firmware's GsRamMemMap::bks_table at the
+// identical GSRAM offset 0x1110 (abs 0x6100_1110). 12 packed 41-byte
+// entries = 492 B (0x1EC):
+//   entry[0]     = current BKS1  (entry[0].svn = current firmware SVN)
+//   entry[1..10] = last ten SVNs' BKS1 (history)
+//   entry[11]    = the single BKS2 (bks2_id is always 0)
+// Each entry is packed { valid:u8, svn:[u8;8], bks:[u8;32] } and not
+// word-aligned, so it is modeled as a byte-granular (memwidth = 8) mem;
+// the typed valid/svn/bks split is owned by the bks_store driver.
+
+mem bks_table_entry_t {
+    desc = "Packed 41-byte BKS entry: valid(1) + svn(8) + bks(32).";
+    mementries = 41;
+    memwidth   = 8;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Boot Status
+// ══════════════════════════════════════════════════════════════
+
+reg boot_status_t {
+    name = "Boot Status";
+    desc = "HSM boot phase indicator. Written by HSM firmware, polled
+            by Admin. Values: 0=NotStarted, 1=Done, 2=Run.";
+    field { sw = rw; hw = r; } STATE[31:0] = 0x0;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Admin↔HSM IPC queues
+// ══════════════════════════════════════════════════════════════
+
+reg ipc_queue_index_t {
+    name = "IPC Queue Index";
+    desc = "Producer or consumer index for an IPC ring.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+// IPC message slot: 16 DWORDs (64 bytes).
+regfile ipc_message_t {
+    name = "IPC Message";
+    desc = "64-byte IPC message slot (16 × u32). First DWORD is the
+            header (opcode, response bit, status, length). Remaining
+            15 DWORDs are payload.";
+    io_sq_dw_t DW0  @ 0x00;
+    io_sq_dw_t DW1  @ 0x04;
+    io_sq_dw_t DW2  @ 0x08;
+    io_sq_dw_t DW3  @ 0x0C;
+    io_sq_dw_t DW4  @ 0x10;
+    io_sq_dw_t DW5  @ 0x14;
+    io_sq_dw_t DW6  @ 0x18;
+    io_sq_dw_t DW7  @ 0x1C;
+    io_sq_dw_t DW8  @ 0x20;
+    io_sq_dw_t DW9  @ 0x24;
+    io_sq_dw_t DW10 @ 0x28;
+    io_sq_dw_t DW11 @ 0x2C;
+    io_sq_dw_t DW12 @ 0x30;
+    io_sq_dw_t DW13 @ 0x34;
+    io_sq_dw_t DW14 @ 0x38;
+    io_sq_dw_t DW15 @ 0x3C;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// IIC / OIC queue structures
+// ══════════════════════════════════════════════════════════════
+
+// -- ISQ Entry - 8 bytes (2 DWORDs) --
+
+reg isq_addr_lo_t {
+    name = "ISQ Address Low";
+    desc = "Low 32 bits of the host SQE address.";
+    field { sw = rw; hw = r; } ADDR[31:0] = 0x0;
+};
+
+reg isq_addr_hi_t {
+    name = "ISQ Address High";
+    desc = "High 32 bits of the host SQE address.";
+    field { sw = rw; hw = r; } ADDR[31:0] = 0x0;
+};
+
+regfile isq_entry_t {
+    name = "ISQ Entry";
+    desc = "Inbound Submission Queue entry — 8 bytes. Points to the
+             host-side SQE that the DMA engine fetches into IO_SQ.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
+};
+
+// -- ICQ Entry - 16 bytes (4 DWORDs) --
+
+reg icq_info_t {
+    name = "ICQ Info";
+    desc = "Inbound Completion Queue info: status and interface select.";
+    field { sw = rw; hw = r; } STATUS[7:0] = 0x0;
+    field { sw = rw; hw = r; } IFC_SLCT[15:8] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:16] = 0x0;
+};
+
+reg icq_index_t {
+    name = "ICQ Index";
+    desc = "ISQ slot index being completed.";
+    field { sw = rw; hw = r; } INDEX[15:0] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:16] = 0x0;
+};
+
+regfile icq_entry_t {
+    name = "ICQ Entry";
+    desc = "Inbound Completion Queue entry — 16 bytes.";
+    isq_addr_lo_t  ADDR_LO @ 0x0;
+    isq_addr_hi_t  ADDR_HI @ 0x4;
+    icq_info_t INFO    @ 0x8;
+    icq_index_t INDEX  @ 0xC;
+};
+
+// -- IO SQ Entry - 64 bytes (16 DWORDs) --
+
+reg io_sq_dw_t {
+    name = "IO SQ DWORD";
+    desc = "One DWORD of an IO Submission Queue entry.";
+    field {} VAL[31:0] = 0x0;
+};
+
+regfile io_sq_entry_t {
+    name = "IO SQ Entry";
+    desc = "64-byte command descriptor DMA'd from host.";
+    io_sq_dw_t DW0  @ 0x00;
+    io_sq_dw_t DW1  @ 0x04;
+    io_sq_dw_t DW2  @ 0x08;
+    io_sq_dw_t DW3  @ 0x0C;
+    io_sq_dw_t DW4  @ 0x10;
+    io_sq_dw_t DW5  @ 0x14;
+    io_sq_dw_t DW6  @ 0x18;
+    io_sq_dw_t DW7  @ 0x1C;
+    io_sq_dw_t DW8  @ 0x20;
+    io_sq_dw_t DW9  @ 0x24;
+    io_sq_dw_t DW10 @ 0x28;
+    io_sq_dw_t DW11 @ 0x2C;
+    io_sq_dw_t DW12 @ 0x30;
+    io_sq_dw_t DW13 @ 0x34;
+    io_sq_dw_t DW14 @ 0x38;
+    io_sq_dw_t DW15 @ 0x3C;
+};
+
+// -- Queue shadow (single DWORD) --
+
+reg queue_shadow_t {
+    name = "Queue Shadow";
+    desc = "DMA shadow of a queue producer/consumer index.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+// -- IO Meta Entry - 8 bytes (2 DWORDs) --
+
+reg io_meta_ctlr_t {
+    name = "IO Meta Controller";
+    desc = "Controller ID for this IO slot.";
+    field { sw = rw; hw = na; } CONTROLLER_ID[15:0] = 0x0;
+    field { sw = rw; hw = na; } RSVD[31:16] = 0x0;
+};
+
+reg io_meta_queue_t {
+    name = "IO Meta Queue";
+    desc = "Queue ID and index for this IO slot.";
+    field { sw = rw; hw = na; } QUEUE_ID[15:0] = 0x0;
+    field { sw = rw; hw = na; } QUEUE_INDEX[31:16] = 0x0;
+};
+
+regfile io_meta_entry_t {
+    name = "IO Meta Entry";
+    desc = "Per-slot metadata written at recv time. One per IO_SQ slot.";
+    io_meta_ctlr_t  CTLR  @ 0x0;
+    io_meta_queue_t QUEUE  @ 0x4;
+};
+
+// -- OSQ Entry - 16 bytes (4 DWORDs) --
+
+reg osq_desc_t {
+    name = "OSQ Descriptor";
+    desc = "Outbound descriptor: queue IDs and credits.";
+    field { sw = rw; hw = r; } RX_QUEUE_ID[7:0] = 0x0;
+    field { sw = rw; hw = r; } RX_CREDIT[15:8] = 0x0;
+    field { sw = rw; hw = r; } TX_QUEUE_ID[23:16] = 0x0;
+    field { sw = rw; hw = r; } AXI_ID[31:24] = 0x0;
+};
+
+reg osq_tag_t {
+    name = "OSQ Tag";
+    desc = "16-bit tag + control field.";
+    field { sw = rw; hw = r; } TAG[15:0] = 0x0;
+    field { sw = rw; hw = r; } CONTROL[31:16] = 0x0;
+};
+
+regfile osq_entry_t {
+    name = "OSQ Entry";
+    desc = "Outbound Submission Queue entry — 16 bytes.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
+    osq_desc_t    DESC    @ 0x8;
+    osq_tag_t     TAG     @ 0xC;
+};
+
+// -- OCQ Entry - 16 bytes (4 DWORDs) --
+
+reg ocq_info_t {
+    name = "OCQ Info (DW2)";
+    desc = "Routing info: queue_index, queue_id, axi_id.";
+    field { sw = rw; hw = r; } QUEUE_INDEX[15:0] = 0x0;
+    field { sw = rw; hw = r; } QUEUE_ID[23:16] = 0x0;
+    field { sw = rw; hw = r; } AXI_ID[31:24] = 0x0;
+};
+
+reg ocq_tag_t {
+    name = "OCQ Tag (DW3)";
+    desc = "Tag and completion status.";
+    field { sw = rw; hw = r; } TAG[15:0] = 0x0;
+    field { sw = rw; hw = r; } RSVD0[23:16] = 0x0;
+    field { sw = rw; hw = r; } STATUS[31:24] = 0x0;
+};
+
+regfile ocq_entry_t {
+    name = "OCQ Entry";
+    desc = "Outbound Completion Queue entry — 16 bytes.";
+    isq_addr_lo_t ADDR_LO @ 0x0;
+    isq_addr_hi_t ADDR_HI @ 0x4;
+    ocq_info_t    INFO    @ 0x8;
+    ocq_tag_t     TAG     @ 0xC;
+};
+
+// -- IO CQ Entry - 16 bytes (4 DWORDs) --
+
+reg io_cq_dw_t {
+    name = "IO CQ DWORD";
+    desc = "One DWORD of an IO Completion Queue entry.";
+    field {} VAL[31:0] = 0x0;
+};
+
+regfile io_cq_entry_t {
+    name = "IO CQ Entry";
+    desc = "16-byte completion status written by firmware.";
+    io_cq_dw_t DW0 @ 0x0;
+    io_cq_dw_t DW1 @ 0x4;
+    io_cq_dw_t DW2 @ 0x8;
+    io_cq_dw_t DW3 @ 0xC;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// GDMA queue structures
+// ══════════════════════════════════════════════════════════════
+
+reg gdma_sq_dw_t {
+    name = "GDMA SQ DWORD";
+    desc = "One DWORD of a GDMA Submission Queue entry.";
+    field {} VAL[31:0] = 0x0;
+};
+
+regfile gdma_sq_entry_t {
+    name = "GDMA SQ Entry";
+    desc = "64-byte GDMA submission descriptor.";
+    gdma_sq_dw_t DW0  @ 0x00;
+    gdma_sq_dw_t DW1  @ 0x04;
+    gdma_sq_dw_t DW2  @ 0x08;
+    gdma_sq_dw_t DW3  @ 0x0C;
+    gdma_sq_dw_t DW4  @ 0x10;
+    gdma_sq_dw_t DW5  @ 0x14;
+    gdma_sq_dw_t DW6  @ 0x18;
+    gdma_sq_dw_t DW7  @ 0x1C;
+    gdma_sq_dw_t DW8  @ 0x20;
+    gdma_sq_dw_t DW9  @ 0x24;
+    gdma_sq_dw_t DW10 @ 0x28;
+    gdma_sq_dw_t DW11 @ 0x2C;
+    gdma_sq_dw_t DW12 @ 0x30;
+    gdma_sq_dw_t DW13 @ 0x34;
+    gdma_sq_dw_t DW14 @ 0x38;
+    gdma_sq_dw_t DW15 @ 0x3C;
+};
+
+reg gdma_cq_status_t {
+    name = "CQ Status (DW0)";
+    desc = "Completion status and TAG echoed from SQ entry.";
+    field { sw = rw; hw = rw; } SUCCESS[0:0] = 0x0;
+    field { sw = rw; hw = rw; } RSVD0[15:1] = 0x0;
+    field { sw = rw; hw = rw; } TAG[31:16] = 0x0;
+};
+
+reg gdma_cq_rsvd_t {
+    name = "GDMA CQ Reserved";
+    desc = "Reserved DWORD in GDMA CQ entry.";
+    field {} VAL[31:0] = 0x0;
+};
+
+regfile gdma_cq_entry_t {
+    name = "GDMA CQ Entry";
+    desc = "16-byte GDMA completion entry.";
+    gdma_cq_status_t STATUS @ 0x0;
+    gdma_cq_rsvd_t   RSVD0 @ 0x4;
+    gdma_cq_rsvd_t   RSVD1 @ 0x8;
+    gdma_cq_rsvd_t   RSVD2 @ 0xC;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Crypto command descriptors (AES, UPKA, SHA)
+// ══════════════════════════════════════════════════════════════
+
+// -- AES Command Entry - 24 bytes (6 DWORDs) --
+
+regfile aes_cmd_entry_t {
+    name = "AES Command Entry";
+    desc = "24-byte AES command descriptor.";
+    io_sq_dw_t CMD_CODE   @ 0x00;
+    io_sq_dw_t RESULT     @ 0x04;
+    io_sq_dw_t BYTE_COUNT @ 0x08;
+    io_sq_dw_t MESSAGE    @ 0x0C;
+    io_sq_dw_t KEY        @ 0x10;
+    io_sq_dw_t IV         @ 0x14;
+};
+
+// -- UPKA Command Entry - 20 bytes (5 DWORDs) --
+
+regfile upka_cmd_entry_t {
+    name = "UPKA Command Entry";
+    desc = "20-byte PKA command descriptor (per-engine slot).";
+    io_sq_dw_t COMMAND_CODE @ 0x00;
+    io_sq_dw_t RESULT_ADDR  @ 0x04;
+    io_sq_dw_t ARG1_ADDR    @ 0x08;
+    io_sq_dw_t ARG2_ADDR    @ 0x0C;
+    io_sq_dw_t ARG3_ADDR    @ 0x10;
+};
+
+// -- SHA Command Entry - 32 bytes (8 DWORDs) --
+
+regfile sha_cmd_entry_t {
+    name = "SHA Command Entry";
+    desc = "32-byte SHA command descriptor.";
+    io_sq_dw_t SHA_COMMAND     @ 0x00;
+    io_sq_dw_t SHA_RESULT      @ 0x04;
+    io_sq_dw_t SHA_MSG_ADDR    @ 0x08;
+    io_sq_dw_t SHA_MSG_LEN     @ 0x0C;
+    io_sq_dw_t SHA_INIT_DIGEST @ 0x10;
+    io_sq_dw_t SHA_KEY_ADDR    @ 0x14;
+    io_sq_dw_t PASS_MSG_BUFF   @ 0x18;
+    io_sq_dw_t SHA_KEY_LEN     @ 0x1C;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Heap structures (IO_META + SRAM_IO_BUF)
+// ══════════════════════════════════════════════════════════════
+
+mem sram_io_buf_t {
+    desc = "18KB per-slot DMA buffer for the bump allocator.";
+    mementries = 4608;
+    memwidth = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Partition Store + Key Vault
+// ══════════════════════════════════════════════════════════════
+
+// ── Partition persistent store ──────────────────────────────────
+//
+// Per-partition persistent store, one entry per partition (cardinality
+// 65, one slot per key-vault table index / controller id), each a
+// 3072-byte (0xC00) region mirroring the reference firmware's
+// HsmPartPersistentStore with Uno-specific working-state fields appended
+// into its trailing reserved region. The typed layout and the only
+// access path are owned by the part_store driver — the PAL no longer
+// reads or writes this GSRAM directly.
+
+reg part_store_word_t {
+    name = "Partition Store Word";
+    desc = "One 32-bit word of the per-partition persistent store. The
+            typed field layout (reference HsmPartPersistentStore plus the
+            Uno-specific working-state fields) is owned by the part_store
+            driver, not described here.";
+    field { sw = rw; hw = na; } VAL[31:0] = 0x0;
+};
+
+// One partition persistent-store entry: an opaque 3072-byte (0xC00)
+// region, 768 words. The typed layout lives in the part_store driver,
+// which owns the only access path (the PAL no longer touches GSRAM
+// directly).
+addrmap part_store_t {
+    name = "Partition Persistent Store";
+    desc = "Per-partition persistent store (3072 B), mirroring the reference
+            firmware's HsmPartPersistentStore with Uno-specific fields
+            appended into the trailing reserved region.";
+
+    default hw = na;
+    default sw = rw;
+
+    part_store_word_t DATA[768] @ 0x00 += 0x04;  // 0x000 - 0xC00
+};
+
+// ── Key vault ───────────────────────────────────────────────────
+//
+// Typed mirror of the reference firmware's per-partition key store, so
+// key IDs, sizes, and on-storage layout are interchangeable. One table
+// is TOTAL_TABLE_LEN = 17408 B and holds 256 metadata entries, a
+// block-allocator bitmap, and a key-data blob region:
+//
+//   0x0000 - 0x0800  ENTRY[256]  (256 × 8-byte PhysicalEntry metadata)
+//   0x0800 - 0x0900  BITMAP[64]  (used-block tracker, 64 × u32)
+//   0x0900 - 0x4400  BLOB        (15104-byte key-data region)
+//
+// Within BLOB, each key occupies an 8-byte-aligned block laid out as
+// [32-byte attributes][key bytes]; PhysicalEntry.OFFSET is the block
+// index (× 8 = byte offset into BLOB).
+
+// One 8-byte vault metadata entry (mirrors the reference PhysicalEntry).
+reg pe_dw0_t {
+    name = "Vault Entry DW0";
+    desc = "PhysicalEntry low DWORD: blob block offset + flags.";
+    field { sw = rw; hw = na; } OFFSET[15:0]   = 0x0;  // blob block index
+    field { sw = rw; hw = na; } DISABLED[16:16] = 0x0; // EntryFlags bit 0
+    field { sw = rw; hw = na; } SESSION[17:17]  = 0x0; // EntryFlags bit 1
+    field { sw = rw; hw = na; } FLAGS_RSVD[31:18] = 0x0;
+};
+
+reg pe_dw1_t {
+    name = "Vault Entry DW1";
+    desc = "PhysicalEntry high DWORD: session id / key tag, kind, app id.";
+    field { sw = rw; hw = na; } SESSION_OR_TAG[15:0] = 0x0;
+    field { sw = rw; hw = na; } KIND[23:16]          = 0x0; // HsmVaultKeyKind
+    field { sw = rw; hw = na; } APP_ID[31:24]        = 0x0;
+};
+
+regfile physical_entry_t {
+    name = "Vault Physical Entry";
+    desc = "8-byte key metadata entry.";
+    pe_dw0_t DW0 @ 0x0;
+    pe_dw1_t DW1 @ 0x4;
+};
+
+// One word of the per-table used-block allocator bitmap.
+reg used_block_t {
+    name = "Used Block Tracker Word";
+    desc = "32 blob-block occupancy bits.";
+    field { sw = rw; hw = na; } BITS[31:0] = 0x0;
+};
+
+// Key-data blob region (15104 B = TOTAL_TABLE_LEN - 2304).
+mem key_blob_t {
+    desc = "Per-table key-data blob region.";
+    mementries = 3776;  // 15104 / 4
+    memwidth = 32;
+};
+
+// One 17408-byte vault table.
+addrmap key_vault_table_t {
+    name = "Key Vault Table";
+    desc = "One 17408-byte vault table: metadata + bitmap + blob.";
+
+    default hw = na;
+    default sw = rw;
+
+    physical_entry_t ENTRY[256]  @ 0x0000 += 0x08;  // 0x0000 - 0x0800
+    used_block_t     BITMAP[64]  @ 0x0800 += 0x04;  // 0x0800 - 0x0900
+    key_blob_t       BLOB        @ 0x0900;          // 0x0900 - 0x4400
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
+// ══════════════════════════════════════════════════════════════
+
+addrmap io_gsram {
+    name = "IO GSRAM";
+    desc = "Unified GSRAM address map (2 MiB at 0x6100_0000).";
+
+    default hw = na;
+    default sw = rw;
+
+    // ─── BKS table (device-global, SP-populated): 12 × 41-byte entries ───
+    bks_table_entry_t BKS_TABLE[12]    @ 0x01110 += 0x29;  // 0x1110 - 0x12FC
+
+    // ─── Boot ───
+    boot_status_t    BOOT_STATUS        @ 0x07000;
+
+    // ─── Admin↔HSM IPC (depth=2, msg_len=16 DWORDs) ───
+    // From HSM's perspective: RX = Admin writes / HSM reads,
+    //                         TX = HSM writes / Admin reads.
+    ipc_queue_index_t IPC_ADMIN_HSM_RX_PI   @ 0x07004;
+    ipc_queue_index_t IPC_ADMIN_HSM_RX_CI   @ 0x07008;
+    ipc_queue_index_t IPC_ADMIN_HSM_TX_PI   @ 0x0700C;
+    ipc_queue_index_t IPC_ADMIN_HSM_TX_CI   @ 0x07010;
+    ipc_message_t     IPC_ADMIN_HSM_RX_RING[2] @ 0x07014 += 0x40;
+    ipc_message_t     IPC_ADMIN_HSM_TX_RING[2] @ 0x07094 += 0x40;
+
+    // ─── IIC (Inbound IO) — 0x20-aligned ───
+    isq_entry_t      ISQ[32]            @ 0x0E440 += 0x08;
+    icq_entry_t      ICQ[32]            @ 0x0E540 += 0x10;
+    io_sq_entry_t    IO_SQ[32]          @ 0x0E740 += 0x40;
+    queue_shadow_t   ICQ_TAIL_SHADOW    @ 0x0EF40;
+
+    // ─── OIC (Outbound IO) — 0x20-aligned ───
+    osq_entry_t      OSQ[32]            @ 0x0EF60 += 0x10;
+    ocq_entry_t      OCQ[32]            @ 0x0F160 += 0x10;
+    io_cq_entry_t    IO_CQ[32]          @ 0x0F360 += 0x10;
+    queue_shadow_t   OCQ_TAIL_SHADOW    @ 0x0F560;
+
+    // ─── GDMA — 0x20-aligned ───
+    gdma_sq_entry_t  GDMA_SQ[32]        @ 0x12840 += 0x40;
+    gdma_cq_entry_t  GDMA_CQ[32]        @ 0x13040 += 0x10;
+    queue_shadow_t   GDMA_CQ_TAIL_SHADOW @ 0x13240;
+
+    // ─── Crypto ───
+    aes_cmd_entry_t  AES_CMD[32]         @ 0x15064 += 0x18;
+    upka_cmd_entry_t UPKA_ENGINE_CMD[16] @ 0x15364 += 0x14;
+    sha_cmd_entry_t  SHA_CMD[32]         @ 0x154A4 += 0x20;
+
+    // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
+    io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
+    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4800;
+
+    // ─── Partition persistent store (65 entries, 3072 B each) ───
+    part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;
+
+    // ─── Key vault (65 typed tables, 17408 B each) ───
+    key_vault_table_t KEY_VAULT[65]   @ 0xEBC00 += 0x4400;   // 65 × 17408 = 0x114400
+};

@@ -348,7 +348,7 @@ fn test_hmac_derived_key_prop_no_usage_flags_rejected(session: HsmSession) {
         .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
-    assert!(matches!(result, Err(HsmError::DdiCmdFailure)));
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
 /// Minimal valid HMAC props (only sign + verify) should succeed

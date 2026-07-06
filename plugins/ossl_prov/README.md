@@ -10,13 +10,16 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Signature** | ECDSA, RSA PKCS#1 v1.5, RSA-PSS |
 | **Key Exchange** | ECDH |
 | **Asymmetric Encryption** | RSA-OAEP |
+| **Symmetric Encryption** | AES-CBC (128/192/256), AES-GCM (256), AES-XTS (256) — **OpenSSL 3.5+** |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
 | **MAC** | HMAC-SHA256, HMAC-SHA384, HMAC-SHA512 |
-| **KDF** | HKDF (RFC 5869) |
+| **KDF** | HKDF (RFC 5869), KBKDF (SP 800-108 Counter Mode) |
 | **Encoder** | DER (SubjectPublicKeyInfo for public keys; PrivateKeyInfo metadata-only — keys are not exportable), Text |
 | **Store** | `azihsm://` URI scheme for masked key loading |
 
 > **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter (plaintext DER) or `azihsm.wrapped_key` parameter (pre-wrapped blob).
+
+> **Note:** AES symmetric keys are opaque **`EVP_SKEY`** objects and require **OpenSSL 3.5+** (they use the 3.5 `SKEYMGMT` API). They are generated inside the HSM (or re-imported from a masked blob) and are never exposed as raw bytes. On OpenSSL versions before 3.5 the opaque-key manager is unavailable, so AES keys cannot be created or bound — the cipher names still resolve but are unusable. See [AES Symmetric Encryption](#aes-symmetric-encryption).
 
 ## Key Usage and Operation Dependencies
 
@@ -54,7 +57,9 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - **RSA Encrypt & Decrypt** require a key imported with `keyEncipherment`. A `digitalSignature` key cannot be used for encryption.
 - **ECDH** requires an EC key generated with `keyAgreement`. A `digitalSignature` EC key cannot be used for ECDH.
 - **HKDF** requires a masked key file as input (`azihsm.ikm_file`). In practice this is the output of an ECDH derive (`shared_masked.bin`). There is no other way to provide the input keying material from the CLI besides using a masked key file.
-- **HMAC** requires a masked HMAC key derived via HKDF with `derived_key_type:hmac`. The HKDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
+- **KBKDF** (SP 800-108 Counter Mode) works like HKDF: it requires a masked key file as input (`azihsm.ikm_file`, typically an ECDH derive output) and derives AES or HMAC keys. The standard `salt` / `info` parameters map to the SP 800-108 label / context, and at least one of them must be provided.
+- **HMAC** requires a masked HMAC key derived via HKDF or KBKDF with `derived_key_type:hmac`. The KDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
+- **AES** (CBC / GCM / XTS) uses opaque symmetric `EVP_SKEY` keys generated inside the HSM, selected by the `azihsm.key_kind` skey option rather than `azihsm.key_usage`. Requires OpenSSL 3.5+. See [AES Symmetric Encryption](#aes-symmetric-encryption).
 
 ## Building
 
@@ -460,6 +465,77 @@ openssl pkeyutl -decrypt ${PROV} \
 | `rsa_oaep_md` | Hash for OAEP: `sha256`, `sha384`, `sha512` (SHA-1 rejected) |
 | `rsa_mgf1_md` | MGF1 hash (defaults to `rsa_oaep_md`) |
 
+### AES Symmetric Encryption
+
+AES uses the OpenSSL 3.5 opaque symmetric-key (`EVP_SKEY` / `SKEYMGMT`) API. Keys are opaque, HSM-resident objects — generated inside the HSM and never exposed as raw bytes; a masked blob is written to disk for later re-import, just like the asymmetric keys.
+
+**Requires:** OpenSSL 3.5+ — the opaque-key manager (`SKEYMGMT`) and the cipher's `EVP_SKEY` init hooks exist only in 3.5+, so on any OpenSSL before 3.5 AES keys cannot be created or bound (raw-key init is refused). Note the build example earlier in this README uses OpenSSL 3.0.3; build and run against 3.5+ to use AES. No other prerequisite — the key is generated in the first step below.
+
+Three kinds are supported, selected by the `azihsm.key_kind` skey option:
+
+| `azihsm.key_kind` | Modes | `key-length` (bytes) |
+|-------------------|-------|----------------------|
+| `AES` (default) | CBC | 16 / 24 / 32 (AES-128/192/256) |
+| `AES-GCM` | GCM | 32 (AES-256 only) |
+| `AES-XTS` | XTS | 64 (an AES-256 key pair) |
+
+Generate an opaque AES key with `skeyutl -genkey`; the masked blob is written to the `azihsm.masked_key` path:
+
+```bash
+# AES-256 (CBC-capable) key
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:32 \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin
+
+# AES-256-GCM key
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:32 \
+    -skeyopt azihsm.key_kind:AES-GCM \
+    -skeyopt azihsm.masked_key:./aes256_gcm_masked.bin
+
+# AES-256-XTS key (64-byte key pair)
+openssl skeyutl -genkey ${PROV} \
+    -skeymgmt AES \
+    -skeyopt key-length:64 \
+    -skeyopt azihsm.key_kind:AES-XTS \
+    -skeyopt azihsm.masked_key:./aes256_xts_masked.bin
+```
+
+Encrypt and decrypt with AES-CBC via `openssl enc`. The opaque key is re-imported from its masked blob with the same `-skeymgmt AES -skeyopt azihsm.masked_key:...` options; the IV is supplied with `-iv`:
+
+```bash
+# Encrypt
+openssl enc -e -aes-256-cbc ${PROV} \
+    -skeymgmt AES \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin \
+    -iv 000102030405060708090a0b0c0d0e0f \
+    -in plaintext.bin -out ciphertext.bin
+
+# Decrypt
+openssl enc -d -aes-256-cbc ${PROV} \
+    -skeymgmt AES \
+    -skeyopt azihsm.masked_key:./aes256_masked.bin \
+    -iv 000102030405060708090a0b0c0d0e0f \
+    -in ciphertext.bin -out decrypted.bin
+```
+
+PKCS#7 padding is applied by default, so the input need not be block-aligned. `-aes-128-cbc` and `-aes-192-cbc` work the same way with 16- and 24-byte keys.
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-skeymgmt AES` | Yes | Select the azihsm AES opaque-key manager |
+| `key-length` | No | (`-genkey` only) Raw key length in **bytes**; defaults to 32 for `AES`/`AES-GCM`, 64 for `AES-XTS`. On `enc` the length comes from the masked blob |
+| `azihsm.key_kind` | No | `AES` (default, CBC), `AES-GCM`, or `AES-XTS` |
+| `azihsm.masked_key` | Yes | On `-genkey`: output path for the masked blob. On `enc`: the masked blob to re-import |
+
+> **GCM and XTS are not reachable through `openssl enc`** — the `enc` app's `opt_cipher()` rejects AEAD and XTS ciphers, so a GCM nonce/AAD/tag or an XTS tweak cannot be passed through the CLI. These modes are driven through the `EVP_CipherInit_SKEY` C API instead. (On decrypt, AES-GCM requires the tag to be set *before* the ciphertext, since the HSM decrypts and verifies in a single operation.)
+
+> **Opacity:** AES keys are non-exportable — `EVP_SKEY_get0_raw_key()` fails by design, so raw key bytes never leave the HSM.
+
 ### ECDH Key Exchange
 
 Derive a shared secret with a peer's public key. The output is a masked key blob (not raw bytes). The provider supports two output modes: when `output_file` is set, the masked blob is written to that file and `secretlen` is set to 0; when `output_file` is not set, the masked blob is written into the caller's buffer. This masked key is the required input for HKDF key derivation.
@@ -553,6 +629,60 @@ The actual derived key size inside the HSM is determined by `derived_key_bits`. 
 | `SHA512` | `512` | HMAC-SHA512 | `SHA512` |
 
 Using a mismatched digest when consuming the key (e.g., deriving with `SHA384` but using `-macopt digest:SHA256`) will fail.
+
+### KBKDF Key Derivation
+
+Derive AES or HMAC keys from a masked key file using KBKDF (NIST SP 800-108 Counter Mode with an HMAC PRF). Like HKDF, the input keying material (IKM) must be a masked key blob — typically the output of an ECDH derive — and the output is also a masked key blob. The standard `salt` / `info` parameters map to the SP 800-108 **label** and **context**; at least one of them must be provided.
+
+**Requires:** A masked key file as IKM, produced by ECDH derive or another KDF derivation.
+
+```bash
+# Derive an AES-256 key from an ECDH shared secret (label only)
+openssl kdf ${PROV} \
+    -keylen 4096 \
+    -kdfopt digest:SHA256 \
+    -kdfopt mode:counter \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./aes_masked.bin \
+    -kdfopt derived_key_type:aes \
+    -kdfopt derived_key_bits:256 \
+    -kdfopt hexsalt:000102030405060708090a0b0c \
+    -binary -out /dev/null \
+    KBKDF
+
+# Derive an HMAC key with label and context
+openssl kdf ${PROV} \
+    -keylen 4096 \
+    -kdfopt digest:SHA384 \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./hmac_masked.bin \
+    -kdfopt derived_key_type:hmac \
+    -kdfopt derived_key_bits:384 \
+    -kdfopt hexsalt:000102030405060708090a0b0c \
+    -kdfopt hexinfo:f0f1f2f3f4f5f6f7f8f9 \
+    -binary -out /dev/null \
+    KBKDF
+```
+
+**Output behavior** is identical to [HKDF](#hkdf-key-derivation): when `output_file` is set the masked blob is written there, otherwise it is written into the caller's buffer (which `-keylen` must be large enough to hold).
+
+**KBKDF parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `digest` | No | HMAC PRF hash: `SHA1`, `SHA256` (default), `SHA384`, `SHA512`. For `derived_key_type:hmac`, this also determines the HMAC key kind |
+| `mode` | No | KBKDF mode; only `counter` is supported (default) |
+| `mac` | No | PRF MAC; only `HMAC` is supported (default) |
+| `azihsm.ikm_file` | Yes | Path to masked key file used as input keying material |
+| `output_file` | No | Path for output masked key blob. When set, takes priority over the caller's buffer |
+| `derived_key_type` | No | `aes` (default) or `hmac` |
+| `derived_key_bits` | No | Output key size in bits (default: 256). Must be >0 and divisible by 8 |
+| `hexsalt` | No\* | SP 800-108 **label** in hex |
+| `hexinfo` | No\* | SP 800-108 **context** in hex |
+
+\* At least one of `hexsalt` (label) / `hexinfo` (context) must be provided; deriving with both absent is rejected.
+
+When using `derived_key_type:hmac`, the `digest` ↔ `derived_key_bits` ↔ HMAC key-kind matching rules are identical to [HKDF](#hkdf-key-derivation) (SHA256/256, SHA384/384, SHA512/512).
 
 ### HMAC
 
