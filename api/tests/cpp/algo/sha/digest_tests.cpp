@@ -103,7 +103,7 @@ struct ShaTestParams
 
 #include <string>
 
-std::vector<uint8_t> hex_to_bytes(const char *hex)
+static std::vector<uint8_t> hex_to_bytes(const char *hex)
 {
     std::vector<uint8_t> bytes;
     for (size_t i = 0; hex[i] != '\0'; i += 2)
@@ -806,8 +806,7 @@ TEST_F(azihsm_sha_digest, one_shot_exact_len_with_larger_allocation)
     });
 }
 
-
-uint32_t expected_digest_len(azihsm_algo_id algo_id)
+static uint32_t expected_digest_len(azihsm_algo_id algo_id)
 {
     switch (algo_id)
     {
