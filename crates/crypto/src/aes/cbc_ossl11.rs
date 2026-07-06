@@ -654,8 +654,8 @@ impl<'a> DecryptOpContext<'a> for OsslAesCbcDecryptContext {
                     .crypter
                     .finalize(&mut output[count..])
                     .map_err(|_| CryptoError::AesDecryptError)?;
-                // Note: IV is updated in the context but not propagated back to the caller
-                // For proper IV chaining in streaming mode, the IV should be the last block of ciphertext
+                // Advance the context IV to the last ciphertext block so the CBC
+                // chain continues on a follow-on call (retrievable via algo()/into_algo()).
                 let iv_len = self.algo.iv.len();
                 if input.len() >= iv_len {
                     self.algo.iv.copy_from_slice(&input[input.len() - iv_len..]);

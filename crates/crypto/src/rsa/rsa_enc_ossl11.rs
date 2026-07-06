@@ -309,8 +309,7 @@ impl<'a> OsslRsaEncryptAlgo<'a> {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - `CryptoError::RsaSetPropertyError` - Setting padding, OAEP hash algorithm, or label fails
-    /// - `CryptoError::RsaError` - Setting MGF1 hash algorithm fails
+    /// - `CryptoError::RsaSetPropertyError` - Setting padding, OAEP hash algorithm, MGF1 hash algorithm, or label fails
     fn configure_decrypter<'b>(
         &mut self,
         decrypter: &mut openssl::encrypt::Decrypter<'b>,
