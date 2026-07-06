@@ -771,7 +771,8 @@ TEST_F(azihsm_sha_digest, streaming_one_byte_updates_match_one_shot)
     });
 }
 
-// Verifies one-shot SHA-256 digest does not overwrite bytes past the reported digest length.
+// Verifies one-shot SHA-256 digest accepts a larger output buffer and does not overwrite
+// bytes past the reported digest length.
 TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -784,7 +785,8 @@ TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
         data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
 
-        std::array<uint8_t, 64> digest;
+        constexpr uint32_t expected_len = 32;
+        std::array<uint8_t, 64> digest{};
         digest.fill(0xA5);
 
         azihsm_buffer digest_buf{};
@@ -794,11 +796,11 @@ TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
         auto err = azihsm_crypt_digest(session, &algo, &data_buf, &digest_buf);
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(digest_buf.len, 32u);
+        ASSERT_EQ(digest_buf.len, expected_len);
 
-        for (size_t i = 32; i < digest.size(); ++i)
+        for (size_t i = expected_len; i < digest.size(); ++i)
         {
-            ASSERT_EQ(digest[i], 0xA5);
+            ASSERT_EQ(digest[i], 0xA5) << "Digest wrote past expected SHA-256 length at byte " << i;
         }
     });
 }
@@ -1145,7 +1147,8 @@ TEST_F(azihsm_sha_digest, streaming_finish_rejects_null_digest_buffer)
     });
 }
 
-// Verifies streaming SHA-256 finish does not overwrite bytes past the reported digest length.
+// Verifies streaming SHA-256 digest finish accepts a larger output buffer and does not overwrite
+// bytes past the reported digest length.
 TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -1166,7 +1169,8 @@ TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
 
         ASSERT_EQ(azihsm_crypt_digest_update(ctx_handle, &data_buf), AZIHSM_STATUS_SUCCESS);
 
-        std::array<uint8_t, 64> digest;
+        constexpr uint32_t expected_len = 32;
+        std::array<uint8_t, 64> digest{};
         digest.fill(0xA5);
 
         azihsm_buffer digest_buf{};
@@ -1176,11 +1180,11 @@ TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
         auto err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(digest_buf.len, 32u);
+        ASSERT_EQ(digest_buf.len, expected_len);
 
-        for (size_t i = 32; i < digest.size(); ++i)
+        for (size_t i = expected_len; i < digest.size(); ++i)
         {
-            ASSERT_EQ(digest[i], 0xA5);
+            ASSERT_EQ(digest[i], 0xA5) << "Digest finish wrote past expected SHA-256 length at byte " << i;
         }
     });
 }
