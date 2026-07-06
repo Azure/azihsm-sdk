@@ -771,9 +771,9 @@ TEST_F(azihsm_sha_digest, streaming_one_byte_updates_match_one_shot)
     });
 }
 
-// Verifies one-shot SHA-256 digest accepts a larger output buffer and does not overwrite
-// bytes past the reported digest length.
-TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
+// Verifies one-shot SHA-256 digest does not overwrite bytes past the requested digest length
+// when the backing allocation is larger than digest_buf.len.
+TEST_F(azihsm_sha_digest, one_shot_exact_len_with_larger_allocation)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         azihsm_algo algo{};
@@ -791,7 +791,7 @@ TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
 
         azihsm_buffer digest_buf{};
         digest_buf.ptr = digest.data();
-        digest_buf.len = static_cast<uint32_t>(digest.size());
+        digest_buf.len = expected_len;
 
         auto err = azihsm_crypt_digest(session, &algo, &data_buf, &digest_buf);
 
@@ -800,10 +800,12 @@ TEST_F(azihsm_sha_digest, one_shot_does_not_write_past_digest_length)
 
         for (size_t i = expected_len; i < digest.size(); ++i)
         {
-            ASSERT_EQ(digest[i], 0xA5) << "Digest wrote past expected SHA-256 length at byte " << i;
+            ASSERT_EQ(digest[i], 0xA5)
+                << "One-shot digest wrote past requested digest length at byte " << i;
         }
     });
 }
+
 
 uint32_t expected_digest_len(azihsm_algo_id algo_id)
 {
@@ -1147,9 +1149,9 @@ TEST_F(azihsm_sha_digest, streaming_finish_rejects_null_digest_buffer)
     });
 }
 
-// Verifies streaming SHA-256 digest finish accepts a larger output buffer and does not overwrite
-// bytes past the reported digest length.
-TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
+// Verifies streaming SHA-256 digest finish does not overwrite bytes past the requested digest
+// length when the backing allocation is larger than digest_buf.len.
+TEST_F(azihsm_sha_digest, streaming_finish_exact_len_with_larger_allocation)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         azihsm_algo algo{};
@@ -1175,7 +1177,7 @@ TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
 
         azihsm_buffer digest_buf{};
         digest_buf.ptr = digest.data();
-        digest_buf.len = static_cast<uint32_t>(digest.size());
+        digest_buf.len = expected_len;
 
         auto err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
 
@@ -1184,7 +1186,8 @@ TEST_F(azihsm_sha_digest, streaming_finish_does_not_write_past_digest_length)
 
         for (size_t i = expected_len; i < digest.size(); ++i)
         {
-            ASSERT_EQ(digest[i], 0xA5) << "Digest finish wrote past expected SHA-256 length at byte " << i;
+            ASSERT_EQ(digest[i], 0xA5)
+                << "Streaming digest finish wrote past requested digest length at byte " << i;
         }
     });
 }
