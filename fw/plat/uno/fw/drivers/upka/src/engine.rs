@@ -387,7 +387,10 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// # Parameters
     ///
     /// - `key_type`: RSA key type (size + format selector).
-    /// - `key`: DMA-capable private key buffer.
+    /// - `key`: DMA-capable private key buffer. For standard keys this is a
+    ///   `d ‖ n` blob; for CRT keys it is a contiguous `param1 ‖ param2` blob
+    ///   (`param1` = `p ‖ q ‖ dp ‖ dq`, `param2` = `n ‖ n1q ‖ n2p`) at least
+    ///   `5 * mod_size` bytes long.
     /// - `input`: DMA-capable input block buffer.
     /// - `output`: DMA-capable output block buffer.
     ///
@@ -404,16 +407,28 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         let mod_size = rsa_mod_size(key_type);
-        Self::ensure_cmd_input(
-            !key.is_empty() && input.len() == mod_size && output.len() == mod_size,
-        )?;
+
+        // CRT private keys are a contiguous `param1 ‖ param2` blob: `param1`
+        // (`p ‖ q ‖ dp ‖ dq`, 2·mod_size) is read from the key/arg2 pointer and
+        // `param2` (`n ‖ n1q ‖ n2p`, 3·mod_size) is read from arg3. Standard
+        // (non-CRT) keys are a single `d ‖ n` blob read from arg2 with arg3 = 0.
+        let (key_ok, arg3) = if rsa_is_crt(key_type) {
+            let param2_off = rsa_crt_param1_len(key_type);
+            (
+                key.len() >= param2_off + 3 * mod_size,
+                key.as_ptr() as u32 + param2_off as u32,
+            )
+        } else {
+            (!key.is_empty(), 0)
+        };
+        Self::ensure_cmd_input(key_ok && input.len() == mod_size && output.len() == mod_size)?;
 
         self.execute_cmd(
             rsa_priv_opcode(key_type),
             output.as_mut_ptr() as u32,
             input.as_ptr() as u32,
             key.as_ptr() as u32,
-            0,
+            arg3,
         )
         .await
     }

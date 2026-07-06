@@ -18,10 +18,11 @@
 //!
 //! # Status
 //!
-//! AES-256-CBC, HKDF, and KBKDF are implemented. Further tests (per-engine
-//! ECDSA / ECDH / RSA, and the RNG/DRBG FW-mode KAT) are appended to
-//! [`run_pre_op`] as they are added — each is a direct call, with per-PKA-engine
-//! tests wrapped in a `for engine in 0..PKA_ENGINES` loop.
+//! AES-256-CBC, HKDF, KBKDF, and per-engine RSA-2048 mod-exp (standard and CRT)
+//! are implemented. Further tests (per-engine ECDSA / ECDH, and the RNG/DRBG
+//! FW-mode KAT) are appended to [`run_pre_op`] as they are added — each is a
+//! direct call, with per-PKA-engine tests wrapped in a
+//! `for engine in 0..PKA_ENGINES` loop.
 
 mod aes_cbc;
 mod kdf;
@@ -44,6 +45,9 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
     kdf::run_kbkdf(pal, io).await?;
     for engine in 0..pka::PKA_ENGINES {
         pka::run_rsa_mod_exp_on_engine(pal, io, engine).await?;
+    }
+    for engine in 0..pka::PKA_ENGINES {
+        pka::run_rsa_mod_exp_crt_on_engine(pal, io, engine).await?;
     }
     Ok(())
 }
