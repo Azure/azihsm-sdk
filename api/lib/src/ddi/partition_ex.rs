@@ -4,12 +4,17 @@
 //! Partition provisioning over the TBOR transport at the DDI layer.
 //!
 //! This module hosts the host-side dispatch for the in-session
-//! Crypto-Officer `PartInit` command, mirroring the firmware handler:
+//! Crypto-Officer partition-provisioning commands, mirroring the
+//! firmware handlers:
 //!
 //! * **`PartInit`** (opcode `0x07`) — derive the partition PTA keypair,
 //!   persist the caller-asserted unified `PartPolicy` plus the POTA /
 //!   SATA / optional SAPOTA thumbprints, and return the PTA CSR +
 //!   COSE_Sign1 attestation report.
+//! * **`PartFinal`** (opcode `0x08`) — re-supply the unified
+//!   `PartPolicy` (for `POTAPubKey` recovery) and the PTA cert-chain
+//!   descriptors, optionally restore a prior `local_mk` backup, and
+//!   return the current `local_mk` backup envelope.
 //!
 //! It runs **inside an already-open CO session** established by
 //! [`super::session_ex::open_session_ex`]: the request carries the
@@ -46,6 +51,25 @@ impl From<TborPartInitResp> for PartInitResult {
         Self {
             pta_csr: resp.pta_csr,
             pta_report: resp.pta_report,
+        }
+    }
+}
+
+/// API-layer result of a TBOR `PartFinal` provisioning command.
+///
+/// Mirrors [`TborPartFinalResp`] with owned bytes so the wire response
+/// type stays confined to the DDI layer and never reaches `HsmSession`
+/// callers.
+#[derive(Debug, Clone, Default)]
+pub struct PartFinalResult {
+    /// Current `local_mk` backup envelope the firmware produced.
+    pub local_mk_backup: Vec<u8>,
+}
+
+impl From<TborPartFinalResp> for PartFinalResult {
+    fn from(resp: TborPartFinalResp) -> Self {
+        Self {
+            local_mk_backup: resp.local_mk_backup,
         }
     }
 }
@@ -187,6 +211,67 @@ pub(crate) fn part_init_ex(
         .map_err(HsmError::from)
 }
 
+/// Issue `PartFinal` (opcode `0x08`) on the active CO session.
+///
+/// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+/// and the PTA cert-chain descriptors, optionally restoring a prior
+/// `local_mk` backup. Returns the current `local_mk` backup envelope.
+///
+/// # Arguments
+///
+/// * `partition` - The HSM partition handle.
+/// * `session_id` - The active CO session id this request binds to.
+/// * `part_policy` - Caller-asserted unified [`PartPolicy`] image
+///   ([`PART_POLICY_LEN`] bytes), re-supplied from `PartInit`.
+/// * `cert_descriptors` - PTA cert-chain `(offset, length)` descriptors
+///   pointing into the side-band data buffer; `1..=`[`MAX_CERTS`]
+///   entries.
+/// * `prev_local_mk_backup` - Optional prior `local_mk` backup envelope
+///   to restore; `None` on first finalization.
+///
+/// # Errors
+///
+/// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
+/// wrong length or fails to decode, when `cert_descriptors` is empty or
+/// exceeds [`MAX_CERTS`], or when `prev_local_mk_backup` exceeds
+/// [`LOCAL_MK_BACKUP_MAX_LEN`]; surfaces DDI/device failures from the
+/// round-trip.
+pub(crate) fn part_final_ex(
+    partition: &HsmPartition,
+    session_id: u16,
+    part_policy: &[u8],
+    cert_descriptors: &[CertDescriptor],
+    prev_local_mk_backup: Option<&[u8]>,
+) -> HsmResult<PartFinalResult> {
+    if part_policy.len() != PART_POLICY_LEN {
+        return Err(HsmError::InvalidArgument);
+    }
+    if cert_descriptors.is_empty() || cert_descriptors.len() > MAX_CERTS {
+        return Err(HsmError::InvalidArgument);
+    }
+    if prev_local_mk_backup.is_some_and(|b| b.len() > LOCAL_MK_BACKUP_MAX_LEN) {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    let mut req = TborPartFinalReq {
+        session_id,
+        cert_descriptors: cert_descriptors.to_vec(),
+        ..Default::default()
+    };
+    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| HsmError::InvalidArgument)?;
+    if let Some(b) = prev_local_mk_backup {
+        req.prev_local_mk_backup = b.to_vec();
+    }
+
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let mut cookie = None;
+    dev.exec_op_tbor(&req, &mut cookie)
+        .map(PartFinalResult::from)
+        .map_err(HsmError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +382,58 @@ mod emu_tests {
         let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
 
         let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, Some(&bad_sapota));
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// A minimal, well-formed one-entry cert-descriptor list.
+    fn one_cert_descriptor() -> Vec<CertDescriptor> {
+        vec![CertDescriptor::default()]
+    }
+
+    /// `PartFinal` rejects a wrong-length `part_policy` before any
+    /// device round-trip.
+    #[test]
+    fn part_final_rejects_bad_part_policy_len() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
+
+        let res = session.part_final(&bad_policy, &one_cert_descriptor(), None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// `PartFinal` rejects an empty `cert_descriptors` list.
+    #[test]
+    fn part_final_rejects_empty_cert_descriptors() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let policy = vec![0u8; PART_POLICY_LEN];
+
+        let res = session.part_final(&policy, &[], None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// `PartFinal` rejects more than [`MAX_CERTS`] cert descriptors.
+    #[test]
+    fn part_final_rejects_too_many_cert_descriptors() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let policy = vec![0u8; PART_POLICY_LEN];
+        let too_many = vec![CertDescriptor::default(); MAX_CERTS + 1];
+
+        let res = session.part_final(&policy, &too_many, None);
+        assert!(matches!(res, Err(HsmError::InvalidArgument)));
+    }
+
+    /// `PartFinal` rejects an oversized `prev_local_mk_backup`.
+    #[test]
+    fn part_final_rejects_oversized_prev_local_mk_backup() {
+        let _guard = EMU_LOCK.lock();
+        let session = fresh_co_session();
+        let policy = vec![0u8; PART_POLICY_LEN];
+        let oversized = vec![0u8; LOCAL_MK_BACKUP_MAX_LEN + 1];
+
+        let res = session.part_final(&policy, &one_cert_descriptor(), Some(&oversized));
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 }
