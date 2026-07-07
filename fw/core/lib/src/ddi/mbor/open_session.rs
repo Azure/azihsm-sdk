@@ -210,7 +210,16 @@ async fn derive_session_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        let priv_key = pal.vault_key(io, sess_enc_key_id)?;
+        // ECDH needs the private scalar, which is the trailing
+        // `priv_key_len` bytes of the vault key. This handles both
+        // on-storage layouts: the Uno PAL stores `pub(96) ‖ priv(48)`
+        // while the std PAL stores the bare `priv(48)`.
+        let priv_key_len = HsmEccCurve::P384.priv_key_len();
+        let sess_enc_blob = pal.vault_key(io, sess_enc_key_id)?;
+        if sess_enc_blob.len() < priv_key_len {
+            return Err(HsmError::InternalError);
+        }
+        let (_head, priv_key) = sess_enc_blob.split_at(sess_enc_blob.len() - priv_key_len);
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,
