@@ -237,7 +237,9 @@ pub(crate) fn part_init_ex(
 /// exceeds [`MAX_CERTS`], or contains a cert whose offset/length does not
 /// fit in the 16-bit descriptor fields, or when a present
 /// `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`] bytes;
-/// surfaces DDI/device failures from the round-trip.
+/// returns [`HsmError::InternalError`] if the device returns a
+/// malformed (wrong-length) `local_mk_backup`; and surfaces DDI/device
+/// failures from the round-trip.
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
@@ -292,9 +294,17 @@ pub(crate) fn part_final_ex(
     let inner = partition.inner().read();
     let dev = inner.dev();
     let mut cookie = None;
-    dev.exec_op_tbor(&req, Some(&[sideband.as_slice()]), &mut cookie)
-        .map(PartFinalResult::from)
-        .map_err(HsmError::from)
+    let resp = dev
+        .exec_op_tbor(&req, Some(&[sideband.as_slice()]), &mut cookie)
+        .map_err(HsmError::from)?;
+
+    // The firmware always returns a fixed-size `local_mk_backup`
+    // envelope; reject a malformed (wrong-length) device response rather
+    // than surfacing it to callers.
+    if resp.local_mk_backup.len() != LOCAL_MK_BACKUP_LEN {
+        return Err(HsmError::InternalError);
+    }
+    Ok(PartFinalResult::from(resp))
 }
 
 #[cfg(test)]

@@ -46,8 +46,15 @@ pub const LOCAL_MK_BACKUP_MAX_LEN: usize = 1024;
 ///
 /// Mirrors `azihsm_fw_ddi_tbor_types::part_final::LOCAL_MK_BACKUP_LEN`;
 /// the firmware treats a non-empty field as exactly this length (an
-/// empty field means absent).
-pub const LOCAL_MK_BACKUP_LEN: usize = 164;
+/// empty field means absent). The breakdown mirrors the firmware's
+/// deterministic AES-256-GCM `MaskedKey` envelope layout:
+/// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`.
+pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+
+// Pin the computed length to the wire-documented 164 B so an envelope
+// layout change forces this constant (and the mirror comment) to be
+// revisited.
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
 /// One PTA-chain certificate descriptor: the byte `offset` and `length`
 /// of a DER certificate within the side-band data buffer.

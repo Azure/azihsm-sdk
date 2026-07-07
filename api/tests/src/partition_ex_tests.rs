@@ -10,7 +10,7 @@
 //! not require a FW-accepted policy / cert chain.
 
 use azihsm_api::*;
-use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_MAX_LEN;
+use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -133,16 +133,18 @@ fn part_final_rejects_too_many_cert_descriptors() {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
-/// `PartFinal` rejects an oversized `prev_local_mk_backup`.
+/// `PartFinal` rejects a `prev_local_mk_backup` whose length is not
+/// exactly [`LOCAL_MK_BACKUP_LEN`] (near-miss under-length), exercising
+/// the fixed-size guard rather than a coarse max-length check.
 #[test]
-fn part_final_rejects_oversized_prev_local_mk_backup() {
+fn part_final_rejects_wrong_len_prev_local_mk_backup() {
     let _guard = EMU_LOCK.lock();
     let session = fresh_co_session();
     let policy = vec![0u8; PART_POLICY_LEN];
-    let oversized = vec![0u8; LOCAL_MK_BACKUP_MAX_LEN + 1];
+    let wrong_len = vec![0u8; LOCAL_MK_BACKUP_LEN - 1];
 
     let cert = one_cert();
     let chain = [HsmCertDescriptor { cert: &cert }];
-    let res = session.part_final(&policy, &chain, Some(&oversized));
+    let res = session.part_final(&policy, &chain, Some(&wrong_len));
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
