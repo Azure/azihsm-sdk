@@ -170,7 +170,9 @@ impl HsmGdmaController for UnoHsmPal {
         dst: &mut DmaBuf,
         prp: bool,
     ) -> HsmResult<()> {
-        // Only SGL Data Block descriptors are supported here.
+        // Only inline SGL Data Block descriptors are supported here; the
+        // GDMA hardware consumes the descriptor and interprets its SGL
+        // format.
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }

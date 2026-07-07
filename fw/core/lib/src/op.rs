@@ -156,19 +156,35 @@ impl SqeValidateExt for Sqe<'_> {
 
         // Optional out-of-band SGL descriptor array (`oob_prp`/`oob_len`).
         // When present it must be a whole number of 16-byte SGL Data
-        // Block descriptors and fit within a single descriptor page.
+        // Block descriptors, no larger than a single descriptor page, and
+        // 4K-page-aligned so the array cannot straddle a page boundary.
         let oob_len = self.oob_len();
-        if oob_len != 0 && (!oob_len.is_multiple_of(OOB_ENTRY_LEN) || oob_len > MAX_OOB_LEN) {
-            error!(
-                "core",
-                HsmError::IoChannelInvalidOobLen,
-                "Invalid OOB descriptor-array length: {}",
-                oob_len
-            );
-            return Err(OpError::new(
-                HsmError::IoChannelInvalidOobLen,
-                HostStatus::INVALID_OOB_LEN,
-            ));
+        if oob_len != 0 {
+            if !oob_len.is_multiple_of(OOB_ENTRY_LEN) || oob_len > MAX_OOB_LEN {
+                error!(
+                    "core",
+                    HsmError::IoChannelInvalidOobLen,
+                    "Invalid OOB descriptor-array length: {}",
+                    oob_len
+                );
+                return Err(OpError::new(
+                    HsmError::IoChannelInvalidOobLen,
+                    HostStatus::INVALID_OOB_LEN,
+                ));
+            }
+
+            if !is_aligned_4k(self.oob_prp()) {
+                error!(
+                    "core",
+                    HsmError::IoChannelInvalidOobAlignment,
+                    "Invalid OOB PRP alignment: {:?}",
+                    self.oob_prp()
+                );
+                return Err(OpError::new(
+                    HsmError::IoChannelInvalidOobAlignment,
+                    HostStatus::INVALID_OOB_PRP,
+                ));
+            }
         }
 
         Ok(())

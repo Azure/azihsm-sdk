@@ -53,18 +53,19 @@ impl HsmGdmaController for StdHsmPal {
         dst: &mut DmaBuf,
         prp: bool,
     ) -> HsmResult<()> {
-        // Only SGL Data Block descriptors are supported here.
+        // Only inline SGL Data Block descriptors are supported here.
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
-        // The descriptor's embedded length must match the destination.
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
-        if len != dst.len() {
-            return Err(HsmError::InvalidArg);
-        }
+        // The std PAL dereferences the descriptor's source address as a
+        // raw host-process pointer (unlike the uno PAL, where the GDMA
+        // hardware consumes the descriptor and interprets its SGL format),
+        // so validate the length + source address before the copy.
+        crate::drivers::gdma::validate_raw_src(desc, dst.len())?;
         // SAFETY: see `copy_mem_from_host` — std PRP addresses are raw
         // host-process pointers the caller guarantees valid and alive;
-        // `len == dst.len()` bounds the copy.
+        // `validate_raw_src` rejects a null source for `len > 0`, and the
+        // descriptor length equals `dst.len()`.
         unsafe { self.gdma.copy_mem_from_host_raw(desc, dst) };
         Ok(())
     }

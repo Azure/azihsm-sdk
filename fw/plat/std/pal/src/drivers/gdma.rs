@@ -56,11 +56,16 @@ impl StdGdma {
     /// that `dst` is at least that long (the trait wrapper enforces
     /// `length == dst.len()`).
     pub unsafe fn copy_mem_from_host_raw(&self, desc: &[u8; 16], dst: &mut [u8]) {
+        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
+        // A zero-length transfer is a no-op; skip so a (permitted) null
+        // source address on an empty descriptor is never dereferenced.
+        if len == 0 {
+            return;
+        }
         let src = HsmDmaAddr {
             lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
             hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
         };
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
         core::ptr::copy_nonoverlapping(addr_to_ptr(src), dst.as_mut_ptr(), len);
     }
 
@@ -82,6 +87,33 @@ impl StdGdma {
 fn addr_to_ptr(addr: HsmDmaAddr) -> *mut u8 {
     let full = (addr.hi as u64) << 32 | addr.lo as u64;
     full as *mut u8
+}
+
+/// Validate a raw 16-byte descriptor's length and source address for the
+/// std PAL, which dereferences the source as a raw host-process pointer.
+///
+/// Unlike the uno PAL — where the GDMA hardware consumes the descriptor
+/// and interprets its SGL format — the std PAL copies from the address
+/// directly, so it must reject a source it cannot safely dereference.
+/// Only the embedded length and the source address are checked; the
+/// descriptor *format* (SGL type / sub-type, of which there are several
+/// valid encodings) is deliberately not interpreted here.
+///
+/// # Errors
+///
+/// - [`HsmError::InvalidArg`] — the embedded length does not equal
+///   `dst_len`, or a non-empty (`len > 0`) transfer names a null source
+///   address.
+pub(crate) fn validate_raw_src(desc: &[u8; 16], dst_len: usize) -> HsmResult<()> {
+    let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
+    if len != dst_len {
+        return Err(HsmError::InvalidArg);
+    }
+    // A non-empty transfer must name a non-null source address (bytes 0-7).
+    if len != 0 && desc[..8].iter().all(|&b| b == 0) {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -119,5 +151,34 @@ mod tests {
         unsafe { StdGdma::new().copy_mem_from_host_raw(&desc, &mut dst) };
         assert!(dst[..8].iter().all(|&b| b == 0x5A));
         assert!(dst[8..].iter().all(|&b| b == 0x00));
+    }
+
+    #[test]
+    fn validate_raw_src_checks_length_and_null_source() {
+        use azihsm_fw_hsm_pal_traits::HsmError;
+
+        // A descriptor whose embedded length matches `dst_len` and names a
+        // non-null source is accepted.  (Descriptor *format* bytes are not
+        // interpreted, so any type/reserved bytes are irrelevant.)
+        let src = [0u8; 16];
+        let desc = sgl_desc(&src);
+        assert!(validate_raw_src(&desc, 16).is_ok());
+
+        // A length that does not match the destination is rejected.
+        assert!(matches!(
+            validate_raw_src(&desc, 8),
+            Err(HsmError::InvalidArg)
+        ));
+
+        // A null source address with a non-empty length is rejected.
+        let mut null_src = [0u8; 16];
+        null_src[8..12].copy_from_slice(&16u32.to_le_bytes());
+        assert!(matches!(
+            validate_raw_src(&null_src, 16),
+            Err(HsmError::InvalidArg)
+        ));
+
+        // A null source address with length 0 is a permitted empty item.
+        assert!(validate_raw_src(&[0u8; 16], 0).is_ok());
     }
 }
