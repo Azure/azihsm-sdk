@@ -25,6 +25,26 @@ pub enum HsmError {
     UnsupportedCmd = 0x08000009,
     DdiEncodeFailed = 0x08680001,
     DdiDecodeFailed = 0x08680002,
+    // TBOR wire-decode failures. Each corresponds to a distinct
+    // structural fault detected by the zero-copy TBOR decoder; the
+    // decode path returns these directly (no intermediate error type).
+    TborBufferTooShort = 0x08680010,
+    TborUnsupportedVersion = 0x08680011,
+    TborMessageTruncated = 0x08680012,
+    TborOffsetLengthOutOfBounds = 0x08680013,
+    TborInvalidFixedLength = 0x08680014,
+    TborOpcodeMismatch = 0x08680015,
+    TborUnexpectedTocType = 0x08680016,
+    TborInvalidNonePayload = 0x08680017,
+    TborNonMonotonicTocOffsets = 0x08680018,
+    TborMissingField = 0x08680019,
+    TborDuplicateField = 0x0868001A,
+    TborInvalidEnumValue = 0x0868001B,
+    // TBOR wire-encode failures.
+    TborBufferTooSmall = 0x0868001C,
+    TborTooManyTocEntries = 0x0868001D,
+    TborDataTooLarge = 0x0868001E,
+    TborDataOffsetOverflow = 0x0868001F,
     VaultSessionLimitReached = 0x08700001,
     SessionNotExpected = 0x08700002,
     SessionExpected = 0x08700003,
@@ -226,6 +246,14 @@ pub enum HsmError {
     // ── AES Key Wrap errors ────────────────────────────────────────
     AesUnwrapFailed = 0x087000D9,
 
+    // ── Session establishment protocol ─────────────────────────────
+    SessionAuthFailure = 0x087000DA,
+    InvalidPskId = 0x087000DB,
+    SessionNotPending = 0x087000DC,
+    AeadEnvelopeAuthFailed = 0x087000DD,
+    AeadEnvelopeDecodeFailed = 0x087000DE,
+    InvalidSessionType = 0x087000DF,
+
     // ── Core lifecycle / transport diagnostics ─────────────────────
     SqeInvalidPsdt = 0x087000E0,
     RecvTaskFailure = 0x087000E1,
@@ -233,6 +261,108 @@ pub enum HsmError {
     SendTaskFailure = 0x087000E3,
     CompleteIoFailure = 0x087000E4,
     DropIoFailure = 0x087000E5,
+
+    /// In-session command rejected because the calling role's
+    /// partition PSK is still the well-known compiled-in default.
+    /// The only in-session commands permitted in this state are
+    /// session tear-down (`CloseSession`) and the PSK rotation
+    /// itself (`ChangePsk`); rotate the PSK once and retry.
+    DefaultPskMustRotate = 0x087000E6,
+
+    /// `OpenSessionInit` rejected the caller-supplied `suite_id`
+    /// because no such suite is implemented (or it has been retired).
+    /// See [`SessionSuite`] for the registered values.
+    UnsupportedSessionSuite = 0x087000E7,
+
+    /// X.509 DER parsing failed (malformed structure, bad tag/length,
+    /// or unsupported field encoding).
+    X509ParseError = 0x087000F0,
+
+    /// The root certificate is not self-signed (issuer ≠ subject).
+    X509NotSelfSigned = 0x087000F1,
+
+    /// The certificate's issuer does not match the previous certificate's subject.
+    X509IssuerMismatch = 0x087000F2,
+
+    /// The ECDSA signature did not verify.
+    X509SignatureInvalid = 0x087000F3,
+
+    /// The certificate's AKID does not match the previous certificate's SKID.
+    X509AkidSkidMismatch = 0x087000F4,
+
+    /// An intermediate certificate does not have cA=true in BasicConstraints.
+    X509NotCa = 0x087000F5,
+
+    /// The chain exceeds the maximum path length from BasicConstraints.
+    X509PathLenExceeded = 0x087000F6,
+
+    /// A CA certificate does not have the keyCertSign bit set in KeyUsage.
+    X509KeyUsageInvalid = 0x087000F7,
+
+    /// The signature algorithm is not a supported ECDSA variant.
+    X509UnsupportedAlgorithm = 0x087000F8,
+
+    /// The certificate contains an unrecognized critical extension.
+    X509UnrecognizedCriticalExtension = 0x087000F9,
+
+    /// `step()` was called after the chain was already fully validated.
+    X509AlreadyComplete = 0x087000FA,
+
+    /// Failed to export an ECC key to HSM wire format (raw scalar /
+    /// coordinate bytes).  This is **not** a DER encoding error — the
+    /// HSM ECC format is the raw padded scalar/coordinate bytes
+    /// produced by `ExportableHsmKey::to_hsm_bytes` (see
+    /// `HsmEccCurve::wire_coord_len`).
+    EccExportError = 0x087000FB,
+
+    // ── Partition initialization (PartInit) ────────────────────────
+    /// `PartInit` rejected because a Partition Trust Anchor key has
+    /// already been bound to this partition incarnation.  One-shot
+    /// enforcement: the only path to a fresh PTA binding is via a
+    /// full partition free/realloc cycle.
+    PtaKeyAlreadySet = 0x087000FC,
+
+    /// `PartInit` rejected because a Unique Machine Secret (UMS) key
+    /// has already been bound to this partition incarnation.
+    /// One-shot enforcement matching [`Self::PtaKeyAlreadySet`]: the
+    /// only path to a fresh UMS binding is via a full partition
+    /// free/realloc cycle.
+    UpsKeyAlreadySet = 0x087000FD,
+
+    /// A partition operation required the Unique Machine Secret (UMS)
+    /// vault key but `PartInit` has not yet successfully bound one
+    /// for this incarnation.  Returned by
+    /// [`HsmPartitionManager::part_ums_key_id`](crate::HsmPartitionManager::part_ums_key_id)
+    /// when the slot is empty.
+    UmsKeyNotSet = 0x087000FE,
+
+    /// Returned by the property-based getters on
+    /// [`HsmPartitionManager`](crate::HsmPartitionManager)
+    /// (`part_prop_get_*` / `part_prop_get_bytes`) when the addressed
+    /// [`PartPropId`](crate::PartPropId) slot is absent (i.e. has not
+    /// been populated, or was last
+    /// [`part_prop_clear`](crate::HsmPartitionManager::part_prop_clear)ed).
+    /// Distinct from [`HsmError::InvalidArg`], which signals a
+    /// caller bug (unknown id, kind mismatch, etc.).
+    PartPropNotFound = 0x087000FF,
+    /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
+    /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
+    /// carries the requested selector (SVN / owner id).
+    SeedNotFound = 0x08700100,
+
+    // Firmware-internal diagnostic codes logged by the CPU fault and panic
+    // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
+    // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
+    // the DDI status range, and are emitted to the trace log only (never
+    // returned over the wire).
+    /// A Rust `panic!` reached the firmware panic handler.
+    Panic = 0x08F00001,
+    /// A CPU `HardFault` exception was taken (an escalated bus/usage/mem
+    /// fault, or a stack overflow).
+    HardFault = 0x08F00002,
+    /// An exception or interrupt with no dedicated handler reached the
+    /// `DefaultHandler`.
+    UnexpectedException = 0x08F00003,
 }
 
 impl core::fmt::Debug for HsmError {

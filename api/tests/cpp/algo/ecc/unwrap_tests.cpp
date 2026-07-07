@@ -1022,3 +1022,169 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_multi_byte_blob_corruption_patt
         }
     });
 }
+
+// Verifies unwrap rejects a non-null wrapped-key pointer with zero length.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_non_null_wrapped_key_with_zero_length)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+
+        uint8_t dummy = 0;
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = &dummy;
+        wrapped_key_buf.len = 0;
+
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap rejects a null wrapped-key pointer with non-zero length.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_null_wrapped_key_with_nonzero_length)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = nullptr;
+        wrapped_key_buf.len = 1;
+
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies repeated imports of the same wrapped blob are independent objects:
+// deleting the first imported pair does not invalidate the second imported pair.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_repeated_imports_are_independently_deletable)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto first = ctx.try_unwrap();
+        ASSERT_EQ(first.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(first.private_key, 0);
+        ASSERT_NE(first.public_key, 0);
+
+        auto_key first_private_key;
+        auto_key first_public_key;
+        first_private_key.handle = first.private_key;
+        first_public_key.handle = first.public_key;
+
+        auto second = ctx.try_unwrap();
+        ASSERT_EQ(second.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(second.private_key, 0);
+        ASSERT_NE(second.public_key, 0);
+
+        auto_key second_private_key;
+        auto_key second_public_key;
+        second_private_key.handle = second.private_key;
+        second_public_key.handle = second.public_key;
+
+        ASSERT_NE(first_private_key.get(), second_private_key.get());
+        ASSERT_NE(first_public_key.get(), second_public_key.get());
+
+        ASSERT_EQ(azihsm_key_delete(first_private_key.get()), AZIHSM_STATUS_SUCCESS);
+        first_private_key.release();
+        ASSERT_EQ(azihsm_key_delete(first_public_key.get()), AZIHSM_STATUS_SUCCESS);
+        first_public_key.release();
+
+        const std::vector<uint8_t> message = { 0x69, 0x6E, 0x64, 0x65, 0x70, 0x65,
+                                               0x6E, 0x64, 0x65, 0x6E, 0x74 };
+
+        auto roundtrip = run_ecdsa_sign_verify_roundtrip(
+            second_private_key.get(),
+            second_public_key.get(),
+            message
+        );
+
+        ASSERT_EQ(roundtrip.status, AZIHSM_STATUS_SUCCESS)
+            << "roundtrip failed at step: " << roundtrip.step << " detail: " << roundtrip.detail;
+    });
+}
+
+// Verifies unwrap failure does not modify caller-provided output handles.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_preserves_nonzero_output_handles_on_failure)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesUnwrapPairInputs unwrap_inputs(0x77);
+        unwrap_inputs.unwrap_algo.id = static_cast<azihsm_algo_id>(0xFFFFFFFF);
+
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
+        const azihsm_handle original_private_key = static_cast<azihsm_handle>(0x11111111);
+        const azihsm_handle original_public_key = static_cast<azihsm_handle>(0x22222222);
+
+        azihsm_handle private_key = original_private_key;
+        azihsm_handle public_key = original_public_key;
+
+        auto err = ctx.raw_unwrap(unwrap_inputs, &private_key, &public_key);
+
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(private_key, original_private_key);
+        ASSERT_EQ(public_key, original_public_key);
+    });
+}
+
+// Verifies unwrap rejects P-521 wrapped blob corruption.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_corrupted_wrapped_blob_integrity_p521)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P521, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_GT(ctx.wrapped_blob.size(), 2u);
+
+        std::vector<uint8_t> mutated = ctx.wrapped_blob;
+        mutated[mutated.size() / 2] ^= 0x01;
+
+        ctx.wrapped_key_buf.ptr = mutated.data();
+        ctx.wrapped_key_buf.len = static_cast<uint32_t>(mutated.size());
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap rejects P-521 wrapped blob truncation.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_truncated_blob_p521)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P521, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_GT(ctx.wrapped_blob.size(), 16u);
+
+        ctx.wrapped_blob.resize(ctx.wrapped_blob.size() - 16);
+        ctx.wrapped_key_buf.ptr = ctx.wrapped_blob.data();
+        ctx.wrapped_key_buf.len = static_cast<uint32_t>(ctx.wrapped_blob.size());
+
+        auto result = ctx.try_unwrap();
+
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}

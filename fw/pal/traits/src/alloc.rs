@@ -144,6 +144,20 @@ impl DmaBuf {
         let (a, b) = self.inner.split_at_mut(mid);
         unsafe { (DmaBuf::from_raw_mut(a), DmaBuf::from_raw_mut(b)) }
     }
+
+    /// Securely zeroes the buffer.
+    ///
+    /// Uses per-byte volatile writes followed by a compiler fence so the
+    /// wipe cannot be optimized away even when the compiler can prove the
+    /// bytes are never read again. Intended for scrubbing key material.
+    #[inline]
+    pub fn zeroize(&mut self) {
+        for b in self.inner.iter_mut() {
+            // SAFETY: `b` is a valid, aligned, writable byte of this buffer.
+            unsafe { core::ptr::write_volatile(b, 0) };
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl core::ops::Deref for DmaBuf {
@@ -158,6 +172,39 @@ impl core::ops::DerefMut for DmaBuf {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.inner
+    }
+}
+
+// `DmaBuf` is a transparent newtype over `[u8]`, so byte-wise equality
+// matches caller expectations. This impl is required by the FW TBOR
+// codec's `TocEntry` enum (variants hold `&DmaBuf` and derive
+// `PartialEq`/`Eq` for test assertions and the wire round-trip).
+//
+// Note: comparing two byte buffers in constant time is the caller's
+// responsibility (use `subtle::ConstantTimeEq` for secrets); this
+// `PartialEq` is `[u8]::eq` and short-circuits.
+impl PartialEq for DmaBuf {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for DmaBuf {}
+
+// Cross-type byte equality used by tests and codec assertions that
+// compare a `&DmaBuf` to a `&[u8; N]` literal (e.g. `b"hello"`).
+impl PartialEq<[u8]> for DmaBuf {
+    #[inline(always)]
+    fn eq(&self, other: &[u8]) -> bool {
+        &self.inner == other
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for DmaBuf {
+    #[inline(always)]
+    fn eq(&self, other: &[u8; N]) -> bool {
+        &self.inner == other.as_slice()
     }
 }
 

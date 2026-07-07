@@ -40,6 +40,14 @@ pub struct Nextest {
     /// Crates to exclude from nextest (e.g. crates with heavyweight build scripts)
     #[clap(long)]
     pub exclude: Vec<String>,
+
+    /// Test only the specified test target
+    #[clap(long)]
+    pub test: Option<String>,
+
+    /// Test name filters
+    #[clap(long)]
+    pub filter: Vec<String>,
 }
 
 impl Xtask for Nextest {
@@ -96,6 +104,15 @@ impl Xtask for Nextest {
             for val in &exclude_vals {
                 command_args.push(val);
             }
+        }
+        let test_val = self.test.clone().unwrap_or_default();
+        if self.test.is_some() {
+            command_args.push("--test");
+            command_args.push(&test_val);
+        }
+        if !self.filter.is_empty() {
+            command_args.push("--");
+            command_args.extend(self.filter.iter().map(|s| s.as_str()));
         }
 
         cmd!(

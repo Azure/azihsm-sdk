@@ -1,0 +1,27 @@
+// Copyright (c) Microsoft Corporation.
+//
+// Cortex-M7 — PPB peripheral address map
+//
+// Reference: DDI0403E §B3, DDI0489F §4
+//
+// Note: SysTick, NVIC, SCB, and TCM are at fixed PPB addresses.
+// They are defined in separate RDL files and included here.
+
+`include "systick.rdl"
+`include "nvic.rdl"
+`include "scb.rdl"
+`include "tcm.rdl"
+
+addrmap cortex_m {
+    name = "Cortex-M7 PPB";
+    desc = "Private Peripheral Bus (PPB) peripherals for Cortex-M7.
+             Includes SysTick, NVIC, SCB, and TCM control registers.";
+
+    default hw = na;
+    default sw = rw;
+
+    systick SYSTICK  @ 0xE000_E010;
+    nvic    NVIC     @ 0xE000_E100;
+    scb     SCB      @ 0xE000_ED00;
+    tcm     TCM      @ 0xE000_EF90;
+};

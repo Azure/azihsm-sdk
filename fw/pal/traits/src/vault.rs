@@ -6,17 +6,16 @@
 //! Defines the key management interface for the HSM firmware. The vault
 //! stores cryptographic keys in protected memory (SRAM on Cortex-M7,
 //! heap on the standard PAL) and tracks their type, attributes, and
-//! per-key metadata.
+//! per-key attributes.
 //!
 //! ## Key lifecycle
 //!
 //! ```text
-//! vault_key_create(key_bytes, kind, session, attrs, meta) → key_id
+//! vault_key_create(key_bytes, kind, session, attrs) → key_id
 //!   ↓
 //! vault_key(key_id)       → &[u8] key material
 //! vault_key_kind(key_id)  → HsmVaultKeyKind
 //! vault_key_attrs(key_id) → HsmVaultKeyAttrs
-//! vault_key_meta(key_id)  → &[u8] metadata blob
 //!   ↓
 //! vault_key_delete(key_id)
 //! vault_key_delete_by_session(session_id)
@@ -131,6 +130,130 @@ pub enum HsmVaultKeyKind {
     VarLenHmacSha256 = 32,
     VarLenHmacSha384 = 33,
     VarLenHmacSha512 = 34,
+
+    /// In-flight TBOR session-handshake (Pending) state blob.
+    ///
+    /// Holds the opaque Pending blob (`exported ‖ pk_init ‖ pk_resp ‖
+    /// session_type ‖ suite_id`, up to
+    /// [`SESSION_PENDING_BLOB_MAX`](crate::SESSION_PENDING_BLOB_MAX) =
+    /// 256 B) produced by the TBOR `OpenSessionInit` phase and consumed
+    /// by `OpenSessionFinish`.
+    ///
+    /// Written by
+    /// [`HsmSessionManager::session_create_pending`](crate::HsmSessionManager::session_create_pending)
+    /// as a session-scoped key (auto-deleted on session close); replaced
+    /// by a [`SessionEx`](Self::SessionEx) key on
+    /// [`session_promote`](crate::HsmSessionManager::session_promote).
+    /// Used only by PALs that back Pending state in the key vault (e.g.
+    /// the Uno PAL); the std PAL keeps Pending state in RAM.
+    SessionExPending = 35,
+
+    /// Session-establishment-protocol blob for TBOR sessions (both CO
+    /// and CU).
+    ///
+    /// Length-discriminated by session type:
+    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(80)]`
+    ///   = 120 B.
+    /// * **Authenticated (CO):** the above ‖ `mac_tx(48) ‖ mac_rx(48)`
+    ///   = 216 B.
+    ///
+    /// Written by
+    /// [`HsmSessionManager::session_promote`](crate::HsmSessionManager::session_promote)
+    /// when any TBOR session completes its handshake; never produced
+    /// by the existing [`Session`](Self::Session) path.
+    SessionEx = 36,
+
+    /// Partition Trust Anchor (PTA) ECC-P384 private key.
+    ///
+    /// Written by the TBOR `PartInit` handler when binding the
+    /// per-incarnation PTA identity.  One per partition incarnation;
+    /// rebinding is rejected with [`HsmError::PtaKeyAlreadySet`].
+    ///
+    /// [`HsmError::PtaKeyAlreadySet`]: crate::HsmError::PtaKeyAlreadySet
+    PartitionTrustAnchor = 37,
+
+    /// Partition Unique Machine Secret (UMS) — 48 B HMAC-SHA-384-sized
+    /// secret derived in `PartInit` from `UDS` plus the request-side
+    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`) inputs.
+    ///
+    /// Persisted in the partition key vault for the lifetime of the
+    /// partition incarnation so that later phases (e.g. FinalizePart)
+    /// can derive secondary partition secrets without re-supplying
+    /// `MachineSeed`.  One per partition incarnation; rebinding is
+    /// rejected with [`HsmError::UmsKeyAlreadySet`].
+    ///
+    /// [`HsmError::UmsKeyAlreadySet`]: crate::HsmError::UmsKeyAlreadySet
+    PartitionUniqueMachineSecret = 38,
+}
+
+/// Key scope: the lifecycle / visibility domain a vault key belongs
+/// to.
+///
+/// Encoded as the 3-bit [`scope`](HsmVaultKeyAttrs::scope) field of
+/// [`HsmVaultKeyAttrs`] (six values defined; two encodings remain for
+/// future expansion).
+///
+/// The field lives in bits that were **reserved** in the prior
+/// `HsmVaultKeyAttrs` layout, so the change is purely additive and
+/// backward-compatible: every previously-created key (including all
+/// MBOR-created keys, which never touch these bits) decodes as
+/// [`Unspecified`](Self::Unspecified) — the all-zero default.  Scope is
+/// only meaningful for keys created through the TBOR API, which set an
+/// explicit non-`Unspecified` value; MBOR key creation leaves it
+/// `Unspecified`.
+///
+/// | Bits | Variant | Meaning |
+/// |------|---------|---------|
+/// | `000` | `Unspecified` | No scope (default; all MBOR / legacy keys) |
+/// | `001` | `Session` | Session-scoped; auto-deleted on session close |
+/// | `010` | `Ephemeral` | Ephemeral key; not persisted |
+/// | `011` | `Local` | Partition-local key |
+/// | `100` | `SecurityDomain` | Security-domain–scoped key |
+/// | `101` | `Internal` | Firmware-internal key |
+///
+/// [`open_enum`] keeps the type forward-compatible: an unrecognized
+/// 3-bit encoding surfaces as `HsmKeyScope::Unknown(bits)` rather than
+/// failing to decode.
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HsmKeyScope {
+    /// No scope. The all-zero default carried by every MBOR-created and
+    /// pre-scope (legacy) key; scope semantics do not apply.
+    Unspecified = 0b000,
+
+    /// Session-scoped key; deleted when its session closes.
+    Session = 0b001,
+
+    /// Ephemeral key; lives only for the duration of an operation and
+    /// is never persisted.
+    Ephemeral = 0b010,
+
+    /// Partition-local key.
+    Local = 0b011,
+
+    /// Security-domain–scoped key.
+    SecurityDomain = 0b100,
+
+    /// Firmware-internal key.
+    Internal = 0b101,
+}
+
+impl HsmKeyScope {
+    /// Mask covering the 3-bit `scope` field.
+    const BITS_MASK: u8 = 0b111;
+
+    /// Pack into the 3-bit [`HsmVaultKeyAttrs::scope`] field. Masked to
+    /// 3 bits so an out-of-range `Unknown` can never corrupt
+    /// neighbouring attribute bits.
+    const fn into_bits(self) -> u8 {
+        self.0 & Self::BITS_MASK
+    }
+
+    /// Unpack from the 3-bit [`HsmVaultKeyAttrs::scope`] field.
+    const fn from_bits(bits: u8) -> Self {
+        Self(bits & Self::BITS_MASK)
+    }
 }
 
 /// Key attribute bitfield for vault-stored keys.
@@ -139,11 +262,13 @@ pub enum HsmVaultKeyKind {
 /// HSM-specific flags.  Set at key creation time and governs which
 /// operations are permitted on the key.
 ///
-/// The bit positions and overall width match the prior reference
-/// firmware's `EntryAttributeFlags` so a little-endian serialization
-/// of this value into the leading 8 bytes of a masked-key attribute
-/// blob is byte-compatible with host tooling that parses either
-/// firmware's output.
+/// The PKCS#11 usage bits (`private` … `derive`) keep the bit positions
+/// of the prior reference firmware's `EntryAttributeFlags` so a
+/// little-endian serialization of those bits stays byte-compatible with
+/// host tooling.  The [`scope`](Self::scope) field (bits 17–19) is an
+/// **additive** [`HsmKeyScope`] that complements — and is independent of
+/// — the legacy `internal` (bit 0) and `session` (bit 1) flags, which
+/// remain in place for backward compatibility.
 ///
 /// ## Bit layout
 ///
@@ -166,7 +291,8 @@ pub enum HsmVaultKeyKind {
 /// | 14 | `wrap` | Allowed for key wrapping |
 /// | 15 | `unwrap` | Allowed for key unwrapping |
 /// | 16 | `derive` | Allowed for key derivation |
-/// | 17–63 | `rsvd` | Reserved (must be zero) |
+/// | 17–19 | `scope` | Key scope ([`HsmKeyScope`]) — additive; `0` on legacy / MBOR keys |
+/// | 20–63 | `rsvd` | Reserved (must be zero) |
 #[bitfield(u64)]
 #[derive(PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct HsmVaultKeyAttrs {
@@ -221,47 +347,20 @@ pub struct HsmVaultKeyAttrs {
     /// Allowed for key derivation. Secret keys.
     pub derive: bool,
 
+    /// Key scope: lifecycle / visibility domain. See [`HsmKeyScope`].
+    /// Carved from previously-reserved bits, so the all-zero default
+    /// [`HsmKeyScope::Unspecified`] is what every legacy / MBOR key
+    /// decodes to.  Set to a specific scope only by the TBOR API.
+    #[bits(3)]
+    pub scope: HsmKeyScope,
+
     /// Reserved.
-    #[bits(47)]
+    #[bits(44)]
     rsvd: u64,
 }
 
 /// RAII guard for a newly created vault key.
 ///
-/// Returned by [`HsmVault::vault_key_create`]. The guard implements an
-/// explicit commit/rollback discipline: the key is *provisional* until
-/// [`dismiss`](Self::dismiss) is called.  If the guard is dropped
-/// without dismissing — for example because a downstream encode step
-/// or DDI handler returned an error — the destructor deletes the key
-/// from the vault, leaving no half-created entry behind.
-///
-/// Typical usage:
-///
-/// ```ignore
-/// let guard = pal.vault_key_create(io, &key, kind, sess, attrs, meta)?;
-/// // ... fallible work that uses `guard.key_id()` ...
-/// let id = guard.dismiss(); // commit; key now permanent
-/// ```
-pub trait VaultKeyGuard {
-    /// Returns the key ID assigned to the provisional key.
-    ///
-    /// Safe to call multiple times; does **not** commit the key.
-    ///
-    /// # Returns
-    ///
-    /// The [`HsmKeyId`] under which the key is currently registered in
-    /// the vault.
-    fn key_id(&self) -> HsmKeyId;
-
-    /// Commits the key. The vault entry persists past the guard's
-    /// lifetime and the destructor becomes a no-op.
-    ///
-    /// # Returns
-    ///
-    /// The committed [`HsmKeyId`].
-    fn dismiss(self) -> HsmKeyId;
-}
-
 /// HSM key vault interface.
 ///
 /// All accessor methods take an [`HsmIo`] handle, used to scope the
@@ -270,21 +369,11 @@ pub trait VaultKeyGuard {
 /// borrow directly from vault storage; the borrow lives no longer
 /// than the `&self` borrow on the vault.
 pub trait HsmVault {
-    /// RAII guard returned by [`vault_key_create`](Self::vault_key_create).
-    ///
-    /// The lifetime parameter ties the guard to the vault so an
-    /// uncommitted key cannot outlive the vault that owns it.
-    type KeyGuard<'a>: VaultKeyGuard
-    where
-        Self: 'a;
-
     /// Stores a new key in the vault under a freshly assigned
     /// [`HsmKeyId`].
     ///
-    /// The returned [`Self::KeyGuard`] holds the key in a *provisional*
-    /// state.  The caller must invoke [`VaultKeyGuard::dismiss`] to
-    /// commit the entry; dropping the guard otherwise rolls the key
-    /// back.
+    /// The key is committed immediately. (Rollback of a half-completed
+    /// operation will be handled by a future undo log, not here.)
     ///
     /// # Parameters
     ///
@@ -299,26 +388,21 @@ pub trait HsmVault {
     ///   key.
     /// - `attrs` — PKCS#11-style permission bitfield (see
     ///   [`HsmVaultKeyAttrs`]).
-    /// - `meta` — opaque per-key metadata (e.g. label, ECC point
-    ///   encoding); stored verbatim and returned by
-    ///   [`vault_key_meta`](Self::vault_key_meta).
     ///
     /// # Returns
     ///
-    /// - `Ok(guard)` — provisional vault entry; commit with
-    ///   [`VaultKeyGuard::dismiss`].
+    /// - `Ok(key_id)` — the new key's [`HsmKeyId`].
     /// - `Err(HsmError::NotEnoughSpace)` — vault is full.
     /// - `Err(HsmError::InvalidArg)` — `key.len()` does not match
     ///   `kind`, or `attrs` are inconsistent.
-    fn vault_key_create(
+    async fn vault_key_create(
         &self,
         io: &impl HsmIo,
-        key: &[u8],
+        key: &DmaBuf,
         kind: HsmVaultKeyKind,
         session_id: Option<HsmSessId>,
         attrs: HsmVaultKeyAttrs,
-        meta: &[u8],
-    ) -> HsmResult<Self::KeyGuard<'_>>;
+    ) -> HsmResult<HsmKeyId>;
 
     /// Deletes a single key by ID.
     ///
@@ -340,7 +424,7 @@ pub trait HsmVault {
     ///   live key in the caller's partition.
     /// - `Err(HsmError::NotPermitted)` if the key's `destroyable` bit
     ///   is unset (e.g. internal device keys).
-    fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+    async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
 
     /// Deletes every key whose `session_id` matches `session_id`.
     ///
@@ -355,7 +439,11 @@ pub trait HsmVault {
     /// # Returns
     ///
     /// - `Ok(())` always; deleting zero keys is not an error.
-    fn vault_key_delete_by_session(&self, io: &impl HsmIo, session_id: HsmSessId) -> HsmResult<()>;
+    async fn vault_key_delete_by_session(
+        &self,
+        io: &impl HsmIo,
+        session_id: HsmSessId,
+    ) -> HsmResult<()>;
 
     /// Deletes every key owned by the caller's partition, regardless
     /// of session or attribute flags.
@@ -367,7 +455,7 @@ pub trait HsmVault {
     /// # Returns
     ///
     /// - `Ok(())` always; an already-empty vault is not an error.
-    fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()>;
+    async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()>;
 
     /// Borrows the raw key material for `key_id`.
     ///
@@ -434,24 +522,58 @@ pub trait HsmVault {
     /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
     ///   live key in the caller's partition.
     fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs>;
+}
 
-    /// Borrows the per-key metadata blob.
-    ///
-    /// The returned slice points into vault storage and is valid for
-    /// the duration of the `&self` borrow.  Content is whatever was
-    /// passed to
-    /// [`vault_key_create`](Self::vault_key_create)'s `meta`
-    /// parameter.
-    ///
-    /// # Parameters
-    ///
-    /// - `io` — caller's I/O context (partition scope).
-    /// - `key_id` — key to look up.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(&[u8])` — metadata bytes (may be empty).
-    /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
-    ///   live key in the caller's partition.
-    fn vault_key_meta(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&[u8]>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_defaults_to_unspecified() {
+        // Fresh attrs (and every legacy / MBOR key, which leaves the
+        // reserved bits zero) decode as Unspecified.
+        assert_eq!(HsmVaultKeyAttrs::new().scope(), HsmKeyScope::Unspecified);
+    }
+
+    #[test]
+    fn scope_round_trips() {
+        for s in [
+            HsmKeyScope::Unspecified,
+            HsmKeyScope::Session,
+            HsmKeyScope::Ephemeral,
+            HsmKeyScope::Local,
+            HsmKeyScope::SecurityDomain,
+            HsmKeyScope::Internal,
+        ] {
+            assert_eq!(HsmVaultKeyAttrs::new().with_scope(s).scope(), s);
+        }
+    }
+
+    #[test]
+    fn scope_occupies_bits_17_to_19_only() {
+        // SecurityDomain = 0b100 → bit 19 set, value 1 << 19.
+        let bits = HsmVaultKeyAttrs::new()
+            .with_scope(HsmKeyScope::SecurityDomain)
+            .into_bits();
+        assert_eq!(bits, 1u64 << 19);
+    }
+
+    #[test]
+    fn scope_is_additive_and_orthogonal_to_legacy_flags() {
+        // Setting scope must not disturb the pre-existing internal /
+        // session / usage bits, and vice-versa — the change is purely
+        // additive over the reserved region.
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_session(true)
+            .with_derive(true)
+            .with_scope(HsmKeyScope::Local);
+        assert!(attrs.internal());
+        assert!(attrs.session());
+        assert!(attrs.derive());
+        assert_eq!(attrs.scope(), HsmKeyScope::Local);
+        // internal(bit0) | session(bit1) | derive(bit16) | Local<<17.
+        let expected = 1u64 | (1 << 1) | (1 << 16) | ((0b011) << 17);
+        assert_eq!(attrs.into_bits(), expected);
+    }
 }

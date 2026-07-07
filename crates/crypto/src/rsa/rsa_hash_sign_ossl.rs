@@ -25,10 +25,42 @@
 //! - PKCS#1 v1.5 is deterministic and may be vulnerable to certain attacks
 
 use openssl::md_ctx::*;
-use openssl::pkey_ctx::*;
 use openssl::rsa::*;
 
 use super::*;
+
+// Libctx-aware digest-sign/verify init. The `openssl` crate's
+// `MdCtx::digest_sign_init`/`digest_verify_init` call the legacy
+// `EVP_DigestSignInit`/`EVP_DigestVerifyInit`, which fetch the digest and RSA
+// signature op from the *process default* libctx regardless of the key — on
+// OpenSSL 3.5 that resolves to the azihsm provider and re-enters it during the
+// HSM session open. The `_ex` variants take an explicit `OSSL_LIB_CTX`, so the
+// digest/signature fetch is pinned to the crate-private libctx
+// (default-provider only) and never lands on azihsm. These symbols exist in
+// OpenSSL 3.0+ libcrypto but are not bound by openssl-sys 0.9.x, so they are
+// declared here. See [`crate::libctx`].
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    fn EVP_DigestSignInit_ex(
+        ctx: *mut openssl_sys::EVP_MD_CTX,
+        pctx: *mut *mut openssl_sys::EVP_PKEY_CTX,
+        mdname: *const std::os::raw::c_char,
+        libctx: *mut openssl_sys::OSSL_LIB_CTX,
+        props: *const std::os::raw::c_char,
+        pkey: *mut openssl_sys::EVP_PKEY,
+        params: *const openssl_sys::OSSL_PARAM,
+    ) -> std::os::raw::c_int;
+
+    fn EVP_DigestVerifyInit_ex(
+        ctx: *mut openssl_sys::EVP_MD_CTX,
+        pctx: *mut *mut openssl_sys::EVP_PKEY_CTX,
+        mdname: *const std::os::raw::c_char,
+        libctx: *mut openssl_sys::OSSL_LIB_CTX,
+        props: *const std::os::raw::c_char,
+        pkey: *mut openssl_sys::EVP_PKEY,
+        params: *const openssl_sys::OSSL_PARAM,
+    ) -> std::os::raw::c_int;
+}
 
 /// RSA signing and verification context using OpenSSL.
 ///
@@ -86,10 +118,7 @@ impl SignOp for OsslRsaHashSignAlgo {
         }
 
         let mut ctx = MdCtx::new().map_err(|_| CryptoError::RsaError)?;
-        let pkey_ctx = ctx
-            .digest_sign_init(Some(self.hash.md()), key.pkey())
-            .map_err(|_| CryptoError::RsaError)?;
-        self.configure_pkey_ctx(pkey_ctx)?;
+        self.digest_sign_init_isolated(&mut ctx, key)?;
 
         let sig_len = len(&mut ctx, data)?;
 
@@ -126,10 +155,7 @@ impl<'a> SignStreamingOp<'a> for OsslRsaHashSignAlgo {
     /// A streaming context that can be updated with message data and finalized.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let mut ctx = MdCtx::new().map_err(|_| CryptoError::RsaError)?;
-        let pkey_ctx = ctx
-            .digest_sign_init(Some(self.hash.md()), key.pkey())
-            .map_err(|_| CryptoError::RsaError)?;
-        self.configure_pkey_ctx(pkey_ctx)?;
+        self.digest_sign_init_isolated(&mut ctx, &key)?;
         Ok(OsslRsaHashSignAlgoSignContext { algo: self, ctx })
     }
 }
@@ -242,10 +268,7 @@ impl VerifyOp for OsslRsaHashSignAlgo {
         signature: &[u8],
     ) -> Result<bool, CryptoError> {
         let mut ctx = MdCtx::new().map_err(|_| CryptoError::RsaError)?;
-        let pkey_ctx = ctx
-            .digest_verify_init(Some(self.hash.md()), key.pkey())
-            .map_err(|_| CryptoError::RsaError)?;
-        self.configure_pkey_ctx(pkey_ctx)?;
+        self.digest_verify_init_isolated(&mut ctx, key)?;
         ctx.digest_verify(data, signature)
             .map_err(|_| CryptoError::RsaVerifyError)
     }
@@ -269,10 +292,7 @@ impl<'a> VerifyStreamingOp<'a> for OsslRsaHashSignAlgo {
     /// A streaming context that can be updated with message data and finalized.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let mut ctx = MdCtx::new().map_err(|_| CryptoError::RsaError)?;
-        let pkey_ctx = ctx
-            .digest_verify_init(Some(self.hash.md()), key.pkey())
-            .map_err(|_| CryptoError::RsaError)?;
-        self.configure_pkey_ctx(pkey_ctx)?;
+        self.digest_verify_init_isolated(&mut ctx, &key)?;
         Ok(OsslRsaHashSignAlgoVerifyContext {
             algo: self,
             md_ctx: ctx,
@@ -405,21 +425,131 @@ impl OsslRsaHashSignAlgo {
         }
     }
 
-    /// Configures the OpenSSL signer with the appropriate padding and parameters.
+    /// Initialises `ctx` for digest-signing in the crate-private libctx and
+    /// applies the padding configuration.
     ///
-    /// Sets the padding mode and, for PSS, configures the salt length and MGF1 hash algorithm.
+    /// Replaces `MdCtx::digest_sign_init` (which uses the legacy, default-libctx
+    /// `EVP_DigestSignInit`) with `EVP_DigestSignInit_ex` pinned to the private
+    /// libctx, so neither the digest nor the RSA signature op can resolve to
+    /// azihsm. Subsequent `digest_sign`/`digest_sign_update`/`digest_sign_final`
+    /// calls operate on the same already-initialised context and do not
+    /// re-fetch.
+    #[allow(unsafe_code)]
+    fn digest_sign_init_isolated(
+        &self,
+        ctx: &mut MdCtxRef,
+        key: &RsaPrivateKey,
+    ) -> Result<(), CryptoError> {
+        use std::ptr;
+
+        use foreign_types::ForeignTypeRef;
+        use openssl_sys as ffi;
+
+        let mdname =
+            std::ffi::CString::new(self.hash.md_name()?).map_err(|_| CryptoError::RsaError)?;
+
+        // SAFETY: `ctx` and the key pkey are valid; `pctx` is owned by `ctx`
+        // and must not be freed here. `mdname` outlives the call.
+        unsafe {
+            let mut pctx: *mut ffi::EVP_PKEY_CTX = ptr::null_mut();
+            if EVP_DigestSignInit_ex(
+                ctx.as_ptr(),
+                &mut pctx,
+                mdname.as_ptr(),
+                crate::libctx::crypto_libctx_ptr(),
+                ptr::null(),
+                key.pkey().as_ptr(),
+                ptr::null(),
+            ) != 1
+            {
+                return Err(CryptoError::RsaError);
+            }
+            self.configure_ctx(pctx)
+        }
+    }
+
+    /// Initialises `ctx` for digest-verifying in the crate-private libctx and
+    /// applies the padding configuration. See [`Self::digest_sign_init_isolated`].
+    #[allow(unsafe_code)]
+    fn digest_verify_init_isolated(
+        &self,
+        ctx: &mut MdCtxRef,
+        key: &RsaPublicKey,
+    ) -> Result<(), CryptoError> {
+        use std::ptr;
+
+        use foreign_types::ForeignTypeRef;
+        use openssl_sys as ffi;
+
+        let mdname =
+            std::ffi::CString::new(self.hash.md_name()?).map_err(|_| CryptoError::RsaError)?;
+
+        // SAFETY: `ctx` and the key pkey are valid; `pctx` is owned by `ctx`
+        // and must not be freed here. `mdname` outlives the call.
+        unsafe {
+            let mut pctx: *mut ffi::EVP_PKEY_CTX = ptr::null_mut();
+            if EVP_DigestVerifyInit_ex(
+                ctx.as_ptr(),
+                &mut pctx,
+                mdname.as_ptr(),
+                crate::libctx::crypto_libctx_ptr(),
+                ptr::null(),
+                key.pkey().as_ptr(),
+                ptr::null(),
+            ) != 1
+            {
+                return Err(CryptoError::RsaError);
+            }
+            self.configure_ctx(pctx)
+        }
+    }
+
+    /// Applies the padding configuration to the `EVP_PKEY_CTX` produced by the
+    /// digest-sign/verify init: padding mode, and for PSS the salt length and
+    /// MGF1 digest. Replicates the prior `configure_pkey_ctx` logic via the raw
+    /// `EVP_PKEY_CTX_set_*` controls.
     ///
-    /// # Arguments
+    /// # Safety
     ///
-    /// * `signer` - The OpenSSL signer to configure
-    fn configure_pkey_ctx<T>(&self, pkey: &mut PkeyCtxRef<T>) -> Result<(), CryptoError> {
-        pkey.set_rsa_padding(self.padding)
-            .map_err(|_| CryptoError::RsaSetPropertyError)?;
-        if self.padding == Padding::PKCS1_PSS {
-            pkey.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::custom(self.salt_len as i32))
+    /// `pctx` must be the valid, init-owned `EVP_PKEY_CTX` for `ctx`.
+    #[allow(unsafe_code)]
+    unsafe fn configure_ctx(
+        &self,
+        pctx: *mut openssl_sys::EVP_PKEY_CTX,
+    ) -> Result<(), CryptoError> {
+        use foreign_types::ForeignType;
+        use openssl_sys as ffi;
+
+        // SAFETY: `pctx` is the valid, init-owned `EVP_PKEY_CTX` for the
+        // operation, per this fn's contract. `md` (when PSS) outlives its use.
+        unsafe {
+            if ffi::EVP_PKEY_CTX_set_rsa_padding(pctx, self.padding.as_raw()) != 1 {
+                return Err(CryptoError::RsaSetPropertyError);
+            }
+            if self.padding == Padding::PKCS1_PSS {
+                // `set_rsa_pss_saltlen` takes a `c_int`; reject salt lengths that
+                // don't fit rather than letting `as` truncate.
+                let saltlen = std::os::raw::c_int::try_from(self.salt_len)
+                    .map_err(|_| CryptoError::RsaSetPropertyError)?;
+                if ffi::EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, saltlen) != 1 {
+                    return Err(CryptoError::RsaSetPropertyError);
+                }
+                // Fetch the MGF1 digest from the private libctx so it never
+                // resolves to azihsm. `pctx` is a provider ctx, so
+                // `EVP_PKEY_CTX_set_rsa_mgf1_md` forwards the digest by *name*
+                // (`EVP_MD_get0_name`): the provider copies that name and
+                // re-fetches its own md synchronously inside this call, so `md`
+                // does not need to outlive it (no dangling pointer at sign time).
+                let md = openssl::md::Md::fetch(
+                    Some(crate::libctx::crypto_libctx()),
+                    self.hash.md_name()?,
+                    None,
+                )
                 .map_err(|_| CryptoError::RsaSetPropertyError)?;
-            pkey.set_rsa_mgf1_md(self.hash.md())
-                .map_err(|_| CryptoError::RsaSetPropertyError)?;
+                if ffi::EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, md.as_ptr()) != 1 {
+                    return Err(CryptoError::RsaSetPropertyError);
+                }
+            }
         }
         Ok(())
     }

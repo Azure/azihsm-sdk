@@ -13,6 +13,7 @@
 
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::ImportableKey;
+use azihsm_crypto::PrivateKey;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 
@@ -23,7 +24,7 @@ fn key_size_bits(key_size: HsmRsaKey) -> usize {
 }
 
 impl HsmRsa for StdHsmPal {
-    async fn ras_gen_keypair(
+    async fn rsa_gen_keypair(
         &self,
         _io: &impl HsmIo,
         key_size: HsmRsaKey,
@@ -72,6 +73,22 @@ impl HsmRsa for StdHsmPal {
     ) -> Result<(), HsmError> {
         let pub_key = RsaPublicKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
         self.rsa.mod_exp_pub(&pub_key, x, y).await
+    }
+
+    fn rsa_priv_pub_key(
+        &self,
+        _io: &impl HsmIo,
+        priv_key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        // The std PAL's vault representation is DER: parse it, derive
+        // the public key, and emit the raw wire form `n_le || e_le`.
+        // This is the vault-format → wire-format conversion; the BE->LE
+        // flip lives in the driver.  In query mode (`pub_out == None`)
+        // only the wire length is computed and returned.
+        let pk = RsaPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
+        let pubk = pk.public_key().map_err(|_| HsmError::RsaGenerateError)?;
+        crate::drivers::rsa::rsa_pub_wire(&pubk, pub_out.map(|b| &mut **b))
     }
 
     async fn rsa_pkcs1_encrypt<'a>(

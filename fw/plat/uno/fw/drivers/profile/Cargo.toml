@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_uno_drivers_profile"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[features]
+default = []
+# Enable TraceMailbox MMIO writes — only valid on the emulator where
+# the TRACE_MAILBOX peripheral exists. Do NOT enable on silicon.
+trace = []
+# Trace output backend awareness (set by the trace crate). Selects the
+# task-ID source returned by `current_task_id`: the TraceMailbox MMIO for
+# `backend-semihosting` (emulator), or the portable atomic otherwise
+# (e.g. `backend-uart` on silicon).
+backend-semihosting = []
+backend-uart = []
+
+[dependencies]
+azihsm_fw_static_ref = { workspace = true }
+azihsm_fw_uno_drivers_semihosting = { workspace = true }
+azihsm_fw_uno_reg_soc = { workspace = true }
+portable-atomic = { workspace = true }
+tock-registers = { workspace = true }

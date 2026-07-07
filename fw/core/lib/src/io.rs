@@ -35,9 +35,12 @@
 //! session flags against the decoded DDI header before dispatch.
 //! Session state flows back via [`HsmOpStatus`] → CQE DW0/DW1.
 //!
-//! TBOR commands currently use [`SessionCtrl::NoSession`] only (the
-//! first migration target is `GetApiRev`); per-opcode session mapping
-//! will be added when sessioned TBOR commands land.
+//! TBOR commands derive their [`SessionCtrl`] from the wire opcode
+//! via [`SessionCtrl::from_tbor_opcode`]: `GetApiRev` and
+//! `OpenSessionInit` are session-less; `OpenSessionFinish` and
+//! `ChangePsk` require the SQE to carry the targeted slot's
+//! `session_id`; `CloseSession` is classified as `Close` so the CQE
+//! reflects the slot teardown.
 
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_types::DdiReqHdr;
@@ -88,12 +91,12 @@ impl<P: HsmPal> Hsm<P> {
         }
     }
 
-    /// Returns `true` if the partition for this IO is enabled.
+    /// Returns `true` if the partition for this IO can accept host traffic.
     #[inline]
     fn partition_enabled(&self, io: &P::Io) -> bool {
-        self.pal()
-            .part_state(io)
-            .is_ok_and(|s| s == PartState::Enabled)
+        crate::part_state::part_state(self.pal(), io)
+            .map(|s| matches!(s, PartState::Enabled | PartState::Initializing))
+            .unwrap_or(false)
     }
 
     /// Parses the SQE once, populates the CQE header, and returns the
@@ -155,7 +158,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Phase 2: decode + validate + dispatch (no yield) ───────
         let (resp, session_ctrl) = {
-            let req = &req_buf[..params.src_len];
+            let req = &mut req_buf[..params.src_len];
             let mut decoder = DdiDecoder::new(req);
             let hdr: DdiReqHdr = decoder.decode_hdr().op_err(
                 "core",
@@ -235,31 +238,51 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Phase 2: parse TBOR header, validate session, dispatch ─
         let (resp, session_ctrl) = {
-            let req_bytes = &req_buf[..params.src_len];
-            let req_view = TborRequestView::parse(req_bytes).op_err(
-                "core",
-                HsmError::DdiDecodeFailed,
-                HostStatus::REQ_HDR_DECODE_ERR,
-            )?;
+            // Capture `opcode` via a short-lived shared reborrow so
+            // the parsed `RequestView` is dropped before `dispatch`
+            // takes a mutable borrow of the same buffer.  AEAD-path
+            // handlers (`OpenSessionFinish` / `ChangePsk` / `PartInit`)
+            // open envelope sub-views in place via `decode_mut`,
+            // which requires `&mut DmaBuf` end-to-end.
+            let opcode = {
+                let req_view = TborRequestView::parse(&req_buf[..params.src_len]).op_err(
+                    "core",
+                    HsmError::DdiDecodeFailed,
+                    HostStatus::REQ_HDR_DECODE_ERR,
+                )?;
+                req_view.opcode()
+            };
 
-            // TBOR currently has no sessioned commands; require NoSession.
-            let session_ctrl = SessionCtrl::NoSession;
-            if let Err(_e) =
-                Self::validate_session_no_session(params.session_flags, params.sqe_session_id)
-            {
+            // Per-opcode session-flag validation: GetApiRev /
+            // OpenSessionInit must be sessionless; OpenSessionFinish /
+            // CloseSession / ChangePsk must carry the SQE session_id
+            // for the targeted slot.  Unknown opcodes are classified as
+            // NoSession here so dispatch reaches the handler layer and
+            // surfaces `UnsupportedCmd` via a typed TBOR response.
+            let session_ctrl = SessionCtrl::from_tbor_opcode(opcode);
+            if let Err(_e) = Self::validate_tbor_session_flags(session_ctrl, params.session_flags) {
                 let resp: &DmaBuf = self
                     .pal()
                     .dma_alloc_var(io, |buf| {
-                        ddi::tbor::encode_tbor_err(req_view.opcode(), HsmError::InvalidArg, buf)
+                        ddi::tbor::encode_tbor_err(opcode, HsmError::InvalidArg, buf)
                     })
                     .op_status(HostStatus::INTERNAL_ERROR)?;
                 (resp, session_ctrl)
             } else {
-                let opcode = req_view.opcode();
-                let resp: &DmaBuf = self
-                    .pal()
-                    .dma_alloc_var(io, |buf| ddi::tbor::dispatch(opcode, &req_view, buf))
-                    .op_status(HostStatus::INTERNAL_ERROR)?;
+                let dispatch_result = ddi::tbor::dispatch(
+                    self.pal(),
+                    io,
+                    &mut req_buf[..params.src_len],
+                    opcode,
+                    params.sqe_session_id,
+                )
+                .await;
+                let resp: &DmaBuf = dispatch_result.or_else(|err| {
+                    self.pal()
+                        .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))
+                        .op_status(HostStatus::INTERNAL_ERROR)
+                        .map(|b| &*b)
+                })?;
                 (resp, session_ctrl)
             }
         };
@@ -329,14 +352,27 @@ impl<P: HsmPal> Hsm<P> {
         Ok(())
     }
 
-    /// Lightweight TBOR-side analogue of [`Self::validate_session`] for
-    /// the (currently universal) NoSession case.
+    /// TBOR-side analogue of [`Self::validate_session`] that checks
+    /// only the SQE-flag shape against the opcode's expected
+    /// [`SessionCtrl`].
+    ///
+    /// Cross-checking the SQE `session_id` against the inline body
+    /// `session_id` TOC entry happens in [`ddi::tbor::dispatch`] for
+    /// every in-session / close opcode (i.e. every opcode whose
+    /// [`SessionCtrl`] requires `id_valid = true`).  This validator
+    /// only enforces the `ctrl` / `id_valid` consistency.
     #[inline(always)]
-    fn validate_session_no_session(flags: SessionFlags, _sqe_session_id: u16) -> HsmResult<()> {
-        if flags.ctrl() != SessionCtrl::NoSession as u8 || flags.id_valid() {
+    fn validate_tbor_session_flags(expected: SessionCtrl, flags: SessionFlags) -> HsmResult<()> {
+        if flags.ctrl() != expected as u8 {
             return Err(HsmError::InvalidArg);
         }
-        Ok(())
+        match (expected, flags.id_valid()) {
+            (SessionCtrl::NoSession, true) => Err(HsmError::InvalidArg),
+            (SessionCtrl::Open, true) => Err(HsmError::SessionNotExpected),
+            (SessionCtrl::Close, false) => Err(HsmError::InvalidArg),
+            (SessionCtrl::InSession, false) => Err(HsmError::InvalidArg),
+            _ => Ok(()),
+        }
     }
 
     /// Handles an [`OP_FLUSH`] IO command.

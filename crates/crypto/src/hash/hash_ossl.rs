@@ -37,8 +37,10 @@
 
 use openssl::hash::*;
 use openssl::md::*;
+use openssl::md_ctx::MdCtx;
 
 use super::*;
+use crate::libctx::crypto_libctx;
 
 /// OpenSSL-based hash implementation.
 ///
@@ -152,6 +154,31 @@ impl OsslHashAlgo {
         Md::from_nid(self.message_digest().type_()).unwrap()
     }
 
+    /// Canonical OpenSSL name used to fetch this digest from a libctx.
+    ///
+    /// Returns `CryptoError::HashUnsupportedAlgorithm` for any digest outside
+    /// the supported set (SHA-1/256/384/512). A `HashAlgo` is only ever
+    /// constructed for those, so this is defensive rather than expected — but it
+    /// returns an error instead of panicking in production code.
+    pub(crate) fn md_name(&self) -> Result<&'static str, CryptoError> {
+        use openssl::nid::Nid;
+        match self.md.type_() {
+            Nid::SHA1 => Ok("SHA1"),
+            Nid::SHA256 => Ok("SHA256"),
+            Nid::SHA384 => Ok("SHA384"),
+            Nid::SHA512 => Ok("SHA512"),
+            _ => Err(CryptoError::HashUnsupportedAlgorithm),
+        }
+    }
+
+    /// Fetches this digest from the crate-private libctx (default-provider-only)
+    /// so it never resolves to a provider (e.g. azihsm) in the process default
+    /// libctx. See [`crate::libctx`].
+    fn fetch_md(&self) -> Result<Md, CryptoError> {
+        Md::fetch(Some(crypto_libctx()), self.md_name()?, None)
+            .map_err(|_| CryptoError::HashInitError)
+    }
+
     /// Returns the DER digest algorithm identifier for this hash algorithm.
     ///
     /// # Returns
@@ -176,15 +203,17 @@ impl OsslHashAlgo {
 impl HashOp for OsslHashAlgo {
     /// Computes a hash using OpenSSL's optimized implementation.
     ///
-    /// This method leverages OpenSSL's `hash::hash` function for one-shot
-    /// hash computation. It handles both size queries and actual hash
-    /// computation based on whether an output buffer is provided.
+    /// This method computes the digest with an `MdCtx` over an `Md` fetched from
+    /// the crate-private libctx (default-provider only), so it never resolves to
+    /// the azihsm provider on OpenSSL 3.5 (see [`crate::libctx`]). It handles
+    /// both size queries and actual hash computation based on whether an output
+    /// buffer is provided.
     ///
     /// # Implementation Details
     ///
-    /// - Uses OpenSSL's optimized one-shot hash function
+    /// - Fetches the digest from the crate-private libctx (`fetch_md`)
     /// - Validates output buffer size before computation
-    /// - Copies result to user-provided buffer
+    /// - Runs `digest_init` / `digest_update` / `digest_final` on an `MdCtx`
     /// - Returns actual hash size regardless of operation mode
     ///
     /// # Buffer Management
@@ -193,15 +222,21 @@ impl HashOp for OsslHashAlgo {
     /// the hash computation, preventing buffer overflows and ensuring safe
     /// operation.
     fn hash(&mut self, data: &[u8], hash: Option<&mut [u8]>) -> Result<usize, CryptoError> {
-        use openssl::hash;
+        let size = self.md.size();
         if let Some(hash) = hash {
-            if hash.len() < self.md.size() {
+            if hash.len() < size {
                 Err(CryptoError::HashBufferTooSmall)?;
             }
-            let digest = hash::hash(self.md, data).map_err(|_| CryptoError::HashError)?;
-            hash[..self.md.size()].copy_from_slice(&digest[..self.md.size()]);
+            let md = self.fetch_md()?;
+            let mut ctx = MdCtx::new().map_err(|_| CryptoError::HashInitError)?;
+            ctx.digest_init(&md)
+                .map_err(|_| CryptoError::HashInitError)?;
+            ctx.digest_update(data)
+                .map_err(|_| CryptoError::HashUpdateError)?;
+            ctx.digest_final(&mut hash[..size])
+                .map_err(|_| CryptoError::HashFinishError)?;
         }
-        Ok(self.md.size())
+        Ok(size)
     }
 }
 
@@ -210,14 +245,16 @@ impl HashStreamingOp for OsslHashAlgo {
 
     /// Initializes a new OpenSSL hash context for streaming operations.
     ///
-    /// Creates a new OpenSSL `Hasher` instance configured with the
-    /// appropriate `MessageDigest` for the algorithm. The context
-    /// maintains internal state for incremental hash computation.
+    /// Fetches an `Md` for the algorithm from the crate-private libctx
+    /// (default-provider only; see [`crate::libctx`]) and initialises an
+    /// `MdCtx` for incremental hashing. The fetched `Md` is stored in the
+    /// context (`_md`) so it stays alive for the lifetime of the `MdCtx`.
     ///
     /// # Context Initialization
     ///
-    /// - Creates OpenSSL `Hasher` with algorithm-specific configuration
-    /// - Stores the `MessageDigest` for later size queries
+    /// - Fetches the digest from the crate-private libctx (`fetch_md`)
+    /// - Initialises an `MdCtx` via `digest_init`
+    /// - Keeps the `Md` alive alongside the context
     /// - Handles OpenSSL initialization errors gracefully
     ///
     /// # Error Handling
@@ -226,11 +263,14 @@ impl HashStreamingOp for OsslHashAlgo {
     /// initialization fails, which may occur due to memory allocation
     /// failures or invalid algorithm configurations.
     fn hash_init(self) -> Result<Self::Context, CryptoError> {
-        let context =
-            openssl::hash::Hasher::new(self.md).map_err(|_| CryptoError::HashInitError)?;
+        let md = self.fetch_md()?;
+        let mut ctx = MdCtx::new().map_err(|_| CryptoError::HashInitError)?;
+        ctx.digest_init(&md)
+            .map_err(|_| CryptoError::HashInitError)?;
         Ok(OsslHashAlgoContext {
             algo: self,
-            hasher: context,
+            ctx,
+            _md: md,
         })
     }
 }
@@ -256,8 +296,10 @@ impl HashStreamingOp for OsslHashAlgo {
 pub struct OsslHashAlgoContext {
     /// The hash algorithm instance.
     algo: OsslHashAlgo,
-    /// OpenSSL hasher maintaining the algorithm state.
-    hasher: openssl::hash::Hasher,
+    /// OpenSSL digest context, fetched from the crate-private libctx.
+    ctx: MdCtx,
+    /// Keeps the fetched digest alive for the context's lifetime.
+    _md: Md,
 }
 
 /// Implementation of streaming hash operations for OpenSSL contexts.
@@ -288,8 +330,8 @@ impl HashOpContext for OsslHashAlgoContext {
     /// operation fails, which may indicate memory issues or
     /// corrupted context state.
     fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
-        self.hasher
-            .update(data)
+        self.ctx
+            .digest_update(data)
             .map_err(|_| CryptoError::HashUpdateError)
     }
 
@@ -321,7 +363,7 @@ impl HashOpContext for OsslHashAlgoContext {
     /// # Error Handling
     ///
     /// - `CryptoError::HashBufferTooSmall`: Output buffer insufficient
-    /// - `CryptoError::HashFinalizeError`: OpenSSL finalization failed
+    /// - `CryptoError::HashFinishError`: OpenSSL finalization failed
     fn finish(&mut self, hash: Option<&mut [u8]>) -> Result<usize, CryptoError> {
         let len = self.algo.md.size();
         if let Some(hash) = hash {
@@ -329,12 +371,9 @@ impl HashOpContext for OsslHashAlgoContext {
                 Err(CryptoError::HashBufferTooSmall)?;
             }
 
-            let digest = self
-                .hasher
-                .finish()
+            self.ctx
+                .digest_final(&mut hash[..len])
                 .map_err(|_| CryptoError::HashFinishError)?;
-
-            hash[..digest.len()].copy_from_slice(&digest);
         }
 
         Ok(len)

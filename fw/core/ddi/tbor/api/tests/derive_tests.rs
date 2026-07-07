@@ -4,8 +4,25 @@
 //! Integration tests for the #[tbor] derive macro.
 
 #![allow(clippy::unwrap_used)]
+#![allow(unsafe_code)]
 
 use azihsm_fw_ddi_tbor_api::tbor;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+use zerocopy::little_endian::U16 as Le16;
+use zerocopy::FromBytes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zerocopy::TryFromBytes;
+use zerocopy::Unaligned;
+
+// SAFETY: test-only branding. Host-side tests have no real DMA engine,
+// so the DMA-reachability contract is moot; the brand is needed purely
+// to satisfy the parse/decode signatures.
+fn brand(b: &[u8]) -> &DmaBuf {
+    // SAFETY: see fn-level doc comment.
+    unsafe { DmaBuf::from_raw(b) }
+}
 
 // ── Request with scalar fields ─────────────────────────────────────────
 
@@ -30,7 +47,7 @@ fn request_scalar_encode_decode() {
     assert_eq!(frame.slot_id(), 3);
     assert_eq!(frame.cert_id(), 1);
 
-    let view = GetCertificateReq::decode(frame.as_bytes()).unwrap();
+    let view = GetCertificateReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.slot_id(), 3);
     assert_eq!(view.cert_id(), 1);
     assert_eq!(view.len(), 12);
@@ -58,7 +75,7 @@ fn response_buffer_encode_decode() {
     assert_eq!(frame.len(), 33);
     assert_eq!(frame.certificate(), cert_data);
 
-    let view = GetCertificateResp::decode(frame.as_bytes()).unwrap();
+    let view = GetCertificateResp::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.status(), 0);
     assert!(!view.fips_approved());
     assert_eq!(view.certificate(), cert_data);
@@ -99,7 +116,7 @@ fn request_mixed_types_round_trip() {
         .unwrap()
         .finish();
 
-    let view = AesEncryptReq::decode(frame.as_bytes()).unwrap();
+    let view = AesEncryptReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.sess_id(), azihsm_fw_ddi_tbor_api::SessionId(43));
     assert_eq!(view.key_id(), azihsm_fw_ddi_tbor_api::KeyId(16));
     assert_eq!(view.op(), 1);
@@ -129,7 +146,7 @@ fn request_u32_u64_round_trip() {
         .unwrap()
         .finish();
 
-    let view = BigFieldReq::decode(frame.as_bytes()).unwrap();
+    let view = BigFieldReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.count(), 0xDEADBEEF);
     assert_eq!(view.timestamp(), 0x0123456789ABCDEF);
     assert_eq!(view.flags(), 0x42);
@@ -154,7 +171,7 @@ fn response_fips_flag() {
         .unwrap()
         .finish();
 
-    let view = DeviceInfoResp::decode(frame.as_bytes()).unwrap();
+    let view = DeviceInfoResp::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.status(), 0);
     assert!(view.fips_approved());
     assert_eq!(view.kind(), 2);
@@ -194,7 +211,7 @@ fn view_display() {
         .unwrap()
         .finish();
 
-    let view = GetCertificateReq::decode(frame.as_bytes()).unwrap();
+    let view = GetCertificateReq::decode(brand(frame.as_bytes())).unwrap();
     let output = format!("{}", view);
     assert!(output.contains("GetCertificateReq"));
     assert!(output.contains("slot_id"));
@@ -214,14 +231,8 @@ fn decode_wrong_opcode() {
         .finish()
         .unwrap();
 
-    let err = GetCertificateReq::decode(msg).unwrap_err();
-    assert!(matches!(
-        err,
-        azihsm_fw_ddi_tbor::DecodeError::OpcodeMismatch {
-            expected: 0x09,
-            actual: 0xFF
-        }
-    ));
+    let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
+    assert_eq!(err, azihsm_fw_hsm_pal_traits::HsmError::TborOpcodeMismatch);
 }
 
 #[test]
@@ -237,11 +248,11 @@ fn decode_wrong_toc_count() {
         .finish()
         .unwrap();
 
-    let err = GetCertificateReq::decode(msg).unwrap_err();
-    assert!(matches!(
+    let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::MessageTruncated { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborMessageTruncated
+    );
 }
 
 #[test]
@@ -255,15 +266,11 @@ fn decode_wrong_toc_type() {
         .finish()
         .unwrap();
 
-    let err = GetCertificateReq::decode(msg).unwrap_err();
-    assert!(matches!(
+    let err = GetCertificateReq::decode(brand(msg)).unwrap_err();
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::UnexpectedTocType {
-            entry_index: 0,
-            expected: 3,
-            actual: 0
-        }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborUnexpectedTocType
+    );
 }
 
 // ── Optional fields ───────────────────────────────────────────────────
@@ -292,7 +299,7 @@ fn optional_scalar_all_present() {
     assert_eq!(frame.opt_value(), Some(1000));
     assert_eq!(frame.opt_flags(), Some(0xFF));
 
-    let view = OptionalScalarReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalScalarReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.required_id(), 5);
     assert_eq!(view.opt_value(), Some(1000));
     assert_eq!(view.opt_flags(), Some(0xFF));
@@ -315,7 +322,7 @@ fn optional_scalar_some_absent() {
     assert_eq!(frame.opt_value(), None);
     assert_eq!(frame.opt_flags(), Some(42));
 
-    let view = OptionalScalarReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalScalarReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.required_id(), 3);
     assert_eq!(view.opt_value(), None);
     assert_eq!(view.opt_flags(), Some(42));
@@ -335,7 +342,7 @@ fn optional_scalar_all_absent_early_finish() {
     assert_eq!(frame.opt_value(), None);
     assert_eq!(frame.opt_flags(), None);
 
-    let view = OptionalScalarReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalScalarReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.required_id(), 1);
     assert_eq!(view.opt_value(), None);
     assert_eq!(view.opt_flags(), None);
@@ -387,10 +394,10 @@ fn optional_buffer_present() {
     assert_eq!(frame.data(), b"hello");
     assert_eq!(frame.opt_extra(), Some(b"world".as_slice()));
 
-    let view = OptionalBufferReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalBufferReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.sess(), azihsm_fw_ddi_tbor_api::SessionId(10));
     assert_eq!(view.data(), b"hello");
-    assert_eq!(view.opt_extra(), Some(b"world".as_slice()));
+    assert!(view.opt_extra().is_some_and(|d| &**d == b"world"));
 }
 
 #[test]
@@ -407,7 +414,7 @@ fn optional_buffer_absent_early_finish() {
     assert_eq!(frame.data(), b"hello");
     assert_eq!(frame.opt_extra(), None);
 
-    let view = OptionalBufferReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalBufferReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.data(), b"hello");
     assert_eq!(view.opt_extra(), None);
 
@@ -446,7 +453,7 @@ fn some_none_some_offset_compression() {
     // Total: 4 header + 3*4 TOC + 8 data = 24
     assert_eq!(frame.len(), 24);
 
-    let view = SomeNoneSomeReq::decode(frame.as_bytes()).unwrap();
+    let view = SomeNoneSomeReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.first(), b"AAAA");
     assert_eq!(view.middle(), None);
     assert_eq!(view.last(), b"BBBB");
@@ -492,11 +499,11 @@ fn optional_response_round_trip() {
         .unwrap()
         .finish();
 
-    let view = OptionalResp::decode(frame.as_bytes()).unwrap();
+    let view = OptionalResp::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.status(), 0);
     assert!(view.fips_approved());
     assert_eq!(view.result_code(), 1);
-    assert_eq!(view.opt_data(), Some(b"payload".as_slice()));
+    assert!(view.opt_data().is_some_and(|d| &**d == b"payload"));
 
     // Without data — early finish
     let mut buf2 = [0u8; 256];
@@ -506,7 +513,7 @@ fn optional_response_round_trip() {
         .unwrap()
         .finish();
 
-    let view2 = OptionalResp::decode(frame2.as_bytes()).unwrap();
+    let view2 = OptionalResp::decode(brand(frame2.as_bytes())).unwrap();
     assert_eq!(view2.status(), 0x05);
     assert_eq!(view2.result_code(), 0);
     assert_eq!(view2.opt_data(), None);
@@ -525,13 +532,53 @@ fn optional_display() {
         .unwrap()
         .finish();
 
-    let view = OptionalScalarReq::decode(frame.as_bytes()).unwrap();
+    let view = OptionalScalarReq::decode(brand(frame.as_bytes())).unwrap();
     let output = format!("{}", view);
     assert!(output.contains("OptionalScalarReq"));
     assert!(output.contains("required_id"));
     assert!(output.contains("5"));
     assert!(output.contains("100"));
     assert!(output.contains("None"));
+}
+
+// ── Typed u8 newtype field (#[tbor(U8)]) ──────────────────────────────
+
+/// Plain single-field newtype over `u8`, used to exercise a typed
+/// inline-`u8` schema field. No validation — any byte round-trips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WireTag(pub u8);
+
+#[tbor(opcode = 0x41)]
+pub struct TypedU8Req {
+    psk_id: u8,
+    // Carried as an inline `Uint8` on the wire; the accessor/encoder are
+    // typed `WireTag` rather than a bare `u8`. `#[tbor(U8)]` declares the
+    // wire width (the macro cannot see that `WireTag` is u8-wide).
+    #[tbor(U8)]
+    suite_id: WireTag,
+}
+
+#[test]
+fn typed_u8_newtype_round_trips() {
+    let mut buf = [0u8; 256];
+    let frame = TypedU8Req::encode(&mut buf)
+        .unwrap()
+        .psk_id(1)
+        .unwrap()
+        .suite_id(WireTag(0x07))
+        .unwrap()
+        .finish();
+
+    // Wire is identical to two inline u8 fields: 4 header + 2*4 TOC.
+    assert_eq!(frame.len(), 12);
+    // Typed accessor returns the newtype.
+    assert_eq!(frame.suite_id(), WireTag(0x07));
+
+    let view = TypedU8Req::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.psk_id(), 1);
+    assert_eq!(view.suite_id(), WireTag(0x07));
+    // The wire byte is the raw inner value (no validation/transform).
+    assert_eq!(view.suite_id().0, 0x07);
 }
 
 // ── Alignment padding ─────────────────────────────────────────────────
@@ -558,7 +605,7 @@ fn aligned_field_with_padding_needed() {
     assert_eq!(frame.header(), b"ABCDE");
     assert_eq!(frame.value(), 0xDEADBEEF);
 
-    let view = AlignedReq::decode(frame.as_bytes()).unwrap();
+    let view = AlignedReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.header(), b"ABCDE");
     assert_eq!(view.value(), 0xDEADBEEF);
 }
@@ -577,7 +624,7 @@ fn aligned_field_already_aligned() {
     assert_eq!(frame.header(), b"ABCD");
     assert_eq!(frame.value(), 0x12345678);
 
-    let view = AlignedReq::decode(frame.as_bytes()).unwrap();
+    let view = AlignedReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.header(), b"ABCD");
     assert_eq!(view.value(), 0x12345678);
 }
@@ -606,7 +653,7 @@ fn align_8_with_padding() {
     assert_eq!(frame.prefix(), b"ABC");
     assert_eq!(frame.timestamp(), 0x0123456789ABCDEF);
 
-    let view = Aligned8Req::decode(frame.as_bytes()).unwrap();
+    let view = Aligned8Req::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.prefix(), b"ABC");
     assert_eq!(view.timestamp(), 0x0123456789ABCDEF);
 }
@@ -645,14 +692,76 @@ fn multiple_aligned_fields() {
     assert_eq!(frame.extra(), b"hello");
     assert_eq!(frame.checksum(), 0xABCD1234);
 
-    let view = MultiAlignReq::decode(frame.as_bytes()).unwrap();
+    let view = MultiAlignReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.tag(), b"XYZ");
     assert_eq!(view.count(), 100);
     assert_eq!(view.extra(), b"hello");
     assert_eq!(view.checksum(), 0xABCD1234);
 }
 
-// ── Optional + aligned ────────────────────────────────────────────────
+// ── Unaligned typed slice ─────────────────────────────────────────────
+
+/// `#[repr(C)]` POD with `Unaligned` little-endian `U16` fields →
+/// alignment 1.  Exercises a typed-slice `&[T]` field: because `T` is
+/// `Unaligned`, the derive inserts **no** alignment padding, and the
+/// zero-copy `&[Pair]` cast is sound even when the slice lands on an odd
+/// data offset.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
+#[repr(C)]
+struct Pair {
+    a: Le16,
+    b: Le16,
+}
+
+#[tbor(opcode = 0x40)]
+pub struct TypedSliceReq<'a> {
+    // An odd-length leading buffer forces the following typed slice to a
+    // misaligned data offset. Because `Pair` is `Unaligned`, the slice
+    // still decodes correctly with no padding entry.
+    #[tbor(max_len = 64)]
+    lead: &'a [u8],
+    #[tbor(min_len = 1, max_len = 16)]
+    items: &'a [Pair],
+}
+
+#[test]
+fn typed_slice_unaligned_needs_no_padding() {
+    #[repr(align(8))]
+    struct AlignedBuf([u8; 512]);
+
+    let pairs = [
+        Pair {
+            a: Le16::new(0x0102),
+            b: Le16::new(0x0304),
+        },
+        Pair {
+            a: Le16::new(0x0506),
+            b: Le16::new(0x0708),
+        },
+    ];
+
+    let mut backing = AlignedBuf([0u8; 512]);
+    let frame = TypedSliceReq::encode(&mut backing.0)
+        .unwrap()
+        // 5 bytes → odd, so `items` lands on an odd offset. An `Unaligned`
+        // element type means no padding entry is inserted, yet the cast
+        // is still sound.
+        .lead(b"ABCDE")
+        .unwrap()
+        .items(&pairs)
+        .unwrap()
+        .finish();
+
+    assert_eq!(frame.lead(), b"ABCDE");
+
+    let view = TypedSliceReq::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.lead(), b"ABCDE");
+    // A non-empty, correct slice proves the `Unaligned` cast succeeded at
+    // an odd offset with no `#[tbor(align)]` and no padding entry.
+    assert_eq!(view.items(), &pairs[..]);
+}
 
 #[tbor(opcode = 0x33)]
 pub struct OptAlignReq<'a> {
@@ -681,7 +790,7 @@ fn optional_aligned_present() {
     assert_eq!(frame.opt_value(), Some(42));
     assert_eq!(frame.suffix(), b"end");
 
-    let view = OptAlignReq::decode(frame.as_bytes()).unwrap();
+    let view = OptAlignReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.prefix(), b"AB");
     assert_eq!(view.opt_value(), Some(42));
     assert_eq!(view.suffix(), b"end");
@@ -703,7 +812,7 @@ fn optional_aligned_absent_skip_ahead() {
     assert_eq!(frame.opt_value(), None);
     assert_eq!(frame.suffix(), b"end");
 
-    let view = OptAlignReq::decode(frame.as_bytes()).unwrap();
+    let view = OptAlignReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.prefix(), b"AB");
     assert_eq!(view.opt_value(), None);
     assert_eq!(view.suffix(), b"end");
@@ -717,7 +826,7 @@ fn encode_buffer_too_small() {
     let result = GetCertificateReq::encode(&mut buf);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall)
     ));
 }
 
@@ -749,7 +858,7 @@ fn fixed_array_round_trip() {
     assert_eq!(frame.payload(), b"test data");
 
     // Decode
-    let view = FixedArrayReq::decode(frame.as_bytes()).unwrap();
+    let view = FixedArrayReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.nonce(), &nonce);
     assert_eq!(view.payload(), b"test data");
 }
@@ -766,11 +875,11 @@ fn fixed_array_wrong_length_rejected() {
         .finish()
         .unwrap();
 
-    let err = FixedArrayReq::decode(msg).unwrap_err();
-    assert!(matches!(
+    let err = FixedArrayReq::decode(brand(msg)).unwrap_err();
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength
+    );
 }
 
 // ── Length constraints on slices ──────────────────────────────────────
@@ -797,7 +906,7 @@ fn len_constraint_valid() {
     assert_eq!(frame.tag(), b"hello");
     assert_eq!(frame.data(), b"world");
 
-    let view = ConstrainedReq::decode(frame.as_bytes()).unwrap();
+    let view = ConstrainedReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.tag(), b"hello");
     assert_eq!(view.data(), b"world");
 }
@@ -809,7 +918,7 @@ fn len_constraint_too_short() {
     let result = ConstrainedReq::encode(&mut buf).unwrap().tag(b"");
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::DataTooLarge { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge)
     ));
 }
 
@@ -820,7 +929,7 @@ fn len_constraint_too_long() {
     let result = ConstrainedReq::encode(&mut buf).unwrap().tag(&long_tag);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::DataTooLarge { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge)
     ));
 }
 
@@ -836,11 +945,11 @@ fn len_constraint_decode_too_short() {
         .finish()
         .unwrap();
 
-    let err = ConstrainedReq::decode(msg).unwrap_err();
-    assert!(matches!(
+    let err = ConstrainedReq::decode(brand(msg)).unwrap_err();
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::InvalidFixedLength { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborInvalidFixedLength
+    );
 }
 
 // ── All-optional struct (finish from State0) ──────────────────────────
@@ -859,7 +968,7 @@ fn all_optional_immediate_finish() {
     assert_eq!(frame.opt_a(), None);
     assert_eq!(frame.opt_b(), None);
 
-    let view = AllOptReq::decode(frame.as_bytes()).unwrap();
+    let view = AllOptReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.opt_a(), None);
     assert_eq!(view.opt_b(), None);
 }
@@ -902,7 +1011,7 @@ fn derive_sealed_key_round_trip() {
     assert_eq!(frame.session(), azihsm_fw_ddi_tbor_api::SessionId(5));
     assert_eq!(frame.key_blob(), blob);
 
-    let view = SealedKeyReq::decode(frame.as_bytes()).unwrap();
+    let view = SealedKeyReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.session(), azihsm_fw_ddi_tbor_api::SessionId(5));
     assert_eq!(view.key_blob(), blob);
 }
@@ -929,8 +1038,8 @@ fn optional_fixed_array_present() {
 
     assert_eq!(frame.opt_nonce(), Some(&nonce));
 
-    let view = OptFixedArrayReq::decode(frame.as_bytes()).unwrap();
-    assert_eq!(view.opt_nonce(), Some(&nonce));
+    let view = OptFixedArrayReq::decode(brand(frame.as_bytes())).unwrap();
+    assert!(view.opt_nonce().is_some_and(|d| **d == nonce));
 }
 
 #[test]
@@ -944,7 +1053,7 @@ fn optional_fixed_array_absent() {
 
     assert_eq!(frame.opt_nonce(), None);
 
-    let view = OptFixedArrayReq::decode(frame.as_bytes()).unwrap();
+    let view = OptFixedArrayReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.opt_nonce(), None);
 }
 
@@ -986,7 +1095,7 @@ fn response_encode_buffer_too_small() {
     let result = GetCertificateResp::encode(&mut buf, 0, false);
     assert!(matches!(
         result,
-        Err(azihsm_fw_ddi_tbor::EncodeError::BufferTooSmall { .. })
+        Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall)
     ));
 }
 
@@ -1028,11 +1137,11 @@ fn derive_response_wrong_toc_count() {
         .unwrap();
 
     // DeviceInfoResp expects 2 TOC entries, not 3.
-    let err = DeviceInfoResp::decode(msg).unwrap_err();
-    assert!(matches!(
+    let err = DeviceInfoResp::decode(brand(msg)).unwrap_err();
+    assert_eq!(
         err,
-        azihsm_fw_ddi_tbor::DecodeError::MessageTruncated { .. }
-    ));
+        azihsm_fw_hsm_pal_traits::HsmError::TborMessageTruncated
+    );
 }
 
 // ── Include field groups ──────────────────────────────────────────────
@@ -1070,7 +1179,7 @@ fn include_group_encode_decode() {
         .finish();
 
     // Verify via raw core decoder.
-    let raw = azihsm_fw_ddi_tbor::RequestView::parse(frame.as_bytes()).unwrap();
+    let raw = azihsm_fw_ddi_tbor::RequestView::parse(brand(frame.as_bytes())).unwrap();
     assert_eq!(raw.opcode(), 0x70);
     assert_eq!(raw.toc_count(), 4);
     assert!(matches!(
@@ -1141,7 +1250,7 @@ fn nested_include_encode_decode() {
         .finish();
 
     // Wire: flat 5 TOC entries + 7 bytes data
-    let raw = azihsm_fw_ddi_tbor::RequestView::parse(frame.as_bytes()).unwrap();
+    let raw = azihsm_fw_ddi_tbor::RequestView::parse(brand(frame.as_bytes())).unwrap();
     assert_eq!(raw.opcode(), 0x71);
     assert_eq!(raw.toc_count(), 5);
     assert!(matches!(
@@ -1197,7 +1306,7 @@ fn tbor_request_trait_decode() {
         .unwrap()
         .finish();
 
-    let view = <GetCertificateReq as TborRequest>::decode(frame.as_bytes()).unwrap();
+    let view = <GetCertificateReq as TborRequest>::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.slot_id(), 3);
     assert_eq!(view.cert_id(), 1);
 }
@@ -1215,11 +1324,11 @@ fn trait_based_dispatch() {
         .finish();
 
     let wire = frame.as_bytes();
-    let raw = azihsm_fw_ddi_tbor::RequestView::parse(wire).unwrap();
+    let raw = azihsm_fw_ddi_tbor::RequestView::parse(brand(wire)).unwrap();
 
     let result = match raw.opcode() {
         GetCertificateReq::OPCODE => {
-            let view = GetCertificateReq::decode(wire).unwrap();
+            let view = GetCertificateReq::decode(brand(wire)).unwrap();
             assert_eq!(view.slot_id(), 5);
             Ok("get_cert")
         }
@@ -1227,4 +1336,229 @@ fn trait_based_dispatch() {
         _ => Err("unknown opcode"),
     };
     assert_eq!(result, Ok("get_cert"));
+}
+
+// ── ViewMut with mixed scalar + mutable-buffer fields ──────────────────
+//
+// Regression guard for codegen_view_mut: `Uint32`/`Uint64` are
+// data-section types and participate in the `split_at_mut` chain, but
+// the destructured `ViewMut` field type is `u32`/`u64`. The codegen
+// must convert the split slice to the numeric value at struct-init
+// time, not pass the slice through (which would not type-check).
+#[tbor(opcode = 0x42)]
+pub struct MixedMutableReq<'a> {
+    pub epoch: u32,
+    pub serial: u64,
+    #[tbor(max_len = 32, mutable)]
+    pub payload: &'a [u8],
+}
+
+#[test]
+fn decode_mut_with_uint32_uint64_siblings() {
+    let mut buf = [0u8; 256];
+    let frame = MixedMutableReq::encode(&mut buf)
+        .unwrap()
+        .epoch(0xCAFEBABE)
+        .unwrap()
+        .serial(0x0011_2233_4455_6677)
+        .unwrap()
+        .payload(b"hello-payload")
+        .unwrap()
+        .finish();
+
+    let frame_len = frame.len();
+    // SAFETY: test-only re-branding of a stack-allocated wire buffer
+    // that outlives `wire_mut` and is not aliased for the borrow.
+    let wire_mut: &mut DmaBuf = unsafe { DmaBuf::from_raw_mut(&mut buf[..frame_len]) };
+    let view = MixedMutableReq::decode_mut(wire_mut).unwrap();
+    assert_eq!(view.epoch, 0xCAFEBABE);
+    assert_eq!(view.serial, 0x0011_2233_4455_6677);
+    assert_eq!(&**view.payload, b"hello-payload");
+}
+
+// ── Field group with typed-slice + buffer fields (include) ────────────
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
+#[repr(C)]
+struct GrpPair {
+    a: zerocopy::little_endian::U16,
+    b: zerocopy::little_endian::U16,
+}
+
+#[tbor(fields)]
+pub struct EvidenceLikeGroup<'a> {
+    #[tbor(session_id)]
+    session: u16,
+    #[tbor(buffer, max_len = 64)]
+    items: &'a [GrpPair],
+    #[tbor(buffer, len = 4)]
+    one: &'a GrpPair,
+    #[tbor(buffer, max_len = 64)]
+    blob: &'a [u8],
+}
+
+#[tbor(opcode = 0x7B)]
+pub struct GroupBufReq<'a> {
+    #[tbor(include)]
+    ev: EvidenceLikeGroup<'a>,
+    #[tbor(max_len = 32)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn field_group_typed_slice_and_buffer_round_trip() {
+    let pairs = [
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0102),
+            b: zerocopy::little_endian::U16::new(0x0304),
+        },
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0506),
+            b: zerocopy::little_endian::U16::new(0x0708),
+        },
+    ];
+
+    let one = GrpPair {
+        a: zerocopy::little_endian::U16::new(0xAABB),
+        b: zerocopy::little_endian::U16::new(0xCCDD),
+    };
+
+    let mut buf = [0u8; 512];
+    let frame = GroupBufReq::encode(&mut buf)
+        .unwrap()
+        .ev(|g| {
+            g.session(azihsm_fw_ddi_tbor_api::SessionId(42))?
+                .items(&pairs)?
+                .one(&one)?
+                .blob(b"BLOB")
+        })
+        .unwrap()
+        .tail(b"TAIL")
+        .unwrap()
+        .finish();
+
+    let view = GroupBufReq::decode(brand(frame.as_bytes())).unwrap();
+    let ev = view.ev();
+    assert_eq!(ev.session(), azihsm_fw_ddi_tbor_api::SessionId(42));
+    assert_eq!(ev.items(), &pairs[..]);
+    // Single typed-POD ref (`&GrpPair`) borrowed zero-copy from the group.
+    assert_eq!(ev.one(), &one);
+    assert_eq!(&**ev.blob(), b"BLOB");
+    // The field after the included group must read at the group-adjusted
+    // TOC offset.
+    assert_eq!(&**view.tail(), b"TAIL");
+}
+
+#[tbor(opcode = 0x7C)]
+pub struct SinglePodReq<'a> {
+    #[tbor(buffer, len = 4)]
+    pair: &'a GrpPair,
+    #[tbor(max_len = 16)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn single_typed_pod_ref_top_level_round_trip() {
+    let p = GrpPair {
+        a: zerocopy::little_endian::U16::new(0x1234),
+        b: zerocopy::little_endian::U16::new(0x5678),
+    };
+    let mut buf = [0u8; 256];
+    let frame = SinglePodReq::encode(&mut buf)
+        .unwrap()
+        .pair(&p)
+        .unwrap()
+        .tail(b"z")
+        .unwrap()
+        .finish();
+    let view = SinglePodReq::decode(brand(frame.as_bytes())).unwrap();
+    assert_eq!(view.pair(), &p);
+    assert_eq!(&**view.tail(), b"z");
+}
+
+// ── ViewMut with an include-group sibling ─────────────────────────────
+//
+// Regression guard for codegen_view_mut: `#[tbor(mutable)]` must coexist
+// with a `#[tbor(include)]` group. A group sub-view borrows the whole
+// buffer (its members' offsets are message-relative), which cannot
+// coexist with a `&mut` sub-region of the same buffer — so the group is
+// **omitted** from `ViewMut`. The mutable field must still be split out
+// correctly, with the group's data bytes discarded in the inter-field
+// gap, and the trailing field must read at its group-adjusted offset.
+// The group itself is read through the shared `View` (`decode`).
+#[tbor(opcode = 0x7D)]
+pub struct GroupMutableReq<'a> {
+    #[tbor(max_len = 32, mutable)]
+    secret: &'a [u8],
+    #[tbor(include)]
+    ev: EvidenceLikeGroup<'a>,
+    #[tbor(max_len = 32)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn decode_mut_with_include_group_sibling() {
+    let pairs = [
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0102),
+            b: zerocopy::little_endian::U16::new(0x0304),
+        },
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0506),
+            b: zerocopy::little_endian::U16::new(0x0708),
+        },
+    ];
+    let one = GrpPair {
+        a: zerocopy::little_endian::U16::new(0xAABB),
+        b: zerocopy::little_endian::U16::new(0xCCDD),
+    };
+
+    let mut buf = [0u8; 512];
+    let frame = GroupMutableReq::encode(&mut buf)
+        .unwrap()
+        .secret(b"initial-secret!!")
+        .unwrap()
+        .ev(|g| {
+            g.session(azihsm_fw_ddi_tbor_api::SessionId(7))?
+                .items(&pairs)?
+                .one(&one)?
+                .blob(b"BLOB")
+        })
+        .unwrap()
+        .tail(b"TAIL")
+        .unwrap()
+        .finish();
+    let frame_len = frame.len();
+
+    // Shared view: the include group is read through `decode`.
+    {
+        let view = GroupMutableReq::decode(brand(&buf[..frame_len])).unwrap();
+        let ev = view.ev();
+        assert_eq!(ev.session(), azihsm_fw_ddi_tbor_api::SessionId(7));
+        assert_eq!(ev.items(), &pairs[..]);
+        assert_eq!(&**ev.blob(), b"BLOB");
+        assert_eq!(&**view.tail(), b"TAIL");
+    }
+
+    // Mutable view: the group is omitted; `secret` (&mut) and `tail` (&)
+    // are still split out correctly across the group's data gap.
+    {
+        // SAFETY: test-only re-branding of a stack-allocated wire buffer
+        // that outlives `wire_mut` and is not aliased for the borrow.
+        let wire_mut: &mut DmaBuf = unsafe { DmaBuf::from_raw_mut(&mut buf[..frame_len]) };
+        let view = GroupMutableReq::decode_mut(wire_mut).unwrap();
+        assert_eq!(&**view.secret, b"initial-secret!!");
+        assert_eq!(&**view.tail, b"TAIL");
+        // Mutate the secret in place.
+        view.secret[0] = b'X';
+    }
+
+    // Re-decode: the in-place mutation stuck and the group + tail bytes
+    // are intact (the split did not corrupt neighbouring regions).
+    let view = GroupMutableReq::decode(brand(&buf[..frame_len])).unwrap();
+    assert_eq!(&**view.tail(), b"TAIL");
+    assert_eq!(view.ev().items(), &pairs[..]);
+    assert_eq!(&**view.ev().blob(), b"BLOB");
 }

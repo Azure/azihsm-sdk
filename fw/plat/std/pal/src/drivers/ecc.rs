@@ -14,6 +14,7 @@
 //! | Method | Operation | Input | Output |
 //! |--------|-----------|-------|--------|
 //! | [`gen_keypair`] | Key generation | `EccCurve` | `(EccPrivateKey, EccPublicKey)` |
+//! | [`pub_coords`] | Serialize pub key | `&EccPublicKey`, `big_endian`, `&mut [u8]` out | `x ∥ y` bytes |
 //! | [`ecc_sign`] | Raw EC sign | `&EccPrivateKey`, `&[u8]` hash | `Vec<u8>` (r∥s) |
 //! | [`ecc_verify`] | Raw EC verify | `&EccPublicKey`, `&[u8]` hash, `&[u8]` sig | `bool` |
 //! | [`ecdh_derive`] | ECDH agreement | `&EccPrivateKey`, `&EccPublicKey` | writes `&mut [u8]` |
@@ -40,6 +41,7 @@ use azihsm_crypto::SignOp;
 use azihsm_crypto::VerifyOp;
 use azihsm_fw_hsm_pal_traits::*;
 
+use super::reverse_copy;
 use crate::worker::WorkerPool;
 
 /// Std ECC driver — software ECC via OpenSSL with async worker dispatch.
@@ -53,9 +55,13 @@ impl StdEcc {
         Self { pool }
     }
 
-    /// Generate an ECC key pair asynchronously.
+    /// Generate an ECC key pair asynchronously, returning the
+    /// `(EccPrivateKey, EccPublicKey)` handle pair.
     ///
-    /// Returns the `(EccPrivateKey, EccPublicKey)` handle pair.
+    /// Serialization is a separate concern: turn the public-key handle
+    /// into raw `x ∥ y` bytes (in a chosen byte order) with
+    /// [`Self::pub_coords`], and the private-key handle into raw HSM
+    /// scalar bytes with its `to_hsm_bytes`.
     pub async fn gen_keypair(&self, curve: EccCurve) -> HsmResult<(EccPrivateKey, EccPublicKey)> {
         self.pool
             .submit_with_result(async move {
@@ -67,6 +73,58 @@ impl StdEcc {
                 Ok((priv_key, pub_key))
             })
             .await
+    }
+
+    /// Serialize a public-key handle's coordinates to raw `x ∥ y` bytes
+    /// in the requested byte order.  The curve is taken from the handle.
+    ///
+    /// `big_endian = true` yields the OpenSSL/NIST big-endian form used
+    /// by internal consumers (cert generation, POTA hashing); `false`
+    /// yields the little-endian DDI wire form (matching real PKA
+    /// hardware).  The BE↔LE flip lives here in the driver.  P-521
+    /// coordinates are padded to `wire_coord_len`.
+    ///
+    /// `out.len()` must be `wire_pub_key_len` for the key's curve
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).
+    pub async fn pub_coords(
+        &self,
+        pub_key: &EccPublicKey,
+        big_endian: bool,
+        out: &mut [u8],
+    ) -> HsmResult<()> {
+        let curve = pub_key.curve();
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        if out.len() != wire_coord * 2 {
+            return Err(HsmError::EccGetCoordinatesError);
+        }
+
+        // Read the big-endian coordinates on the worker pool.
+        let pub_key = pub_key.clone();
+        let (x_be, y_be) = self
+            .pool
+            .submit_with_result(async move {
+                let mut x_be = [0u8; 66];
+                let mut y_be = [0u8; 66];
+                pub_key
+                    .coord(Some((&mut x_be[..coord_len], &mut y_be[..coord_len])))
+                    .map_err(|_| HsmError::EccGetCoordinatesError)?;
+                Ok::<_, HsmError>((x_be, y_be))
+            })
+            .await?;
+
+        // Lay the coordinates out in the requested byte order — the
+        // BE↔LE flip is the driver's responsibility.
+        out.fill(0);
+        let (x_dst, y_dst) = out.split_at_mut(wire_coord);
+        if big_endian {
+            x_dst[..coord_len].copy_from_slice(&x_be[..coord_len]);
+            y_dst[..coord_len].copy_from_slice(&y_be[..coord_len]);
+        } else {
+            reverse_copy(x_dst, &x_be[..coord_len]);
+            reverse_copy(y_dst, &y_be[..coord_len]);
+        }
+        Ok(())
     }
 
     /// Raw EC sign over a pre-computed hash digest.
@@ -99,6 +157,49 @@ impl StdEcc {
             .await
     }
 
+    /// Sign a wire-LE digest with an [`EccPrivateKey`] handle and
+    /// write the wire-LE signature (`r_le || s_le`, P-521 padded)
+    /// into `sig_le_out`.
+    ///
+    /// `sig_le_out.len()` must be `wire_sig_len(curve)`
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).  `hash_le.len()`
+    /// must not exceed SHA-512 (64 bytes); longer inputs are
+    /// rejected rather than silently truncated.
+    pub async fn ecc_sign_le(
+        &self,
+        priv_key: &EccPrivateKey,
+        hash_le: &[u8],
+        sig_le_out: &mut [u8],
+    ) -> HsmResult<()> {
+        let curve = EccKeyOp::curve(priv_key);
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        if sig_le_out.len() != wire_coord * 2 {
+            return Err(HsmError::EccSignFailed);
+        }
+        if hash_le.len() > 64 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Reverse wire-LE digest into BE scratch for OpenSSL.
+        let mut hash_be = [0u8; 64];
+        reverse_copy(&mut hash_be[..hash_le.len()], hash_le);
+
+        let sig_be = self.ecc_sign(priv_key, &hash_be[..hash_le.len()]).await?;
+        if sig_be.len() < coord_len * 2 {
+            return Err(HsmError::EccSignFailed);
+        }
+
+        // Reverse each component into the LE wire layout.
+        sig_le_out.fill(0);
+        let (r_le_dst, rest) = sig_le_out.split_at_mut(wire_coord);
+        let (s_le_dst, _) = rest.split_at_mut(wire_coord);
+        let (r_be, s_be) = sig_be.split_at(coord_len);
+        reverse_copy(r_le_dst, r_be);
+        reverse_copy(s_le_dst, s_be);
+        Ok(())
+    }
+
     /// Raw EC verify a signature over a pre-computed hash digest.
     ///
     /// Returns `true` if the signature is valid, `false` otherwise.
@@ -118,6 +219,56 @@ impl StdEcc {
                     .map_err(|_| HsmError::EccVerifyFailed)
             })
             .await
+    }
+
+    /// Verify a wire-LE signature using a public key supplied as
+    /// wire-LE `x || y` coordinates.  The driver constructs the
+    /// OpenSSL pub-key handle and performs BE↔LE conversion plus
+    /// P-521 per-coordinate de-padding internally so the PAL doesn't
+    /// have to.
+    ///
+    /// `hash` is passed through to OpenSSL **unmodified** — the PAL
+    /// trait's verify contract says "Raw digest bytes; no endianness
+    /// conversion is applied", so callers pass the BE hash they got
+    /// from SHA directly.  (The asymmetry with [`Self::ecc_sign_le`]
+    /// matches the upstream trait contract; both internal
+    /// firmware callers of verify pass BE digests.)
+    ///
+    /// `pub_le.len()` must be `wire_pub_key_len(curve)`
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).
+    /// `sig_le.len()` must be `wire_sig_len(curve)`
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).
+    pub async fn ecc_verify_le(
+        &self,
+        curve: EccCurve,
+        pub_le: &[u8],
+        hash: &[u8],
+        sig_le: &[u8],
+    ) -> HsmResult<bool> {
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        let wire_len = wire_coord * 2;
+        if pub_le.len() < wire_len || sig_le.len() < wire_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Reverse each wire-LE coordinate (skipping any trailing
+        // padding bytes for P-521) into OpenSSL-BE form.
+        let (x_wire, y_wire) = pub_le[..wire_len].split_at(wire_coord);
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        reverse_copy(&mut x_be[..coord_len], &x_wire[..coord_len]);
+        reverse_copy(&mut y_be[..coord_len], &y_wire[..coord_len]);
+        let key = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
+            .map_err(|_| HsmError::InvalidArg)?;
+
+        let (r_wire, s_wire) = sig_le[..wire_len].split_at(wire_coord);
+        let sig_len = coord_len * 2;
+        let mut sig_be = [0u8; 132];
+        reverse_copy(&mut sig_be[..coord_len], &r_wire[..coord_len]);
+        reverse_copy(&mut sig_be[coord_len..sig_len], &s_wire[..coord_len]);
+
+        self.ecc_verify(&key, hash, &sig_be[..sig_len]).await
     }
 
     /// ECDH key agreement — derives a shared secret into `secret`.
@@ -161,6 +312,65 @@ impl StdEcc {
         secret[..bytes.len()].copy_from_slice(&bytes);
         Ok(())
     }
+
+    /// ECDH key agreement using a public key supplied as wire-LE
+    /// `x || y` coordinates.  The driver constructs the OpenSSL
+    /// pub-key handle internally, including stripping P-521
+    /// per-coordinate padding.
+    ///
+    /// `pub_le.len()` must be `wire_pub_key_len(curve)`
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).  The shared
+    /// secret is written into `secret_out` in OpenSSL's native
+    /// big-endian form — the trait contract leaves the secret
+    /// endianness unspecified and current callers consume it as
+    /// opaque HKDF input, so no flip is applied.
+    pub async fn ecdh_derive_le(
+        &self,
+        priv_key: &EccPrivateKey,
+        curve: EccCurve,
+        pub_le: &[u8],
+        secret_out: &mut [u8],
+    ) -> HsmResult<()> {
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        let wire_len = wire_coord * 2;
+        if pub_le.len() < wire_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let (x_wire, y_wire) = pub_le[..wire_len].split_at(wire_coord);
+        let mut x_be = [0u8; 66];
+        let mut y_be = [0u8; 66];
+        reverse_copy(&mut x_be[..coord_len], &x_wire[..coord_len]);
+        reverse_copy(&mut y_be[..coord_len], &y_wire[..coord_len]);
+        let pubk = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
+            .map_err(|_| HsmError::InvalidArg)?;
+
+        self.ecdh_derive(priv_key, &pubk, secret_out).await
+    }
+}
+
+/// Raw private-key (and per-coordinate) length in bytes for the
+/// given curve.  Mirrors `HsmEccCurve::priv_key_len` but defined
+/// in driver-local terms so the driver doesn't depend on the
+/// PAL-trait crate's curve enum.
+fn priv_key_len(curve: EccCurve) -> usize {
+    match curve {
+        EccCurve::P256 => 32,
+        EccCurve::P384 => 48,
+        EccCurve::P521 => 66,
+    }
+}
+
+/// Wire-format per-coordinate length, padded to 32-bit words.
+/// P-256/P-384 are already word-aligned (32 / 48); P-521 pads from
+/// 66 to 68.
+fn wire_coord_len(curve: EccCurve) -> usize {
+    match curve {
+        EccCurve::P256 => 32,
+        EccCurve::P384 => 48,
+        EccCurve::P521 => 68,
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +407,27 @@ mod tests {
         let (priv_key, pub_key) = driver.gen_keypair(EccCurve::P521).await.unwrap();
         assert_eq!(EccKeyOp::curve(&priv_key), EccCurve::P521);
         assert_eq!(pub_key.curve(), EccCurve::P521);
+    }
+
+    // ── Public-key coordinate serialization ─────────────────────
+
+    #[tokio::test]
+    async fn pub_coords_le_is_byte_reverse_of_be() {
+        let driver = make_driver();
+        let (_priv_key, pub_key) = driver.gen_keypair(EccCurve::P384).await.unwrap();
+        let mut be = [0u8; 96];
+        let mut le = [0u8; 96];
+        driver.pub_coords(&pub_key, true, &mut be).await.unwrap();
+        driver.pub_coords(&pub_key, false, &mut le).await.unwrap();
+        // Each 48-byte coordinate in LE is the byte-reverse of BE.
+        let mut expected = [0u8; 96];
+        for (d, s) in expected[..48].iter_mut().zip(be[..48].iter().rev()) {
+            *d = *s;
+        }
+        for (d, s) in expected[48..].iter_mut().zip(be[48..].iter().rev()) {
+            *d = *s;
+        }
+        assert_eq!(le, expected);
     }
 
     // ── Sign / verify roundtrip ─────────────────────────────────

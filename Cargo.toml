@@ -13,6 +13,7 @@ members = [
   "crates/crypto",
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
+  "crates/session_ex_crypto",
   "crates/test_with_tracing",
   "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
@@ -28,15 +29,23 @@ members = [
   "ddi/mock",
   "ddi/nix",
   "ddi/res_test_dev",
+  "ddi/sock",
+  "ddi/sock/proto",
   "ddi/tbor/codec",
   "ddi/tbor/derive",
-  "ddi/tbor/test_helpers",
   "ddi/tbor/types",
   "ddi/win",
+  "fw/core/crypto/aead-envelope",
   "fw/core/crypto/aes-cbc-pad",
   "fw/core/crypto/gcm-buf",
   "fw/core/crypto/hpke",
-  "fw/core/crypto/masked-key",
+  "fw/core/crypto/key-derive",
+  "fw/core/crypto/key-masking",
+  "fw/core/crypto/key-report",
+  "fw/core/crypto/key-report/gen",
+  "fw/core/crypto/x509-builder",
+  "fw/core/crypto/x509-builder/gen",
+  "fw/core/crypto/x509-chain",
   "fw/core/ddi/mbor/api",
   "fw/core/ddi/mbor/codec",
   "fw/core/ddi/mbor/derive",
@@ -45,6 +54,7 @@ members = [
   "fw/core/ddi/tbor/codec",
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
+  "fw/core/io",
   "fw/core/lib",
   "fw/core/tracing",
   "fw/pal/traits",
@@ -52,6 +62,10 @@ members = [
   "fw/plat/std/pal",
   "fw/plat/std/x509",
   "fw/plat/std/x509/gen",
+  "plugins/ossl_engine/engine",
+  "plugins/ossl_engine/engine-resiliency",
+  "plugins/ossl_engine/openssl-engine",
+  "plugins/ossl_engine/openssl-sys-engine",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
@@ -83,14 +97,18 @@ azihsm_ddi_mbor_types = { features = [
 ], path = "ddi/mbor/types" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_sock = { path = "ddi/sock" }
+azihsm_ddi_sock_proto = { path = "ddi/sock/proto" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
-azihsm_ddi_tbor_test_helpers = { path = "ddi/tbor/test_helpers" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
+azihsm_session_ex_crypto = { path = "crates/session_ex_crypto" }
 azihsm_tpm = { path = "crates/tpm" }
+openssl-engine = { path = "plugins/ossl_engine/openssl-engine" }
+openssl-sys-engine = { path = "plugins/ossl_engine/openssl-sys-engine" }
 resiliency_macro = { path = "crates/resiliency_macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
@@ -109,14 +127,21 @@ azihsm_fw_ddi_tbor_derive = { path = "fw/core/ddi/tbor/derive" }
 azihsm_fw_ddi_tbor_types = { path = "fw/core/ddi/tbor/types" }
 
 # Firmware crates — crypto
+azihsm_fw_core_crypto_aead_envelope = { path = "fw/core/crypto/aead-envelope" }
 azihsm_fw_core_crypto_aes_cbc_pad = { path = "fw/core/crypto/aes-cbc-pad" }
 azihsm_fw_core_crypto_gcm_buf = { path = "fw/core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
-azihsm_fw_core_crypto_masked_key = { path = "fw/core/crypto/masked-key" }
+azihsm_fw_core_crypto_key_derive = { path = "fw/core/crypto/key-derive" }
+azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
+azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
+azihsm_fw_core_crypto_x509_builder = { path = "fw/core/crypto/x509-builder" }
+azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/gen" }
+azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
+azihsm_fw_hsm_io = { path = "fw/core/io" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
@@ -125,17 +150,14 @@ azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
 
 # Embassy crates
 embassy-executor = "0.10.0"
-embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
-embassy-time = "0.5.1"
-embassy-time-driver = "0.2.2"
-embassy-time-queue-utils = "0.3.1"
 
 # Public crates
 anyhow = "1.0"
 arbitrary = "1"
 asn1 = "0.23.0"
 async-channel = "2.0.0"
+bindgen = "0.71"
 bitfield = "0.19.1"
 bitfield-struct = "0.13.0"
 bitflags = "2.10.0"
@@ -143,19 +165,19 @@ cfg-if = "1"
 chrono = "0.4.31"
 clap = "4.2"
 cmake = "0.1.57"
-convert_case = "0.6.0"
 critical-section = "1.2.0"
 darling = "0.20.11"
 delegate = "0.13.3"
 der = "0.7.8"
 env_logger = "0.11.8"
+foreign-types = "0.3"
 fs2 = "0.4.3"
 getrandom = "0.2"
 glob = "0.3"
 hex = "0.4.3"
 is-terminal = "0.4"
 itertools = "0.14.0"
-junit-parser = "1.5.0"
+junit-parser = "1.5.1"
 jzon = "0.12.5"
 lazy_static = "1.5.0"
 libc = "0.2"
@@ -167,7 +189,7 @@ minicbor = "0.19.1"
 nix = "0.26"
 num-bigint = "0.4"
 open-enum = "0.3.0"
-openssl = "0.10.79"
+openssl = "= 0.10.79"
 openssl-sys = "0.9"
 p384 = "0.13.0"
 parking_lot = "0.12"
@@ -175,6 +197,7 @@ pastey = "0.2.1"
 pem-rfc7468 = "0.7.0"
 pkcs1 = "0.7.5"
 pkcs8 = "0.10.2"
+pkg-config = "0.3"
 proc-macro2 = "1.0.106"
 quote = "1.0"
 rand = "0.10.1"

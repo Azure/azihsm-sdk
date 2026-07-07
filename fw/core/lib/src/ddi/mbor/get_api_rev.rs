@@ -38,8 +38,8 @@ pub(crate) fn get_api_rev<'p, P: HsmPal>(
     let _body: DdiGetApiRevReq = decoder.decode_data()?;
 
     let resp_data = DdiGetApiRevResp {
-        min: DdiApiRev { major: 1, minor: 0 },
-        max: DdiApiRev { major: 1, minor: 0 },
+        min: super::DDI_API_REV_MIN,
+        max: super::DDI_API_REV_MAX,
     };
 
     let resp = pal.dma_alloc_var(io, |buf| {

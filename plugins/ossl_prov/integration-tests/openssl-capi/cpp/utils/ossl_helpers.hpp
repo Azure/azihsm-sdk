@@ -84,4 +84,22 @@ struct EvpKdfCtxDeleter
 };
 using EvpKdfCtxPtr = std::unique_ptr<EVP_KDF_CTX, EvpKdfCtxDeleter>;
 
+struct EvpCipherDeleter
+{
+    void operator()(EVP_CIPHER *p) const
+    {
+        EVP_CIPHER_free(p);
+    }
+};
+using EvpCipherPtr = std::unique_ptr<EVP_CIPHER, EvpCipherDeleter>;
+
+struct EvpCipherCtxDeleter
+{
+    void operator()(EVP_CIPHER_CTX *p) const
+    {
+        EVP_CIPHER_CTX_free(p);
+    }
+};
+using EvpCipherCtxPtr = std::unique_ptr<EVP_CIPHER_CTX, EvpCipherCtxDeleter>;
+
 #endif // OSSL_HELPERS_HPP

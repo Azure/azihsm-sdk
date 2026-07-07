@@ -105,20 +105,6 @@ impl<'a> OsslHkdfAlgo<'a> {
     }
 }
 
-/// Converts platform-agnostic HKDF mode to OpenSSL-specific mode constant.
-///
-/// This conversion enables the platform-agnostic HKDF interface to map
-/// to OpenSSL's specific mode enumeration for HKDF operations.
-impl From<HkdfMode> for openssl::pkey_ctx::HkdfMode {
-    fn from(mode: HkdfMode) -> Self {
-        match mode {
-            HkdfMode::Extract => openssl::pkey_ctx::HkdfMode::EXTRACT_ONLY,
-            HkdfMode::ExtractAndExpand => openssl::pkey_ctx::HkdfMode::EXTRACT_THEN_EXPAND,
-            HkdfMode::Expand => openssl::pkey_ctx::HkdfMode::EXPAND_ONLY,
-        }
-    }
-}
-
 /// Implements HKDF key derivation operation.
 ///
 /// This implementation uses OpenSSL's HKDF functionality to derive key material
@@ -153,80 +139,43 @@ impl<'a> DeriveOp for OsslHkdfAlgo<'a> {
     /// - `CryptoError::HkdfDeriveError` - HKDF derivation operation fails
     /// - `CryptoError::InvalidKeySize` - Key material extraction fails
     fn derive(&self, key: &Self::Key, derive_len: usize) -> Result<Self::DerivedKey, CryptoError> {
-        // Extract key bytes
         let key_bytes = key.to_vec()?;
 
-        // Create and configure HKDF context
-        let mut ctx = openssl::pkey_ctx::PkeyCtx::new_id(openssl::pkey::Id::HKDF)
-            .map_err(|_| CryptoError::HkdfError)?;
-        self.configure_pkey_ctx(&mut ctx)?;
+        let mode = match self.mode {
+            HkdfMode::Extract => openssl::kdf::HkdfMode::ExtractOnly,
+            HkdfMode::ExtractAndExpand => openssl::kdf::HkdfMode::ExtractAndExpand,
+            HkdfMode::Expand => openssl::kdf::HkdfMode::ExpandOnly,
+        };
+        // Extract-only yields the PRK (exactly one digest block); the expand
+        // modes yield the requested length. Reject a mismatched requested
+        // length for Extract so behavior matches the Windows (CNG) backend
+        // instead of silently ignoring `derive_len`.
+        let out_len = match self.mode {
+            HkdfMode::Extract => {
+                if derive_len != self.md.size() {
+                    return Err(CryptoError::HmacInvalidDerivedKeyLength);
+                }
+                self.md.size()
+            }
+            _ => derive_len,
+        };
+        let mut out = vec![0u8; out_len];
 
-        // Set input keying material
-        ctx.set_hkdf_key(&key_bytes)
-            .map_err(|_| CryptoError::HkdfSetPropertyError)?;
+        // `kdf::hkdf` fetches "HKDF" and its digest from the crate-private libctx
+        // (default-provider only), so the derivation never resolves to the azihsm
+        // provider on OpenSSL 3.5. `self.md` only supplies the digest name. See
+        // [`crate::libctx`].
+        openssl::kdf::hkdf(
+            self.md,
+            &key_bytes,
+            self.salt,
+            self.info,
+            mode,
+            Some(crate::libctx::crypto_libctx()),
+            &mut out,
+        )
+        .map_err(|_| CryptoError::HkdfDeriveError)?;
 
-        // Derive the key
-        let mut derived_key = vec![0u8; derive_len];
-        let derived_size = ctx
-            .derive(Some(&mut derived_key))
-            .map_err(|_| CryptoError::HkdfDeriveError)?;
-
-        // Return only the actual derived bytes
-        GenericSecretKey::from_bytes(&derived_key[..derived_size])
-    }
-}
-
-impl<'a> OsslHkdfAlgo<'a> {
-    /// Configures OpenSSL PkeyCtx with HKDF parameters.
-    ///
-    /// This method sets up the OpenSSL context with the hash algorithm, salt,
-    /// and info parameters required for HKDF derivation. The initialization
-    /// sequence is critical: `derive_init()` must be called before setting
-    /// any HKDF-specific parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `pkey_ctx` - The OpenSSL public key context to configure
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on successful configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CryptoError::HkdfInitError` if any OpenSSL property setting fails.
-    fn configure_pkey_ctx<T>(
-        &self,
-        pkey_ctx: &mut openssl::pkey_ctx::PkeyCtx<T>,
-    ) -> Result<(), CryptoError> {
-        // Call derive_init() BEFORE setting any HKDF parameters
-        pkey_ctx
-            .derive_init()
-            .map_err(|_| CryptoError::HkdfSetPropertyError)?;
-
-        // Set message digest
-        pkey_ctx
-            .set_hkdf_md(self.md)
-            .map_err(|_| CryptoError::HkdfSetPropertyError)?;
-
-        // Set HKDF mode
-        pkey_ctx
-            .set_hkdf_mode(self.mode.into())
-            .map_err(|_| CryptoError::HkdfSetPropertyError)?;
-        // Set salt if provided
-        if let Some(salt) = self.salt {
-            pkey_ctx
-                .set_hkdf_salt(salt)
-                .map_err(|_| CryptoError::HkdfSetPropertyError)?;
-        }
-
-        // Set info if provided
-        if let Some(info) = self.info {
-            pkey_ctx
-                .add_hkdf_info(info)
-                .map_err(|_| CryptoError::HkdfSetPropertyError)?;
-        }
-
-        Ok(())
+        GenericSecretKey::from_bytes(&out)
     }
 }

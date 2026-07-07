@@ -21,7 +21,7 @@ pub struct DdiEccGenerateKeyPairReq<'a> {
 pub struct DdiEccGenerateKeyPairResp<'a> {
     #[ddi(id = 1)]
     pub private_key_id: u16,
-    #[ddi(id = 2)]
+    #[ddi(id = 2, frame)]
     pub pub_key: DdiPublicKey<'a>,
     #[ddi(id = 3, max_len = 3072)]
     pub masked_key: &'a [u8],

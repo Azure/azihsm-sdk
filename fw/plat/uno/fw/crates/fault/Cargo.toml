@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2021"
+name = "azihsm_fw_uno_fault"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[features]
+default = []
+
+# Emulator builds: after reporting a panic/fault, terminate the firmware
+# via semihosting `SYS_EXIT(-1)` so the emulator host stops instead of
+# spinning. On silicon (no semihosting host) the handlers halt in a loop.
+semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
+
+# Development aid: append a raw stack-memory hexdump (32 words from the
+# captured SP) to the HardFault report. Off by default to keep the fault
+# path minimal — the default dump mirrors the mcr-hsm minimalist
+# register/CFSR report.
+fault-stackdump = []
+
+[dependencies]
+azihsm_fw_hsm_core_tracing.workspace = true
+azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
+azihsm_fw_uno_error.workspace = true
+azihsm_fw_uno_reg_cortex_m.workspace = true
+cortex-m.workspace = true
+cortex-m-rt.workspace = true
+tock-registers.workspace = true

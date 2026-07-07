@@ -1,0 +1,210 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[workspace]
+members = [
+  "app",
+  "crates/bulk_copy",
+  "crates/error",
+  "crates/fault",
+  "crates/key_vault",
+  "crates/single_cell",
+  "crates/static_init",
+  "crates/static_ref",
+  "crates/trace",
+  "drivers/aes",
+  "drivers/bks_store",
+  "drivers/boot_status",
+  "drivers/core_status",
+  "drivers/gdma",
+  "drivers/iic",
+  "drivers/ipc",
+  "drivers/nvic",
+  "drivers/oic",
+  "drivers/pac",
+  "drivers/part_store",
+  "drivers/profile",
+  "drivers/rng",
+  "drivers/semihosting",
+  "drivers/session_store",
+  "drivers/sha",
+  "drivers/systick",
+  "drivers/uart",
+  "drivers/upka",
+  "drivers/vault",
+  "pal",
+  "reg/cortex-m",
+  "reg/soc",
+]
+resolver = "2"
+
+[workspace.dependencies]
+azihsm_fw_bulk_copy = { path = "crates/bulk_copy" }
+azihsm_fw_single_cell = { path = "crates/single_cell" }
+azihsm_fw_static_init = { path = "crates/static_init" }
+azihsm_fw_static_ref = { path = "crates/static_ref" }
+azihsm_fw_uno_reg_cortex_m = { path = "reg/cortex-m" }
+
+azihsm_fw_uno_drivers_aes = { path = "drivers/aes" }
+azihsm_fw_uno_drivers_bks_store = { path = "drivers/bks_store" }
+azihsm_fw_uno_drivers_boot_status = { path = "drivers/boot_status" }
+azihsm_fw_uno_drivers_core_status = { path = "drivers/core_status" }
+azihsm_fw_uno_drivers_gdma = { path = "drivers/gdma" }
+azihsm_fw_uno_drivers_iic = { path = "drivers/iic" }
+azihsm_fw_uno_drivers_ipc = { path = "drivers/ipc" }
+azihsm_fw_uno_drivers_nvic = { path = "drivers/nvic" }
+azihsm_fw_uno_drivers_oic = { path = "drivers/oic" }
+azihsm_fw_uno_drivers_part_store = { path = "drivers/part_store" }
+azihsm_fw_uno_drivers_profile = { default-features = false, path = "drivers/profile" }
+azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
+azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
+azihsm_fw_uno_drivers_session_store = { path = "drivers/session_store" }
+azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }
+azihsm_fw_uno_drivers_systick = { path = "drivers/systick" }
+azihsm_fw_uno_drivers_uart = { path = "drivers/uart" }
+azihsm_fw_uno_drivers_upka = { path = "drivers/upka" }
+azihsm_fw_uno_drivers_vault = { path = "drivers/vault" }
+azihsm_fw_uno_error = { path = "crates/error" }
+azihsm_fw_uno_fault = { path = "crates/fault" }
+azihsm_fw_uno_key_vault = { path = "crates/key_vault" }
+azihsm_fw_uno_pac = { path = "drivers/pac" }
+azihsm_fw_uno_pal = { path = "pal" }
+azihsm_fw_uno_reg_soc = { path = "reg/soc" }
+azihsm_fw_uno_trace = { path = "crates/trace" }
+
+azihsm_fw_core_crypto_aes_cbc_pad = { path = "../../../core/crypto/aes-cbc-pad" }
+azihsm_fw_core_crypto_gcm_buf = { path = "../../../core/crypto/gcm-buf" }
+azihsm_fw_core_crypto_hpke = { path = "../../../core/crypto/hpke" }
+azihsm_fw_core_crypto_key_derive = { path = "../../../core/crypto/key-derive" }
+azihsm_fw_core_crypto_key_masking = { path = "../../../core/crypto/key-masking" }
+azihsm_fw_core_crypto_x509_chain = { path = "../../../core/crypto/x509-chain" }
+azihsm_fw_ddi_mbor = { path = "../../../core/ddi/mbor/codec" }
+azihsm_fw_ddi_mbor_api = { path = "../../../core/ddi/mbor/api" }
+azihsm_fw_ddi_mbor_derive = { path = "../../../core/ddi/mbor/derive" }
+azihsm_fw_ddi_mbor_types = { path = "../../../core/ddi/mbor/types" }
+azihsm_fw_hsm_core = { default-features = false, path = "../../../core/lib" }
+azihsm_fw_hsm_core_tracing = { path = "../../../core/tracing" }
+azihsm_fw_hsm_pal_traits = { path = "../../../pal/traits" }
+
+bitfield-struct = "0.13.0"
+cfg-if = "1.0.0"
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+critical-section = "1.2.0"
+darling = "0.20"
+embassy-executor = "0.10.0"
+embassy-futures = "0.1.2"
+embassy-sync = "0.8.0"
+embassy-time = "0.5.1"
+embassy-time-driver = { features = ["tick-hz-32"], version = "0.2.2" }
+embassy-time-queue-utils = "0.3.1"
+heapless = "0.9.2"
+linkme = "0.3.36"
+open-enum = "0.5.2"
+pastey = "0.2.2"
+portable-atomic = "1"
+proc-macro2 = "1"
+quote = "1"
+syn = { features = ["full"], version = "2" }
+tock-registers = { git = "https://github.com/tock/tock.git", rev = "release-2.2" }
+zerocopy = "0.8.48"
+
+[workspace.lints.rust]
+future_incompatible = { level = "deny", priority = -1 }
+legacy_derive_helpers = "allow"                         # need for ddi_mbor_derive
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+# Code that needs unsafe should opt-in via a module-scoped allow.
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+await_holding_lock = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+filter_map_next = "warn"
+fn_params_excessive_bools = "warn"
+implicit_clone = "warn"
+imprecise_flops = "warn"
+inefficient_to_string = "warn"
+linkedlist = "warn"
+lossy_float_literal = "warn"
+macro_use_imports = "warn"
+needless_continue = "warn"
+option_option = "warn"
+ref_option_ref = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+suboptimal_flops = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_box_returns = "warn"
+unwrap_used = "warn"
+
+# Possible future additions:
+#
+# useful, but _very_ tedious to fix
+#   doc_markdown = "warn"
+# will be useful to weed-out stubbed codepaths in production
+#   todo = "warn"
+#   unimplemented = "warn"
+# useful, but will require a follow-up PR to enable
+#   map_err_ignore = "warn"
+# useful, but requires a follow-up PR to enable
+#   unused_self = "warn"
+
+# Nested if / else if statements can be easier to read than an equivalent
+# flattened statements.
+collapsible_else_if = "allow"
+collapsible_if = "allow"
+# There are types where it makes sense to define the length, but it can never
+# be empty. This lint is reasonable for container-like data-structures, but
+# makes less sense for hardware-backed data structures.
+len_without_is_empty = "allow"
+# While it's generally a good idea to derive / implement `Default` when
+# appropriate, there are many types in the HvLite codebase where a type has a
+# `new()` method, but no sensible "Default".
+new_without_default = "allow"
+# This is the #1 most commonly ignored lint for a reason (at least according
+# to [this famous issue](https://github.com/rust-lang/rust-clippy/issues/5418)
+# on the clippy GitHub repo)! There are plenty of perfectly reasonable
+# functions that require a large number of non-optional arguments,
+# particularly when working with low-level hardware APIs.
+too_many_arguments = "allow"
+# This is a heuristic based lint that isn't always appropriate. While it's
+# often a good to decompose complex types into more digestible chunks, there
+# are many cases where a one-off complex type is required, and suppressing
+# this lint will simply add line-noise.
+type_complexity = "allow"
+# This lint attempts to simplify usages of if let usage in a loop where only
+# one variant type is used. While somewhat useful, its suggestions can lead to
+# throwing away potentially useful error information in non-obvious ways.
+manual_flatten = "allow"
+# This lint warns about comparing boolean values in an `assert_eq!` statement when `assert!`
+# could be used instead. While shorter, the explicit comparison can be more obvious to read
+# in certain cases than unary operators with `assert!`.
+bool_assert_comparison = "allow"
+# This lint suggests collapsing Box::new(Foo::default()) into Box::default(). We often
+# prefer to specify types completely for local code clarity's sake.
+box_default = "allow"
+# This lint is purely style, and we are ok with inlined and uninlined format args.
+uninlined_format_args = "allow"
+# Needed for bitflags 1.x compatibility. Remove when we update to bitflags 2.x
+bad_bit_mask = "allow"
+# Besides the misleading name (this lint also triggers on arrays), we believe that it
+# doesn't provide value. If a developer gets their type wrong they'll notice and fix it.
+# Sometimes you do want a list of a single range.
+single_range_in_vec_init = "allow"
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = true
+opt-level = 3
+panic = "abort"
+
+[profile.dev]
+codegen-units = 1
+debug = true
+lto = true
+opt-level = 3
+panic = "abort"

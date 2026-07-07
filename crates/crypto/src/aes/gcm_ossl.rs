@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use openssl::cipher::*;
-use openssl::cipher_ctx::*;
+use openssl::cipher::Cipher;
+use openssl::cipher_ctx::CipherCtx;
 
 use super::*;
 
@@ -71,13 +71,19 @@ impl OsslAesGcmAlgo {
         &self.tag
     }
 
-    fn cipher(&self, key: &AesKey) -> Result<&'static CipherRef, CryptoError> {
-        match key.size() {
-            16 => Ok(Cipher::aes_128_gcm()),
-            24 => Ok(Cipher::aes_192_gcm()),
-            32 => Ok(Cipher::aes_256_gcm()),
-            _ => Err(CryptoError::GcmInvalidKeySize),
-        }
+    fn cipher(&self, key: &AesKey) -> Result<Cipher, CryptoError> {
+        let name = match key.size() {
+            16 => "AES-128-GCM",
+            24 => "AES-192-GCM",
+            32 => "AES-256-GCM",
+            _ => return Err(CryptoError::GcmInvalidKeySize),
+        };
+        // The key size is already validated above, so a `Cipher::fetch` failure
+        // is a cipher-availability/config problem (e.g. the private libctx's
+        // default provider does not offer this AES-GCM variant), not a key-size
+        // error. Map it to `GcmConfigError` so the diagnostic isn't misleading.
+        Cipher::fetch(Some(crate::libctx::crypto_libctx()), name, None)
+            .map_err(|_| CryptoError::GcmConfigError)
     }
 }
 
@@ -115,7 +121,7 @@ impl EncryptOp for AesGcmAlgo {
         let cipher = self.cipher(key)?;
 
         let mut ctx = CipherCtx::new().map_err(|_| CryptoError::GcmEncryptionFailed)?;
-        ctx.encrypt_init(Some(cipher), Some(key.bytes()), Some(&self.iv))
+        ctx.encrypt_init(Some(&cipher), Some(key.bytes()), Some(&self.iv))
             .map_err(|_| CryptoError::GcmEncryptionFailed)?;
         if let Some(aad) = &self.aad {
             ctx.cipher_update(aad, None)
@@ -166,7 +172,7 @@ impl<'a> EncryptStreamingOp<'a> for OsslAesGcmAlgo {
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let cipher = self.cipher(&key)?;
         let mut ctx = CipherCtx::new().map_err(|_| CryptoError::GcmEncryptionFailed)?;
-        ctx.encrypt_init(Some(cipher), Some(key.bytes()), Some(&self.iv))
+        ctx.encrypt_init(Some(&cipher), Some(key.bytes()), Some(&self.iv))
             .map_err(|_| CryptoError::GcmEncryptionFailed)?;
 
         // Process AAD if provided
@@ -366,7 +372,7 @@ impl DecryptOp for AesGcmAlgo {
         let cipher = self.cipher(key)?;
 
         let mut ctx = CipherCtx::new().map_err(|_| CryptoError::GcmDecryptionFailed)?;
-        ctx.decrypt_init(Some(cipher), Some(key.bytes()), Some(&self.iv))
+        ctx.decrypt_init(Some(&cipher), Some(key.bytes()), Some(&self.iv))
             .map_err(|_| CryptoError::GcmDecryptionFailed)?;
 
         // Set the authentication tag for verification (must be done before AAD)
@@ -422,7 +428,7 @@ impl<'a> DecryptStreamingOp<'a> for OsslAesGcmAlgo {
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, CryptoError> {
         let cipher = self.cipher(&key)?;
         let mut ctx = CipherCtx::new().map_err(|_| CryptoError::GcmDecryptionFailed)?;
-        ctx.decrypt_init(Some(cipher), Some(key.bytes()), Some(&self.iv))
+        ctx.decrypt_init(Some(&cipher), Some(key.bytes()), Some(&self.iv))
             .map_err(|_| CryptoError::GcmDecryptionFailed)?;
 
         // Set the authentication tag for verification (must be done before AAD)

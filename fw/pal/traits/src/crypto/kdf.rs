@@ -108,7 +108,7 @@ pub trait HsmKdf {
     ///
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `algo` — underlying hash algorithm (e.g. SHA-256).
-    /// - `salt` — optional salt; `&[]` selects the RFC 5869 default
+    /// - `salt` — optional salt; `None` selects the RFC 5869 default
     ///   (a string of zero bytes of `algo.digest_len()`).
     /// - `ikm` — input keying material.
     /// - `prk` — output PRK; must be at least `algo.digest_len()`
@@ -126,7 +126,7 @@ pub trait HsmKdf {
         &self,
         io: &impl HsmIo,
         algo: HsmHashAlgo,
-        salt: &DmaBuf,
+        salt: Option<&DmaBuf>,
         ikm: &DmaBuf,
         prk: &mut DmaBuf,
     ) -> HsmResult<()>;
@@ -146,7 +146,7 @@ pub trait HsmKdf {
     /// - `algo` — underlying hash algorithm.
     /// - `prk` — PRK from
     ///   [`hkdf_extract`](Self::hkdf_extract).
-    /// - `info` — context / application info; `&[]` to omit.
+    /// - `info` — context / application info; `None` to omit.
     /// - `output` — OKM destination; `output.len()` must satisfy
     ///   `output.len() <= 255 * algo.digest_len()`.
     ///
@@ -163,7 +163,7 @@ pub trait HsmKdf {
         io: &impl HsmIo,
         algo: HsmHashAlgo,
         prk: &DmaBuf,
-        info: &DmaBuf,
+        info: Option<&DmaBuf>,
         output: &mut DmaBuf,
     ) -> HsmResult<()>;
 
@@ -177,8 +177,8 @@ pub trait HsmKdf {
     /// - `io` — caller's I/O context (per-IO scope).
     /// - `algo` — HMAC underlying hash (e.g. SHA-384).
     /// - `key` — key-derivation key (KDK).
-    /// - `label` — purpose string; `&[]` to omit.
-    /// - `context` — binding context; `&[]` to omit.
+    /// - `label` — purpose string; `None` to omit.
+    /// - `context` — binding context; `None` to omit.
     /// - `output` — derived-key destination; `output.len()` bytes
     ///   are produced.
     ///
@@ -194,8 +194,8 @@ pub trait HsmKdf {
         io: &impl HsmIo,
         algo: HsmHashAlgo,
         key: &DmaBuf,
-        label: &DmaBuf,
-        context: &DmaBuf,
+        label: Option<&DmaBuf>,
+        context: Option<&DmaBuf>,
         output: &mut DmaBuf,
     ) -> HsmResult<()>;
 

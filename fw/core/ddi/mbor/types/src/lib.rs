@@ -331,7 +331,7 @@ pub struct DdiRespExt {}
 #[ddi(map)]
 pub struct DdiPublicKey<'a> {
     #[ddi(id = 1, max_len = 768)]
-    pub raw: &'a DmaBuf,
+    pub raw: &'a mut DmaBuf,
     #[ddi(id = 2)]
     pub key_kind: DdiKeyType,
 }
@@ -345,7 +345,7 @@ pub struct DdiKeyProperties<'a> {
     #[ddi(id = 2)]
     pub key_availability: DdiKeyAvailability,
     #[ddi(id = 3, max_len = 128)]
-    pub key_label: &'a DmaBuf,
+    pub key_label: &'a mut DmaBuf,
 }
 
 /// Target key metadata (16-byte bitflag blob).
@@ -356,6 +356,117 @@ pub struct DdiTargetKeyMetadata {
     pub blob: [u8; 16],
 }
 
+/// Bit accessors for the wire-format target key metadata blob.
+///
+/// These bit positions are the wire contract between host and
+/// firmware — they MUST match the host-side definitions in
+/// `ddi/mbor/types/src/metadata.rs` exactly.  Both crates decode the
+/// same 16-byte payload sent over the wire from the host, so any
+/// drift will silently corrupt the firmware's interpretation of a
+/// key's requested permissions.
+///
+/// The full set of flags is mirrored here (including `MODIFIABLE`
+/// and `WRAP`) even though our handlers do not yet read every one,
+/// so the constants stay in lockstep with the host.  The
+/// `metadata_bit_positions_match_host_wire_contract` test below
+/// pins the positions against a known blob pattern.
+impl DdiTargetKeyMetadata {
+    const BIT_FLAG_SESSION: usize = 0;
+    const BIT_FLAG_MODIFIABLE: usize = 1;
+    const BIT_FLAG_ENCRYPT: usize = 2;
+    const BIT_FLAG_DECRYPT: usize = 3;
+    const BIT_FLAG_SIGN: usize = 4;
+    const BIT_FLAG_VERIFY: usize = 5;
+    const BIT_FLAG_DERIVE: usize = 6;
+    const BIT_FLAG_WRAP: usize = 7;
+    const BIT_FLAG_UNWRAP: usize = 8;
+
+    #[inline]
+    fn get_bit(&self, bit: usize) -> bool {
+        let index = bit / u8::BITS as usize;
+        let bit = bit % u8::BITS as usize;
+        (self.blob[index] & (1 << bit)) != 0
+    }
+
+    /// Flag indicating the key is a session-scoped key.
+    pub fn session(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_SESSION)
+    }
+
+    /// Flag indicating the key is modifiable.
+    pub fn modifiable(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_MODIFIABLE)
+    }
+
+    /// Flag indicating the key can be used for encryption.
+    pub fn encrypt(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_ENCRYPT)
+    }
+
+    /// Flag indicating the key can be used for decryption.
+    pub fn decrypt(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_DECRYPT)
+    }
+
+    /// Flag indicating the key can be used for signing.
+    pub fn sign(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_SIGN)
+    }
+
+    /// Flag indicating the key can be used for verification.
+    pub fn verify(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_VERIFY)
+    }
+
+    /// Flag indicating the key can be used for deriving other keys.
+    pub fn derive(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_DERIVE)
+    }
+
+    /// Flag indicating the key can be used for wrapping.
+    pub fn wrap(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_WRAP)
+    }
+
+    /// Flag indicating the key can be used for unwrapping.
+    pub fn unwrap(&self) -> bool {
+        self.get_bit(Self::BIT_FLAG_UNWRAP)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the wire bit positions of every defined flag.
+    ///
+    /// The blob byte pattern below corresponds to a metadata payload
+    /// with bits 0, 2, 4, 6, 8 set (alternating in byte 0 — `0x55`
+    /// — and bit 0 of byte 1 — `0x01`).  Any reordering / shifting
+    /// of the `BIT_FLAG_*` constants on the firmware side will fail
+    /// this test.  The asserted positions must match the host-side
+    /// `BIT_FLAG_*` definitions in `ddi/mbor/types/src/metadata.rs`
+    /// (lines 19-27 at time of writing) — those constants are the
+    /// wire contract this test pins against.
+    #[test]
+    fn metadata_bit_positions_match_host_wire_contract() {
+        let m = DdiTargetKeyMetadata {
+            blob: [0x55, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        // Byte 0 — `0x55` = bits 0, 2, 4, 6
+        assert!(m.session(), "BIT_FLAG_SESSION = 0");
+        assert!(!m.modifiable(), "BIT_FLAG_MODIFIABLE = 1");
+        assert!(m.encrypt(), "BIT_FLAG_ENCRYPT = 2");
+        assert!(!m.decrypt(), "BIT_FLAG_DECRYPT = 3");
+        assert!(m.sign(), "BIT_FLAG_SIGN = 4");
+        assert!(!m.verify(), "BIT_FLAG_VERIFY = 5");
+        assert!(m.derive(), "BIT_FLAG_DERIVE = 6");
+        assert!(!m.wrap(), "BIT_FLAG_WRAP = 7");
+        // Byte 1 — `0x01` = bit 8
+        assert!(m.unwrap(), "BIT_FLAG_UNWRAP = 8");
+    }
+}
+
 /// Target key properties for key creation/unwrap.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
@@ -363,7 +474,7 @@ pub struct DdiTargetKeyProperties<'a> {
     #[ddi(id = 1)]
     pub key_metadata: DdiTargetKeyMetadata,
     #[ddi(id = 2, max_len = 128)]
-    pub key_label: &'a DmaBuf,
+    pub key_label: &'a mut DmaBuf,
 }
 
 // ── ddi_op_req_resp! macro ─────────────────────────────────────────────

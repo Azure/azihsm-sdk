@@ -97,6 +97,12 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::_HmacSha384 => 48,
         HsmVaultKeyKind::_HmacSha512 => 64,
         HsmVaultKeyKind::MaskingKey => 80,
+        HsmVaultKeyKind::PartitionTrustAnchor => 48,
+        HsmVaultKeyKind::PartitionUniqueMachineSecret => 48,
+        // SessionEx is length-discriminated by session type
+        // (PlainText=120, Authenticated=216); reported as variable
+        // length, same handling as VarLenHmac*.
+        HsmVaultKeyKind::SessionEx => return None,
         // Variable-length HMAC — size depends on actual key.
         HsmVaultKeyKind::VarLenHmacSha256
         | HsmVaultKeyKind::VarLenHmacSha384
@@ -121,6 +127,7 @@ fn fw_storage_cost(kind: HsmVaultKeyKind, actual_len: usize) -> Option<usize> {
             HsmVaultKeyKind::VarLenHmacSha256
                 | HsmVaultKeyKind::VarLenHmacSha384
                 | HsmVaultKeyKind::VarLenHmacSha512
+                | HsmVaultKeyKind::SessionEx
         ) =>
         {
             actual_len
@@ -135,7 +142,7 @@ fn fw_storage_cost(kind: HsmVaultKeyKind, actual_len: usize) -> Option<usize> {
 // Data structures
 // ---------------------------------------------------------------------------
 
-/// A single stored key with its metadata.
+/// A single stored key with its attributes.
 struct VaultEntry {
     /// Raw key material (may differ in size from firmware representation).
     key: Vec<u8>,
@@ -147,8 +154,6 @@ struct VaultEntry {
     /// for session-scoped keys where `phys` is the vault key ID of the
     /// session blob.
     session_key_id: Option<HsmKeyId>,
-    /// Arbitrary per-key metadata blob.
-    meta: Vec<u8>,
     /// Firmware-equivalent storage cost (for capacity tracking).
     cost: usize,
 }
@@ -201,7 +206,6 @@ impl KeyVault {
         kind: HsmVaultKeyKind,
         session_key_id: Option<HsmKeyId>,
         attrs: HsmVaultKeyAttrs,
-        meta: &[u8],
     ) -> HsmResult<HsmKeyId> {
         let cost = fw_storage_cost(kind, key.len()).ok_or(HsmError::InvalidKeyType)?;
 
@@ -218,7 +222,6 @@ impl KeyVault {
                 kind,
                 attrs,
                 session_key_id,
-                meta: meta.to_vec(),
                 cost,
             });
             table.used_bytes += cost;
@@ -296,11 +299,6 @@ impl KeyVault {
         Ok(self.get_entry(key_id)?.attrs)
     }
 
-    /// Query the key metadata.
-    pub fn key_meta(&self, key_id: HsmKeyId) -> HsmResult<&[u8]> {
-        Ok(&self.get_entry(key_id)?.meta)
-    }
-
     /// Number of tables in this vault.
     #[cfg(test)]
     #[allow(dead_code)]
@@ -348,13 +346,7 @@ mod tests {
         let mut vault = KeyVault::new(1);
         let key_data = [0xAA; 32];
         let kid = vault
-            .create(
-                &key_data,
-                HsmVaultKeyKind::Aes256,
-                None,
-                aes256_attrs(),
-                &[],
-            )
+            .create(&key_data, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         assert_eq!(vault.key(kid).unwrap(), &key_data);
     }
@@ -364,10 +356,10 @@ mod tests {
         let mut vault = KeyVault::new(2);
         let key = [0u8; 32];
         let k0 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         let k1 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         // Both in table 0, entries 0 and 1.
         assert_eq!(u16::from(k0), 0x0000);
@@ -379,12 +371,12 @@ mod tests {
         let mut vault = KeyVault::new(1);
         let key = [0u8; 32];
         let kid = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         vault.delete(kid).unwrap();
         // Slot 0 is free again.
         let kid2 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         assert_eq!(u16::from(kid2), 0x0000);
     }
@@ -404,21 +396,21 @@ mod tests {
 
         // 3 session-scoped keys.
         let s0 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs())
             .unwrap();
         let s1 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs())
             .unwrap();
         let s2 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs())
             .unwrap();
 
         // 2 app-scoped keys.
         let a0 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         let a1 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
 
         vault.delete_by_session_key(HsmKeyId::from(5u16)).unwrap();
@@ -448,7 +440,7 @@ mod tests {
         let expected = BLOB_MEMORY_SIZE / fw_storage_cost(HsmVaultKeyKind::Aes256, 32).unwrap();
         let mut count = 0;
         loop {
-            match vault.create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[]) {
+            match vault.create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs()) {
                 Ok(_) => count += 1,
                 Err(HsmError::NotEnoughSpace) => break,
                 Err(e) => panic!("unexpected error: {e:?}"),
@@ -465,7 +457,7 @@ mod tests {
         let mut vault3 = KeyVault::new(3);
         let mut count = 0;
         while vault3
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .is_ok()
         {
             count += 1;
@@ -483,7 +475,7 @@ mod tests {
         let mut count = 0;
         let attrs = HsmVaultKeyAttrs::new().with_sign(true);
         loop {
-            match vault.create(&key, HsmVaultKeyKind::Rsa4kPrivateCrt, None, attrs, &[]) {
+            match vault.create(&key, HsmVaultKeyKind::Rsa4kPrivateCrt, None, attrs) {
                 Ok(_) => count += 1,
                 Err(HsmError::NotEnoughSpace) => break,
                 Err(e) => panic!("unexpected error: {e:?}"),
@@ -501,7 +493,7 @@ mod tests {
         let attrs = HsmVaultKeyAttrs::new().with_encrypt(true);
         let mut count = 0;
         while vault
-            .create(&key, HsmVaultKeyKind::Aes128, None, attrs, &[])
+            .create(&key, HsmVaultKeyKind::Aes128, None, attrs)
             .is_ok()
         {
             count += 1;
@@ -516,11 +508,10 @@ mod tests {
         let mut vault = KeyVault::new(1);
         let err = vault
             .create(
-                &[],
+                &[0u8; 16],
                 HsmVaultKeyKind::Free,
                 None,
                 HsmVaultKeyAttrs::new(),
-                &[],
             )
             .unwrap_err();
         assert_eq!(err, HsmError::InvalidKeyType);
@@ -535,7 +526,6 @@ mod tests {
                 HsmVaultKeyKind::Ecc384Private,
                 None,
                 HsmVaultKeyAttrs::new().with_sign(true),
-                &[],
             )
             .unwrap();
         assert_eq!(vault.key_kind(kid).unwrap(), HsmVaultKeyKind::Ecc384Private);
@@ -549,25 +539,9 @@ mod tests {
             .with_local(true)
             .with_never_extractable(true);
         let kid = vault
-            .create(&[0; 48], HsmVaultKeyKind::Ecc384Private, None, attrs, &[])
+            .create(&[0; 48], HsmVaultKeyKind::Ecc384Private, None, attrs)
             .unwrap();
         assert_eq!(vault.key_attrs(kid).unwrap(), attrs);
-    }
-
-    #[test]
-    fn key_meta_query() {
-        let mut vault = KeyVault::new(1);
-        let meta = b"my-key-label";
-        let kid = vault
-            .create(
-                &[0; 32],
-                HsmVaultKeyKind::Aes256,
-                None,
-                aes256_attrs(),
-                meta,
-            )
-            .unwrap();
-        assert_eq!(vault.key_meta(kid).unwrap(), meta);
     }
 
     #[test]
@@ -604,6 +578,8 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha384, 48),
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
+            (HsmVaultKeyKind::PartitionTrustAnchor, 48),
+            (HsmVaultKeyKind::PartitionUniqueMachineSecret, 48),
         ];
         for &(kind, expected) in cases {
             assert_eq!(
@@ -627,10 +603,10 @@ mod tests {
         let mut vault = KeyVault::new(1);
         let key = [0u8; 32];
         let k0 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         let k1 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap();
         vault.clear();
         assert!(vault.key(k0).is_err());
@@ -641,7 +617,7 @@ mod tests {
     fn empty_vault_no_tables() {
         let mut vault = KeyVault::new(0);
         let err = vault
-            .create(&[0; 32], HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
+            .create(&[0; 32], HsmVaultKeyKind::Aes256, None, aes256_attrs())
             .unwrap_err();
         assert_eq!(err, HsmError::NotEnoughSpace);
     }

@@ -642,6 +642,8 @@ static azihsm_status sign_with_pota_key(
 {
     azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const unsigned char *der_ptr = priv_key_der;
+    OSSL_LIB_CTX *pota_libctx = NULL;
+    OSSL_PROVIDER *pota_default = NULL;
     EVP_PKEY *pota_pkey = NULL;
     EVP_MD_CTX *md_ctx = NULL;
     unsigned char *der_sig_buf = NULL;
@@ -653,8 +655,26 @@ static azihsm_status sign_with_pota_key(
     sig_out->ptr = NULL;
     sig_out->len = 0;
 
+    /* The POTA key is a software EC key.  Run its decode + sign in a private
+     * library context that has only the default provider, so the operation
+     * can never be routed to the azihsm provider (which the application also
+     * loads in the default libctx, and whose keymgmt carries no private
+     * component — causing intermittent "not a private key" failures). */
+    pota_libctx = OSSL_LIB_CTX_new();
+    if (pota_libctx == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        goto cleanup;
+    }
+    pota_default = OSSL_PROVIDER_load(pota_libctx, "default");
+    if (pota_default == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        goto cleanup;
+    }
+
     /* Decode the POTA private key from its DER representation */
-    pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)priv_key_der_len);
+    pota_pkey = d2i_AutoPrivateKey_ex(NULL, &der_ptr, (long)priv_key_der_len, pota_libctx, NULL);
     if (pota_pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
@@ -668,7 +688,7 @@ static azihsm_status sign_with_pota_key(
         goto cleanup;
     }
 
-    if (EVP_DigestSignInit(md_ctx, NULL, EVP_sha384(), NULL, pota_pkey) != 1)
+    if (EVP_DigestSignInit_ex(md_ctx, NULL, "SHA384", pota_libctx, NULL, pota_pkey, NULL) != 1)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         goto cleanup;
@@ -746,6 +766,12 @@ cleanup:
     OPENSSL_clear_free(der_sig_buf, der_sig_len);
     EVP_MD_CTX_free(md_ctx);
     EVP_PKEY_free(pota_pkey);
+    /* OSSL_PROVIDER_unload is not NULL-safe; OSSL_LIB_CTX_free is. */
+    if (pota_default != NULL)
+    {
+        OSSL_PROVIDER_unload(pota_default);
+    }
+    OSSL_LIB_CTX_free(pota_libctx);
     return status;
 }
 
@@ -1218,9 +1244,93 @@ cleanup:
 
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session)
 {
+    if (session != 0)
+    {
+        azihsm_sess_close(session);
+    }
+    if (device != 0)
+    {
+        azihsm_part_close(device);
+    }
+}
 
-    azihsm_sess_close(session);
-    azihsm_part_close(device);
+/* The context this thread is currently opening a session for, so a libcrypto
+ * fetch the open triggers re-enters that same context and fails fast instead of
+ * recursing into its non-recursive lock.  Other contexts are unaffected. */
+static __thread AZIHSM_OSSL_PROV_CTX *azihsm_opening_ctx = NULL;
+
+azihsm_status azihsm_ensure_session(AZIHSM_OSSL_PROV_CTX *provctx)
+{
+    azihsm_status status;
+
+    if (provctx == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* Re-entrant call on the context being opened: must not touch its lock. */
+    if (azihsm_opening_ctx == provctx)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "azihsm_ensure_session: re-entrant call during HSM session open"
+        );
+        return AZIHSM_STATUS_INVALID_CONTEXT_STATE;
+    }
+
+    /* Fast path: session already open. */
+    if (!CRYPTO_THREAD_read_lock(provctx->session_lock))
+    {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+    CRYPTO_THREAD_unlock(provctx->session_lock);
+
+    if (!CRYPTO_THREAD_write_lock(provctx->session_lock))
+    {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "failed to acquire session lock");
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Another thread opened the session while we waited for the lock. */
+    if (provctx->session != 0)
+    {
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    AZIHSM_OSSL_PROV_CTX *prev_opening = azihsm_opening_ctx;
+    azihsm_opening_ctx = provctx;
+
+    /* Prime the default libctx's DRBG: the SDK open below draws randomness
+     * via bare RAND_bytes, whose lazy DRBG instantiation otherwise fails
+     * deep in the open on some hosts (e.g. nginx's config thread). */
+    unsigned char primer[1];
+    if (RAND_bytes(primer, sizeof(primer)) != 1)
+    {
+        azihsm_opening_ctx = prev_opening;
+        CRYPTO_THREAD_unlock(provctx->session_lock);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    OPENSSL_cleanse(primer, sizeof(primer));
+
+    status = azihsm_open_device_and_session(
+        &provctx->config,
+        &provctx->device,
+        &provctx->session,
+        &provctx->resiliency_ctx
+    );
+    azihsm_opening_ctx = prev_opening;
+
+    CRYPTO_THREAD_unlock(provctx->session_lock);
+
+    return status;
 }
 
 /*

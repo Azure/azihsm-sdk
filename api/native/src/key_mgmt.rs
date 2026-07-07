@@ -212,6 +212,11 @@ pub unsafe extern "C" fn azihsm_key_derive(
                 hkdf_derive_key(&session, algo, base_key, derived_key_props)?
             }
 
+            // KBKDF (SP 800-108 Counter Mode) derivation
+            AzihsmAlgoId::KbkdfCounterDerive => {
+                kbkdf_counter_derive_key(&session, algo, base_key, derived_key_props)?
+            }
+
             _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 

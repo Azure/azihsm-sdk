@@ -51,6 +51,7 @@ static const OSSL_ALGORITHM azihsm_ossl_digest[] = {
 extern const OSSL_DISPATCH azihsm_ossl_aes128cbc_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes192cbc_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes256cbc_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_aes256gcm_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes128xts_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_aes256xts_functions[];
 
@@ -58,10 +59,20 @@ static const OSSL_ALGORITHM azihsm_ossl_cipher[] = {
     ALG(AZIHSM_OSSL_ALG_NAME_AES_128_CBC, azihsm_ossl_aes128cbc_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_192_CBC, azihsm_ossl_aes192cbc_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_256_CBC, azihsm_ossl_aes256cbc_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_AES_256_GCM, azihsm_ossl_aes256gcm_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_128_XTS, azihsm_ossl_aes128xts_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_AES_256_XTS, azihsm_ossl_aes256xts_functions),
     ALG_TABLE_END
 };
+
+// Symmetric Key Management (SKEYMGMT, OpenSSL 3.5+)
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+extern const OSSL_DISPATCH azihsm_ossl_aes_skeymgmt_functions[];
+
+static const OSSL_ALGORITHM azihsm_ossl_skeymgmt[] = { ALG(AZIHSM_OSSL_ALG_NAME_AES_SKEYMGMT,
+                                                           azihsm_ossl_aes_skeymgmt_functions),
+                                                       ALG_TABLE_END };
+#endif
 
 // MAC
 extern const OSSL_DISPATCH azihsm_ossl_hmac_functions[];
@@ -73,12 +84,13 @@ static const OSSL_ALGORITHM azihsm_ossl_mac[] = {
 
 // KDF
 extern const OSSL_DISPATCH azihsm_ossl_hkdf_functions[];
-// KBKDF not yet implemented - empty dispatch table would cause OpenSSL to reject all KDFs
-// extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
 
-static const OSSL_ALGORITHM azihsm_ossl_kdf[] = { ALG(AZIHSM_OSSL_ALG_NAME_HKDF,
-                                                      azihsm_ossl_hkdf_functions),
-                                                  ALG_TABLE_END };
+static const OSSL_ALGORITHM azihsm_ossl_kdf[] = {
+    ALG(AZIHSM_OSSL_ALG_NAME_HKDF, azihsm_ossl_hkdf_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_KBKDF, azihsm_ossl_kbkdf_functions),
+    ALG_TABLE_END
+};
 
 // Key Management
 extern const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[];
@@ -240,6 +252,7 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         provctx->unwrapping_key.priv = 0;
     }
     CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
+    CRYPTO_THREAD_lock_free(provctx->session_lock);
 
     /* Destroy resiliency context before closing the device */
     if (provctx->resiliency_ctx != NULL)
@@ -297,7 +310,21 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
     int *no_store
 )
 {
-    // Dispatch tables do not change and may be cached
+    /* query_operation is a pure discovery callback.  OpenSSL invokes it from
+     * inside libcrypto initialisation paths — notably EVP_RAND_instantiate,
+     * which fetches its AES cipher provider while the global DRBG is being
+     * brought up.  Any work performed here that calls back into libcrypto
+     * (for example opening the HSM session, which in turn instantiates the
+     * simulator backend and asks libcrypto for random bytes / EC keys) would
+     * re-enter the very initialisation path that is on the stack, deadlock
+     * the OpenSSL Once cell guarding DRBG init, and ultimately poison the
+     * lazy-initialised dispatcher in the mock DDI.  See the integration test
+     * `nginx_tests` and the design note in azihsm_ossl_hsm.c
+     * (azihsm_ensure_session) for the full backtrace.
+     *
+     * The dispatch tables are static, so we always return them
+     * unconditionally and defer azihsm_ensure_session() to each algorithm's
+     * first real entry point (newctx / open / init). */
     *no_store = 0;
     switch (operation_id)
     {
@@ -305,6 +332,10 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_digest;
     case OSSL_OP_CIPHER:
         return azihsm_ossl_cipher;
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+    case OSSL_OP_SKEYMGMT:
+        return azihsm_ossl_skeymgmt;
+#endif
     case OSSL_OP_MAC:
         return azihsm_ossl_mac;
     case OSSL_OP_KDF:
@@ -321,9 +352,9 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_encoders;
     case OSSL_OP_STORE:
         return azihsm_ossl_store;
+    default:
+        return NULL;
     }
-
-    return NULL;
 }
 
 static OSSL_STATUS azihsm_ossl_get_capabilities(
@@ -731,7 +762,6 @@ OSSL_STATUS OSSL_provider_init(
 )
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
-    azihsm_status status;
     const OSSL_DISPATCH *in_iter;
     OSSL_FUNC_core_get_params_fn *get_params_fn = NULL;
 
@@ -747,26 +777,27 @@ OSSL_STATUS OSSL_provider_init(
     if (ctx->libctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ctx->default_provider = ensure_default_provider();
     if (ctx->default_provider == NULL)
     {
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
+    }
+
+    ctx->session_lock = CRYPTO_THREAD_lock_new();
+    if (ctx->session_lock == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        goto cleanup;
     }
 
     /* Find get_params_fn from the core dispatch table for config parsing */
@@ -782,11 +813,7 @@ OSSL_STATUS OSSL_provider_init(
     /* Parse configuration from openssl.cnf and environment variables */
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Validate API revision is within supported range */
@@ -803,11 +830,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MAJOR,
             AZIHSM_API_REVISION_MAX_MINOR
         );
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Check if resiliency is enabled via environment variable */
@@ -829,11 +852,7 @@ OSSL_STATUS OSSL_provider_init(
                 "unsafe resiliency storage dir '%s'",
                 dir
             );
-            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-            OSSL_PROVIDER_unload(ctx->default_provider);
-            OSSL_LIB_CTX_free(ctx->libctx);
-            OPENSSL_free(ctx);
-            return OSSL_FAILURE;
+            goto cleanup;
         }
         int ret = snprintf(
             ctx->config.resiliency_storage_dir,
@@ -848,36 +867,27 @@ OSSL_STATUS OSSL_provider_init(
                 PROV_R_INVALID_CONFIG_DATA,
                 "Resiliency storage dir path too long"
             );
-            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-            OSSL_PROVIDER_unload(ctx->default_provider);
-            OSSL_LIB_CTX_free(ctx->libctx);
-            OPENSSL_free(ctx);
-            return OSSL_FAILURE;
+            goto cleanup;
         }
     }
 
-    status = azihsm_open_device_and_session(
-        &ctx->config,
-        &ctx->device,
-        &ctx->session,
-        &ctx->resiliency_ctx
-    );
-
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
-
-        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-        OSSL_PROVIDER_unload(ctx->default_provider);
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
-    }
+    /* Open is deferred to azihsm_ensure_session. */
 
     *provctx = ctx;
     *out = azihsm_ossl_base_dispatch;
 
     return OSSL_SUCCESS;
+
+cleanup:
+    CRYPTO_THREAD_lock_free(ctx->session_lock);
+    CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+    if (ctx->default_provider != NULL)
+    {
+        OSSL_PROVIDER_unload(ctx->default_provider);
+    }
+    OSSL_LIB_CTX_free(ctx->libctx);
+    OPENSSL_free(ctx);
+    return OSSL_FAILURE;
 }
 
 #if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR == 0

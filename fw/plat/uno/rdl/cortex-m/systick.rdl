@@ -1,0 +1,72 @@
+// Copyright (c) Microsoft Corporation.
+//
+// SysTick — ARMv7-M System Timer
+//
+// Reference: DDI0403E §B3.3
+// Base address: 0xE000_E010 (PPB)
+
+reg csr_t {
+    name = "SysTick Control and Status Register";
+    desc = "Controls the SysTick timer and provides status.";
+
+    field {} ENABLE[0:0] = 0x0;
+    ENABLE->desc = "Counter enable. 0 = disabled, 1 = operating.";
+
+    field {} TICKINT[1:1] = 0x0;
+    TICKINT->desc = "Exception request enable. 1 = count to 0 pends SysTick exception.";
+
+    field {} CLKSOURCE[2:2] = 0x0;
+    CLKSOURCE->desc = "Clock source. 0 = external reference, 1 = processor clock.";
+
+    field {} COUNTFLAG[16:16] = 0x0;
+    COUNTFLAG->desc = "Returns 1 if counter has counted to 0 since last read. Cleared on read.";
+    COUNTFLAG->sw = r;
+};
+
+reg rvr_t {
+    name = "SysTick Reload Value Register";
+    desc = "Reload value for the counter on wrap to zero.";
+
+    field {} RELOAD[23:0] = 0x0;
+    RELOAD->desc = "Value to load into CVR when the counter reaches 0.
+                     If 0, counter is disabled on next wrap.";
+};
+
+reg cvr_t {
+    name = "SysTick Current Value Register";
+    desc = "Current counter value. Any write clears to zero and clears COUNTFLAG.";
+
+    field {} CURRENT[31:0] = 0x0;
+    CURRENT->desc = "Current counter value.";
+};
+
+reg calib_t {
+    name = "SysTick Calibration Value Register";
+    desc = "Calibration and implementation information.";
+
+    field {} TENMS[23:0] = 0x0;
+    TENMS->desc = "Reload value for 10ms tick. 0 = calibration info not known.";
+    TENMS->sw = r;
+
+    field {} SKEW[30:30] = 0x0;
+    SKEW->desc = "1 = TENMS value is inexact or not given.";
+    SKEW->sw = r;
+
+    field {} NOREF[31:31] = 0x0;
+    NOREF->desc = "1 = no external reference clock (CLKSOURCE forced to 1).";
+    NOREF->sw = r;
+};
+
+addrmap systick {
+    name = "SysTick";
+    desc = "ARMv7-M System Timer. Decrementing 24-bit counter with
+             auto-reload from RVR. Optionally generates SysTick exception.";
+
+    default hw = na;
+    default sw = rw;
+
+    csr_t   CSR   @ 0x00;
+    rvr_t   RVR   @ 0x04;
+    cvr_t   CVR   @ 0x08;
+    calib_t CALIB @ 0x0C;
+};

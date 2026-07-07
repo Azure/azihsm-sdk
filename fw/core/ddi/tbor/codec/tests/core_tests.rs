@@ -5,10 +5,21 @@
 //! edge cases, and error handling.
 
 #![allow(clippy::unwrap_used)]
+#![allow(unsafe_code)]
 
 use std::vec::Vec;
 
 use azihsm_fw_ddi_tbor::*;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
+
+// SAFETY: test-only branding. Host-side tests have no real DMA engine,
+// so the DMA-reachability contract is moot; the brand is needed purely
+// to satisfy the `RequestView::parse` / `ResponseView::parse` signatures.
+fn brand(b: &[u8]) -> &DmaBuf {
+    // SAFETY: see fn-level doc comment.
+    unsafe { DmaBuf::from_raw(b) }
+}
 
 // ── Spec Worked Example 1: Simple Request ──────────────────────────────
 
@@ -25,7 +36,7 @@ fn spec_example1_request_decode() {
         0x48, 0x65, 0x6C, 0x6C, 0x6F, // data: "Hello"
     ];
 
-    let view = RequestView::parse(wire).unwrap();
+    let view = RequestView::parse(brand(wire)).unwrap();
     assert_eq!(view.version(), 0x01);
     assert_eq!(view.opcode(), 0x0A);
     assert_eq!(view.toc_count(), 2);
@@ -55,7 +66,7 @@ fn spec_example1_request_encode() {
 
     assert_eq!(msg.len(), 17);
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.opcode(), 0x0A);
     assert_eq!(view.toc_count(), 2);
 
@@ -83,7 +94,7 @@ fn spec_example2_response_decode() {
         0x4F, 0x4B, 0x21, // data: "OK!"
     ];
 
-    let view = ResponseView::parse(wire).unwrap();
+    let view = ResponseView::parse(brand(wire)).unwrap();
     assert_eq!(view.version(), 0x01);
     assert!(view.fips_approved());
     assert_eq!(view.status(), 0);
@@ -107,7 +118,7 @@ fn spec_example2_response_encode() {
 
     assert_eq!(msg.len(), 15);
 
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     assert!(view.fips_approved());
     assert_eq!(view.status(), 0);
     match view.toc_entry(0) {
@@ -127,7 +138,7 @@ fn round_trip_session_id() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::SessionId(v) => assert_eq!(v, 0x1234),
         other => panic!("expected SessionId, got {:?}", other),
@@ -143,7 +154,7 @@ fn round_trip_key_id() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::KeyId(v) => assert_eq!(v, 0xABCD),
         other => panic!("expected KeyId, got {:?}", other),
@@ -159,7 +170,7 @@ fn round_trip_uint8() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Uint8(v) => assert_eq!(v, 0xFF),
         other => panic!("expected Uint8, got {:?}", other),
@@ -175,7 +186,7 @@ fn round_trip_uint16() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Uint16(v) => assert_eq!(v, 0xBEEF),
         other => panic!("expected Uint16, got {:?}", other),
@@ -191,7 +202,7 @@ fn round_trip_uint32() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Uint32(v) => assert_eq!(v, 0xDEADBEEF),
         other => panic!("expected Uint32, got {:?}", other),
@@ -207,7 +218,7 @@ fn round_trip_uint64() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Uint64(v) => assert_eq!(v, 0x0123456789ABCDEF),
         other => panic!("expected Uint64, got {:?}", other),
@@ -224,7 +235,7 @@ fn round_trip_sealed_key() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::SealedKey(data) => assert_eq!(data, key_data),
         other => panic!("expected SealedKey, got {:?}", other),
@@ -248,7 +259,7 @@ fn round_trip_multiple_entries() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 5);
 
     match view.toc_entry(0) {
@@ -286,7 +297,7 @@ fn round_trip_response_with_status_and_data() {
         .finish()
         .unwrap();
 
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     assert_eq!(view.status(), 0x00000005);
     assert!(!view.fips_approved());
     assert_eq!(view.toc_count(), 2);
@@ -313,7 +324,7 @@ fn decode_minimum_request() {
         .unwrap();
 
     assert_eq!(msg.len(), 8);
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 1);
     assert_eq!(view.data_size(), 0);
 }
@@ -328,7 +339,7 @@ fn decode_minimum_response() {
         .unwrap();
 
     assert_eq!(msg.len(), 12);
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 1);
     assert_eq!(view.data_size(), 0);
 }
@@ -342,7 +353,7 @@ fn empty_buffer_field() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Buffer(data) => assert_eq!(data.len(), 0),
         other => panic!("expected Buffer, got {:?}", other),
@@ -358,7 +369,7 @@ fn max_toc_entries() {
     }
     let msg = enc.finish().unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 32);
     for i in 0..32 {
         match view.toc_entry(i) {
@@ -373,15 +384,15 @@ fn max_toc_entries() {
 #[test]
 fn decode_buffer_too_short() {
     let wire = [0x01, 0x00];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(err, DecodeError::BufferTooShort { .. }));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborBufferTooShort);
 }
 
 #[test]
 fn decode_unsupported_version() {
     let wire = [0x02, 0x00, 0x00, 0x0A, 0x0C, 0x00, 0x00, 0x00];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(err, DecodeError::UnsupportedVersion(0x02)));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborUnsupportedVersion);
 }
 
 #[test]
@@ -390,8 +401,8 @@ fn decode_message_truncated() {
         0x01, 0x00, 0x01, 0x0A, // 2 TOC entries expected
         0x00, 0x00, 0x00, 0x2B, // only 1 present
     ];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(err, DecodeError::MessageTruncated { .. }));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborMessageTruncated);
 }
 
 #[test]
@@ -400,8 +411,8 @@ fn decode_offset_out_of_bounds() {
     let word = toc::build_toc_offset_len(TocType::Buffer as u8, 127, 0);
     let wb = word.to_be_bytes();
     let wire = [0x01, 0x00, 0x00, 0x0A, wb[0], wb[1], wb[2], wb[3]];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(err, DecodeError::OffsetLengthOutOfBounds { .. }));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborOffsetLengthOutOfBounds);
 }
 
 #[test]
@@ -413,16 +424,8 @@ fn decode_invalid_uint32_length() {
         0x01, 0x00, 0x00, 0x0A, wb[0], wb[1], wb[2], wb[3], 0x00, 0x00,
         0x00, // 3 bytes of data
     ];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidFixedLength {
-            entry_type: 5,
-            expected: 4,
-            actual: 3,
-            ..
-        }
-    ));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborInvalidFixedLength);
 }
 
 #[test]
@@ -433,7 +436,7 @@ fn encode_too_many_toc_entries() {
         enc = enc.uint8(0).unwrap();
     }
     let err = enc.uint8(0).unwrap_err();
-    assert!(matches!(err, EncodeError::TooManyTocEntries));
+    assert_eq!(err, HsmError::TborTooManyTocEntries);
 }
 
 #[test]
@@ -442,7 +445,7 @@ fn encode_buffer_too_small() {
     let err = RequestEncoder::new(&mut buf, 0x01, 0x0A)
         .buffer(b"this is way too long for the buffer")
         .unwrap_err();
-    assert!(matches!(err, EncodeError::BufferTooSmall { .. }));
+    assert_eq!(err, HsmError::TborBufferTooSmall);
 }
 
 // ── Unknown TOC types (forward compat) ─────────────────────────────────
@@ -458,7 +461,7 @@ fn decode_unknown_toc_type_preserved() {
         0x01, 0x00, 0x01, 0x0A, uw[0], uw[1], uw[2], uw[3], kw[0], kw[1], kw[2], kw[3],
     ];
 
-    let view = RequestView::parse(&wire).unwrap();
+    let view = RequestView::parse(brand(&wire)).unwrap();
     assert_eq!(view.toc_count(), 2);
 
     match view.toc_entry(0) {
@@ -486,7 +489,7 @@ fn decode_nonzero_reserved_bits_accepted() {
     wire[1] = 0xFF; // reserved byte
     wire[2] |= 0xE0; // upper 3 reserved bits of byte 2
 
-    let view = RequestView::parse(&wire).unwrap();
+    let view = RequestView::parse(brand(&wire)).unwrap();
     assert_eq!(view.toc_count(), 1);
     match view.toc_entry(0) {
         TocEntry::Uint8(v) => assert_eq!(v, 1),
@@ -509,7 +512,7 @@ fn toc_iter_yields_all_entries() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     let entries: Vec<_> = view.toc_iter().collect();
     assert_eq!(entries.len(), 3);
     assert!(matches!(entries[0], TocEntry::SessionId(1)));
@@ -530,7 +533,7 @@ fn display_request_view() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     let output = std::format!("{}", view);
     assert!(output.contains("Request v1"));
     assert!(output.contains("opcode=0x0A"));
@@ -547,7 +550,7 @@ fn display_response_view() {
         .finish()
         .unwrap();
 
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     let output = std::format!("{}", view);
     assert!(output.contains("Response v1"));
     assert!(output.contains("Success"));
@@ -564,7 +567,7 @@ fn hex_dump_format() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     let output = std::format!("{:#}", view);
     assert!(output.contains("0000"));
 }
@@ -580,7 +583,7 @@ fn round_trip_none_entry() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 1);
     assert!(matches!(view.toc_entry(0), TocEntry::None));
 }
@@ -598,7 +601,7 @@ fn none_mixed_with_other_entries() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 3);
     assert!(matches!(view.toc_entry(0), TocEntry::SessionId(42)));
     assert!(matches!(view.toc_entry(1), TocEntry::None));
@@ -619,7 +622,7 @@ fn none_response_round_trip() {
         .finish()
         .unwrap();
 
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 2);
     assert!(matches!(view.toc_entry(0), TocEntry::None));
     assert!(matches!(view.toc_entry(1), TocEntry::Uint8(7)));
@@ -638,7 +641,7 @@ fn all_none_entries() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 3);
     assert_eq!(view.data_size(), 0);
     for i in 0..3 {
@@ -655,11 +658,8 @@ fn none_entry_nonzero_payload_rejected() {
         0x01, 0x00, 0x00, 0x0A, // header
         bw[0], bw[1], bw[2], bw[3],
     ];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidNonePayload { entry_index: 0, .. }
-    ));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborInvalidNonePayload);
 }
 
 #[test]
@@ -673,7 +673,7 @@ fn none_display() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     let output = std::format!("{}", view);
     assert!(output.contains("none"));
 }
@@ -693,7 +693,7 @@ fn round_trip_padding_entry() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     assert_eq!(view.toc_count(), 3);
     match view.toc_entry(1) {
         TocEntry::Padding(p) => assert_eq!(p.len(), 2),
@@ -712,7 +712,7 @@ fn zero_length_padding_round_trip() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Padding(p) => assert_eq!(p.len(), 0),
         other => panic!("expected Padding, got {:?}", other),
@@ -728,7 +728,7 @@ fn request_buffer_over_max_rejected() {
     let err = RequestEncoder::new(&mut buf, 0x01, 0x0A)
         .buffer(&big)
         .unwrap_err();
-    assert!(matches!(err, EncodeError::DataTooLarge { .. }));
+    assert_eq!(err, HsmError::TborDataTooLarge);
 }
 
 #[test]
@@ -741,7 +741,7 @@ fn request_exact_max_data_succeeds() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::Buffer(b) => assert_eq!(b.len(), 8191),
         other => panic!("expected Buffer, got {:?}", other),
@@ -763,7 +763,7 @@ fn response_reserved_bits_accepted() {
     wire[2] = 0xFF; // reserved byte
     wire[3] |= 0xE0; // upper 3 reserved bits of toc_count byte
 
-    let view = ResponseView::parse(&wire).unwrap();
+    let view = ResponseView::parse(brand(&wire)).unwrap();
     assert_eq!(view.toc_count(), 1);
 }
 
@@ -778,7 +778,7 @@ fn response_toc_iter() {
         .finish()
         .unwrap();
 
-    let view = ResponseView::parse(msg).unwrap();
+    let view = ResponseView::parse(brand(msg)).unwrap();
     let entries: Vec<_> = view.toc_iter().collect();
     assert_eq!(entries.len(), 2);
     assert!(matches!(entries[0], TocEntry::SessionId(10)));
@@ -798,7 +798,7 @@ fn display_padding_and_sealed_key() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     let output = std::format!("{}", view);
     assert!(output.contains("sealed_key"));
     assert!(output.contains("padding"));
@@ -813,7 +813,7 @@ fn empty_sealed_key_round_trip() {
         .finish()
         .unwrap();
 
-    let view = RequestView::parse(msg).unwrap();
+    let view = RequestView::parse(brand(msg)).unwrap();
     match view.toc_entry(0) {
         TocEntry::SealedKey(data) => assert_eq!(data.len(), 0),
         other => panic!("expected SealedKey, got {:?}", other),
@@ -827,14 +827,6 @@ fn decode_invalid_uint64_length() {
     let wire = [
         0x01, 0x00, 0x00, 0x0A, wb[0], wb[1], wb[2], wb[3], 0x00, 0x00, 0x00, 0x00,
     ];
-    let err = RequestView::parse(&wire).unwrap_err();
-    assert!(matches!(
-        err,
-        DecodeError::InvalidFixedLength {
-            entry_type: 6,
-            expected: 8,
-            actual: 4,
-            ..
-        }
-    ));
+    let err = RequestView::parse(brand(&wire)).unwrap_err();
+    assert_eq!(err, HsmError::TborInvalidFixedLength);
 }

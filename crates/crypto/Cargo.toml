@@ -16,8 +16,15 @@ pem-rfc7468 = { features = ["alloc"], workspace = true }
 thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# foreign-types provides ForeignTypeRef::as_ptr to obtain the raw OSSL_LIB_CTX*
+# for the EVP_MAC FFI in the HMAC backend. The workspace pins it to the version
+# openssl uses so the trait impl on openssl's LibCtxRef matches.
+foreign-types.workspace = true
 openssl.workspace = true
 openssl-sys.workspace = true
+# Zeroizing wipes the transient plaintext HMAC key copy (raw_private_key) once
+# EVP_MAC_init has copied it into the MAC context.
+zeroize.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { features = ["Win32_Security_Cryptography"], workspace = true }
