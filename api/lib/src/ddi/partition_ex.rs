@@ -223,39 +223,61 @@ pub(crate) fn part_init_ex(
 /// * `session_id` - The active CO session id this request binds to.
 /// * `part_policy` - Caller-asserted unified [`PartPolicy`] image
 ///   ([`PART_POLICY_LEN`] bytes), re-supplied from `PartInit`.
-/// * `cert_descriptors` - PTA cert-chain `(offset, length)` descriptors
-///   pointing into the side-band data buffer; `1..=`[`MAX_CERTS`]
-///   entries.
+/// * `pta_cert_chain` - PTA certificate chain as a list of
+///   [`HsmCertDescriptor`]s (`1..=`[`MAX_CERTS`] entries). The wrapper
+///   concatenates their DER bytes into the side-band buffer and derives
+///   the matching `(offset, length)` descriptor list.
 /// * `prev_local_mk_backup` - Optional prior `local_mk` backup envelope
 ///   to restore; `None` on first finalization.
 ///
 /// # Errors
 ///
 /// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
-/// wrong length or fails to decode, when `cert_descriptors` is empty or
-/// exceeds [`MAX_CERTS`], or when `prev_local_mk_backup` exceeds
-/// [`LOCAL_MK_BACKUP_MAX_LEN`]; surfaces DDI/device failures from the
-/// round-trip.
+/// wrong length or fails to decode, when `pta_cert_chain` is empty,
+/// exceeds [`MAX_CERTS`], or contains a cert whose offset/length does not
+/// fit in the 16-bit descriptor fields, or when `prev_local_mk_backup`
+/// exceeds [`LOCAL_MK_BACKUP_MAX_LEN`]; surfaces DDI/device failures from
+/// the round-trip.
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
     part_policy: &[u8],
-    cert_descriptors: &[CertDescriptor],
+    pta_cert_chain: &[HsmCertDescriptor<'_>],
     prev_local_mk_backup: Option<&[u8]>,
 ) -> HsmResult<PartFinalResult> {
     if part_policy.len() != PART_POLICY_LEN {
         return Err(HsmError::InvalidArgument);
     }
-    if cert_descriptors.is_empty() || cert_descriptors.len() > MAX_CERTS {
+    if pta_cert_chain.is_empty() || pta_cert_chain.len() > MAX_CERTS {
         return Err(HsmError::InvalidArgument);
     }
     if prev_local_mk_backup.is_some_and(|b| b.len() > LOCAL_MK_BACKUP_MAX_LEN) {
         return Err(HsmError::InvalidArgument);
     }
 
+    // Concatenate the DER certs into a single side-band buffer and derive
+    // the `(offset, length)` descriptor for each. The whole buffer ships
+    // as one out-of-band SGL item; the firmware slices each cert out of
+    // it by descriptor.
+    let mut sideband = Vec::new();
+    let mut cert_descriptors = Vec::with_capacity(pta_cert_chain.len());
+    for desc in pta_cert_chain {
+        let cert = desc.cert;
+        let offset = sideband.len();
+        let length = cert.len();
+        if offset > u16::MAX as usize || length > u16::MAX as usize {
+            return Err(HsmError::InvalidArgument);
+        }
+        cert_descriptors.push(CertDescriptor {
+            offset: tbor_int::U16::new(offset as u16),
+            length: tbor_int::U16::new(length as u16),
+        });
+        sideband.extend_from_slice(cert);
+    }
+
     let mut req = TborPartFinalReq {
         session_id,
-        cert_descriptors: cert_descriptors.to_vec(),
+        cert_descriptors,
         ..Default::default()
     };
     req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
@@ -267,7 +289,7 @@ pub(crate) fn part_final_ex(
     let inner = partition.inner().read();
     let dev = inner.dev();
     let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
+    dev.exec_op_tbor(&req, Some(&[sideband.as_slice()]), &mut cookie)
         .map(PartFinalResult::from)
         .map_err(HsmError::from)
 }
@@ -385,9 +407,9 @@ mod emu_tests {
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 
-    /// A minimal, well-formed one-entry cert-descriptor list.
-    fn one_cert_descriptor() -> Vec<CertDescriptor> {
-        vec![CertDescriptor::default()]
+    /// A minimal, well-formed one-entry PTA certificate (DER bytes).
+    fn one_cert() -> Vec<u8> {
+        vec![0u8; 4]
     }
 
     /// `PartFinal` rejects a wrong-length `part_policy` before any
@@ -398,11 +420,13 @@ mod emu_tests {
         let session = fresh_co_session();
         let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
 
-        let res = session.part_final(&bad_policy, &one_cert_descriptor(), None);
+        let cert = one_cert();
+        let chain = [HsmCertDescriptor { cert: &cert }];
+        let res = session.part_final(&bad_policy, &chain, None);
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 
-    /// `PartFinal` rejects an empty `cert_descriptors` list.
+    /// `PartFinal` rejects an empty cert chain.
     #[test]
     fn part_final_rejects_empty_cert_descriptors() {
         let _guard = EMU_LOCK.lock();
@@ -413,13 +437,14 @@ mod emu_tests {
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 
-    /// `PartFinal` rejects more than [`MAX_CERTS`] cert descriptors.
+    /// `PartFinal` rejects more than [`MAX_CERTS`] certificates.
     #[test]
     fn part_final_rejects_too_many_cert_descriptors() {
         let _guard = EMU_LOCK.lock();
         let session = fresh_co_session();
         let policy = vec![0u8; PART_POLICY_LEN];
-        let too_many = vec![CertDescriptor::default(); MAX_CERTS + 1];
+        let cert = one_cert();
+        let too_many = vec![HsmCertDescriptor { cert: cert.as_slice() }; MAX_CERTS + 1];
 
         let res = session.part_final(&policy, &too_many, None);
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
@@ -433,7 +458,9 @@ mod emu_tests {
         let policy = vec![0u8; PART_POLICY_LEN];
         let oversized = vec![0u8; LOCAL_MK_BACKUP_MAX_LEN + 1];
 
-        let res = session.part_final(&policy, &one_cert_descriptor(), Some(&oversized));
+        let cert = one_cert();
+        let chain = [HsmCertDescriptor { cert: &cert }];
+        let res = session.part_final(&policy, &chain, Some(&oversized));
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 }

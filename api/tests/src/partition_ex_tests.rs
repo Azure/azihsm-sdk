@@ -10,7 +10,6 @@
 //! not require a FW-accepted policy / cert chain.
 
 use azihsm_api::*;
-use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
@@ -31,9 +30,9 @@ fn valid_part_init_inputs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     )
 }
 
-/// A minimal, well-formed one-entry cert-descriptor list.
-fn one_cert_descriptor() -> Vec<CertDescriptor> {
-    vec![CertDescriptor::default()]
+/// A minimal, well-formed one-entry PTA certificate chain (one DER cert).
+fn one_cert() -> Vec<u8> {
+    vec![0u8; 4]
 }
 
 // ── PartInit ────────────────────────────────────────────────────────────────
@@ -98,11 +97,13 @@ fn part_final_rejects_bad_part_policy_len() {
     let session = fresh_co_session();
     let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
 
-    let res = session.part_final(&bad_policy, &one_cert_descriptor(), None);
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+    let res = session.part_final(&bad_policy, &chain, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
-/// `PartFinal` rejects an empty `cert_descriptors` list.
+/// `PartFinal` rejects an empty cert chain.
 #[test]
 fn part_final_rejects_empty_cert_descriptors() {
     let _guard = EMU_LOCK.lock();
@@ -113,13 +114,14 @@ fn part_final_rejects_empty_cert_descriptors() {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
-/// `PartFinal` rejects more than [`MAX_CERTS`] cert descriptors.
+/// `PartFinal` rejects more than [`MAX_CERTS`] certificates.
 #[test]
 fn part_final_rejects_too_many_cert_descriptors() {
     let _guard = EMU_LOCK.lock();
     let session = fresh_co_session();
     let policy = vec![0u8; PART_POLICY_LEN];
-    let too_many = vec![CertDescriptor::default(); MAX_CERTS + 1];
+    let cert = one_cert();
+    let too_many = vec![HsmCertDescriptor { cert: cert.as_slice() }; MAX_CERTS + 1];
 
     let res = session.part_final(&policy, &too_many, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
@@ -133,6 +135,8 @@ fn part_final_rejects_oversized_prev_local_mk_backup() {
     let policy = vec![0u8; PART_POLICY_LEN];
     let oversized = vec![0u8; LOCAL_MK_BACKUP_MAX_LEN + 1];
 
-    let res = session.part_final(&policy, &one_cert_descriptor(), Some(&oversized));
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+    let res = session.part_final(&policy, &chain, Some(&oversized));
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }

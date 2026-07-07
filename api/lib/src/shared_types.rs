@@ -9,6 +9,25 @@
 use open_enum::open_enum;
 use zerocopy::*;
 
+/// A single DER-encoded certificate in a certificate chain.
+///
+/// Borrowed view over one certificate's DER bytes, used by the
+/// partition-provisioning API (e.g. [`HsmSession::part_final`]) to accept
+/// a PTA certificate chain as `&[HsmCertDescriptor]`.
+///
+/// It mirrors the native `{ data, len }` buffer shape so the FFI layer
+/// can build a `&[HsmCertDescriptor]` from a C array of certificate
+/// buffers without copying, while the wire-level side-band
+/// `(offset, length)` descriptors stay an internal detail the SDK derives
+/// on the caller's behalf.
+///
+/// [`HsmSession::part_final`]: crate::HsmSession::part_final
+#[derive(Debug, Clone, Copy)]
+pub struct HsmCertDescriptor<'a> {
+    /// DER-encoded bytes of the certificate.
+    pub cert: &'a [u8],
+}
+
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.

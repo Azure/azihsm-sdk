@@ -11,7 +11,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use azihsm_crypto::AesKey;
-use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
@@ -169,13 +168,13 @@ impl HsmSession {
     /// Issues TBOR `PartFinal` (opcode `0x08`) on this CO session.
     ///
     /// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
-    /// and the PTA cert-chain descriptors, optionally restoring a prior
-    /// `local_mk` backup. Only valid on a V2 session; a V1 session
-    /// returns [`HsmError::InvalidSession`].
+    /// and the PTA certificate chain (as a list of [`HsmCertDescriptor`]s),
+    /// optionally restoring a prior `local_mk` backup. Only valid on a V2
+    /// session; a V1 session returns [`HsmError::InvalidSession`].
     pub fn part_final(
         &self,
         part_policy: &[u8],
-        cert_descriptors: &[CertDescriptor],
+        pta_cert_chain: &[HsmCertDescriptor<'_>],
         prev_local_mk_backup: Option<&[u8]>,
     ) -> HsmResult<PartFinalResult> {
         let inner = self.inner.read();
@@ -184,7 +183,7 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 part_policy,
-                cert_descriptors,
+                pta_cert_chain,
                 prev_local_mk_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
