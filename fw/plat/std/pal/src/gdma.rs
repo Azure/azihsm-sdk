@@ -46,6 +46,10 @@ impl HsmGdmaController for StdHsmPal {
     /// Copy from host memory into an HSM buffer, sourced from a raw
     /// 16-byte NVMe SGL Data Block descriptor (first dword = host
     /// pointer, `length` field = transfer size).
+    ///
+    /// This is a raw transport primitive: descriptor validation
+    /// (type/reserved bytes, null-address guard) is performed by the
+    /// caller (core OOB layer) before this method is invoked.
     async fn copy_mem_from_host_raw(
         &self,
         _io: &impl HsmIo,
@@ -57,17 +61,11 @@ impl HsmGdmaController for StdHsmPal {
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
-        // Validate the descriptor (type/reserved bytes and a non-null
-        // source for a non-empty transfer) before the unchecked copy.
-        let (_src, len) = parse_sgl_data_block(desc)?;
-        // The descriptor's embedded length must match the destination.
-        if len as usize != dst.len() {
-            return Err(HsmError::InvalidArg);
-        }
         // SAFETY: see `copy_mem_from_host` — std PRP addresses are raw
-        // host-process pointers the caller guarantees valid and alive;
-        // `parse_sgl_data_block` rejects a null source for `len > 0`, and
-        // `len == dst.len()` bounds the copy.
+        // host-process pointers the caller guarantees valid and alive.
+        // The caller (core OOB layer) has already validated the descriptor
+        // type/reserved bytes and the non-null source constraint via
+        // `parse_sgl_data_block`.
         unsafe { self.gdma.copy_mem_from_host_raw(desc, dst) };
         Ok(())
     }

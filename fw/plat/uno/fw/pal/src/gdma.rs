@@ -32,7 +32,6 @@ use azihsm_fw_hsm_pal_traits::HsmGdmaController;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
-use azihsm_fw_hsm_pal_traits::parse_sgl_data_block;
 use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
@@ -175,10 +174,10 @@ impl HsmGdmaController for UnoHsmPal {
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
-        // Validate the descriptor (type/reserved bytes and a non-null
-        // source for a non-empty transfer) before handing it to the GDMA,
-        // whose hardware would otherwise reinterpret a malformed type.
-        let (_src, len) = parse_sgl_data_block(desc)?;
+        // The caller (core OOB layer) has already validated the descriptor
+        // type/reserved bytes and the non-null source constraint via
+        // `parse_sgl_data_block`; forward it as a raw transport directly.
+        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
         // Transfer length is the descriptor's embedded length; it must
         // match the destination exactly.
         if len as usize != dst.len() {

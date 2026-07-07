@@ -8,11 +8,16 @@
 //! the 4 KiB request buffer. The SQE's `oob_prp` points at a host page
 //! of 16-byte **NVMe SGL Data Block descriptors**; a TBOR message
 //! references an item by its **index** into that array. [`copy_oob`]
-//! locates the indexed descriptor and forwards it **verbatim** to the
-//! GDMA ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets
-//! the descriptor and copies the item into a caller-allocated
-//! [`DmaBuf`]. This layer does **no** SGL parsing itself — it only
-//! bounds the index and computes the descriptor's address.
+//! locates and validates the indexed descriptor (via
+//! [`parse_sgl_data_block`]), then forwards it to the GDMA
+//! ([`HsmGdmaController::copy_mem_from_host_raw`]), which copies the item
+//! into a caller-allocated [`DmaBuf`].
+//!
+//! Descriptor validation (type/reserved bytes, null-address guard) belongs
+//! here in the OOB/core layer — not in PAL traits — because it is
+//! protocol/wire logic, not a platform capability. The PAL's
+//! `copy_mem_from_host_raw` is a raw transport primitive that receives an
+//! already-validated descriptor.
 //!
 //! The Uno GDMA does not walk PRP lists; each transfer is a single SGL
 //! Data Block (arbitrary address, no page-alignment constraint), so OOB
@@ -64,11 +69,6 @@ fn addr_offset(base: HsmDmaAddr, off: u64) -> HsmResult<HsmDmaAddr> {
 /// Host address of the SGL Data Block descriptor at `index`, bounds-checked
 /// against the descriptor array length.
 ///
-/// This is the only interpretation the OOB layer does — locating the
-/// 16-byte descriptor.  The descriptor's contents (address / length /
-/// type) are consumed by the GDMA layer
-/// ([`HsmGdmaController::copy_mem_from_host_raw`]), not here.
-///
 /// # Errors
 /// * [`HsmError::InvalidArg`] — `index` is out of bounds for `oob.len`,
 ///   or the descriptor address overflows.
@@ -85,21 +85,58 @@ pub fn entry_addr(oob: &OobPtr, index: usize) -> HsmResult<HsmDmaAddr> {
     addr_offset(oob.prp, entry_off as u64)
 }
 
+/// Parse and validate a 16-byte NVMe SGL Data Block descriptor, returning
+/// the `(address, length)` it encodes.
+///
+/// The descriptor layout is `address(8, LE) ‖ length(4, LE) ‖
+/// reserved(3) ‖ SGL-identifier(1)`.  Only an **address-based Data Block**
+/// descriptor is accepted: the SGL-identifier byte encodes the descriptor
+/// type (bits 7:4) and sub-type (bits 3:0), both of which are `0h` for an
+/// address-based Data Block, and the three reserved bytes must be zero.
+///
+/// This is a core/OOB domain function — descriptor format validation is
+/// protocol/wire logic, not a platform capability, so it lives here rather
+/// than in the PAL traits boundary.
+///
+/// # Errors
+///
+/// - [`HsmError::InvalidArg`] — a non-zero reserved or SGL-identifier byte
+///   (i.e. not an address-based Data Block descriptor), or a null source
+///   address paired with a non-zero `length`.
+pub fn parse_sgl_data_block(desc: &[u8; 16]) -> HsmResult<(HsmDmaAddr, u32)> {
+    // Bytes 12-14 (reserved) and byte 15 (SGL identifier: type nibble 0h
+    // = Data Block, sub-type nibble 0h = address) must all be zero.
+    if desc[12] != 0 || desc[13] != 0 || desc[14] != 0 || desc[15] != 0 {
+        return Err(HsmError::InvalidArg);
+    }
+    let addr = HsmDmaAddr {
+        lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
+        hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
+    };
+    let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+    // A non-empty transfer must name a non-null source address.
+    if len != 0 && addr.is_null() {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok((addr, len))
+}
+
 /// Copy OOB item `index` into the caller-allocated `dst`.
 ///
 /// Locates the 16-byte SGL Data Block descriptor at `oob.prp + index*16`,
-/// reads it, and forwards it **verbatim** to the GDMA
-/// ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets the
-/// descriptor (address / length / type) and copies the item into `dst`.
-/// The OOB layer does no SGL parsing itself.
+/// reads it from host memory, validates it via [`parse_sgl_data_block`]
+/// (type/reserved bytes and null-address guard), then forwards the
+/// already-validated descriptor to the GDMA
+/// ([`HsmGdmaController::copy_mem_from_host_raw`]) as a raw transport
+/// primitive. The GDMA copies the item into `dst`.
 ///
-/// The GDMA enforces that the descriptor's `length` equals `dst.len()`,
-/// so the caller must size `dst` to the item's length (from the TBOR
-/// descriptor, which must agree with the OOB descriptor).
+/// The caller must size `dst` to the item's length (from the TBOR
+/// descriptor): `dst.len()` must equal the OOB descriptor's embedded
+/// `length` field, or the call returns [`HsmError::InvalidArg`].
 ///
 /// # Errors
-/// * [`HsmError::InvalidArg`] — `index` out of bounds, or the descriptor
-///   `length` does not equal `dst.len()` (from the GDMA).
+/// * [`HsmError::InvalidArg`] — `index` out of bounds; invalid descriptor
+///   type/reserved bytes or null source; descriptor `length` ≠ `dst.len()`.
 /// * [`HsmError`] — propagated from the GDMA / allocator.
 pub async fn copy_oob<P>(
     pal: &P,
@@ -124,8 +161,15 @@ where
         let bytes: &[u8] = entry;
         let raw: &[u8; SGL_ENTRY_LEN] = bytes.try_into().map_err(|_| HsmError::InternalError)?;
 
-        // Forward the raw descriptor to the GDMA, which interprets it and
-        // copies the item into `dst` (validating `length == dst.len()`).
+        // Validate descriptor type/reserved bytes and null-address guard.
+        // This is protocol/wire logic that belongs in the OOB core layer,
+        // not in the PAL transport primitive.
+        let (_addr, len) = parse_sgl_data_block(raw)?;
+        if len as usize != dst.len() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Forward the validated descriptor to the GDMA as a raw copy.
         pal.copy_mem_from_host_raw(io, raw, dst, false).await?;
         Ok(())
     })
@@ -198,5 +242,39 @@ mod tests {
             ),
             Err(HsmError::InvalidArg)
         );
+    }
+
+    #[test]
+    fn parse_sgl_data_block_validates_type_reserved_and_null() {
+        // Build a valid descriptor pointing at a local buffer.
+        let src = [0u8; 16];
+        let addr = src.as_ptr() as u64;
+        let mut desc = [0u8; 16];
+        desc[..8].copy_from_slice(&addr.to_le_bytes());
+        desc[8..12].copy_from_slice(&(src.len() as u32).to_le_bytes());
+
+        let (parsed_addr, len) = parse_sgl_data_block(&desc).expect("valid descriptor");
+        assert!(!parsed_addr.is_null());
+        assert_eq!(len, 16);
+
+        // A non-zero SGL-identifier byte (a non-Data-Block type) is rejected.
+        let mut bad_type = desc;
+        bad_type[15] = 0x20;
+        assert_eq!(parse_sgl_data_block(&bad_type), Err(HsmError::InvalidArg));
+
+        // A non-zero reserved byte is rejected.
+        let mut bad_rsvd = desc;
+        bad_rsvd[12] = 0x01;
+        assert_eq!(parse_sgl_data_block(&bad_rsvd), Err(HsmError::InvalidArg));
+
+        // A null source address with a non-empty length is rejected.
+        let mut null_src = [0u8; 16];
+        null_src[8..12].copy_from_slice(&16u32.to_le_bytes());
+        assert_eq!(parse_sgl_data_block(&null_src), Err(HsmError::InvalidArg));
+
+        // A null source address with length 0 is a permitted empty item.
+        let (parsed_addr, len) = parse_sgl_data_block(&[0u8; 16]).expect("empty descriptor");
+        assert!(parsed_addr.is_null());
+        assert_eq!(len, 0);
     }
 }

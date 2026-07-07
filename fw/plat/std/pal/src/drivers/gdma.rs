@@ -125,46 +125,4 @@ mod tests {
         assert!(dst[..8].iter().all(|&b| b == 0x5A));
         assert!(dst[8..].iter().all(|&b| b == 0x00));
     }
-
-    #[test]
-    fn parse_sgl_data_block_validates_type_reserved_and_null() {
-        use azihsm_fw_hsm_pal_traits::parse_sgl_data_block;
-        use azihsm_fw_hsm_pal_traits::HsmError;
-
-        // A well-formed address-based Data Block descriptor parses.
-        let src = [0u8; 16];
-        let desc = sgl_desc(&src);
-        let (addr, len) = parse_sgl_data_block(&desc).expect("valid descriptor");
-        assert!(!addr.is_null());
-        assert_eq!(len, 16);
-
-        // A non-zero SGL-identifier byte (a non-Data-Block type) is rejected.
-        let mut bad_type = desc;
-        bad_type[15] = 0x20;
-        assert!(matches!(
-            parse_sgl_data_block(&bad_type),
-            Err(HsmError::InvalidArg)
-        ));
-
-        // A non-zero reserved byte is rejected.
-        let mut bad_rsvd = desc;
-        bad_rsvd[12] = 0x01;
-        assert!(matches!(
-            parse_sgl_data_block(&bad_rsvd),
-            Err(HsmError::InvalidArg)
-        ));
-
-        // A null source address with a non-empty length is rejected.
-        let mut null_src = [0u8; 16];
-        null_src[8..12].copy_from_slice(&16u32.to_le_bytes());
-        assert!(matches!(
-            parse_sgl_data_block(&null_src),
-            Err(HsmError::InvalidArg)
-        ));
-
-        // A null source address with length 0 is a permitted empty item.
-        let (addr, len) = parse_sgl_data_block(&[0u8; 16]).expect("empty descriptor");
-        assert!(addr.is_null());
-        assert_eq!(len, 0);
-    }
 }
