@@ -121,7 +121,12 @@ fn part_final_rejects_too_many_cert_descriptors() {
     let session = fresh_co_session();
     let policy = vec![0u8; PART_POLICY_LEN];
     let cert = one_cert();
-    let too_many = vec![HsmCertDescriptor { cert: cert.as_slice() }; MAX_CERTS + 1];
+    let too_many = vec![
+        HsmCertDescriptor {
+            cert: cert.as_slice()
+        };
+        MAX_CERTS + 1
+    ];
 
     let res = session.part_final(&policy, &too_many, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
