@@ -63,6 +63,7 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
+    out_sess_id: &mut Option<u16>,
 ) -> HsmResult<&'p DmaBuf> {
     let mut body: DdiOpenSessionReq = decoder.decode_data()?;
 
@@ -131,6 +132,11 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     let sess_id = pal
         .session_create(io, &api_rev_bytes, mk_session, None)
         .await?;
+
+    // Surface the freshly-allocated session id so the IO layer can place it
+    // in the CQE, letting the host driver register the session against the
+    // calling file handle (required for the later CloseSession lookup).
+    *out_sess_id = Some(u16::from(sess_id));
 
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
     let resp = encode_response(

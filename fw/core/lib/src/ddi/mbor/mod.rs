@@ -117,6 +117,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
+    out_sess_id: &mut Option<u16>,
 ) -> HsmResult<&'p DmaBuf> {
     check_api_rev(hdr)?;
 
@@ -136,7 +137,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
-        DdiOp::OpenSession => open_session(pal, io, decoder, hdr).await,
+        DdiOp::OpenSession => open_session(pal, io, decoder, hdr, out_sess_id).await,
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr).await,
         DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr).await,
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,

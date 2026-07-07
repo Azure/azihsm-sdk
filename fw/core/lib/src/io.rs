@@ -157,7 +157,7 @@ impl<P: HsmPal> Hsm<P> {
             )?;
 
         // ── Phase 2: decode + validate + dispatch (no yield) ───────
-        let (resp, session_ctrl) = {
+        let (resp, session_ctrl, cqe_sess_id, cqe_closed) = {
             let req = &mut req_buf[..params.src_len];
             let mut decoder = DdiDecoder::new(req);
             let hdr: DdiReqHdr = decoder.decode_hdr().op_err(
@@ -168,14 +168,36 @@ impl<P: HsmPal> Hsm<P> {
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
+            // OpenSession reports its freshly-allocated id here (via the
+            // out-param) so we can carry it in the CQE.
+            let mut opened_sess_id: Option<u16> = None;
             let dispatch_result = match Self::validate_session(
                 &hdr,
                 session_ctrl,
                 params.session_flags,
                 params.sqe_session_id,
             ) {
-                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+                Ok(()) => {
+                    ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr, &mut opened_sess_id)
+                        .await
+                }
                 Err(e) => Err(e),
+            };
+
+            // Fill the CQE session fields so the host can track the session
+            // per file handle: a successful OpenSession returns the newly
+            // allocated id in `session_id` (which sets `session_id_valid`), and
+            // a successful CloseSession additionally sets `session_closed`.
+            // Both are left cleared on any dispatch failure so the fields are
+            // only populated on success.
+            let (cqe_sess_id, cqe_closed) = if dispatch_result.is_ok() {
+                match session_ctrl {
+                    SessionCtrl::Open => (opened_sess_id, false),
+                    SessionCtrl::Close => (hdr.sess_id, true),
+                    _ => (None, false),
+                }
+            } else {
+                (None, false)
             };
 
             let resp: &DmaBuf = dispatch_result.or_else(|status| {
@@ -185,7 +207,7 @@ impl<P: HsmPal> Hsm<P> {
                     .map(|b| &*b)
             })?;
 
-            (resp, session_ctrl)
+            (resp, session_ctrl, cqe_sess_id, cqe_closed)
         };
 
         let resp_len = resp.len();
@@ -200,7 +222,13 @@ impl<P: HsmPal> Hsm<P> {
                 HostStatus::DMA_TXN_ERROR,
             )?;
 
-        Ok(HsmOpStatus::new(resp_len, session_ctrl, None, None, false))
+        Ok(HsmOpStatus::new(
+            resp_len,
+            session_ctrl,
+            cqe_sess_id,
+            None,
+            cqe_closed,
+        ))
     }
 
     /// Handles an [`OP_TBOR`] IO command.
