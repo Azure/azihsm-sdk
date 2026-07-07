@@ -456,6 +456,46 @@ impl UnoHsmPal {
             _ => Err(HsmError::InvalidArg),
         }
     }
+
+    /// Resets partition `pid`'s per-tenant state for an NSSR `Migrate`,
+    /// mirroring the reference firmware's `state.migrate()`.
+    ///
+    /// Wipes ALL vault key material (app, session, and internal keys — the
+    /// reference does `vault().clear()` / `KeyStore::nuke()`) so no prior
+    /// tenant key survives, then clears only the per-tenant persistent state
+    /// (credential, enable-time/provisioning key handles, nonce, session table,
+    /// BK3 session key, PIN policy) while PRESERVING the provisioning material
+    /// (sealed BK3 + incarnation flag, PTA public key, policy hash,
+    /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, `Masked_BK_BOOT`,
+    /// and identity). Finally regenerates the enable-time establish-credential
+    /// and session-encryption keys.
+    ///
+    /// The net effect matches the reference: the partition keeps its identity
+    /// and provisioning across the reset and only needs its credential
+    /// re-established, preserving the impactless-update guarantee — unlike a
+    /// full [`part_disable`], which additionally tears down the provisioning
+    /// material.
+    ///
+    /// [`part_disable`]: Self::part_disable
+    pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
+        let part = PartStore::partition(pid)?;
+        match part.state()? {
+            PartState::Enabled => {
+                // Wipe every vault key (app + session + internal) so no prior
+                // tenant key material survives the reset.
+                let admin_io = UnoHsmIo::admin(pid);
+                crate::vault::vault(&admin_io)
+                    .clear(self, &admin_io)
+                    .await?;
+                // Clear per-tenant persistent state, preserving provisioning.
+                part.clear_migrate_state();
+                // Regenerate the enable-time establish-credential and
+                // session-encryption keys (this PAL provisions them eagerly).
+                self.provision_enabled_keys(pid).await
+            }
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
 }
 
 impl HsmPartitionManager for UnoHsmPal {

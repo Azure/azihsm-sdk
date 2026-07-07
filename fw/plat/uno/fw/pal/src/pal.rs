@@ -605,6 +605,12 @@ impl UnoHsmPal {
         let result = match PfnEnableDisableAction(msg.info.action) {
             PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
+            // NSSR: the Admin sends `Migrate` to reset a partition's per-tenant
+            // state. `part_migrate` mirrors the reference `state.migrate()`:
+            // wipe the key vault and clear the per-tenant state while preserving
+            // the partition's provisioning, then regenerate the enable-time
+            // keys, leaving the partition enabled and re-provisionable.
+            PfnEnableDisableAction::Migrate => self.part_migrate(pid).await,
             _ => Err(HsmError::UnsupportedCmd),
         };
         let status = match result {
