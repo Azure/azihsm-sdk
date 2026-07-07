@@ -223,8 +223,15 @@ impl DdiDev for DdiSockDev {
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         req: &T,
+        oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
+        // The socket transport (v1) carries only the SQE body; it has no
+        // channel for out-of-band SGL descriptor pages yet.
+        if oob_items.is_some_and(|items| !items.is_empty()) {
+            return Err(DdiError::UnsupportedEncoding);
+        }
+
         // ── 1. Encode the TBOR request.
         let session_ctrl = req.session_ctrl();
         let session_id = req.get_session_id();

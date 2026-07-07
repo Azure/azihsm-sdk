@@ -43,6 +43,13 @@ const MAX_SRC_LEN: u32 = PAGE_4K;
 /// the GDMA path to plumb a second PRP page (`dst_prp2`).
 const MAX_DST_LEN: u32 = 2 * PAGE_4K;
 
+/// Size of one NVMe SGL Data Block descriptor in the OOB array.
+const OOB_ENTRY_LEN: u32 = 16;
+
+/// Maximum out-of-band descriptor-array length: one 4K descriptor page
+/// (→ up to 256 SGL Data Block descriptors).
+const MAX_OOB_LEN: u32 = PAGE_4K;
+
 /// Returns true if the 64-bit DMA address is 4K-page-aligned.
 #[inline]
 fn is_aligned_4k(addr: HsmDmaAddr) -> bool {
@@ -144,6 +151,23 @@ impl SqeValidateExt for Sqe<'_> {
             return Err(OpError::new(
                 HsmError::IoChannelInvalidDstAlignment,
                 HostStatus::INVALID_DST_PRP,
+            ));
+        }
+
+        // Optional out-of-band SGL descriptor array (`oob_prp`/`oob_len`).
+        // When present it must be a whole number of 16-byte SGL Data
+        // Block descriptors and fit within a single descriptor page.
+        let oob_len = self.oob_len();
+        if oob_len != 0 && (!oob_len.is_multiple_of(OOB_ENTRY_LEN) || oob_len > MAX_OOB_LEN) {
+            error!(
+                "core",
+                HsmError::IoChannelInvalidOobLen,
+                "Invalid OOB descriptor-array length: {}",
+                oob_len
+            );
+            return Err(OpError::new(
+                HsmError::IoChannelInvalidOobLen,
+                HostStatus::INVALID_OOB_LEN,
             ));
         }
 

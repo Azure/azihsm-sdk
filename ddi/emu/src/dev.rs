@@ -66,6 +66,9 @@ const EMU_PART_RES_MASK: u128 = 1u128 << EMU_PID;
 /// 4-KiB page bound, so we allocate one full page per direction.
 const SCRATCH_LEN: usize = 4096;
 
+/// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
+const OOB_ENTRY_LEN: usize = 16;
+
 /// Page size enforced by the firmware platform.
 const PAGE_4K: usize = 4096;
 
@@ -256,6 +259,7 @@ impl DdiDev for DdiEmuDev {
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         req: &T,
+        oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
@@ -273,15 +277,51 @@ impl DdiDev for DdiEmuDev {
             &src.as_slice()[..req_len]
         );
 
+        // ── 1b. Build the out-of-band SGL Data Block descriptor page ─
+        //
+        // Each caller-supplied item becomes one 16-byte NVMe SGL Data
+        // Block descriptor `addr(8, LE) ‖ length(4, LE) ‖ rsvd(3) ‖
+        // type(1)=0` written into a page-aligned buffer the SQE points
+        // at via `oob_prp`/`oob_len`. The device indexes descriptors by
+        // position; the item slices are borrowed (no copy) and stay live
+        // for the duration of the blocking `io` below.
+        let mut oob_page = AlignedBuf::new(SCRATCH_LEN);
+        let oob_len = match oob_items {
+            Some(items) if !items.is_empty() => {
+                let total = items.len() * OOB_ENTRY_LEN;
+                if total > SCRATCH_LEN {
+                    return Err(DdiError::InvalidParameter);
+                }
+                let page = oob_page.as_mut_slice();
+                for (i, item) in items.iter().enumerate() {
+                    let off = i * OOB_ENTRY_LEN;
+                    let addr = item.as_ptr() as u64;
+                    page[off..off + 8].copy_from_slice(&addr.to_le_bytes());
+                    page[off + 8..off + 12].copy_from_slice(&(item.len() as u32).to_le_bytes());
+                    // bytes [off+12..off+16] stay zero: rsvd (3) +
+                    // SGL descriptor-type nibble 0 (Data Block).
+                }
+                total as u32
+            }
+            _ => 0,
+        };
+
         // ── 2. Build SQE with OP_TBOR ──────────────────────────────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let req_session_id = req.get_session_id();
         let session_ctrl = req.session_ctrl();
+        let oob_prp = if oob_len != 0 {
+            oob_page.as_slice().as_ptr() as u64
+        } else {
+            0
+        };
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(OP_TBOR).with_id(cmd_id))
             .buf_lens(req_len as u32, SCRATCH_LEN as u32)
             .src_prp1(src.as_slice().as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
+            .oob_prp(oob_prp)
+            .oob_len(oob_len)
             .session_flags(
                 SessionFlags::new()
                     .with_ctrl(u8::from(session_ctrl))
@@ -537,7 +577,7 @@ mod tests {
         let req = TborApiRevReq::new();
         let mut cookie = None;
         let resp = dev
-            .exec_op_tbor(&req, &mut cookie)
+            .exec_op_tbor(&req, None, &mut cookie)
             .expect("TBOR GetApiRev should succeed against the emulator");
 
         assert_eq!(

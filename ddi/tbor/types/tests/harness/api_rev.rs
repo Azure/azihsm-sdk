@@ -18,5 +18,5 @@ use azihsm_ddi_tbor_types::TborApiRevResp;
 pub fn helper_api_rev_tbor(dev: &<AzihsmDdi as Ddi>::Dev) -> Result<TborApiRevResp, DdiError> {
     let req = TborApiRevReq::new();
     let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
+    dev.exec_op_tbor(&req, None, &mut cookie)
 }

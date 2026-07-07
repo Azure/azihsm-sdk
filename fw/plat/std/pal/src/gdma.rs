@@ -43,6 +43,32 @@ impl HsmGdmaController for StdHsmPal {
         Ok(())
     }
 
+    /// Copy from host memory into an HSM buffer, sourced from a raw
+    /// 16-byte NVMe SGL Data Block descriptor (first dword = host
+    /// pointer, `length` field = transfer size).
+    async fn copy_mem_from_host_raw(
+        &self,
+        _io: &impl HsmIo,
+        desc: &[u8; 16],
+        dst: &mut DmaBuf,
+        prp: bool,
+    ) -> HsmResult<()> {
+        // Only SGL Data Block descriptors are supported here.
+        if prp {
+            return Err(HsmError::UnsupportedCmd);
+        }
+        // The descriptor's embedded length must match the destination.
+        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
+        if len != dst.len() {
+            return Err(HsmError::InvalidArg);
+        }
+        // SAFETY: see `copy_mem_from_host` — std PRP addresses are raw
+        // host-process pointers the caller guarantees valid and alive;
+        // `len == dst.len()` bounds the copy.
+        unsafe { self.gdma.copy_mem_from_host_raw(desc, dst) };
+        Ok(())
+    }
+
     /// Copy from an HSM buffer to host memory.
     ///
     /// Interprets the PRP address as a raw host pointer.
