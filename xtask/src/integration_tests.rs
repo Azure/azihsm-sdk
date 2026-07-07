@@ -41,11 +41,15 @@ pub struct IntegrationTest {
     /// Which suite to run.  Defaults to `all` (cli + capi + nginx).
     #[clap(long, value_enum, default_value_t = Suite::All)]
     pub suite: Suite,
+
+    /// Whether to run tests with code coverage enabled
+    #[clap(long)]
+    pub coverage: bool,
 }
 
 impl Xtask for IntegrationTest {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
-        log::trace!("start testing");
+        log::trace!("start integration tests");
 
         #[cfg(not(target_os = "linux"))]
         {
@@ -145,8 +149,8 @@ impl Xtask for IntegrationTest {
                 );
             }
 
-            let run_pkg = |pkg: &str, ctx: XtaskCtx| -> anyhow::Result<()> {
-                crate::nextest::Nextest {
+            let run_pkg = |pkg: &str, skip_clean: bool, ctx: XtaskCtx| -> anyhow::Result<()> {
+                let test = crate::nextest::Nextest {
                     features: Some("integration".to_string()),
                     package: Some(pkg.to_string()),
                     no_default_features: false,
@@ -155,18 +159,25 @@ impl Xtask for IntegrationTest {
                     exclude: vec![],
                     test: None,
                     filter: vec![],
+                };
+
+                if self.coverage {
+                    let mut cov = crate::coverage::Coverage::from(test);
+                    cov.skip_clean = skip_clean;
+                    cov.run(ctx)
+                } else {
+                    test.run(ctx)
                 }
-                .run(ctx)
             };
 
             match self.suite {
-                Suite::Cli => run_pkg("provider-integration-tests-cli", _ctx),
-                Suite::Capi => run_pkg("provider-integration-tests-capi", _ctx),
-                Suite::Nginx => run_pkg("provider-integration-tests-nginx", _ctx),
+                Suite::Cli => run_pkg("provider-integration-tests-cli", false, _ctx),
+                Suite::Capi => run_pkg("provider-integration-tests-capi", false, _ctx),
+                Suite::Nginx => run_pkg("provider-integration-tests-nginx", false, _ctx),
                 Suite::All => {
-                    run_pkg("provider-integration-tests-cli", _ctx.clone())?;
-                    run_pkg("provider-integration-tests-capi", _ctx.clone())?;
-                    run_pkg("provider-integration-tests-nginx", _ctx)
+                    run_pkg("provider-integration-tests-cli", false, _ctx.clone())?;
+                    run_pkg("provider-integration-tests-capi", true, _ctx.clone())?;
+                    run_pkg("provider-integration-tests-nginx", true, _ctx)
                 }
             }
         }
