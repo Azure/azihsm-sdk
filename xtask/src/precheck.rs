@@ -277,53 +277,26 @@ impl Xtask for Precheck {
         }
 
         if stage.nextest {
-            if self.package.is_none()
-                && self.features.is_none()
-                && self.filterset.is_none()
-                && self.test.is_none()
-                && self.filter.is_empty()
-            {
-                // Run default tests
-                let tests = default_tests(&self.exclude, self.profile.clone());
-                run_tests(tests, false, self.skip_clean, ctx.clone())?;
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // Run azihsm_ddi mock tests
-                    let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
-                    run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
-                }
-            } else {
-                Nextest {
-                    features: self.features.clone(),
-                    package: self.package.clone(),
-                    no_default_features: false,
-                    filterset: self.filterset.clone(),
-                    profile: self.profile.clone(),
-                    exclude: self.exclude.clone(),
-                    test: self.test.clone(),
-                    filter: self.filter.clone(),
-                }
-                .run(ctx.clone())?;
+            Nextest {
+                features: self.features.clone(),
+                package: self.package.clone(),
+                no_default_features: false,
+                filterset: self.filterset.clone(),
+                profile: self.profile.clone(),
+                exclude: self.exclude.clone(),
+                test: self.test.clone(),
+                filter: self.filter.clone(),
             }
+            .run(ctx.clone())?;
         }
 
         if stage.nextest_min {
-            // TODO: UPDATE FOR MINIMAL TESTS
-            // Run default tests
-            let tests = default_tests(&self.exclude, self.profile.clone());
+            // Run min tests
+            let tests = min_tests(&self.exclude, self.profile.clone());
             run_tests(tests, false, self.skip_clean, ctx.clone())?;
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                // Run azihsm_ddi mock tests
-                let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
-                run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
-            }
         }
 
         if stage.nextest_full {
-            // TODO: UPDATE FOR FULL TESTS
             // Run default tests
             let tests = default_tests(&self.exclude, self.profile.clone());
             run_tests(tests, false, self.skip_clean, ctx.clone())?;
@@ -382,7 +355,44 @@ impl Xtask for Precheck {
     }
 }
 
-// Helper function to define default test parameters for --nextest and --coverage
+// Helper function to define test parameters for --nextest-min
+fn min_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    let mut mock_exclude = exclude.to_owned();
+
+    for pkg in [
+        "azihsm_api_tests",
+        "azihsm_ossl_provider",
+        "azihsm_res_test_dev",
+        "azihsm_resiliency_test_helpers",
+        "provider-integration-tests-cli",
+        "provider-integration-tests-capi",
+        "provider-integration-tests-nginx",
+        "resiliency_stress",
+        "resiliency_macro",
+    ] {
+        if !mock_exclude.iter().any(|e| e == pkg) {
+            mock_exclude.push(pkg.to_string());
+        }
+    }
+
+    // SDK Run min mock tests
+    tests.push(Nextest {
+        features: Some("mock".to_string()),
+        package: None,
+        no_default_features: false,
+        filterset: None,
+        profile: profile.clone().or(Some("ci-mock".to_string())),
+        exclude: mock_exclude,
+        test: None,
+        filter: vec![],
+    });
+
+    tests
+}
+
+// Helper function to define default test parameters for --nextest-full and --coverage
 fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
