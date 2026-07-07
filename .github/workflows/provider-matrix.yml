@@ -81,7 +81,7 @@ jobs:
             cov:           false
 
           # Use Ubuntu 24.04 for collecting code coverage
-          - distro:        u2404
+          - distro:        u2404-cov
             label:         Ubuntu 24.04 (OpenSSL 3.0.13) with coverage
             image:         ubuntu:24.04
             family:        debian
