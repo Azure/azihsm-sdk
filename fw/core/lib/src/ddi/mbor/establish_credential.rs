@@ -80,13 +80,11 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
 
     // ── Step 2: POTA signature verification ──────────────────────────
     //
-    // TODO(bringup): The host can only obtain the partition identity public
-    // key (needed to produce a valid POTA signature) via the certificate-chain
-    // DDIs (`GetCertChainInfo`/`GetCertificate`), which are not yet
-    // implemented. Restore this call once a partition-identity read path
-    // (e.g. tbor `part_info`) lands.
-    //
-    // verify_pota_signature(pal, io, body.pota_pub_key.raw, body.pota_sig).await?;
+    // The host produces the POTA endorsement by signing
+    // SHA-384(0x04 || part_id_pub_key) with the POTA private key that
+    // corresponds to `pota_pub_key`; `part_id_pub_key` is read back over the
+    // DDI.
+    verify_pota_signature(pal, io, body.pota_pub_key.raw, body.pota_sig).await?;
 
     // ── Steps 3-4: ECDH + HKDF → 80-byte OKM (aes_key ‖ hmac_key) ────
     let okm = pal.dma_alloc(io, BK_LEN)?;
@@ -269,11 +267,11 @@ fn check_fail_fast<P: HsmPal>(
 /// Verifies the POTA signature over the partition identity public key.
 ///
 /// The signature is computed by the host over
-/// `SHA-384( 0x04 ‖ x ‖ y )`, the SEC1-uncompressed form of the
-/// partition identity P-384 public key (big-endian).  We materialize
-/// the same 97-byte form locally and verify the supplied signature
-/// against it.
-#[allow(dead_code)]
+/// `SHA-384( 0x04 ‖ x ‖ y )`, the 97-byte uncompressed-point form of
+/// the partition identity P-384 public key, where `x`/`y` are the raw wire
+/// coordinates in PKA/DDI little-endian order (i.e. `0x04 ‖ x_le ‖ y_le`,
+/// *not* the big-endian SEC1 encoding).  We materialize the same 97-byte form
+/// locally from `part_id_pub_key` and verify the supplied signature against it.
 async fn verify_pota_signature<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -337,11 +335,16 @@ async fn derive_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        // The EstablishCred vault blob stores `pub(96) ‖ priv(48)`; ECDH
-        // needs the trailing private scalar, not the leading public key.
+        // ECDH needs the private scalar, which is the trailing
+        // `priv_key_len` bytes of the vault key. This handles both
+        // on-storage layouts: the Uno PAL stores `pub(96) ‖ priv(48)`
+        // while the std PAL stores the bare `priv(48)`.
+        let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let est_cred_blob = pal.vault_key(io, est_cred_key_id)?;
-        let (_pub_key, priv_key) =
-            est_cred_blob.split_at(HsmEccCurve::P384.pub_key_len());
+        if est_cred_blob.len() < priv_key_len {
+            return Err(HsmError::InternalError);
+        }
+        let (_head, priv_key) = est_cred_blob.split_at(est_cred_blob.len() - priv_key_len);
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

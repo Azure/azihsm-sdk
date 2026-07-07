@@ -177,7 +177,7 @@ pub(crate) fn ecc_point_validate_opcode(curve: UpkaEccCurve) -> u32 {
 /// # Returns
 ///
 /// - Digest size in bytes.
-pub(crate) fn hash_size(curve: UpkaEccCurve) -> usize {
+pub fn hash_size(curve: UpkaEccCurve) -> usize {
     match curve {
         UpkaEccCurve::P256 => 32,
         UpkaEccCurve::P384 => 48,

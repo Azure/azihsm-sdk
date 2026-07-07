@@ -113,6 +113,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// - `Ok(())`: Verification completed and status was written to `result`.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
     ///   or hardware rejected the command.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ecc_verify(
         &mut self,
         curve: UpkaEccCurve,
@@ -120,13 +121,31 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         hash: &DmaBuf,
         signature: &DmaBuf,
         result: &mut DmaBuf,
+        prime: &DmaBuf,
+        mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
         Self::ensure_cmd_input(
             !pub_key.is_empty()
                 && hash.len() >= hash_size(curve)
                 && signature.len() >= signature_size(curve)
-                && result.len() >= Self::RESULT_WORD_LEN,
+                && result.len() >= Self::RESULT_WORD_LEN
+                && prime.len() >= hsm_point_size(curve)
+                && mont_result.len() >= hsm_point_size(curve),
         )?;
+
+        // Required PKA setup: compute the Montgomery constant for the curve
+        // prime on this engine before the verify (mirrors ecdh_derive). The
+        // verify command consumes the engine state this leaves behind; both
+        // run on the same engine acquisition (execute_cmd does not wipe
+        // between commands).
+        self.execute_cmd(
+            mont_const_calc_opcode(curve),
+            mont_result.as_mut_ptr() as u32,
+            prime.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await?;
 
         self.execute_cmd(
             ecc_verify_opcode(curve),
@@ -199,7 +218,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         Self::ensure_cmd_input(
             priv_key.len() >= hsm_point_size(curve)
                 && pub_key.len() >= hsm_point_size(curve) * 2
-                && secret.len() >= point_size(curve),
+                && secret.len() >= point_size(curve)
+                && prime.len() >= hsm_point_size(curve)
+                && mont_result.len() >= hsm_point_size(curve),
         )?;
 
         // Required PKA setup: compute the Montgomery constant for the curve
