@@ -189,6 +189,22 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdSealingKeyGen` (opcode `0x09`) on this session.
+    ///
+    /// Generates a new security-domain sealing key in the partition
+    /// vault for the requested `scope` (the 1-byte `KeyScope`
+    /// discriminant) and returns its key handle. Only valid on a V2
+    /// session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn sd_sealing_key_gen(&self, scope: u8) -> HsmResult<HsmKey> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => {
+                ddi::sd_sealing_key_gen_ex(&inner.partition, inner.id, scope)
+            }
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.
