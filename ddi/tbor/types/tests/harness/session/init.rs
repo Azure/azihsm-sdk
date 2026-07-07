@@ -160,7 +160,7 @@ pub fn session_open_init_with_options(
         pk_init: pk_init_sec1,
     };
     let mut cookie = None;
-    let resp: TborSessionOpenInitResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let resp: TborSessionOpenInitResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
 
     let info = build_hpke_info(opts.psk_id, opts.session_type.to_u8(), opts.suite_id);
     let default_psk = default_psk(opts.psk_id).map_err(|_| DdiError::InvalidParameter)?;

@@ -26,9 +26,11 @@
 //! before unpadding so a tag mismatch never reveals padding-oracle
 //! information.
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use azihsm_fw_hsm_pal_traits::HsmError;
+#[cfg(feature = "cbc")]
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -91,11 +93,11 @@ pub async fn seal<'a, P>(
     pal: &P,
     io: &impl HsmIo,
     suite: HpkeSuite,
-    key: &[u8],
-    base_nonce: &[u8],
+    key: &DmaBuf,
+    base_nonce: &DmaBuf,
     aad: &[u8],
-    pt: &[u8],
-    ct: &mut [u8],
+    pt: &DmaBuf,
+    ct: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<usize>
 where
@@ -109,7 +111,7 @@ where
         #[cfg(not(feature = "cbc"))]
         {
             let _ = (pal, io, suite, key, aad, pt, ct, alloc);
-            Err(HsmError::UnsupportedAlgorithm)
+            Err(HsmError::InvalidAlgorithm)
         }
     } else {
         seal_gcm(pal, io, key, base_nonce, aad, pt, ct, alloc).await
@@ -167,7 +169,7 @@ where
         #[cfg(not(feature = "cbc"))]
         {
             let _ = (pal, io, suite, key, aad, ct, pt, alloc);
-            Err(HsmError::UnsupportedAlgorithm)
+            Err(HsmError::InvalidAlgorithm)
         }
     } else {
         open_gcm(pal, io, key, base_nonce, aad, ct, pt, alloc).await
@@ -189,36 +191,33 @@ where
 async fn seal_gcm<'a, P>(
     pal: &P,
     io: &impl HsmIo,
-    key: &[u8],
-    nonce: &[u8],
+    key: &DmaBuf,
+    nonce: &DmaBuf,
     aad: &[u8],
-    pt: &[u8],
-    ct: &mut [u8],
+    pt: &DmaBuf,
+    ct: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<usize>
 where
     P: HsmCrypto + 'a,
 {
-    let key_dma = dma_copy_in(alloc, key)?;
-    let nonce_dma = dma_copy_in(alloc, nonce)?;
-
     if aad.is_empty() {
-        // No AAD — simple path, no buffer formatting needed.
+        // No AAD — GCM writes the ciphertext and tag straight into the
+        // caller's `ct` (split into text / tag regions); no scratch
+        // buffers, no copies.
         let ct_len = pt.len() + GCM_TAG_LEN;
         if ct.len() < ct_len {
             return Err(HsmError::InvalidArg);
         }
-        let pt_dma = dma_copy_in(alloc, pt)?;
-        let ct_scratch = alloc.dma_alloc(pt.len())?;
-        let tag_dma = alloc.dma_alloc(GCM_TAG_LEN)?;
-        pal.gcm_encrypt(io, key_dma, nonce_dma, 0, pt_dma, ct_scratch, tag_dma)
+        let (ct_text, rest) = ct.split_at_mut(pt.len());
+        let (ct_tag, _) = rest.split_at_mut(GCM_TAG_LEN);
+        pal.gcm_encrypt(io, key, nonce, 0, pt, ct_text, ct_tag)
             .await?;
-        ct[..pt.len()].copy_from_slice(ct_scratch);
-        ct[pt.len()..ct_len].copy_from_slice(tag_dma);
         Ok(ct_len)
     } else {
-        // Non-empty AAD — format [padded_aad | pt] into a DMA scratch
-        // buffer, encrypt in-place, then copy only text + tag to `ct`.
+        // Non-empty AAD — the padded-AAD layout still needs a work buffer
+        // for the in-place ciphertext, but the tag is written straight
+        // into `ct`.
         let buf_len = azihsm_fw_core_crypto_gcm_buf::gcm_buf_len(aad.len(), pt.len());
         let padded = azihsm_fw_core_crypto_gcm_buf::padded_aad_len(aad.len());
         let text_len = buf_len - padded;
@@ -227,15 +226,16 @@ where
             return Err(HsmError::InvalidArg);
         }
         let work = alloc.dma_alloc(buf_len)?;
-        let tag_dma = alloc.dma_alloc(GCM_TAG_LEN)?;
         // Format [padded_aad | pt] directly into DMA work buffer.
         // SAFETY: work derefs to &mut [u8] via DmaBuf::DerefMut.
         let aad_len = azihsm_fw_core_crypto_gcm_buf::format_gcm_buf(aad, pt, &mut work[..buf_len]);
-        pal.gcm_encrypt_in_place(io, key_dma, nonce_dma, aad_len, work, tag_dma)
+        let (ct_text, rest) = ct.split_at_mut(text_len);
+        let (ct_tag, _) = rest.split_at_mut(GCM_TAG_LEN);
+        pal.gcm_encrypt_in_place(io, key, nonce, aad_len, work, ct_tag)
             .await?;
-        // Copy only the encrypted text (after padded AAD) + tag to output.
-        ct[..text_len].copy_from_slice(&work[padded..buf_len]);
-        ct[text_len..out_len].copy_from_slice(tag_dma);
+        // Copy only the encrypted text (after padded AAD) to the output;
+        // the tag was written into `ct` directly.
+        ct_text.copy_from_slice(&work[padded..buf_len]);
         Ok(out_len)
     }
 }

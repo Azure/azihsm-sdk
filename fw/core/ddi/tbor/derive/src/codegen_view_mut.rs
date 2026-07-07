@@ -15,6 +15,13 @@
 //!   from a split-off mutable region; all field borrows are disjoint).
 //! * Scalar fields (`u8`/`u16`/`u32`/`u64`/`SessionId`/`KeyId`): owned
 //!   by value, copied out of the TOC during construction.
+//! * `#[tbor(include)]` field groups are **omitted** from `ViewMut`.
+//!   A group sub-view borrows the whole buffer (its members' offsets
+//!   are message-relative), which cannot coexist with a `&mut`
+//!   sub-region of the same buffer. The group's data-section bytes are
+//!   simply skipped by the split chain (they fall in an inter-field
+//!   gap); read the group through the shared `View` (`decode`) instead
+//!   — the two decodes are used sequentially by the handler.
 //!
 //! ## Layout invariants
 //!
@@ -48,11 +55,15 @@ pub fn gen_view_mut(schema: &Schema) -> TokenStream {
     let view_mut_name = format_ident!("{}ViewMut", schema.name);
     let name = &schema.name;
 
-    let struct_fields = schema.fields.iter().map(|field| {
-        let fname = &field.name;
-        let ty = field_type_tokens(field);
-        quote! { pub #fname: #ty, }
-    });
+    let struct_fields = schema
+        .fields
+        .iter()
+        .filter(|field| field.include_group.is_none())
+        .map(|field| {
+            let fname = &field.name;
+            let ty = field_type_tokens(field);
+            quote! { pub #fname: #ty, }
+        });
 
     quote! {
         /// Destructured zero-copy view over an encoded message. All
@@ -93,12 +104,17 @@ pub fn gen_decode_mut_body(schema: &Schema) -> Option<TokenStream> {
     // Today only Buffer/SealedKey can be `mutable`; other
     // data-section types (Uint32/Uint64) are admitted as shared
     // fields if present, since they still occupy data-section space.
-    let data_fields: Vec<(usize, &SchemaField)> = schema
+    let data_fields: Vec<(TokenStream, &SchemaField)> = schema
         .fields
         .iter()
         .enumerate()
         .filter(|(_, f)| f.wire_type.uses_data_section())
-        .map(|(i, f)| (layout.field_toc_indices[i], f))
+        .map(|(i, f)| {
+            (
+                crate::codegen_enc::effective_toc_idx(i, &layout, &schema.fields),
+                f,
+            )
+        })
         .collect();
 
     // Scalar (inline-encoded) field captures: read directly via a
@@ -107,8 +123,9 @@ pub fn gen_decode_mut_body(schema: &Schema) -> Option<TokenStream> {
         .fields
         .iter()
         .enumerate()
+        .filter(|(_, field)| field.include_group.is_none())
         .filter_map(|(i, field)| {
-            let toc_idx = layout.field_toc_indices[i];
+            let toc_idx = crate::codegen_enc::effective_toc_idx(i, &layout, &schema.fields);
             let var = format_ident!("__scalar_{}", field.name);
             let body = match field.wire_type {
                 WireType::Uint8 => Some(quote! {
@@ -210,6 +227,7 @@ pub fn gen_decode_mut_body(schema: &Schema) -> Option<TokenStream> {
     let struct_init: Vec<TokenStream> = schema
         .fields
         .iter()
+        .filter(|field| field.include_group.is_none())
         .map(|field| {
             let fname = &field.name;
             let value = match field.wire_type {

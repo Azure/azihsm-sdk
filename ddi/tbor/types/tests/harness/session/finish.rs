@@ -149,7 +149,7 @@ pub fn session_open_finish_with_mac(
         seed_envelope,
     };
     let mut cookie = None;
-    let resp: TborSessionOpenFinishResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let resp: TborSessionOpenFinishResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
 
     Ok(SessionHandshake {
         session_id: pending.session_id,

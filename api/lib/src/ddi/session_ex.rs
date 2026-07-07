@@ -190,7 +190,7 @@ fn open_session_ex_init(
 
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&req, &mut cookie)
+        .exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)?;
 
     // Derive the 48-byte HPKE `exported` secret, then verify the FW's
@@ -278,7 +278,7 @@ fn open_session_ex_finish(
     };
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&req, &mut cookie)
+        .exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)?;
 
     Ok(OpenSessionExResult {
@@ -317,7 +317,7 @@ pub(crate) fn close_session_ex(partition: &HsmPartition, session_id: u16) -> Hsm
 
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
+    dev.exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)
         .map(|_| ())
 }
