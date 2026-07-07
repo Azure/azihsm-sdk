@@ -235,9 +235,9 @@ pub(crate) fn part_init_ex(
 /// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
 /// wrong length or fails to decode, when `pta_cert_chain` is empty,
 /// exceeds [`MAX_CERTS`], or contains a cert whose offset/length does not
-/// fit in the 16-bit descriptor fields, or when `prev_local_mk_backup`
-/// exceeds [`LOCAL_MK_BACKUP_MAX_LEN`]; surfaces DDI/device failures from
-/// the round-trip.
+/// fit in the 16-bit descriptor fields, or when a present
+/// `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`] bytes;
+/// surfaces DDI/device failures from the round-trip.
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
@@ -251,7 +251,10 @@ pub(crate) fn part_final_ex(
     if pta_cert_chain.is_empty() || pta_cert_chain.len() > MAX_CERTS {
         return Err(HsmError::InvalidArgument);
     }
-    if prev_local_mk_backup.is_some_and(|b| b.len() > LOCAL_MK_BACKUP_MAX_LEN) {
+    // The firmware treats a non-empty `prev_local_mk_backup` as a
+    // fixed-size envelope of exactly `LOCAL_MK_BACKUP_LEN` bytes, so
+    // reject any other present length up front (deterministic guard).
+    if prev_local_mk_backup.is_some_and(|b| b.len() != LOCAL_MK_BACKUP_LEN) {
         return Err(HsmError::InvalidArgument);
     }
 
@@ -407,7 +410,8 @@ mod emu_tests {
         assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 
-    /// A minimal, well-formed one-entry PTA certificate (DER bytes).
+    /// A one-entry PTA cert placeholder (4 opaque bytes). The host-side
+    /// guards never parse DER, so its contents are irrelevant.
     fn one_cert() -> Vec<u8> {
         vec![0u8; 4]
     }

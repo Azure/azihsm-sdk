@@ -30,7 +30,8 @@ fn valid_part_init_inputs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     )
 }
 
-/// A minimal, well-formed one-entry PTA certificate chain (one DER cert).
+/// A one-entry PTA cert placeholder (4 opaque bytes). The host-side
+/// guards never parse DER, so its contents are irrelevant.
 fn one_cert() -> Vec<u8> {
     vec![0u8; 4]
 }

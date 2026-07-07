@@ -15,11 +15,13 @@ use zerocopy::*;
 /// partition-provisioning API (e.g. [`HsmSession::part_final`]) to accept
 /// a PTA certificate chain as `&[HsmCertDescriptor]`.
 ///
-/// It mirrors the native `{ data, len }` buffer shape so the FFI layer
-/// can build a `&[HsmCertDescriptor]` from a C array of certificate
-/// buffers without copying, while the wire-level side-band
-/// `(offset, length)` descriptors stay an internal detail the SDK derives
-/// on the caller's behalf.
+/// This is a Rust borrowed view, **not** a `#[repr(C)]` / ABI-stable
+/// type: it cannot be shared across the FFI boundary directly. The
+/// native FFI layer instead converts a C array of `{ data, len }`
+/// certificate buffers into a `&[HsmCertDescriptor]`, wrapping each
+/// buffer's bytes (the DER is borrowed, not copied). The wire-level
+/// side-band `(offset, length)` descriptors stay an internal detail the
+/// SDK derives on the caller's behalf.
 ///
 /// [`HsmSession::part_final`]: crate::HsmSession::part_final
 #[derive(Debug, Clone, Copy)]

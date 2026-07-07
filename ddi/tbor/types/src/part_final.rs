@@ -41,6 +41,14 @@ pub const CERT_DESCRIPTORS_MAX_LEN: usize = MAX_CERTS * CERT_DESCRIPTOR_LEN;
 /// Maximum on-the-wire length of a `local_mk` backup envelope.
 pub const LOCAL_MK_BACKUP_MAX_LEN: usize = 1024;
 
+/// Exact on-the-wire length of a non-empty `local_mk` backup envelope
+/// (`prev_local_mk_backup` / `local_mk_backup`).
+///
+/// Mirrors `azihsm_fw_ddi_tbor_types::part_final::LOCAL_MK_BACKUP_LEN`;
+/// the firmware treats a non-empty field as exactly this length (an
+/// empty field means absent).
+pub const LOCAL_MK_BACKUP_LEN: usize = 164;
+
 /// One PTA-chain certificate descriptor: the byte `offset` and `length`
 /// of a DER certificate within the side-band data buffer.
 ///
