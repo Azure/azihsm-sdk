@@ -13,6 +13,7 @@ mod masked_key;
 mod partition;
 mod partition_ex;
 mod rsa;
+mod sd_backup;
 mod session;
 mod session_ex;
 mod tpm;
@@ -33,6 +34,9 @@ pub(crate) use partition::*;
 pub use partition_ex::PartInitResult;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
+// WIP: SD backup/restore wrappers have no callers yet (see sd_backup.rs).
+#[allow(unused_imports)]
+pub(crate) use sd_backup::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
