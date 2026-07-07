@@ -316,28 +316,40 @@ impl ChainValidator {
         let curve = verify_key.curve;
         let coord_len = curve.priv_key_len();
         let hw_len = curve.wire_coord_len();
-        let sig_len = curve.sig_len();
 
         // Allocate DMA buffer for digest output.
         let digest_dma = alloc.dma_alloc(digest_len)?;
 
-        // Hash the TBSCertificate (already in DMA memory).
+        // Hash the TBSCertificate (already in DMA memory).  The digest is
+        // the natural big-endian SHA value the signer signed over.
         pal.hash(io, hash_algo, curr.tbs_raw, digest_dma, true)
             .await?;
 
-        // Decode DER ECDSA signature directly into a DMA buffer (raw format).
-        let sig_dma = alloc.dma_alloc(sig_len)?;
-        ecdsa::decode_ecdsa_sig(curr.signature, curve, sig_dma)?;
-
-        // Copy public key into hardware wire format.
-        // X.509 uses coord_len per coordinate (66 for P-521),
-        // hardware expects hw_len (68 for P-521) with leading zeros.
+        // `HsmEcc::ecc_verify` wants the public key and signature in the
+        // little-endian wire form: each component's magnitude in the first
+        // `coord_len` bytes of its `hw_len` slot (any padding — P-521 — at
+        // the slot tail).  X.509 carries both big-endian, so place each
+        // component in its slot and reverse it in place.
         let pk_dma = alloc.dma_alloc(curve.wire_pub_key_len())?;
         pk_dma.fill(0);
-        let pad = hw_len - coord_len;
-        pk_dma[pad..pad + coord_len].copy_from_slice(&verify_key.point[..coord_len]);
-        pk_dma[hw_len + pad..hw_len + pad + coord_len]
+        pk_dma[..coord_len].copy_from_slice(&verify_key.point[..coord_len]);
+        pk_dma[hw_len..hw_len + coord_len]
             .copy_from_slice(&verify_key.point[coord_len..coord_len * 2]);
+        pk_dma[..coord_len].reverse();
+        pk_dma[hw_len..hw_len + coord_len].reverse();
+
+        // Decode the DER ECDSA signature (big-endian `r ‖ s`, contiguous)
+        // directly into the wire buffer, shift `s` to its slot when the
+        // slot is padded (P-521), then reverse each component in place.
+        let sig_dma = alloc.dma_alloc(curve.wire_sig_len())?;
+        sig_dma.fill(0);
+        ecdsa::decode_ecdsa_sig(curr.signature, curve, sig_dma)?;
+        if hw_len != coord_len {
+            sig_dma.copy_within(coord_len..coord_len * 2, hw_len);
+            sig_dma[coord_len..hw_len].fill(0);
+        }
+        sig_dma[..coord_len].reverse();
+        sig_dma[hw_len..hw_len + coord_len].reverse();
 
         let result_dma = alloc.dma_alloc(4)?;
 
