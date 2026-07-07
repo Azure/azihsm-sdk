@@ -194,7 +194,7 @@ pub async fn encap<'a, P>(
     suite: HpkeSuite,
     pk_r: &[u8],
     enc: &mut [u8],
-    shared_secret: &mut [u8],
+    shared_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -216,8 +216,9 @@ where
     if pub_size != npk_pal {
         return Err(HsmError::InvalidArg);
     }
-    let sk_e = alloc_bytes(priv_size, alloc)?;
-    let pk_e_le = alloc_bytes(pub_size, alloc)?;
+    // Ephemeral `sk_e ‖ pk_e_le` share one allocation.
+    let ek = alloc_bytes(priv_size + pub_size, alloc)?;
+    let (sk_e, pk_e_le) = ek.split_at_mut(priv_size);
     let (sk_len, pk_len) = pal
         .ecc_gen_keypair(
             io,
@@ -279,7 +280,7 @@ pub async fn decap<'a, P>(
     enc: &[u8],
     sk_r: &[u8],
     pk_r: &[u8],
-    shared_secret: &mut [u8],
+    shared_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -338,10 +339,10 @@ pub async fn auth_encap<'a, P>(
     io: &impl HsmIo,
     suite: HpkeSuite,
     pk_r: &[u8],
-    sk_s: &[u8],
+    sk_s: &DmaBuf,
     pk_s: &[u8],
     enc: &mut [u8],
-    shared_secret: &mut [u8],
+    shared_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -362,8 +363,9 @@ where
     if pub_size != npk_pal {
         return Err(HsmError::InvalidArg);
     }
-    let sk_e = alloc_bytes(priv_size, alloc)?;
-    let pk_e_le = alloc_bytes(pub_size, alloc)?;
+    // Ephemeral `sk_e ‖ pk_e_le` share one allocation.
+    let ek = alloc_bytes(priv_size + pub_size, alloc)?;
+    let (sk_e, pk_e_le) = ek.split_at_mut(priv_size);
     let (sk_len, pk_len) = pal
         .ecc_gen_keypair(
             io,
@@ -382,12 +384,10 @@ where
     let pk_r_le = alloc_bytes(npk_pal, alloc)?;
     sec1_be_to_pal_le(pk_r, &mut pk_r_le[..], coord_len)?;
 
-    let sk_s_dma = dma_copy_in(alloc, sk_s)?;
-
     let dh = alloc_bytes(ndh * 2, alloc)?;
     pal.ecdh_derive(io, curve, &sk_e[..sk_len], pk_r_le, &mut dh[..ndh])
         .await?;
-    pal.ecdh_derive(io, curve, sk_s_dma, pk_r_le, &mut dh[ndh..])
+    pal.ecdh_derive(io, curve, sk_s, pk_r_le, &mut dh[ndh..])
         .await?;
 
     pal_le_to_sec1_be(&pk_e_le[..pk_len], &mut enc[..npk_wire], coord_len)?;
@@ -430,7 +430,7 @@ pub async fn auth_decap<'a, P>(
     sk_r: &[u8],
     pk_r: &[u8],
     pk_s: &[u8],
-    shared_secret: &mut [u8],
+    shared_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -497,7 +497,7 @@ async fn extract_and_expand<'a, P>(
     suite: HpkeSuite,
     dh: &[u8],
     kem_context: &[u8],
-    shared_secret: &mut [u8],
+    shared_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -513,7 +513,7 @@ where
         io,
         algo,
         &kem_suite_id,
-        &[],
+        None,
         b"eae_prk",
         dh,
         eae_prk,

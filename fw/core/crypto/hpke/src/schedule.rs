@@ -38,10 +38,10 @@ struct ScheduleState<'a> {
     /// Cached HPKE suite identifier.
     suite_id: [u8; 10],
     /// `secret = LabeledExtract(shared_secret, "secret", psk)` (`Nh` bytes).
-    secret: &'a [u8],
+    secret: &'a DmaBuf,
     /// `key_schedule_context = mode || psk_id_hash || info_hash`
     /// (`1 + 2*Nh` bytes).
-    ksc: &'a [u8],
+    ksc: &'a DmaBuf,
 }
 
 fn alloc_bytes(len: usize, alloc: &impl HsmScopedAlloc) -> HsmResult<&mut DmaBuf> {
@@ -78,7 +78,7 @@ async fn derive_secret_and_ksc<'a, P>(
     io: &impl HsmIo,
     suite: HpkeSuite,
     mode: u8,
-    shared_secret: &[u8],
+    shared_secret: &DmaBuf,
     info: &[u8],
     psk: &[u8],
     psk_id: &[u8],
@@ -91,38 +91,41 @@ where
     let nh = suite.nh();
     let suite_id = suite.hpke_suite_id();
 
-    let psk_id_hash = alloc_bytes(nh, alloc)?;
-    kdf::labeled_extract(
-        pal,
-        io,
-        algo,
-        &suite_id,
-        &[],
-        b"psk_id_hash",
-        psk_id,
-        psk_id_hash,
-        alloc,
-    )
-    .await?;
-
-    let info_hash = alloc_bytes(nh, alloc)?;
-    kdf::labeled_extract(
-        pal,
-        io,
-        algo,
-        &suite_id,
-        &[],
-        b"info_hash",
-        info,
-        info_hash,
-        alloc,
-    )
-    .await?;
-
+    // `key_schedule_context = mode ‖ psk_id_hash ‖ info_hash`.  Allocate
+    // it up front and write the two hashes straight into their slots —
+    // no separate hash buffers, no copy into the KSC.
     let ksc = alloc_bytes(1 + 2 * nh, alloc)?;
     ksc[0] = mode;
-    ksc[1..1 + nh].copy_from_slice(psk_id_hash);
-    ksc[1 + nh..].copy_from_slice(info_hash);
+    {
+        let slot = &mut ksc[1..1 + nh];
+        kdf::labeled_extract(
+            pal,
+            io,
+            algo,
+            &suite_id,
+            None,
+            b"psk_id_hash",
+            psk_id,
+            slot,
+            alloc,
+        )
+        .await?;
+    }
+    {
+        let slot = &mut ksc[1 + nh..1 + 2 * nh];
+        kdf::labeled_extract(
+            pal,
+            io,
+            algo,
+            &suite_id,
+            None,
+            b"info_hash",
+            info,
+            slot,
+            alloc,
+        )
+        .await?;
+    }
 
     let secret = alloc_bytes(nh, alloc)?;
     kdf::labeled_extract(
@@ -130,7 +133,7 @@ where
         io,
         algo,
         &suite_id,
-        shared_secret,
+        Some(shared_secret),
         b"secret",
         psk,
         secret,
@@ -187,12 +190,12 @@ pub async fn key_schedule<'a, P>(
     io: &impl HsmIo,
     suite: HpkeSuite,
     mode: u8,
-    shared_secret: &[u8],
+    shared_secret: &DmaBuf,
     info: &[u8],
     psk: &[u8],
     psk_id: &[u8],
-    key: &mut [u8],
-    base_nonce: &mut [u8],
+    key: &mut DmaBuf,
+    base_nonce: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -263,11 +266,11 @@ pub async fn key_schedule_export<'a, P>(
     io: &impl HsmIo,
     suite: HpkeSuite,
     mode: u8,
-    shared_secret: &[u8],
+    shared_secret: &DmaBuf,
     info: &[u8],
     psk: &[u8],
     psk_id: &[u8],
-    exporter_secret: &mut [u8],
+    exporter_secret: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where

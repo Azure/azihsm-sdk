@@ -1367,8 +1367,8 @@ fn decode_mut_with_uint32_uint64_siblings() {
         .finish();
 
     let frame_len = frame.len();
-    // SAFETY: test-only branding of a heap-resident buffer; see
-    // module-level brand() helper.
+    // SAFETY: test-only re-branding of a stack-allocated wire buffer
+    // that outlives `wire_mut` and is not aliased for the borrow.
     let wire_mut: &mut DmaBuf = unsafe { DmaBuf::from_raw_mut(&mut buf[..frame_len]) };
     let view = MixedMutableReq::decode_mut(wire_mut).unwrap();
     assert_eq!(view.epoch, 0xCAFEBABE);
@@ -1476,4 +1476,89 @@ fn single_typed_pod_ref_top_level_round_trip() {
     let view = SinglePodReq::decode(brand(frame.as_bytes())).unwrap();
     assert_eq!(view.pair(), &p);
     assert_eq!(&**view.tail(), b"z");
+}
+
+// ── ViewMut with an include-group sibling ─────────────────────────────
+//
+// Regression guard for codegen_view_mut: `#[tbor(mutable)]` must coexist
+// with a `#[tbor(include)]` group. A group sub-view borrows the whole
+// buffer (its members' offsets are message-relative), which cannot
+// coexist with a `&mut` sub-region of the same buffer — so the group is
+// **omitted** from `ViewMut`. The mutable field must still be split out
+// correctly, with the group's data bytes discarded in the inter-field
+// gap, and the trailing field must read at its group-adjusted offset.
+// The group itself is read through the shared `View` (`decode`).
+#[tbor(opcode = 0x7D)]
+pub struct GroupMutableReq<'a> {
+    #[tbor(max_len = 32, mutable)]
+    secret: &'a [u8],
+    #[tbor(include)]
+    ev: EvidenceLikeGroup<'a>,
+    #[tbor(max_len = 32)]
+    tail: &'a [u8],
+}
+
+#[test]
+fn decode_mut_with_include_group_sibling() {
+    let pairs = [
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0102),
+            b: zerocopy::little_endian::U16::new(0x0304),
+        },
+        GrpPair {
+            a: zerocopy::little_endian::U16::new(0x0506),
+            b: zerocopy::little_endian::U16::new(0x0708),
+        },
+    ];
+    let one = GrpPair {
+        a: zerocopy::little_endian::U16::new(0xAABB),
+        b: zerocopy::little_endian::U16::new(0xCCDD),
+    };
+
+    let mut buf = [0u8; 512];
+    let frame = GroupMutableReq::encode(&mut buf)
+        .unwrap()
+        .secret(b"initial-secret!!")
+        .unwrap()
+        .ev(|g| {
+            g.session(azihsm_fw_ddi_tbor_api::SessionId(7))?
+                .items(&pairs)?
+                .one(&one)?
+                .blob(b"BLOB")
+        })
+        .unwrap()
+        .tail(b"TAIL")
+        .unwrap()
+        .finish();
+    let frame_len = frame.len();
+
+    // Shared view: the include group is read through `decode`.
+    {
+        let view = GroupMutableReq::decode(brand(&buf[..frame_len])).unwrap();
+        let ev = view.ev();
+        assert_eq!(ev.session(), azihsm_fw_ddi_tbor_api::SessionId(7));
+        assert_eq!(ev.items(), &pairs[..]);
+        assert_eq!(&**ev.blob(), b"BLOB");
+        assert_eq!(&**view.tail(), b"TAIL");
+    }
+
+    // Mutable view: the group is omitted; `secret` (&mut) and `tail` (&)
+    // are still split out correctly across the group's data gap.
+    {
+        // SAFETY: test-only re-branding of a stack-allocated wire buffer
+        // that outlives `wire_mut` and is not aliased for the borrow.
+        let wire_mut: &mut DmaBuf = unsafe { DmaBuf::from_raw_mut(&mut buf[..frame_len]) };
+        let view = GroupMutableReq::decode_mut(wire_mut).unwrap();
+        assert_eq!(&**view.secret, b"initial-secret!!");
+        assert_eq!(&**view.tail, b"TAIL");
+        // Mutate the secret in place.
+        view.secret[0] = b'X';
+    }
+
+    // Re-decode: the in-place mutation stuck and the group + tail bytes
+    // are intact (the split did not corrupt neighbouring regions).
+    let view = GroupMutableReq::decode(brand(&buf[..frame_len])).unwrap();
+    assert_eq!(&**view.tail(), b"TAIL");
+    assert_eq!(view.ev().items(), &pairs[..]);
+    assert_eq!(&**view.ev().blob(), b"BLOB");
 }
