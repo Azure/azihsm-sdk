@@ -12,8 +12,12 @@ doctest = false
 test = false
 
 [features]
+# AES-256-CBC + HMAC AEAD suites (RFC-9180-style CBC variants). Off by
+# default: firmware only ever negotiates the AES-GCM suites, so the CBC
+# code (seal_cbc/open_cbc) is compiled out to save flash. Enable this
+# feature to build the CBC suites back in.
 cbc = ["dep:azihsm_fw_core_crypto_aes_cbc_pad"]
-default = ["cbc"]
+default = []
 
 [dependencies]
 azihsm_fw_core_crypto_aes_cbc_pad = { optional = true, path = "../aes-cbc-pad" }

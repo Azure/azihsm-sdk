@@ -67,8 +67,9 @@ pub struct PskParams<'a> {
 /// directly.
 #[derive(Debug, Clone, Copy)]
 pub struct AuthParams<'a> {
-    /// Sender private key.
-    pub sk_s: &'a [u8],
+    /// Sender private key (DMA buffer — consumed directly by the ECDH
+    /// engine, no internal copy).
+    pub sk_s: &'a DmaBuf,
     /// Sender public key.
     pub pk_s: &'a [u8],
 }
@@ -528,9 +529,9 @@ pub async fn seal<'a, P>(
     pal: &P,
     io: &impl HsmIo,
     cfg: &HpkeSealConfig<'_>,
-    pt: &[u8],
+    pt: &DmaBuf,
     enc_out: Option<&mut [u8]>,
-    ct_out: Option<&mut [u8]>,
+    ct_out: Option<&mut DmaBuf>,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<SealSizes>
 where
@@ -566,9 +567,9 @@ async fn do_seal<'a, P>(
     pal: &P,
     io: &impl HsmIo,
     cfg: &HpkeSealConfig<'_>,
-    pt: &[u8],
+    pt: &DmaBuf,
     enc_out: &mut [u8],
-    ct_out: &mut [u8],
+    ct_out: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
@@ -586,8 +587,11 @@ where
         _ => return Err(HsmError::InvalidArg),
     }
 
-    let key = alloc_bytes(suite.nk(), alloc)?;
-    let nonce = alloc_bytes(suite.nn(), alloc)?;
+    // AEAD `key ‖ base_nonce` share one allocation; the two LabeledExpand
+    // outputs write into the split halves.
+    let nk = suite.nk();
+    let kn = alloc_bytes(nk + suite.nn(), alloc)?;
+    let (key, nonce) = kn.split_at_mut(nk);
     let (psk, psk_id) = psk_bytes(&cfg.psk);
     schedule::key_schedule(
         pal,
@@ -807,7 +811,7 @@ async fn derive_exported<'a, P>(
     io: &impl HsmIo,
     suite: HpkeSuite,
     mode: Mode,
-    shared_secret: &[u8],
+    shared_secret: &DmaBuf,
     info: &[u8],
     psk: &Option<PskParams<'_>>,
     exporter_context: &[u8],
@@ -833,6 +837,10 @@ where
     )
     .await?;
 
+    // The caller's `out` is a plain `&mut [u8]` (not DMA-eligible), so the
+    // final LabeledExpand writes into a DMA scratch that is copied out —
+    // one boundary copy for the exported secret.
+    let out_scratch = alloc_bytes(out.len(), alloc)?;
     kdf::labeled_expand(
         pal,
         io,
@@ -841,8 +849,10 @@ where
         exp_secret,
         b"sec",
         exporter_context,
-        out,
+        out_scratch,
         alloc,
     )
-    .await
+    .await?;
+    out.copy_from_slice(out_scratch);
+    Ok(())
 }
