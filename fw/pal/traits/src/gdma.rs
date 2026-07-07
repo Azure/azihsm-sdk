@@ -74,6 +74,44 @@ impl HsmDmaAddr {
     }
 }
 
+/// Parse and validate a 16-byte NVMe SGL Data Block descriptor, returning
+/// the `(address, length)` it encodes.
+///
+/// The descriptor layout is `address(8, LE) ‖ length(4, LE) ‖
+/// reserved(3) ‖ SGL-identifier(1)`.  Only an **address-based Data Block**
+/// descriptor is accepted: the SGL-identifier byte encodes the descriptor
+/// type (bits 7:4) and sub-type (bits 3:0), both of which are `0h` for an
+/// address-based Data Block, and the three reserved bytes must be zero.
+///
+/// This guards a subsequent raw GDMA copy
+/// ([`HsmGdmaController::copy_mem_from_host_raw`]) against a host-supplied
+/// descriptor whose type/reserved bytes would be reinterpreted by the
+/// hardware, and against a null source address on a non-empty transfer
+/// (which would fault or dereference `NULL` on the std PAL).
+///
+/// # Errors
+///
+/// - [`HsmError::InvalidArg`] — a non-zero reserved or SGL-identifier byte
+///   (i.e. not an address-based Data Block descriptor), or a null source
+///   address paired with a non-zero `length`.
+pub fn parse_sgl_data_block(desc: &[u8; 16]) -> HsmResult<(HsmDmaAddr, u32)> {
+    // Bytes 12-14 (reserved) and byte 15 (SGL identifier: type nibble 0h
+    // = Data Block, sub-type nibble 0h = address) must all be zero.
+    if desc[12] != 0 || desc[13] != 0 || desc[14] != 0 || desc[15] != 0 {
+        return Err(HsmError::InvalidArg);
+    }
+    let addr = HsmDmaAddr {
+        lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
+        hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
+    };
+    let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+    // A non-empty transfer must name a non-null source address.
+    if len != 0 && addr.is_null() {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok((addr, len))
+}
+
 /// GDMA memory-copy interface.
 ///
 /// All three methods are `async`: they queue a DMA descriptor with

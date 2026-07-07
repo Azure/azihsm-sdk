@@ -57,13 +57,16 @@ impl HsmGdmaController for StdHsmPal {
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
+        // Validate the descriptor (type/reserved bytes and a non-null
+        // source for a non-empty transfer) before the unchecked copy.
+        let (_src, len) = parse_sgl_data_block(desc)?;
         // The descriptor's embedded length must match the destination.
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
-        if len != dst.len() {
+        if len as usize != dst.len() {
             return Err(HsmError::InvalidArg);
         }
         // SAFETY: see `copy_mem_from_host` — std PRP addresses are raw
         // host-process pointers the caller guarantees valid and alive;
+        // `parse_sgl_data_block` rejects a null source for `len > 0`, and
         // `len == dst.len()` bounds the copy.
         unsafe { self.gdma.copy_mem_from_host_raw(desc, dst) };
         Ok(())

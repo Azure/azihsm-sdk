@@ -56,11 +56,16 @@ impl StdGdma {
     /// that `dst` is at least that long (the trait wrapper enforces
     /// `length == dst.len()`).
     pub unsafe fn copy_mem_from_host_raw(&self, desc: &[u8; 16], dst: &mut [u8]) {
+        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
+        // A zero-length transfer is a no-op; skip so a (permitted) null
+        // source address on an empty descriptor is never dereferenced.
+        if len == 0 {
+            return;
+        }
         let src = HsmDmaAddr {
             lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
             hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
         };
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
         core::ptr::copy_nonoverlapping(addr_to_ptr(src), dst.as_mut_ptr(), len);
     }
 
@@ -119,5 +124,47 @@ mod tests {
         unsafe { StdGdma::new().copy_mem_from_host_raw(&desc, &mut dst) };
         assert!(dst[..8].iter().all(|&b| b == 0x5A));
         assert!(dst[8..].iter().all(|&b| b == 0x00));
+    }
+
+    #[test]
+    fn parse_sgl_data_block_validates_type_reserved_and_null() {
+        use azihsm_fw_hsm_pal_traits::parse_sgl_data_block;
+        use azihsm_fw_hsm_pal_traits::HsmError;
+
+        // A well-formed address-based Data Block descriptor parses.
+        let src = [0u8; 16];
+        let desc = sgl_desc(&src);
+        let (addr, len) = parse_sgl_data_block(&desc).expect("valid descriptor");
+        assert!(!addr.is_null());
+        assert_eq!(len, 16);
+
+        // A non-zero SGL-identifier byte (a non-Data-Block type) is rejected.
+        let mut bad_type = desc;
+        bad_type[15] = 0x20;
+        assert!(matches!(
+            parse_sgl_data_block(&bad_type),
+            Err(HsmError::InvalidArg)
+        ));
+
+        // A non-zero reserved byte is rejected.
+        let mut bad_rsvd = desc;
+        bad_rsvd[12] = 0x01;
+        assert!(matches!(
+            parse_sgl_data_block(&bad_rsvd),
+            Err(HsmError::InvalidArg)
+        ));
+
+        // A null source address with a non-empty length is rejected.
+        let mut null_src = [0u8; 16];
+        null_src[8..12].copy_from_slice(&16u32.to_le_bytes());
+        assert!(matches!(
+            parse_sgl_data_block(&null_src),
+            Err(HsmError::InvalidArg)
+        ));
+
+        // A null source address with length 0 is a permitted empty item.
+        let (addr, len) = parse_sgl_data_block(&[0u8; 16]).expect("empty descriptor");
+        assert!(addr.is_null());
+        assert_eq!(len, 0);
     }
 }

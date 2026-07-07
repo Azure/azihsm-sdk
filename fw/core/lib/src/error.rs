@@ -40,6 +40,8 @@ impl HostStatus {
     pub const ALLOC_ERR: u16 = 0x0C9;
 
     pub const INVALID_OOB_LEN: u16 = 0x0CA;
+
+    pub const INVALID_OOB_PRP: u16 = 0x0CB;
 }
 
 // ── OpError: pairs HsmError (for logging) with host status (for CQE) ─
