@@ -148,16 +148,17 @@ pub(super) fn fetch_pk_hsm(
 ///
 /// # Errors
 ///
-/// Returns [`HsmError::InvalidArgument`] when `session_type` is not a
-/// recognized [`HsmSessionExType`] value; otherwise propagates
-/// transport-specific failures from the handshake.
+/// Propagates transport-specific failures from the handshake.
 pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
     session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
-    let session_type = SessionType::try_from(session_type)?;
+    // Convert the API-layer session type to the wire-level `SessionType`
+    // here in the DDI layer, so the public API surface never handles the
+    // DDI wire type.
+    let session_type: SessionType = session_type.try_into()?;
     let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
     open_session_ex_finish(partition, pending)
 }
@@ -210,7 +211,7 @@ fn open_session_ex_init(
 
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&req, &mut cookie)
+        .exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)?;
 
     // Derive the 48-byte HPKE `exported` secret, then verify the FW's
@@ -298,7 +299,7 @@ fn open_session_ex_finish(
     };
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&req, &mut cookie)
+        .exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)?;
 
     Ok(OpenSessionExResult {
@@ -337,7 +338,7 @@ pub(crate) fn close_session_ex(partition: &HsmPartition, session_id: u16) -> Hsm
 
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
+    dev.exec_op_tbor(&req, None, &mut cookie)
         .map_err(HsmError::from)
         .map(|_| ())
 }

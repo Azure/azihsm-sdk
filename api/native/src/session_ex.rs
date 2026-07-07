@@ -44,7 +44,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_open(
         let session = Box::new(partition.open_session_ex(
             partition.api_rev(),
             psk_id,
-            session_type.into(),
+            api::HsmSessionExType::from(session_type),
         )?);
 
         let handle = HANDLE_TABLE.alloc_handle(HandleType::Session, session);
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         let pta_csr = deref_mut_ptr(pta_csr)?;
         let pta_report = deref_mut_ptr(pta_report)?;
 
-        let result = session.part_init(
+        let result = session.part_init_ex(
             mach_seed,
             part_policy,
             pota_thumbprint,

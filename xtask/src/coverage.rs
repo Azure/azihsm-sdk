@@ -40,6 +40,14 @@ pub struct Coverage {
     #[clap(long)]
     pub exclude: Vec<String>,
 
+    /// Test only the specified test target
+    #[clap(long)]
+    pub test: Option<String>,
+
+    /// Test name filters
+    #[clap(long)]
+    pub filter: Vec<String>,
+
     /// Skip cleaning existing llvm-cov artifacts before running coverage
     #[clap(long)]
     pub skip_clean: bool,
@@ -85,18 +93,25 @@ impl Xtask for Coverage {
             command_args.push(&profile_val);
         }
         let exclude_vals: Vec<String>;
-        if self.package.is_none() {
+        if !self.exclude.is_empty() && self.package.is_none() {
             command_args.push("--workspace");
-            if !self.exclude.is_empty() {
-                exclude_vals = self
-                    .exclude
-                    .iter()
-                    .flat_map(|c| ["--exclude".to_string(), c.clone()])
-                    .collect();
-                for val in &exclude_vals {
-                    command_args.push(val);
-                }
+            exclude_vals = self
+                .exclude
+                .iter()
+                .flat_map(|c| ["--exclude".to_string(), c.clone()])
+                .collect();
+            for val in &exclude_vals {
+                command_args.push(val);
             }
+        }
+        let test_val = self.test.clone().unwrap_or_default();
+        if self.test.is_some() {
+            command_args.push("--test");
+            command_args.push(&test_val);
+        }
+        if !self.filter.is_empty() {
+            command_args.push("--");
+            command_args.extend(self.filter.iter().map(|s| s.as_str()));
         }
 
         // Clean existing llvm-cov artifacts unless --skip-clean is set
@@ -129,6 +144,8 @@ impl From<crate::nextest::Nextest> for Coverage {
             filterset: nextest.filterset,
             profile: nextest.profile,
             exclude: nextest.exclude,
+            test: nextest.test,
+            filter: nextest.filter,
             skip_clean: false,
         }
     }

@@ -37,6 +37,8 @@
 //! | DW9-10| destination PRP2                                   |
 //! | DW11  | [`SessionFlags`]                                   |
 //! | DW12  | session id (low 16 bits)                          |
+//! | DW13-14| out-of-band (OOB) SGL-descriptor-page pointer ([`HsmDmaAddr`])|
+//! | DW15  | out-of-band (OOB) total byte count                |
 //!
 //! # CQE layout
 //!
@@ -310,6 +312,34 @@ impl Sqe<'_> {
     pub fn session_id(&self) -> u16 {
         self.0[12] as u16
     }
+
+    // ── DW13–15: out-of-band (OOB) side-band ────────────────────
+
+    /// Out-of-band SGL-descriptor-page pointer (DW13–14).
+    ///
+    /// Points at a host page holding an array of 16-byte **NVMe SGL Data
+    /// Block descriptors** (`address(8) ‖ length(4) ‖ rsvd(3) ‖
+    /// type(1)`).  A TBOR message references an OOB item by its **index**
+    /// into this array; the firmware reads the indexed descriptor and
+    /// SGL-copies the item's bytes.  Zero = no OOB data.
+    #[inline]
+    pub fn oob_prp(&self) -> HsmDmaAddr {
+        HsmDmaAddr {
+            lo: self.0[13],
+            hi: self.0[14],
+        }
+    }
+
+    /// Out-of-band SGL-descriptor-array byte count (DW15).
+    ///
+    /// Total size of the 16-byte SGL descriptor array at
+    /// [`oob_prp`](Self::oob_prp) — i.e. `num_entries * 16`.  Bounds the
+    /// index a TBOR message may reference: `index * 16 + 16 <= oob_len`.
+    /// Zero = no OOB data.
+    #[inline]
+    pub fn oob_len(&self) -> u32 {
+        self.0[15]
+    }
 }
 
 // ── SQE builder (host side) ─────────────────────────────────────────
@@ -371,6 +401,21 @@ impl SqeBuilder {
     #[inline]
     pub fn session_id(mut self, id: u16) -> Self {
         self.0[12] = u32::from(id);
+        self
+    }
+
+    /// Set the out-of-band SGL-descriptor-page pointer (DW13–14).
+    #[inline]
+    pub fn oob_prp(mut self, addr: u64) -> Self {
+        self.0[13] = addr as u32;
+        self.0[14] = (addr >> 32) as u32;
+        self
+    }
+
+    /// Set the out-of-band SGL-descriptor-array byte count (DW15).
+    #[inline]
+    pub fn oob_len(mut self, len: u32) -> Self {
+        self.0[15] = len;
         self
     }
 

@@ -125,6 +125,30 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  test_ubuntu_smoke:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run emu smoke tests
+      id: test-emu-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-emu-smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   build_windows:
 
     runs-on: windows-2025-vs2026
@@ -220,6 +244,30 @@ jobs:
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
       if: ${{ steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_smoke:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run emu smoke tests
+      id: test-emu-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-emu-smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1

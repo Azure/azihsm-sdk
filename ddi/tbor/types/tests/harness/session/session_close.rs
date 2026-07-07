@@ -19,6 +19,6 @@ use azihsm_ddi_tbor_types::TborSessionCloseResp;
 pub fn session_close(dev: &<AzihsmDdi as Ddi>::Dev, session_id: u16) -> Result<(), DdiError> {
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
-    let _resp: TborSessionCloseResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let _resp: TborSessionCloseResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
     Ok(())
 }
