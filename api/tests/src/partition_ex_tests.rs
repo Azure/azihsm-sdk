@@ -148,3 +148,40 @@ fn part_final_rejects_wrong_len_prev_local_mk_backup() {
     let res = session.part_final(&policy, &chain, Some(&wrong_len));
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
+
+// ── Host-guard pass-through (request-construction / round-trip) ──────────────
+
+/// Valid-length `PartInit` inputs pass every host-side guard, so the
+/// request is sealed, constructed, and shipped to the device. The call
+/// is therefore never rejected with [`HsmError::InvalidArgument`] (the
+/// host-guard error); it may still fail on-device with a different
+/// error. This exercises the request-construction / TBOR wiring path
+/// that the negative guard tests skip.
+#[test]
+fn part_init_valid_inputs_pass_host_guards() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, pota, sata) = valid_part_init_inputs();
+    let policy = vec![0u8; PART_POLICY_LEN];
+
+    let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, None);
+    assert!(!matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// Valid-length `PartFinal` inputs pass every host-side guard, so the
+/// request is built — the cert chain is concatenated into the OOB
+/// side-band buffer and its `(offset, length)` descriptors derived — and
+/// shipped to the device. The call is therefore never rejected with
+/// [`HsmError::InvalidArgument`]; it may still fail on-device. This
+/// exercises the request-construction / TBOR-OOB wiring path.
+#[test]
+fn part_final_valid_inputs_pass_host_guards() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+
+    let res = session.part_final(&policy, &chain, None);
+    assert!(!matches!(res, Err(HsmError::InvalidArgument)));
+}
