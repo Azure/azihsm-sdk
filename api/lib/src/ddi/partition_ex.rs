@@ -182,7 +182,7 @@ pub(crate) fn part_init_ex(
     let inner = partition.inner().read();
     let dev = inner.dev();
     let mut cookie = None;
-    dev.exec_op_tbor(&req, &mut cookie)
+    dev.exec_op_tbor(&req, None, &mut cookie)
         .map(PartInitResult::from)
         .map_err(HsmError::from)
 }

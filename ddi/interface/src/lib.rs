@@ -298,6 +298,13 @@ pub trait DdiDev {
 
     /// Execute a DDI command whose body is TBOR-encoded.
     ///
+    /// # Arguments
+    /// * `req`       - TBOR-encodable request
+    /// * `oob_items` - Optional out-of-band payloads (each becomes one
+    ///   NVMe SGL Data Block descriptor the device indexes by position).
+    ///   Pass `None` for commands that carry no out-of-band data.
+    /// * `cookie`    - Optional cookie threaded through to the backend
+    ///
     /// # Default
     ///
     /// Returns [`DdiError::UnsupportedEncoding`]. Override on backends
@@ -305,6 +312,7 @@ pub trait DdiDev {
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         _req: &T,
+        _oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         Err(DdiError::UnsupportedEncoding)

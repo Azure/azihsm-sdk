@@ -56,6 +56,7 @@ members = [
   "fw/core/ddi/tbor/types",
   "fw/core/io",
   "fw/core/lib",
+  "fw/core/oob",
   "fw/core/tracing",
   "fw/pal/traits",
   "fw/plat/std/lib",
@@ -142,6 +143,7 @@ azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_io = { path = "fw/core/io" }
+azihsm_fw_hsm_oob = { path = "fw/core/oob" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }

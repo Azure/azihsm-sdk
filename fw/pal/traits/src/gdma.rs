@@ -49,7 +49,7 @@ use super::*;
 /// Mirrors the host's PRP / flat-address representation: SQE fields
 /// store the address as two adjacent dwords, and PAL drivers consume
 /// the two halves directly without needing to reconstruct a `u64`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HsmDmaAddr {
     /// Lower 32 bits of the address.
     pub lo: u32,
@@ -72,6 +72,44 @@ impl HsmDmaAddr {
     pub fn is_null(&self) -> bool {
         self.lo == 0 && self.hi == 0
     }
+}
+
+/// Parse and validate a 16-byte NVMe SGL Data Block descriptor, returning
+/// the `(address, length)` it encodes.
+///
+/// The descriptor layout is `address(8, LE) ‖ length(4, LE) ‖
+/// reserved(3) ‖ SGL-identifier(1)`.  Only an **address-based Data Block**
+/// descriptor is accepted: the SGL-identifier byte encodes the descriptor
+/// type (bits 7:4) and sub-type (bits 3:0), both of which are `0h` for an
+/// address-based Data Block, and the three reserved bytes must be zero.
+///
+/// This guards a subsequent raw GDMA copy
+/// ([`HsmGdmaController::copy_mem_from_host_raw`]) against a host-supplied
+/// descriptor whose type/reserved bytes would be reinterpreted by the
+/// hardware, and against a null source address on a non-empty transfer
+/// (which would fault or dereference `NULL` on the std PAL).
+///
+/// # Errors
+///
+/// - [`HsmError::InvalidArg`] — a non-zero reserved or SGL-identifier byte
+///   (i.e. not an address-based Data Block descriptor), or a null source
+///   address paired with a non-zero `length`.
+pub fn parse_sgl_data_block(desc: &[u8; 16]) -> HsmResult<(HsmDmaAddr, u32)> {
+    // Bytes 12-14 (reserved) and byte 15 (SGL identifier: type nibble 0h
+    // = Data Block, sub-type nibble 0h = address) must all be zero.
+    if desc[12] != 0 || desc[13] != 0 || desc[14] != 0 || desc[15] != 0 {
+        return Err(HsmError::InvalidArg);
+    }
+    let addr = HsmDmaAddr {
+        lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
+        hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
+    };
+    let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+    // A non-empty transfer must name a non-null source address.
+    if len != 0 && addr.is_null() {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok((addr, len))
 }
 
 /// GDMA memory-copy interface.
@@ -172,6 +210,51 @@ pub trait HsmGdmaController {
         &self,
         io: &impl HsmIo,
         src: HsmDmaAddr,
+        dst: &mut DmaBuf,
+        prp: bool,
+    ) -> HsmResult<()>;
+
+    /// Copies bytes from host memory into an HSM-local DMA buffer, using
+    /// a **raw 16-byte NVMe SGL Data Block descriptor** as the host
+    /// source.
+    ///
+    /// Unlike [`copy_mem_from_host`](Self::copy_mem_from_host) — which
+    /// takes a single address and synthesizes the second descriptor
+    /// dword as zero — this passes both descriptor dwords straight to
+    /// the GDMA hardware SGL source (`sgl0`/`sgl1`).  `desc[0..8]` is the
+    /// address; `desc[8..16]` is the block's embedded `length(4) ‖
+    /// rsvd(3) ‖ type(1)` (each little-endian, per NVMe).  This lets the
+    /// firmware forward an SGL Data Block descriptor read out of an OOB
+    /// descriptor page verbatim.
+    ///
+    /// The **transfer length is the descriptor's `length` field**
+    /// (`desc[8..12]`), which **must equal `dst.len()`**.
+    ///
+    /// Only SGL is supported: `prp == true` returns
+    /// [`HsmError::UnsupportedCmd`].
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `desc` — the raw 16-byte SGL Data Block descriptor.
+    /// - `dst` — HSM-local DMA-capable destination buffer;
+    ///   `dst.len()` must equal the descriptor's `length`.
+    /// - `prp` — must be `false` (SGL); `true` is unsupported.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — bytes copied successfully.
+    /// - `Err(HsmError::UnsupportedCmd)` — `prp == true`.
+    /// - `Err(HsmError::InvalidArg)` — the descriptor `length` does not
+    ///   equal `dst.len()`, `dst` is not in DMA memory, or the address is
+    ///   null for a non-empty transfer.
+    /// - `Err(HsmError::FailedToStartDmaTransaction)` — descriptor could
+    ///   not be queued.
+    /// - `Err(HsmError)` — propagated from the GDMA driver.
+    async fn copy_mem_from_host_raw(
+        &self,
+        io: &impl HsmIo,
+        desc: &[u8; 16],
         dst: &mut DmaBuf,
         prp: bool,
     ) -> HsmResult<()>;

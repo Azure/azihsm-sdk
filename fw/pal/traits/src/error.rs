@@ -350,6 +350,15 @@ pub enum HsmError {
     /// carries the requested selector (SVN / owner id).
     SeedNotFound = 0x08700100,
 
+    /// The SQE's out-of-band descriptor-array length (`oob_len`) is
+    /// malformed: not a whole number of 16-byte SGL descriptors, or
+    /// larger than a single descriptor page.
+    IoChannelInvalidOobLen = 0x08700104,
+
+    /// The SQE's out-of-band descriptor-array pointer (`oob_prp`) is not
+    /// 4K-page-aligned, so the descriptor array could straddle a page.
+    IoChannelInvalidOobAlignment = 0x08700105,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
