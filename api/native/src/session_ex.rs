@@ -20,7 +20,7 @@ use super::*;
 /// @param[in] session_type Channel integrity profile to pin for the session
 /// @param[out] sess_handle Pointer to the session handle to be allocated
 ///
-/// @return `AzihsmError` indicating the result of the operation
+/// @return `AzihsmStatus` indicating the result of the operation
 ///
 /// # Safety
 ///
@@ -131,23 +131,15 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         let sata_thumbprint: &[u8] = deref_ptr(params.sata_thumbprint)?.try_into()?;
         let sapota_thumbprint = buffer_to_optional_slice(params.sapota_thumbprint)?;
 
-        // Validate the output buffers before the one-shot provisioning
-        // operation: `PartInit` cannot be re-run and its CSR / report
-        // cannot be re-fetched, so an invalid or undersized buffer must be
-        // rejected *up front* (with the required size) while the call is
-        // still retryable — not after the partition has been irreversibly
-        // provisioned. The device output is bounded by the wire-schema
-        // maxima, so a buffer of at least that capacity is guaranteed to
-        // hold the result; this also makes the standard two-call size probe
-        // (NULL/small buffer -> `BUFFER_TOO_SMALL` + required size -> retry)
-        // safe for this one-shot command.
-        let pta_csr = deref_mut_ptr(pta_csr)?;
-        let pta_report = deref_mut_ptr(pta_report)?;
+        // Validate the output buffers before calling into the session
+        validate_ptr(pta_csr)?;
+        validate_ptr(pta_report)?;
 
-        //validate output buffers are distinct
         if std::ptr::eq(pta_csr, pta_report) {
             Err(AzihsmStatus::InvalidArgument)?;
         }
+        let pta_csr = deref_mut_ptr(pta_csr)?;
+        let pta_report = deref_mut_ptr(pta_report)?;
         validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN)?;
         validate_output_buffer(pta_report, api::PTA_REPORT_MAX_LEN)?;
 
