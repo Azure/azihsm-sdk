@@ -148,9 +148,9 @@ impl<'a> DeriveOp for OsslHkdfAlgo<'a> {
     ///
     /// Returns an error if:
     /// - `CryptoError::HkdfError` - HKDF context creation fails
-    /// - `CryptoError::HkdfInitError` - HKDF property setting or key setting fails
-    /// - `CryptoError::HkdfDeriveError` - HKDF derivation operation fails
-    /// - `CryptoError::InvalidKeySize` - Key material extraction fails
+    /// - `CryptoError::HkdfSetPropertyError` - Setting HKDF properties or the key fails
+    /// - `CryptoError::HkdfDeriveError` - Derivation fails or a zero-length output is requested
+    /// - `CryptoError::HmacInvalidDerivedKeyLength` - Extract-mode length differs from the digest size
     fn derive(&self, key: &Self::Key, derive_len: usize) -> Result<Self::DerivedKey, CryptoError> {
         // Extract key bytes
         let key_bytes = key.to_vec()?;

@@ -312,11 +312,10 @@ impl HashOpContext for OsslHashAlgoContext {
     /// hold the complete hash result before attempting the finalization,
     /// preventing buffer overflows.
     ///
-    /// # Context Consumption
+    /// # Context Reuse
     ///
-    /// This method consumes the context by taking ownership (`self`),
-    /// ensuring that the context cannot be accidentally reused after
-    /// finalization, which would be a programming error.
+    /// This method takes `&mut self` and finalizes the digest; the context
+    /// must not be updated or finalized again afterwards.
     ///
     /// # Error Handling
     ///
