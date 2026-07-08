@@ -38,6 +38,29 @@ pub struct AeadEnvelope<'a> {
     pub tag: &'a DmaBuf,
 }
 
+/// Borrowed view over the *cleartext* regions of an envelope that can
+/// be read **without the AEAD key** — i.e. without verifying the
+/// authentication tag.
+///
+/// Returned by [`peek`](crate::peek). Unlike [`AeadEnvelope`] — which
+/// [`open`](crate::open) produces only after verifying the tag and
+/// decrypting the payload — an `AeadPeek` involves no crypto and no
+/// I/O: the payload is still ciphertext and the tag is unverified. The
+/// exposed `iv` / `aad` bytes are therefore cleartext but
+/// **UNAUTHENTICATED** — a tampered blob would still fail
+/// [`open`](crate::open), so callers MUST NOT trust these bytes until a
+/// subsequent `open` verifies the tag.
+#[derive(Debug)]
+pub struct AeadPeek<'a> {
+    /// AEAD algorithm read from the envelope header.
+    pub alg: AeadAlg,
+    /// The GCM nonce (`alg.iv_len()` bytes).
+    pub iv: &'a DmaBuf,
+    /// Additional authenticated data (may be empty). Cleartext but
+    /// unauthenticated until [`open`](crate::open) verifies the tag.
+    pub aad: &'a DmaBuf,
+}
+
 /// Compute the byte offsets of the IV, AAD, payload, and tag
 /// regions given the parsed header and total envelope length.
 ///
