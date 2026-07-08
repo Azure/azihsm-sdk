@@ -36,7 +36,7 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
     let (key_len, vault_kind) = super::from_ddi::aes(body.key_size)?;
-    let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata)?;
+    let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, true)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
     // `key_tag` because the key cannot be looked up across sessions.

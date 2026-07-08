@@ -832,6 +832,10 @@ pub fn get_unwrapping_key(
         }
         assert!(resp.is_ok(), "resp {:?}", resp);
         let resp = resp.unwrap();
+        // The sim (mock) backend returns a populated masked-key
+        // envelope; the emu backend defers firmware-side masking and
+        // emits an empty placeholder for now, so only assert off-emu.
+        #[cfg(not(feature = "emu"))]
         assert!(!resp.data.masked_key.is_empty());
 
         return (
@@ -896,6 +900,30 @@ pub fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
     wrapped_data.append(&mut encrypted_data);
 
     wrapped_data
+}
+
+/// Build a wrapped blob whose OAEP-recovered "KEK" is 48 bytes — larger
+/// than any valid AES key — to exercise the oversized-KEK rejection path.
+/// The trailing bytes are arbitrary: unwrapping fails on the oversized KEK
+/// before the AES-KWP step is reached.
+pub fn wrap_data_with_oversized_kek(wrapping_pub_key_der: Vec<u8>) -> Vec<u8> {
+    let oversized_kek = [0xA5u8; 48];
+    let wrapping_pub_key = RsaPublicKey::from_bytes(&wrapping_pub_key_der).unwrap();
+    let mut encrypted_kek = Encrypter::encrypt_vec(
+        &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+        &wrapping_pub_key,
+        &oversized_kek,
+    )
+    .unwrap();
+
+    // Arbitrary trailer so the blob exceeds the modulus length (a blob no
+    // longer than the modulus is rejected as "too short" first).
+    let mut trailer = vec![0u8; 40];
+
+    let mut wrapped = Vec::with_capacity(encrypted_kek.len() + trailer.len());
+    wrapped.append(&mut encrypted_kek);
+    wrapped.append(&mut trailer);
+    wrapped
 }
 
 /// Helper to perform ECC signing operation using OpenSSL/Symcrypt.

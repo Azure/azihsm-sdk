@@ -265,14 +265,14 @@ pub trait HsmRsa {
     /// separate copy.
     ///
     /// `priv_key` is in the PAL's own vault representation — raw key
-    /// material on real PKA hardware, DER in the std/OpenSSL PAL — and
-    /// this method converts it into the wire form: the little-endian
-    /// modulus followed by a fixed 4-byte little-endian exponent (the
-    /// raw layout the host's `DdiDerPublicKey` post-decode turns into
-    /// DER).  The PAL owns the whole vault-format → wire-format
-    /// conversion, including any big-endian↔little-endian flip (real
-    /// PKA is little-endian native; an OpenSSL backend holds big-endian
-    /// components and reverses them).
+    /// material on real PKA hardware, the crypto crate's HSM byte layout
+    /// in the std/OpenSSL PAL — and this method converts it into the wire
+    /// form: the little-endian modulus followed by a fixed 4-byte
+    /// little-endian exponent (the raw layout the host's `DdiDerPublicKey`
+    /// post-decode turns into DER).  The PAL owns the whole vault-format →
+    /// wire-format conversion, including any big-endian↔little-endian flip
+    /// (real PKA is little-endian native; an OpenSSL backend holds
+    /// big-endian components and reverses them).
     ///
     /// Follows the query/alloc/use convention: pass `pub_out = None` to
     /// query the wire length the caller must allocate, then
@@ -294,6 +294,35 @@ pub trait HsmRsa {
         priv_key: &DmaBuf,
         pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize>;
+
+    /// Convert a DER-encoded RSA private key (recovered from a
+    /// `CKM_RSA_AES_KEY_WRAP` unwrap) **in place** into the PAL's vault
+    /// representation, also reporting the modulus length used to classify
+    /// the vault key kind (256 / 384 / 512 for RSA-2048 / 3072 / 4096).
+    ///
+    /// The conversion overwrites `buf` and returns the vault length: the
+    /// valid vault bytes are `buf[..vault_len]`.  Converting in place lets
+    /// the large recovered RSA material (up to ~2.3 KB for RSA-4096) be
+    /// reused as the vault buffer rather than duplicated — important under
+    /// the PAL's fixed per-slot DMA budget.
+    ///
+    /// The vault representation is PAL-defined, is **layout-dependent on
+    /// `crt`**, and is no larger than the source DER (so it always fits in
+    /// `buf`).  Real PKA hardware keeps its own raw non-CRT / custom CRT
+    /// layouts; the std/OpenSSL PAL uses the crypto crate's fixed-size HSM
+    /// byte layout — non-CRT `n || e || p || q`, CRT
+    /// `n || e || d || p || q || dp || dq || qinv` — which is smaller than
+    /// the source DER (so `buf` is overwritten and `vault_len < buf.len()`).
+    ///
+    /// # Returns
+    /// - `Ok((vault_len, modulus_len))`.
+    /// - `Err(HsmError::InvalidArg)` — `buf` is not a valid RSA private key.
+    fn rsa_priv_der_to_vault(
+        &self,
+        io: &impl HsmIo,
+        buf: &mut DmaBuf,
+        crt: bool,
+    ) -> HsmResult<(usize, usize)>;
 
     /// PKCS#1 v1.5 encrypt (EME-PKCS1-v1_5).
     ///
@@ -492,8 +521,13 @@ pub trait HsmRsa {
     ///   `key_size.modulus_len()` bytes.
     /// - `label` — OAEP label; must equal the encryption-time
     ///   label.
-    /// - `output` — plaintext destination; must be at least
-    ///   `key_size.max_oaep_message(algo)` bytes.
+    /// - `output` — plaintext destination; must be large enough to hold
+    ///   the recovered plaintext (at most `key_size.modulus_len()`
+    ///   bytes — the recovered length is returned).  A recovered
+    ///   plaintext longer than `output` fails with
+    ///   [`HsmError::RsaInvalidKeyLength`], so a caller that accepts only
+    ///   a bounded plaintext (e.g. a small KEK) may size `output` to that
+    ///   bound.
     /// - `alloc` — scoped allocator for RSA scratch.
     ///
     /// # Returns

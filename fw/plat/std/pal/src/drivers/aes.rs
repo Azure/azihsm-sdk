@@ -32,6 +32,7 @@ use azihsm_crypto::AesCbcAlgo;
 use azihsm_crypto::AesEcbAlgo;
 use azihsm_crypto::AesGcmAlgo;
 use azihsm_crypto::AesKey;
+use azihsm_crypto::AesKeyWrapPadAlgo;
 use azihsm_crypto::DecryptOp;
 use azihsm_crypto::EncryptOp;
 use azihsm_crypto::ImportableKey;
@@ -281,6 +282,71 @@ impl StdAes {
 
         plaintext[..result_data.len()].copy_from_slice(&result_data);
         Ok(())
+    }
+
+    /// AES-KWP (RFC 5649) unwrap asynchronously.
+    ///
+    /// Unwraps `input` with the key-encryption key `kek`, verifying the
+    /// RFC 5649 AIV and padding, and writes the recovered key material
+    /// into `output`.  Byte-oriented — no endianness conversion.
+    ///
+    /// # Parameters
+    /// - `kek` — key-encryption key (16, 24, or 32 bytes).
+    /// - `input` — wrapped key material (multiple of 8 bytes, `>= 16`).
+    /// - `output` — destination for the unwrapped key material.
+    ///
+    /// # Returns
+    /// - `Ok(len)` — unwrapped plaintext length; `output[..len]` valid.
+    ///
+    /// # Errors
+    /// - [`HsmError::AesInvalidKeyLength`] — `kek` is not a valid AES
+    ///   key length.
+    /// - [`HsmError::InvalidArg`] — `input`/`output` size-constraint
+    ///   violation (RFC 5649: `input` must be >= 16 bytes, a multiple of 8,
+    ///   and <= 3080; `output` must hold at least `input.len() - 8` bytes).
+    /// - [`HsmError::AesUnwrapFailed`] — AIV/padding integrity check failed
+    ///   (wrong key, tampering, or corruption).
+    pub async fn kwp_unwrap(
+        &self,
+        kek: &[u8],
+        input: &[u8],
+        output: &mut [u8],
+    ) -> HsmResult<usize> {
+        // RFC 5649 size constraints (per the `aes_kwp_unwrap` trait
+        // contract): the wrapped input is >= 16 bytes, a multiple of 8, and
+        // at most 3080 (round_up_8(3072) + the 8-byte AIV); the output holds
+        // at least `input.len() - 8` bytes.  Violations are `InvalidArg` —
+        // distinct from an integrity failure — matching the hardware PAL.
+        if input.len() < 16 || !input.len().is_multiple_of(8) || input.len() > 3080 {
+            return Err(HsmError::InvalidArg);
+        }
+        if output.len() < input.len() - 8 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let kek_owned = kek.to_vec();
+        let input_owned = input.to_vec();
+        let out_len = output.len();
+
+        let result = self
+            .pool
+            .submit_with_result(async move {
+                let aes_key =
+                    AesKey::from_bytes(&kek_owned).map_err(|_| HsmError::AesInvalidKeyLength)?;
+                let mut algo = AesKeyWrapPadAlgo::default();
+                let mut buf = vec![0u8; out_len];
+                // Size is pre-validated above, so a failure here is an
+                // AIV / padding integrity failure.
+                let written = algo
+                    .decrypt(&aes_key, &input_owned, Some(&mut buf))
+                    .map_err(|_| HsmError::AesUnwrapFailed)?;
+                buf.truncate(written);
+                Ok::<_, HsmError>(buf)
+            })
+            .await?;
+
+        output[..result.len()].copy_from_slice(&result);
+        Ok(result.len())
     }
 }
 
@@ -755,5 +821,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dec_pt, pt);
+    }
+
+    // ── AES-KWP unwrap (RFC 5649) round-trip ────────────────────
+
+    #[tokio::test]
+    async fn kwp_unwrap_roundtrip() {
+        let driver = make_driver();
+        let kek = [0x42u8; 32]; // AES-256 KEK
+
+        // Wrap a representative payload whose length is not a multiple of
+        // 8 (47 bytes), so RFC 5649 pads it to the next 8-byte boundary
+        // (exercising the padding / unpadding path).
+        let payload: Vec<u8> = (0..47u8).collect();
+        let mut wrapped = vec![0u8; payload.len() + 16];
+        let wrapped_len = {
+            let kek_key = AesKey::from_bytes(&kek).unwrap();
+            let mut algo = AesKeyWrapPadAlgo::default();
+            algo.encrypt(&kek_key, &payload, Some(&mut wrapped))
+                .unwrap()
+        };
+        wrapped.truncate(wrapped_len);
+
+        let mut out = vec![0u8; payload.len() + 8];
+        let len = driver.kwp_unwrap(&kek, &wrapped, &mut out).await.unwrap();
+        assert_eq!(&out[..len], &payload[..]);
+    }
+
+    #[tokio::test]
+    async fn kwp_unwrap_tamper_fails() {
+        let driver = make_driver();
+        let kek = [0x42u8; 32];
+
+        let payload: Vec<u8> = (0..32u8).collect();
+        let mut wrapped = vec![0u8; payload.len() + 16];
+        let wrapped_len = {
+            let kek_key = AesKey::from_bytes(&kek).unwrap();
+            let mut algo = AesKeyWrapPadAlgo::default();
+            algo.encrypt(&kek_key, &payload, Some(&mut wrapped))
+                .unwrap()
+        };
+        wrapped.truncate(wrapped_len);
+        wrapped[0] ^= 0xff; // corrupt the AIV → integrity check must fail
+
+        let mut out = vec![0u8; payload.len() + 8];
+        let res = driver.kwp_unwrap(&kek, &wrapped, &mut out).await;
+        assert_eq!(res.unwrap_err(), HsmError::AesUnwrapFailed);
+    }
+
+    #[tokio::test]
+    async fn kwp_unwrap_rejects_bad_sizes() {
+        let driver = make_driver();
+        let kek = [0x42u8; 32];
+        let mut out = vec![0u8; 4096];
+
+        // Too short (< 16 bytes).
+        let short = [0u8; 8];
+        assert_eq!(
+            driver.kwp_unwrap(&kek, &short, &mut out).await.unwrap_err(),
+            HsmError::InvalidArg
+        );
+
+        // Not a multiple of 8.
+        let unaligned = [0u8; 20];
+        assert_eq!(
+            driver
+                .kwp_unwrap(&kek, &unaligned, &mut out)
+                .await
+                .unwrap_err(),
+            HsmError::InvalidArg
+        );
+
+        // Larger than the 3080-byte maximum.
+        let oversized = vec![0u8; 3088];
+        assert_eq!(
+            driver
+                .kwp_unwrap(&kek, &oversized, &mut out)
+                .await
+                .unwrap_err(),
+            HsmError::InvalidArg
+        );
+
+        // Output too small (< input.len() - 8).
+        let input = [0u8; 24];
+        let mut tiny = vec![0u8; 8];
+        assert_eq!(
+            driver
+                .kwp_unwrap(&kek, &input, &mut tiny)
+                .await
+                .unwrap_err(),
+            HsmError::InvalidArg
+        );
     }
 }

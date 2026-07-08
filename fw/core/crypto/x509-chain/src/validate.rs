@@ -20,6 +20,9 @@
 //!
 //! No time validation, no CRL, no policy processing.
 
+use core::ops::AsyncFnMut;
+
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHash;
@@ -28,6 +31,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 
 use crate::ecdsa;
+use crate::parse::parse_cert;
 use crate::types::key_usage;
 use crate::types::CertInfo;
 use crate::types::EcPubKey;
@@ -362,4 +366,150 @@ impl ChainValidator {
             Err(HsmError::X509SignatureInvalid)
         }
     }
+}
+
+/// Walk and validate a certificate chain, root → leaf, returning the
+/// leaf public key.
+///
+/// This is the reusable, transport-agnostic chain-walking entry point:
+/// it drives [`ChainValidator`] over `cert_lens.len()` certificates while
+/// leaving the *source* of the certificate bytes to the caller. The
+/// `fetch` callback supplies each certificate's DER into a caller-visible
+/// DMA buffer — index `0` is the root, `cert_lens.len() - 1` the leaf —
+/// which is then parsed and verified. Two max-sized DER buffers are
+/// reused across the walk (double-buffering), so the certificate buffers
+/// consume ≈2×max(`cert_lens`) of DMA regardless of chain length.
+/// Callers that carry their chain out-of-band simply copy the indexed
+/// item into `buf` inside `fetch`; nothing here is transport-specific.
+///
+/// Per certificate the validator checks the ECDSA signature, issuer↔
+/// subject name chaining, AKID↔SKID, and CA `BasicConstraints`/`KeyUsage`
+/// (see [`ChainValidator`]).
+///
+/// # Anchoring
+///
+/// * `anchor == None` — the chain is trusted by its self-signed root
+///   alone (no external anchor).
+/// * `anchor == Some(pubkey)` — some **non-leaf** (issuing) certificate's
+///   public key MUST equal `pubkey` (raw big-endian `X‖Y`), binding the
+///   chain to an external trust anchor (e.g. a policy POTA / SATA key).
+///
+/// On success `leaf_out` is filled with the leaf public key (raw
+/// big-endian `X‖Y`); its length must equal the leaf key length.
+///
+/// # Errors
+///
+/// * [`HsmError::InvalidArg`] — empty chain, a zero-length certificate,
+///   `leaf_out`'s length does not match the leaf public-key length, or
+///   the `anchor` requirement was not satisfied.
+/// * [`HsmError::InternalError`] — the validator did not reach the leaf
+///   after every certificate was consumed (internal invariant).
+/// * Any [`HsmError`] surfaced by `fetch`, [`parse_cert`], or signature
+///   verification.
+pub async fn validate_chain<P, F>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    cert_lens: &[usize],
+    anchor: Option<&[u8]>,
+    leaf_out: &mut [u8],
+    mut fetch: F,
+) -> HsmResult<()>
+where
+    P: HsmHash + HsmEcc,
+    F: for<'a> AsyncFnMut(usize, &'a mut DmaBuf) -> HsmResult<()>,
+{
+    if cert_lens.is_empty() || cert_lens.len() > u16::MAX as usize {
+        return Err(HsmError::InvalidArg);
+    }
+
+    // Reject zero-length certificates up front and size the reused
+    // buffers to the widest cert in the chain.
+    let mut max_len = 0usize;
+    for &len in cert_lens {
+        if len == 0 {
+            return Err(HsmError::InvalidArg);
+        }
+        if len > max_len {
+            max_len = len;
+        }
+    }
+
+    let mut validator = ChainValidator::new(cert_lens.len() as u16);
+    // A chain with no anchor requirement is trivially "anchored".
+    let mut anchored = anchor.is_none();
+
+    // Double-buffering: [`ChainValidator`] only needs the *previous*
+    // certificate alive while it checks the current one, so two
+    // max-sized DER buffers are reused for the whole walk instead of
+    // allocating one per certificate. `curr` receives the cert being
+    // processed; `prev` retains the one before it. The two handles are
+    // swapped at the end of each iteration.
+    let mut curr = alloc.dma_alloc(max_len)?;
+    let mut prev = alloc.dma_alloc(max_len)?;
+    let mut prev_len = 0usize;
+
+    for (i, &len) in cert_lens.iter().enumerate() {
+        // The caller fills the leading `len` bytes of the current buffer
+        // with this cert's DER (only that prefix of the reused buffer is
+        // meaningful for this iteration).
+        fetch(i, &mut curr[..len]).await?;
+
+        // Inner scope: `curr_cert`/`prev_cert` borrow the buffers, so
+        // they must be dropped before the `swap` below can take the
+        // buffers by mutable reference again.
+        {
+            let curr_cert = parse_cert(&curr[..len])?;
+
+            // Trust-anchor binding: some non-leaf (issuing) certificate's
+            // public key must equal the anchor. Both the cert key and the
+            // anchor are big-endian, so this is a direct byte compare.
+            if let Some(anchor) = anchor {
+                if i + 1 < cert_lens.len() {
+                    let point: &[u8] = curr_cert.pub_key.point;
+                    if point == anchor {
+                        anchored = true;
+                    }
+                }
+            }
+
+            // Re-parse the retained previous cert from its buffer.
+            // `parse_cert` only borrows (no crypto), so this is cheap and
+            // keeps `prev_cert` scoped to this iteration.
+            let prev_cert = if i > 0 {
+                Some(parse_cert(&prev[..prev_len])?)
+            } else {
+                None
+            };
+
+            match validator
+                .step(pal, io, alloc, prev_cert.as_ref(), &curr_cert)
+                .await
+            {
+                StepResult::Valid { leaf_pub_key, .. } => {
+                    if !anchored {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    let point: &[u8] = leaf_pub_key.point;
+                    if point.len() != leaf_out.len() {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    leaf_out.copy_from_slice(point);
+                    return Ok(());
+                }
+                StepResult::NeedNext => {}
+                StepResult::Invalid(error) => return Err(error),
+            }
+        }
+
+        // The current cert becomes the next iteration's `prev`: swap the
+        // buffer handles so the just-filled bytes are retained while the
+        // stale `prev` buffer is recycled as the next `curr`.
+        core::mem::swap(&mut curr, &mut prev);
+        prev_len = len;
+    }
+
+    // `ChainValidator::new(cert_lens.len())` yields `Valid` on the final
+    // (leaf) step, so reaching here means the counts disagreed.
+    Err(HsmError::InternalError)
 }

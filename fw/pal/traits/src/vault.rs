@@ -311,7 +311,8 @@ pub struct HsmVaultKeyAttrs {
     /// Can be deleted by user.
     pub destroyable: bool,
 
-    /// Generated locally (not imported). Set by device.
+    /// Set by the device only for keys *generated* on-device; false for
+    /// derived and imported / unwrapped keys (same semantics as PKCS#11).
     pub local: bool,
 
     /// Key value can be exported from the device.
