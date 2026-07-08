@@ -866,6 +866,7 @@ impl DdiDev for DdiNixDev {
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         req: &T,
+        _oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         /// SQE opcode that routes the command through the firmware's

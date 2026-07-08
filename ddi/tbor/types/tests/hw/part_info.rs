@@ -45,7 +45,7 @@ fn round_trip() {
     let dev = open_hw_dev();
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&TborPartInfoReq::new(), &mut cookie)
+        .exec_op_tbor(&TborPartInfoReq::new(), None, &mut cookie)
         .expect("TBOR PartInfo round-trip on hardware");
     assert_default_part_info(&resp);
 }

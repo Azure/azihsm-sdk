@@ -29,7 +29,7 @@ fn round_trip() {
     let dev = open_hw_dev();
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&TborApiRevReq::new(), &mut cookie)
+        .exec_op_tbor(&TborApiRevReq::new(), None, &mut cookie)
         .expect("TBOR ApiRev round-trip on hardware");
     assert_eq!(
         resp, EXPECTED,
