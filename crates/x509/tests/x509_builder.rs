@@ -16,17 +16,17 @@ use azihsm_crypto::EcdsaAlgo;
 use azihsm_crypto::HashAlgo;
 use azihsm_crypto::HashOp;
 use azihsm_crypto::SignOp;
-use azihsm_fw_hsm_std_x509::cert_builder::IntermediateCertParams;
-use azihsm_fw_hsm_std_x509::cert_builder::KeyUsage;
-use azihsm_fw_hsm_std_x509::cert_builder::LeafCertParams;
-use azihsm_fw_hsm_std_x509::cert_builder::RootCertParams;
-use azihsm_fw_hsm_std_x509::cert_builder::CN_LEN;
-use azihsm_fw_hsm_std_x509::cert_builder::SN_LEN;
-use azihsm_fw_hsm_std_x509::cert_builder::{self};
+use azihsm_crypto::x509_builder::cert_builder::CN_LEN;
+use azihsm_crypto::x509_builder::cert_builder::IntermediateCertParams;
+use azihsm_crypto::x509_builder::cert_builder::KeyUsage;
+use azihsm_crypto::x509_builder::cert_builder::LeafCertParams;
+use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
+use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
+use azihsm_crypto::x509_builder::cert_builder::{self};
 #[cfg(target_os = "linux")]
-use azihsm_fw_hsm_std_x509::csr_builder::DeviceCsrParams;
+use azihsm_crypto::x509_builder::csr_builder::DeviceCsrParams;
 #[cfg(target_os = "linux")]
-use azihsm_fw_hsm_std_x509::csr_builder::{self};
+use azihsm_crypto::x509_builder::csr_builder::{self};
 use x509::X509Certificate;
 use x509::X509CertificateOp;
 
@@ -136,7 +136,7 @@ fn build_test_root_cert(key: &TestKeyPair) -> Vec<u8> {
         subject_key_id: &key.compute_ski(),
     };
 
-    let mut tbs = azihsm_fw_hsm_std_x509::root_cert::TBS_TEMPLATE;
+    let mut tbs = azihsm_crypto::x509_builder::root_cert::TBS_TEMPLATE;
     patch_tbs_root(&mut tbs, &params);
     let (r, s) = key.sign_data(&tbs);
 
@@ -146,7 +146,7 @@ fn build_test_root_cert(key: &TestKeyPair) -> Vec<u8> {
 }
 
 fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::root_cert::*;
+    use azihsm_crypto::x509_builder::root_cert::*;
     let cn = pad_cn(params.subject_cn);
     let sn = pad_sn(params.subject_sn);
     tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
@@ -179,7 +179,7 @@ fn build_test_intermediate_cert(
         path_len: pathlen,
     };
 
-    let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
+    let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
     patch_tbs_intermediate(&mut tbs, &params);
     let (r, s) = root_key.sign_data(&tbs);
 
@@ -189,7 +189,7 @@ fn build_test_intermediate_cert(
 }
 
 fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::intermediate_cert::*;
+    use azihsm_crypto::x509_builder::intermediate_cert::*;
     let s_cn = pad_cn(params.subject_cn);
     let i_cn = pad_cn(params.issuer_cn);
     let s_sn = pad_sn(params.subject_sn);
@@ -229,7 +229,7 @@ fn build_test_leaf_cert(
         key_usage,
     };
 
-    let mut tbs = azihsm_fw_hsm_std_x509::leaf_cert::TBS_TEMPLATE;
+    let mut tbs = azihsm_crypto::x509_builder::leaf_cert::TBS_TEMPLATE;
     patch_tbs_leaf(&mut tbs, &params);
     let (r, s) = issuer_key.sign_data(&tbs);
 
@@ -239,7 +239,7 @@ fn build_test_leaf_cert(
 }
 
 fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::leaf_cert::*;
+    use azihsm_crypto::x509_builder::leaf_cert::*;
     let s_cn = pad_cn(params.subject_cn);
     let i_cn = pad_cn(params.issuer_cn);
     let s_sn = pad_sn(params.subject_sn);
@@ -268,10 +268,10 @@ fn build_test_csr(key: &TestKeyPair) -> Vec<u8> {
         subject_sn: "DEVICE01",
     };
 
-    let mut tbs = azihsm_fw_hsm_std_x509::device_csr::TBS_TEMPLATE;
-    let pk_off = azihsm_fw_hsm_std_x509::device_csr::PUBLIC_KEY_OFFSET;
-    let cn_off = azihsm_fw_hsm_std_x509::device_csr::SUBJECT_CN_OFFSET;
-    let sn_off = azihsm_fw_hsm_std_x509::device_csr::SUBJECT_SN_OFFSET;
+    let mut tbs = azihsm_crypto::x509_builder::device_csr::TBS_TEMPLATE;
+    let pk_off = azihsm_crypto::x509_builder::device_csr::PUBLIC_KEY_OFFSET;
+    let cn_off = azihsm_crypto::x509_builder::device_csr::SUBJECT_CN_OFFSET;
+    let sn_off = azihsm_crypto::x509_builder::device_csr::SUBJECT_SN_OFFSET;
     tbs[pk_off..pk_off + 97].copy_from_slice(&key.pubkey_bytes);
     tbs[cn_off..cn_off + CN_LEN].copy_from_slice(&subject_cn);
     tbs[sn_off..sn_off + SN_LEN].copy_from_slice(&subject_sn);
@@ -555,7 +555,7 @@ fn test_chain_wrong_signer_fails() {
         key_usage: KeyUsage::DIGITAL_SIGNATURE,
     };
 
-    let mut tbs = azihsm_fw_hsm_std_x509::leaf_cert::TBS_TEMPLATE;
+    let mut tbs = azihsm_crypto::x509_builder::leaf_cert::TBS_TEMPLATE;
     patch_tbs_leaf(&mut tbs, &leaf_params);
     let (r, s) = wrong_key.sign_data(&tbs);
 
