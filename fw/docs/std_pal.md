@@ -1,6 +1,6 @@
 # Standard PAL Implementation
 
-**Crates:** `azihsm_fw_hsm_std`, `azihsm_fw_hsm_pal_std`, `azihsm_fw_hsm_std_x509`
+**Crates:** `azihsm_fw_hsm_std`, `azihsm_fw_hsm_pal_std`
 
 ## Overview
 
@@ -152,7 +152,7 @@ All crypto operations delegate to the `azihsm_crypto` crate which wraps OpenSSL 
 
 ## X.509 Certificate Builder
 
-The `azihsm_fw_hsm_std_x509` crate provides template-driven certificate construction:
+The `azihsm_crypto::x509_builder` module (used here by the std PAL's `cert` driver) provides template-driven certificate construction:
 
 - Pre-compiled DER templates for root, intermediate, and leaf certificates
 - Runtime patching functions that fill in public keys, serial numbers, validity dates, and subject/issuer fields
