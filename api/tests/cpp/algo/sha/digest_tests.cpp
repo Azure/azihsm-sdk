@@ -105,9 +105,24 @@ struct ShaTestParams
 
 static std::vector<uint8_t> hex_to_bytes(const char *hex)
 {
-    std::vector<uint8_t> bytes;
+    if (hex == nullptr)
+    {
+        ADD_FAILURE() << "hex_to_bytes received a null hex string";
+        return {};
+    }
 
-    for (size_t i = 0; hex[i] != '\0'; i += 2)
+    const size_t hex_len = std::strlen(hex);
+
+    if ((hex_len % 2) != 0)
+    {
+        ADD_FAILURE() << "hex_to_bytes requires an even-length hex string, got length " << hex_len;
+        return {};
+    }
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(hex_len / 2);
+
+    for (size_t i = 0; i < hex_len; i += 2)
     {
         unsigned int value = 0;
         int parsed_count = std::sscanf(hex + i, "%2x", &value);
