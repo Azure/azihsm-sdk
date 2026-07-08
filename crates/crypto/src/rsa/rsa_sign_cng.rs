@@ -204,6 +204,41 @@ impl VerifyOp for CngRsaSignAlgo {
     ) -> Result<bool, CryptoError> {
         let (pad, flags) = self.padding_info();
         let pad_ptr = pad_ptr(&pad);
+
+        // Windows CNG's `BCryptVerifySignature` only supports `BCRYPT_PAD_PKCS1`
+        // and `BCRYPT_PAD_PSS` — it rejects `BCRYPT_PAD_NONE`. For raw (no
+        // padding) verification, perform the public-key primitive `s^e mod n`
+        // directly via `BCryptEncrypt` (mirroring how `sign` special-cases
+        // `Padding::None` with `BCryptDecrypt`) and compare the recovered value
+        // against `data`.
+        if let Padding::None = self.padding {
+            let mut recovered = vec![0u8; signature.len()];
+            let mut len = 0u32;
+            // SAFETY: Calling Windows CNG BCryptEncrypt to perform the raw RSA
+            // public-key operation.
+            // - key.handle() is a valid BCRYPT_KEY_HANDLE from a CNG public key
+            //   object that outlives the call
+            // - signature is the "plaintext" input, valid for reads for the call
+            // - pad_ptr is None for BCRYPT_PAD_NONE; None IV (RSA has no IV)
+            // - recovered is a valid mutable slice sized to the modulus length;
+            //   BCrypt will not write beyond its bounds and errors if too small
+            // - len is a valid mutable u32 receiving the output size
+            // - flags is BCRYPT_PAD_NONE per padding_info()
+            let status = unsafe {
+                BCryptEncrypt(
+                    key.handle(),
+                    Some(signature),
+                    pad_ptr,
+                    None,
+                    Some(recovered.as_mut_slice()),
+                    &mut len,
+                    flags,
+                )
+            };
+            status.ok().map_err(|_| CryptoError::RsaVerifyError)?;
+            return Ok(recovered[..len as usize] == *data);
+        }
+
         // SAFETY: Calling Windows CNG BCryptVerifySignature API.
         // - key.handle() is a valid BCRYPT_KEY_HANDLE obtained from a CNG public key object
         //   that remains valid for the lifetime of the key reference
