@@ -156,31 +156,31 @@ pub struct Precheck {
     )]
     pub all: bool,
     /// Skip taplo (TOML formatting) (used with --fmt)
-    #[clap(long)]
+    #[clap(long, requires = "fmt")]
     pub skip_taplo: bool,
     /// Skip audit (used with --audit/--full/--all)
     #[clap(long)]
     pub skip_audit: bool,
     /// Skip Clang formatting (used with --fmt)
-    #[clap(long)]
+    #[clap(long, requires = "fmt")]
     pub skip_clang: bool,
     /// Skip cleaning existing llvm-cov artifacts before running coverage
     #[clap(long)]
     pub skip_clean: bool,
     /// Skip specifying toolchain for formatting checks (used with --fmt)
-    #[clap(long)]
+    #[clap(long, requires = "fmt")]
     skip_toolchain: bool,
     /// Crates to exclude (used with --clippy/--nextest/--nextest-min/--nextest-full)
     #[clap(long = "exclude")]
     exclude: Vec<String>,
     /// Package to run tests for (used with --nextest)
-    #[clap(long, short = 'p')]
+    #[clap(long, short = 'p', requires = "nextest")]
     package: Option<String>,
     /// Features to enable when running tests (used with --nextest)
-    #[clap(long, short = 'F')]
+    #[clap(long, short = 'F', requires = "nextest")]
     features: Option<String>,
     /// Test filterset (see https://nexte.st/docs/filtersets) (used with --nextest)
-    #[clap(long, short = 'E')]
+    #[clap(long, short = 'E', requires = "nextest")]
     filterset: Option<String>,
     /// The nextest profile to use (used with --nextest/--nextest-min/--nextest-full)
     #[clap(long)]
@@ -191,16 +191,16 @@ pub struct Precheck {
     #[clap(long)]
     pub config: Option<String>,
     /// Do not append the default build location of the azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
-    #[clap(long)]
+    #[clap(long, requires = "coverage_report")]
     pub no_default_native: bool,
     /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
-    #[clap(long)]
+    #[clap(long, requires = "coverage_report")]
     pub additional_obj_paths: Vec<String>,
-    /// The nextest test target to run
-    #[clap(long)]
+    /// The nextest test target to run (used with --nextest)
+    #[clap(long, requires = "nextest")]
     pub test: Option<String>,
-    /// Test name filters
-    #[clap(long)]
+    /// Test name filters (used with --nextest)
+    #[clap(long, requires = "nextest")]
     filter: Vec<String>,
 }
 
