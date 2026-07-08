@@ -7,6 +7,8 @@
 //! [`UnmaskedView`] covering the recovered plaintext.
 
 use azihsm_fw_core_crypto_aead_envelope::open as aead_open;
+use azihsm_fw_core_crypto_aead_envelope::AeadAlg;
+use azihsm_fw_core_crypto_aead_envelope::HEADER_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use azihsm_fw_hsm_pal_traits::HsmError;
@@ -118,4 +120,37 @@ pub async fn unmask<'a>(
         owner_seed_id: metadata.owner_seed_id.get(),
         target_key: env.payload,
     })
+}
+
+/// Peek the cleartext [`MaskedKeyMetadata`] of a masked-key blob **without
+/// the masking key** — i.e. without verifying the AEAD tag.
+///
+/// The metadata is the envelope's AAD region; it is cleartext but bound
+/// by the tag, so a tampered blob would still fail [`unmask`]. This peek
+/// exists purely for reading cleartext bindings (e.g. the `{svn,
+/// owner_seed_id}` platform identity or the key `scope`) *before*
+/// unmasking; its result MUST NOT be trusted until a subsequent `unmask`
+/// verifies the tag.
+///
+/// # Errors
+///
+/// * [`HsmError::MaskedKeyDecodeFailed`] — the blob is too short to hold
+///   the envelope header + metadata, or the metadata fails v1 validation.
+pub fn peek_metadata(blob: &DmaBuf) -> HsmResult<&MaskedKeyMetadata> {
+    // Envelope layout: header ‖ iv ‖ aad(META_LEN) ‖ ct ‖ tag. The
+    // metadata is the fixed-size AAD region; its offset is fixed by the
+    // AES-GCM envelope layout (all masked keys use AES-256-GCM).
+    const AAD_OFF: usize = HEADER_LEN + AeadAlg::AesGcm256.iv_len();
+    let end = AAD_OFF
+        .checked_add(META_LEN)
+        .ok_or(HsmError::MaskedKeyDecodeFailed)?;
+    if blob.len() < end {
+        return Err(HsmError::MaskedKeyDecodeFailed);
+    }
+
+    let aad: &[u8] = &blob[AAD_OFF..end];
+    let metadata =
+        MaskedKeyMetadata::ref_from_bytes(aad).map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
+    metadata.validate_v1()?;
+    Ok(metadata)
 }
