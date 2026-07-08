@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Host-side evidence descriptors for TBOR side-band buffers.
+//! Host-side evidence descriptors for TBOR out-of-band chains.
 //!
 //! Several Security-Domain TBOR commands carry their bulk attestation
 //! evidence — DER certificate chains and COSE_Sign1 attestation reports —

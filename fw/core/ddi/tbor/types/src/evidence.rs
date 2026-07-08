@@ -1,18 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Evidence descriptors for TBOR side-band buffers.
+//! Evidence descriptors for TBOR out-of-band certificate/report chains.
 //!
 //! Several TBOR commands carry their bulk evidence — DER certificate
-//! chains and COSE_Sign1 attestation reports — **out of band** in a
-//! side-band data buffer, and reference each item from the TBOR message
-//! with a small `(offset, length)` descriptor.  This module defines the
-//! packed, `Unaligned` descriptor POD types shared by those schemas.
+//! chains and COSE_Sign1 attestation reports — **out of band** as SGL
+//! Data Blocks, and reference each item from the TBOR message with a
+//! small `(index, length)` descriptor.  This module defines the packed,
+//! `Unaligned` descriptor POD types shared by those schemas.
 //!
-//! Each descriptor is a `#[repr(C)]` POD whose two little-endian
-//! [`U16`](crate::tbor_int::U16) fields keep it alignment-1
-//! (`Unaligned`), so a `&[T]` typed slice is borrowed zero-copy from the
-//! data section at any offset with no alignment padding.
+//! Each descriptor is a `#[repr(C)]` POD whose `u8` `index` and
+//! little-endian [`U16`](crate::tbor_int::U16) `length` keep it
+//! alignment-1 (`Unaligned`), so a `&[T]` typed slice is borrowed
+//! zero-copy from the data section at any offset with no alignment
+//! padding.
 
 use azihsm_fw_ddi_tbor_api::tbor;
 use zerocopy::FromBytes;
@@ -97,7 +98,7 @@ pub const EVIDENCE_CHAIN_MAX_CERTS: usize = 8;
 pub const EVIDENCE_CHAIN_MAX_LEN: usize = EVIDENCE_CHAIN_MAX_CERTS * CERT_DESCRIPTOR_LEN;
 const _: () = assert!(EVIDENCE_CHAIN_MAX_LEN == 24);
 
-/// Side-band evidence as a reusable TBOR **field group**: the three
+/// Out-of-band evidence as a reusable TBOR **field group**: the three
 /// certificate-chain descriptor lists plus the attestation-report
 /// descriptor list.  `#[tbor(include)]` it into a command to splice these
 /// four TOC entries into the message.
@@ -107,19 +108,19 @@ const _: () = assert!(EVIDENCE_CHAIN_MAX_LEN == 24);
 /// `(index, length)` descriptors referencing them.  Each list is a
 /// variable-length typed slice (`&[CertDescriptor]` /
 /// `&[ReportDescriptor]`) — there is no fixed per-chain cap, only the
-/// wire-size `max_len` bound.
+/// wire-size [`EVIDENCE_CHAIN_MAX_LEN`] bound (24 B = 8 descriptors).
 #[tbor(fields)]
 pub struct Evidence<'a> {
     /// Manufacturer certificate-chain descriptors.
-    #[tbor(buffer, max_len = 8)]
+    #[tbor(buffer, max_len = 24)]
     pub mfgr_cert_chain: &'a [CertDescriptor],
 
     /// Owner certificate-chain descriptors.
-    #[tbor(buffer, max_len = 8)]
+    #[tbor(buffer, max_len = 24)]
     pub owner_cert_chain: &'a [CertDescriptor],
 
     /// Partition-owner certificate-chain descriptors.
-    #[tbor(buffer, max_len = 8)]
+    #[tbor(buffer, max_len = 24)]
     pub part_owner_cert_chain: &'a [CertDescriptor],
 
     /// Attestation-report (COSE_Sign1) descriptor.  A single zero-copy

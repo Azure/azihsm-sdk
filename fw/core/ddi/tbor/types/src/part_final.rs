@@ -72,9 +72,9 @@ const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 /// `PartFinal` request schema.
 ///
 /// Finalizes the partition: re-supplies the unified [`PartPolicy`] (for
-/// `POTAPubKey` recovery), the PTA cert-chain descriptor list (pointing
-/// into the side-band buffer), and an optional prior `local_mk` backup
-/// to restore.
+/// `POTAPubKey` recovery), the PTA cert-chain descriptor list
+/// (referencing out-of-band SGL Data Blocks), and an optional prior
+/// `local_mk` backup to restore.
 ///
 /// [`PartPolicy`]: crate::policy::PartPolicy
 #[tbor(opcode = 0x08)]
@@ -105,7 +105,7 @@ pub struct TborPartFinalReq<'a> {
     /// so no alignment padding is inserted.  Byte length is a non-zero
     /// multiple of [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN), up to
     /// [`CERT_DESCRIPTORS_MAX_LEN`](crate::evidence::CERT_DESCRIPTORS_MAX_LEN).
-    #[tbor(buffer, min_len = 1, max_len = 8)]
+    #[tbor(buffer, min_len = 3, max_len = 6)]
     pub cert_descriptors: &'a [CertDescriptor],
 
     /// Optional previously-generated `local_mk` backup envelope to
@@ -152,11 +152,11 @@ mod tests {
         let policy = [0u8; PART_POLICY_LEN];
         let descs = [
             CertDescriptor {
-                index: 16,
+                index: 0,
                 length: U16::new(32),
             },
             CertDescriptor {
-                index: 48,
+                index: 1,
                 length: U16::new(64),
             },
         ];

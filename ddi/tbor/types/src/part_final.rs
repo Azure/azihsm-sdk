@@ -7,7 +7,7 @@
 //! `PartInit` by installing the POTA-endorsed PTA certificate chain and
 //! deriving the partition's local masking keys.  It re-supplies the
 //! unified `PartPolicy` (for `POTAPubKey` recovery), the PTA cert-chain
-//! descriptor list (pointing into the side-band data buffer), and an
+//! descriptor list (referencing out-of-band SGL Data Blocks), and an
 //! optional prior `local_mk` backup to restore; it returns the current
 //! `local_mk` backup.  See `azihsm_fw_ddi_tbor_types::part_final` for the
 //! full wire schema.
@@ -90,10 +90,11 @@ pub struct TborPartFinalReq {
     /// little-endian image.
     pub part_policy: PartPolicy,
 
-    /// PTA certificate chain descriptors `(offset, length)` pointing into
-    /// the side-band buffer.  Encoded as the packed little-endian byte
-    /// image of the elements; carries 1..=[`MAX_CERTS`] entries.
-    #[tbor(min_len = 1, max_len = 8)]
+    /// PTA certificate chain descriptors `(index, length)` referencing
+    /// the out-of-band SGL Data Blocks.  Encoded as the packed
+    /// little-endian byte image of the elements; carries 1..=[`MAX_CERTS`]
+    /// entries.
+    #[tbor(min_len = 3, max_len = 6)]
     pub cert_descriptors: Vec<CertDescriptor>,
 
     /// Optional previously-generated `local_mk` backup to restore.
@@ -134,11 +135,11 @@ mod tests {
             part_policy: PartPolicy::zeroed(),
             cert_descriptors: alloc::vec![
                 CertDescriptor {
-                    index: 0x12,
+                    index: 0,
                     length: U16::new(0x0567),
                 },
                 CertDescriptor {
-                    index: 16,
+                    index: 1,
                     length: U16::new(32),
                 },
             ],
@@ -150,7 +151,7 @@ mod tests {
 
         // The packed little-endian descriptor image must appear verbatim
         // somewhere in the encoded frame's data section.
-        let needle = [0x12, 0x67, 0x05, 0x10, 0x20, 0x00];
+        let needle = [0x00, 0x67, 0x05, 0x01, 0x20, 0x00];
         assert!(
             frame.windows(needle.len()).any(|w| w == needle),
             "encoded frame must carry the packed LE cert descriptors",
@@ -166,7 +167,7 @@ mod tests {
             session_id: 7,
             part_policy: PartPolicy::zeroed(),
             cert_descriptors: alloc::vec![CertDescriptor {
-                index: 16,
+                index: 0,
                 length: U16::new(32),
             }],
             prev_local_mk_backup: Vec::new(),

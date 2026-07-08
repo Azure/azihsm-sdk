@@ -135,7 +135,7 @@ mod tests {
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            index: 8,
+            index: 1,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];
@@ -174,7 +174,7 @@ mod tests {
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            index: 8,
+            index: 1,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];
