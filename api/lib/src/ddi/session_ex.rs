@@ -31,6 +31,8 @@
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -111,17 +113,62 @@ pub struct OpenSessionExResult {
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
-/// production cert chain. Reuses [`get_part_pub_key`], whose leaf
-/// cert is the partition-ID cert; its SubjectPublicKeyInfo carries
+/// production cert chain. Reuses [`fetch_cert_chain_checked`], whose
+/// leaf cert is the partition-ID cert; its SubjectPublicKeyInfo carries
 /// the P-384 key the FW uses as `pk_s` in HPKE `auth_psk`.
+///
+/// The SD handshake authenticates the entire session against this key,
+/// so the partition cert chain is cryptographically verified (via
+/// [`validate_part_cert_chain`]) before the leaf key is trusted.
 pub(super) fn fetch_pk_hsm(
     dev: &HsmDev,
     rev: HsmApiRev,
 ) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
-    let pk_der = get_part_pub_key(dev, rev)?;
+    let (chain_pem, leaf_der) = fetch_cert_chain_checked(dev, rev, 0)?;
+    validate_part_cert_chain(&chain_pem)?;
+
+    let leaf = X509Certificate::from_der(&leaf_der).map_err(|_| HsmError::InternalError)?;
+    let pk_der = leaf
+        .get_public_key_der()
+        .map_err(|_| HsmError::InternalError)?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| HsmError::InternalError)?;
     let sec1 = ec_pub_to_sec1(&pk)?;
     Ok((pk, sec1))
+}
+
+/// Cryptographically verify the partition cert chain's internal
+/// issuance/order (leaf issued by intermediate ... issued by root)
+/// before its leaf key is trusted as `pk_hsm`.
+///
+/// `chain_pem` is the leaf->root PEM stack returned by
+/// [`fetch_cert_chain_checked`]. [`X509CertificateOp::validate_chain`]
+/// verifies internal consistency, not a pinned trust anchor. A single
+/// self-signed cert (e.g. the sim backend) has no ordering to verify,
+/// so chains shorter than two certs are accepted as-is.
+///
+/// # Errors
+///
+/// Returns [`HsmError::InternalError`] when the PEM stack is empty or
+/// fails to parse, and [`HsmError::InvalidSignature`] when the chain
+/// fails cryptographic verification.
+fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
+    let certs = X509Certificate::from_pem_stack(chain_pem.as_bytes())
+        .map_err(|_| HsmError::InternalError)?;
+    let Some((leaf, rest)) = certs.split_first() else {
+        return Err(HsmError::InternalError);
+    };
+    if rest.is_empty() {
+        // Single self-signed cert (e.g. sim): no chain ordering to verify.
+        return Ok(());
+    }
+    if leaf
+        .validate_chain(rest)
+        .map_err(|_| HsmError::InternalError)?
+    {
+        Ok(())
+    } else {
+        Err(HsmError::InvalidSignature)
+    }
 }
 
 /// Opens a session on an HSM partition over the TBOR transport.
