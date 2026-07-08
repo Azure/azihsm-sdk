@@ -20,6 +20,7 @@
 //!
 //! No time validation, no CRL, no policy processing.
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHash;
@@ -28,6 +29,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 
 use crate::ecdsa;
+use crate::parse::parse_cert;
 use crate::types::key_usage;
 use crate::types::CertInfo;
 use crate::types::EcPubKey;
@@ -362,4 +364,109 @@ impl ChainValidator {
             Err(HsmError::X509SignatureInvalid)
         }
     }
+}
+
+/// Walk and validate a certificate chain, root → leaf, returning the
+/// leaf public key.
+///
+/// This is the reusable, transport-agnostic chain-walking entry point:
+/// it drives [`ChainValidator`] over `cert_lens.len()` certificates while
+/// leaving the *source* of the certificate bytes to the caller. The
+/// `fetch` callback supplies each certificate's DER into a
+/// freshly-allocated buffer — index `0` is the root, `cert_lens.len() -
+/// 1` the leaf — which is then parsed and verified. Callers that carry
+/// their chain out-of-band simply copy the indexed item into `buf` inside
+/// `fetch`; nothing here is transport-specific.
+///
+/// Per certificate the validator checks the ECDSA signature, issuer↔
+/// subject name chaining, AKID↔SKID, and CA `BasicConstraints`/`KeyUsage`
+/// (see [`ChainValidator`]).
+///
+/// # Anchoring
+///
+/// * `anchor == None` — the chain is trusted by its self-signed root
+///   alone (no external anchor).
+/// * `anchor == Some(pubkey)` — some **non-leaf** (issuing) certificate's
+///   public key MUST equal `pubkey` (raw big-endian `X‖Y`), binding the
+///   chain to an external trust anchor (e.g. a policy POTA / SATA key).
+///
+/// On success `leaf_out` is filled with the leaf public key (raw
+/// big-endian `X‖Y`); its length must equal the leaf key length.
+///
+/// # Errors
+///
+/// * [`HsmError::InvalidArg`] — empty chain, a zero-length certificate,
+///   or the `anchor` requirement was not satisfied.
+/// * [`HsmError::InternalError`] — `leaf_out` length mismatch, or the
+///   validator did not reach the leaf (internal invariant).
+/// * Any [`HsmError`] surfaced by `fetch`, [`parse_cert`], or signature
+///   verification.
+pub async fn validate_chain<P, F>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    cert_lens: &[usize],
+    anchor: Option<&[u8]>,
+    leaf_out: &mut [u8],
+    mut fetch: F,
+) -> HsmResult<()>
+where
+    P: HsmHash + HsmEcc,
+    F: AsyncFnMut(usize, &mut DmaBuf) -> HsmResult<()>,
+{
+    if cert_lens.is_empty() || cert_lens.len() > u16::MAX as usize {
+        return Err(HsmError::InvalidArg);
+    }
+
+    let mut validator = ChainValidator::new(cert_lens.len() as u16);
+    // A chain with no anchor requirement is trivially "anchored".
+    let mut anchored = anchor.is_none();
+    let mut prev: Option<CertInfo<'_>> = None;
+
+    for (i, &len) in cert_lens.iter().enumerate() {
+        if len == 0 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // The caller fills a scope-allocated buffer with this cert's DER.
+        // `dma_alloc` bumps from the scoped arena, so every cert buffer
+        // stays live for the whole walk (the validator borrows the
+        // previous cert while processing the current one).
+        let buf = alloc.dma_alloc(len)?;
+        fetch(i, buf).await?;
+        let curr = parse_cert(buf)?;
+
+        // Trust-anchor binding: some non-leaf (issuing) certificate's
+        // public key must equal the anchor. Both the cert key and the
+        // anchor are big-endian, so this is a direct byte compare.
+        if let Some(anchor) = anchor {
+            if i + 1 < cert_lens.len() {
+                let point: &[u8] = curr.pub_key.point;
+                if point == anchor {
+                    anchored = true;
+                }
+            }
+        }
+
+        match validator.step(pal, io, alloc, prev.as_ref(), &curr).await {
+            StepResult::Valid { leaf_pub_key, .. } => {
+                if !anchored {
+                    return Err(HsmError::InvalidArg);
+                }
+                let point: &[u8] = leaf_pub_key.point;
+                if point.len() != leaf_out.len() {
+                    return Err(HsmError::InternalError);
+                }
+                leaf_out.copy_from_slice(point);
+                return Ok(());
+            }
+            StepResult::NeedNext => {}
+            StepResult::Invalid(error) => return Err(error),
+        }
+        prev = Some(curr);
+    }
+
+    // `ChainValidator::new(cert_lens.len())` yields `Valid` on the final
+    // (leaf) step, so reaching here means the counts disagreed.
+    Err(HsmError::InternalError)
 }
