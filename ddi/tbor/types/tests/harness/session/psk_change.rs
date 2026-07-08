@@ -47,7 +47,7 @@ pub fn psk_change(
         psk_envelope: envelope,
     };
     let mut cookie = None;
-    let _resp: TborPskChangeResp = dev.exec_op_tbor(&req, &mut cookie)?;
+    let _resp: TborPskChangeResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
     Ok(())
 }
 

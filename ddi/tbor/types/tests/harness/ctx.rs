@@ -94,7 +94,7 @@ impl TestCtx {
     /// [`Self::expect_fw_reject`].
     pub fn tbor<R: TborOpReq>(&self, req: &R) -> DdiResult<R::OpResp> {
         let mut cookie = None;
-        self.dev.exec_op_tbor(req, &mut cookie)
+        self.dev.exec_op_tbor(req, None, &mut cookie)
     }
 
     /// Issue `req`, assert the FW dispatcher rejected it with exactly

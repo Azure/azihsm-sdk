@@ -275,6 +275,14 @@ pub enum TborStatus {
     PtaKeyAlreadySet = 0x087000FC,
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
+
+    /// The SQE's out-of-band descriptor-array length (`oob_len`) is
+    /// malformed (mirror of `HsmError::IoChannelInvalidOobLen`).
+    IoChannelInvalidOobLen = 0x08700104,
+
+    /// The SQE's out-of-band descriptor-array pointer (`oob_prp`) is not
+    /// 4K-page-aligned (mirror of `HsmError::IoChannelInvalidOobAlignment`).
+    IoChannelInvalidOobAlignment = 0x08700105,
 }
 
 impl core::fmt::Debug for TborStatus {
