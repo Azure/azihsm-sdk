@@ -597,18 +597,22 @@ impl TryFrom<u32> for AzihsmSessionExType {
 
 impl From<api::HsmSessionExType> for AzihsmSessionExType {
     /// Converts an `api::HsmSessionExType` into an `AzihsmSessionExType`.
-    #[allow(unsafe_code)]
+    ///
+    /// Both types are `#[open_enum]` wrappers over a `u32`, so the
+    /// conversion copies the underlying discriminant directly and never
+    /// relies on layout assumptions.
     fn from(session_type: api::HsmSessionExType) -> Self {
-        // SAFETY: AzihsmSessionExType and api::HsmSessionExType have the same representation
-        unsafe { std::mem::transmute(session_type) }
+        shared_types::HsmSessionExType(session_type.0)
     }
 }
 
 impl From<AzihsmSessionExType> for api::HsmSessionExType {
     /// Converts an `AzihsmSessionExType` into an `api::HsmSessionExType`.
-    #[allow(unsafe_code)]
+    ///
+    /// Both types are `#[open_enum]` wrappers over a `u32`, so the
+    /// conversion copies the underlying discriminant directly and never
+    /// relies on layout assumptions.
     fn from(session_type: AzihsmSessionExType) -> Self {
-        // SAFETY: AzihsmSessionExType and api::HsmSessionExType have the same representation
-        unsafe { std::mem::transmute(session_type) }
+        api::HsmSessionExType(session_type.0)
     }
 }

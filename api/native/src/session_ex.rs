@@ -146,8 +146,13 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
 
         let pta_csr = deref_mut_ptr(pta_csr)?;
         let pta_report = deref_mut_ptr(pta_report)?;
-        validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN)?;
-        validate_output_buffer(pta_report, api::PTA_REPORT_MAX_LEN)?;
+
+        // Validate both output buffers up-front against the fixed wire-schema bounds,
+        // so we can report the required capacity without provisioning the partition if the caller's buffer is too small.
+        let csr_check = validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN).map(|_| ());
+        let report_check = validate_output_buffer(pta_report, api::PTA_REPORT_MAX_LEN).map(|_| ());
+        csr_check?;
+        report_check?;
 
         let result = session.part_init_ex(
             mach_seed,
