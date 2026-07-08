@@ -40,5 +40,31 @@ fn rsa_no_padding_sign_verify_roundtrip() {
             !verified,
             "raw no-padding verify must reject a modified message"
         );
+
+        let mut algo = RsaSignAlgo::with_no_padding();
+        let verified = Verifier::verify(
+            &mut algo,
+            &public_key,
+            &message[..modulus_size - 1],
+            &signature,
+        )
+        .expect("Verification must not error");
+        assert!(
+            !verified,
+            "raw no-padding verify must reject a short message"
+        );
+
+        let mut algo = RsaSignAlgo::with_no_padding();
+        let verified = Verifier::verify(
+            &mut algo,
+            &public_key,
+            &message,
+            &signature[..modulus_size - 1],
+        )
+        .expect("Verification must not error");
+        assert!(
+            !verified,
+            "raw no-padding verify must reject a short signature"
+        );
     }
 }

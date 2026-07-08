@@ -212,7 +212,12 @@ impl VerifyOp for CngRsaSignAlgo {
         // `Padding::None` with `BCryptDecrypt`) and compare the recovered value
         // against `data`.
         if let Padding::None = self.padding {
-            let mut recovered = vec![0u8; signature.len()];
+            let modulus_size = key.size();
+            if data.len() != modulus_size || signature.len() != modulus_size {
+                return Ok(false);
+            }
+
+            let mut recovered = vec![0u8; modulus_size];
             let mut len = 0u32;
             // SAFETY: Calling Windows CNG BCryptEncrypt to perform the raw RSA
             // public-key operation.
@@ -235,8 +240,10 @@ impl VerifyOp for CngRsaSignAlgo {
                     flags,
                 )
             };
-            status.ok().map_err(|_| CryptoError::RsaVerifyError)?;
-            return Ok(recovered[..len as usize] == *data);
+            if status.is_err() || len as usize != modulus_size {
+                return Ok(false);
+            }
+            return Ok(constant_time_eq(&recovered, data));
         }
 
         // SAFETY: Calling Windows CNG BCryptVerifySignature API.
@@ -312,6 +319,17 @@ impl VerifyRecoverOp for CngRsaSignAlgo {
         status.ok().map_err(|_| CryptoError::RsaVerifyError)?;
         Ok(len as usize)
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 impl CngRsaSignAlgo {
