@@ -96,7 +96,11 @@ pub const EVIDENCE_CHAIN_MAX_CERTS: usize = 8;
 /// Maximum on-the-wire length of one cert-chain descriptor list
 /// (`EVIDENCE_CHAIN_MAX_CERTS × CERT_DESCRIPTOR_LEN`).
 pub const EVIDENCE_CHAIN_MAX_LEN: usize = EVIDENCE_CHAIN_MAX_CERTS * CERT_DESCRIPTOR_LEN;
+// Pin the `Evidence` group's `#[tbor(... = N)]` byte literals to their
+// descriptor-size constants (the derive requires integer literals):
+// `max_len = 24` on the cert-chain lists and `len = 3` on `evidence`.
 const _: () = assert!(EVIDENCE_CHAIN_MAX_LEN == 24);
+const _: () = assert!(REPORT_DESCRIPTOR_LEN == 3);
 
 /// Out-of-band evidence as a reusable TBOR **field group**: the three
 /// certificate-chain descriptor lists plus the attestation-report

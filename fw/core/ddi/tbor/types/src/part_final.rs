@@ -69,6 +69,13 @@ pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 // both the breakdown above and the field attributes.
 const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
+// Pin the `cert_descriptors` `#[tbor(min_len/max_len)]` literals to their
+// descriptor-size constants (the derive requires integer literals): a
+// single descriptor (`min_len`) and `MAX_CERTS` descriptors (`max_len`).
+// If a descriptor size or `MAX_CERTS` changes, update the field attribute.
+const _: () = assert!(crate::evidence::CERT_DESCRIPTOR_LEN == 3);
+const _: () = assert!(crate::evidence::CERT_DESCRIPTORS_MAX_LEN == 6);
+
 /// `PartFinal` request schema.
 ///
 /// Finalizes the partition: re-supplies the unified [`PartPolicy`] (for
@@ -110,8 +117,10 @@ pub struct TborPartFinalReq<'a> {
     /// multiple.  A wire length that is not a multiple of
     /// [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN) (e.g.
     /// 4 or 5 B) fails the zero-copy cast and decodes as an **empty**
-    /// slice (`try_ref_from_bytes(..).unwrap_or(&[])`), so a decoder MUST
-    /// reject an empty `cert_descriptors` as a malformed request.
+    /// slice — the derive does **not** reject it
+    /// (`try_ref_from_bytes(..).unwrap_or(&[])`); the PartFinal handler is
+    /// therefore responsible for treating an empty `cert_descriptors` as a
+    /// malformed request.
     #[tbor(buffer, min_len = 3, max_len = 6)]
     pub cert_descriptors: &'a [CertDescriptor],
 
