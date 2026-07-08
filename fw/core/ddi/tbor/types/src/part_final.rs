@@ -22,11 +22,12 @@
 //!   it.  Layout owned by [`crate::policy::PartPolicy`]; length pinned by
 //!   [`PART_POLICY_LEN`].
 //! * `cert_descriptors` — a packed list of [`CertDescriptor`] entries
-//!   `(offset, length)` describing where each DER certificate of the PTA
-//!   chain lives in the **side-band** data buffer (the certificate bytes
-//!   are transferred out of band, not in the TBOR message).  The number
-//!   of certificates is `cert_descriptors.len() / CERT_DESCRIPTOR_LEN`,
-//!   capped at [`MAX_CERTS`](crate::evidence::MAX_CERTS).
+//!   `(index, length)` referencing where each DER certificate of the PTA
+//!   chain is carried **out of band** as an SGL Data Block (the
+//!   certificate bytes are transferred out of band, not in the TBOR
+//!   message).  The number of certificates is
+//!   `cert_descriptors.len() / CERT_DESCRIPTOR_LEN`, capped at
+//!   [`MAX_CERTS`](crate::evidence::MAX_CERTS).
 //! * `prev_local_mk_backup` — optional previously-generated `local_mk`
 //!   backup envelope to restore.  An **empty** field means absent — the
 //!   handler then generates a fresh `local_mk` and returns its backup.
@@ -97,8 +98,8 @@ pub struct TborPartFinalReq<'a> {
     #[tbor(buffer, len = 484)]
     pub part_policy: &'a [u8],
 
-    /// Packed list of [`CertDescriptor`] entries `(offset, length)` for
-    /// the PTA certificate chain in the side-band buffer.  Decoded as a
+    /// Packed list of [`CertDescriptor`] entries `(index, length)` for
+    /// the PTA certificate chain carried out of band.  Decoded as a
     /// zero-copy typed slice; because [`CertDescriptor`] is `Unaligned`
     /// (alignment 1) the `&[CertDescriptor]` cast is sound at any offset,
     /// so no alignment padding is inserted.  Byte length is a non-zero
@@ -151,11 +152,11 @@ mod tests {
         let policy = [0u8; PART_POLICY_LEN];
         let descs = [
             CertDescriptor {
-                offset: U16::new(16),
+                index: 16,
                 length: U16::new(32),
             },
             CertDescriptor {
-                offset: U16::new(48),
+                index: 48,
                 length: U16::new(64),
             },
         ];
@@ -174,7 +175,7 @@ mod tests {
             .finish();
 
         // The encoder serialized `&[CertDescriptor]` to its raw bytes:
-        // two 4-byte descriptors, little-endian.
+        // two 3-byte descriptors, little-endian.
         let raw = frame.cert_descriptors();
         assert_eq!(raw.len(), descs.len() * CERT_DESCRIPTOR_LEN);
         assert_eq!(raw, IntoBytes::as_bytes(&descs[..]));
