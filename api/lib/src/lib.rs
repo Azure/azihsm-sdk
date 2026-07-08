@@ -12,7 +12,8 @@ mod shared_types;
 pub mod traits;
 
 pub use algo::*;
-pub use ddi::*;
+pub use ddi::PTA_CSR_MAX_LEN;
+pub use ddi::PTA_REPORT_MAX_LEN;
 pub use error::*;
 pub use op::*;
 pub use partition::*;

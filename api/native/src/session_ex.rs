@@ -91,12 +91,17 @@ pub struct AzihsmSessExPartInitParams {
 /// @param[in,out] pta_csr Output buffer for the DER PKCS#10 CSR. On input
 ///                `len` is the capacity; on success it is set to the number
 ///                of bytes written. If the buffer is too small (or `ptr` is
-///                NULL with `len == 0`), `len` is set to the required size and
+///                NULL with `len == 0`), `len` is set to the maximum possible
+///                output size (the buffer is validated up-front against a
+///                fixed wire-schema bound, so the probe reports that bound
+///                rather than the exact byte count for this device) and
 ///                `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned **before** the
 ///                partition is provisioned — so the standard two-call probe
-///                (call once with a zero-length buffer to learn the size,
-///                then retry) is safe for this one-shot command. A NULL `ptr`
-///                with a non-zero `len` is rejected with
+///                (call once with a zero-length buffer to learn the required
+///                capacity, then retry) is safe for this one-shot command. A
+///                buffer sized to that bound is always large enough; the
+///                `len` written on success is the exact number of bytes. A
+///                NULL `ptr` with a non-zero `len` is rejected with
 ///                `AZIHSM_STATUS_INVALID_ARGUMENT`.
 /// @param[in,out] pta_report Output buffer for the attestation report, with
 ///                the same capacity/length contract as `pta_csr`.
@@ -138,6 +143,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         if std::ptr::eq(pta_csr, pta_report) {
             Err(AzihsmStatus::InvalidArgument)?;
         }
+
         let pta_csr = deref_mut_ptr(pta_csr)?;
         let pta_report = deref_mut_ptr(pta_report)?;
         validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN)?;

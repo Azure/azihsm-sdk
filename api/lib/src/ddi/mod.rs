@@ -30,7 +30,6 @@ pub(crate) use kbkdf::*;
 pub(crate) use key::*;
 pub(crate) use masked_key::*;
 pub(crate) use partition::*;
-pub use partition_ex::PartInitResult;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
 pub(crate) use session::*;

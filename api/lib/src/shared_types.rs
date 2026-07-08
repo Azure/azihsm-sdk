@@ -157,3 +157,18 @@ pub enum HsmSessionExType {
     /// envelope.
     Authenticated = 1,
 }
+
+/// Result of a security-domain partition-provisioning (`part_init_ex`)
+/// command: the artifacts the device returns after initializing a
+/// partition's security domain.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborPartInitResp`) is converted into it inside the DDI layer, so the
+/// wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmPartInitExResult {
+    /// DER-encoded PKCS#10 CertificationRequest for the PTA public key.
+    pub pta_csr: Vec<u8>,
+    /// COSE_Sign1 PTA key-attestation report signed by the PID.
+    pub pta_report: Vec<u8>,
+}

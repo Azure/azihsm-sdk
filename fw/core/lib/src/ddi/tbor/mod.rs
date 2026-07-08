@@ -348,6 +348,9 @@ mod tests {
     #[test]
     fn part_commands_are_in_session_and_cross_checked() {
         for op in [opcode::PART_INIT] {
+            // The opcode must actually be wired into `dispatch`; classifying
+            // an opcode without implementing it would be a latent bug.
+            assert!(is_known_opcode(op), "{op:#04x} must be a known opcode");
             assert!(is_in_session(op), "{op:#04x} must be in-session");
             assert!(
                 needs_session_id_cross_check(op),
