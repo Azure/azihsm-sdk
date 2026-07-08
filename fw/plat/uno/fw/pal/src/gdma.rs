@@ -81,6 +81,26 @@ fn device_dma_buf(ptr: *const u8, len: u32) -> GdmaBuf {
     }
 }
 
+/// Converts a raw 16-byte NVMe SGL Data Block descriptor into an SGL
+/// [`GdmaBuf`] for a host-side DMA source.
+///
+/// The descriptor's two little-endian 8-byte dwords map directly onto
+/// the GDMA SGL source pair: `desc[0..8]` → `sgl0` (address),
+/// `desc[8..16]` → `sgl1` (the block's embedded length + type).
+#[inline(always)]
+fn sgl_desc_buf(desc: &[u8; 16]) -> GdmaBuf {
+    GdmaBuf::Sgl {
+        sgl0: GdmaAddr {
+            lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
+            hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
+        },
+        sgl1: GdmaAddr {
+            lo: u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]),
+            hi: u32::from_le_bytes([desc[12], desc[13], desc[14], desc[15]]),
+        },
+    }
+}
+
 /// Maps a partition ID to a GDMA host interface selector.
 ///
 /// Controller ID = `part_id + 1` because GDMA `IFC_SLCT` uses 0 for
@@ -130,6 +150,39 @@ impl HsmGdmaController for UnoHsmPal {
     ) -> HsmResult<()> {
         let len = dst.len() as u32;
         let src_addr = host_dma_buf(src, prp);
+        let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
+        self.gdma
+            .copy_mem(
+                src_addr,
+                host_interface(io.pid())?,
+                len,
+                dst_addr,
+                MemInterface::Device,
+                len,
+            )?
+            .await
+    }
+
+    async fn copy_mem_from_host_raw(
+        &self,
+        io: &impl HsmIo,
+        desc: &[u8; 16],
+        dst: &mut DmaBuf,
+        prp: bool,
+    ) -> HsmResult<()> {
+        // Only inline SGL Data Block descriptors are supported here; the
+        // GDMA hardware consumes the descriptor and interprets its SGL
+        // format.
+        if prp {
+            return Err(HsmError::UnsupportedCmd);
+        }
+        // Transfer length is the descriptor's embedded length; it must
+        // match the destination exactly.
+        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+        if len as usize != dst.len() {
+            return Err(HsmError::InvalidArg);
+        }
+        let src_addr = sgl_desc_buf(desc);
         let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
         self.gdma
             .copy_mem(

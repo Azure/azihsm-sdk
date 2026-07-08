@@ -11,8 +11,10 @@ mod kbkdf;
 mod key;
 mod masked_key;
 mod partition;
+mod partition_ex;
 mod rsa;
 mod session;
+mod session_ex;
 mod tpm;
 
 pub(crate) use aes::*;
@@ -28,8 +30,11 @@ pub(crate) use kbkdf::*;
 pub(crate) use key::*;
 pub(crate) use masked_key::*;
 pub(crate) use partition::*;
+pub use partition_ex::PartInitResult;
+pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
 pub(crate) use session::*;
+pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
 
 use super::*;

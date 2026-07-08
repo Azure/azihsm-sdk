@@ -42,3 +42,8 @@ path = "junit.xml"
 
 [profile.ci-api.junit]
 path = "junit.xml"
+
+# profile for running emu smoke tests
+# (in-process firmware).
+[profile.ci-emu-smoke.junit]
+path = "junit.xml"
