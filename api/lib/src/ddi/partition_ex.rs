@@ -234,12 +234,12 @@ pub(crate) fn part_init_ex(
 ///
 /// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
 /// wrong length or fails to decode, when `pta_cert_chain` is empty,
-/// exceeds [`MAX_CERTS`], or contains a cert whose offset/length does not
-/// fit in the 16-bit descriptor fields, or when a present
-/// `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`] bytes;
-/// returns [`HsmError::InternalError`] if the device returns a
-/// malformed (wrong-length) `local_mk_backup`; and surfaces DDI/device
-/// failures from the round-trip.
+/// exceeds [`MAX_CERTS`], contains an empty cert, or contains a cert
+/// whose offset/length does not fit in the 16-bit descriptor fields, or
+/// when a present `prev_local_mk_backup` is not exactly
+/// [`LOCAL_MK_BACKUP_LEN`] bytes; returns [`HsmError::InternalError`] if
+/// the device returns a malformed (wrong-length) `local_mk_backup`; and
+/// surfaces DDI/device failures from the round-trip.
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
@@ -270,7 +270,10 @@ pub(crate) fn part_final_ex(
         let cert = desc.cert;
         let offset = sideband.len();
         let length = cert.len();
-        if offset > u16::MAX as usize || length > u16::MAX as usize {
+        // An empty cert is not valid DER and would yield a zero-length
+        // descriptor (and possibly an empty side-band buffer); reject it
+        // up front alongside the other deterministic host-side guards.
+        if length == 0 || offset > u16::MAX as usize || length > u16::MAX as usize {
             return Err(HsmError::InvalidArgument);
         }
         cert_descriptors.push(CertDescriptor {

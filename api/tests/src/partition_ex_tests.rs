@@ -115,6 +115,23 @@ fn part_final_rejects_empty_cert_descriptors() {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
+/// `PartFinal` rejects a cert chain containing an empty (zero-length)
+/// certificate, which is not valid DER and would yield a zero-length
+/// side-band descriptor.
+#[test]
+fn part_final_rejects_empty_cert() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let empty_cert: Vec<u8> = Vec::new();
+    let chain = [HsmCertDescriptor {
+        cert: empty_cert.as_slice(),
+    }];
+
+    let res = session.part_final(&policy, &chain, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
 /// `PartFinal` rejects more than [`MAX_CERTS`] certificates.
 #[test]
 fn part_final_rejects_too_many_cert_descriptors() {
