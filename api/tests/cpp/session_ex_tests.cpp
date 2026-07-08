@@ -38,14 +38,17 @@ class azihsm_sess_ex : public ::testing::Test
     }
 };
 
-#if 0
+// Happy-path session open requires the two-phase TBOR HPKE handshake, which is
+// only implemented by the emu (in-process firmware) backend; the mock backend
+// returns `UnsupportedEncoding` for TBOR ops. Gate this test on the emu backend
+// so it is excluded from the mock lane (see `AZIHSM_FEATURE_EMU` in CMakeLists).
+#ifdef AZIHSM_FEATURE_EMU
 TEST_F(azihsm_sess_ex, open_and_close)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
-        auto part_guard = scope_guard::make_scope_exit([&part_handle] {
-            azihsm_part_close(part_handle);
-        });
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
 
         azihsm_handle sess_handle = 0;
         auto err =
@@ -59,7 +62,7 @@ TEST_F(azihsm_sess_ex, open_and_close)
         });
     });
 }
-#endif
+#endif // AZIHSM_FEATURE_EMU
 
 TEST_F(azihsm_sess_ex, open_null_sess_handle)
 {

@@ -52,11 +52,12 @@ The provisioning inputs are grouped into an
 structure. `pta_csr` and `pta_report` are caller-provided output buffers:
 on input `len` is the buffer capacity; on success `len` is set to the
 number of bytes written. Because provisioning is a one-shot operation, an
-undersized or NULL output buffer is rejected with
+undersized buffer (or a NULL `ptr` with `len == 0`) is rejected with
 `AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size
 **before** the partition is provisioned — so the standard two-call size
-probe (call once with a NULL/small buffer to learn the size, then retry
-with an adequately sized buffer) is safe for this command.
+probe (call once with a zero-length buffer to learn the size, then retry
+with an adequately sized buffer) is safe for this command. A NULL `ptr`
+with a non-zero `len` is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ```cpp
 azihsm_status azihsm_sess_ex_part_init(
