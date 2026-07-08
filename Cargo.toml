@@ -11,6 +11,7 @@ members = [
   "api/tests/macro",
   "crates/cred_encrypt",
   "crates/crypto",
+  "crates/crypto/x509_builder/gen",
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
   "crates/session_ex_crypto",
@@ -61,8 +62,6 @@ members = [
   "fw/pal/traits",
   "fw/plat/std/lib",
   "fw/plat/std/pal",
-  "fw/plat/std/x509",
-  "fw/plat/std/x509/gen",
   "plugins/ossl_engine/engine",
   "plugins/ossl_engine/engine-resiliency",
   "plugins/ossl_engine/openssl-engine",
@@ -140,6 +139,7 @@ azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/g
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common
+azihsm_crypto_x509_builder_gen = { path = "crates/crypto/x509_builder/gen" }
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_io = { path = "fw/core/io" }
@@ -147,8 +147,6 @@ azihsm_fw_hsm_oob = { path = "fw/core/oob" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
-azihsm_fw_hsm_std_x509 = { path = "fw/plat/std/x509" }
-azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
 
 # Embassy crates
 embassy-executor = "0.10.0"

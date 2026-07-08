@@ -23,12 +23,12 @@
 //! they bypass it entirely. The trait impl ([`HsmCertStore`]) at the
 //! bottom of this file is the only path the core uses.
 
+use azihsm_crypto::x509_builder::cert_builder;
+use azihsm_crypto::x509_builder::cert_builder::*;
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableHsmKey;
 use azihsm_crypto::HashAlgo;
-use azihsm_fw_hsm_std_x509::cert_builder;
-use azihsm_fw_hsm_std_x509::cert_builder::*;
 
 use super::*;
 use crate::part::NUM_PARTITIONS;
@@ -96,7 +96,7 @@ fn to_uncompressed(raw: &[u8; P384_PUB_KEY_LEN]) -> [u8; P384_UNCOMPRESSED_LEN] 
 // ---------------------------------------------------------------------------
 
 fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::root_cert::*;
+    use azihsm_crypto::x509_builder::root_cert::*;
     let cn = cert_builder::pad_cn(params.subject_cn).expect("valid CN");
     let sn = cert_builder::pad_sn(params.subject_sn).expect("valid SN");
     tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
@@ -111,7 +111,7 @@ fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
 }
 
 fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::intermediate_cert::*;
+    use azihsm_crypto::x509_builder::intermediate_cert::*;
     let s_cn = cert_builder::pad_cn(params.subject_cn).expect("valid CN");
     let i_cn = cert_builder::pad_cn(params.issuer_cn).expect("valid CN");
     let s_sn = cert_builder::pad_sn(params.subject_sn).expect("valid SN");
@@ -131,7 +131,7 @@ fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
 }
 
 fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
-    use azihsm_fw_hsm_std_x509::leaf_cert::*;
+    use azihsm_crypto::x509_builder::leaf_cert::*;
     let s_cn = cert_builder::pad_cn(params.subject_cn).expect("valid CN");
     let i_cn = cert_builder::pad_cn(params.issuer_cn).expect("valid CN");
     let s_sn = cert_builder::pad_sn(params.subject_sn).expect("valid SN");
@@ -236,7 +236,7 @@ impl StdHsmPal {
             subject_sn: ROOT_SN,
             subject_key_id: &root_kp.ski,
         };
-        let mut tbs = azihsm_fw_hsm_std_x509::root_cert::TBS_TEMPLATE;
+        let mut tbs = azihsm_crypto::x509_builder::root_cert::TBS_TEMPLATE;
         patch_tbs_root(&mut tbs, &root_params);
         let (r, s) = self.hash_and_sign(&root_kp.priv_key, &tbs).await?;
         let mut root_cert = [0u8; MAX_CERT_DER_LEN];
@@ -258,7 +258,7 @@ impl StdHsmPal {
             authority_key_id: &root_kp.ski,
             path_len: 1,
         };
-        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
+        let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
         patch_tbs_intermediate(&mut tbs, &deviceid_params);
         let (r, s) = self.hash_and_sign(&root_kp.priv_key, &tbs).await?;
         let mut deviceid_cert = [0u8; MAX_CERT_DER_LEN];
@@ -281,7 +281,7 @@ impl StdHsmPal {
             authority_key_id: &deviceid_kp.ski,
             path_len: 0,
         };
-        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
+        let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
         patch_tbs_intermediate(&mut tbs, &alias_params);
         let (r, s) = self.hash_and_sign(&deviceid_kp.priv_key, &tbs).await?;
         let mut alias_cert = [0u8; MAX_CERT_DER_LEN];
@@ -418,7 +418,7 @@ impl StdHsmPal {
             authority_key_id: &self.cert_store().alias_ski,
             key_usage: KeyUsage::DIGITAL_SIGNATURE,
         };
-        let mut tbs = azihsm_fw_hsm_std_x509::leaf_cert::TBS_TEMPLATE;
+        let mut tbs = azihsm_crypto::x509_builder::leaf_cert::TBS_TEMPLATE;
         patch_tbs_leaf(&mut tbs, &params);
 
         // Sign via PAL.
