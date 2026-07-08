@@ -179,6 +179,16 @@ typedef uint32_t azihsm_sess_type;
 
 Possible values are defined by [AZIHSM_SESS_TYPE_XXX](#azihsm_sess_type_xxx)
 
+### azihsm_session_ex_type
+
+Security-domain session channel integrity profile
+
+```cpp
+typedef uint32_t azihsm_session_ex_type;
+```
+
+Possible values are defined by [AZIHSM_SESSION_EX_TYPE_XXX](#azihsm_session_ex_type_xxx)
+
 
 <!--
 
@@ -354,6 +364,15 @@ Algorithm ID type values
 #define AZIHSM_SESS_TYPE_CLEAR 1
 #define AZIHSM_SESS_TYPE_AUTHENTICATED 2
 #define AZIHSM_SESS_TYPE_ENCRYPTED 3
+```
+
+### AZIHSM_SESSION_EX_TYPE_XXX
+
+Security-domain session channel integrity profile values
+
+```cpp
+#define AZIHSM_SESSION_EX_TYPE_PLAIN_TEXT 0
+#define AZIHSM_SESSION_EX_TYPE_AUTHENTICATED 1
 ```
 
 <!-- 

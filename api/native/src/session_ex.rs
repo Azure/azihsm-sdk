@@ -9,11 +9,12 @@
 
 use super::*;
 
-/// @brief Open an HSM session over the TBOR transport (security-domain)
+/// @brief Open a security-domain session to the device
 ///
-/// Runs the two-phase `open_session_ex` HPKE handshake using the API
-/// revision negotiated when the partition was opened, and returns a
-/// handle to the resulting session.
+/// Opens a security-domain session using the API revision negotiated when
+/// the partition was opened, and returns a handle to the resulting
+/// session. `session_type` selects the channel integrity profile pinned
+/// for the session.
 ///
 /// @param[in] dev_handle Handle to the HSM partition
 /// @param[in] session_type Channel integrity profile to pin for the session
@@ -56,36 +57,57 @@ pub unsafe extern "C" fn azihsm_sess_ex_open(
     })
 }
 
-/// @brief Provision a partition over a security-domain session (TBOR `PartInit`)
+/// Input buffers for [`azihsm_sess_ex_part_init`].
 ///
-/// Issues the TBOR `PartInit` command on the given V2 session: it seals
-/// `mach_seed` under the session key and ships it alongside the unified
-/// `part_policy` and the POTA / SATA / optional SAPOTA thumbprints,
-/// returning the PTA certificate-signing request and the PTA attestation
+/// Groups the security-domain provisioning inputs into a single struct so
+/// the call site does not pass them as separate arguments. Each field
+/// points to an `azihsm_buffer`; `sapota_thumbprint` is optional and may
+/// be NULL to omit it.
+#[repr(C)]
+pub struct AzihsmSessExPartInitParams {
+    /// Machine seed plaintext buffer.
+    pub mach_seed: *const AzihsmBuffer,
+    /// Unified partition policy image buffer.
+    pub part_policy: *const AzihsmBuffer,
+    /// POTA public-key thumbprint buffer.
+    pub pota_thumbprint: *const AzihsmBuffer,
+    /// SATA public-key thumbprint buffer.
+    pub sata_thumbprint: *const AzihsmBuffer,
+    /// Optional SAPOTA thumbprint buffer; NULL to omit.
+    pub sapota_thumbprint: *const AzihsmBuffer,
+}
+
+/// @brief Provision a partition's security domain
+///
+/// Initializes the partition from the machine seed and unified partition
+/// policy, together with the partition-owner (POTA), security-administrator
+/// (SATA), and optional secondary-owner (SAPOTA) trust-anchor thumbprints,
+/// returning the partition's certificate-signing request and attestation
 /// report.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
-/// @param[in] mach_seed Machine seed plaintext buffer
-/// @param[in] part_policy Unified partition policy image buffer
-/// @param[in] pota_thumbprint POTA public-key thumbprint buffer
-/// @param[in] sata_thumbprint SATA public-key thumbprint buffer
-/// @param[in] sapota_thumbprint Optional SAPOTA thumbprint buffer (may be null)
+/// @param[in] params Provisioning input buffers
+///            (see `azihsm_sess_ex_part_init_params`)
 /// @param[in,out] pta_csr Output buffer for the DER PKCS#10 CSR. On input
 ///                `len` is the capacity; on success it is set to the number
-///                of bytes written. On `BufferTooSmall` it is set to the
-///                required size.
-/// @param[in,out] pta_report Output buffer for the COSE_Sign1 attestation
-///                report, with the same capacity/length contract as
-///                `pta_csr`.
+///                of bytes written. If the buffer is too small (or `ptr` is
+///                NULL), `len` is set to the required size and
+///                `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned **before** the
+///                partition is provisioned — so the standard two-call probe
+///                (call once with a NULL/small buffer to learn the size,
+///                then retry) is safe for this one-shot command.
+/// @param[in,out] pta_report Output buffer for the attestation report, with
+///                the same capacity/length contract as `pta_csr`.
 ///
-/// @return `AzihsmError` indicating the result of the operation
+/// @return `AzihsmStatus` indicating the result of the operation
 ///
 /// # Safety
 ///
 /// - `sess_handle` must be a valid security-domain session handle.
-/// - `mach_seed`, `part_policy`, `pota_thumbprint`, and `sata_thumbprint`
-///   must be valid pointers to `azihsm_buffer` structures.
-/// - `sapota_thumbprint` must be null or a valid `azihsm_buffer` pointer.
+/// - `params` must be a valid pointer to an `azihsm_sess_ex_part_init_params`
+///   whose `mach_seed`, `part_policy`, `pota_thumbprint`, and
+///   `sata_thumbprint` are valid `azihsm_buffer` pointers, and whose
+///   `sapota_thumbprint` is NULL or a valid `azihsm_buffer` pointer.
 /// - `pta_csr` and `pta_report` must be valid pointers to distinct
 ///   `azihsm_buffer` structures with writable backing storage of the
 ///   advertised length.
@@ -93,28 +115,34 @@ pub unsafe extern "C" fn azihsm_sess_ex_open(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_ex_part_init(
     sess_handle: AzihsmHandle,
-    mach_seed: *const AzihsmBuffer,
-    part_policy: *const AzihsmBuffer,
-    pota_thumbprint: *const AzihsmBuffer,
-    sata_thumbprint: *const AzihsmBuffer,
-    sapota_thumbprint: *const AzihsmBuffer,
+    params: *const AzihsmSessExPartInitParams,
     pta_csr: *mut AzihsmBuffer,
     pta_report: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
 
-        let mach_seed: &[u8] = deref_ptr(mach_seed)?.try_into()?;
-        let part_policy: &[u8] = deref_ptr(part_policy)?.try_into()?;
-        let pota_thumbprint: &[u8] = deref_ptr(pota_thumbprint)?.try_into()?;
-        let sata_thumbprint: &[u8] = deref_ptr(sata_thumbprint)?.try_into()?;
-        let sapota_thumbprint = buffer_to_optional_slice(sapota_thumbprint)?;
+        let mach_seed: &[u8] = deref_ptr(params.mach_seed)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+        let pota_thumbprint: &[u8] = deref_ptr(params.pota_thumbprint)?.try_into()?;
+        let sata_thumbprint: &[u8] = deref_ptr(params.sata_thumbprint)?.try_into()?;
+        let sapota_thumbprint = buffer_to_optional_slice(params.sapota_thumbprint)?;
 
-        // Validate the output buffers before the one-shot provisioning op
-        // so a null pointer is rejected up front rather than after the
-        // partition has already been provisioned.
+        // Validate the output buffers before the one-shot provisioning
+        // operation: `PartInit` cannot be re-run and its CSR / report
+        // cannot be re-fetched, so an invalid or undersized buffer must be
+        // rejected *up front* (with the required size) while the call is
+        // still retryable — not after the partition has been irreversibly
+        // provisioned. The device output is bounded by the wire-schema
+        // maxima, so a buffer of at least that capacity is guaranteed to
+        // hold the result; this also makes the standard two-call size probe
+        // (NULL/small buffer -> `BUFFER_TOO_SMALL` + required size -> retry)
+        // safe for this one-shot command.
         let pta_csr = deref_mut_ptr(pta_csr)?;
         let pta_report = deref_mut_ptr(pta_report)?;
+        validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN)?;
+        validate_output_buffer(pta_report, api::PTA_REPORT_MAX_LEN)?;
 
         let result = session.part_init_ex(
             mach_seed,

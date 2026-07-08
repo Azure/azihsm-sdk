@@ -12,7 +12,7 @@ mod shared_types;
 pub mod traits;
 
 pub use algo::*;
-pub use ddi::PartInitResult;
+pub use ddi::*;
 pub use error::*;
 pub use op::*;
 pub use partition::*;
