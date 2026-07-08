@@ -25,8 +25,8 @@
 //!   `(index, length)` referencing where each DER certificate of the PTA
 //!   chain is carried **out of band** as an SGL Data Block (the
 //!   certificate bytes are transferred out of band, not in the TBOR
-//!   message).  The number of certificates is
-//!   `cert_descriptors.len() / CERT_DESCRIPTOR_LEN`, capped at
+//!   message).  Decoded as a `&[CertDescriptor]`, so the certificate
+//!   count is `cert_descriptors.len()`, capped at
 //!   [`MAX_CERTS`](crate::evidence::MAX_CERTS).
 //! * `prev_local_mk_backup` — optional previously-generated `local_mk`
 //!   backup envelope to restore.  An **empty** field means absent — the
@@ -102,9 +102,16 @@ pub struct TborPartFinalReq<'a> {
     /// the PTA certificate chain carried out of band.  Decoded as a
     /// zero-copy typed slice; because [`CertDescriptor`] is `Unaligned`
     /// (alignment 1) the `&[CertDescriptor]` cast is sound at any offset,
-    /// so no alignment padding is inserted.  Byte length is a non-zero
-    /// multiple of [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN), up to
-    /// [`CERT_DESCRIPTORS_MAX_LEN`](crate::evidence::CERT_DESCRIPTORS_MAX_LEN).
+    /// so no alignment padding is inserted.
+    ///
+    /// `min_len`/`max_len` are a coarse wire-size guard bounding the byte
+    /// length to `[CERT_DESCRIPTOR_LEN, CERT_DESCRIPTORS_MAX_LEN]` =
+    /// `[3, 6]`; they cannot by themselves enforce a whole-descriptor
+    /// multiple.  A wire length that is not a multiple of
+    /// [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN) (e.g.
+    /// 4 or 5 B) fails the zero-copy cast and decodes as an **empty**
+    /// slice (`try_ref_from_bytes(..).unwrap_or(&[])`), so a decoder MUST
+    /// reject an empty `cert_descriptors` as a malformed request.
     #[tbor(buffer, min_len = 3, max_len = 6)]
     pub cert_descriptors: &'a [CertDescriptor],
 
