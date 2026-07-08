@@ -140,6 +140,19 @@ impl HsmRsa for UnoHsmPal {
         Err(HsmError::UnsupportedCmd)
     }
 
+    fn rsa_priv_der_to_vault(
+        &self,
+        _io: &impl HsmIo,
+        _buf: &mut DmaBuf,
+        _crt: bool,
+    ) -> HsmResult<(usize, usize)> {
+        // TODO: parse the recovered RSA private-key DER on Uno and rewrite
+        // it in place into the vault representation — the raw non-CRT
+        // (`n`/`e`/`d`) or the custom CRT layout selected by `crt`
+        // (RsaUnwrap RSA import).
+        Err(HsmError::UnsupportedCmd)
+    }
+
     // ── PKCS#1 v1.5 encryption ─────────────────────────────────────
 
     async fn rsa_pkcs1_encrypt<'a>(

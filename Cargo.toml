@@ -56,6 +56,8 @@ members = [
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
   "fw/core/io",
+  "fw/core/key-decode",
+  "fw/core/key-unwrap",
   "fw/core/lib",
   "fw/core/oob",
   "fw/core/tracing",
@@ -143,6 +145,8 @@ azihsm_crypto_x509_builder_gen = { path = "crates/crypto/x509_builder/gen" }
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_io = { path = "fw/core/io" }
+azihsm_fw_hsm_key_decode = { path = "fw/core/key-decode" }
+azihsm_fw_hsm_key_unwrap = { path = "fw/core/key-unwrap" }
 azihsm_fw_hsm_oob = { path = "fw/core/oob" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }

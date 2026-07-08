@@ -60,4 +60,5 @@ pub use types::CertInfo;
 pub use types::EcPubKey;
 pub use types::SigAlgo;
 pub use types::StepResult;
+pub use validate::validate_chain;
 pub use validate::ChainValidator;

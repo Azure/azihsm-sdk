@@ -546,24 +546,24 @@ impl StdHsmPal {
     /// `await`-free, so on the single-threaded executor it runs
     /// atomically — concurrent reads cannot race to generate two keys.
     ///
-    /// Only the private key is persisted (as DER — the std PAL's
-    /// representation; real firmware stores raw key material); the public
-    /// key is derived from it on demand (matching the reference
-    /// firmware).
+    /// Only the private key is persisted (as HSM byte format — raw
+    /// components, the std PAL's vault representation; real firmware stores
+    /// its own raw key material); the public key is derived from it on
+    /// demand (matching the reference firmware).
     fn provision_unwrapping_key(&self, pid: HsmPartId) -> HsmResult<()> {
         if self.active_part(pid)?.unwrapping_key_id.is_some() {
             return Ok(());
         }
 
         let pk = RsaPrivateKey::generate(256).map_err(|_| HsmError::RsaGenerateError)?;
-        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::RsaToDerError)?;
+        let priv_len = pk.hsm_bytes_len();
         let mut priv_buf = vec![0u8; priv_len];
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
         let result = (|| {
-            pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+            pk.to_hsm_bytes(&mut priv_buf[..priv_len])
                 .map_err(|_| HsmError::RsaToDerError)?;
 
             let entry = self.active_part_mut(pid)?;

@@ -36,8 +36,10 @@
 //! mode returns the same deterministic sizes.
 
 use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableHsmKey;
+use azihsm_crypto::ImportableKey;
 use azihsm_crypto::PrivateKey;
 
 use super::*;
@@ -49,6 +51,16 @@ fn to_ecc_curve(curve: HsmEccCurve) -> EccCurve {
         HsmEccCurve::P256 => EccCurve::P256,
         HsmEccCurve::P384 => EccCurve::P384,
         HsmEccCurve::P521 => EccCurve::P521,
+    }
+}
+
+/// Map the crypto library's [`azihsm_crypto::EccCurve`] back to the
+/// PAL-level [`HsmEccCurve`].
+fn from_ecc_curve(curve: EccCurve) -> HsmEccCurve {
+    match curve {
+        EccCurve::P256 => HsmEccCurve::P256,
+        EccCurve::P384 => HsmEccCurve::P384,
+        EccCurve::P521 => HsmEccCurve::P521,
     }
 }
 
@@ -233,5 +245,52 @@ impl HsmEcc for StdHsmPal {
                 &mut secret[..],
             )
             .await
+    }
+
+    fn ecc_priv_der_to_vault(
+        &self,
+        _io: &impl HsmIo,
+        der: &DmaBuf,
+        out: Option<&mut DmaBuf>,
+    ) -> HsmResult<(usize, HsmEccCurve)> {
+        // std PAL vault format is raw HSM-format scalar bytes; parse the
+        // recovered PKCS#8 DER and re-export in the vault representation.
+        let pk = EccPrivateKey::from_bytes(der).map_err(|_| HsmError::InvalidArg)?;
+        let curve = from_ecc_curve(pk.curve());
+        let priv_len = curve.wire_coord_len();
+        if let Some(out) = out {
+            if out.len() < priv_len {
+                return Err(HsmError::InvalidArg);
+            }
+            pk.to_hsm_bytes(&mut out[..priv_len])
+                .map_err(|_| HsmError::InvalidArg)?;
+        }
+        Ok((priv_len, curve))
+    }
+
+    async fn ecc_priv_pub_key(
+        &self,
+        _io: &impl HsmIo,
+        priv_key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize> {
+        // Parse the vault-format (raw HSM scalar) private key and report
+        // the wire public-key length; in use mode derive the public key
+        // and serialize it (`x || y`, wire-LE) via the shared driver
+        // helper (same chain as `ecc_gen_keypair_from_okm`).
+        let pk = EccPrivateKey::from_hsm_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
+        let wire_pub_len = from_ecc_curve(pk.curve()).wire_pub_key_len();
+        if let Some(out) = pub_out {
+            if out.len() < wire_pub_len {
+                return Err(HsmError::InvalidArg);
+            }
+            let pub_key = pk
+                .public_key()
+                .map_err(|_| HsmError::EccGetCoordinatesError)?;
+            self.ecc
+                .pub_coords(&pub_key, false, &mut out[..wire_pub_len])
+                .await?;
+        }
+        Ok(wire_pub_len)
     }
 }

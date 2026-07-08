@@ -17,6 +17,7 @@ mod encode;
 mod format;
 
 pub use azihsm_fw_core_crypto_aead_envelope::AeadAlg;
+pub use decode::peek_metadata;
 pub use decode::unmask;
 pub use decode::UnmaskedView;
 pub use encode::mask;
