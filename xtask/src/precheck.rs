@@ -398,10 +398,15 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 
     let mut mock_exclude = exclude.to_owned();
 
-    mock_exclude.extend(vec![
-        "provider-integration-tests-cli".to_string(),
-        "provider-integration-tests-capi".to_string(),
-    ]);
+    for pkg in [
+        "provider-integration-tests-cli",
+        "provider-integration-tests-capi",
+        "provider-integration-tests-nginx",
+    ] {
+        if !mock_exclude.iter().any(|e| e == pkg) {
+            mock_exclude.push(pkg.to_string());
+        }
+    }
 
     // SDK Run all mock tests
     tests.push(Nextest {
