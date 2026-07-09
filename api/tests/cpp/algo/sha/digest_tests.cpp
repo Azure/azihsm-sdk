@@ -3,6 +3,7 @@
 
 #include <array>
 #include <azihsm_api.h>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -103,6 +104,11 @@ struct ShaTestParams
     const char *test_name;
 };
 
+static bool is_hex_digit(char c)
+{
+    return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+}
+
 static std::vector<uint8_t> hex_to_bytes(const char *hex)
 {
     if (hex == nullptr)
@@ -124,6 +130,12 @@ static std::vector<uint8_t> hex_to_bytes(const char *hex)
 
     for (size_t i = 0; i < hex_len; i += 2)
     {
+        if (!is_hex_digit(hex[i]) || !is_hex_digit(hex[i + 1]))
+        {
+            ADD_FAILURE() << "Invalid hex character at offset " << i;
+            return {};
+        }
+
         unsigned int value = 0;
         int parsed_count = std::sscanf(hex + i, "%2x", &value);
 
