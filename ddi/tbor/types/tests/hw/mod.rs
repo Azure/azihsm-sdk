@@ -47,7 +47,10 @@ use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 
 pub mod api_rev;
+pub mod assertions;
+pub mod open_session;
 pub mod part_info;
+pub mod session_helper;
 
 /// Process-global serialisation lock for hardware tests.
 ///
@@ -85,13 +88,29 @@ impl Deref for HwDev {
 /// signal than downstream `exec_op_tbor` failures.
 pub(crate) fn open_hw_dev() -> HwDev {
     let guard = HW_TEST_LOCK.lock();
+    let dev = open_backend_dev();
+    HwDev { dev, _guard: guard }
+}
+
+/// Open an *additional* fd on the same physical device without
+/// re-acquiring [`HW_TEST_LOCK`]. Intended for tests that need two
+/// concurrent file descriptors on the same board (the Linux kernel
+/// driver enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so multi-session
+/// tests must span multiple fds).
+///
+/// The caller must already hold the lock via a live [`HwDev`], which
+/// is why this helper takes `&HwDev` — it borrows the guard's
+/// lifetime to statically prevent lock-free use.
+pub(crate) fn open_additional_hw_dev_fd(_lock_holder: &HwDev) -> <AzihsmDdi as Ddi>::Dev {
+    open_backend_dev()
+}
+
+fn open_backend_dev() -> <AzihsmDdi as Ddi>::Dev {
     let ddi = AzihsmDdi::default();
     let infos = ddi.dev_info_list();
     let info = infos
         .first()
         .expect("hw test: backend advertised no device (driver loaded? board present?)");
-    let dev = ddi
-        .open_dev(&info.path)
-        .expect("hw test: failed to open backend device");
-    HwDev { dev, _guard: guard }
+    ddi.open_dev(&info.path)
+        .expect("hw test: failed to open backend device")
 }
