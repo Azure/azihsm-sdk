@@ -17,9 +17,10 @@ use zerocopy::*;
 ///
 /// This is a Rust borrowed view, **not** a `#[repr(C)]` / ABI-stable
 /// type: it cannot be shared across the FFI boundary directly. The
-/// native FFI layer instead converts a C array of `{ data, len }`
+/// intended FFI approach (no native `part_final` surface exists yet) is
+/// for the native layer to convert a C array of `{ data, len }`
 /// certificate buffers into a `&[HsmCertDescriptor]`, wrapping each
-/// buffer's bytes (the DER is borrowed, not copied). The wire-level
+/// buffer's bytes (borrowing the DER, not copying). The wire-level
 /// `(index, length)` descriptors — each referencing an out-of-band SGL
 /// Data Block — stay an internal detail the SDK derives on the caller's
 /// behalf.

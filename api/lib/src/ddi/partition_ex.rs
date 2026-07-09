@@ -34,12 +34,13 @@ use azihsm_ddi_tbor_types::*;
 use super::*;
 
 /// Exact on-the-wire length of a non-empty `local_mk` backup envelope
-/// (`prev_local_mk_backup` / `local_mk_backup`). Owned by the API layer
-/// (the wire schema does not pin it), but mirrors the firmware's
-/// deterministic AES-256-GCM `MaskedKey` envelope layout:
+/// (`prev_local_mk_backup` / `local_mk_backup`). The firmware pins this
+/// field to exactly this length and treats an empty field as absent;
+/// this constant mirrors the firmware's deterministic AES-256-GCM
+/// `MaskedKey` envelope layout:
 /// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`.
-/// The firmware treats a non-empty field as exactly this length (an
-/// empty field means absent).
+/// It lives in the API layer so the host-side `part_final_ex` guards can
+/// enforce that firmware contract before the round-trip.
 const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 
 // Pin the computed length to the wire-documented 164 B so an envelope
