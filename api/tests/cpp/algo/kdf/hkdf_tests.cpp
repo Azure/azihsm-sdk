@@ -23,6 +23,71 @@ class azihsm_hkdf : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
+static key_props valid_hkdf_aes_props()
+{
+    key_props props = {};
+    props.key_class = AZIHSM_KEY_CLASS_SECRET;
+    props.key_kind = AZIHSM_KEY_KIND_AES;
+    props.key_size_bits = 256;
+    props.encrypt = 1;
+    props.decrypt = 1;
+    return props;
+}
+
+static azihsm_status hkdf_derive_with_algo(
+    azihsm_handle session,
+    azihsm_algo *algo,
+    key_props props
+)
+{
+    auto_key secret_a;
+    auto_key secret_b;
+    derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+    std::vector<azihsm_key_prop> derived_key_props;
+    azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
+
+    auto_key derived_key;
+
+    return azihsm_key_derive(
+        session,
+        algo,
+        secret_a.get(),
+        &derived_key_prop_list,
+        derived_key.get_ptr()
+    );
+}
+
+static azihsm_status hkdf_derive_with_custom_params(
+    azihsm_handle session,
+    azihsm_algo_id hmac_algo_id,
+    key_props props,
+    azihsm_buffer *salt,
+    azihsm_buffer *info
+)
+{
+    auto_key secret_a;
+    auto_key secret_b;
+    derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+    azihsm_algo_hkdf_params hkdf_params{};
+    azihsm_algo hkdf_algo{};
+    build_hkdf_algo(hkdf_params, hkdf_algo, hmac_algo_id, salt, info);
+
+    std::vector<azihsm_key_prop> derived_key_props;
+    azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
+
+    auto_key derived_key;
+
+    return azihsm_key_derive(
+        session,
+        &hkdf_algo,
+        secret_a.get(),
+        &derived_key_prop_list,
+        derived_key.get_ptr()
+    );
+}
+
 // ============================================================
 // Test cases
 // ============================================================
@@ -751,6 +816,226 @@ TEST_F(azihsm_hkdf, hkdf_long_salt_info_roundtrip)
             key_b.get(),
             reinterpret_cast<const uint8_t *>(msg),
             std::strlen(msg)
+        );
+    });
+}
+
+/// Test that HKDF derive rejects a null algorithm pointer.
+TEST_F(azihsm_hkdf, hkdf_null_algo_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        EXPECT_EQ(
+            hkdf_derive_with_algo(session, nullptr, valid_hkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects null HKDF params.
+TEST_F(azihsm_hkdf, hkdf_null_algo_params_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        azihsm_algo hkdf_algo = {};
+        hkdf_algo.id = AZIHSM_ALGO_ID_HKDF_DERIVE;
+        hkdf_algo.params = nullptr;
+        hkdf_algo.len = sizeof(azihsm_algo_hkdf_params);
+
+        EXPECT_EQ(
+            hkdf_derive_with_algo(session, &hkdf_algo, valid_hkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects zero HKDF params length.
+TEST_F(azihsm_hkdf, hkdf_zero_algo_params_len_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        uint8_t salt[] = { 0x01, 0x02, 0x03 };
+        uint8_t info[] = { 0x04, 0x05, 0x06 };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params{};
+        azihsm_algo hkdf_algo{};
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
+
+        hkdf_algo.len = 0;
+
+        EXPECT_EQ(
+            hkdf_derive_with_algo(session, &hkdf_algo, valid_hkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects a mismatched HKDF params length.
+TEST_F(azihsm_hkdf, hkdf_algo_params_len_mismatch_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        uint8_t salt[] = { 0x01, 0x02, 0x03 };
+        uint8_t info[] = { 0x04, 0x05, 0x06 };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params{};
+        azihsm_algo hkdf_algo{};
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
+
+        hkdf_algo.len = sizeof(azihsm_algo_hkdf_params) - 1;
+
+        EXPECT_EQ(
+            hkdf_derive_with_algo(session, &hkdf_algo, valid_hkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects a null derived-key output pointer.
+TEST_F(azihsm_hkdf, hkdf_null_derived_key_output_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key secret_a;
+        auto_key secret_b;
+        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+        uint8_t salt[] = { 0x01, 0x02, 0x03 };
+        uint8_t info[] = { 0x04, 0x05, 0x06 };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params{};
+        azihsm_algo hkdf_algo{};
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
+
+        key_props props = valid_hkdf_aes_props();
+
+        std::vector<azihsm_key_prop> derived_key_props;
+        azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
+
+        EXPECT_EQ(
+            azihsm_key_derive(session, &hkdf_algo, secret_a.get(), &derived_key_prop_list, nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects a null derived-key property list.
+TEST_F(azihsm_hkdf, hkdf_null_derived_key_props_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key secret_a;
+        auto_key secret_b;
+        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+        uint8_t salt[] = { 0x01, 0x02, 0x03 };
+        uint8_t info[] = { 0x04, 0x05, 0x06 };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params{};
+        azihsm_algo hkdf_algo{};
+        build_hkdf_algo(hkdf_params, hkdf_algo, AZIHSM_ALGO_ID_HMAC_SHA256, &salt_buf, &info_buf);
+
+        auto_key derived_key;
+
+        EXPECT_EQ(
+            azihsm_key_derive(session, &hkdf_algo, secret_a.get(), nullptr, derived_key.get_ptr()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects a salt buffer with null pointer and non-zero length.
+TEST_F(azihsm_hkdf, hkdf_null_salt_with_nonzero_len_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        key_props props = valid_hkdf_aes_props();
+
+        uint8_t info[] = { 0x04, 0x05, 0x06 };
+
+        azihsm_buffer invalid_salt_buf = {
+            .ptr = nullptr,
+            .len = 1,
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        EXPECT_EQ(
+            hkdf_derive_with_custom_params(
+                session,
+                AZIHSM_ALGO_ID_HMAC_SHA256,
+                props,
+                &invalid_salt_buf,
+                &info_buf
+            ),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that HKDF derive rejects an info buffer with null pointer and non-zero length.
+TEST_F(azihsm_hkdf, hkdf_null_info_with_nonzero_len_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        key_props props = valid_hkdf_aes_props();
+
+        uint8_t salt[] = { 0x01, 0x02, 0x03 };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer invalid_info_buf = {
+            .ptr = nullptr,
+            .len = 1,
+        };
+
+        EXPECT_EQ(
+            hkdf_derive_with_custom_params(
+                session,
+                AZIHSM_ALGO_ID_HMAC_SHA256,
+                props,
+                &salt_buf,
+                &invalid_info_buf
+            ),
+            AZIHSM_STATUS_INVALID_ARGUMENT
         );
     });
 }
