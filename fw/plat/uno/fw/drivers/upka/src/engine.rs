@@ -124,10 +124,15 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         prime: &DmaBuf,
         mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
+        // pub_key (X || Y) and signature (R || S) are consumed by the PKA in
+        // wire format: two coordinates each padded to `hsm_point_size` (P-521
+        // = 68, not the 66-byte field width). Validate against the full wire
+        // width so an undersized buffer cannot make the hardware DMA read past
+        // the caller's allocation.
         Self::ensure_cmd_input(
-            !pub_key.is_empty()
+            pub_key.len() >= hsm_point_size(curve) * 2
                 && hash.len() >= hash_size(curve)
-                && signature.len() >= signature_size(curve)
+                && signature.len() >= hsm_point_size(curve) * 2
                 && result.len() >= Self::RESULT_WORD_LEN
                 && prime.len() >= hsm_point_size(curve)
                 && mont_result.len() >= hsm_point_size(curve),
