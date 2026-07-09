@@ -266,6 +266,19 @@ pub(super) const RSA_2K_MOD_EXP_KAT: RsaModExpKat = RsaModExpKat {
     ],
 };
 
+/// Expected KEK recovered by OAEP-decoding (SHA-256, empty label) the RSA-2048
+/// mod-exp plaintext block [`RSA_2K_MOD_EXP_KAT`]`.k`.
+///
+/// This is the tail of the reference firmware's RSA mod-exp self-test: after the
+/// PKA mod-exp produces the padded plaintext, the SHA engine OAEP-decodes it and
+/// the recovered key-encryption key is compared against this constant. Byte-for-
+/// byte identical to the reference firmware's `OAEP_KEK_SELF_TEST`
+/// (`drivers/crypto/sha/src/sha.rs`). Natural (big-endian) byte order — it is
+/// extracted from the big-endian OAEP-encoded message.
+pub(super) const OAEP_KEK_SELF_TEST: &[u8] = &[
+    0xf0, 0x81, 0x50, 0x2a, 0xe5, 0x33, 0x54, 0x59, 0x95, 0xdf, 0x87, 0xc4, 0x2a, 0x19, 0x20, 0x21,
+];
+
 /// RSA-2048 CRT modular-exponentiation (private-key) known-answer vector.
 ///
 /// Exercises the raw RSA-CRT private-key operation on a PKA engine: the

@@ -17,6 +17,9 @@
 
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmHash;
+use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
+use azihsm_fw_hsm_pal_traits::HsmKdf;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
@@ -26,6 +29,7 @@ use azihsm_fw_uno_trace::tracing::error;
 
 use super::vectors::ECDH_384_KAT;
 use super::vectors::ECDH_P384_PRIME_LE;
+use super::vectors::OAEP_KEK_SELF_TEST;
 use super::vectors::RSA_2K_CRT_KAT;
 use super::vectors::RSA_2K_MOD_EXP_KAT;
 use crate::UnoHsmIo;
@@ -41,11 +45,14 @@ const RSA_2K_LEN: usize = 256;
 const ECDH_384_LEN: usize = 48;
 
 /// Runs the RSA-2048 mod-exp (private-key) known-answer test on PKA engine
-/// `engine`.
+/// `engine`, followed by the OAEP-decode (SHA-256) KEK check.
 ///
 /// Computes `c^d mod n` on the pinned engine and compares the result against
-/// the expected plaintext. Returns [`HsmError::SelfTestKatMismatch`] on a
-/// mismatch, or any error surfaced by the PKA engine / allocator.
+/// the expected plaintext, then OAEP-decodes that plaintext block and compares
+/// the recovered KEK against the expected value (mirroring the reference
+/// firmware's `rsa_mod_exp_self_test` + `decode_oaep_kek_self_test`). Returns
+/// [`HsmError::SelfTestKatMismatch`] on a mismatch, or any error surfaced by
+/// the PKA / SHA engine or the allocator.
 pub(super) async fn run_rsa_mod_exp_on_engine(
     pal: &UnoHsmPal,
     io: &UnoHsmIo,
@@ -77,6 +84,81 @@ pub(super) async fn run_rsa_mod_exp_on_engine(
                 "selftest",
                 HsmError::SelfTestKatMismatch,
                 "RSA-2K mod-exp KAT mismatch on engine"
+            );
+            return Err(HsmError::SelfTestKatMismatch);
+        }
+
+        // ── OAEP-decode tail (SHA-256, empty label) ──────────────────────────
+        // Ported from the reference `decode_oaep_kek_self_test`: the mod-exp
+        // output block is little-endian, so it is reversed into the big-endian
+        // OAEP-encoded message `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, then
+        // OAEP-decoded with the SHA/MGF1 primitives (identical steps to the
+        // production `rsa_oaep_decrypt`) and the recovered 16-byte KEK is
+        // compared against the expected value. This also exercises SHA-256 and
+        // MGF1 on the HSM SHA engine.
+        const H_LEN: usize = 32; // SHA-256 digest length.
+        let em = scope.dma_alloc(RSA_2K_LEN)?;
+        for (i, &b) in output[..RSA_2K_LEN].iter().enumerate() {
+            em[RSA_2K_LEN - 1 - i] = b;
+        }
+
+        if em[0] != 0x00 {
+            error!(
+                "selftest",
+                HsmError::SelfTestKatMismatch,
+                "RSA-2K OAEP leading byte nonzero on engine"
+            );
+            return Err(HsmError::SelfTestKatMismatch);
+        }
+
+        // Recover seed: seed = maskedSeed XOR MGF(maskedDB, hLen).
+        {
+            let (seed, db) = em[1..RSA_2K_LEN].split_at_mut(H_LEN);
+            pal.mgf1_xor(io, HsmHashAlgo::Sha256, db, seed).await?;
+        }
+        // Recover DB: DB = maskedDB XOR MGF(seed, dbLen).
+        {
+            let (seed, db) = em[1..RSA_2K_LEN].split_at_mut(H_LEN);
+            pal.mgf1_xor(io, HsmHashAlgo::Sha256, seed, db).await?;
+        }
+
+        // Verify lHash' == SHA-256(empty label).
+        let label_hash = scope.dma_alloc(H_LEN)?;
+        let empty = &input[..0];
+        pal.hash(io, HsmHashAlgo::Sha256, empty, label_hash, true)
+            .await?;
+        let db = &em[1 + H_LEN..RSA_2K_LEN];
+        let db_hash: &[u8] = &db[..H_LEN];
+        let label_hash_slice: &[u8] = &label_hash[..H_LEN];
+        if db_hash != label_hash_slice {
+            error!(
+                "selftest",
+                HsmError::SelfTestKatMismatch,
+                "RSA-2K OAEP lHash mismatch on engine"
+            );
+            return Err(HsmError::SelfTestKatMismatch);
+        }
+
+        // DB = lHash' ‖ PS(0x00…) ‖ 0x01 ‖ M — locate the 0x01 separator, then
+        // recover and check the message M against the expected KEK.
+        let ps_and_m = &db[H_LEN..];
+        let sep = match ps_and_m.iter().position(|&x| x == 0x01) {
+            Some(s) if ps_and_m[..s].iter().all(|&x| x == 0x00) => s,
+            _ => {
+                error!(
+                    "selftest",
+                    HsmError::SelfTestKatMismatch,
+                    "RSA-2K OAEP separator invalid on engine"
+                );
+                return Err(HsmError::SelfTestKatMismatch);
+            }
+        };
+        let kek: &[u8] = &db[H_LEN + sep + 1..];
+        if kek != OAEP_KEK_SELF_TEST {
+            error!(
+                "selftest",
+                HsmError::SelfTestKatMismatch,
+                "RSA-2K OAEP KEK mismatch on engine"
             );
             return Err(HsmError::SelfTestKatMismatch);
         }
