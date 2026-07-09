@@ -96,10 +96,43 @@ fn write_handle(key: Option<HsmKeyId>) -> [u8; 2] {
 }
 
 /// Absolute GSRAM base address of partition slot 0.
+#[cfg_attr(test, allow(dead_code))]
 const PART_STORE_BASE: usize = (IO_GSRAM_BASE + PART_STORE_T_BASE) as usize;
 
 /// Bytes between consecutive partition slots.
 const STRIDE: usize = size_of::<Storage>();
+
+/// Base address of partition slot 0's backing store.
+///
+/// In production this resolves to the fixed GSRAM MMIO region
+/// ([`PART_STORE_BASE`]). Host unit tests have no such region, so a single
+/// leaked, zero-initialised heap allocation laid out identically
+/// (`NUM_PARTITIONS` x `STRIDE`, `Storage` alignment) stands in for it, letting
+/// every [`Partition`] handle address real memory so the lifecycle clears can
+/// be exercised and asserted off-target.
+#[cfg(not(test))]
+#[inline]
+fn store_base() -> usize {
+    PART_STORE_BASE
+}
+
+#[cfg(test)]
+fn store_base() -> usize {
+    use core::mem::align_of;
+    use std::alloc::{alloc_zeroed, Layout};
+    use std::sync::OnceLock;
+
+    static BASE: OnceLock<usize> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        let layout = Layout::from_size_align(NUM_PARTITIONS * STRIDE, align_of::<Storage>())
+            .expect("valid part-store test layout");
+        // SAFETY: `layout` has a non-zero size and an all-zero bit pattern is a
+        // valid `Storage` (every field is a byte array or a zero-valued scalar).
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert!(!ptr.is_null(), "part-store test backing allocation failed");
+        ptr as usize
+    })
+}
 
 // ── Lockout policy (reference `PinPolicy`) ───────────────────────────────
 
@@ -303,7 +336,7 @@ impl Partition {
     #[inline]
     fn slot_ptr(self) -> *mut Storage {
         // `self.0 < NUM_PARTITIONS` by construction (see `PartStore::partition`).
-        (PART_STORE_BASE + self.0 * STRIDE) as *mut Storage
+        (store_base() + self.0 * STRIDE) as *mut Storage
     }
 
     /// Shared reference to this partition's slot.
@@ -1331,17 +1364,4 @@ impl Partition {
 }
 
 #[cfg(test)]
-mod align_probe {
-    use core::mem::offset_of;
-
-    use super::*;
-    #[test]
-    fn pub_key_offsets() {
-        std::eprintln!(
-            "id_pub  = {}",
-            offset_of!(Storage, partition_identifier) + 16 + 48
-        );
-        std::eprintln!("ec_pub  = {}", offset_of!(Storage, ec_pub_key));
-        std::eprintln!("se_pub  = {}", offset_of!(Storage, se_pub_key));
-    }
-}
+mod tests;

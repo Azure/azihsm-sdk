@@ -600,8 +600,9 @@ impl UnoHsmPal {
         // PF (PcieFunction::Pf == 64) is enabled before its resources are
         // assigned; a VF is enabled after. `part_enable` needs to know which.
         let is_pf = msg.info.pfn == 64;
-        // Map the IPC action onto a partition-lifecycle primitive; Migrate
-        // and any unknown action are not supported.
+        // Map the IPC action onto a partition-lifecycle primitive. `Migrate`
+        // drives an NSSR reset (handled by `part_migrate` below); only an
+        // unknown action is rejected as unsupported.
         let result = match PfnEnableDisableAction(msg.info.action) {
             PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
