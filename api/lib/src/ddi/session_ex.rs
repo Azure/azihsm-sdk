@@ -32,6 +32,7 @@ use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
 use x509::X509Certificate;
+use x509::X509CertificateError;
 use x509::X509CertificateOp;
 use zeroize::Zeroizing;
 
@@ -161,13 +162,14 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
         // Single self-signed cert (e.g. sim): no chain ordering to verify.
         return Ok(());
     }
-    if leaf
-        .validate_chain(rest)
-        .map_err(|_| HsmError::InternalError)?
-    {
-        Ok(())
-    } else {
-        Err(HsmError::InvalidSignature)
+    match leaf.validate_chain(rest) {
+        Ok(true) => Ok(()),
+        // A verification failure (bad signature / broken issuance chain)
+        // surfaces as `Ok(false)` on Windows and `Err(VerifyError)` on
+        // Linux; map both to `InvalidSignature`. Parse / store-setup
+        // failures remain `InternalError`.
+        Ok(false) | Err(X509CertificateError::VerifyError) => Err(HsmError::InvalidSignature),
+        Err(_) => Err(HsmError::InternalError),
     }
 }
 

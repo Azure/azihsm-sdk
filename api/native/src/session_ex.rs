@@ -98,7 +98,10 @@ pub struct AzihsmSessExPartInitParams {
 ///                `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned **before** the
 ///                partition is provisioned — so the standard two-call probe
 ///                (call once with a zero-length buffer to learn the required
-///                capacity, then retry) is safe for this one-shot command. A
+///                capacity, then retry) is safe for this one-shot command.
+///                When either output buffer is too small, **both** `pta_csr`
+///                and `pta_report` have their `len` set to their maximum
+///                bound, so a single probe reports both required sizes. A
 ///                buffer sized to that bound is always large enough; the
 ///                `len` written on success is the exact number of bytes. A
 ///                NULL `ptr` with a non-zero `len` is rejected with
@@ -147,10 +150,38 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         let pta_csr = deref_mut_ptr(pta_csr)?;
         let pta_report = deref_mut_ptr(pta_report)?;
 
-        // Validate both output buffers up-front against the fixed wire-schema bounds,
-        // so we can report the required capacity without provisioning the partition if the caller's buffer is too small.
+        // Reject two distinct `azihsm_buffer` structs that alias the same
+        // non-NULL backing storage; writing both outputs would overlap.
+        // The size-probe case (`ptr == NULL`, `len == 0`) is still allowed.
+        if !pta_csr.ptr.is_null() && pta_csr.ptr == pta_report.ptr {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+
+        // Validate both output buffers up-front against the fixed
+        // wire-schema bounds so the partition is not provisioned when a buffer is too small.
         let csr_check = validate_output_buffer(pta_csr, api::PTA_CSR_MAX_LEN).map(|_| ());
         let report_check = validate_output_buffer(pta_report, api::PTA_REPORT_MAX_LEN).map(|_| ());
+
+        // A malformed buffer (`INVALID_ARGUMENT`) is the hardest error and
+        // must not be masked by a `BUFFER_TOO_SMALL` from the other buffer.
+        if matches!(csr_check, Err(AzihsmStatus::InvalidArgument))
+            || matches!(report_check, Err(AzihsmStatus::InvalidArgument))
+        {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+
+        // If either buffer is too small, advertise BOTH required
+        // capacities in a single probe (`validate_output_buffer` fills in
+        // `len` only for the buffer that is itself too small).
+        if matches!(csr_check, Err(AzihsmStatus::BufferTooSmall))
+            || matches!(report_check, Err(AzihsmStatus::BufferTooSmall))
+        {
+            pta_csr.len = api::PTA_CSR_MAX_LEN as u32;
+            pta_report.len = api::PTA_REPORT_MAX_LEN as u32;
+            return Err(AzihsmStatus::BufferTooSmall);
+        }
+
+        // Propagate any other status verbatim, then continue on success.
         csr_check?;
         report_check?;
 
