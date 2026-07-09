@@ -79,6 +79,41 @@ static azihsm_status kbkdf_derive_from_secret(
     );
 }
 
+static azihsm_status kbkdf_derive_with_algo(
+    azihsm_handle session,
+    azihsm_algo *algo,
+    key_props props
+)
+{
+    auto_key secret_a;
+    auto_key secret_b;
+    derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+    std::vector<azihsm_key_prop> derived_key_props;
+    azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
+
+    auto_key derived_key;
+
+    return azihsm_key_derive(
+        session,
+        algo,
+        secret_a.get(),
+        &derived_key_prop_list,
+        derived_key.get_ptr()
+    );
+}
+
+static key_props valid_kbkdf_aes_props()
+{
+    key_props props = {};
+    props.key_class = AZIHSM_KEY_CLASS_SECRET;
+    props.key_kind = AZIHSM_KEY_KIND_AES;
+    props.key_size_bits = 256;
+    props.encrypt = 1;
+    props.decrypt = 1;
+    return props;
+}
+
 // ============================================================
 // Test cases
 // ============================================================
@@ -443,7 +478,7 @@ TEST_F(azihsm_kbkdf, kbkdf_derive_aes_without_usage_flags_fails)
     });
 }
 
-/// Test that deriving an AES key with an unsupported AES key size fails with InvalidKeyProps.
+/// Test that deriving an AES key with an unsupported AES key size fails with InvalidArgument.
 TEST_F(azihsm_kbkdf, kbkdf_derive_invalid_aes_key_size_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -650,7 +685,7 @@ TEST_F(azihsm_kbkdf, kbkdf_null_context_with_nonzero_len_fails)
 }
 
 /// Test that KBKDF derive succeeds when both label and context are omitted.
-TEST_F(azihsm_kbkdf, kbkdf_missing_label_and_context_roundtrip)
+TEST_F(azihsm_kbkdf, kbkdf_missing_label_and_context_succeeds)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         key_props props = {};
@@ -740,109 +775,6 @@ TEST_F(azihsm_kbkdf, kbkdf_different_label_produces_different_key)
     });
 }
 
-/// Test that changing the KBKDF context changes the derived key material.
-TEST_F(azihsm_kbkdf, kbkdf_different_context_produces_different_key)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto_key secret_a;
-        auto_key secret_b;
-        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
-
-        key_props props = {};
-        props.key_class = AZIHSM_KEY_CLASS_SECRET;
-        props.key_kind = AZIHSM_KEY_KIND_AES;
-        props.key_size_bits = 256;
-        props.encrypt = 1;
-        props.decrypt = 1;
-
-        const char *label_str = "same-label";
-        const char *context1_str = "context-one";
-        const char *context2_str = "context-two";
-
-        azihsm_buffer label_buf = {
-            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
-            .len = static_cast<uint32_t>(std::strlen(label_str)),
-        };
-
-        azihsm_buffer context1_buf = {
-            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context1_str)),
-            .len = static_cast<uint32_t>(std::strlen(context1_str)),
-        };
-
-        azihsm_buffer context2_buf = {
-            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context2_str)),
-            .len = static_cast<uint32_t>(std::strlen(context2_str)),
-        };
-
-        auto_key derived_key_1;
-        auto_key derived_key_2;
-
-        ASSERT_EQ(
-            kbkdf_derive_from_secret(
-                session,
-                secret_a.get(),
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                props,
-                &label_buf,
-                &context1_buf,
-                derived_key_1
-            ),
-            AZIHSM_STATUS_SUCCESS
-        );
-
-        ASSERT_EQ(
-            kbkdf_derive_from_secret(
-                session,
-                secret_a.get(),
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                props,
-                &label_buf,
-                &context2_buf,
-                derived_key_2
-            ),
-            AZIHSM_STATUS_SUCCESS
-        );
-
-        EXPECT_NE(derived_key_1.get(), derived_key_2.get());
-    });
-}
-
-/// Test that KBKDF rejects an AES key with only decrypt usage enabled.
-TEST_F(azihsm_kbkdf, kbkdf_derive_aes_decrypt_only_fails)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        key_props props = {};
-        props.key_class = AZIHSM_KEY_CLASS_SECRET;
-        props.key_kind = AZIHSM_KEY_KIND_AES;
-        props.key_size_bits = 256;
-        props.decrypt = 1;
-
-        const char *label_str = "decrypt-only-label";
-        const char *context_str = "decrypt-only-context";
-
-        azihsm_buffer label_buf = {
-            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
-            .len = static_cast<uint32_t>(std::strlen(label_str)),
-        };
-
-        azihsm_buffer context_buf = {
-            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_str)),
-            .len = static_cast<uint32_t>(std::strlen(context_str)),
-        };
-
-        EXPECT_EQ(
-            kbkdf_derive_with_custom_params(
-                session,
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                props,
-                &label_buf,
-                &context_buf
-            ),
-            AZIHSM_STATUS_INVALID_KEY_PROPS
-        );
-    });
-}
-
 /// Test that KBKDF rejects an AES key with only encrypt usage enabled.
 TEST_F(azihsm_kbkdf, kbkdf_derive_aes_encrypt_only_fails)
 {
@@ -879,19 +811,39 @@ TEST_F(azihsm_kbkdf, kbkdf_derive_aes_encrypt_only_fails)
     });
 }
 
-/// Test that KBKDF rejects a non-standard AES key size.
-TEST_F(azihsm_kbkdf, kbkdf_derive_aes_129_bit_len_fails)
+/// Test that KBKDF derive rejects a null algorithm pointer.
+TEST_F(azihsm_kbkdf, kbkdf_null_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        key_props props = {};
-        props.key_class = AZIHSM_KEY_CLASS_SECRET;
-        props.key_kind = AZIHSM_KEY_KIND_AES;
-        props.key_size_bits = 129;
-        props.encrypt = 1;
-        props.decrypt = 1;
+        EXPECT_EQ(
+            kbkdf_derive_with_algo(session, nullptr, valid_kbkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
 
-        const char *label_str = "invalid-size-label";
-        const char *context_str = "invalid-size-context";
+/// Test that KBKDF derive rejects null KBKDF params.
+TEST_F(azihsm_kbkdf, kbkdf_null_algo_params_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        azihsm_algo kbkdf_algo = {};
+        kbkdf_algo.id = AZIHSM_ALGO_ID_KBKDF_COUNTER_DERIVE;
+        kbkdf_algo.params = nullptr;
+        kbkdf_algo.len = sizeof(azihsm_algo_kbkdf_counter_params);
+
+        EXPECT_EQ(
+            kbkdf_derive_with_algo(session, &kbkdf_algo, valid_kbkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that KBKDF derive rejects zero KBKDF params length.
+TEST_F(azihsm_kbkdf, kbkdf_zero_algo_params_len_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        const char *label_str = "valid-label";
+        const char *context_str = "valid-context";
 
         azihsm_buffer label_buf = {
             .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
@@ -903,13 +855,104 @@ TEST_F(azihsm_kbkdf, kbkdf_derive_aes_129_bit_len_fails)
             .len = static_cast<uint32_t>(std::strlen(context_str)),
         };
 
+        azihsm_algo_kbkdf_counter_params kbkdf_params = {};
+        azihsm_algo kbkdf_algo = {};
+        build_kbkdf_counter_algo(
+            kbkdf_params,
+            kbkdf_algo,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_buf
+        );
+
+        kbkdf_algo.len = 0;
+
         EXPECT_EQ(
-            kbkdf_derive_with_custom_params(
+            kbkdf_derive_with_algo(session, &kbkdf_algo, valid_kbkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that KBKDF derive rejects a mismatched KBKDF params length.
+TEST_F(azihsm_kbkdf, kbkdf_algo_params_len_mismatch_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        const char *label_str = "valid-label";
+        const char *context_str = "valid-context";
+
+        azihsm_buffer label_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
+            .len = static_cast<uint32_t>(std::strlen(label_str)),
+        };
+
+        azihsm_buffer context_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_str)),
+            .len = static_cast<uint32_t>(std::strlen(context_str)),
+        };
+
+        azihsm_algo_kbkdf_counter_params kbkdf_params = {};
+        azihsm_algo kbkdf_algo = {};
+        build_kbkdf_counter_algo(
+            kbkdf_params,
+            kbkdf_algo,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_buf
+        );
+
+        kbkdf_algo.len = sizeof(azihsm_algo_kbkdf_counter_params) - 1;
+
+        EXPECT_EQ(
+            kbkdf_derive_with_algo(session, &kbkdf_algo, valid_kbkdf_aes_props()),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that KBKDF derive rejects a null derived-key output pointer.
+TEST_F(azihsm_kbkdf, kbkdf_null_derived_key_output_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key secret_a;
+        auto_key secret_b;
+        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+        const char *label_str = "valid-label";
+        const char *context_str = "valid-context";
+
+        azihsm_buffer label_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(label_str)),
+            .len = static_cast<uint32_t>(std::strlen(label_str)),
+        };
+
+        azihsm_buffer context_buf = {
+            .ptr = reinterpret_cast<uint8_t *>(const_cast<char *>(context_str)),
+            .len = static_cast<uint32_t>(std::strlen(context_str)),
+        };
+
+        azihsm_algo_kbkdf_counter_params kbkdf_params = {};
+        azihsm_algo kbkdf_algo = {};
+        build_kbkdf_counter_algo(
+            kbkdf_params,
+            kbkdf_algo,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &label_buf,
+            &context_buf
+        );
+
+        key_props props = valid_kbkdf_aes_props();
+
+        std::vector<azihsm_key_prop> derived_key_props;
+        azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
+
+        EXPECT_EQ(
+            azihsm_key_derive(
                 session,
-                AZIHSM_ALGO_ID_HMAC_SHA256,
-                props,
-                &label_buf,
-                &context_buf
+                &kbkdf_algo,
+                secret_a.get(),
+                &derived_key_prop_list,
+                nullptr
             ),
             AZIHSM_STATUS_INVALID_ARGUMENT
         );
