@@ -145,16 +145,22 @@ mod integration {
         // OBK (48-byte random)
         let openssl = find_openssl_bin();
         let obk_path = keymat_dir.join("obk.bin");
+        let obk_tmp = tmp_sibling(&obk_path);
         let status = Command::new(&openssl)
             .args(["rand", "-out"])
-            .arg(&obk_path)
+            .arg(&obk_tmp)
             .arg("48")
             .status()
             .expect("Failed to run openssl rand");
         assert!(status.success(), "Failed to generate obk.bin");
+        publish(&obk_tmp, &obk_path);
 
-        // POTA P-384 key pair
+        // POTA P-384 key pair, written via temp files and published atomically
+        // so a concurrent process never reads a half-written key.
         let pota_priv = keymat_dir.join("pota_private_key.der");
+        let pota_pub = keymat_dir.join("pota_public_key.der");
+        let priv_tmp = tmp_sibling(&pota_priv);
+        let pub_tmp = tmp_sibling(&pota_pub);
 
         // Generate EC P-384 key in PEM
         let genkey = Command::new(&openssl)
@@ -170,9 +176,9 @@ mod integration {
         // Convert to DER
         let mut convert = Command::new(&openssl)
             .args(["ec", "-outform", "DER", "-out"])
-            .arg(&pota_priv)
+            .arg(&priv_tmp)
             .stdin(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("Failed to spawn openssl ec");
         convert
@@ -181,25 +187,52 @@ mod integration {
             .expect("stdin piped")
             .write_all(&genkey.stdout)
             .expect("Failed to write PEM to openssl ec stdin");
-        let status = convert.wait().expect("Failed to wait for openssl ec");
+        let convert = convert
+            .wait_with_output()
+            .expect("Failed to wait for openssl ec");
         assert!(
-            status.success(),
-            "Failed to convert POTA private key to DER"
+            convert.status.success(),
+            "Failed to convert POTA private key to DER: {}",
+            String::from_utf8_lossy(&convert.stderr)
         );
 
         // Extract public key
-        let pota_pub = keymat_dir.join("pota_public_key.der");
         let pubkey = Command::new(&openssl)
             .args(["ec", "-in"])
-            .arg(&pota_priv)
+            .arg(&priv_tmp)
             .args(["-inform", "DER", "-pubout", "-outform", "DER", "-out"])
-            .arg(&pota_pub)
-            .stderr(Stdio::null())
-            .status()
+            .arg(&pub_tmp)
+            .stderr(Stdio::piped())
+            .output()
             .expect("Failed to run openssl ec -pubout");
-        assert!(pubkey.success(), "Failed to extract POTA public key");
+        assert!(
+            pubkey.status.success(),
+            "Failed to extract POTA public key: {}",
+            String::from_utf8_lossy(&pubkey.stderr)
+        );
+
+        publish(&priv_tmp, &pota_priv);
+        publish(&pub_tmp, &pota_pub);
 
         (credentials, keymat_dir)
+    }
+
+    /// Returns a temp path next to `path`, unique to this process (same
+    /// directory keeps the later rename on one filesystem, so it is atomic).
+    fn tmp_sibling(path: &Path) -> PathBuf {
+        let mut name = path
+            .file_name()
+            .expect("keymat path has a file name")
+            .to_os_string();
+        name.push(format!(".tmp.{}", std::process::id()));
+        path.with_file_name(name)
+    }
+
+    /// Atomically publishes a completed temp file to its final shared path, so
+    /// a concurrent reader always sees a complete file.
+    fn publish(tmp: &Path, final_path: &Path) {
+        fs::rename(tmp, final_path)
+            .unwrap_or_else(|e| panic!("Failed to publish {}: {e}", final_path.display()));
     }
 
     /// Returns the resiliency storage directory inside the keymat dir.

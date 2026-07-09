@@ -40,7 +40,11 @@
 
 use super::*;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", ossl300))]
+mod hash_ossl;
+
+#[cfg(all(target_os = "linux", not(ossl300)))]
+#[path = "hash_ossl11.rs"]
 mod hash_ossl;
 
 #[cfg(target_os = "windows")]

@@ -131,11 +131,11 @@ mod tests {
         let pok_remote = [0xABu8; MASKED_SD_LEN];
         let sd_mk = [0xCDu8; LOCAL_MK_BACKUP_LEN];
         let cert = CertDescriptor {
-            offset: crate::tbor_int::U16::new(0),
+            index: 0,
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            offset: crate::tbor_int::U16::new(8),
+            index: 1,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];
@@ -170,11 +170,11 @@ mod tests {
         let policy = [0u8; PART_POLICY_LEN];
         let pok_remote = [0xABu8; MASKED_SD_LEN];
         let cert = CertDescriptor {
-            offset: crate::tbor_int::U16::new(0),
+            index: 0,
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            offset: crate::tbor_int::U16::new(8),
+            index: 1,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];

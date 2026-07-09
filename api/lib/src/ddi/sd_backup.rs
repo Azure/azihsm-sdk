@@ -27,20 +27,22 @@
 //! session id, which the firmware dispatcher cross-checks against the
 //! SQE-carried session id.
 //!
-//! # Side-band evidence (not yet transmitted)
+//! # Out-of-band evidence (not yet transmitted)
 //!
 //! Five of these commands reference their bulk attestation evidence — DER
-//! certificate chains and a COSE_Sign1 report — from an **out-of-band**
-//! side-band buffer via `(offset, length)` descriptors. The DDI transport
-//! ([`azihsm_ddi_interface::DdiDev::exec_op_tbor`]) does not yet carry a
-//! side-band buffer, so the [`SdEvidenceRef`] inputs accepted here are
-//! **not yet transmitted**: the corresponding descriptor fields are left
-//! empty on the wire. These signatures are expected to change once the
-//! side-band plumbing lands; they exist now so the API surface is ready.
+//! certificate chains and a COSE_Sign1 report — out of band via
+//! `(index, length)` descriptors that point at OOB SGL Data Blocks. The
+//! DDI transport ([`azihsm_ddi_interface::DdiDev::exec_op_tbor`]) can now
+//! carry those blocks (its `oob_items` parameter), but this SDK layer does
+//! not yet populate the descriptors or pass the evidence: the
+//! [`SdEvidenceRef`] inputs accepted here are **not yet transmitted** (the
+//! descriptor fields are left empty and `None` is passed for `oob_items`).
+//! These signatures exist now so the API surface is ready; wiring the
+//! evidence through is future work.
 
 // WIP: these wrappers are not yet called (no HsmSession entry points) and
-// the side-band evidence transport is not yet wired. Remove this blanket
-// allow once callers and the side-band buffer land.
+// the evidence is not yet wired through the OOB transport. Remove this
+// blanket allow once callers and evidence transmission land.
 #![allow(dead_code)]
 
 use azihsm_ddi_tbor_types::*;
@@ -89,9 +91,9 @@ impl<'a> From<&'a [u8]> for Certificate<'a> {
 /// [`Certificate`]s) and the COSE_Sign1 attestation report for one
 /// evidence party (sender / receiver / source / destination / peer).
 ///
-/// The DER bytes travel out of band in a side-band buffer the DDI
-/// transport does not yet carry, so instances are currently **accepted
-/// but ignored** by the wrappers below (see the module docs).
+/// The DER bytes are destined for out-of-band SGL Data Blocks, but this
+/// layer does not yet transmit them, so instances are currently
+/// **accepted but ignored** by the wrappers below (see the module docs).
 pub(crate) struct SdEvidenceRef<'a> {
     /// Manufacturer certificate chain.
     pub mfgr_cert_chain: &'a [Certificate<'a>],
@@ -189,8 +191,8 @@ pub(crate) fn sd_create_remote_backup_ex(
     receiver_evidence: &SdEvidenceRef<'_>,
     policy: &[u8],
 ) -> HsmResult<Vec<u8>> {
-    // Side-band evidence is accepted for a forward-compatible signature
-    // but not yet transmitted (no side-band transport). See module docs.
+    // Evidence is accepted for a forward-compatible signature but not yet
+    // transmitted through the OOB transport. See module docs.
     let _ = receiver_evidence;
 
     let req = TborSdCreateRemoteBackupReq {

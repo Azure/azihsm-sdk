@@ -40,9 +40,25 @@ mod block;
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         mod key_ossl;
+        #[cfg(ossl300)]
         mod ecb_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "ecb_ossl11.rs"]
+        mod ecb_ossl;
+        #[cfg(ossl300)]
         mod cbc_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "cbc_ossl11.rs"]
+        mod cbc_ossl;
+        #[cfg(ossl300)]
         mod xts_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "xts_ossl11.rs"]
+        mod xts_ossl;
+        #[cfg(ossl300)]
+        mod gcm_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "gcm_ossl11.rs"]
         mod gcm_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod key_cng;
