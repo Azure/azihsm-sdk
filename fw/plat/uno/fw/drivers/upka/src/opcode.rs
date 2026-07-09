@@ -124,7 +124,7 @@ pub(crate) fn ecc_key_gen_opcode(curve: UpkaEccCurve) -> u32 {
 /// Return the Montgomery-constant-calculation opcode for the selected curve.
 ///
 /// The PKA engine requires a per-call `mont_const_calc(curve_prime)` before an
-/// ECC point-multiplication / verify; it leaves engine state the subsequent
+/// ECC point-multiplication / verify; it leaves engine state that the subsequent
 /// command consumes (same engine acquisition).
 pub(crate) fn mont_const_calc_opcode(curve: UpkaEccCurve) -> u32 {
     match curve {
