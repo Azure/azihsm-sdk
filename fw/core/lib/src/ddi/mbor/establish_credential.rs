@@ -267,11 +267,11 @@ fn check_fail_fast<P: HsmPal>(
 /// Verifies the POTA signature over the partition identity public key.
 ///
 /// The signature is computed by the host over
-/// `SHA-384( 0x04 ‖ x ‖ y )`, the 97-byte uncompressed-point form of
-/// the partition identity P-384 public key, where `x`/`y` are the raw wire
-/// coordinates in PKA/DDI little-endian order (i.e. `0x04 ‖ x_le ‖ y_le`,
-/// *not* the big-endian SEC1 encoding).  We materialize the same 97-byte form
-/// locally from `part_id_pub_key` and verify the supplied signature against it.
+/// `SHA-384( 0x04 ‖ x ‖ y )`, the 97-byte SEC1-uncompressed form of
+/// the partition identity P-384 public key, where `x`/`y` are the raw
+/// coordinates in natural **big-endian** order (as used in DER / X.509).
+/// We materialize the same 97-byte form locally from `part_id_pub_key`
+/// and verify the supplied signature against it.
 async fn verify_pota_signature<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
