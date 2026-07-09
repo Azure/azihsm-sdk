@@ -246,38 +246,46 @@ impl HsmEcc for UnoHsmPal {
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
 
-        // Callers pass the hash digest in natural big-endian order, but the
-        // PKA consumes the hash operand little-endian (like every scalar).
-        // The pub_key and signature already arrive LE via the host DDI serde.
-        // Reverse exactly the curve's `hash_size` digest bytes into LE scratch:
-        // the caller may pass a larger buffer, and reversing the whole thing
-        // would move the digest out of the leading bytes the hardware reads.
         let digest_len = hash_size(pka_curve);
         if hash.len() < digest_len {
             return Err(HsmError::InvalidArg);
         }
-        let hash_le = self.dma_alloc(io, digest_len)?;
-        hash_le.copy_from_slice(&hash[..digest_len]);
-        hash_le.reverse();
-
-        // The PKA verify requires a per-call Montgomery constant computed
-        // from the curve prime, exactly like ecdh_derive.
         let prime_le = curve_prime_le(pka_curve);
-        let prime = self.dma_alloc(io, prime_le.len())?;
-        prime.copy_from_slice(prime_le);
-        let mont_result = self.dma_alloc(io, prime_le.len())?;
 
-        self.pka
-            .ecc_verify(
-                pka_curve,
-                pub_key,
-                hash_le,
-                signature,
-                result,
-                prime,
-                mont_result,
-            )
-            .await
+        // Allocate the per-call PKA scratch (LE hash, curve prime, and the
+        // Montgomery-constant result) from a scoped heap so it is released as
+        // soon as the verify completes rather than living for the whole IO. A
+        // single IO that verifies several signatures (e.g. cert-chain
+        // validation) would otherwise accumulate this scratch and can exhaust
+        // the DMA pool.
+        self.alloc_scoped_async(io, async |scope| {
+            // Callers pass the hash digest big-endian, but the PKA consumes it
+            // little-endian; reverse exactly `hash_size` bytes into LE scratch
+            // (a larger caller buffer must not move the digest out of the
+            // leading bytes the hardware reads). pub_key/signature already
+            // arrive LE via the host DDI serde.
+            let hash_le = scope.dma_alloc(digest_len)?;
+            hash_le.copy_from_slice(&hash[..digest_len]);
+            hash_le.reverse();
+
+            // Per-call Montgomery constant from the curve prime (like ecdh_derive).
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
+
+            self.pka
+                .ecc_verify(
+                    pka_curve,
+                    pub_key,
+                    hash_le,
+                    signature,
+                    result,
+                    prime,
+                    mont_result,
+                )
+                .await
+        })
+        .await
     }
 
     /// Derive an ECDH shared secret.
@@ -309,32 +317,37 @@ impl HsmEcc for UnoHsmPal {
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
 
-        // The PKA point-multiply requires a per-call Montgomery constant
-        // computed from the curve prime; provide the prime and a scratch
-        // buffer for its result.
         let prime_le = curve_prime_le(pka_curve);
-        let prime = self.dma_alloc(io, prime_le.len())?;
-        prime.copy_from_slice(prime_le);
-        let mont_result = self.dma_alloc(io, prime_le.len())?;
 
-        self.pka
-            .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
-            .await?;
+        // Scope the per-call Montgomery scratch (curve prime + result) so it is
+        // freed as soon as the point-multiply completes instead of living for
+        // the whole IO; keeping it IO-bounded needlessly grows DMA-pool
+        // pressure in multi-step flows.
+        self.alloc_scoped_async(io, async |scope| {
+            // The PKA point-multiply requires a per-call Montgomery constant
+            // computed from the curve prime.
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
 
-        // The host DDI serde delivers the peer public key and receives the
-        // firmware output already in PKA-native little-endian (see
-        // `pub_key_der_pre_encode`/`post_decode`), and the local private key
-        // is stored little-endian in the vault, so both pass through
-        // unconverted. The shared secret, however, is consumed internally by
-        // HKDF and never crosses the DDI boundary; the host derives it in
-        // big-endian (openssl), so reverse the PKA's little-endian secret.
-        // Reverse exactly the `secret_len` written bytes: the trait allows the
-        // caller to pass a larger buffer (e.g. wire-padded P-521, 68 vs 66), so
-        // reversing the whole buffer would pull trailing padding to the front
-        // and corrupt the HKDF input; slicing by the wire point size would
-        // instead panic when the buffer is exactly `secret_len`.
-        let secret_len = curve.secret_len();
-        secret[..secret_len].reverse();
-        Ok(())
+            self.pka
+                .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
+                .await?;
+
+            // pub_key (peer) and priv_key (vault) already pass through in
+            // PKA-native little-endian and are unconverted. The shared secret,
+            // however, is consumed internally by HKDF and never crosses the DDI
+            // boundary; the host derives it big-endian (openssl), so reverse the
+            // PKA's little-endian output. Reverse exactly the `secret_len`
+            // written bytes: the trait allows a larger caller buffer (wire-padded
+            // P-521, 68 vs 66), so reversing the whole buffer would pull trailing
+            // padding to the front and corrupt the HKDF input; slicing by the
+            // wire point size would instead panic when the buffer is exactly
+            // `secret_len`.
+            let secret_len = curve.secret_len();
+            secret[..secret_len].reverse();
+            Ok(())
+        })
+        .await
     }
 }
