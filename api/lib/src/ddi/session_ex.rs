@@ -91,25 +91,25 @@ struct PendingHandshake {
     pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
-pub struct OpenSessionExResult {
+pub(crate) struct OpenSessionExResult {
     /// Active session identifier.
-    pub session_id: u16,
+    pub(crate) session_id: u16,
     /// PSK id used for the handshake (0 = CO, 1 = CU).
-    pub psk_id: u8,
+    pub(crate) psk_id: u8,
     /// Channel integrity profile pinned at handshake time.
-    pub session_type: SessionType,
+    pub(crate) session_type: SessionType,
     /// HPKE exported secret (`Nh = 48`) used to derive `param_key`
     /// and (for authenticated sessions) the MAC keys. Retained so
     /// tests can re-derive labelled material on demand. Held in a
     /// [`Zeroizing`] buffer so it is wiped on drop even when this
     /// result is dropped directly (e.g. in tests) rather than moved
     /// into a session.
-    pub exported: Zeroizing<Vec<u8>>,
+    pub(crate) exported: Zeroizing<Vec<u8>>,
     /// Per-session AES-256 wrap key derived from the HPKE export.
-    pub param_key: AesKey,
+    pub(crate) param_key: AesKey,
     /// FW-emitted wrapped masking-key blob — opaque to the host.
     /// Held in a [`Zeroizing`] buffer so it is wiped on drop.
-    pub bmk_session: Zeroizing<Vec<u8>>,
+    pub(crate) bmk_session: Zeroizing<Vec<u8>>,
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
