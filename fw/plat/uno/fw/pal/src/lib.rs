@@ -39,6 +39,7 @@ mod alloc;
 mod cert;
 mod crypto;
 mod gdma;
+mod gsram_alias;
 mod io;
 mod ipc;
 mod lock;

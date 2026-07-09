@@ -5,6 +5,7 @@
 members = [
   "app",
   "crates/bulk_copy",
+  "crates/cert_blob",
   "crates/error",
   "crates/fault",
   "crates/key_vault",
@@ -40,6 +41,7 @@ resolver = "2"
 
 [workspace.dependencies]
 azihsm_fw_bulk_copy = { path = "crates/bulk_copy" }
+azihsm_fw_uno_cert_blob = { path = "crates/cert_blob" }
 azihsm_fw_single_cell = { path = "crates/single_cell" }
 azihsm_fw_static_init = { path = "crates/static_init" }
 azihsm_fw_static_ref = { path = "crates/static_ref" }
@@ -107,6 +109,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { features = ["full"], version = "2" }
 tock-registers = { git = "https://github.com/tock/tock.git", rev = "release-2.2" }
+static_assertions = "1.1.0"
 zerocopy = "0.8.48"
 
 [workspace.lints.rust]
