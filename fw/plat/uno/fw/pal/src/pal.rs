@@ -531,18 +531,6 @@ impl UnoHsmPal {
                 WAKE_TABLE[irq as usize](self, irq);
             }
         }
-
-        // AES/SHA completion is detected by POLLING the engine STATUS, not by the
-        // `AES_DONE`/`SHA_DONE` edge interrupt. On this silicon the done IRQ does
-        // not reliably re-arm for back-to-back commands (the first op completes
-        // and raises the IRQ; the second completes in hardware but no second IRQ
-        // is delivered), which silently hangs any sequential AES/SHA sequence
-        // (pre-op self-tests, partition-provisioning HMAC-SHA384 KDF + AES-CBC
-        // key masking, …). The reference firmware polls BUSY for exactly this
-        // reason. `wake()` is a guarded no-op when no flag bit is set, so calling
-        // it every poll is cheap (one MMIO read) and idempotent with the IRQ path.
-        self.aes.wake();
-        self.sha.wake();
     }
 
     /// Handle an incoming IPC message.
