@@ -10,13 +10,17 @@
 //! not require a FW-accepted policy / cert chain.
 
 use azihsm_api::*;
-use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
+
+/// Exact length of a non-empty `local_mk` backup envelope the API
+/// enforces before the round-trip (mirrors the firmware's fixed
+/// `header(8) + iv(12) + aad(96) + ct(32) + tag(16)` envelope).
+const LOCAL_MK_BACKUP_LEN: usize = 164;
 
 use crate::emu_helpers::*;
 
@@ -117,7 +121,7 @@ fn part_final_rejects_empty_cert_descriptors() {
 
 /// `PartFinal` rejects a cert chain containing an empty (zero-length)
 /// certificate, which is not valid DER and would yield a zero-length
-/// side-band descriptor.
+/// out-of-band descriptor.
 #[test]
 fn part_final_rejects_empty_cert() {
     let _guard = EMU_LOCK.lock();

@@ -33,6 +33,20 @@ use azihsm_ddi_tbor_types::*;
 
 use super::*;
 
+/// Exact on-the-wire length of a non-empty `local_mk` backup envelope
+/// (`prev_local_mk_backup` / `local_mk_backup`). Owned by the API layer
+/// (the wire schema does not pin it), but mirrors the firmware's
+/// deterministic AES-256-GCM `MaskedKey` envelope layout:
+/// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`.
+/// The firmware treats a non-empty field as exactly this length (an
+/// empty field means absent).
+const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+
+// Pin the computed length to the wire-documented 164 B so an envelope
+// layout change forces this constant (and the mirror comment) to be
+// revisited.
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+
 /// API-layer result of a TBOR `PartInit` provisioning command.
 ///
 /// Mirrors [`TborPartInitResp`] with owned bytes so the wire response
@@ -224,9 +238,9 @@ pub(crate) fn part_init_ex(
 /// * `part_policy` - Caller-asserted unified [`PartPolicy`] image
 ///   ([`PART_POLICY_LEN`] bytes), re-supplied from `PartInit`.
 /// * `pta_cert_chain` - PTA certificate chain as a list of
-///   [`HsmCertDescriptor`]s (`1..=`[`MAX_CERTS`] entries). The wrapper
-///   concatenates their DER bytes into the side-band buffer and derives
-///   the matching `(offset, length)` descriptor list.
+///   [`HsmCertDescriptor`]s (`1..=`[`MAX_CERTS`] entries). Each cert's DER
+///   bytes ship as their own out-of-band SGL Data Block; the wrapper
+///   derives the matching `(index, length)` descriptor list.
 /// * `prev_local_mk_backup` - Optional prior `local_mk` backup envelope
 ///   to restore; `None` on first finalization.
 ///
@@ -235,11 +249,11 @@ pub(crate) fn part_init_ex(
 /// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
 /// wrong length or fails to decode, when `pta_cert_chain` is empty,
 /// exceeds [`MAX_CERTS`], contains an empty cert, or contains a cert
-/// whose offset/length does not fit in the 16-bit descriptor fields, or
-/// when a present `prev_local_mk_backup` is not exactly
-/// [`LOCAL_MK_BACKUP_LEN`] bytes; returns [`HsmError::InternalError`] if
-/// the device returns a malformed (wrong-length) `local_mk_backup`; and
-/// surfaces DDI/device failures from the round-trip.
+/// whose length does not fit in the 16-bit descriptor field, or when a
+/// present `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`]
+/// bytes; returns [`HsmError::InternalError`] if the device returns a
+/// malformed (wrong-length) `local_mk_backup`; and surfaces DDI/device
+/// failures from the round-trip.
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
@@ -260,27 +274,26 @@ pub(crate) fn part_final_ex(
         return Err(HsmError::InvalidArgument);
     }
 
-    // Concatenate the DER certs into a single side-band buffer and derive
-    // the `(offset, length)` descriptor for each. The whole buffer ships
-    // as one out-of-band SGL item; the firmware slices each cert out of
-    // it by descriptor.
-    let mut sideband = Vec::new();
+    // Each DER cert ships as its own out-of-band SGL Data Block; the
+    // firmware locates each one by the descriptor's `index` (its position
+    // in the OOB item list) and reads `length` bytes from it.
+    let mut oob: Vec<&[u8]> = Vec::with_capacity(pta_cert_chain.len());
     let mut cert_descriptors = Vec::with_capacity(pta_cert_chain.len());
-    for desc in pta_cert_chain {
+    for (i, desc) in pta_cert_chain.iter().enumerate() {
         let cert = desc.cert;
-        let offset = sideband.len();
         let length = cert.len();
         // An empty cert is not valid DER and would yield a zero-length
-        // descriptor (and possibly an empty side-band buffer); reject it
-        // up front alongside the other deterministic host-side guards.
-        if length == 0 || offset > u16::MAX as usize || length > u16::MAX as usize {
+        // descriptor; reject it up front alongside the other
+        // deterministic host-side guards.
+        if length == 0 || length > u16::MAX as usize {
             return Err(HsmError::InvalidArgument);
         }
+        // `i` is bounded by the `MAX_CERTS` check above, so it fits `u8`.
         cert_descriptors.push(CertDescriptor {
-            offset: tbor_int::U16::new(offset as u16),
+            index: i as u8,
             length: tbor_int::U16::new(length as u16),
         });
-        sideband.extend_from_slice(cert);
+        oob.push(cert);
     }
 
     let mut req = TborPartFinalReq {
@@ -298,7 +311,7 @@ pub(crate) fn part_final_ex(
     let dev = inner.dev();
     let mut cookie = None;
     let resp = dev
-        .exec_op_tbor(&req, Some(&[sideband.as_slice()]), &mut cookie)
+        .exec_op_tbor(&req, Some(&oob), &mut cookie)
         .map_err(HsmError::from)?;
 
     // The firmware always returns a fixed-size `local_mk_backup`

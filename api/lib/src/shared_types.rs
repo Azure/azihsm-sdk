@@ -20,8 +20,9 @@ use zerocopy::*;
 /// native FFI layer instead converts a C array of `{ data, len }`
 /// certificate buffers into a `&[HsmCertDescriptor]`, wrapping each
 /// buffer's bytes (the DER is borrowed, not copied). The wire-level
-/// side-band `(offset, length)` descriptors stay an internal detail the
-/// SDK derives on the caller's behalf.
+/// `(index, length)` descriptors — each referencing an out-of-band SGL
+/// Data Block — stay an internal detail the SDK derives on the caller's
+/// behalf.
 ///
 /// [`HsmSession::part_final`]: crate::HsmSession::part_final
 #[derive(Debug, Clone, Copy)]
