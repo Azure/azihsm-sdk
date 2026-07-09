@@ -88,6 +88,66 @@ static azihsm_status hkdf_derive_with_custom_params(
     );
 }
 
+static void init_test_aes_cbc_pad_algo(azihsm_algo &algo, azihsm_algo_aes_cbc_params &params)
+{
+    uint8_t iv[16] = { 0xA5 };
+    std::memcpy(params.iv, iv, sizeof(iv));
+
+    algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
+    algo.params = &params;
+    algo.len = sizeof(params);
+}
+
+static void assert_aes_cbc_roundtrip_does_not_recover_plaintext(
+    azihsm_handle enc_key,
+    azihsm_handle dec_key,
+    const uint8_t *plaintext,
+    size_t plaintext_len
+)
+{
+    azihsm_algo_aes_cbc_params cbc_params{};
+    azihsm_algo crypt_algo{};
+    init_test_aes_cbc_pad_algo(crypt_algo, cbc_params);
+
+    std::vector<uint8_t> ciphertext;
+    ASSERT_EQ(
+        AZIHSM_STATUS_SUCCESS,
+        ::single_shot_crypt(
+            CryptOperation::Encrypt,
+            enc_key,
+            &crypt_algo,
+            plaintext,
+            plaintext_len,
+            ciphertext
+        )
+    );
+
+    init_test_aes_cbc_pad_algo(crypt_algo, cbc_params);
+
+    std::vector<uint8_t> decrypted;
+    azihsm_status decrypt_status = ::single_shot_crypt(
+        CryptOperation::Decrypt,
+        dec_key,
+        &crypt_algo,
+        ciphertext.data(),
+        ciphertext.size(),
+        decrypted
+    );
+
+    // If decryption fails, that is expected for different key material.
+    if (decrypt_status != AZIHSM_STATUS_SUCCESS)
+    {
+        SUCCEED();
+        return;
+    }
+
+    // If decryption succeeds, it still must not recover the original plaintext.
+    ASSERT_FALSE(
+        decrypted.size() == plaintext_len &&
+        std::memcmp(decrypted.data(), plaintext, plaintext_len) == 0
+    );
+}
+
 // ============================================================
 // Test cases
 // ============================================================
@@ -1036,6 +1096,134 @@ TEST_F(azihsm_hkdf, hkdf_null_info_with_nonzero_len_fails)
                 &invalid_info_buf
             ),
             AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+/// Test that changing HKDF salt changes the derived key material.
+TEST_F(azihsm_hkdf, hkdf_different_salt_produces_non_interoperable_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key secret_a;
+        auto_key secret_b;
+        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+        uint8_t salt_a[] = { 's', 'a', 'l', 't', '-', 'a' };
+        uint8_t salt_b[] = { 's', 'a', 'l', 't', '-', 'b' };
+        uint8_t info[] = { 's', 'a', 'm', 'e', '-', 'i', 'n', 'f', 'o' };
+
+        azihsm_buffer salt_a_buf = {
+            .ptr = salt_a,
+            .len = static_cast<uint32_t>(sizeof(salt_a)),
+        };
+
+        azihsm_buffer salt_b_buf = {
+            .ptr = salt_b,
+            .len = static_cast<uint32_t>(sizeof(salt_b)),
+        };
+
+        azihsm_buffer info_buf = {
+            .ptr = info,
+            .len = static_cast<uint32_t>(sizeof(info)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params_a{};
+        azihsm_algo hkdf_algo_a{};
+        build_hkdf_algo(
+            hkdf_params_a,
+            hkdf_algo_a,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &salt_a_buf,
+            &info_buf
+        );
+
+        azihsm_algo_hkdf_params hkdf_params_b{};
+        azihsm_algo hkdf_algo_b{};
+        build_hkdf_algo(
+            hkdf_params_b,
+            hkdf_algo_b,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &salt_b_buf,
+            &info_buf
+        );
+
+        auto_key key_a;
+        derive_aes_key_from_shared_secret(session, &hkdf_algo_a, secret_a.get(), 256, key_a);
+
+        auto_key key_b;
+        derive_aes_key_from_shared_secret(session, &hkdf_algo_b, secret_b.get(), 256, key_b);
+
+        const char *msg = "HKDF different salt should not interoperate";
+
+        assert_aes_cbc_roundtrip_does_not_recover_plaintext(
+            key_a.get(),
+            key_b.get(),
+            reinterpret_cast<const uint8_t *>(msg),
+            std::strlen(msg)
+        );
+    });
+}
+
+/// Test that changing HKDF info changes the derived key material.
+TEST_F(azihsm_hkdf, hkdf_different_info_produces_non_interoperable_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key secret_a;
+        auto_key secret_b;
+        derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+        uint8_t salt[] = { 's', 'a', 'm', 'e', '-', 's', 'a', 'l', 't' };
+        uint8_t info_a[] = { 'i', 'n', 'f', 'o', '-', 'a' };
+        uint8_t info_b[] = { 'i', 'n', 'f', 'o', '-', 'b' };
+
+        azihsm_buffer salt_buf = {
+            .ptr = salt,
+            .len = static_cast<uint32_t>(sizeof(salt)),
+        };
+
+        azihsm_buffer info_a_buf = {
+            .ptr = info_a,
+            .len = static_cast<uint32_t>(sizeof(info_a)),
+        };
+
+        azihsm_buffer info_b_buf = {
+            .ptr = info_b,
+            .len = static_cast<uint32_t>(sizeof(info_b)),
+        };
+
+        azihsm_algo_hkdf_params hkdf_params_a{};
+        azihsm_algo hkdf_algo_a{};
+        build_hkdf_algo(
+            hkdf_params_a,
+            hkdf_algo_a,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &salt_buf,
+            &info_a_buf
+        );
+
+        azihsm_algo_hkdf_params hkdf_params_b{};
+        azihsm_algo hkdf_algo_b{};
+        build_hkdf_algo(
+            hkdf_params_b,
+            hkdf_algo_b,
+            AZIHSM_ALGO_ID_HMAC_SHA256,
+            &salt_buf,
+            &info_b_buf
+        );
+
+        auto_key key_a;
+        derive_aes_key_from_shared_secret(session, &hkdf_algo_a, secret_a.get(), 256, key_a);
+
+        auto_key key_b;
+        derive_aes_key_from_shared_secret(session, &hkdf_algo_b, secret_b.get(), 256, key_b);
+
+        const char *msg = "HKDF different info should not interoperate";
+
+        assert_aes_cbc_roundtrip_does_not_recover_plaintext(
+            key_a.get(),
+            key_b.get(),
+            reinterpret_cast<const uint8_t *>(msg),
+            std::strlen(msg)
         );
     });
 }
