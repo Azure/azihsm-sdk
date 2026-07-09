@@ -49,5 +49,8 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
     for engine in 0..pka::PKA_ENGINES {
         pka::run_rsa_mod_exp_crt_on_engine(pal, io, engine).await?;
     }
+    for engine in 0..pka::PKA_ENGINES {
+        pka::run_ecdh_on_engine(pal, io, engine).await?;
+    }
     Ok(())
 }
