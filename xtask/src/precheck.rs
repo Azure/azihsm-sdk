@@ -383,7 +383,7 @@ fn min_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
         package: None,
         no_default_features: false,
         filterset: None,
-        profile: profile.clone().or(Some("ci-mock".to_string())),
+        profile: profile.clone().or_else(|| Some("ci-mock".to_string())),
         exclude: mock_exclude,
         test: None,
         filter: vec![],

@@ -14,7 +14,7 @@ cargo xtask <command> [options]
 
 ### precheck
 
-By default, run a minimal set of checks including copyright, formatting, and clippy. 
+By default, run a minimal set of checks consisting of fmt and a subset of tests.
 Pass the '--full' argument to run a comprehensive set of checks.
 
 ```bash
