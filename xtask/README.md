@@ -21,7 +21,7 @@ Pass the '--full' argument to run a comprehensive set of checks.
 # Run minimal set of checks
 cargo xtask precheck
 
-# Run all checks
+# Run comprehensive set of checks
 cargo xtask precheck --full
 ```
 
