@@ -108,11 +108,11 @@ mod tests {
     fn request_round_trips_policy() {
         let policy = [0u8; PART_POLICY_LEN];
         let cert = CertDescriptor {
-            offset: crate::tbor_int::U16::new(0),
+            index: 0,
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            offset: crate::tbor_int::U16::new(8),
+            index: 1,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];
