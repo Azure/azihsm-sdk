@@ -7,7 +7,7 @@
 //! `PartInit` by installing the POTA-endorsed PTA certificate chain and
 //! deriving the partition's local masking keys.  It re-supplies the
 //! unified `PartPolicy` (for `POTAPubKey` recovery), the PTA cert-chain
-//! descriptor list (pointing into the side-band data buffer), and an
+//! descriptor list (referencing out-of-band SGL Data Blocks), and an
 //! optional prior `local_mk` backup to restore; it returns the current
 //! `local_mk` backup.  See `azihsm_fw_ddi_tbor_types::part_final` for the
 //! full wire schema.
@@ -27,9 +27,9 @@ use crate::tbor_int::U16;
 /// TBOR opcode for `PartFinal`.
 pub const TBOR_OP_PART_FINAL: u8 = 0x08;
 
-/// Size of a single [`CertDescriptor`] on the wire (`offset(2) ‖
+/// Size of a single [`CertDescriptor`] on the wire (`index(1) ‖
 /// length(2)`, little-endian).
-pub const CERT_DESCRIPTOR_LEN: usize = 4;
+pub const CERT_DESCRIPTOR_LEN: usize = 3;
 
 /// Maximum number of certificates the PTA chain descriptor list may
 /// carry.
@@ -56,14 +56,29 @@ pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 // revisited.
 const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
-/// One PTA-chain certificate descriptor: the byte `offset` and `length`
-/// of a DER certificate within the side-band data buffer.
+/// Exact on-the-wire length of a non-empty `local_mk` backup envelope
+/// (`prev_local_mk_backup` / `local_mk_backup`).
+///
+/// Mirrors `azihsm_fw_ddi_tbor_types::part_final::LOCAL_MK_BACKUP_LEN`;
+/// the firmware treats a non-empty field as exactly this length (an
+/// empty field means absent). The breakdown mirrors the firmware's
+/// deterministic AES-256-GCM `MaskedKey` envelope layout:
+/// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`.
+pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+
+// Pin the computed length to the wire-documented 164 B so an envelope
+// layout change forces this constant (and the mirror comment) to be
+// revisited.
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+
+/// One PTA-chain certificate descriptor: the OOB SGL-descriptor `index`
+/// and byte `length` of a DER certificate carried out of band.
 ///
 /// Host-side mirror of
 /// `azihsm_fw_ddi_tbor_types::evidence::CertDescriptor`.  `#[repr(C)]`
-/// POD (size [`CERT_DESCRIPTOR_LEN`] = 4 B, alignment 1); the
-/// [`U16`](crate::tbor_int::U16) fields are little-endian on the wire and
-/// keep the type `Unaligned`.
+/// POD (size [`CERT_DESCRIPTOR_LEN`] = 3 B, alignment 1); `index` is a
+/// `u8` and `length` a little-endian [`U16`](crate::tbor_int::U16) on the
+/// wire, keeping the type `Unaligned`.
 #[derive(
     Debug,
     Default,
@@ -79,8 +94,9 @@ const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 )]
 #[repr(C)]
 pub struct CertDescriptor {
-    /// Byte offset of the DER certificate in the side-band buffer.
-    pub offset: U16,
+    /// Index of the DER certificate's SGL Data Block descriptor in the
+    /// OOB descriptor page.
+    pub index: u8,
 
     /// Byte length of the DER certificate.
     pub length: U16,
@@ -104,10 +120,11 @@ pub struct TborPartFinalReq {
     /// little-endian image.
     pub part_policy: PartPolicy,
 
-    /// PTA certificate chain descriptors `(offset, length)` pointing into
-    /// the side-band buffer.  Encoded as the packed little-endian byte
-    /// image of the elements; carries 1..=[`MAX_CERTS`] entries.
-    #[tbor(min_len = 1, max_len = 8)]
+    /// PTA certificate chain descriptors `(index, length)` referencing
+    /// the out-of-band SGL Data Blocks.  Encoded as the packed
+    /// little-endian byte image of the elements; carries 1..=[`MAX_CERTS`]
+    /// entries.
+    #[tbor(min_len = 3, max_len = 6)]
     pub cert_descriptors: Vec<CertDescriptor>,
 
     /// Optional previously-generated `local_mk` backup to restore.
@@ -148,11 +165,11 @@ mod tests {
             part_policy: PartPolicy::zeroed(),
             cert_descriptors: alloc::vec![
                 CertDescriptor {
-                    offset: U16::new(0x1234),
+                    index: 0,
                     length: U16::new(0x0567),
                 },
                 CertDescriptor {
-                    offset: U16::new(16),
+                    index: 1,
                     length: U16::new(32),
                 },
             ],
@@ -164,7 +181,7 @@ mod tests {
 
         // The packed little-endian descriptor image must appear verbatim
         // somewhere in the encoded frame's data section.
-        let needle = [0x34, 0x12, 0x67, 0x05, 0x10, 0x00, 0x20, 0x00];
+        let needle = [0x00, 0x67, 0x05, 0x01, 0x20, 0x00];
         assert!(
             frame.windows(needle.len()).any(|w| w == needle),
             "encoded frame must carry the packed LE cert descriptors",
@@ -180,7 +197,7 @@ mod tests {
             session_id: 7,
             part_policy: PartPolicy::zeroed(),
             cert_descriptors: alloc::vec![CertDescriptor {
-                offset: U16::new(16),
+                index: 0,
                 length: U16::new(32),
             }],
             prev_local_mk_backup: Vec::new(),
