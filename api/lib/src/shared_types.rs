@@ -90,6 +90,9 @@ pub enum HsmKeyKind {
 
     /// AES GCM symmetric key kind.
     AesGcm = 10,
+
+    /// HSM Sealing key kind (used for sealing/unsealing operations).
+    Sealing = 11,
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.

@@ -30,40 +30,34 @@ use super::*;
 
 /// Issue `SdSealingKeyGen` (opcode `0x09`) on the active session.
 ///
-/// Ships the active `session_id` and the requested key `scope`, and
+/// Ships the active session id and the requested key `scope`, and
 /// returns the [`HsmKeyHandle`] for the newly generated security-domain
 /// sealing key. The firmware allocates the key in the partition vault
-/// and returns its vault id, which is packed into a key handle with no
-/// bulk-key component.
+/// and returns its vault id, packed into a key handle with no bulk-key
+/// component.
 ///
 /// # Arguments
 ///
-/// * `partition` - The HSM partition handle.
-/// * `session_id` - The active session id this request binds to.
+/// * `session` - The active security-domain (V2) session.
 /// * `scope` - Requested key scope (lifecycle / visibility domain) as
 ///   the 1-byte `KeyScope` discriminant (mirror of the firmware
 ///   `HsmKeyScope`).
 ///
-/// # Returns
-///
-/// Returns the [`HsmKeyHandle`] of the newly generated sealing key.
-///
 /// # Errors
 ///
-/// Surfaces DDI/device failures from the round-trip.
-pub(crate) fn sd_sealing_key_gen_ex(
-    partition: &HsmPartition,
-    session_id: u16,
-    scope: u8,
-) -> HsmResult<HsmKeyHandle> {
-    let req = TborSdSealingKeyGenReq { session_id, scope };
+/// Returns [`HsmError::InvalidSession`] on a non-security-domain (V1)
+/// session, and surfaces DDI/device failures from the round-trip.
+pub(crate) fn sd_sealing_key_gen(session: &HsmSession, scope: u8) -> HsmResult<HsmKeyHandle> {
+    let req = TborSdSealingKeyGenReq {
+        session_id: session.ex_session_id()?,
+        scope,
+    };
 
-    let inner = partition.inner().read();
-    let dev = inner.dev();
     let mut cookie = None;
-    let resp = dev
-        .exec_op_tbor(&req, None, &mut cookie)
-        .map_err(HsmError::from)?;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
 
     Ok(to_key_handle(resp.key_handle, None))
 }
