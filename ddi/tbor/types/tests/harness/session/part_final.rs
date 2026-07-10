@@ -51,11 +51,17 @@ pub fn part_final(
         certs
             .iter()
             .enumerate()
-            .map(|(i, c)| CertDescriptor {
-                index: i as u8,
-                length: U16::new(c.len() as u16),
+            .map(|(i, c)| {
+                // The wire format is `index: u8` + `length: u16`; reject
+                // (rather than silently truncate) inputs that don't fit.
+                let index = u8::try_from(i).map_err(|_| DdiError::InvalidParameter)?;
+                let length = u16::try_from(c.len()).map_err(|_| DdiError::InvalidParameter)?;
+                Ok(CertDescriptor {
+                    index,
+                    length: U16::new(length),
+                })
             })
-            .collect()
+            .collect::<Result<Vec<_>, DdiError>>()?
     };
 
     let req = TborPartFinalReq {
