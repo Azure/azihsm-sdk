@@ -362,9 +362,11 @@ async fn verify_policy_hash<P: HsmPal>(
 ///
 /// Reads the `{svn, owner}` the blob was masked under from its (cleartext
 /// but tag-bound) metadata, re-derives the matching `PartLocalBMK`, and
-/// unmasks the blob.  Rejects a blob from a *newer* SVN (anti-rollback);
-/// older-or-equal SVNs are accepted (the masking key is re-derivable from
-/// the versioned device seeds).
+/// unmasks the blob.  The anti-rollback policy (reject a blob from a
+/// *newer* SVN; older-or-equal SVNs are accepted since the masking key is
+/// re-derivable from the versioned device seeds) is enforced **after**
+/// `unmask` authenticates the metadata, so a tampered cleartext SVN fails
+/// the AEAD tag rather than spoofing the rollback error.
 async fn restore_part_local_mk<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -374,17 +376,18 @@ async fn restore_part_local_mk<P: HsmPal>(
     prev: &mut DmaBuf,
     out_mk: &mut DmaBuf,
 ) -> HsmResult<()> {
+    // Peek the cleartext `{svn, owner}` bindings.  These are needed *now*
+    // to re-derive the unmasking key, but they are NOT yet authenticated
+    // (`peek_metadata`'s result must not be trusted until `unmask` verifies
+    // the tag), so the anti-rollback policy below is deferred until after
+    // `unmask` succeeds.
     let (prev_svn, prev_owner) = peek_backup_svn_owner(prev)?;
-    if prev_svn > cur_svn {
-        // Anti-rollback: a backup minted under a newer SVN cannot be
-        // restored on this (older) firmware.
-        return Err(HsmError::PartFinalBackupSvnRollback);
-    }
 
     let local_bmk = derive_local_bmk(pal, io, alloc, ups, prev_svn, prev_owner).await?;
 
     // `unmask` decrypts the envelope in place in the request buffer — no
-    // scratch staging copy needed.
+    // scratch staging copy needed.  On success it has verified the AEAD tag
+    // over the AAD, so `{prev_svn, prev_owner}` are now authenticated.
     let view = unmask(pal, io, local_bmk, prev).await?;
     let len_ok = view.target_key.len() == out_mk.len();
     if len_ok {
@@ -395,6 +398,17 @@ async fn restore_part_local_mk<P: HsmPal>(
     // buffer so it does not linger (until the IO slot is recycled) longer
     // than necessary.
     prev.fill(0);
+
+    // Anti-rollback, enforced on the now-authenticated `svn`: a backup
+    // minted under a newer SVN cannot be restored on this (older)
+    // firmware.  Enforcing this only after the tag is verified means a
+    // tampered cleartext `svn` fails `unmask` (generic AEAD error) rather
+    // than being able to spoof this specific rollback error.
+    if prev_svn > cur_svn {
+        // Don't hand back / leave the recovered key on a rejected restore.
+        out_mk.fill(0);
+        return Err(HsmError::PartFinalBackupSvnRollback);
+    }
     if !len_ok {
         // Firmware invariant: the AEAD tag has already verified the
         // envelope, so a genuine (firmware-minted) backup always holds a
