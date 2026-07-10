@@ -387,9 +387,8 @@ async fn restore_part_local_mk<P: HsmPal>(
     if len_ok {
         out_mk.copy_from_slice(view.target_key);
     }
-    // `view` borrows `prev`; end that borrow before wiping the buffer.
-    drop(view);
-    // Wipe the recovered plaintext `PartLocalMK` left in the request DMA
+    // `view`'s borrow of `prev` ends at its last use above, so we can now
+    // wipe the recovered plaintext `PartLocalMK` left in the request DMA
     // buffer so it does not linger (until the IO slot is recycled) longer
     // than necessary.
     prev.fill(0);

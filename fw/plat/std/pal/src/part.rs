@@ -27,10 +27,20 @@
 //! ## Partition lifecycle
 //!
 //! ```text
-//! Disabled ──► part_alloc ──► Uninitialized ──► Initialized
-//!    ▲                              │
-//!    └────────── part_free ─────────┘
+//! Unallocated ──part_alloc──► Allocated ──part_enable──► Enabled
+//!                                                          │
+//!                                               PartInit   │   part_disable ⇄ part_enable
+//!                                                          ▼   toggles Enabled ⇄ Disabled
+//!                                                     Initializing
+//!                                                          │
+//!                                               PartFinal  │
+//!                                                          ▼
+//!                                                     Initialized
 //! ```
+//!
+//! `part_free` returns a partition in any allocated state to
+//! `Unallocated`.  `Enabled`, `Initializing`, and `Initialized` all serve
+//! DDI traffic; `Unallocated`, `Allocated`, and `Disabled` do not.
 //!
 //! ## Resource allocation
 //!
