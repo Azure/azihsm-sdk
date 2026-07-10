@@ -68,7 +68,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
 /// # Safety
 ///
 /// - `handle` must be a valid session handle previously returned by
-///   `azihsm_sess_open`.
+///   `azihsm_sess_open` or `azihsm_sess_ex_open`.
 /// - The handle must not have been previously closed.
 /// - After this call, the handle becomes invalid and must not be used.
 #[unsafe(no_mangle)]

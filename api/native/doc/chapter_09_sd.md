@@ -3,7 +3,7 @@
 The security-domain (SD) API opens a session to a partition and provisions
 its security domain. A security-domain session (opened with
 [`azihsm_sess_ex_open`](#azihsm_sess_ex_open)) is required to issue the
-provisioning command in this chapter.
+provisioning commands in this chapter.
 
 ## azihsm_sess_ex_open
 
@@ -13,7 +13,8 @@ The session uses the API revision that was selected when the partition was
 opened with [`azihsm_part_open`](#azihsm_part_open). The `session_type`
 selects the channel integrity profile pinned for the session (see
 [azihsm_session_ex_type](#azihsm_session_ex_type)), and a handle to the new
-session is returned.
+session is returned. The returned handle is closed with
+[`azihsm_sess_close`](#azihsm_sess_close), the same as a regular session.
 
 ```cpp
 azihsm_status azihsm_sess_ex_open(
@@ -109,3 +110,71 @@ struct azihsm_sess_ex_part_init_params {
  | pota_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | POTA public-key thumbprint               |
  | sata_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | SATA public-key thumbprint               |
  | sapota_thumbprint | [azihsm_buffer*](#azihsm_buffer) | optional SAPOTA thumbprint (may be NULL) |
+
+## azihsm_sess_ex_part_final
+
+Finalize a partition's security domain over a security-domain session.
+
+Installs the POTA-endorsed PTA certificate chain and derives the
+partition's local masking keys, returning the current `local_mk` backup
+envelope (`local_mk_backup`). The unified partition policy (`part_policy`)
+is re-supplied for `POTAPubKey` recovery, and an optional prior `local_mk`
+backup (`prev_local_mk_backup`) may be restored (omit it on first
+finalization).
+
+The inputs are grouped into an
+[`azihsm_sess_ex_part_final_params`](#azihsm_sess_ex_part_final_params)
+structure. `local_mk_backup` is a caller-provided output buffer: on input
+`len` is the buffer capacity; on success `len` is set to the number of
+bytes written. Because finalization is a one-shot operation, an undersized
+buffer (or a NULL `ptr` with `len == 0`) is rejected with
+`AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size
+**before** the partition is finalized, so the standard two-call size probe
+(call once with a zero-length buffer to learn the required capacity, then
+retry) is safe. A NULL `ptr` with a non-zero `len` is rejected with
+`AZIHSM_STATUS_INVALID_ARGUMENT`.
+
+```cpp
+azihsm_status azihsm_sess_ex_part_final(
+    azihsm_handle sess_handle,
+    const struct azihsm_sess_ex_part_final_params *params,
+    struct azihsm_buffer *local_mk_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                 | Name                                                                    | Description                                            |
+ | ------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+ | [in] sess_handle          | [azihsm_handle](#azihsm_handle)                                         | security-domain session handle                         |
+ | [in] params               | [azihsm_sess_ex_part_final_params*](#azihsm_sess_ex_part_final_params)   | finalization input buffers                             |
+ | [in, out] local_mk_backup | [azihsm_buffer *](#azihsm_buffer)                                       | output buffer for the local_mk backup envelope  &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sess_ex_part_final_params
+
+Finalization input buffers for
+[`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final). `part_policy`
+points to an [azihsm_buffer](#azihsm_buffer); `pta_cert_chain` points to an
+array of `pta_cert_count` [azihsm_buffer](#azihsm_buffer)s, each holding
+one DER certificate; `prev_local_mk_backup` is optional and may be NULL to
+omit it.
+
+```cpp
+struct azihsm_sess_ex_part_final_params {
+    const struct azihsm_buffer *part_policy;
+    const struct azihsm_buffer *pta_cert_chain;
+    uint32_t pta_cert_count;
+    const struct azihsm_buffer *prev_local_mk_backup;
+};
+```
+
+ | Field                | Name                             | Description                                  |
+ | -------------------- | -------------------------------- | -------------------------------------------- |
+ | part_policy          | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image               |
+ | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER certificate buffers             |
+ | pta_cert_count       | uint32_t                         | number of certificates in pta_cert_chain     |
+ | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL) |
