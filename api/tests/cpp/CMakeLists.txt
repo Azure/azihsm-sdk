@@ -86,7 +86,9 @@ set(SOURCE
     algo/rsa/keygen_tests.cpp
     algo/rsa/keyreport_tests.cpp
     algo/rsa/enc_dec_tests.cpp
+    algo/rsa/rsa_static_der.cpp
     algo/rsa/sign_verify_tests.cpp
+    algo/rsa/unwrap_tests.cpp
     algo/sha/digest_tests.cpp
     algo/hmac/sign_verify_tests.cpp
     algo/hmac/keygen_tests.cpp

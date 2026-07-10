@@ -19,6 +19,7 @@ class azihsm_rsa_keygen : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
+// Verifies RSA 2048 key pair generation succeeds and keys can be deleted.
 TEST_F(azihsm_rsa_keygen, generate_rsa_2048_keypair)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -40,6 +41,7 @@ TEST_F(azihsm_rsa_keygen, generate_rsa_2048_keypair)
     });
 }
 
+// Verifies generated RSA keys report the expected key kind and class properties.
 TEST_F(azihsm_rsa_keygen, get_key_properties)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -66,6 +68,7 @@ TEST_F(azihsm_rsa_keygen, get_key_properties)
     });
 }
 
+// Verifies key property retrieval rejects a null output buffer.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_output_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -82,6 +85,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_output_buffer)
     });
 }
 
+// Verifies EC curve property is not present on RSA private keys.
 TEST_F(azihsm_rsa_keygen, get_key_prop_ec_curve_not_present)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -100,6 +104,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_ec_curve_not_present)
     });
 }
 
+// Verifies requesting an unsupported property returns the expected error.
 TEST_F(azihsm_rsa_keygen, get_key_prop_unknown_property_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -118,6 +123,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_unknown_property_fails)
     });
 }
 
+// Verifies generated RSA keys report the expected kind and public/private class.
 TEST_F(azihsm_rsa_keygen, generated_rsa_keys_report_expected_kind_and_class)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -166,6 +172,7 @@ TEST_F(azihsm_rsa_keygen, generated_rsa_keys_report_expected_kind_and_class)
     });
 }
 
+// Verifies key property retrieval rejects a null property descriptor.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_null_property_pointer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -179,6 +186,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_null_property_pointer)
     });
 }
 
+// Verifies key property retrieval rejects an invalid key handle.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_key_handle)
 {
     part_list_.for_each_session([](azihsm_handle /*session*/) {
@@ -187,11 +195,11 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_invalid_key_handle)
 
         auto err = azihsm_key_get_prop(static_cast<azihsm_handle>(0), &prop);
 
-        // Avoid depending on the exact invalid-handle status name.
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
+// Verifies EC curve property is not present on RSA public keys.
 TEST_F(azihsm_rsa_keygen, get_key_prop_ec_curve_not_present_on_public_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -210,6 +218,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_ec_curve_not_present_on_public_key)
     });
 }
 
+// Verifies failed property retrieval does not modify the caller's output buffer.
 TEST_F(azihsm_rsa_keygen, get_key_prop_does_not_modify_output_on_failure)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -229,6 +238,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_does_not_modify_output_on_failure)
     });
 }
 
+// Verifies key kind property rejects an undersized output buffer.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_small_kind_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -247,6 +257,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_small_kind_buffer)
     });
 }
 
+// Verifies key class property rejects an undersized output buffer.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_small_class_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -265,6 +276,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_small_class_buffer)
     });
 }
 
+// Verifies key property retrieval rejects a zero-length output buffer.
 TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_zero_length_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -281,6 +293,7 @@ TEST_F(azihsm_rsa_keygen, get_key_prop_rejects_zero_length_buffer)
     });
 }
 
+// Verifies generated RSA unwrapping keys have the expected key attribute flags.
 TEST_F(azihsm_rsa_keygen, generate_unwrapping_key_flags)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -340,6 +353,7 @@ TEST_F(azihsm_rsa_keygen, generate_unwrapping_key_flags)
     });
 }
 
+// Verifies generated RSA private keys expose only the expected capabilities.
 TEST_F(azihsm_rsa_keygen, generate_unwrapping_private_key_capability)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -395,6 +409,7 @@ TEST_F(azihsm_rsa_keygen, generate_unwrapping_private_key_capability)
     });
 }
 
+// Verifies generated RSA public keys expose only the expected capabilities.
 TEST_F(azihsm_rsa_keygen, generate_unwrapping_public_key_capability)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -448,6 +463,7 @@ TEST_F(azihsm_rsa_keygen, generate_unwrapping_public_key_capability)
     });
 }
 
+// Verifies both generated RSA keys report a 2048-bit length.
 TEST_F(azihsm_rsa_keygen, generated_keypair_reports_2048_bit_length)
 {
     part_list_.for_each_session([](azihsm_handle session) {
