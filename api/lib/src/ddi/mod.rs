@@ -35,8 +35,6 @@ pub(crate) use partition::*;
 pub use partition_ex::LOCAL_MK_BACKUP_LEN;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
-// WIP: SD backup/restore wrappers have no callers yet (see sd_backup.rs).
-#[allow(unused_imports)]
 pub(crate) use sd_backup::*;
 pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;

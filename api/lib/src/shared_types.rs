@@ -39,6 +39,45 @@ pub struct HsmPartFinalExResult {
     pub local_mk_backup: Vec<u8>,
 }
 
+/// Borrowed attestation-evidence inputs for the security-domain backup /
+/// restore API (e.g. [`HsmSession::sd_create_remote_backup`]).
+///
+/// Bundles the three DER certificate chains (each an ordered list of
+/// [`HsmCertDescriptor`]s) and the COSE_Sign1 attestation report for one
+/// evidence party (sender / receiver / source / destination / peer). The
+/// DER bytes are destined for out-of-band transmission; this SDK layer
+/// does not transmit them yet, so instances are currently **accepted but
+/// ignored** — the API surface is forward-compatible for when the
+/// evidence wiring lands.
+///
+/// [`HsmSession::sd_create_remote_backup`]: crate::HsmSession::sd_create_remote_backup
+#[derive(Debug, Clone, Copy)]
+pub struct HsmSdEvidence<'a> {
+    /// Manufacturer certificate chain.
+    pub mfgr_cert_chain: &'a [HsmCertDescriptor<'a>],
+    /// Owner certificate chain.
+    pub owner_cert_chain: &'a [HsmCertDescriptor<'a>],
+    /// Partition-owner certificate chain.
+    pub part_owner_cert_chain: &'a [HsmCertDescriptor<'a>],
+    /// COSE_Sign1 attestation report (DER/COSE bytes).
+    pub report: &'a [u8],
+}
+
+/// Result of a security-domain restore command (`sd_restore_*`): the
+/// refreshed device-local partition-owner-key backup and the
+/// security-domain masking-key backup envelope.
+///
+/// API-layer type with owned bytes. The DDI/wire response types are
+/// converted into it inside the DDI layer, so the wire types never
+/// surface to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmSdRestoreResult {
+    /// Partition-owner-key backup wrapped under the device-local key.
+    pub pok_local_backup: Vec<u8>,
+    /// Security-domain masking-key backup envelope.
+    pub sd_mk_backup: Vec<u8>,
+}
+
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.

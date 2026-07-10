@@ -202,6 +202,172 @@ impl HsmSession {
             HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdCreateRemoteBackup` (opcode `0x0A`) on this session.
+    ///
+    /// Creates a new security domain from the unified `policy` and returns
+    /// the remote partition-owner-key backup. `receiver_evidence` is
+    /// accepted for a forward-compatible signature but not yet transmitted.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_create_remote_backup(
+        &self,
+        sender_key: u16,
+        receiver_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_create_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                sender_key,
+                receiver_evidence,
+                policy,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdResealBackup` (opcode `0x0B`) on this session.
+    ///
+    /// Re-masks the source `pok_remote_backup` (bound to
+    /// `sealing_key_handle`) for the destination, returning a freshly
+    /// resealed remote backup. `src_evidence` / `dest_evidence` are
+    /// accepted but not yet transmitted. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
+    pub fn sd_reseal_backup(
+        &self,
+        sealing_key_handle: u16,
+        src_evidence: &HsmSdEvidence<'_>,
+        dest_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_remote_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_reseal_backup_ex(
+                &inner.partition,
+                inner.id,
+                sealing_key_handle,
+                src_evidence,
+                dest_evidence,
+                policy,
+                pok_remote_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdRestoreRemoteBackup` (opcode `0x0C`) on this session.
+    ///
+    /// Restores a security domain from `pok_remote_backup` (bound to
+    /// `sealing_key_id`), returning the refreshed device-local backup and
+    /// masking-key backup envelope. `sender_evidence` is accepted but not
+    /// yet transmitted. Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_restore_remote_backup(
+        &self,
+        sealing_key_id: u16,
+        sender_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_remote_backup: &[u8],
+        sd_mk_backup: Option<&[u8]>,
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_restore_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                sealing_key_id,
+                sender_evidence,
+                policy,
+                pok_remote_backup,
+                sd_mk_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdRestoreLocalBackup` (opcode `0x0D`) on this session.
+    ///
+    /// Restores a security domain from its device-local backups, returning
+    /// the refreshed local backup and masking-key backup envelope. Carries
+    /// no attestation evidence. Only valid on a V2 session; a V1 session
+    /// returns [`HsmError::InvalidSession`].
+    pub fn sd_restore_local_backup(
+        &self,
+        pok_local_backup: &[u8],
+        sd_mk_backup: &[u8],
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_restore_local_backup_ex(
+                &inner.partition,
+                inner.id,
+                pok_local_backup,
+                sd_mk_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdCreatePeerBackup` (opcode `0x0E`) on this session.
+    ///
+    /// Re-masks `pok_local_backup` (bound to `sealing_key_id`) for a
+    /// destination peer, returning the peer backup. `dst_evidence` is
+    /// accepted but not yet transmitted. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
+    pub fn sd_create_peer_backup(
+        &self,
+        sealing_key_id: u16,
+        dst_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_local_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_create_peer_backup_ex(
+                &inner.partition,
+                inner.id,
+                sealing_key_id,
+                dst_evidence,
+                policy,
+                pok_local_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdRestorePeerBackup` (opcode `0x0F`) on this session.
+    ///
+    /// Restores a security domain from `pok_peer_backup` (bound to
+    /// `sealing_key_id`), returning the refreshed device-local backup and
+    /// masking-key backup envelope. `src_evidence` is accepted but not yet
+    /// transmitted. Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_restore_peer_backup(
+        &self,
+        sealing_key_id: u16,
+        src_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_peer_backup: &[u8],
+        sd_mk_backup: &[u8],
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::sd_restore_peer_backup_ex(
+                &inner.partition,
+                inner.id,
+                sealing_key_id,
+                src_evidence,
+                policy,
+                pok_peer_backup,
+                sd_mk_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.

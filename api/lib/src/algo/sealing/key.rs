@@ -42,7 +42,7 @@ impl HsmSealingKey {
     }
 
     fn check_key_usage(props: &HsmKeyProps) -> bool {
-        //check if key usage flags are valid for the key kind
+        // Derivation is the only usage permitted for a sealing key.
         match props.kind() {
             HsmKeyKind::Sealing => props.can_derive(),
             _ => false,

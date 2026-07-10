@@ -35,15 +35,10 @@
 //! DDI transport ([`azihsm_ddi_interface::DdiDev::exec_op_tbor`]) can now
 //! carry those blocks (its `oob_items` parameter), but this SDK layer does
 //! not yet populate the descriptors or pass the evidence: the
-//! [`SdEvidenceRef`] inputs accepted here are **not yet transmitted** (the
+//! [`HsmSdEvidence`] inputs accepted here are **not yet transmitted** (the
 //! descriptor fields are left empty and `None` is passed for `oob_items`).
 //! These signatures exist now so the API surface is ready; wiring the
 //! evidence through is future work.
-
-// WIP: these wrappers are not yet called (no HsmSession entry points) and
-// the evidence is not yet wired through the OOB transport. Remove this
-// blanket allow once callers and evidence transmission land.
-#![allow(dead_code)]
 
 use azihsm_ddi_tbor_types::*;
 
@@ -57,69 +52,10 @@ const POK_BACKUP_LEN: usize = 180;
 /// envelope. The firmware schema is the length authority.
 const SD_MK_BACKUP_LEN: usize = 164;
 
-/// A single DER-encoded X.509 certificate.
-///
-/// Thin, `Copy` newtype over the DER bytes, used purely for readability
-/// at the SD evidence API boundary: a certificate chain is a slice of
-/// these ([`&[Certificate]`](Certificate)) rather than a bare
-/// `&[&[u8]]`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Certificate<'a>(&'a [u8]);
-
-impl<'a> Certificate<'a> {
-    /// Wraps DER-encoded certificate bytes.
-    pub fn new(der: &'a [u8]) -> Self {
-        Self(der)
-    }
-
-    /// Returns the DER-encoded certificate bytes.
-    pub fn as_der(&self) -> &'a [u8] {
-        self.0
-    }
-}
-
-impl<'a> From<&'a [u8]> for Certificate<'a> {
-    fn from(der: &'a [u8]) -> Self {
-        Self(der)
-    }
-}
-
-/// Borrowed attestation-evidence inputs shared by the SD backup / restore
-/// commands.
-///
-/// Bundles the three DER certificate chains (each an ordered list of
-/// [`Certificate`]s) and the COSE_Sign1 attestation report for one
-/// evidence party (sender / receiver / source / destination / peer).
-///
-/// The DER bytes are destined for out-of-band SGL Data Blocks, but this
-/// layer does not yet transmit them, so instances are currently
-/// **accepted but ignored** by the wrappers below (see the module docs).
-pub(crate) struct SdEvidenceRef<'a> {
-    /// Manufacturer certificate chain.
-    pub mfgr_cert_chain: &'a [Certificate<'a>],
-    /// Owner certificate chain.
-    pub owner_cert_chain: &'a [Certificate<'a>],
-    /// Partition-owner certificate chain.
-    pub part_owner_cert_chain: &'a [Certificate<'a>],
-    /// COSE_Sign1 attestation report (DER/COSE bytes).
-    pub report: &'a [u8],
-}
-
-/// API-layer result of the SD restore commands.
-///
-/// Mirrors the shared restore response shape (a refreshed local
-/// partition-owner-key backup plus the security-domain masking-key backup
-/// envelope) with owned bytes so the wire response types stay confined to
-/// the DDI layer.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SdRestoreResult {
-    /// Partition-owner-key backup wrapped under the device-local key.
-    pub pok_local_backup: Vec<u8>,
-    /// Security-domain masking-key backup envelope.
-    pub sd_mk_backup: Vec<u8>,
-}
-
-impl From<TborSdRestoreLocalBackupResp> for SdRestoreResult {
+/// Converts each SD restore wire response into the public
+/// [`HsmSdRestoreResult`], keeping the wire response types confined to the
+/// DDI layer.
+impl From<TborSdRestoreLocalBackupResp> for HsmSdRestoreResult {
     fn from(resp: TborSdRestoreLocalBackupResp) -> Self {
         Self {
             pok_local_backup: resp.pok_local_backup,
@@ -128,7 +64,7 @@ impl From<TborSdRestoreLocalBackupResp> for SdRestoreResult {
     }
 }
 
-impl From<TborSdRestoreRemoteBackupResp> for SdRestoreResult {
+impl From<TborSdRestoreRemoteBackupResp> for HsmSdRestoreResult {
     fn from(resp: TborSdRestoreRemoteBackupResp) -> Self {
         Self {
             pok_local_backup: resp.pok_local_backup,
@@ -137,7 +73,7 @@ impl From<TborSdRestoreRemoteBackupResp> for SdRestoreResult {
     }
 }
 
-impl From<TborSdRestorePeerBackupResp> for SdRestoreResult {
+impl From<TborSdRestorePeerBackupResp> for HsmSdRestoreResult {
     fn from(resp: TborSdRestorePeerBackupResp) -> Self {
         Self {
             pok_local_backup: resp.pok_local_backup,
@@ -146,9 +82,9 @@ impl From<TborSdRestorePeerBackupResp> for SdRestoreResult {
     }
 }
 
-/// Decodes a caller-supplied 484-byte unified `PartPolicy` image,
-/// failing fast with [`HsmError::InvalidArgument`] on a wrong length or
-/// malformed image.
+/// Decodes a caller-supplied unified `PartPolicy` image
+/// ([`PART_POLICY_LEN`] bytes), failing fast with
+/// [`HsmError::InvalidArgument`] on a wrong length or malformed image.
 fn decode_policy(policy: &[u8]) -> HsmResult<PartPolicy> {
     if policy.len() != PART_POLICY_LEN {
         return Err(HsmError::InvalidArgument);
@@ -188,7 +124,7 @@ pub(crate) fn sd_create_remote_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     sender_key: u16,
-    receiver_evidence: &SdEvidenceRef<'_>,
+    receiver_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
 ) -> HsmResult<Vec<u8>> {
     // Evidence is accepted for a forward-compatible signature but not yet
@@ -237,8 +173,8 @@ pub(crate) fn sd_reseal_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     sealing_key_handle: u16,
-    src_evidence: &SdEvidenceRef<'_>,
-    dest_evidence: &SdEvidenceRef<'_>,
+    src_evidence: &HsmSdEvidence<'_>,
+    dest_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
     pok_remote_backup: &[u8],
 ) -> HsmResult<Vec<u8>> {
@@ -290,11 +226,11 @@ pub(crate) fn sd_restore_remote_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     sealing_key_id: u16,
-    sender_evidence: &SdEvidenceRef<'_>,
+    sender_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
     pok_remote_backup: &[u8],
     sd_mk_backup: Option<&[u8]>,
-) -> HsmResult<SdRestoreResult> {
+) -> HsmResult<HsmSdRestoreResult> {
     let _ = sender_evidence;
     check_len(pok_remote_backup, POK_BACKUP_LEN)?;
     if let Some(mk) = sd_mk_backup {
@@ -314,7 +250,7 @@ pub(crate) fn sd_restore_remote_backup_ex(
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, None, &mut cookie)
-        .map(SdRestoreResult::from)
+        .map(HsmSdRestoreResult::from)
         .map_err(HsmError::from)
 }
 
@@ -341,7 +277,7 @@ pub(crate) fn sd_restore_local_backup_ex(
     session_id: u16,
     pok_local_backup: &[u8],
     sd_mk_backup: &[u8],
-) -> HsmResult<SdRestoreResult> {
+) -> HsmResult<HsmSdRestoreResult> {
     check_len(pok_local_backup, POK_BACKUP_LEN)?;
     check_len(sd_mk_backup, SD_MK_BACKUP_LEN)?;
 
@@ -355,7 +291,7 @@ pub(crate) fn sd_restore_local_backup_ex(
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, None, &mut cookie)
-        .map(SdRestoreResult::from)
+        .map(HsmSdRestoreResult::from)
         .map_err(HsmError::from)
 }
 
@@ -383,7 +319,7 @@ pub(crate) fn sd_create_peer_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     sealing_key_id: u16,
-    dst_evidence: &SdEvidenceRef<'_>,
+    dst_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
     pok_local_backup: &[u8],
 ) -> HsmResult<Vec<u8>> {
@@ -434,11 +370,11 @@ pub(crate) fn sd_restore_peer_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     sealing_key_id: u16,
-    src_evidence: &SdEvidenceRef<'_>,
+    src_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
     pok_peer_backup: &[u8],
     sd_mk_backup: &[u8],
-) -> HsmResult<SdRestoreResult> {
+) -> HsmResult<HsmSdRestoreResult> {
     let _ = src_evidence;
     check_len(pok_peer_backup, POK_BACKUP_LEN)?;
     check_len(sd_mk_backup, SD_MK_BACKUP_LEN)?;
@@ -456,7 +392,7 @@ pub(crate) fn sd_restore_peer_backup_ex(
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, None, &mut cookie)
-        .map(SdRestoreResult::from)
+        .map(HsmSdRestoreResult::from)
         .map_err(HsmError::from)
 }
 
@@ -464,8 +400,8 @@ pub(crate) fn sd_restore_peer_backup_ex(
 mod tests {
     use super::*;
 
-    /// A 484-byte zeroed image decodes to the default policy; wrong
-    /// lengths are rejected.
+    /// A correctly-sized ([`PART_POLICY_LEN`]) zeroed image decodes to the
+    /// default policy; wrong lengths are rejected.
     #[test]
     fn decode_policy_enforces_length() {
         assert!(decode_policy(&[0u8; PART_POLICY_LEN]).is_ok());
