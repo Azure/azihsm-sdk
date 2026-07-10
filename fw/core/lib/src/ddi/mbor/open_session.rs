@@ -216,16 +216,26 @@ async fn derive_session_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        // ECDH needs the private scalar, which is the trailing
-        // `priv_key_len` bytes of the vault key. This handles both
-        // on-storage layouts: the Uno PAL stores `pub(96) ‖ priv(48)`
-        // while the std PAL stores the bare `priv(48)`.
+        // The session-encryption key is stored as
+        // `pub(pub_key_len) ‖ priv(priv_key_len)`; ECDH needs the private
+        // scalar. Split off the leading public key so a blob that is not in
+        // this layout (e.g. a bare private key with no public half) is
+        // rejected up front rather than silently keying ECDH on the wrong
+        // bytes.
+        let pub_key_len = HsmEccCurve::P384.pub_key_len();
         let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let sess_enc_blob = pal.vault_key(io, sess_enc_key_id)?;
-        if sess_enc_blob.len() < priv_key_len {
+        if sess_enc_blob.len() < pub_key_len + priv_key_len {
             return Err(HsmError::InternalError);
         }
-        let (_head, priv_key) = sess_enc_blob.split_at(sess_enc_blob.len() - priv_key_len);
+        let (_pub_key, priv_key) = sess_enc_blob.split_at(pub_key_len);
+        let priv_key = &priv_key[..priv_key_len];
+        // A zero private scalar is invalid for ECDH and indicates a corrupt
+        // or uninitialised vault slot; reject it rather than deriving a
+        // degenerate shared secret.
+        if priv_key.iter().all(|&b| b == 0) {
+            return Err(HsmError::InternalError);
+        }
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

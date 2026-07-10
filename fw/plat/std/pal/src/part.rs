@@ -918,9 +918,14 @@ impl StdHsmPal {
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// Generate an ECC P-384 key pair, store the raw HSM-format private
-    /// key (scalar `d`, 48 bytes) in the vault, and write the raw public
-    /// key coordinates (x ∥ y) into `pub_key_out`.
+    /// Generate an ECC P-384 key pair, store it in the vault, and write
+    /// the raw public key coordinates (x ∥ y) into `pub_key_out`.
+    ///
+    /// The stored vault blob depends on `kind`: the `EstablishCred` and
+    /// `SessionEncryption` keys are stored as `pub(96) ‖ priv(48)` (144 B,
+    /// matching the Uno PAL and the reference on-storage layout, so ECDH
+    /// derivation can split off the public half); every other kind stores
+    /// the bare raw HSM-format private scalar `d` (48 B for P-384).
     ///
     /// `big_endian` selects the public-key byte order (the BE↔LE flip is
     /// the driver's responsibility): `true` yields OpenSSL big-endian
@@ -951,16 +956,30 @@ impl StdHsmPal {
             .pub_coords(&pub_key, big_endian, pub_key_out)
             .await?;
 
-        // Export private key as raw HSM scalar bytes (48 B for P-384)
-        // and store them in the vault.
+        // Export private key as raw HSM scalar bytes (48 B for P-384).
         let priv_len = pk.hsm_bytes_len();
         let mut priv_buf = vec![0u8; priv_len];
         pk.to_hsm_bytes(&mut priv_buf[..priv_len])
             .map_err(|_| HsmError::EccExportError)?;
 
+        // The establish-credential and session-encryption keys are stored
+        // as `pub(P384_PUB_KEY_LEN) ‖ priv(priv_len)` (144 B), matching the
+        // Uno PAL's `build_enable_key_blob` and the reference on-storage
+        // layout, so the ECDH derivation can split off the public half.
+        // Every other kind stores the bare private scalar.
+        let key_blob: Vec<u8> = match kind {
+            HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
+                let mut blob = Vec::with_capacity(P384_PUB_KEY_LEN + priv_len);
+                blob.extend_from_slice(&pub_key_out[..P384_PUB_KEY_LEN]);
+                blob.extend_from_slice(&priv_buf[..priv_len]);
+                blob
+            }
+            _ => priv_buf,
+        };
+
         let table = self.table_mut();
         let entry = &mut table.entries[pid as usize];
-        entry.vault.create(&priv_buf[..priv_len], kind, None, attrs)
+        entry.vault.create(&key_blob, kind, None, attrs)
     }
 
     /// Clear all state associated with an enabled partition (internal keys,
