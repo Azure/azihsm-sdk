@@ -383,14 +383,23 @@ async fn restore_part_local_mk<P: HsmPal>(
     // `unmask` decrypts the envelope in place in the request buffer — no
     // scratch staging copy needed.
     let view = unmask(pal, io, local_bmk, prev).await?;
-    if view.target_key.len() != out_mk.len() {
+    let len_ok = view.target_key.len() == out_mk.len();
+    if len_ok {
+        out_mk.copy_from_slice(view.target_key);
+    }
+    // `view` borrows `prev`; end that borrow before wiping the buffer.
+    drop(view);
+    // Wipe the recovered plaintext `PartLocalMK` left in the request DMA
+    // buffer so it does not linger (until the IO slot is recycled) longer
+    // than necessary.
+    prev.fill(0);
+    if !len_ok {
         // Firmware invariant: the AEAD tag has already verified the
         // envelope, so a genuine (firmware-minted) backup always holds a
         // `PART_LOCAL_MK_LEN` key — a mismatch signals corruption / a
         // sizing bug, not a client-supplied error.
         return Err(HsmError::InternalError);
     }
-    out_mk.copy_from_slice(view.target_key);
     Ok(())
 }
 
