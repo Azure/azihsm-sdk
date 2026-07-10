@@ -3,7 +3,7 @@
 
 #include "rsa_static_der.hpp"
 
-// Pre-generated RSA PKCS#8 DER blobs (one per bit length). This makes the
+// Pre-generated RSA PKCS#8 DER blobs (currently only RSA-2048). This makes the
 // tests fully deterministic. Do not use these blobs outside of tests,
 // as they contain hardcoded private key values.
 

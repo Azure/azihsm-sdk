@@ -23,7 +23,7 @@ class azihsm_rsa_unwrap : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
-// Wraps a pre-generated external RSA PKCS#8 key pair for key_unwrap_pair tests.
+// Wraps a pre-generated external RSA PKCS#8 private key blob for key_unwrap_pair tests.
 static azihsm_status make_wrapped_rsa_pkcs8_blob(
     azihsm_handle wrapping_pub_key,
     uint32_t bit_len,
