@@ -346,7 +346,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha256_plaintext_too_large_rejected)
         ciphertext_buf.len = static_cast<uint32_t>(ciphertext_data.size());
 
         auto encrypt_err = azihsm_crypt_encrypt(&algo, pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_NE(encrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
@@ -380,7 +380,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_plaintext_too_large_rejected)
         ciphertext_buf.len = static_cast<uint32_t>(ciphertext_data.size());
 
         auto encrypt_err = azihsm_crypt_encrypt(&algo, pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_NE(encrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
@@ -1265,7 +1265,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_plaintext_too_large_rejected)
         ciphertext_buf.len = static_cast<uint32_t>(ciphertext_data.size());
 
         auto encrypt_err = azihsm_crypt_encrypt(&algo, pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_NE(encrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
