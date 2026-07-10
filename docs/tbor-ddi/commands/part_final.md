@@ -82,7 +82,8 @@ Carries the 164-byte `local_mk_backup` envelope.
 
 | Error | Cause |
 |---|---|
-| `TborInvalidFixedLength` | `part_policy` not 484 B, `cert_descriptors` not a 1–2-element multiple of 3 B, or a present `prev_local_mk_backup` not 164 B |
+| `TborInvalidFixedLength` | Decode-time length-bound violation: `part_policy` ≠ 484 B, `cert_descriptors` byte length outside `3..=6` B, or `prev_local_mk_backup` > 164 B |
+| `InvalidArg` | Handler-time validation: `cert_descriptors` within range but not a whole number of 3-byte descriptors (e.g. 4 or 5 B), or a present `prev_local_mk_backup` not exactly 164 B |
 | `DdiDecodeFailed` | Malformed request body |
 
 ## See also
