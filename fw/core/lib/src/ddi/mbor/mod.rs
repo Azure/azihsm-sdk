@@ -167,7 +167,6 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
-        DdiOp::OpenSession => unreachable!("OpenSession is handled before this match"),
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr).await,
         DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr).await,
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
