@@ -20,7 +20,8 @@ use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 /// Exact length of a non-empty `local_mk` backup envelope the API
 /// enforces before the round-trip (mirrors the firmware's fixed
 /// `header(8) + iv(12) + aad(96) + ct(32) + tag(16)` envelope).
-const LOCAL_MK_BACKUP_LEN: usize = 164;
+const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
 use crate::emu_helpers::*;
 
