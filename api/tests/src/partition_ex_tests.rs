@@ -1,0 +1,209 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Integration tests for the TBOR partition-provisioning session API
+//! (`HsmSession::part_init_ex` and `HsmSession::part_final`).
+//!
+//! These exercise the input-validation guards through the *public*
+//! `azihsm_api` surface against the FW emulator. Each guard returns
+//! before the device round-trip, so the checks are deterministic and do
+//! not require a FW-accepted policy / cert chain.
+
+use azihsm_api::*;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::MAX_CERTS;
+use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
+
+/// Exact length of a non-empty `local_mk` backup envelope the API
+/// enforces before the round-trip (mirrors the firmware's fixed
+/// `header(8) + iv(12) + aad(96) + ct(32) + tag(16)` envelope).
+const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+
+use crate::emu_helpers::*;
+
+/// Well-formed fixed-size inputs for the non-`part_policy` `PartInit`
+/// fields.
+fn valid_part_init_inputs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![0u8; MACH_SEED_LEN],
+        vec![0u8; POTA_THUMBPRINT_LEN],
+        vec![0u8; SATA_THUMBPRINT_LEN],
+    )
+}
+
+/// A one-entry PTA cert placeholder (4 opaque bytes). The host-side
+/// guards never parse DER, so its contents are irrelevant.
+fn one_cert() -> Vec<u8> {
+    vec![0u8; 4]
+}
+
+// ── PartInit ────────────────────────────────────────────────────────────────
+
+/// A wrong-length `part_policy` is rejected up front, before any device
+/// round-trip.
+#[test]
+fn part_init_rejects_bad_part_policy_len() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, pota, sata) = valid_part_init_inputs();
+    let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
+
+    let res = session.part_init_ex(&mach_seed, &bad_policy, &pota, &sata, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// A wrong-length `pota_thumbprint` is rejected.
+#[test]
+fn part_init_rejects_bad_pota_thumbprint_len() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, _pota, sata) = valid_part_init_inputs();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let bad_pota = vec![0u8; POTA_THUMBPRINT_LEN + 1];
+
+    let res = session.part_init_ex(&mach_seed, &policy, &bad_pota, &sata, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// A wrong-length `sata_thumbprint` is rejected.
+#[test]
+fn part_init_rejects_bad_sata_thumbprint_len() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, pota, _sata) = valid_part_init_inputs();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let bad_sata = vec![0u8; SATA_THUMBPRINT_LEN + 1];
+
+    let res = session.part_init_ex(&mach_seed, &policy, &pota, &bad_sata, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// A present-but-wrong-length `sapota_thumbprint` is rejected.
+#[test]
+fn part_init_rejects_bad_sapota_thumbprint_len() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, pota, sata) = valid_part_init_inputs();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
+
+    let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, Some(&bad_sapota));
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// `PartFinal` rejects a wrong-length `part_policy` before any device
+/// round-trip.
+#[test]
+fn part_final_rejects_bad_part_policy_len() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
+
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+    let res = session.part_final(&bad_policy, &chain, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// `PartFinal` rejects an empty cert chain.
+#[test]
+fn part_final_rejects_empty_cert_descriptors() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+
+    let res = session.part_final(&policy, &[], None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// `PartFinal` rejects a cert chain containing an empty (zero-length)
+/// certificate, which is not valid DER and would yield a zero-length
+/// out-of-band descriptor.
+#[test]
+fn part_final_rejects_empty_cert() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let empty_cert: Vec<u8> = Vec::new();
+    let chain = [HsmCertDescriptor {
+        cert: empty_cert.as_slice(),
+    }];
+
+    let res = session.part_final(&policy, &chain, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// `PartFinal` rejects more than [`MAX_CERTS`] certificates.
+#[test]
+fn part_final_rejects_too_many_cert_descriptors() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let cert = one_cert();
+    let too_many = vec![
+        HsmCertDescriptor {
+            cert: cert.as_slice()
+        };
+        MAX_CERTS + 1
+    ];
+
+    let res = session.part_final(&policy, &too_many, None);
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// `PartFinal` rejects a `prev_local_mk_backup` whose length is not
+/// exactly [`LOCAL_MK_BACKUP_LEN`] (near-miss under-length), exercising
+/// the fixed-size guard rather than a coarse max-length check.
+#[test]
+fn part_final_rejects_wrong_len_prev_local_mk_backup() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let wrong_len = vec![0u8; LOCAL_MK_BACKUP_LEN - 1];
+
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+    let res = session.part_final(&policy, &chain, Some(&wrong_len));
+    assert!(matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+// ── Host-guard pass-through (request-construction / round-trip) ──────────────
+
+/// Valid-length `PartInit` inputs pass every host-side guard, so the
+/// request is sealed, constructed, and shipped to the device. The call
+/// is therefore never rejected with [`HsmError::InvalidArgument`] (the
+/// host-guard error); it may still fail on-device with a different
+/// error. This exercises the request-construction / TBOR wiring path
+/// that the negative guard tests skip.
+#[test]
+fn part_init_valid_inputs_pass_host_guards() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let (mach_seed, pota, sata) = valid_part_init_inputs();
+    let policy = vec![0u8; PART_POLICY_LEN];
+
+    let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, None);
+    assert!(!matches!(res, Err(HsmError::InvalidArgument)));
+}
+
+/// Valid-length `PartFinal` inputs pass every host-side guard, so the
+/// request is built — the cert chain is concatenated into the OOB
+/// side-band buffer and its `(offset, length)` descriptors derived — and
+/// shipped to the device. The call is therefore never rejected with
+/// [`HsmError::InvalidArgument`]; it may still fail on-device. This
+/// exercises the request-construction / TBOR-OOB wiring path.
+#[test]
+fn part_final_valid_inputs_pass_host_guards() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+    let policy = vec![0u8; PART_POLICY_LEN];
+    let cert = one_cert();
+    let chain = [HsmCertDescriptor { cert: &cert }];
+
+    let res = session.part_final(&policy, &chain, None);
+    assert!(!matches!(res, Err(HsmError::InvalidArgument)));
+}
