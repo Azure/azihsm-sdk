@@ -18,10 +18,10 @@
 //!
 //! # Status
 //!
-//! AES-256-CBC, HKDF, KBKDF, and per-engine RSA-2048 mod-exp (standard and CRT),
-//! ECDH-P384, and ECDSA-P384 are implemented. Further tests (the RNG/DRBG
-//! FW-mode KAT) are appended to [`run_pre_op`] as they are added — each is a
-//! direct call, with per-PKA-engine tests wrapped in a
+//! AES-256-CBC, HKDF, KBKDF, per-engine RSA-2048 mod-exp (standard and CRT),
+//! ECDH-P384, ECDSA-P384, and the RNG/DRBG FW-mode KAT are implemented. Further
+//! tests are appended to [`run_pre_op`] as they are added — each is a direct
+//! call, with per-PKA-engine tests wrapped in a
 //! `for engine in 0..PKA_ENGINES` loop.
 
 mod aes_cbc;
@@ -55,5 +55,9 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
     for engine in 0..pka::PKA_ENGINES {
         pka::run_ecdsa_on_engine(pal, io, engine).await?;
     }
+    // The DRBG FW-mode KAT is state-destructive; it saves and restores the
+    // production DRBG registers internally. Run it last (matching the reference
+    // `preops_cast` ordering) and before any live RNG consumer exists.
+    pal.rng.self_test()?;
     Ok(())
 }
