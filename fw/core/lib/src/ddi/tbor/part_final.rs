@@ -302,7 +302,9 @@ async fn validate_pta_chain<P: HsmPal>(
 
     // The chain is cryptographically valid and POTA-anchored; its
     // terminal (PTA) certificate must carry this partition's PTA key.
-    if pta_from_chain != **pta {
+    // Compare as byte slices (`pta` is a `DmaBuf` DST over `[u8]`).
+    let expected_pta: &[u8] = pta;
+    if &pta_from_chain[..] != expected_pta {
         return Err(HsmError::PartFinalPtaMismatch);
     }
 
