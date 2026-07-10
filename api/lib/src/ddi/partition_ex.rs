@@ -33,19 +33,14 @@ use azihsm_ddi_tbor_types::*;
 
 use super::*;
 
-/// Exact on-the-wire length of a non-empty `local_mk` backup envelope
-/// (`prev_local_mk_backup` / `local_mk_backup`). The firmware pins this
-/// field to exactly this length and treats an empty field as absent;
-/// this constant mirrors the firmware's deterministic AES-256-GCM
-/// `MaskedKey` envelope layout:
-/// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`.
-/// It lives in the API layer so the host-side `part_final_ex` guards can
-/// enforce that firmware contract before the round-trip.
+/// Exact on-the-wire length of a non-empty `local_mk` backup envelope,
+/// pinned by the firmware (empty = absent). Mirrors its AES-256-GCM
+/// `MaskedKey` layout: `header(8) + iv(12) + aad(96) + ct(32) + tag(16)`.
+/// Kept in the API layer so `part_final_ex` can enforce it before the
+/// round-trip.
 const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 
-// Pin the computed length to the wire-documented 164 B so an envelope
-// layout change forces this constant (and the mirror comment) to be
-// revisited.
+// Pin to the documented 164 B so an envelope-layout change is caught here.
 const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
 /// API-layer result of a TBOR `PartInit` provisioning command.
@@ -70,18 +65,11 @@ impl From<TborPartInitResp> for PartInitResult {
     }
 }
 
-/// API-layer result of a TBOR `PartFinal` provisioning command.
-///
-/// Mirrors [`TborPartFinalResp`] with owned bytes so the wire response
-/// type stays confined to the DDI layer and never reaches `HsmSession`
+/// Converts the DDI/wire `PartFinal` response into the API-layer
+/// [`HsmPartFinalExResult`] with owned bytes, so the wire response type
+/// stays confined to the DDI layer and never reaches `HsmSession`
 /// callers.
-#[derive(Debug, Clone, Default)]
-pub struct PartFinalResult {
-    /// Current `local_mk` backup envelope the firmware produced.
-    pub local_mk_backup: Vec<u8>,
-}
-
-impl From<TborPartFinalResp> for PartFinalResult {
+impl From<TborPartFinalResp> for HsmPartFinalExResult {
     fn from(resp: TborPartFinalResp) -> Self {
         Self {
             local_mk_backup: resp.local_mk_backup,
@@ -261,7 +249,7 @@ pub(crate) fn part_final_ex(
     part_policy: &[u8],
     pta_cert_chain: &[HsmCertDescriptor<'_>],
     prev_local_mk_backup: Option<&[u8]>,
-) -> HsmResult<PartFinalResult> {
+) -> HsmResult<HsmPartFinalExResult> {
     if part_policy.len() != PART_POLICY_LEN {
         return Err(HsmError::InvalidArgument);
     }
@@ -321,7 +309,7 @@ pub(crate) fn part_final_ex(
     if resp.local_mk_backup.len() != LOCAL_MK_BACKUP_LEN {
         return Err(HsmError::InternalError);
     }
-    Ok(PartFinalResult::from(resp))
+    Ok(HsmPartFinalExResult::from(resp))
 }
 
 #[cfg(test)]

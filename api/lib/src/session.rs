@@ -176,7 +176,7 @@ impl HsmSession {
         part_policy: &[u8],
         pta_cert_chain: &[HsmCertDescriptor<'_>],
         prev_local_mk_backup: Option<&[u8]>,
-    ) -> HsmResult<PartFinalResult> {
+    ) -> HsmResult<HsmPartFinalExResult> {
         let inner = self.inner.read();
         match &inner.kind {
             SessionKind::Ver2 { .. } => ddi::part_final_ex(

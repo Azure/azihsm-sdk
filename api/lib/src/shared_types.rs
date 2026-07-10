@@ -11,25 +11,32 @@ use zerocopy::*;
 
 /// A single DER-encoded certificate in a certificate chain.
 ///
-/// Borrowed view over one certificate's DER bytes, used by the
+/// Borrowed view over one cert's DER bytes, used by the
 /// partition-provisioning API (e.g. [`HsmSession::part_final`]) to accept
-/// a PTA certificate chain as `&[HsmCertDescriptor]`.
-///
-/// This is a Rust borrowed view, **not** a `#[repr(C)]` / ABI-stable
-/// type: it cannot be shared across the FFI boundary directly. The
-/// intended FFI approach (no native `part_final` surface exists yet) is
-/// for the native layer to convert a C array of `{ data, len }`
-/// certificate buffers into a `&[HsmCertDescriptor]`, wrapping each
-/// buffer's bytes (borrowing the DER, not copying). The wire-level
-/// `(index, length)` descriptors — each referencing an out-of-band SGL
-/// Data Block — stay an internal detail the SDK derives on the caller's
-/// behalf.
+/// a PTA chain as `&[HsmCertDescriptor]`. It is a Rust borrow, **not** an
+/// ABI-stable `#[repr(C)]` type; a future native `part_final` FFI would
+/// build it from a C array of `{ data, len }` buffers (borrowing, not
+/// copying). The wire-level `(index, length)` OOB descriptors stay
+/// internal to the SDK.
 ///
 /// [`HsmSession::part_final`]: crate::HsmSession::part_final
 #[derive(Debug, Clone, Copy)]
 pub struct HsmCertDescriptor<'a> {
     /// DER-encoded bytes of the certificate.
     pub cert: &'a [u8],
+}
+
+/// Result of a security-domain partition-finalization (`part_final_ex`)
+/// command: the artifacts the device returns after finalizing a
+/// partition's security domain.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborPartFinalResp`) is converted into it inside the DDI layer, so the
+/// wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmPartFinalExResult {
+    /// Current `local_mk` backup envelope the firmware produced.
+    pub local_mk_backup: Vec<u8>,
 }
 
 /// Cryptographic key class.
