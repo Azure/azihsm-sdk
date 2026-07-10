@@ -49,8 +49,20 @@
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         mod key_ossl;
+        #[cfg(ossl300)]
         mod rsa_enc_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "rsa_enc_ossl11.rs"]
+        mod rsa_enc_ossl;
+        #[cfg(ossl300)]
         mod rsa_sign_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "rsa_sign_ossl11.rs"]
+        mod rsa_sign_ossl;
+        #[cfg(ossl300)]
+        mod rsa_hash_sign_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "rsa_hash_sign_ossl11.rs"]
         mod rsa_hash_sign_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod key_cng;

@@ -48,7 +48,15 @@
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         mod key_ossl;
+        #[cfg(ossl300)]
         mod ecc_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "ecc_ossl11.rs"]
+        mod ecc_ossl;
+        #[cfg(ossl300)]
+        mod ecdh_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "ecdh_ossl11.rs"]
         mod ecdh_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod key_cng;

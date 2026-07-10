@@ -48,6 +48,10 @@ use super::*;
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         mod key_ossl;
+        #[cfg(ossl300)]
+        mod hmac_ossl;
+        #[cfg(not(ossl300))]
+        #[path = "hmac_ossl11.rs"]
         mod hmac_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod key_cng;
