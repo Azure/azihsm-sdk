@@ -135,6 +135,19 @@ impl HsmSession {
         self.inner.write().set_bmk_session(bmk_session);
     }
 
+    /// Issues TBOR `SdSealingKeyGen` (opcode `0x09`) on this session.
+    ///
+    /// Returns the active TBOR (V2, security-domain) session id, or
+    /// [`HsmError::InvalidSession`] for a V1 session. Used by the DDI
+    /// layer to bind security-domain commands to the session.
+    pub(crate) fn ex_session_id(&self) -> HsmResult<u16> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => Ok(inner.id),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
     /// Issues TBOR `PartInit` (opcode `0x07`) on this CO session.
     ///
     /// Seals `mach_seed` under the session `param_key` and ships it
@@ -148,10 +161,10 @@ impl HsmSession {
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
         sapota_thumbprint: Option<&[u8]>,
-    ) -> HsmResult<PartInitResult> {
+    ) -> HsmResult<HsmPartInitExResult> {
         let inner = self.inner.read();
         match &inner.kind {
-            SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
+            HsmSessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
                 &inner.partition,
                 inner.id,
                 param_key,
@@ -161,7 +174,32 @@ impl HsmSession {
                 sata_thumbprint,
                 sapota_thumbprint,
             ),
-            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `PartFinal` (opcode `0x08`) on this CO session.
+    ///
+    /// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+    /// and the PTA certificate chain (as a list of [`HsmCertDescriptor`]s),
+    /// optionally restoring a prior `local_mk` backup. Only valid on a V2
+    /// session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn part_final(
+        &self,
+        part_policy: &[u8],
+        pta_cert_chain: &[HsmCertDescriptor<'_>],
+        prev_local_mk_backup: Option<&[u8]>,
+    ) -> HsmResult<HsmPartFinalExResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            HsmSessionKind::Ver2 { .. } => ddi::part_final_ex(
+                &inner.partition,
+                inner.id,
+                part_policy,
+                pta_cert_chain,
+                prev_local_mk_backup,
+            ),
+            HsmSessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
 }
@@ -171,7 +209,7 @@ impl HsmSession {
 /// The fields that differ between the V1 `open_session` path and the
 /// V2 `open_session_ex` handshake live here; the shared
 /// identity/rev/partition/epoch fields stay on [`HsmSessionInner`].
-enum SessionKind {
+enum HsmSessionKind {
     /// Version 1 session, established over the single-round-trip
     /// `OpenSession` command.
     Ver1 {
@@ -203,10 +241,10 @@ enum SessionKind {
     },
 }
 
-impl fmt::Debug for SessionKind {
+impl fmt::Debug for HsmSessionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SessionKind::Ver1 {
+            HsmSessionKind::Ver1 {
                 app_id,
                 seed,
                 bmk_session,
@@ -219,7 +257,7 @@ impl fmt::Debug for SessionKind {
                     &format_args!("<redacted; {} bytes>", bmk_session.len()),
                 )
                 .finish(),
-            SessionKind::Ver2 {
+            HsmSessionKind::Ver2 {
                 psk_id,
                 session_type,
                 exported,
@@ -262,7 +300,7 @@ struct HsmSessionInner {
     /// a `reopen_session` call is needed before retrying a key operation.
     last_restore_epoch: u64,
     /// Version-specific session material (V1 vs V2).
-    kind: SessionKind,
+    kind: HsmSessionKind,
 }
 
 impl Drop for HsmSessionInner {
@@ -273,23 +311,23 @@ impl Drop for HsmSessionInner {
     #[instrument(skip_all, fields(session_id = self.id))]
     fn drop(&mut self) {
         let _ = match &self.kind {
-            SessionKind::Ver1 { .. } => {
+            HsmSessionKind::Ver1 { .. } => {
                 self.with_dev(|dev| ddi::close_session(dev, self.id, self.rev))
             }
-            SessionKind::Ver2 { .. } => ddi::close_session_ex(&self.partition, self.id),
+            HsmSessionKind::Ver2 { .. } => ddi::close_session_ex(&self.partition, self.id),
         };
 
         // Wipe sensitive session material from process memory once the
         // session is closed: `seed` for V1, the HPKE `exported` secret
         // for V2, and the device-wrapped `bmk_session` blob for both.
         match &mut self.kind {
-            SessionKind::Ver1 {
+            HsmSessionKind::Ver1 {
                 seed, bmk_session, ..
             } => {
                 seed.zeroize();
                 bmk_session.zeroize();
             }
-            SessionKind::Ver2 {
+            HsmSessionKind::Ver2 {
                 exported,
                 bmk_session,
                 ..
@@ -329,7 +367,7 @@ impl HsmSessionInner {
             rev,
             partition,
             last_restore_epoch: epoch,
-            kind: SessionKind::Ver1 {
+            kind: HsmSessionKind::Ver1 {
                 app_id,
                 seed,
                 bmk_session,
@@ -351,7 +389,7 @@ impl HsmSessionInner {
             rev,
             partition,
             last_restore_epoch: epoch,
-            kind: SessionKind::Ver2 {
+            kind: HsmSessionKind::Ver2 {
                 psk_id: result.psk_id,
                 session_type: result.session_type,
                 exported: result.exported.to_vec(),
@@ -387,8 +425,8 @@ impl HsmSessionInner {
     /// only; `0` for a V2 session).
     pub(crate) fn _app_id(&self) -> u8 {
         match &self.kind {
-            SessionKind::Ver1 { app_id, .. } => *app_id,
-            SessionKind::Ver2 { .. } => 0,
+            HsmSessionKind::Ver1 { app_id, .. } => *app_id,
+            HsmSessionKind::Ver2 { .. } => 0,
         }
     }
 
@@ -397,15 +435,15 @@ impl HsmSessionInner {
     /// than the V1 reopen path).
     pub(crate) fn seed(&self) -> Option<[u8; 48]> {
         match &self.kind {
-            SessionKind::Ver1 { seed, .. } => Some(*seed),
-            SessionKind::Ver2 { .. } => None,
+            HsmSessionKind::Ver1 { seed, .. } => Some(*seed),
+            HsmSessionKind::Ver2 { .. } => None,
         }
     }
 
     /// Returns a clone of the backed-up session masking key.
     pub(crate) fn bmk_session(&self) -> Vec<u8> {
         match &self.kind {
-            SessionKind::Ver1 { bmk_session, .. } | SessionKind::Ver2 { bmk_session, .. } => {
+            HsmSessionKind::Ver1 { bmk_session, .. } | HsmSessionKind::Ver2 { bmk_session, .. } => {
                 bmk_session.clone()
             }
         }
@@ -415,7 +453,8 @@ impl HsmSessionInner {
     /// reopen.
     pub(crate) fn set_bmk_session(&mut self, bmk_session: Vec<u8>) {
         match &mut self.kind {
-            SessionKind::Ver1 { bmk_session: b, .. } | SessionKind::Ver2 { bmk_session: b, .. } => {
+            HsmSessionKind::Ver1 { bmk_session: b, .. }
+            | HsmSessionKind::Ver2 { bmk_session: b, .. } => {
                 *b = bmk_session;
             }
         }

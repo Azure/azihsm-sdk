@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
-use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::*;
 use resiliency_macro::resiliency_open_part;
 use tracing::*;
@@ -582,7 +581,7 @@ impl HsmPartition {
         &self,
         api_rev: HsmApiRev,
         psk_id: u8,
-        session_type: SessionType,
+        session_type: HsmSessionExType,
     ) -> HsmResult<HsmSession> {
         let result = ddi::open_session_ex(self, api_rev, psk_id, session_type)?;
         Ok(HsmSession::new_ex(api_rev, self.clone(), result))

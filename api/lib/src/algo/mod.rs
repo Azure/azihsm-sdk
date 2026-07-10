@@ -42,6 +42,7 @@ mod hash;
 mod hmac;
 mod kdf;
 mod rsa;
+mod sealing;
 mod secret;
 
 pub use aes::*;
@@ -50,6 +51,7 @@ pub use hash::*;
 pub use hmac::*;
 pub use kdf::*;
 pub use rsa::*;
+pub use sealing::*;
 pub use secret::*;
 
 use super::*;

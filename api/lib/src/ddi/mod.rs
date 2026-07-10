@@ -14,6 +14,7 @@ mod partition;
 mod partition_ex;
 mod rsa;
 mod sd_backup;
+mod sd_sealing_key_gen;
 mod session;
 mod session_ex;
 mod tpm;
@@ -31,12 +32,13 @@ pub(crate) use kbkdf::*;
 pub(crate) use key::*;
 pub(crate) use masked_key::*;
 pub(crate) use partition::*;
-pub use partition_ex::PartInitResult;
+pub use partition_ex::LOCAL_MK_BACKUP_LEN;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
 // WIP: SD backup/restore wrappers have no callers yet (see sd_backup.rs).
 #[allow(unused_imports)]
 pub(crate) use sd_backup::*;
+pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
@@ -102,6 +104,16 @@ impl From<DdiError> for HsmError {
 }
 
 pub(crate) type HsmKeyHandle = u32;
+
+/// Maximum size, in bytes, of the `pta_csr` buffer written by the
+/// partition-provisioning `part_init` command. Owned by the API layer
+/// but pinned to the TBOR wire-schema bound so the two cannot drift.
+pub const PTA_CSR_MAX_LEN: usize = azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
+
+/// Maximum size, in bytes, of the `pta_report` buffer written by the
+/// partition-provisioning `part_init` command. Owned by the API layer
+/// but pinned to the TBOR wire-schema bound so the two cannot drift.
+pub const PTA_REPORT_MAX_LEN: usize = azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
 
 /// Extracts the key ID from a packed HSM key handle.
 ///

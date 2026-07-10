@@ -12,8 +12,9 @@ mod shared_types;
 pub mod traits;
 
 pub use algo::*;
-pub use azihsm_ddi_tbor_types::SessionType;
-pub use ddi::PartInitResult;
+pub use ddi::LOCAL_MK_BACKUP_LEN;
+pub use ddi::PTA_CSR_MAX_LEN;
+pub use ddi::PTA_REPORT_MAX_LEN;
 pub use error::*;
 pub use op::*;
 pub use partition::*;

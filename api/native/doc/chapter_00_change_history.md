@@ -20,5 +20,9 @@
 |            | Added `api_rev` parameter to `azihsm_part_open`                 |
 |            | Removed `api_rev` parameter from `azihsm_sess_open`             |
 |            | Added `AZIHSM_STATUS_UNSUPPORTED_API_REVISION` error code       |
+| 07/08/2026 | Added Security Domain API chapter (`azihsm_sess_ex_open`,        |
+|            | `azihsm_sess_ex_part_init`)                                      |
+|            | Added `azihsm_session_ex_type` enum                              |
+| 07/10/2026 | Added `azihsm_sess_ex_part_final` (Security Domain API)          |
 
 \pagebreak

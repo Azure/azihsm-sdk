@@ -92,7 +92,7 @@ pub struct HsmResiliencyConfig {
 - Called under the resiliency lock, so it should not block
   indefinitely.
 
-For C API signatures, see `api/native/doc/chapter_09_data_structs.md`
+For C API signatures, see `api/native/doc/chapter_10_data_structs.md`
 (`azihsm_resiliency_config`, `azihsm_resiliency_storage_ops`,
 `azihsm_resiliency_lock_ops`, `azihsm_pota_callback_ops`).
 

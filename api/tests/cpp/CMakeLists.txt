@@ -67,6 +67,7 @@ set(SOURCE
     utils/resiliency_config.cpp
     partition_tests.cpp 
     session_tests.cpp 
+    session_ex_tests.cpp 
     handle_mgmt_tests.cpp
     multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
@@ -99,6 +100,16 @@ set(SOURCE
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Expose the selected DDI backend to the C++ sources as a compile definition.
+# `CARGO_FEATURE_*` env vars only exist during the Rust build script, not during
+# C++ compilation, so tests that require a specific backend gate on these macros.
+# `AZIHSM_FEATURE_EMU` is defined only when the emu (in-process firmware) backend
+# is built; happy-path tests that exercise the TBOR transport are gated on it so
+# they are excluded from the mock lane (mock does not implement `exec_op_tbor`).
+if(TEST_FEATURES MATCHES "(^| )emu($| )")
+    target_compile_definitions(azihsm_api_cpp_tests PRIVATE AZIHSM_FEATURE_EMU)
+endif()
 
 if(UNIX)
     find_package(OpenSSL REQUIRED)
