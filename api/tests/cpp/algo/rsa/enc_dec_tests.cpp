@@ -22,7 +22,7 @@ class azihsm_rsa_encrypt_decrypt : public ::testing::Test
 };
 
 // Imports the hardcoded RSA-2048 key pair as an encrypt/decrypt key using RSA key unwrap.
-void import_unwrapped_rsa_keypair_for_enc_dec(
+azihsm_status import_unwrapped_rsa_keypair_for_enc_dec(
     azihsm_handle session,
     const key_props &import_props,
     auto_key &unwrapped_priv_key,
@@ -37,11 +37,18 @@ void import_unwrapped_rsa_keypair_for_enc_dec(
         wrapping_priv_key.get_ptr(),
         wrapping_pub_key.get_ptr()
     );
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(wrapping_priv_key.get(), 0);
-    ASSERT_NE(wrapping_pub_key.get(), 0);
 
-    auto import_err = import_keypair(
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return err;
+    }
+
+    if (wrapping_priv_key.get() == 0 || wrapping_pub_key.get() == 0)
+    {
+        return AZIHSM_STATUS_INVALID_KEY;
+    }
+
+    return import_keypair(
         wrapping_pub_key.get(),
         wrapping_priv_key.get(),
         rsa_private_key_der,
@@ -49,10 +56,6 @@ void import_unwrapped_rsa_keypair_for_enc_dec(
         unwrapped_priv_key.get_ptr(),
         unwrapped_pub_key.get_ptr()
     );
-
-    ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(unwrapped_priv_key.get(), 0);
-    ASSERT_NE(unwrapped_pub_key.get(), 0);
 }
 
 // Builds an RSA PKCS#1 v1.5 encryption/decryption algorithm descriptor.
@@ -85,6 +88,26 @@ azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha384_params()
     return params;
 }
 
+// Builds RSA OAEP parameters using SHA-1 for both OAEP hash and MGF1 hash.
+azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha1_params()
+{
+    azihsm_algo_rsa_pkcs_oaep_params params = {};
+    params.hash_algo_id = AZIHSM_ALGO_ID_SHA1;
+    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA1;
+    params.label = nullptr;
+    return params;
+}
+
+// Builds RSA OAEP parameters using SHA-512 for both OAEP hash and MGF1 hash.
+azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha512_params()
+{
+    azihsm_algo_rsa_pkcs_oaep_params params = {};
+    params.hash_algo_id = AZIHSM_ALGO_ID_SHA512;
+    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA512;
+    params.label = nullptr;
+    return params;
+}
+
 // Builds an RSA OAEP algorithm descriptor from the provided OAEP parameters.
 azihsm_algo make_oaep_algo(azihsm_algo_rsa_pkcs_oaep_params &params)
 {
@@ -108,26 +131,6 @@ key_props rsa_import_props(bool encrypt, bool decrypt)
         .decrypt = decrypt,
     };
     return props;
-}
-
-// Builds RSA OAEP parameters using SHA-1 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha1_params()
-{
-    azihsm_algo_rsa_pkcs_oaep_params params = {};
-    params.hash_algo_id = AZIHSM_ALGO_ID_SHA1;
-    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA1;
-    params.label = nullptr;
-    return params;
-}
-
-// Builds RSA OAEP parameters using SHA-512 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha512_params()
-{
-    azihsm_algo_rsa_pkcs_oaep_params params = {};
-    params.hash_algo_id = AZIHSM_ALGO_ID_SHA512;
-    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA512;
-    params.label = nullptr;
-    return params;
 }
 
 // Verifies RSA OAEP encrypt/decrypt round-trip succeeds with an unwrapped RSA key pair.
@@ -319,7 +322,13 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha256_plaintext_too_large_rejected)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // One byte over RSA-2048 OAEP SHA-256 max plaintext.
         std::vector<uint8_t> plaintext_data(191, 0x41);
@@ -349,7 +358,12 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_plaintext_too_large_rejected)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // One byte over RSA-2048 PKCS#1 v1.5 max plaintext.
         std::vector<uint8_t> plaintext_data(246, 0x42);
@@ -378,8 +392,12 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_rejects_small_ciphertext_buffer)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
 
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "small buffer test";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -409,8 +427,12 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_small_plaintext_buffer)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
 
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "Hello, RSA encryption!";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -448,7 +470,12 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_corrupted_oaep_ciphertext)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "Hello, RSA encryption!";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -489,8 +516,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_oaep_hash_mismatch)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "Hello, RSA encryption!";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -532,8 +562,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_with_public_key_rejected)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "Hello, RSA encryption!";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -570,8 +603,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha256_max_plaintext_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         // RSA-2048 OAEP SHA-256 max plaintext:
         // k - 2*hLen - 2 = 256 - 2*32 - 2 = 190 bytes.
         std::vector<uint8_t> plaintext_data(190, 0x41);
@@ -615,7 +651,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_max_plaintext_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // RSA-2048 PKCS#1 v1.5 max plaintext:
         // k - 11 = 256 - 11 = 245 bytes.
@@ -659,7 +699,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_empty_plaintext_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> plaintext_data;
 
@@ -698,8 +742,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_empty_ciphertext)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         auto algo = make_rsa_pkcs_algo();
 
         azihsm_buffer ciphertext_buf = {};
@@ -724,8 +771,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_truncated_ciphertext)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "truncate test";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -763,8 +813,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_wrong_padding_scheme)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
-
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
         const char *plaintext = "padding mismatch";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
@@ -805,7 +858,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_encryption_is_non_deterministic)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "same input";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -850,7 +907,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_encryption_is_non_deterministic)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "same input";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -896,7 +957,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, same_key_supports_pkcs1_and_oaep)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *pkcs_plaintext = "pkcs1";
         std::vector<uint8_t> pkcs_plaintext_data(
@@ -981,7 +1046,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_same_ciphertext_twice_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "repeat decrypt";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -1033,7 +1102,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_with_new_algo_instance_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "stateless test";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -1076,7 +1149,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_encrypt_decrypt_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "oaep sha512";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
@@ -1117,7 +1194,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_max_plaintext_succeeds)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // RSA-2048 OAEP SHA512 max plaintext:
         // 256 - 2*64 - 2 = 126 bytes.
@@ -1159,7 +1240,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_plaintext_too_large_rejected)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // One byte over RSA-2048 OAEP SHA512 max plaintext.
         std::vector<uint8_t> plaintext_data(127, 0x42);
@@ -1190,7 +1275,11 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_to_sha1_hash_mismatch_rejected)
         auto_key pub_key;
 
         auto props = rsa_import_props(true, true);
-        import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        auto import_err =
+            import_unwrapped_rsa_keypair_for_enc_dec(session, props, priv_key, pub_key);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *plaintext = "oaep sha512 sha1 mismatch";
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
