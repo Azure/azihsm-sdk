@@ -53,32 +53,6 @@ static azihsm_status kbkdf_derive_with_custom_params(
     );
 }
 
-static azihsm_status kbkdf_derive_from_secret(
-    azihsm_handle session,
-    azihsm_handle secret,
-    azihsm_algo_id hmac_algo_id,
-    key_props props,
-    azihsm_buffer *label,
-    azihsm_buffer *context,
-    auto_key &derived_key
-)
-{
-    azihsm_algo_kbkdf_counter_params kbkdf_params{};
-    azihsm_algo kbkdf_algo{};
-    build_kbkdf_counter_algo(kbkdf_params, kbkdf_algo, hmac_algo_id, label, context);
-
-    std::vector<azihsm_key_prop> derived_key_props;
-    azihsm_key_prop_list derived_key_prop_list = build_key_prop_list(props, derived_key_props);
-
-    return azihsm_key_derive(
-        session,
-        &kbkdf_algo,
-        secret,
-        &derived_key_prop_list,
-        derived_key.get_ptr()
-    );
-}
-
 static azihsm_status kbkdf_derive_with_algo(
     azihsm_handle session,
     azihsm_algo *algo,
