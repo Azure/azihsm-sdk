@@ -165,6 +165,29 @@ struct PartInitInputs
         params.sapota_thumbprint = nullptr;
     }
 };
+
+// Well-formed (non-empty, non-null) finalization inputs: a valid policy buffer
+// and a one-entry PTA cert chain. Contents/lengths are irrelevant for the
+// pre-provisioning validation paths these tests cover, since the FFI rejects
+// them before reaching `part_final_ex`.
+struct PartFinalInputs
+{
+    std::vector<uint8_t> part_policy = std::vector<uint8_t>(32, 0);
+    std::vector<uint8_t> cert = std::vector<uint8_t>(4, 0);
+    azihsm_buffer part_policy_buf{};
+    azihsm_buffer cert_buf{};
+    azihsm_sess_ex_part_final_params params{};
+
+    PartFinalInputs()
+    {
+        part_policy_buf = { part_policy.data(), static_cast<uint32_t>(part_policy.size()) };
+        cert_buf = { cert.data(), static_cast<uint32_t>(cert.size()) };
+        params.part_policy = &part_policy_buf;
+        params.pta_cert_chain = &cert_buf; // single-element array
+        params.pta_cert_count = 1;
+        params.prev_local_mk_backup = nullptr;
+    }
+};
 } // namespace
 
 // A NULL `params` pointer is rejected before any output buffer is touched.
@@ -295,6 +318,131 @@ TEST_F(azihsm_sess_ex, part_init_null_output_probe)
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         EXPECT_GT(pta_csr.len, 0u);
         EXPECT_GT(pta_report.len, 0u);
+    });
+}
+
+// A NULL `params` pointer is rejected before any output buffer is touched.
+TEST_F(azihsm_sess_ex, part_final_null_params)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        uint8_t out_byte = 0;
+        azihsm_buffer local_mk_backup{ &out_byte, 1 };
+
+        auto err = azihsm_sess_ex_part_final(sess_handle, nullptr, &local_mk_backup);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// A NULL `pta_cert_chain` is rejected as INVALID_ARGUMENT.
+TEST_F(azihsm_sess_ex, part_final_null_cert_chain)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        PartFinalInputs in;
+        in.params.pta_cert_chain = nullptr;
+        in.params.pta_cert_count = 0;
+
+        uint8_t out_byte = 0;
+        azihsm_buffer local_mk_backup{ &out_byte, 1 };
+
+        auto err = azihsm_sess_ex_part_final(sess_handle, &in.params, &local_mk_backup);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// An undersized output buffer is rejected with BUFFER_TOO_SMALL before the
+// partition is finalized, with `len` set to the required capacity.
+TEST_F(azihsm_sess_ex, part_final_buffer_too_small)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        PartFinalInputs in;
+        uint8_t out_byte = 0;
+        azihsm_buffer local_mk_backup{ &out_byte, 1 };
+
+        auto err = azihsm_sess_ex_part_final(sess_handle, &in.params, &local_mk_backup);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        EXPECT_GT(local_mk_backup.len, 1u);
+    });
+}
+
+// A NULL `ptr` with `len == 0` is a valid size probe: it returns
+// BUFFER_TOO_SMALL with `len` set to the required capacity.
+TEST_F(azihsm_sess_ex, part_final_null_output_probe)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        PartFinalInputs in;
+        azihsm_buffer local_mk_backup{ nullptr, 0 };
+
+        auto err = azihsm_sess_ex_part_final(sess_handle, &in.params, &local_mk_backup);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        EXPECT_GT(local_mk_backup.len, 0u);
     });
 }
 #endif // AZIHSM_FEATURE_EMU
