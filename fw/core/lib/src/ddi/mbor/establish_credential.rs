@@ -345,15 +345,9 @@ async fn derive_credential_keys<P: HsmPal>(
         let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let est_cred_blob = pal.vault_key(io, est_cred_key_id)?;
         if est_cred_blob.len() != pub_key_len + priv_key_len {
-            return Err(HsmError::InternalError);
+            return Err(HsmError::EccInvalidKeyLength);
         }
         let (_pub_key, priv_key) = est_cred_blob.split_at(pub_key_len);
-        // A zero private scalar is invalid for ECDH and indicates a corrupt
-        // or uninitialised vault slot; reject it rather than deriving a
-        // degenerate shared secret.
-        if priv_key.iter().all(|&b| b == 0) {
-            return Err(HsmError::InternalError);
-        }
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

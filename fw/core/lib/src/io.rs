@@ -168,39 +168,32 @@ impl<P: HsmPal> Hsm<P> {
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
-            // OpenSession reports its freshly-allocated id here (via the
-            // out-param) so we can carry it in the CQE.
-            let mut opened_sess_id: Option<u16> = None;
             let dispatch_result = match Self::validate_session(
                 &hdr,
                 session_ctrl,
                 params.session_flags,
                 params.sqe_session_id,
             ) {
-                Ok(()) => {
-                    ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr, &mut opened_sess_id)
-                        .await
-                }
+                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
                 Err(e) => Err(e),
             };
 
             // Fill the CQE session fields so the host can track the session
-            // per file handle: a successful OpenSession returns the newly
+            // per file handle: a successful OpenSession carries the newly
             // allocated id in `session_id` (which sets `session_id_valid`), and
             // a successful CloseSession additionally sets `session_closed`.
             // Both are left cleared on any dispatch failure so the fields are
             // only populated on success.
-            let (cqe_sess_id, cqe_closed) = if dispatch_result.is_ok() {
-                match session_ctrl {
-                    SessionCtrl::Open => (opened_sess_id, false),
+            let (cqe_sess_id, cqe_closed) = match &dispatch_result {
+                Ok(out) => match session_ctrl {
+                    SessionCtrl::Open => (out.session_id, false),
                     SessionCtrl::Close => (hdr.sess_id, true),
                     _ => (None, false),
-                }
-            } else {
-                (None, false)
+                },
+                Err(_) => (None, false),
             };
 
-            let resp: &DmaBuf = dispatch_result.or_else(|status| {
+            let resp: &DmaBuf = dispatch_result.map(|out| out.resp).or_else(|status| {
                 self.pal()
                     .dma_alloc_var(io, |buf| ddi::mbor::encode_ddi_err(hdr.op, status, buf))
                     .op_status(HostStatus::INTERNAL_ERROR)

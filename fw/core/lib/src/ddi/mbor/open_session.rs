@@ -63,8 +63,7 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
-    out_sess_id: &mut Option<u16>,
-) -> HsmResult<&'p DmaBuf> {
+) -> HsmResult<DispatchResult<'p>> {
     let mut body: DdiOpenSessionReq = decoder.decode_data()?;
 
     let _lock = pal.partition_lock(io).await?;
@@ -133,18 +132,8 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         .session_create(io, &api_rev_bytes, mk_session, None)
         .await?;
 
-    // Surface the freshly-allocated session id so the IO layer can place it
-    // in the CQE, letting the host driver register the session against the
-    // calling file handle (required for the later CloseSession lookup).
-    *out_sess_id = Some(u16::from(sess_id));
-
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
-    //
-    // `session_create` above already committed the session slot. If encoding
-    // the response fails, the host never learns the session id (the CQE
-    // omits it on a handler error), so best-effort destroy the session to
-    // avoid leaking a slot the host could never close.
-    let resp = match encode_response(
+    let resp = encode_response(
         pal,
         io,
         hdr,
@@ -154,17 +143,16 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         crate::part_state::part_mfgr_svn(pal),
         u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?,
     )
-    .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            *out_sess_id = None;
-            let _ = pal.session_destroy(io, sess_id).await;
-            return Err(e);
-        }
-    };
+    .await?;
 
-    Ok(resp)
+    // Surface the new session id to the IO layer for the CQE (only on the
+    // success path, since the `?` above returns early on failure), letting the
+    // host driver register the session against the calling file handle for the
+    // later CloseSession lookup.
+    Ok(DispatchResult {
+        resp,
+        session_id: Some(u16::from(sess_id)),
+    })
 }
 
 /// Performs all fail-fast checks before any cryptographic work.
@@ -239,15 +227,9 @@ async fn derive_session_credential_keys<P: HsmPal>(
         let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let sess_enc_blob = pal.vault_key(io, sess_enc_key_id)?;
         if sess_enc_blob.len() != pub_key_len + priv_key_len {
-            return Err(HsmError::InternalError);
+            return Err(HsmError::EccInvalidKeyLength);
         }
         let (_pub_key, priv_key) = sess_enc_blob.split_at(pub_key_len);
-        // A zero private scalar is invalid for ECDH and indicates a corrupt
-        // or uninitialised vault slot; reject it rather than deriving a
-        // degenerate shared secret.
-        if priv_key.iter().all(|&b| b == 0) {
-            return Err(HsmError::InternalError);
-        }
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

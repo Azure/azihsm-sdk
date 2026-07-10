@@ -47,6 +47,7 @@
 
 use azihsm_crypto::*;
 use azihsm_fw_hsm_pal_traits::POLICY_HASH_LEN;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
@@ -956,42 +957,32 @@ impl StdHsmPal {
             .pub_coords(&pub_key, big_endian, pub_key_out)
             .await?;
 
-        // Export private key as raw HSM scalar bytes (48 B for P-384).
+        // Export the private key as raw HSM scalar bytes (48 B for P-384).
+        // `Zeroizing` scrubs the transient heap copy on drop once the vault
+        // owns its own copy.
         let priv_len = pk.hsm_bytes_len();
-        let mut priv_buf = vec![0u8; priv_len];
+        let mut priv_buf = Zeroizing::new(vec![0u8; priv_len]);
         pk.to_hsm_bytes(&mut priv_buf[..priv_len])
             .map_err(|_| HsmError::EccExportError)?;
 
-        // The establish-credential and session-encryption keys are stored
-        // as `pub(P384_PUB_KEY_LEN) ‖ priv(priv_len)` (144 B), matching the
-        // Uno PAL's `build_enable_key_blob` and the reference on-storage
-        // layout, so the ECDH derivation can split off the public half.
-        // Every other kind stores the bare private scalar. `mem::take` moves
-        // the scalar out for the bare case (leaving `priv_buf` empty) so both
-        // buffers can be scrubbed uniformly below.
-        let mut key_blob: Vec<u8> = match kind {
+        // The establish-credential and session-encryption keys are stored as
+        // `pub(P384_PUB_KEY_LEN) ‖ priv(priv_len)` (144 B) — matching the Uno
+        // PAL's `build_enable_key_blob` and the reference on-storage layout so
+        // ECDH can split off the public half; every other kind stores the bare
+        // private scalar.
+        let key_blob = match kind {
             HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
-                let mut blob = Vec::with_capacity(P384_PUB_KEY_LEN + priv_len);
+                let mut blob = Zeroizing::new(Vec::with_capacity(P384_PUB_KEY_LEN + priv_len));
                 blob.extend_from_slice(&pub_key_out[..P384_PUB_KEY_LEN]);
                 blob.extend_from_slice(&priv_buf[..priv_len]);
                 blob
             }
-            _ => core::mem::take(&mut priv_buf),
+            _ => priv_buf,
         };
 
-        let result = {
-            let table = self.table_mut();
-            let entry = &mut table.entries[pid as usize];
-            entry.vault.create(&key_blob, kind, None, attrs)
-        };
-
-        // Scrub the transient private-key copies from the heap now that the
-        // vault owns its own copy (best-effort `fill(0)`, mirroring
-        // `provision_unwrapping_key`). Runs on the error path too.
-        priv_buf.fill(0);
-        key_blob.fill(0);
-
-        result
+        let table = self.table_mut();
+        let entry = &mut table.entries[pid as usize];
+        entry.vault.create(&key_blob, kind, None, attrs)
     }
 
     /// Clear all state associated with an enabled partition (internal keys,
