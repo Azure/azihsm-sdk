@@ -32,10 +32,14 @@ pub(crate) async fn close_session<'p, P: HsmPal>(
     let _body: DdiCloseSessionReq = decoder.decode_data()?;
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
-    pal.session_destroy(io, HsmSessId::from(sess_id)).await?;
 
-    // Echo the closed session id back in the response header so the
-    // host can confirm which session was torn down.
+    // Build the response BEFORE tearing down the session. The host tracks
+    // the close from the CQE `session_closed` bit, which the IO layer only
+    // sets when this handler returns `Ok`. Destroying first and then failing
+    // to encode would leave the session gone while the CQE still reports it
+    // open, desyncing the host driver's per-file-handle session tracking.
+    // Echo the closed session id back in the header so the host can confirm
+    // which session was torn down.
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
             &super::success_hdr_sess(hdr, DdiOp::CloseSession, sess_id),
@@ -43,5 +47,8 @@ pub(crate) async fn close_session<'p, P: HsmPal>(
             buf,
         )
     })?;
+
+    pal.session_destroy(io, HsmSessId::from(sess_id)).await?;
+
     Ok(resp)
 }

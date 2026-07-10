@@ -335,20 +335,19 @@ async fn derive_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        // The establish-credential key is stored as
+        // The establish-credential key is stored as exactly
         // `pub(pub_key_len) ‖ priv(priv_key_len)`; ECDH needs the private
-        // scalar. Split off the leading public key so a blob that is not in
-        // this layout (e.g. a bare private key with no public half) is
-        // rejected up front rather than silently keying ECDH on the wrong
-        // bytes.
+        // scalar. Require that exact length and split off the leading public
+        // key, so a blob that is not `pub ‖ priv` — a bare private key, or one
+        // with extra trailing bytes — is rejected rather than silently keying
+        // ECDH on the wrong bytes or masking vault corruption.
         let pub_key_len = HsmEccCurve::P384.pub_key_len();
         let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let est_cred_blob = pal.vault_key(io, est_cred_key_id)?;
-        if est_cred_blob.len() < pub_key_len + priv_key_len {
+        if est_cred_blob.len() != pub_key_len + priv_key_len {
             return Err(HsmError::InternalError);
         }
         let (_pub_key, priv_key) = est_cred_blob.split_at(pub_key_len);
-        let priv_key = &priv_key[..priv_key_len];
         // A zero private scalar is invalid for ECDH and indicates a corrupt
         // or uninitialised vault slot; reject it rather than deriving a
         // degenerate shared secret.

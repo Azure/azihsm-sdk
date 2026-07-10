@@ -139,7 +139,12 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     *out_sess_id = Some(u16::from(sess_id));
 
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
-    let resp = encode_response(
+    //
+    // `session_create` above already committed the session slot. If encoding
+    // the response fails, the host never learns the session id (the CQE
+    // omits it on a handler error), so best-effort destroy the session to
+    // avoid leaking a slot the host could never close.
+    let resp = match encode_response(
         pal,
         io,
         hdr,
@@ -149,7 +154,15 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
         crate::part_state::part_mfgr_svn(pal),
         u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?,
     )
-    .await?;
+    .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            *out_sess_id = None;
+            let _ = pal.session_destroy(io, sess_id).await;
+            return Err(e);
+        }
+    };
 
     Ok(resp)
 }
@@ -216,20 +229,19 @@ async fn derive_session_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        // The session-encryption key is stored as
+        // The session-encryption key is stored as exactly
         // `pub(pub_key_len) ‖ priv(priv_key_len)`; ECDH needs the private
-        // scalar. Split off the leading public key so a blob that is not in
-        // this layout (e.g. a bare private key with no public half) is
-        // rejected up front rather than silently keying ECDH on the wrong
-        // bytes.
+        // scalar. Require that exact length and split off the leading public
+        // key, so a blob that is not `pub ‖ priv` — a bare private key, or one
+        // with extra trailing bytes — is rejected rather than silently keying
+        // ECDH on the wrong bytes or masking vault corruption.
         let pub_key_len = HsmEccCurve::P384.pub_key_len();
         let priv_key_len = HsmEccCurve::P384.priv_key_len();
         let sess_enc_blob = pal.vault_key(io, sess_enc_key_id)?;
-        if sess_enc_blob.len() < pub_key_len + priv_key_len {
+        if sess_enc_blob.len() != pub_key_len + priv_key_len {
             return Err(HsmError::InternalError);
         }
         let (_pub_key, priv_key) = sess_enc_blob.split_at(pub_key_len);
-        let priv_key = &priv_key[..priv_key_len];
         // A zero private scalar is invalid for ECDH and indicates a corrupt
         // or uninitialised vault slot; reject it rather than deriving a
         // degenerate shared secret.
