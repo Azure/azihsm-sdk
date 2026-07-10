@@ -121,7 +121,7 @@ static KIND_LEN: [KeyLen; 41] = [
     /* 35 SessionExPending           */ KeyLen::Variable { min: 32, max: 256 },
     /* 36 SessionEx                    */ KeyLen::Variable { min: 120, max: 216 },
     /* 37 PartitionTrustAnchor         */ KeyLen::Fixed(48),
-    /* 38 PartitionUniqueSecret */ KeyLen::Fixed(48),
+    /* 38 UniquePartitionSecret */ KeyLen::Fixed(48),
     /* 39 PartitionLocalMaskingKey     */ KeyLen::Fixed(32),
     /* 40 PartitionEphemeralMaskingKey */ KeyLen::Fixed(32),
 ];
@@ -185,7 +185,7 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
             (HsmVaultKeyKind::PartitionTrustAnchor, 48),
-            (HsmVaultKeyKind::PartitionUniqueSecret, 48),
+            (HsmVaultKeyKind::UniquePartitionSecret, 48),
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
         ];
@@ -222,7 +222,7 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
             (HsmVaultKeyKind::PartitionTrustAnchor, 48),
-            (HsmVaultKeyKind::PartitionUniqueSecret, 48),
+            (HsmVaultKeyKind::UniquePartitionSecret, 48),
         ];
         for (kind, len) in cases {
             assert_eq!(key_len(kind), Ok(KeyLen::Fixed(len)), "{kind:?}");

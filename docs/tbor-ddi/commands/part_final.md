@@ -6,9 +6,9 @@ Licensed under the MIT License.
 # PartFinal (Opcode 0x08)
 
 **Handler:** Implemented (`fw/core/lib/src/ddi/tbor/part_final.rs`) —
-manticore `FinalizePart`. Cert-chain walking and the SD-local key
-material of `ConfigPartSD` are **not yet implemented** (`cert_descriptors`
-is ignored).
+manticore `FinalizePart`. The PTA certificate chain is walked and
+validated; only the SD-local key material of `ConfigPartSD` is **not yet
+implemented**.
 **Session:** InSession (Crypto Officer)
 
 ## Description
@@ -16,8 +16,8 @@ is ignored).
 Finalizes a partition after [`PartInit`](./part_init.md): derives the
 partition-local masking keys and returns the current `local_mk` backup.
 The caller re-supplies the unified `PartPolicy`, the PTA cert-chain
-descriptor list (pointing into the **side-band** data buffer; currently
-ignored), and an optional prior `local_mk` backup to restore.  It
+descriptor list (referencing the certificates carried **out of band** as
+SGL Data Blocks), and an optional prior `local_mk` backup to restore.  It
 returns the current `local_mk` backup envelope, which the host persists
 and replays as `prev_local_mk_backup` on subsequent launches.
 
@@ -49,19 +49,19 @@ variable-length data section.
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | CO session this request is bound to; cross-checked against the SQE-carried session id. |
 | 8  | `part_policy` | `buffer` (offset/len) | Caller-asserted unified `PartPolicy` re-supplied from `PartInit`. Length pinned to 484 B. The handler verifies `SHA-384(part_policy)` against the stored policy hash. |
-| 12 | `cert_descriptors` | `buffer` (offset/len) | Packed list of `CertDescriptor` entries `(offset: u16, length: u16)`, each 4 B little-endian, locating the DER certificates of the PTA chain in the **side-band** data buffer (the certificate bytes are transferred out of band). 1–8 entries (a non-zero multiple of 4 B, up to 32 B). |
+| 12 | `cert_descriptors` | `buffer` (offset/len) | Packed list of `CertDescriptor` entries `(index: u8, length: u16)`, each 3 B little-endian, referencing the DER certificates of the PTA chain carried **out of band** as SGL Data Blocks (selected by descriptor `index`). 1–2 entries (a non-zero multiple of 3 B, up to 6 B). |
 | 16 | `prev_local_mk_backup` | `buffer` (offset/len) | Optional previously-generated `local_mk` backup envelope to restore. An **empty** field means absent; when present it is exactly 164 B. |
 
 ### Data section
 
 Carries the `part_policy` (484 B), the packed `cert_descriptors`, and
 the optional `prev_local_mk_backup` envelope.  The PTA certificate
-bytes themselves are **not** in the TBOR message — `cert_descriptors`
-points into a separate side-band buffer.
+bytes themselves are **not** in the TBOR message — each `cert_descriptors`
+entry's `index` selects an SGL Data Block carried out of band.
 
-`CertDescriptor` elements are `Unaligned` (alignment 1, little-endian
-`U16` fields), so the typed slice is borrowed zero-copy with no
-alignment padding.
+`CertDescriptor` elements are `Unaligned` (a `u8` `index` and a
+little-endian `U16` `length`), so the typed slice is borrowed zero-copy
+with no alignment padding.
 
 ## Response
 
@@ -82,7 +82,7 @@ Carries the 164-byte `local_mk_backup` envelope.
 
 | Error | Cause |
 |---|---|
-| `TborInvalidFixedLength` | `part_policy` not 484 B, `cert_descriptors` not a 1–8-element multiple of 4 B, or a present `prev_local_mk_backup` not 164 B |
+| `TborInvalidFixedLength` | `part_policy` not 484 B, `cert_descriptors` not a 1–2-element multiple of 3 B, or a present `prev_local_mk_backup` not 164 B |
 | `DdiDecodeFailed` | Malformed request body |
 
 ## See also
