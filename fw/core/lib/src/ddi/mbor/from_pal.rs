@@ -23,6 +23,7 @@ use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 // ── HsmVaultKeyKind → … ───────────────────────────────────────────
@@ -60,6 +61,21 @@ pub(crate) fn ecc_curve(kind: HsmVaultKeyKind) -> HsmResult<HsmEccCurve> {
 pub(crate) fn assert_aes(kind: HsmVaultKeyKind) -> HsmResult<()> {
     match kind {
         HsmVaultKeyKind::Aes128 | HsmVaultKeyKind::Aes192 | HsmVaultKeyKind::Aes256 => Ok(()),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
+
+/// Map an RSA private vault kind (plain or CRT) to its [`HsmRsaKey`]
+/// modulus-size selector.  Any non-RSA-private kind returns
+/// [`HsmError::InvalidKeyType`].
+pub(crate) fn rsa_key(kind: HsmVaultKeyKind) -> HsmResult<HsmRsaKey> {
+    match kind {
+        HsmVaultKeyKind::Rsa2kPrivate => Ok(HsmRsaKey::Rsa2048Priv),
+        HsmVaultKeyKind::Rsa3kPrivate => Ok(HsmRsaKey::Rsa3072Priv),
+        HsmVaultKeyKind::Rsa4kPrivate => Ok(HsmRsaKey::Rsa4096Priv),
+        HsmVaultKeyKind::Rsa2kPrivateCrt => Ok(HsmRsaKey::Rsa2048CrtPriv),
+        HsmVaultKeyKind::Rsa3kPrivateCrt => Ok(HsmRsaKey::Rsa3072CrtPriv),
+        HsmVaultKeyKind::Rsa4kPrivateCrt => Ok(HsmRsaKey::Rsa4096CrtPriv),
         _ => Err(HsmError::InvalidKeyType),
     }
 }

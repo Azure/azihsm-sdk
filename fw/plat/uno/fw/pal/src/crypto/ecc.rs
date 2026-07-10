@@ -21,6 +21,7 @@
 //! self-test is run.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
@@ -29,6 +30,7 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
+use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
 
 use crate::UnoHsmPal;
@@ -59,6 +61,38 @@ fn map_ecc_curve(curve: HsmEccCurve) -> HsmResult<UpkaEccCurve> {
         HsmEccCurve::P384 => Ok(UpkaEccCurve::P384),
         HsmEccCurve::P521 => Ok(UpkaEccCurve::P521),
         _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// NIST P-256 prime modulus in PKA little-endian operand order.
+const PRIME256_LE: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-384 prime modulus in PKA little-endian operand order.
+const PRIME384_LE: [u8; 48] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+    0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-521 prime modulus in PKA little-endian operand order (68-byte,
+/// DWORD-aligned per PKA hardware requirement).
+const PRIME521_LE: [u8; 68] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0x01, 0x00, 0x00,
+];
+
+/// Curve prime modulus (PKA little-endian) for the Montgomery-constant setup.
+fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
+    match curve {
+        UpkaEccCurve::P256 => &PRIME256_LE,
+        UpkaEccCurve::P384 => &PRIME384_LE,
+        UpkaEccCurve::P521 => &PRIME521_LE,
     }
 }
 
@@ -203,7 +237,7 @@ impl HsmEcc for UnoHsmPal {
     ///   inputs, hardware fault).
     async fn ecc_verify(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         pub_key: &DmaBuf,
         hash: &DmaBuf,
@@ -211,9 +245,47 @@ impl HsmEcc for UnoHsmPal {
         result: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
-        self.pka
-            .ecc_verify(pka_curve, pub_key, hash, signature, result)
-            .await
+
+        let digest_len = hash_size(pka_curve);
+        if hash.len() < digest_len {
+            return Err(HsmError::InvalidArg);
+        }
+        let prime_le = curve_prime_le(pka_curve);
+
+        // Allocate the per-call PKA scratch (LE hash, curve prime, and the
+        // Montgomery-constant result) from a scoped heap so it is released as
+        // soon as the verify completes rather than living for the whole IO. A
+        // single IO that verifies several signatures (e.g. cert-chain
+        // validation) would otherwise accumulate this scratch and can exhaust
+        // the DMA pool.
+        self.alloc_scoped_async(io, async |scope| {
+            // Callers pass the hash digest big-endian, but the PKA consumes it
+            // little-endian; reverse exactly `hash_size` bytes into LE scratch
+            // (a larger caller buffer must not move the digest out of the
+            // leading bytes the hardware reads). pub_key/signature already
+            // arrive LE via the host DDI serde.
+            let hash_le = scope.dma_alloc(digest_len)?;
+            hash_le.copy_from_slice(&hash[..digest_len]);
+            hash_le.reverse();
+
+            // Per-call Montgomery constant from the curve prime (like ecdh_derive).
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
+
+            self.pka
+                .ecc_verify(
+                    pka_curve,
+                    pub_key,
+                    hash_le,
+                    signature,
+                    result,
+                    prime,
+                    mont_result,
+                )
+                .await
+        })
+        .await
     }
 
     /// Derive an ECDH shared secret.
@@ -237,16 +309,46 @@ impl HsmEcc for UnoHsmPal {
     ///   public-key point, undersized buffer, hardware fault).
     async fn ecdh_derive(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
-        self.pka
-            .ecdh_derive(pka_curve, priv_key, pub_key, secret)
-            .await
+
+        let prime_le = curve_prime_le(pka_curve);
+
+        // Scope the per-call Montgomery scratch (curve prime + result) so it is
+        // freed as soon as the point-multiply completes instead of living for
+        // the whole IO; keeping it IO-bounded needlessly grows DMA-pool
+        // pressure in multi-step flows.
+        self.alloc_scoped_async(io, async |scope| {
+            // The PKA point-multiply requires a per-call Montgomery constant
+            // computed from the curve prime.
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
+
+            self.pka
+                .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
+                .await?;
+
+            // pub_key (peer) and priv_key (vault) already pass through in
+            // PKA-native little-endian and are unconverted. The shared secret,
+            // however, is consumed internally by HKDF and never crosses the DDI
+            // boundary; the host derives it big-endian (openssl), so reverse the
+            // PKA's little-endian output. Reverse exactly the `secret_len`
+            // written bytes: the trait allows a larger caller buffer (wire-padded
+            // P-521, 68 vs 66), so reversing the whole buffer would pull trailing
+            // padding to the front and corrupt the HKDF input; slicing by the
+            // wire point size would instead panic when the buffer is exactly
+            // `secret_len`.
+            let secret_len = curve.secret_len();
+            secret[..secret_len].reverse();
+            Ok(())
+        })
+        .await
     }
 
     fn ecc_priv_der_to_vault(

@@ -181,7 +181,9 @@ impl StdRsa {
         x: &mut [u8],
     ) -> HsmResult<()> {
         let key = priv_key.clone();
-        let y_owned = y.to_vec();
+        // Wire operands are little-endian; OpenSSL is big-endian.
+        let mut y_be = y.to_vec();
+        y_be.reverse();
         let out_len = x.len();
 
         let result = self
@@ -189,13 +191,14 @@ impl StdRsa {
             .submit_with_result(async move {
                 let mut algo = RsaEncryptAlgo::with_no_padding();
                 let mut buf = vec![0u8; out_len];
-                algo.decrypt(&key, &y_owned, Some(&mut buf))
+                algo.decrypt(&key, &y_be, Some(&mut buf))
                     .map_err(|_| HsmError::RsaDecryptFailed)?;
                 Ok::<_, HsmError>(buf)
             })
             .await?;
 
-        x.copy_from_slice(&result);
+        // `result` is big-endian; emit the little-endian wire form.
+        super::reverse_copy(x, &result);
         Ok(())
     }
 
@@ -223,7 +226,9 @@ impl StdRsa {
         y: &mut [u8],
     ) -> HsmResult<()> {
         let key = pub_key.clone();
-        let x_owned = x_input.to_vec();
+        // Wire operands are little-endian; OpenSSL is big-endian.
+        let mut x_be = x_input.to_vec();
+        x_be.reverse();
         let out_len = y.len();
 
         let result = self
@@ -231,13 +236,14 @@ impl StdRsa {
             .submit_with_result(async move {
                 let mut algo = RsaEncryptAlgo::with_no_padding();
                 let mut buf = vec![0u8; out_len];
-                algo.encrypt(&key, &x_owned, Some(&mut buf))
+                algo.encrypt(&key, &x_be, Some(&mut buf))
                     .map_err(|_| HsmError::RsaEncryptFailed)?;
                 Ok::<_, HsmError>(buf)
             })
             .await?;
 
-        y.copy_from_slice(&result);
+        // `result` is big-endian; emit the little-endian wire form.
+        super::reverse_copy(y, &result);
         Ok(())
     }
 
@@ -406,6 +412,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(recovered, plaintext);
+    }
+
+    // ── Wire byte-order contract (little-endian operands) ────────
+    //
+    // The round-trip / identity tests above reverse symmetrically, so
+    // they pass even if the LE<->BE flips are wrong (or absent). These
+    // tests pin the *absolute* wire byte order by comparing the driver
+    // against a direct OpenSSL no-padding operation: on the wire the
+    // operands are little-endian, while OpenSSL is big-endian. A
+    // non-palindrome input (`m_be != reverse(m_be)`) makes the two byte
+    // orders distinguishable.
+
+    /// Build a non-palindrome big-endian test integer `< n` (leading
+    /// byte `0x01`), so reversing it yields a genuinely different value.
+    fn nonpalindrome_be(key_size_bytes: usize) -> Vec<u8> {
+        let mut m = vec![0u8; key_size_bytes];
+        m[0] = 0x01;
+        m[1] = 0x23;
+        m[key_size_bytes - 1] = 0x02;
+        m
+    }
+
+    /// `mod_exp_pub` must consume a little-endian `x` and emit a
+    /// little-endian `y`, i.e. `y == reverse(m_be^e mod n)`, verified
+    /// against a direct big-endian OpenSSL no-padding public op.
+    #[tokio::test]
+    async fn mod_exp_pub_wire_le_matches_openssl() {
+        let driver = make_driver();
+        let key_size_bytes = 256;
+        let (_priv_key, pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        let m_be = nonpalindrome_be(key_size_bytes);
+
+        // Independent reference: raw RSA public op in big-endian.
+        let mut ref_be = vec![0u8; key_size_bytes];
+        {
+            let mut algo = RsaEncryptAlgo::with_no_padding();
+            let written = algo.encrypt(&pub_key, &m_be, Some(&mut ref_be)).unwrap();
+            assert_eq!(written, key_size_bytes);
+        }
+        let mut expected_le = ref_be.clone();
+        expected_le.reverse();
+
+        // Driver consumes little-endian `x` and emits little-endian `y`.
+        let mut m_le = m_be.clone();
+        m_le.reverse();
+        let mut y_le = vec![0u8; key_size_bytes];
+        driver
+            .mod_exp_pub(&pub_key, &m_le, &mut y_le)
+            .await
+            .unwrap();
+
+        assert_eq!(y_le, expected_le);
+        // Guard: the output must be little-endian, not the big-endian
+        // OpenSSL form (would be equal only if the output flip were missing).
+        assert_ne!(y_le, ref_be);
+    }
+
+    /// `mod_exp_priv` must consume a little-endian `y` and emit a
+    /// little-endian `x`, i.e. `x == reverse(m_be^d mod n)`, verified
+    /// against a direct big-endian OpenSSL no-padding private op.
+    #[tokio::test]
+    async fn mod_exp_priv_wire_le_matches_openssl() {
+        let driver = make_driver();
+        let key_size_bytes = 256;
+        let (priv_key, _pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        let m_be = nonpalindrome_be(key_size_bytes);
+
+        // Independent reference: raw RSA private op in big-endian.
+        let mut ref_be = vec![0u8; key_size_bytes];
+        {
+            let mut algo = RsaEncryptAlgo::with_no_padding();
+            algo.decrypt(&priv_key, &m_be, Some(&mut ref_be)).unwrap();
+        }
+        let mut expected_le = ref_be.clone();
+        expected_le.reverse();
+
+        // Driver consumes little-endian `y` and emits little-endian `x`.
+        let mut m_le = m_be.clone();
+        m_le.reverse();
+        let mut x_le = vec![0u8; key_size_bytes];
+        driver
+            .mod_exp_priv(&priv_key, &m_le, &mut x_le)
+            .await
+            .unwrap();
+
+        assert_eq!(x_le, expected_le);
+        assert_ne!(x_le, ref_be);
     }
 
     // ── OAEP decrypt (wire-LE ciphertext → recovered plaintext) ──

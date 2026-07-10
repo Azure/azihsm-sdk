@@ -738,7 +738,7 @@ pub fn store_rsa_keys_crt(
         Some(sess_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         rsa_priv_key,
-        DdiKeyClass::Rsa,
+        DdiKeyClass::RsaCrt,
         key_usage,
         key_tag,
     );
