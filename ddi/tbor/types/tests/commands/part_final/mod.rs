@@ -14,6 +14,8 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
@@ -26,11 +28,6 @@ use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::PtaChain;
 use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
-
-/// Exact on-the-wire `local_mk_backup` length (164 B); the firmware
-/// schema (`azihsm_fw_ddi_tbor_types::part_final::LOCAL_MK_BACKUP_LEN`)
-/// is the authority.
-const LOCAL_MK_BACKUP_LEN: usize = 164;
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
 /// the PTA public key from the returned CSR and certify it under `pota`
