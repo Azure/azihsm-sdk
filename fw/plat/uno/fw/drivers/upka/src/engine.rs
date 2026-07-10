@@ -379,6 +379,248 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
+    /// Compute the Montgomery constant for `modulus` on this engine.
+    ///
+    /// Establishes the active modulus for the subsequent field operations on the
+    /// same engine acquisition (`execute_cmd` does not wipe engine state between
+    /// commands). `result` receives the natural-form scratch output.
+    ///
+    /// This is a low-level primitive intended for orchestrating a raw ECDSA
+    /// sign sequence (e.g. the FIPS self-test); production ECDSA/ECDH use the
+    /// composite [`ecc_sign`](Self::ecc_sign) / [`ecdh_derive`](Self::ecdh_derive)
+    /// helpers.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Montgomery constant established for `modulus`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mont_const_calc(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        modulus: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve) && modulus.len() >= point_size(curve),
+        )?;
+        self.field_unary(mont_const_calc_opcode(curve), result, modulus)
+            .await
+    }
+
+    /// Multiply an affine point by a scalar (`result = scalar · point`).
+    ///
+    /// `point_xy` is the contiguous `X ‖ Y` affine point (each coordinate
+    /// `point_size` bytes, LE); `scalar` is `point_size` bytes (LE). `result`
+    /// receives the X coordinate of the product (`point_size` bytes, LE).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Product X coordinate was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_point_mul(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        point_xy: &DmaBuf,
+        scalar: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve)
+                && point_xy.len() >= point_size(curve) * 2
+                && scalar.len() >= point_size(curve),
+        )?;
+        self.execute_cmd(
+            ecc_point_mul_opcode(curve),
+            result.as_mut_ptr() as u32,
+            point_xy.as_ptr() as u32,
+            scalar.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
+    /// Reduce a natural-form field element modulo the active modulus.
+    ///
+    /// `arg` is a **double-width** (`2 · point_size` bytes, LE) zero-padded
+    /// dividend: the value to reduce occupies the low `point_size` bytes and the
+    /// high `point_size` bytes must be zero. The hardware reduction reads the
+    /// full `2 · point_size` window, so a tight `point_size` buffer would let it
+    /// read adjacent memory as the high half and produce garbage. `result` is
+    /// `point_size` bytes (LE). Requires a preceding
+    /// [`ecc_mont_const_calc`](Self::ecc_mont_const_calc) for the target
+    /// modulus on the same engine acquisition.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Reduced value was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mod_reduction(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve) && arg.len() >= point_size(curve) * 2,
+        )?;
+        self.field_unary(ecc_mod_reduction_opcode(curve), result, arg)
+            .await
+    }
+
+    /// Convert a natural-form field element into Montgomery form.
+    ///
+    /// `arg` is `point_size` bytes (LE); `result` is `montgomery_size` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Montgomery-form value was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mont_repr_in(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= montgomery_size(curve) && arg.len() >= point_size(curve),
+        )?;
+        self.field_unary(ecc_mont_repr_in_opcode(curve), result, arg)
+            .await
+    }
+
+    /// Convert a Montgomery-form field element back into natural form.
+    ///
+    /// `arg` is `montgomery_size` bytes; `result` is `point_size` bytes (LE).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Natural-form value was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mont_repr_out(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve) && arg.len() >= montgomery_size(curve),
+        )?;
+        self.field_unary(ecc_mont_repr_out_opcode(curve), result, arg)
+            .await
+    }
+
+    /// Compute the modular inverse of a Montgomery-form field element.
+    ///
+    /// `arg` and `result` are `montgomery_size` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Inverse was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mod_inverse(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= montgomery_size(curve) && arg.len() >= montgomery_size(curve),
+        )?;
+        self.field_unary(ecc_mod_inverse_opcode(curve), result, arg)
+            .await
+    }
+
+    /// Multiply two Montgomery-form field elements modulo the active modulus.
+    ///
+    /// `a`, `b` and `result` are `montgomery_size` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Product was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mod_mul(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        a: &DmaBuf,
+        b: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= montgomery_size(curve)
+                && a.len() >= montgomery_size(curve)
+                && b.len() >= montgomery_size(curve),
+        )?;
+        self.field_binary(ecc_mod_mul_opcode(curve), result, a, b)
+            .await
+    }
+
+    /// Add two Montgomery-form field elements modulo the active modulus.
+    ///
+    /// `a`, `b` and `result` are `montgomery_size` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: Sum was written to `result`.
+    /// - `Err(UpkaError::CMD_ERROR)`: Buffer shape is invalid or hardware
+    ///   rejected the command.
+    pub async fn ecc_mod_add(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        a: &DmaBuf,
+        b: &DmaBuf,
+    ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            result.len() >= montgomery_size(curve)
+                && a.len() >= montgomery_size(curve)
+                && b.len() >= montgomery_size(curve),
+        )?;
+        self.field_binary(ecc_mod_add_opcode(curve), result, a, b)
+            .await
+    }
+
+    /// Submit a unary field operation (`result = op(arg)`).
+    async fn field_unary(
+        &mut self,
+        opcode: u32,
+        result: &mut DmaBuf,
+        arg: &DmaBuf,
+    ) -> HsmResult<()> {
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Submit a binary field operation (`result = op(a, b)`).
+    async fn field_binary(
+        &mut self,
+        opcode: u32,
+        result: &mut DmaBuf,
+        a: &DmaBuf,
+        b: &DmaBuf,
+    ) -> HsmResult<()> {
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            a.as_ptr() as u32,
+            b.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
     /// Run an RSA private-key modular exponentiation.
     ///
     /// `key_type` selects both modulus size and key format (standard or CRT).
