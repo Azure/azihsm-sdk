@@ -152,6 +152,13 @@ pub enum PartState {
     /// has not yet run.  No further `PartInit` is permitted until
     /// the next alloc/free cycle (one-shot enforcement).
     Initializing = 4,
+
+    /// The TBOR `PartFinal` handler has finalized the partition:
+    /// the partition-local masking keys are derived and the current
+    /// `local_mk` backup has been issued.  Reached once from
+    /// [`Initializing`](Self::Initializing) (one-shot per alloc/free
+    /// cycle); the partition continues to serve DDI traffic.
+    Initialized = 5,
 }
 
 impl PartState {
@@ -178,6 +185,7 @@ impl PartState {
             2 => Some(Self::Enabled),
             3 => Some(Self::Disabled),
             4 => Some(Self::Initializing),
+            5 => Some(Self::Initialized),
             _ => None,
         }
     }
@@ -787,6 +795,17 @@ impl PartPropId {
     /// one-shot establish-credential RSA-OAEP key.
     pub const ESTABLISH_CRED_KEY_ID: PartPropId = PartPropId(0x0016);
 
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition-local key
+    /// masking key (`PartLocalMK`).  Bound by the TBOR `PartFinal`
+    /// handler; recovered each launch from the caller-replayed
+    /// `local_mk_backup`.
+    pub const LOCAL_MK_KEY_ID: PartPropId = PartPropId(0x001B);
+
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's ephemeral
+    /// key masking key (`EphemeralMK`).  Bound by the TBOR `PartFinal`
+    /// handler; freshly generated each launch (never backed up).
+    pub const EPHEMERAL_MK_KEY_ID: PartPropId = PartPropId(0x001C);
+
     /// Raw ECC-P384 public-key coordinates (x ∥ y, 96 B) of the
     /// partition identity key.  Read-only from caller perspective;
     /// materialised by the PAL alongside [`ID_KEY_ID`](Self::ID_KEY_ID).
@@ -941,7 +960,9 @@ impl PartPropId {
             | Self::UPS_KEY_ID
             | Self::PTA_KEY_ID
             | Self::SESSION_ENC_KEY_ID
-            | Self::ESTABLISH_CRED_KEY_ID => VAULT_REF_RW,
+            | Self::ESTABLISH_CRED_KEY_ID
+            | Self::LOCAL_MK_KEY_ID
+            | Self::EPHEMERAL_MK_KEY_ID => VAULT_REF_RW,
 
             // ── Public-key views (fixed P-384 sizes) ──
             Self::ID_PUB_KEY | Self::SESSION_ENC_PUB_KEY | Self::ESTABLISH_CRED_PUB_KEY => {

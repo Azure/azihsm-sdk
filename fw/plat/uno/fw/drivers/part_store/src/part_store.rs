@@ -52,21 +52,24 @@ const RESERVED3_LEN: usize = 626
     - 4  // state
     - 4  // generation
     - RES_MASK_LEN
-    - 7 * 2  // key handles (u16 + sentinel)
+    - 9 * 2  // key handles (u16 + sentinel)
     - PUB_KEY_LEN  // ec_pub_key
     - PUB_KEY_LEN  // se_pub_key
     - PSK_LEN  // psk_co
     - PSK_LEN  // psk_cu
     - CREDENTIAL_LEN
-    - 1  // credential_valid
-    - 1  // pota_thumbprint_valid
-    - 1  // sata_thumbprint_valid
-    - 1  // sapota_thumbprint_valid
+    - 1  // valid_flags (7 packed presence/init bits)
     - PUB_KEY_LEN  // pta_pub_key
-    - 1  // pta_pub_key_valid
-    - 1  // policy_hash_valid
-    - 1  // bk3_initialized
     - 2; // session_meta (pending_mask + psk_change_mask)
+
+/// Bit positions packed into the per-partition `valid_flags` byte.
+const FLAG_CREDENTIAL_VALID: u8 = 1 << 0;
+const FLAG_POTA_THUMBPRINT_VALID: u8 = 1 << 1;
+const FLAG_SATA_THUMBPRINT_VALID: u8 = 1 << 2;
+const FLAG_SAPOTA_THUMBPRINT_VALID: u8 = 1 << 3;
+const FLAG_PTA_PUB_KEY_VALID: u8 = 1 << 4;
+const FLAG_POLICY_HASH_VALID: u8 = 1 << 5;
+const FLAG_BK3_INITIALIZED: u8 = 1 << 6;
 
 /// Total per-partition slot size (matches the reference layout).
 const STORE_SIZE: usize = 3072;
@@ -225,19 +228,14 @@ struct Storage {
     ups_key_id: [u8; 2],
     pta_key_id: [u8; 2],
     unwrapping_key_id: [u8; 2],
-    // Presence flags for `AbsentUntilSet` byte fields (placed after the
-    // key handles, before `reserved3`, where 1-byte alignment is
-    // harmless and the DMA-target public keys above stay 4-aligned).
-    credential_valid: bool,
-    pota_thumbprint_valid: bool,
-    sata_thumbprint_valid: bool,
-    sapota_thumbprint_valid: bool,
-    pta_pub_key_valid: bool,
-    policy_hash_valid: bool,
-    // One-shot InitBk3 gate. Distinct from `bk3_session_key.is_valid`,
-    // which tracks presence of the BK3 *session key*; this flag records
-    // that InitBk3 has run and must not run again.
-    bk3_initialized: bool,
+    local_mk_key_id: [u8; 2],
+    ephemeral_mk_key_id: [u8; 2],
+    // Presence flags for `AbsentUntilSet` byte fields plus the one-shot
+    // InitBk3 gate, bit-packed into a single byte (see the `FLAG_*`
+    // constants).  Placed after the key handles, before `reserved3`,
+    // where 1-byte alignment is harmless and the DMA-target public keys
+    // above stay 4-aligned.
+    valid_flags: u8,
     // Volatile TBOR session slot metadata: byte 0 = pending_mask
     // (bit N set while slot N's handshake is in flight), byte 1 =
     // psk_change_mask (bit N set once slot N has consumed its one
@@ -360,6 +358,8 @@ impl Partition {
         slot.mk_key_id = absent;
         slot.ups_key_id = absent;
         slot.pta_key_id = absent;
+        slot.local_mk_key_id = absent;
+        slot.ephemeral_mk_key_id = absent;
         slot.unwrapping_key_id = absent;
     }
 
@@ -405,6 +405,8 @@ impl Partition {
         self.set_mk_key_id(None);
         self.set_ups_key_id(None);
         self.set_pta_key_id(None);
+        self.set_local_mk_key_id(None);
+        self.set_ephemeral_mk_key_id(None);
         self.set_unwrapping_key_id(None);
         // Write-once provisioning material + presence flags.
         self.clear_pta_pub_key();
@@ -689,13 +691,18 @@ impl Partition {
     /// Whether InitBk3 has already run for this partition (one-shot gate).
     #[inline(never)]
     pub fn bk3_initialized(self) -> bool {
-        self.slot().bk3_initialized
+        self.slot().valid_flags & FLAG_BK3_INITIALIZED != 0
     }
 
     /// Sets the one-shot InitBk3 gate.
     #[inline(never)]
     pub fn set_bk3_initialized(mut self, valid: bool) {
-        self.slot_mut().bk3_initialized = valid;
+        let slot = self.slot_mut();
+        if valid {
+            slot.valid_flags |= FLAG_BK3_INITIALIZED;
+        } else {
+            slot.valid_flags &= !FLAG_BK3_INITIALIZED;
+        }
     }
 
     // ── lockout policy ───────────────────────────────────────────────────
@@ -741,14 +748,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.policy_hash.copy_from_slice(src);
-        slot.policy_hash_valid = true;
+        slot.valid_flags |= FLAG_POLICY_HASH_VALID;
         Ok(())
     }
 
     /// Whether the partition policy hash has been provisioned.
     #[inline(never)]
     pub fn policy_hash_valid(self) -> bool {
-        self.slot().policy_hash_valid
+        self.slot().valid_flags & FLAG_POLICY_HASH_VALID != 0
     }
 
     /// Clears the partition policy hash (zeroizes and marks absent).
@@ -756,7 +763,7 @@ impl Partition {
     pub fn clear_policy_hash(mut self) {
         let slot = self.slot_mut();
         slot.policy_hash = [0u8; POLICY_HASH_LEN];
-        slot.policy_hash_valid = false;
+        slot.valid_flags &= !FLAG_POLICY_HASH_VALID;
     }
 
     /// Borrows the POTA public-key thumbprint (48 B).
@@ -787,14 +794,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.pota_thumbprint.copy_from_slice(src);
-        slot.pota_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_POTA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a POTA thumbprint has been provisioned.
     #[inline(never)]
     pub fn pota_thumbprint_valid(self) -> bool {
-        self.slot().pota_thumbprint_valid
+        self.slot().valid_flags & FLAG_POTA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the POTA thumbprint (zeroizes and marks absent).
@@ -802,7 +809,7 @@ impl Partition {
     pub fn clear_pota_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.pota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
-        slot.pota_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_POTA_THUMBPRINT_VALID;
     }
 
     /// Borrows the SATA thumbprint (48 B).
@@ -826,14 +833,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.sata_thumbprint.copy_from_slice(src);
-        slot.sata_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_SATA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a SATA thumbprint has been provisioned.
     #[inline(never)]
     pub fn sata_thumbprint_valid(self) -> bool {
-        self.slot().sata_thumbprint_valid
+        self.slot().valid_flags & FLAG_SATA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the SATA thumbprint (zeroizes and marks absent).
@@ -841,7 +848,7 @@ impl Partition {
     pub fn clear_sata_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.sata_thumbprint = [0u8; SATA_THUMBPRINT_LEN];
-        slot.sata_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_SATA_THUMBPRINT_VALID;
     }
 
     /// Borrows the SAPOTA thumbprint (48 B).
@@ -865,14 +872,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.sapota_thumbprint.copy_from_slice(src);
-        slot.sapota_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_SAPOTA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a SAPOTA thumbprint has been provisioned.
     #[inline(never)]
     pub fn sapota_thumbprint_valid(self) -> bool {
-        self.slot().sapota_thumbprint_valid
+        self.slot().valid_flags & FLAG_SAPOTA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the SAPOTA thumbprint (zeroizes and marks absent).
@@ -880,7 +887,7 @@ impl Partition {
     pub fn clear_sapota_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.sapota_thumbprint = [0u8; SAPOTA_THUMBPRINT_LEN];
-        slot.sapota_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_SAPOTA_THUMBPRINT_VALID;
     }
 
     // ── lifecycle state / generation / resource mask ─────────────────────
@@ -1025,6 +1032,30 @@ impl Partition {
         self.slot_mut().unwrapping_key_id = write_handle(key);
     }
 
+    /// Reads the partition-local masking key (`PartLocalMK`) handle.
+    #[inline(never)]
+    pub fn local_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().local_mk_key_id)
+    }
+
+    /// Sets (or clears) the partition-local masking key handle.
+    #[inline(never)]
+    pub fn set_local_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().local_mk_key_id = write_handle(key);
+    }
+
+    /// Reads the partition ephemeral masking key (`EphemeralMK`) handle.
+    #[inline(never)]
+    pub fn ephemeral_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().ephemeral_mk_key_id)
+    }
+
+    /// Sets (or clears) the partition ephemeral masking key handle.
+    #[inline(never)]
+    pub fn set_ephemeral_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().ephemeral_mk_key_id = write_handle(key);
+    }
+
     // ── cached public keys (establish-cred / session-enc) ────────────────
 
     /// Borrows the establish-credential public key (X ‖ Y, 96 B).
@@ -1107,14 +1138,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.pta_pub_key.copy_from_slice(src);
-        slot.pta_pub_key_valid = true;
+        slot.valid_flags |= FLAG_PTA_PUB_KEY_VALID;
         Ok(())
     }
 
     /// Whether the platform trust-anchor public key has been provisioned.
     #[inline(never)]
     pub fn pta_pub_key_valid(self) -> bool {
-        self.slot().pta_pub_key_valid
+        self.slot().valid_flags & FLAG_PTA_PUB_KEY_VALID != 0
     }
 
     /// Clears the platform trust-anchor public key (zeroizes and marks absent).
@@ -1122,7 +1153,7 @@ impl Partition {
     pub fn clear_pta_pub_key(mut self) {
         let slot = self.slot_mut();
         slot.pta_pub_key = [0u8; PUB_KEY_LEN];
-        slot.pta_pub_key_valid = false;
+        slot.valid_flags &= !FLAG_PTA_PUB_KEY_VALID;
     }
 
     /// Borrows the crypto-officer PSK (32 B).
@@ -1212,14 +1243,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.credential.copy_from_slice(src);
-        slot.credential_valid = true;
+        slot.valid_flags |= FLAG_CREDENTIAL_VALID;
         Ok(())
     }
 
     /// Whether a user credential has been provisioned.
     #[inline(never)]
     pub fn credential_valid(self) -> bool {
-        self.slot().credential_valid
+        self.slot().valid_flags & FLAG_CREDENTIAL_VALID != 0
     }
 
     /// Clears the user credential (zeroizes and marks absent).
@@ -1227,7 +1258,7 @@ impl Partition {
     pub fn clear_credential(mut self) {
         let slot = self.slot_mut();
         slot.credential = [0u8; CREDENTIAL_LEN];
-        slot.credential_valid = false;
+        slot.valid_flags &= !FLAG_CREDENTIAL_VALID;
     }
 
     // ── session table (raw region; typed view in drivers/session_store) ──

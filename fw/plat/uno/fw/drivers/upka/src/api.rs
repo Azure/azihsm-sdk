@@ -203,6 +203,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     ///   or hardware rejected the command.
     /// - `Err(UpkaError::QUEUE_FULL)`: No engine can be acquired.
     /// - `Err(UpkaError::WIPE_FAILED)`: Post-operation wipe failed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ecc_verify(
         &self,
         curve: UpkaEccCurve,
@@ -210,9 +211,11 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         hash: &DmaBuf,
         signature: &DmaBuf,
         result: &mut DmaBuf,
+        prime: &DmaBuf,
+        mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.with_engine(async |eng| {
-            eng.ecc_verify(curve, pub_key, hash, signature, result)
+            eng.ecc_verify(curve, pub_key, hash, signature, result, prime, mont_result)
                 .await
         })
         .await
@@ -266,9 +269,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
+        prime: &DmaBuf,
+        mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
-        self.with_engine(async |eng| eng.ecdh_derive(curve, priv_key, pub_key, secret).await)
-            .await
+        self.with_engine(async |eng| {
+            eng.ecdh_derive(curve, priv_key, pub_key, secret, prime, mont_result)
+                .await
+        })
+        .await
     }
 
     /// Run an RSA private-key modular exponentiation.

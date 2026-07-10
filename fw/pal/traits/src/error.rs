@@ -359,6 +359,22 @@ pub enum HsmError {
     /// 4K-page-aligned, so the descriptor array could straddle a page.
     IoChannelInvalidOobAlignment = 0x08700105,
 
+    /// `PartFinal` was asked to restore a `prev_local_mk_backup` whose
+    /// bound SVN is **newer** than this firmware's current SVN — an
+    /// anti-rollback violation: a backup minted under a newer platform
+    /// SVN must not be restored on older firmware.  Distinct from
+    /// [`InvalidArg`](Self::InvalidArg) (a malformed request) — the
+    /// envelope is well-formed, its lineage is simply too new.
+    PartFinalBackupSvnRollback = 0x08700106,
+
+    /// `PartFinal` validated the supplied PTA certificate chain
+    /// (well-formed and correctly anchored to the policy `POTAPubKey`),
+    /// but the chain's **leaf** public key does not match this
+    /// partition's Partition Trust Anchor (PTA) key.  Distinct from an
+    /// [`X509`](Self::X509SignatureInvalid) chain error — the chain is
+    /// cryptographically valid, its identity is simply wrong.
+    PartFinalPtaMismatch = 0x08700107,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
@@ -366,9 +382,11 @@ pub enum HsmError {
     // returned over the wire).
     /// A Rust `panic!` reached the firmware panic handler.
     Panic = 0x08F00001,
+
     /// A CPU `HardFault` exception was taken (an escalated bus/usage/mem
     /// fault, or a stack overflow).
     HardFault = 0x08F00002,
+
     /// An exception or interrupt with no dedicated handler reached the
     /// `DefaultHandler`.
     UnexpectedException = 0x08F00003,

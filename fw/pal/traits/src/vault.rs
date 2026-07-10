@@ -172,18 +172,34 @@ pub enum HsmVaultKeyKind {
     /// [`HsmError::PtaKeyAlreadySet`]: crate::HsmError::PtaKeyAlreadySet
     PartitionTrustAnchor = 37,
 
-    /// Partition Unique Machine Secret (UMS) — 48 B HMAC-SHA-384-sized
-    /// secret derived in `PartInit` from `UDS` plus the request-side
-    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`) inputs.
+    /// Partition Unique Secret — the 48 B HMAC-SHA-384-sized root of the
+    /// partition key schedule.  Initially the Unique Machine Secret (UMS)
+    /// derived in `PartInit` from `UDS` plus the request-side inputs
+    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`); `PartFinal`
+    /// replaces it with the Unique Partition Secret (UPS).
     ///
     /// Persisted in the partition key vault for the lifetime of the
-    /// partition incarnation so that later phases (e.g. FinalizePart)
-    /// can derive secondary partition secrets without re-supplying
-    /// `MachineSeed`.  One per partition incarnation; rebinding is
-    /// rejected with [`HsmError::UmsKeyAlreadySet`].
+    /// partition incarnation so later phases can derive secondary
+    /// partition secrets without re-supplying `MachineSeed`.  One per
+    /// incarnation; rebinding is rejected with
+    /// [`HsmError::UmsKeyAlreadySet`].
     ///
     /// [`HsmError::UmsKeyAlreadySet`]: crate::HsmError::UmsKeyAlreadySet
-    PartitionUniqueMachineSecret = 38,
+    UniquePartitionSecret = 38,
+
+    /// Partition Local Key Masking Key (PartLocalMK) — 32 B AES-256-GCM
+    /// masking key derived in `PartFinal` and masked into the
+    /// `local_mk_backup` envelope.  Masks partition-local keys
+    /// ([`HsmKeyScope::Local`]); recovered across launches from the
+    /// caller-replayed backup.
+    PartitionLocalMaskingKey = 39,
+
+    /// Ephemeral Key Masking Key (EphemeralMK) — 32 B random
+    /// AES-256-GCM masking key generated in `PartFinal`.  Masks
+    /// [`HsmKeyScope::Ephemeral`] keys; never backed up, so it is
+    /// implicitly revoked (along with everything it masked) on the next
+    /// partition reset.
+    PartitionEphemeralMaskingKey = 40,
 }
 
 /// Key scope: the lifecycle / visibility domain a vault key belongs

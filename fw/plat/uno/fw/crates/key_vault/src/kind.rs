@@ -82,7 +82,7 @@ impl KeyLen {
 /// and var-HMAC min/max. `SessionEx` is length-discriminated by session
 /// type (PlainText=120, Authenticated=216) and modelled as variable;
 /// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
-static KIND_LEN: [KeyLen; 39] = [
+static KIND_LEN: [KeyLen; 41] = [
     /* 0  Free                         */ KeyLen::Invalid,
     /* 1  Rsa2kPublic                  */ KeyLen::Fixed(260),
     /* 2  Rsa3kPublic                  */ KeyLen::Fixed(388),
@@ -121,7 +121,9 @@ static KIND_LEN: [KeyLen; 39] = [
     /* 35 SessionExPending           */ KeyLen::Variable { min: 32, max: 256 },
     /* 36 SessionEx                    */ KeyLen::Variable { min: 120, max: 216 },
     /* 37 PartitionTrustAnchor         */ KeyLen::Fixed(48),
-    /* 38 PartitionUniqueMachineSecret */ KeyLen::Fixed(48),
+    /* 38 UniquePartitionSecret */ KeyLen::Fixed(48),
+    /* 39 PartitionLocalMaskingKey     */ KeyLen::Fixed(32),
+    /* 40 PartitionEphemeralMaskingKey */ KeyLen::Fixed(32),
 ];
 
 /// Resolves the length contract for `kind` in O(1).
@@ -183,7 +185,9 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
             (HsmVaultKeyKind::PartitionTrustAnchor, 48),
-            (HsmVaultKeyKind::PartitionUniqueMachineSecret, 48),
+            (HsmVaultKeyKind::UniquePartitionSecret, 48),
+            (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
+            (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
         ];
         for (kind, len) in table {
             assert_eq!(key_len(kind), Ok(KeyLen::Fixed(len)), "{kind:?}");
@@ -197,7 +201,7 @@ mod tests {
 
     #[test]
     fn unknown_discriminant_is_invalid_key_type() {
-        // 200 is well outside the named 0..=38 range.
+        // 200 is well outside the named 0..=40 range.
         assert_eq!(key_len(HsmVaultKeyKind(200)), Err(HsmError::InvalidKeyType));
     }
 
@@ -218,7 +222,7 @@ mod tests {
             (HsmVaultKeyKind::_HmacSha512, 64),
             (HsmVaultKeyKind::MaskingKey, 80),
             (HsmVaultKeyKind::PartitionTrustAnchor, 48),
-            (HsmVaultKeyKind::PartitionUniqueMachineSecret, 48),
+            (HsmVaultKeyKind::UniquePartitionSecret, 48),
         ];
         for (kind, len) in cases {
             assert_eq!(key_len(kind), Ok(KeyLen::Fixed(len)), "{kind:?}");

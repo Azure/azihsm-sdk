@@ -14,6 +14,7 @@ azihsm_fw_hsm_core_tracing.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
 embassy-sync.workspace = true
 tokio = { features = ["rt", "sync", "time"], workspace = true }
+zeroize.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

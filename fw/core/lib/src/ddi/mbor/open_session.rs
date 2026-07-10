@@ -63,7 +63,7 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
-) -> HsmResult<&'p DmaBuf> {
+) -> HsmResult<DispatchResult<'p>> {
     let mut body: DdiOpenSessionReq = decoder.decode_data()?;
 
     let _lock = pal.partition_lock(io).await?;
@@ -145,7 +145,14 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     )
     .await?;
 
-    Ok(resp)
+    // Surface the new session id to the IO layer for the CQE (only on the
+    // success path, since the `?` above returns early on failure), letting the
+    // host driver register the session against the calling file handle for the
+    // later CloseSession lookup.
+    Ok(DispatchResult {
+        resp,
+        session_id: Some(u16::from(sess_id)),
+    })
 }
 
 /// Performs all fail-fast checks before any cryptographic work.
@@ -210,7 +217,19 @@ async fn derive_session_credential_keys<P: HsmPal>(
 
     let secret = pal.dma_alloc(io, HsmEccCurve::P384.secret_len())?;
     {
-        let priv_key = pal.vault_key(io, sess_enc_key_id)?;
+        // The session-encryption key is stored as exactly
+        // `pub(pub_key_len) ‖ priv(priv_key_len)`; ECDH needs the private
+        // scalar. Require that exact length and split off the leading public
+        // key, so a blob that is not `pub ‖ priv` — a bare private key, or one
+        // with extra trailing bytes — is rejected rather than silently keying
+        // ECDH on the wrong bytes or masking vault corruption.
+        let pub_key_len = HsmEccCurve::P384.pub_key_len();
+        let priv_key_len = HsmEccCurve::P384.priv_key_len();
+        let sess_enc_blob = pal.vault_key(io, sess_enc_key_id)?;
+        if sess_enc_blob.len() != pub_key_len + priv_key_len {
+            return Err(HsmError::EccInvalidKeyLength);
+        }
+        let (_pub_key, priv_key) = sess_enc_blob.split_at(pub_key_len);
         pal.ecdh_derive(
             io,
             HsmEccCurve::P384,

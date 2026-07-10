@@ -1,21 +1,42 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! ECC-P384 key-attestation report builder for AZIHSM firmware.
+//! COSE_Sign1 key-attestation report builder and parser for AZIHSM
+//! firmware.
 //!
-//! Emits CBOR / `COSE_Sign1` reports byte-identical to mcr-hsm and
-//! the AZIHSM simulator, without taking a `minicbor` dependency in
-//! firmware.  Variable bytes are patched into pre-baked templates
-//! (see [`template`]) and the SHA-384 + ECDSA-P384 signing step is
-//! routed through the supplied [`HsmCrypto`](azihsm_fw_hsm_pal_traits::HsmCrypto)
-//! implementation.
+//! Emits and parses CBOR / `COSE_Sign1` key-attestation reports whose
+//! wire format matches `~/mcr-hsm` and the AZIHSM simulator
+//! (`ddi/mbor/sim/src/report.rs`) byte-for-byte. The attested public key
+//! may be ECC, RSA, or symmetric; the report is always signed with ES384
+//! (ECDSA-P384). SHA-384 + ECDSA signing/verification are routed through
+//! the supplied [`HsmCrypto`](azihsm_fw_hsm_pal_traits::HsmCrypto)
+//! implementation, and all working buffers are
+//! [`DmaBuf`](azihsm_fw_hsm_pal_traits::DmaBuf) allocations.
 //!
-//! See [`key_report`] for the single public entry point.
+//! * [`key_report`] — build a signed report (query/copy convention).
+//! * [`parse_key_report`] — zero-copy decode into a [`KeyReportView`].
+//! * [`verify_key_report`] — check a report's ES384 signature.
 
 #![no_std]
 
-mod builder;
-#[allow(dead_code)]
-mod template;
+mod codec;
+mod consts;
+mod cose_key;
+mod decode;
+mod encode;
+mod sig;
 
-pub use builder::*;
+pub use consts::KeyFlags;
+pub use consts::APP_UUID_LEN;
+pub use consts::KEY_REPORT_MAX_LEN;
+pub use consts::PRIV_KEY_LEN;
+pub use consts::PUBLIC_KEY_MAX_SIZE;
+pub use consts::REPORT_DATA_LEN;
+pub use consts::SIGNATURE_LEN;
+pub use consts::VM_LAUNCH_ID_LEN;
+pub use cose_key::AttestedPubKey;
+pub use decode::parse_key_report;
+pub use decode::verify_key_report;
+pub use decode::KeyReportView;
+pub use encode::key_report;
+pub use encode::KeyReportParams;

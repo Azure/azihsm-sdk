@@ -56,7 +56,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x05` | `SessionClose` | InSession | [`commands/session_close.md`](./commands/session_close.md) |
 | `0x06` | `PskChange` | InSession | [`commands/psk_change.md`](./commands/psk_change.md) |
 | `0x07` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
-| `0x08` | `PartFinal` (schema-only) | InSession | [`commands/part_final.md`](./commands/part_final.md) |
+| `0x08` | `PartFinal` | InSession | [`commands/part_final.md`](./commands/part_final.md) |
 | `0x09` | `SdSealingKeyGen` (schema-only) | InSession | [`commands/sd_sealing_key_gen.md`](./commands/sd_sealing_key_gen.md) |
 | `0x0A` | `SdCreateRemoteBackup` (schema-only) | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
 | `0x0B` | `SdResealBackup` (schema-only) | InSession | [`commands/sd_reseal_backup.md`](./commands/sd_reseal_backup.md) |

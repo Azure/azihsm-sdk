@@ -27,10 +27,20 @@
 //! ## Partition lifecycle
 //!
 //! ```text
-//! Disabled ──► part_alloc ──► Uninitialized ──► (future: Initialized)
-//!    ▲                              │
-//!    └────────── part_free ─────────┘
+//! Unallocated ──part_alloc──► Allocated ──part_enable──► Enabled
+//!                                                          │
+//!                                               PartInit   │   part_disable ⇄ part_enable
+//!                                                          ▼   toggles Enabled ⇄ Disabled
+//!                                                     Initializing
+//!                                                          │
+//!                                               PartFinal  │
+//!                                                          ▼
+//!                                                     Initialized
 //! ```
+//!
+//! `part_free` returns a partition in any allocated state to
+//! `Unallocated`.  `Enabled`, `Initializing`, and `Initialized` all serve
+//! DDI traffic; `Unallocated`, `Allocated`, and `Disabled` do not.
 //!
 //! ## Resource allocation
 //!
@@ -47,6 +57,7 @@
 
 use azihsm_crypto::*;
 use azihsm_fw_hsm_pal_traits::POLICY_HASH_LEN;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
@@ -258,6 +269,14 @@ pub(crate) struct PartitionEntry {
     /// `part_disable`.
     ups_key_id: Option<HsmKeyId>,
 
+    /// Vault key ID of the partition-local key masking key
+    /// (`PartLocalMK`), bound by `PartFinal`.
+    local_mk_key_id: Option<HsmKeyId>,
+
+    /// Vault key ID of the partition ephemeral key masking key
+    /// (`EphemeralMK`), bound by `PartFinal`.
+    ephemeral_mk_key_id: Option<HsmKeyId>,
+
     /// SEC1 uncompressed P-384 public key for the Partition Trust Anchor.
     pta_pub_key: Option<[u8; P384_PUB_KEY_LEN]>,
 
@@ -310,6 +329,8 @@ impl Default for PartitionEntry {
             psk_cu: None,
             pta_key_id: None,
             ups_key_id: None,
+            local_mk_key_id: None,
+            ephemeral_mk_key_id: None,
             pta_pub_key: None,
             policy_hash: None,
             pota_thumbprint: None,
@@ -590,7 +611,10 @@ impl StdHsmPal {
     /// leak across the allocate/enable boundary.
     fn serving_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
         self.part_if(pid, |s| {
-            matches!(s, PartState::Enabled | PartState::Initializing)
+            matches!(
+                s,
+                PartState::Enabled | PartState::Initializing | PartState::Initialized
+            )
         })
     }
 
@@ -598,7 +622,10 @@ impl StdHsmPal {
     #[allow(clippy::mut_from_ref)]
     fn serving_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
         self.part_if_mut(pid, |s| {
-            matches!(s, PartState::Enabled | PartState::Initializing)
+            matches!(
+                s,
+                PartState::Enabled | PartState::Initializing | PartState::Initialized
+            )
         })
     }
 }
@@ -856,7 +883,7 @@ impl StdHsmPal {
         }
         if !matches!(
             table.entries[idx].state,
-            PartState::Enabled | PartState::Initializing
+            PartState::Enabled | PartState::Initializing | PartState::Initialized
         ) {
             return Err(HsmError::InvalidArg);
         }
@@ -887,7 +914,10 @@ impl StdHsmPal {
         entry.gen = entry.gen.wrapping_add(1);
 
         // If enabled, clear internal keys/nonce/vault/sessions first.
-        if matches!(entry.state, PartState::Enabled | PartState::Initializing) {
+        if matches!(
+            entry.state,
+            PartState::Enabled | PartState::Initializing | PartState::Initialized
+        ) {
             Self::clear_enabled_state(entry);
         }
 
@@ -918,9 +948,14 @@ impl StdHsmPal {
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// Generate an ECC P-384 key pair, store the raw HSM-format private
-    /// key (scalar `d`, 48 bytes) in the vault, and write the raw public
-    /// key coordinates (x ∥ y) into `pub_key_out`.
+    /// Generate an ECC P-384 key pair, store it in the vault, and write
+    /// the raw public key coordinates (x ∥ y) into `pub_key_out`.
+    ///
+    /// The stored vault blob depends on `kind`: the `EstablishCred` and
+    /// `SessionEncryption` keys are stored as `pub(96) ‖ priv(48)` (144 B,
+    /// matching the Uno PAL and the reference on-storage layout, so ECDH
+    /// derivation can split off the public half); every other kind stores
+    /// the bare raw HSM-format private scalar `d` (48 B for P-384).
     ///
     /// `big_endian` selects the public-key byte order (the BE↔LE flip is
     /// the driver's responsibility): `true` yields OpenSSL big-endian
@@ -951,16 +986,32 @@ impl StdHsmPal {
             .pub_coords(&pub_key, big_endian, pub_key_out)
             .await?;
 
-        // Export private key as raw HSM scalar bytes (48 B for P-384)
-        // and store them in the vault.
+        // Export the private key as raw HSM scalar bytes (48 B for P-384).
+        // `Zeroizing` scrubs the transient heap copy on drop once the vault
+        // owns its own copy.
         let priv_len = pk.hsm_bytes_len();
-        let mut priv_buf = vec![0u8; priv_len];
+        let mut priv_buf = Zeroizing::new(vec![0u8; priv_len]);
         pk.to_hsm_bytes(&mut priv_buf[..priv_len])
             .map_err(|_| HsmError::EccExportError)?;
 
+        // The establish-credential and session-encryption keys are stored as
+        // `pub(P384_PUB_KEY_LEN) ‖ priv(priv_len)` (144 B) — matching the Uno
+        // PAL's `build_enable_key_blob` and the reference on-storage layout so
+        // ECDH can split off the public half; every other kind stores the bare
+        // private scalar.
+        let key_blob = match kind {
+            HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
+                let mut blob = Zeroizing::new(Vec::with_capacity(P384_PUB_KEY_LEN + priv_len));
+                blob.extend_from_slice(&pub_key_out[..P384_PUB_KEY_LEN]);
+                blob.extend_from_slice(&priv_buf[..priv_len]);
+                blob
+            }
+            _ => priv_buf,
+        };
+
         let table = self.table_mut();
         let entry = &mut table.entries[pid as usize];
-        entry.vault.create(&priv_buf[..priv_len], kind, None, attrs)
+        entry.vault.create(&key_blob, kind, None, attrs)
     }
 
     /// Clear all state associated with an enabled partition (internal keys,
@@ -1005,6 +1056,8 @@ impl StdHsmPal {
         drop_key(&mut entry.vault, &mut entry.unwrapping_key_id);
         drop_key(&mut entry.vault, &mut entry.pta_key_id);
         drop_key(&mut entry.vault, &mut entry.ups_key_id);
+        drop_key(&mut entry.vault, &mut entry.local_mk_key_id);
+        drop_key(&mut entry.vault, &mut entry.ephemeral_mk_key_id);
         entry.id_key_id = None;
 
         // Public-key mirrors and other non-secret fixed buffers.
@@ -1142,11 +1195,12 @@ impl PartitionEntry {
     /// The internal device-command lifecycle (`part_alloc_internal`,
     /// `part_enable_internal`, `part_disable_internal`,
     /// `part_free_internal`) drives all other transitions; the prop
-    /// API only exposes the single caller-facing one:
-    /// `Enabled → Initializing`, which additionally requires the four
-    /// write-once provisioning fields (PTA key, UMS key, policy,
-    /// POTA thumbprint) to be present.  Any other source/target pair
-    /// is rejected with [`HsmError::InvalidArg`].
+    /// API exposes the two caller-facing ones: `Enabled → Initializing`
+    /// (`PartInit`, which additionally requires the four write-once
+    /// provisioning fields — PTA key, UMS key, policy, POTA thumbprint —
+    /// to be present) and `Initializing → Initialized` (`PartFinal`).
+    /// Any other source/target pair is rejected with
+    /// [`HsmError::InvalidArg`].
     fn transition_state_via_prop(&mut self, target: PartState) -> HsmResult<()> {
         match (self.state, target) {
             (PartState::Enabled, PartState::Initializing) => {
@@ -1158,6 +1212,12 @@ impl PartitionEntry {
                     return Err(HsmError::InvalidArg);
                 }
                 self.state = PartState::Initializing;
+                Ok(())
+            }
+            // `PartFinal` finalizes the partition: the one caller-facing
+            // transition out of `Initializing`.
+            (PartState::Initializing, PartState::Initialized) => {
+                self.state = PartState::Initialized;
                 Ok(())
             }
             // No-op writes (same state) are accepted as a convenience.
@@ -1184,6 +1244,8 @@ impl PartitionEntry {
             PartPropId::RSA_UNWRAPPING_KEY_ID => key_id_to_u32(self.unwrapping_key_id),
             PartPropId::SESSION_ENC_KEY_ID => key_id_to_u32(self.session_enc_key_id),
             PartPropId::ESTABLISH_CRED_KEY_ID => key_id_to_u32(self.establish_cred_key_id),
+            PartPropId::LOCAL_MK_KEY_ID => key_id_to_u32(self.local_mk_key_id),
+            PartPropId::EPHEMERAL_MK_KEY_ID => key_id_to_u32(self.ephemeral_mk_key_id),
             _ => Err(HsmError::InvalidArg),
         }
     }
@@ -1216,6 +1278,14 @@ impl PartitionEntry {
             }
             PartPropId::SESSION_ENC_KEY_ID => {
                 self.session_enc_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::LOCAL_MK_KEY_ID => {
+                self.local_mk_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
+            PartPropId::EPHEMERAL_MK_KEY_ID => {
+                self.ephemeral_mk_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
             PartPropId::ESTABLISH_CRED_KEY_ID => {
@@ -1465,6 +1535,14 @@ impl PartitionEntry {
             }
             PartPropId::SESSION_ENC_KEY_ID => {
                 self.session_enc_key_id = None;
+                Ok(())
+            }
+            PartPropId::LOCAL_MK_KEY_ID => {
+                self.local_mk_key_id = None;
+                Ok(())
+            }
+            PartPropId::EPHEMERAL_MK_KEY_ID => {
+                self.ephemeral_mk_key_id = None;
                 Ok(())
             }
             PartPropId::ESTABLISH_CRED_KEY_ID => {

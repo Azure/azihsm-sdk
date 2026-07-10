@@ -26,6 +26,7 @@ pub(crate) mod kbkdf_derive;
 pub(crate) mod kdf;
 pub(crate) mod key_attrs;
 pub(crate) mod open_session;
+pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
@@ -56,6 +57,7 @@ pub(crate) use hmac::*;
 pub(crate) use init_bk3::*;
 pub(crate) use kbkdf_derive::*;
 pub(crate) use open_session::*;
+pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
@@ -102,11 +104,35 @@ fn check_api_rev(hdr: &DdiReqHdr) -> HsmResult<()> {
     Ok(())
 }
 
+/// Outcome of dispatching a single MBOR command.
+///
+/// Carries the encoded response and, for `OpenSession`, the freshly
+/// allocated session id the IO layer places in the CQE so the host driver
+/// can register the session against the calling file handle. Every other
+/// command leaves `session_id` as `None`.
+pub(crate) struct DispatchResult<'p> {
+    /// Encoded response slice (borrows `pal`'s per-IO allocator).
+    pub(crate) resp: &'p DmaBuf,
+    /// Session id to place in the CQE; set only by `OpenSession`.
+    pub(crate) session_id: Option<u16>,
+}
+
+impl<'p> DispatchResult<'p> {
+    /// Wraps a plain response that carries no session id (the common case).
+    fn from_resp(resp: &'p DmaBuf) -> Self {
+        Self {
+            resp,
+            session_id: None,
+        }
+    }
+}
+
 /// Dispatch a DDI command to its handler.
 ///
-/// Returns the encoded response slice on success, or a [`HsmError`] on
-/// failure. The slice borrows from `pal`'s per-IO allocator and is
-/// valid until the IO completes.
+/// Returns a [`DispatchResult`] — the encoded response slice plus, for
+/// `OpenSession`, the freshly allocated session id — on success, or a
+/// [`HsmError`] on failure. The slice borrows from `pal`'s per-IO allocator
+/// and is valid until the IO completes.
 ///
 /// This function is `async` because `GetCertificate` calls into
 /// `HsmCertStore::get_cert` which is async.
@@ -115,10 +141,17 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
-) -> HsmResult<&'p DmaBuf> {
+) -> HsmResult<DispatchResult<'p>> {
     check_api_rev(hdr)?;
 
-    match hdr.op {
+    // `OpenSession` is the only command that surfaces a session id (for the
+    // CQE), so it returns a fully-formed `DispatchResult`; every other command
+    // yields just a response slice that is wrapped below.
+    if matches!(hdr.op, DdiOp::OpenSession) {
+        return open_session(pal, io, decoder, hdr).await;
+    }
+
+    let resp = match hdr.op {
         DdiOp::GetApiRev => get_api_rev(pal, io, decoder, hdr),
         DdiOp::GetDeviceInfo => get_device_info(pal, io, decoder, hdr),
         DdiOp::GetCertChainInfo => get_cert_chain_info(pal, io, decoder, hdr).await,
@@ -134,7 +167,6 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
-        DdiOp::OpenSession => open_session(pal, io, decoder, hdr).await,
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr).await,
         DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr).await,
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
@@ -145,8 +177,10 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::HkdfDerive => hkdf_derive(pal, io, decoder, hdr).await,
         DdiOp::KbkdfCounterHmacDerive => kbkdf_counter_hmac_derive(pal, io, decoder, hdr).await,
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
+        DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
-    }
+    }?;
+    Ok(DispatchResult::from_resp(resp))
 }
 
 /// Encode a DDI response (header + data) in a single pass.

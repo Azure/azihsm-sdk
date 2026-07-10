@@ -376,6 +376,61 @@ pub const fn part_pta_key_id_prop_id() -> PartPropId {
     PartPropId::PTA_KEY_ID
 }
 
+/// Vault id of the partition-local key masking key (`PartLocalMK`).
+///
+/// Wraps [`PartPropId::LOCAL_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `PartFinal` handler.
+pub fn part_local_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::LOCAL_MK_KEY_ID)
+}
+
+/// Set the partition-local masking-key id.
+pub fn part_set_local_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::LOCAL_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_local_mk_key_id`] /
+/// [`part_set_local_mk_key_id`].
+#[inline]
+pub const fn part_local_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::LOCAL_MK_KEY_ID
+}
+
+/// Vault id of the partition's ephemeral key masking key
+/// (`EphemeralMK`).
+///
+/// Wraps [`PartPropId::EPHEMERAL_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `PartFinal` handler.
+pub fn part_ephemeral_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::EPHEMERAL_MK_KEY_ID)
+}
+
+/// Set the partition ephemeral masking-key id.
+pub fn part_set_ephemeral_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::EPHEMERAL_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_ephemeral_mk_key_id`] /
+/// [`part_set_ephemeral_mk_key_id`].
+#[inline]
+pub const fn part_ephemeral_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::EPHEMERAL_MK_KEY_ID
+}
+
 /// Vault id of the partition's unwrapping key.
 ///
 /// Wraps [`PartPropId::RSA_UNWRAPPING_KEY_ID`] (`U16 → HsmKeyId`,

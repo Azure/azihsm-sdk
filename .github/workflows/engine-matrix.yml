@@ -102,11 +102,29 @@ jobs:
           cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
             --features engine --all-targets -- -D warnings
 
+      # azihsm_crypto's *_ossl11.rs backends only compile under cfg(not(ossl300)),
+      # so the 3.x workspace clippy in rust.yml never lints them; lint them here.
+      - name: Clippy azihsm_crypto
+        run: cargo clippy -p azihsm_crypto --all-targets -- -D warnings
+
+      # cargo-nextest isn't in the base image and building it from source is
+      # unreliable here; fetch the prebuilt binary, pinned to the version xtask
+      # installs elsewhere (xtask/src/setup.rs CARGO_NEXTEST_VERSION).
+      - name: Install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/0.9.132/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+
       # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
       # only on the 1.1 FFI, so they run here. The azihsm_engine mock lifecycle
       # tests pull the OpenSSL-3.x SDK and need separate handling (roadmap #19).
       - name: Test openssl-engine
-        run: cargo test -p openssl-engine --features engine
+        run: cargo nextest run -p openssl-engine --features engine
+
+      - name: Test azihsm_crypto
+        run: cargo nextest run -p azihsm_crypto
+
+      # nextest does not run doctests; run azihsm_crypto's separately.
+      - name: Doctests
+        run: cargo test --doc -p azihsm_crypto
 
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"

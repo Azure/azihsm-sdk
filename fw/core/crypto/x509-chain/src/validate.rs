@@ -22,6 +22,7 @@
 
 use core::ops::AsyncFnMut;
 
+use azihsm_fw_ddi_tbor_types::evidence::CertDescriptor;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmError;
@@ -368,19 +369,28 @@ impl ChainValidator {
     }
 }
 
+/// Maximum accepted DER length of a single certificate in a chain.
+///
+/// Certificate lengths in `descriptors` come from an untrusted request and
+/// size the reused DMA buffers, so they are bounded here: a hostile
+/// descriptor cannot force an oversized allocation (a rejection ceiling —
+/// real ECDSA certs are well under this, so it does not affect the actual
+/// per-chain allocation, which tracks the largest real cert).
+pub const MAX_CERT_DER_LEN: usize = 2048;
+
 /// Walk and validate a certificate chain, root → leaf, returning the
 /// leaf public key.
 ///
-/// This is the reusable, transport-agnostic chain-walking entry point:
-/// it drives [`ChainValidator`] over `cert_lens.len()` certificates while
-/// leaving the *source* of the certificate bytes to the caller. The
-/// `fetch` callback supplies each certificate's DER into a caller-visible
-/// DMA buffer — index `0` is the root, `cert_lens.len() - 1` the leaf —
-/// which is then parsed and verified. Two max-sized DER buffers are
-/// reused across the walk (double-buffering), so the certificate buffers
-/// consume ≈2×max(`cert_lens`) of DMA regardless of chain length.
-/// Callers that carry their chain out-of-band simply copy the indexed
-/// item into `buf` inside `fetch`; nothing here is transport-specific.
+/// The chain is described by `descriptors` — one [`CertDescriptor`] per
+/// certificate, ordered root (`descriptors[0]`) → leaf
+/// (`descriptors[descriptors.len() - 1]`). Each descriptor carries the
+/// certificate's byte `length` and an `index` naming where its DER lives
+/// out of band. The `fetch` callback is invoked with that `index` (widened
+/// to `usize`) and must copy the certificate's DER into the provided DMA
+/// buffer; the *source* of the bytes (an OOB SGL block, a side-band buffer,
+/// …) is left entirely to the caller. Two max-sized DER buffers are reused
+/// across the walk (double-buffering), so the certificate buffers consume
+/// ≈2× the widest descriptor `length` of DMA regardless of chain length.
 ///
 /// Per certificate the validator checks the ECDSA signature, issuer↔
 /// subject name chaining, AKID↔SKID, and CA `BasicConstraints`/`KeyUsage`
@@ -399,9 +409,9 @@ impl ChainValidator {
 ///
 /// # Errors
 ///
-/// * [`HsmError::InvalidArg`] — empty chain, a zero-length certificate,
-///   `leaf_out`'s length does not match the leaf public-key length, or
-///   the `anchor` requirement was not satisfied.
+/// * [`HsmError::InvalidArg`] — empty `descriptors`, a zero-length
+///   certificate, `leaf_out`'s length does not match the leaf public-key
+///   length, or the `anchor` requirement was not satisfied.
 /// * [`HsmError::InternalError`] — the validator did not reach the leaf
 ///   after every certificate was consumed (internal invariant).
 /// * Any [`HsmError`] surfaced by `fetch`, [`parse_cert`], or signature
@@ -410,7 +420,7 @@ pub async fn validate_chain<P, F>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &impl HsmScopedAlloc,
-    cert_lens: &[usize],
+    descriptors: &[CertDescriptor],
     anchor: Option<&[u8]>,
     leaf_out: &mut [u8],
     mut fetch: F,
@@ -419,15 +429,18 @@ where
     P: HsmHash + HsmEcc,
     F: for<'a> AsyncFnMut(usize, &'a mut DmaBuf) -> HsmResult<()>,
 {
-    if cert_lens.is_empty() || cert_lens.len() > u16::MAX as usize {
+    if descriptors.is_empty() || descriptors.len() > u16::MAX as usize {
         return Err(HsmError::InvalidArg);
     }
 
     // Reject zero-length certificates up front and size the reused
     // buffers to the widest cert in the chain.
     let mut max_len = 0usize;
-    for &len in cert_lens {
-        if len == 0 {
+    for d in descriptors {
+        let len = usize::from(d.length.get());
+        // Lengths come from an untrusted request; reject empty or
+        // oversized certificates before they can size a DMA allocation.
+        if len == 0 || len > MAX_CERT_DER_LEN {
             return Err(HsmError::InvalidArg);
         }
         if len > max_len {
@@ -435,7 +448,7 @@ where
         }
     }
 
-    let mut validator = ChainValidator::new(cert_lens.len() as u16);
+    let mut validator = ChainValidator::new(descriptors.len() as u16);
     // A chain with no anchor requirement is trivially "anchored".
     let mut anchored = anchor.is_none();
 
@@ -449,11 +462,13 @@ where
     let mut prev = alloc.dma_alloc(max_len)?;
     let mut prev_len = 0usize;
 
-    for (i, &len) in cert_lens.iter().enumerate() {
+    for (i, d) in descriptors.iter().enumerate() {
+        let len = usize::from(d.length.get());
         // The caller fills the leading `len` bytes of the current buffer
-        // with this cert's DER (only that prefix of the reused buffer is
-        // meaningful for this iteration).
-        fetch(i, &mut curr[..len]).await?;
+        // with this cert's DER, sourced by the descriptor's out-of-band
+        // `index` (only that prefix of the reused buffer is meaningful for
+        // this iteration).
+        fetch(usize::from(d.index), &mut curr[..len]).await?;
 
         // Inner scope: `curr_cert`/`prev_cert` borrow the buffers, so
         // they must be dropped before the `swap` below can take the
@@ -465,7 +480,7 @@ where
             // public key must equal the anchor. Both the cert key and the
             // anchor are big-endian, so this is a direct byte compare.
             if let Some(anchor) = anchor {
-                if i + 1 < cert_lens.len() {
+                if i + 1 < descriptors.len() {
                     let point: &[u8] = curr_cert.pub_key.point;
                     if point == anchor {
                         anchored = true;
@@ -509,7 +524,7 @@ where
         prev_len = len;
     }
 
-    // `ChainValidator::new(cert_lens.len())` yields `Valid` on the final
+    // `ChainValidator::new(descriptors.len())` yields `Valid` on the final
     // (leaf) step, so reaching here means the counts disagreed.
     Err(HsmError::InternalError)
 }

@@ -257,7 +257,10 @@ impl SessionCtrl {
         match opcode {
             opcode::API_REV => Self::NoSession,
             opcode::SESSION_OPEN_INIT => Self::Open,
-            opcode::SESSION_OPEN_FINISH | opcode::PSK_CHANGE | opcode::PART_INIT => Self::InSession,
+            opcode::SESSION_OPEN_FINISH
+            | opcode::PSK_CHANGE
+            | opcode::PART_INIT
+            | opcode::PART_FINAL => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

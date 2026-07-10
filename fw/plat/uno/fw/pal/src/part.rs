@@ -380,6 +380,8 @@ impl UnoHsmPal {
             part.ups_key_id(),
             part.pta_key_id(),
             part.unwrapping_key_id(),
+            part.local_mk_key_id(),
+            part.ephemeral_mk_key_id(),
         ]
         .into_iter()
         .flatten()
@@ -489,6 +491,12 @@ impl HsmPartitionManager for UnoHsmPal {
                         part.set_state(PartState::Initializing);
                         Ok(())
                     }
+                    // `PartFinal` finalizes the partition: the one
+                    // caller-facing transition out of `Initializing`.
+                    (PartState::Initializing, PartState::Initialized) => {
+                        part.set_state(PartState::Initialized);
+                        Ok(())
+                    }
                     // No-op writes (same state) are accepted as a convenience.
                     (cur, tgt) if cur == tgt => Ok(()),
                     // All other transitions are PAL-internal (driven by the
@@ -511,6 +519,8 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::RSA_UNWRAPPING_KEY_ID => part.unwrapping_key_id(),
             PartPropId::ESTABLISH_CRED_KEY_ID => part.ec_key_id(),
             PartPropId::SESSION_ENC_KEY_ID => part.se_key_id(),
+            PartPropId::LOCAL_MK_KEY_ID => part.local_mk_key_id(),
+            PartPropId::EPHEMERAL_MK_KEY_ID => part.ephemeral_mk_key_id(),
             _ => return Err(HsmError::UnsupportedCmd),
         };
         key.map(u16::from).ok_or(HsmError::PartPropNotFound)
@@ -523,6 +533,8 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::MK_KEY_ID => part.set_mk_key_id(Some(key)),
             PartPropId::SESSION_ENC_KEY_ID => part.set_se_key_id(Some(key)),
             PartPropId::ESTABLISH_CRED_KEY_ID => part.set_ec_key_id(Some(key)),
+            PartPropId::LOCAL_MK_KEY_ID => part.set_local_mk_key_id(Some(key)),
+            PartPropId::EPHEMERAL_MK_KEY_ID => part.set_ephemeral_mk_key_id(Some(key)),
             // UPS / PTA key ids are write-once provisioning fields.
             PartPropId::UPS_KEY_ID => {
                 if part.ups_key_id().is_some() {
@@ -670,6 +682,8 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::PTA_KEY_ID => p.set_pta_key_id(None),
             PartPropId::SESSION_ENC_KEY_ID => p.set_se_key_id(None),
             PartPropId::ESTABLISH_CRED_KEY_ID => p.set_ec_key_id(None),
+            PartPropId::LOCAL_MK_KEY_ID => p.set_local_mk_key_id(None),
+            PartPropId::EPHEMERAL_MK_KEY_ID => p.set_ephemeral_mk_key_id(None),
             // AbsentUntilSet byte fields zeroize and reset to absent.
             PartPropId::CREDENTIAL => p.clear_credential(),
             PartPropId::POTA_THUMBPRINT => p.clear_pota_thumbprint(),

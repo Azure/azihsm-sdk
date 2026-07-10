@@ -17,6 +17,7 @@ azihsm_fw_core_crypto_key_derive.workspace = true
 azihsm_fw_core_crypto_key_masking.workspace = true
 azihsm_fw_core_crypto_key_report.workspace = true
 azihsm_fw_core_crypto_x509_builder.workspace = true
+azihsm_fw_core_crypto_x509_chain.workspace = true
 azihsm_fw_ddi_mbor = { features = ["trusted-encode"], workspace = true }
 azihsm_fw_ddi_mbor_api.workspace = true
 azihsm_fw_ddi_mbor_types.workspace = true
@@ -26,6 +27,7 @@ azihsm_fw_hsm_core_tracing.workspace = true
 azihsm_fw_hsm_io.workspace = true
 azihsm_fw_hsm_key_decode.workspace = true
 azihsm_fw_hsm_key_unwrap.workspace = true
+azihsm_fw_hsm_oob.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
 
 zerocopy.workspace = true
