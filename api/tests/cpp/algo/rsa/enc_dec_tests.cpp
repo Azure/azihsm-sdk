@@ -506,7 +506,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_corrupted_oaep_ciphertext)
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
@@ -552,7 +552,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_oaep_hash_mismatch)
 
         auto decrypt_err =
             azihsm_crypt_decrypt(&decrypt_algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
@@ -593,7 +593,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_with_public_key_rejected)
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, pub_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -762,7 +762,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_empty_ciphertext)
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -804,7 +804,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_truncated_ciphertext)
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -849,7 +849,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_wrong_padding_scheme)
 
         auto decrypt_err =
             azihsm_crypt_decrypt(&decrypt_algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
     });
 }
 
@@ -1313,6 +1313,6 @@ TEST_F(azihsm_rsa_encrypt_decrypt, oaep_sha512_to_sha1_hash_mismatch_rejected)
 
         auto decrypt_err =
             azihsm_crypt_decrypt(&decrypt_algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
