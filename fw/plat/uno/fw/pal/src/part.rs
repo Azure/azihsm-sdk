@@ -30,12 +30,13 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_uno_drivers_part_store::PartResetKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_session_store::SessionStore;
 
-use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
 use crate::io::UnoHsmIo;
+use crate::UnoHsmPal;
 
 /// Number of partition slots (one per global key-vault table index).
 pub const NUM_PARTITIONS: usize = 65;
@@ -396,7 +397,7 @@ impl UnoHsmPal {
                 self.delete_key(pid, key_id).await;
             }
         }
-        part.clear_enabled_state();
+        part.clear_state(PartResetKind::Disable);
     }
 
     /// Enables partition `pid` (mirrors the reference firmware's
@@ -488,7 +489,7 @@ impl UnoHsmPal {
                     .clear(self, &admin_io)
                     .await?;
                 // Clear per-tenant persistent state, preserving provisioning.
-                part.clear_migrate_state();
+                part.clear_state(PartResetKind::Migrate);
                 // Regenerate the enable-time establish-credential and
                 // session-encryption keys (this PAL provisions them eagerly).
                 self.provision_enabled_keys(pid).await

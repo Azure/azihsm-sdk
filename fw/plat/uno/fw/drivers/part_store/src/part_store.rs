@@ -290,6 +290,20 @@ mod layout_asserts;
 #[derive(Debug)]
 pub struct PartStore;
 
+/// Selects how much partition state [`Partition::clear_state`] wipes.
+///
+/// Both kinds clear the per-tenant runtime state (enable-time keys,
+/// credential, BK3 session key, nonce, session table, and PIN policy);
+/// they differ only in whether the write-once provisioning material is
+/// preserved. Future reset flavours can be added as additional variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartResetKind {
+    /// NSSR `Migrate`: preserve the partition's provisioning material.
+    Migrate,
+    /// Partition deallocation / disable: also wipe the provisioning material.
+    Disable,
+}
+
 /// A validated partition-store slot.
 ///
 /// Obtained only via [`PartStore::partition`], so holding one is proof
@@ -409,73 +423,30 @@ impl Partition {
         self.se_pub_key_mut().fill(0);
     }
 
-    /// Zeroizes all per-tenant state established at enable and `PartInit`.
+    /// Clears a partition's state for a given [`PartResetKind`].
     ///
-    /// Clears the enable-time and provisioning vault-key handles (the
-    /// vault deletions themselves are the PAL's responsibility), the
-    /// cached public keys, every caller-presented secret and write-once
-    /// provisioning field (with their presence flags), the nonce, VM
-    /// launch GUID, BK3 incarnation flag, and the per-partition session
-    /// table.
+    /// The shared core (cleared for every kind) drops the enable-time and
+    /// provisioning vault-key handles (the vault deletions themselves are the
+    /// PAL's responsibility), the cached public keys, the caller-presented
+    /// credential, the derived BK3 session key, the nonce, the per-partition
+    /// session table + metadata, and the PIN lockout policy — matching the
+    /// reference `state.disable()` / `state.migrate()`, which both reset the
+    /// policy.
     ///
-    /// The partition identity and `Masked_BK_BOOT` are deliberately
-    /// preserved — they are torn down only on free (see [`reset`]). The
-    /// resource mask, generation counter, and lifecycle state are left
-    /// for the caller to manage.
+    /// [`PartResetKind::Disable`] additionally wipes the write-once
+    /// provisioning material (PTA public key, policy hash, POTA/SATA/SAPOTA
+    /// thumbprints, sealed BK3 + incarnation flag, rotated PSKs, and the VM
+    /// launch GUID); [`PartResetKind::Migrate`] preserves it so a host that
+    /// resets via NSSR keeps its provisioning and only re-establishes its
+    /// credential. The partition identity and `Masked_BK_BOOT` are preserved
+    /// for both — they are torn down only on free (see [`reset`]). The
+    /// resource mask, generation counter, and lifecycle state are left for the
+    /// caller to manage.
     ///
     /// [`reset`]: Self::reset
     #[inline(never)]
-    pub fn clear_enabled_state(mut self) {
-        // Enable-time keys + cached public keys.
-        self.clear_enabled_keys();
-        // Provisioning vault-key handles.
-        self.set_mk_key_id(None);
-        self.set_ups_key_id(None);
-        self.set_pta_key_id(None);
-        self.set_local_mk_key_id(None);
-        self.set_ephemeral_mk_key_id(None);
-        self.set_unwrapping_key_id(None);
-        // Write-once provisioning material + presence flags.
-        self.clear_pta_pub_key();
-        self.clear_policy_hash();
-        self.clear_pota_thumbprint();
-        self.clear_sata_thumbprint();
-        self.clear_sapota_thumbprint();
-        self.clear_credential();
-        // BK3 session/sealed material + incarnation flag.
-        self.clear_bk3_session();
-        self.clear_sealed_bk3();
-        self.set_bk3_initialized(false);
-        // Rotated PSKs, nonce, VM launch GUID, and session table.
-        let slot = self.slot_mut();
-        slot.psk_co = [0u8; PSK_LEN];
-        slot.psk_cu = [0u8; PSK_LEN];
-        slot.nonce = [0u8; NONCE_LEN];
-        slot.vm_launch_guid = [0u8; GUID_LEN];
-        slot.session_table = [0u8; SESSION_TABLE_LEN];
-        slot.session_meta = [0u8; 2];
-    }
-
-    /// Clears partition per-tenant runtime state for an NSSR `Migrate`,
-    /// mirroring the reference firmware's `state.migrate()`.
-    ///
-    /// Unlike [`clear_enabled_state`], this PRESERVES the partition's
-    /// provisioning material: sealed BK3 + incarnation flag, PTA public key,
-    /// policy hash, POTA/SATA/SAPOTA thumbprints, rotated PSKs, and the VM
-    /// launch GUID. The reference carries these in the persistent store across
-    /// a migrate, so a host that resets via NSSR keeps its provisioning and
-    /// only re-establishes its credential.
-    ///
-    /// Cleared: enable-time keys, the MK/UPS/PTA/unwrapping vault-key handles
-    /// (their material is wiped wholesale by the caller's vault clear, so the
-    /// handles must not dangle), the credential, the BK3 session key, the
-    /// nonce, the session table, and the PIN lockout policy (reset to default).
-    /// `Masked_BK_BOOT` and the partition identity are preserved (torn down
-    /// only on free), matching the reference.
-    ///
-    /// [`clear_enabled_state`]: Self::clear_enabled_state
-    #[inline(never)]
-    pub fn clear_migrate_state(mut self) {
+    pub fn clear_state(mut self, kind: PartResetKind) {
+        // ── Per-tenant runtime state (cleared for every reset kind) ──
         // Enable-time keys + cached public keys.
         self.clear_enabled_keys();
         // Provisioning vault-key handles (material wiped wholesale by caller).
@@ -483,18 +454,36 @@ impl Partition {
         self.set_ups_key_id(None);
         self.set_pta_key_id(None);
         self.set_unwrapping_key_id(None);
-        // Caller-presented secret.
+        // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
-        // Derived BK3 session key (sealed BK3 + incarnation flag preserved).
         self.clear_bk3_session();
-        // Reset the PIN lockout policy to default (matches reference migrate).
+        // Reset the PIN lockout policy to default (matches the reference
+        // `state.disable()` and `state.migrate()`).
         self.set_pin_policy(PinPolicy::default());
-        // Per-tenant runtime: nonce + session table. PSKs and the VM launch
-        // GUID are provisioning-tied and deliberately preserved.
-        let slot = self.slot_mut();
-        slot.nonce = [0u8; NONCE_LEN];
-        slot.session_table = [0u8; SESSION_TABLE_LEN];
-        slot.session_meta = [0u8; 2];
+        // Per-tenant runtime: nonce, session table, session metadata.
+        {
+            let slot = self.slot_mut();
+            slot.nonce = [0u8; NONCE_LEN];
+            slot.session_table = [0u8; SESSION_TABLE_LEN];
+            slot.session_meta = [0u8; 2];
+        }
+
+        // ── Write-once provisioning material ──
+        // Preserved by `Migrate` (NSSR keeps provisioning); wiped by `Disable`
+        // (partition deallocation).
+        if matches!(kind, PartResetKind::Disable) {
+            self.clear_pta_pub_key();
+            self.clear_policy_hash();
+            self.clear_pota_thumbprint();
+            self.clear_sata_thumbprint();
+            self.clear_sapota_thumbprint();
+            self.clear_sealed_bk3();
+            self.set_bk3_initialized(false);
+            let slot = self.slot_mut();
+            slot.psk_co = [0u8; PSK_LEN];
+            slot.psk_cu = [0u8; PSK_LEN];
+            slot.vm_launch_guid = [0u8; GUID_LEN];
+        }
     }
 
     /// Borrows the partition's 16-byte identity.

@@ -28,7 +28,7 @@ fn buf(bytes: &[u8]) -> &DmaBuf {
     unsafe { DmaBuf::from_raw(bytes) }
 }
 
-/// `clear_migrate_state` must wipe per-tenant runtime state while keeping the
+/// `clear_state(Migrate)` must wipe per-tenant runtime state while keeping the
 /// partition's provisioning material intact (mirrors the reference
 /// `state.migrate()`). This is the regression guard for that split.
 #[test]
@@ -80,7 +80,7 @@ fn preserves_provisioning_and_clears_tenant_state() {
     }
 
     // Act.
-    Partition(pid).clear_migrate_state();
+    Partition(pid).clear_state(PartResetKind::Migrate);
 
     let p = Partition(pid);
 
@@ -136,8 +136,7 @@ fn preserves_provisioning_and_clears_tenant_state() {
         "pin policy allowed_attempts must reset"
     );
     assert_eq!(
-        policy.lockout_time,
-        [0u8; 8],
+        policy.lockout_time, [0u8; 8],
         "pin policy lockout_time must reset"
     );
 }

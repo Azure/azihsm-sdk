@@ -26,6 +26,7 @@
 
 mod part_store;
 
+pub use part_store::PartResetKind;
 pub use part_store::PartStore;
 pub use part_store::Partition;
 pub use part_store::PinPolicy;
