@@ -22,7 +22,7 @@ class azihsm_rsa_encrypt_decrypt : public ::testing::Test
 };
 
 // Imports the hardcoded RSA-2048 key pair as an encrypt/decrypt key using RSA key unwrap.
-azihsm_status import_unwrapped_rsa_keypair_for_enc_dec(
+static azihsm_status import_unwrapped_rsa_keypair_for_enc_dec(
     azihsm_handle session,
     const key_props &import_props,
     auto_key &unwrapped_priv_key,
@@ -59,7 +59,7 @@ azihsm_status import_unwrapped_rsa_keypair_for_enc_dec(
 }
 
 // Builds an RSA PKCS#1 v1.5 encryption/decryption algorithm descriptor.
-azihsm_algo make_rsa_pkcs_algo()
+static azihsm_algo make_rsa_pkcs_algo()
 {
     azihsm_algo algo = {};
     algo.id = AZIHSM_ALGO_ID_RSA_PKCS;
@@ -69,7 +69,7 @@ azihsm_algo make_rsa_pkcs_algo()
 }
 
 // Builds RSA OAEP parameters using SHA-256 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha256_params()
+static azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha256_params()
 {
     azihsm_algo_rsa_pkcs_oaep_params params = {};
     params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
@@ -79,7 +79,7 @@ azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha256_params()
 }
 
 // Builds RSA OAEP parameters using SHA-384 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha384_params()
+static azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha384_params()
 {
     azihsm_algo_rsa_pkcs_oaep_params params = {};
     params.hash_algo_id = AZIHSM_ALGO_ID_SHA384;
@@ -89,7 +89,7 @@ azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha384_params()
 }
 
 // Builds RSA OAEP parameters using SHA-1 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha1_params()
+static azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha1_params()
 {
     azihsm_algo_rsa_pkcs_oaep_params params = {};
     params.hash_algo_id = AZIHSM_ALGO_ID_SHA1;
@@ -99,7 +99,7 @@ azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha1_params()
 }
 
 // Builds RSA OAEP parameters using SHA-512 for both OAEP hash and MGF1 hash.
-azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha512_params()
+static azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha512_params()
 {
     azihsm_algo_rsa_pkcs_oaep_params params = {};
     params.hash_algo_id = AZIHSM_ALGO_ID_SHA512;
@@ -109,7 +109,7 @@ azihsm_algo_rsa_pkcs_oaep_params make_oaep_sha512_params()
 }
 
 // Builds an RSA OAEP algorithm descriptor from the provided OAEP parameters.
-azihsm_algo make_oaep_algo(azihsm_algo_rsa_pkcs_oaep_params &params)
+static azihsm_algo make_oaep_algo(azihsm_algo_rsa_pkcs_oaep_params &params)
 {
     azihsm_algo algo = {};
     algo.id = AZIHSM_ALGO_ID_RSA_PKCS_OAEP;
@@ -710,7 +710,8 @@ TEST_F(azihsm_rsa_encrypt_decrypt, pkcs1_empty_plaintext_succeeds)
         auto algo = make_rsa_pkcs_algo();
 
         azihsm_buffer plaintext_buf = {};
-        plaintext_buf.ptr = plaintext_data.data();
+
+        plaintext_buf.ptr = plaintext_data.empty() ? nullptr : plaintext_data.data();
         plaintext_buf.len = static_cast<uint32_t>(plaintext_data.size());
 
         std::vector<uint8_t> ciphertext_data(256);
