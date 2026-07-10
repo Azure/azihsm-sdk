@@ -63,10 +63,11 @@ const MASKING_KEY_LEN: usize = 32;
 /// KDF labels and key-material lengths, mirroring the `part_init`
 /// `kdf` submodule naming (`AZIHSM-<Command>-<Purpose>-v<N>`).
 mod kdf {
-    /// UDS-root → UPS derivation (KBKDF).  Context is empty for now: the
-    /// handler already walks and validates the PTA certificate chain, but
-    /// binding its hash (`PTACertChainHash`) into this derivation is
-    /// deferred; when it lands, that hash becomes the KBKDF context.
+    /// UMS (the partition root secret in the `ups_key_id` slot) → UPS
+    /// derivation (KBKDF).  Context is empty for now: the handler already
+    /// walks and validates the PTA certificate chain, but binding its hash
+    /// (`PTACertChainHash`) into this derivation is deferred; when it
+    /// lands, that hash becomes the KBKDF context.
     pub const UPS_LABEL: &[u8] = b"AZIHSM-PartFinal-UPS-v1";
 
     /// UPS length (HMAC-SHA-384-sized, matching `PartRoot`).

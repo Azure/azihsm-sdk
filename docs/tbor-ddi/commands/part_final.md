@@ -24,7 +24,7 @@ and replays as `prev_local_mk_backup` on subsequent launches.
 ## Handler steps
 
 1. **Gate:** CO-only; partition must be in `Initializing`; reject otherwise.
-2. **Integrity:** verify `SHA-384(part_policy) == ` the stored
+2. **Integrity:** verify `SHA-384(part_policy)` == the stored
    `policy_hash` (bound at `PartInit`); validate the typed policy.
 3. **UPS:** read the partition root (UMS) from the `ups_key_id` slot and
    derive `UPS = KBKDF(UMS, "AZIHSM-PartFinal-UPS-v1")` (cert-chain hash
