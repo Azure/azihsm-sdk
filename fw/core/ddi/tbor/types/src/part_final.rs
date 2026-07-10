@@ -35,7 +35,7 @@
 //! Outputs:
 //!
 //! * `local_mk_backup` — current `local_mk` backup envelope
-//!   (`CurrPartLocalKMKBackup`), to be persisted by the host and replayed
+//!   (`CurrPartLocalMKBackup`), to be persisted by the host and replayed
 //!   as `prev_local_mk_backup` on subsequent launches.
 
 use azihsm_fw_ddi_tbor_api::tbor;
@@ -127,7 +127,12 @@ pub struct TborPartFinalReq<'a> {
     /// Optional previously-generated `local_mk` backup envelope to
     /// restore.  An **empty** field means absent; when present it is
     /// exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
-    #[tbor(buffer, max_len = 164)]
+    ///
+    /// Marked `#[tbor(mutable)]` so the handler can AEAD-unmask the
+    /// envelope **in place** in the request buffer via
+    /// [`decode_mut`](TborPartFinalReq::decode_mut), avoiding a scratch
+    /// staging copy.
+    #[tbor(buffer, max_len = 164, mutable)]
     pub prev_local_mk_backup: &'a [u8],
 }
 
@@ -136,7 +141,7 @@ pub struct TborPartFinalReq<'a> {
 /// Carries the current `local_mk` backup envelope.
 #[tbor(response)]
 pub struct TborPartFinalResp<'a> {
-    /// Current `local_mk` backup envelope (`CurrPartLocalKMKBackup`).
+    /// Current `local_mk` backup envelope (`CurrPartLocalMKBackup`).
     /// Always exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
     #[tbor(buffer, len = 164)]
     pub local_mk_backup: &'a [u8],

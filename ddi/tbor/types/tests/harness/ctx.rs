@@ -39,6 +39,7 @@ use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborApiRevResp;
 use azihsm_ddi_tbor_types::TborOpReq;
+use azihsm_ddi_tbor_types::TborPartFinalResp;
 use azihsm_ddi_tbor_types::TborPartInitResp;
 use azihsm_ddi_tbor_types::TborStatus;
 
@@ -47,6 +48,7 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::fixture::open_dev;
 use crate::harness::fixture::TestDev;
+use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
 use crate::harness::session::psk_change as psk_change_helper;
 use crate::harness::session::session_close as session_close_helper;
@@ -261,6 +263,19 @@ impl TestCtx {
             sata_thumbprint,
             sapota_thumbprint,
         )
+    }
+
+    /// Issue `PartFinal` re-supplying `part_policy` (must match the one
+    /// bound at `PartInit`), the out-of-band PTA cert chain (`certs`,
+    /// root → PTA), and an optional prior `local_mk` backup.
+    pub fn part_final(
+        &self,
+        session: &SessionHandshake,
+        part_policy: &[u8],
+        prev_local_mk_backup: &[u8],
+        certs: &[&[u8]],
+    ) -> DdiResult<TborPartFinalResp> {
+        part_final_helper(&self.dev, session, part_policy, prev_local_mk_backup, certs)
     }
 
     /// Issue `ApiRev` and return the decoded response. Thin

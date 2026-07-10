@@ -18,6 +18,7 @@
 mod crypto;
 pub mod finish;
 pub mod init;
+pub mod part_final;
 pub mod part_init;
 pub mod psk_change;
 pub mod session_close;
@@ -34,6 +35,7 @@ pub use init::session_open_init;
 pub use init::session_open_init_with_options;
 pub use init::PendingHandshake;
 pub use init::SessionOpenInitOptions;
+pub use part_final::part_final;
 pub use part_init::build_part_init_mach_seed_aad;
 pub use part_init::encrypt_mach_seed_envelope;
 pub use part_init::part_init;

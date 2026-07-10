@@ -49,7 +49,6 @@ fn part_init_envelope_tampered_emu() {
     };
     req.part_policy =
         <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
             .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
@@ -96,7 +95,6 @@ fn part_init_envelope_from_other_session_emu() {
     };
     req.part_policy =
         <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
             .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
@@ -123,7 +121,6 @@ fn part_init_wrong_aad_length_emu() {
     };
     req.part_policy =
         <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
             .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
@@ -157,7 +154,6 @@ fn part_init_wrong_mach_seed_length_emu() {
         };
         req.part_policy =
             <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
                 .expect("known-good policy parses");
         req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 
@@ -189,7 +185,6 @@ fn part_init_wrong_session_id_in_aad_emu() {
     };
     req.part_policy =
         <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
             .expect("known-good policy parses");
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
 

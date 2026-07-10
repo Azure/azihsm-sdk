@@ -110,7 +110,7 @@ pub struct TborPartFinalReq {
 #[tbor(response)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborPartFinalResp {
-    /// Current `local_mk` backup envelope (`CurrPartLocalKMKBackup`).
+    /// Current `local_mk` backup envelope (`CurrPartLocalMKBackup`).
     #[tbor(max_len = 1024)]
     pub local_mk_backup: Vec<u8>,
 }

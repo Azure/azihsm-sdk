@@ -10,6 +10,7 @@ pub mod default_psk_gate;
 pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod open_session;
+pub mod part_final;
 pub mod part_info;
 pub mod part_init;
 pub mod psk_change;

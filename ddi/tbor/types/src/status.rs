@@ -283,6 +283,16 @@ pub enum TborStatus {
     /// The SQE's out-of-band descriptor-array pointer (`oob_prp`) is not
     /// 4K-page-aligned (mirror of `HsmError::IoChannelInvalidOobAlignment`).
     IoChannelInvalidOobAlignment = 0x08700105,
+
+    /// `PartFinal` was asked to restore a `prev_local_mk_backup` whose
+    /// bound SVN is newer than the current firmware SVN (mirror of
+    /// `HsmError::PartFinalBackupSvnRollback`).
+    PartFinalBackupSvnRollback = 0x08700106,
+
+    /// `PartFinal`'s supplied PTA certificate chain is valid and
+    /// POTA-anchored, but its leaf public key does not match the
+    /// partition's PTA key (mirror of `HsmError::PartFinalPtaMismatch`).
+    PartFinalPtaMismatch = 0x08700107,
 }
 
 impl core::fmt::Debug for TborStatus {
