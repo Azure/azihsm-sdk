@@ -38,7 +38,7 @@ use super::*;
 /// `MaskedKey` layout: `header(8) + iv(12) + aad(96) + ct(32) + tag(16)`.
 /// Kept in the API layer so `part_final_ex` can enforce it before the
 /// round-trip.
-const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 
 // Pin to the documented 164 B so an envelope-layout change is caught here.
 const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);

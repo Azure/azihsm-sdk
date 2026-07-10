@@ -199,3 +199,94 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         Ok(())
     })
 }
+
+/// Input buffers for [`azihsm_sess_ex_part_final`].
+///
+/// Groups the security-domain finalization inputs into a single struct.
+/// `pta_cert_chain` points to an array of `pta_cert_count` `azihsm_buffer`s,
+/// each holding one DER certificate. `prev_local_mk_backup` is optional and
+/// may be NULL to omit it (first finalization).
+#[repr(C)]
+pub struct AzihsmSessExPartFinalParams {
+    /// Unified partition policy image buffer.
+    pub part_policy: *const AzihsmBuffer,
+    /// Pointer to an array of `pta_cert_count` DER certificate buffers.
+    pub pta_cert_chain: *const AzihsmBuffer,
+    /// Number of certificates in `pta_cert_chain`.
+    pub pta_cert_count: u32,
+    /// Optional prior `local_mk` backup to restore; NULL to omit.
+    pub prev_local_mk_backup: *const AzihsmBuffer,
+}
+
+/// @brief Finalize a partition's security domain
+///
+/// Installs the POTA-endorsed PTA certificate chain and derives the
+/// partition's local masking keys, returning the current `local_mk` backup
+/// envelope. Re-supplies the unified partition policy (for `POTAPubKey`
+/// recovery) and, optionally, a prior `local_mk` backup to restore.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Finalization input buffers
+///            (see `azihsm_sess_ex_part_final_params`)
+/// @param[in,out] local_mk_backup Output buffer for the `local_mk` backup
+///                envelope. On input `len` is the capacity; on success it is
+///                set to the number of bytes written. If the buffer is too
+///                small (or `ptr` is NULL with `len == 0`), `len` is set to
+///                the required size and `AZIHSM_STATUS_BUFFER_TOO_SMALL` is
+///                returned **before** the partition is finalized. A NULL
+///                `ptr` with a non-zero `len` is rejected with
+///                `AZIHSM_STATUS_INVALID_ARGUMENT`.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` must be a valid pointer to an `azihsm_sess_ex_part_final_params`
+///   whose `part_policy` is a valid `azihsm_buffer` pointer, whose
+///   `pta_cert_chain` points to `pta_cert_count` valid `azihsm_buffer`s, and
+///   whose `prev_local_mk_backup` is NULL or a valid `azihsm_buffer` pointer.
+/// - `local_mk_backup` must be a valid pointer to a writable `azihsm_buffer`.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_part_final(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExPartFinalParams,
+    local_mk_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+
+        // Marshal the C array of `{ ptr, len }` cert buffers into a
+        // `&[HsmCertDescriptor]`, borrowing each buffer's DER bytes for the
+        // duration of the call.
+        validate_ptr(params.pta_cert_chain)?;
+        // SAFETY: the caller guarantees `pta_cert_chain` points to
+        // `pta_cert_count` valid `azihsm_buffer`s (see Safety).
+        let cert_bufs = unsafe {
+            std::slice::from_raw_parts(params.pta_cert_chain, params.pta_cert_count as usize)
+        };
+        let mut cert_chain: Vec<api::HsmCertDescriptor<'_>> = Vec::with_capacity(cert_bufs.len());
+        for buf in cert_bufs {
+            let der: &[u8] = buf.try_into()?;
+            cert_chain.push(api::HsmCertDescriptor { cert: der });
+        }
+
+        let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
+
+        // Validate the output buffer up-front so the partition is not
+        // finalized when the buffer is too small (size-probe safe).
+        validate_ptr(local_mk_backup)?;
+        let local_mk_backup = deref_mut_ptr(local_mk_backup)?;
+        validate_output_buffer(local_mk_backup, api::LOCAL_MK_BACKUP_LEN)?;
+
+        let result = session.part_final(part_policy, &cert_chain, prev_local_mk_backup)?;
+
+        copy_to_buffer(local_mk_backup, &result.local_mk_backup)?;
+
+        Ok(())
+    })
+}
