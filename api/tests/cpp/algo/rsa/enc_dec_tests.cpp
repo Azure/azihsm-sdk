@@ -119,7 +119,7 @@ static azihsm_algo make_oaep_algo(azihsm_algo_rsa_pkcs_oaep_params &params)
 }
 
 // Builds RSA-2048 import properties with configurable encrypt/decrypt usage flags.
-key_props rsa_import_props(bool encrypt, bool decrypt)
+static key_props rsa_import_props(bool encrypt, bool decrypt)
 {
     key_props props = {
         .key_kind = AZIHSM_KEY_KIND_RSA,
@@ -415,7 +415,8 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_rejects_small_ciphertext_buffer)
         ciphertext_buf.len = static_cast<uint32_t>(ciphertext_data.size());
 
         auto encrypt_err = azihsm_crypt_encrypt(&algo, pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_NE(encrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(ciphertext_buf.len, 256u);
     });
 }
 
@@ -451,14 +452,15 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_small_plaintext_buffer)
         auto encrypt_err = azihsm_crypt_encrypt(&algo, pub_key, &plaintext_buf, &ciphertext_buf);
         ASSERT_EQ(encrypt_err, AZIHSM_STATUS_SUCCESS);
 
-        // One byte too small for the decrypted plaintext.
-        std::vector<uint8_t> decrypted_data(plaintext_data.size() - 1);
+        // One byte too small for the required RSA-2048 plaintext output buffer (modulus size).
+        std::vector<uint8_t> decrypted_data(255);
         azihsm_buffer decrypted_buf = {};
         decrypted_buf.ptr = decrypted_data.data();
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_NE(decrypt_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(decrypted_buf.len, 256u);
     });
 }
 
