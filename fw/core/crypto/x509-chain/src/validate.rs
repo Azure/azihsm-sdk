@@ -369,6 +369,15 @@ impl ChainValidator {
     }
 }
 
+/// Maximum accepted DER length of a single certificate in a chain.
+///
+/// Certificate lengths in `descriptors` come from an untrusted request and
+/// size the reused DMA buffers, so they are bounded here: a hostile
+/// descriptor cannot force an oversized allocation (a rejection ceiling —
+/// real ECDSA certs are well under this, so it does not affect the actual
+/// per-chain allocation, which tracks the largest real cert).
+pub const MAX_CERT_DER_LEN: usize = 2048;
+
 /// Walk and validate a certificate chain, root → leaf, returning the
 /// leaf public key.
 ///
@@ -429,7 +438,9 @@ where
     let mut max_len = 0usize;
     for d in descriptors {
         let len = usize::from(d.length.get());
-        if len == 0 {
+        // Lengths come from an untrusted request; reject empty or
+        // oversized certificates before they can size a DMA allocation.
+        if len == 0 || len > MAX_CERT_DER_LEN {
             return Err(HsmError::InvalidArg);
         }
         if len > max_len {
