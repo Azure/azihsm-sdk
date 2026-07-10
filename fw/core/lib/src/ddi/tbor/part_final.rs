@@ -214,9 +214,10 @@ fn parse_request<'a>(req_buf: &'a mut DmaBuf) -> HsmResult<ParsedRequest<'a>> {
         return Err(HsmError::InvalidPermissions);
     }
 
-    // Reinterpret the packed `cert_descriptors` bytes as a typed slice;
-    // a byte length that is not a whole number of descriptors is
-    // rejected here.
+    // `decode_mut`'s view exposes shared (non-mutable) buffer fields as
+    // raw `&DmaBuf` bytes, so reinterpret the packed `cert_descriptors`
+    // bytes as a typed slice here; a byte length that is not a whole
+    // number of descriptors fails the cast and is rejected as `InvalidArg`.
     let cert_descriptors =
         <[CertDescriptor] as zerocopy::TryFromBytes>::try_ref_from_bytes(req.cert_descriptors)
             .map_err(|_| HsmError::InvalidArg)?;

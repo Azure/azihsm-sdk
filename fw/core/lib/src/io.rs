@@ -317,12 +317,24 @@ impl<P: HsmPal> Hsm<P> {
         sqe.validate_io_op()?;
         // Out-of-band SGL descriptor array (side-band bulk transfers such
         // as PartFinal's PTA cert chain); `None` when the SQE carries no
-        // OOB region.
+        // OOB region.  A non-zero `oob_len` with a null `oob_prp` is
+        // rejected up front: `validate_io_op` only bounds the OOB length,
+        // so without this a later OOB read would DMA from a null address.
         let oob_len = sqe.oob_len();
-        let oob = (oob_len != 0).then(|| OobPtr {
-            prp: sqe.oob_prp(),
-            len: oob_len,
-        });
+        let oob_prp = sqe.oob_prp();
+        let oob = match (oob_len != 0, oob_prp.is_null()) {
+            (false, _) => None,
+            (true, false) => Some(OobPtr {
+                prp: oob_prp,
+                len: oob_len,
+            }),
+            (true, true) => {
+                return Err(OpError::new(
+                    HsmError::InvalidArg,
+                    HostStatus::INVALID_FIELD_IN_COMMAND,
+                ));
+            }
+        };
         Ok(IoSqeParams {
             src_len: sqe.src_len() as usize,
             src_addr: sqe.src_prp1(),
