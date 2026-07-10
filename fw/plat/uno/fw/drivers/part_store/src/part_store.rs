@@ -119,7 +119,8 @@ fn store_base() -> usize {
 #[cfg(test)]
 fn store_base() -> usize {
     use core::mem::align_of;
-    use std::alloc::{alloc_zeroed, Layout};
+    use std::alloc::alloc_zeroed;
+    use std::alloc::Layout;
     use std::sync::OnceLock;
 
     static BASE: OnceLock<usize> = OnceLock::new();
@@ -277,15 +278,8 @@ struct Storage {
     reserved3: [u8; RESERVED3_LEN],
 }
 
-// Lock the layout to the reference 3072-byte slot. The whole partition-store
-// GSRAM region (`PART_STORE_T_BASE`..key vault) is sized for exactly
-// `NUM_PARTITIONS` of these.
-const _: () = assert!(size_of::<Storage>() == STORE_SIZE);
-const _: () = assert!(STRIDE == STORE_SIZE);
-// The ECC keygen engine writes the public keys directly into these fields
-// via DMA, which requires 4-byte alignment (see `Storage` field ordering).
-const _: () = assert!(core::mem::offset_of!(Storage, ec_pub_key) % 4 == 0);
-const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
+// Compile-time layout assertions (see `part_store/layout_asserts.rs`).
+mod layout_asserts;
 
 /// GSRAM-backed partition persistent store.
 ///
