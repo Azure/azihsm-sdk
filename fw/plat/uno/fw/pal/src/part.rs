@@ -34,9 +34,9 @@ use azihsm_fw_uno_drivers_part_store::PartResetKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_session_store::SessionStore;
 
+use crate::UnoHsmPal;
 use crate::alloc::UnoScopedAlloc;
 use crate::io::UnoHsmIo;
-use crate::UnoHsmPal;
 
 /// Number of partition slots (one per global key-vault table index).
 pub const NUM_PARTITIONS: usize = 65;
@@ -467,15 +467,18 @@ impl UnoHsmPal {
     /// (credential, enable-time/provisioning key handles, nonce, session table,
     /// BK3 session key, PIN policy) while PRESERVING the provisioning material
     /// (sealed BK3 + incarnation flag, PTA public key, policy hash,
-    /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, `Masked_BK_BOOT`,
-    /// and identity). Finally regenerates the enable-time establish-credential
-    /// and session-encryption keys.
+    /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, and
+    /// `Masked_BK_BOOT`). Because the vault wipe also removes the identity
+    /// private key, a fresh partition identity (keypair + id blob) is
+    /// regenerated — matching the reference firmware, which always provisions a
+    /// fresh identity on NSSR. Finally regenerates the enable-time
+    /// establish-credential and session-encryption keys.
     ///
-    /// The net effect matches the reference: the partition keeps its identity
-    /// and provisioning across the reset and only needs its credential
-    /// re-established, preserving the impactless-update guarantee — unlike a
-    /// full [`part_disable`], which additionally tears down the provisioning
-    /// material.
+    /// The net effect matches the reference: the partition keeps its
+    /// provisioning across the reset — with a freshly regenerated identity —
+    /// and only needs its credential re-established, preserving the
+    /// impactless-update guarantee — unlike a full [`part_disable`], which
+    /// additionally tears down the provisioning material.
     ///
     /// [`part_disable`]: Self::part_disable
     pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
@@ -490,6 +493,12 @@ impl UnoHsmPal {
                     .await?;
                 // Clear per-tenant persistent state, preserving provisioning.
                 part.clear_state(PartResetKind::Migrate);
+                // The `vault.clear()` above also deleted the identity private
+                // key, so regenerate a fresh partition identity (new keypair +
+                // id blob) before anything else. This matches the reference
+                // firmware, which always provisions a fresh identity on NSSR,
+                // and prevents `id_key_id` from dangling at a deleted key.
+                self.provision_identity(pid).await?;
                 // Regenerate the enable-time establish-credential and
                 // session-encryption keys (this PAL provisions them eagerly).
                 self.provision_enabled_keys(pid).await
