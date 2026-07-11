@@ -866,12 +866,21 @@ impl DdiDev for DdiNixDev {
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         req: &T,
-        _oob_items: Option<&[&[u8]]>,
+        oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         /// SQE opcode that routes the command through the firmware's
         /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
         const OP_TBOR: u16 = 2;
+
+        // The nix backend does not (yet) forward out-of-band items as
+        // SGL Data Block descriptors. Reject non-empty `oob_items`
+        // loudly rather than silently dropping payloads — any TBOR
+        // opcode that needs OOB data would otherwise misbehave in a
+        // hard-to-diagnose way.
+        if oob_items.is_some_and(|items| !items.is_empty()) {
+            return Err(DdiError::InvalidParameter);
+        }
 
         const REQ_BUF_LEN: usize = 8192;
         const RESP_BUF_LEN: usize = 8192;
@@ -881,11 +890,10 @@ impl DdiDev for DdiNixDev {
         let req_bytes = req.encode_request(&mut req_buf)?;
         let req_len = req_bytes.len();
 
-        tracing::debug!(
-            opcode = T::OPCODE,
-            "TBOR Request Buffer (in hex): {:02x?}",
-            &req_buf[..req_len]
-        );
+        // Do not log raw request bytes: TBOR requests can carry
+        // sensitive material (e.g. `TborPskChangeReq.psk_envelope`).
+        // Opcode + length is enough to trace the transport path.
+        tracing::debug!(opcode = T::OPCODE, req_len, "TBOR request encoded");
 
         let mut resp_buf = Box::<[u8; RESP_BUF_LEN]>::new([0u8; RESP_BUF_LEN]);
 
@@ -932,13 +940,18 @@ impl DdiDev for DdiNixDev {
         }
 
         // ── 4. Decode the typed response ─────────────────────────
+        // `byte_count` comes from the driver / firmware and is
+        // therefore across a trust boundary — clamp it against the
+        // allocated response buffer before indexing to avoid a
+        // host-side panic on a bogus device value.
         let resp_len = cmd.out_data.byte_count as usize;
+        if resp_len > RESP_BUF_LEN {
+            return Err(DdiError::InvalidParameter);
+        }
         let resp_bytes = &resp_buf[..resp_len];
-        tracing::debug!(
-            opcode = T::OPCODE,
-            "TBOR Response Buffer (in hex): {:02x?}",
-            resp_bytes
-        );
+        // Do not log raw response bytes: responses can carry
+        // sensitive data depending on opcode.
+        tracing::debug!(opcode = T::OPCODE, resp_len, "TBOR response received");
 
         Ok(<T::OpResp>::decode_response(resp_bytes)?)
     }

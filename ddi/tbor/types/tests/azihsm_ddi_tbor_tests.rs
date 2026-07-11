@@ -17,5 +17,5 @@ pub mod harness;
 
 pub mod commands;
 
-#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+#[cfg(feature = "hw-tests")]
 pub mod hw;
