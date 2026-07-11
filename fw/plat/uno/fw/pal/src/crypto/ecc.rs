@@ -252,19 +252,21 @@ impl HsmEcc for UnoHsmPal {
         }
         let prime_le = curve_prime_le(pka_curve);
 
-        // Allocate the per-call PKA scratch (LE hash, curve prime, and the
-        // Montgomery-constant result) from a scoped heap so it is released as
-        // soon as the verify completes rather than living for the whole IO. A
-        // single IO that verifies several signatures (e.g. cert-chain
-        // validation) would otherwise accumulate this scratch and can exhaust
-        // the DMA pool.
+        // Allocate the per-call PKA scratch (curve prime + transient
+        // Montgomery-constant scratch) from a scoped heap so it is released
+        // as soon as the verify completes rather than living for the whole
+        // IO. A single IO that verifies several signatures (e.g. cert-chain
+        // validation) would otherwise accumulate this scratch and can
+        // exhaust the DMA pool.
         self.alloc_scoped_async(io, async |scope| {
             // The digest arrives PKA-native little-endian (the DDI handler asks
             // `hash(.., big_endian = false)` for it); pub_key and signature
             // likewise arrive LE via the host DDI serde. No byte-order
             // conversion is done below the PAL.
 
-            // Per-call Montgomery constant from the curve prime (like ecdh_derive).
+            // Per-call Montgomery constant from the curve prime (like
+            // ecdh_derive). `mont_result` is transient scratch consumed
+            // internally by the driver's verify; it is not surfaced back.
             let prime = scope.dma_alloc(prime_le.len())?;
             prime.copy_from_slice(prime_le);
             let mont_result = scope.dma_alloc(prime_le.len())?;
