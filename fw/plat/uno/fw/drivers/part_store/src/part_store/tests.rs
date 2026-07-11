@@ -8,19 +8,7 @@
 //! [`super::store_base`], so every [`Partition`] handle addresses real memory
 //! rather than the on-target MMIO region.
 
-use core::mem::offset_of;
-
 use super::*;
-
-#[test]
-fn pub_key_offsets() {
-    std::eprintln!(
-        "id_pub  = {}",
-        offset_of!(Storage, partition_identifier) + 16 + 48
-    );
-    std::eprintln!("ec_pub  = {}", offset_of!(Storage, ec_pub_key));
-    std::eprintln!("se_pub  = {}", offset_of!(Storage, se_pub_key));
-}
 
 /// Views a fixed-length test pattern as a `&DmaBuf` for the setters.
 fn buf(bytes: &[u8]) -> &DmaBuf {
@@ -65,6 +53,8 @@ fn preserves_provisioning_and_clears_tenant_state() {
         p.set_mk_key_id(Some(HsmKeyId::from(0x0506u16)));
         p.set_ups_key_id(Some(HsmKeyId::from(0x0708u16)));
         p.set_pta_key_id(Some(HsmKeyId::from(0x090au16)));
+        p.set_local_mk_key_id(Some(HsmKeyId::from(0x0d0eu16)));
+        p.set_ephemeral_mk_key_id(Some(HsmKeyId::from(0x0f10u16)));
         p.set_unwrapping_key_id(Some(HsmKeyId::from(0x0b0cu16)));
         p.set_pin_policy(PinPolicy {
             state: PinPolicyState::Lockout,
@@ -116,6 +106,14 @@ fn preserves_provisioning_and_clears_tenant_state() {
     assert!(
         p.unwrapping_key_id().is_none(),
         "unwrapping key handle must be cleared"
+    );
+    assert!(
+        p.local_mk_key_id().is_none(),
+        "local mk key handle must be cleared"
+    );
+    assert!(
+        p.ephemeral_mk_key_id().is_none(),
+        "ephemeral mk key handle must be cleared"
     );
     assert_eq!(
         p.session_table(),

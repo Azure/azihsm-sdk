@@ -453,6 +453,8 @@ impl Partition {
         self.set_mk_key_id(None);
         self.set_ups_key_id(None);
         self.set_pta_key_id(None);
+        self.set_local_mk_key_id(None);
+        self.set_ephemeral_mk_key_id(None);
         self.set_unwrapping_key_id(None);
         // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
