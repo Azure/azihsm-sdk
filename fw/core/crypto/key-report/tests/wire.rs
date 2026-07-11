@@ -31,11 +31,6 @@ const PROTECTED_HEADER: [u8; 22] = [
 ];
 const COSE_SIGN1_TAG: u8 = 0xD2;
 
-/// Reborrow a `&DmaBuf` as its underlying byte slice.
-fn as_bytes(d: &DmaBuf) -> &[u8] {
-    d
-}
-
 /// Inline EC2 P-384 COSE_Key `{1:2, -1:2, -2:x, -3:y}`.
 fn cose_key(x: &[u8], y: &[u8]) -> Vec<u8> {
     let mut buf = vec![0u8; 256];
@@ -180,12 +175,12 @@ fn parse_decodes_all_fields_zero_copy() {
     };
     assert_eq!(view.public_key_size as usize, expected_cose_len);
 
-    assert_eq!(as_bytes(view.public_key), &pubkey_525[..]);
-    assert_eq!(as_bytes(view.app_uuid), &uuid[..]);
-    assert_eq!(as_bytes(view.report_data), &rd[..]);
-    assert_eq!(as_bytes(view.vm_launch_id), &vm[..]);
-    assert_eq!(as_bytes(view.protected_header), &PROTECTED_HEADER[..]);
-    assert_eq!(as_bytes(view.signature), &sig[..]);
+    assert_eq!(*view.public_key, pubkey_525[..]);
+    assert_eq!(*view.app_uuid, uuid[..]);
+    assert_eq!(*view.report_data, rd[..]);
+    assert_eq!(*view.vm_launch_id, vm[..]);
+    assert_eq!(*view.protected_header, PROTECTED_HEADER[..]);
+    assert_eq!(*view.signature, sig[..]);
 
     // Every byte view must borrow INTO the report buffer (zero-copy).
     let base = report.as_ptr() as usize;

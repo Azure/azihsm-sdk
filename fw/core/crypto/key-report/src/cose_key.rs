@@ -15,10 +15,13 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use minicbor::Decoder;
 use minicbor::Encoder;
 
 use crate::consts::RSA_EXPONENT_MAX_LEN;
 use crate::consts::RSA_MODULUS_MAX_LEN;
+use crate::decode::bytes_span;
+use crate::decode::map_decode_err;
 
 // COSE key-type and key-type-parameter identifiers (IANA COSE registry).
 const COSE_KTY: u8 = 1;
@@ -152,4 +155,108 @@ pub(crate) fn to_cose_key(key: &AttestedPubKey<'_>, out: &mut [u8]) -> HsmResult
     // The encoder writes into `out` and advances a cursor; the number
     // of bytes consumed is the original length minus what remains.
     Ok(out_len - enc.writer().len())
+}
+
+/// Map a COSE elliptic-curve identifier back to its [`HsmEccCurve`].
+fn curve_from_cose_crv(crv: i8) -> HsmResult<HsmEccCurve> {
+    match crv {
+        COSE_CRV_P256 => Ok(HsmEccCurve::P256),
+        COSE_CRV_P384 => Ok(HsmEccCurve::P384),
+        COSE_CRV_P521 => Ok(HsmEccCurve::P521),
+        _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// A parsed EC2 `COSE_Key`: the curve plus zero-copy big-endian affine
+/// coordinates borrowing from the input buffer.
+pub struct Ec2CoseKey<'a> {
+    /// NIST curve the key is on.
+    pub curve: HsmEccCurve,
+    /// Big-endian X coordinate (`curve.priv_key_len()` bytes).
+    pub x: &'a DmaBuf,
+    /// Big-endian Y coordinate (`curve.priv_key_len()` bytes).
+    pub y: &'a DmaBuf,
+}
+
+/// Decode an EC2 `COSE_Key` map `{ 1: 2, -1: crv, -2: x, -3: y }`
+/// (RFC 9052 §7), returning a zero-copy [`Ec2CoseKey`] borrowing the
+/// coordinates from `cose_key`. This is the inverse of the encoder's EC2
+/// branch (see `to_cose_key`).
+///
+/// It is **no-panic** across the trust boundary: every malformed input
+/// (wrong map arity, unknown / duplicate label, non-EC2 key type, unknown
+/// curve, wrong coordinate length, or trailing bytes) returns
+/// [`HsmError::InvalidArg`].
+///
+/// Only the four canonical EC2 labels are accepted, each exactly once;
+/// the coordinate lengths must equal the curve's field size.
+pub fn parse_ec2_cose_key(cose_key: &DmaBuf) -> HsmResult<Ec2CoseKey<'_>> {
+    let mut kty_seen = false;
+    let mut crv: Option<i8> = None;
+    let mut x_span: Option<(usize, usize)> = None;
+    let mut y_span: Option<(usize, usize)> = None;
+
+    {
+        let mut d = Decoder::new(cose_key);
+        if map_decode_err(d.map())? != Some(4) {
+            return Err(HsmError::InvalidArg);
+        }
+        for _ in 0..4 {
+            // All four labels (1, -1, -2, -3) fit in an `i8`.
+            match map_decode_err(d.i8())? {
+                k if k == COSE_KTY as i8 => {
+                    if kty_seen {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    kty_seen = true;
+                    if map_decode_err(d.u8())? != COSE_KTY_EC2 {
+                        return Err(HsmError::InvalidArg);
+                    }
+                }
+                COSE_EC2_CRV => {
+                    if crv.is_some() {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    crv = Some(map_decode_err(d.i8())?);
+                }
+                COSE_EC2_X => {
+                    if x_span.is_some() {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    x_span = Some(bytes_span(&mut d)?);
+                }
+                COSE_EC2_Y => {
+                    if y_span.is_some() {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    y_span = Some(bytes_span(&mut d)?);
+                }
+                _ => return Err(HsmError::InvalidArg),
+            }
+        }
+        // Reject trailing bytes after the COSE_Key map.
+        if d.position() != cose_key.len() {
+            return Err(HsmError::InvalidArg);
+        }
+    }
+
+    if !kty_seen {
+        return Err(HsmError::InvalidArg);
+    }
+    let curve = curve_from_cose_crv(crv.ok_or(HsmError::InvalidArg)?)?;
+    let (x0, x1) = x_span.ok_or(HsmError::InvalidArg)?;
+    let (y0, y1) = y_span.ok_or(HsmError::InvalidArg)?;
+
+    // Coordinates must be exactly the curve's field size (big-endian, no
+    // leading-zero trimming) so `x ‖ y` forms a valid uncompressed point.
+    let coord = curve.priv_key_len();
+    if x1 - x0 != coord || y1 - y0 != coord {
+        return Err(HsmError::InvalidArg);
+    }
+
+    Ok(Ec2CoseKey {
+        curve,
+        x: &cose_key[x0..x1],
+        y: &cose_key[y0..y1],
+    })
 }

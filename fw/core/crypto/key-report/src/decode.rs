@@ -53,13 +53,13 @@ pub struct KeyReportView<'a> {
 }
 
 /// Map a minicbor decode error to [`HsmError::InvalidArg`].
-fn map_decode_err<T, E>(result: Result<T, E>) -> HsmResult<T> {
+pub(crate) fn map_decode_err<T, E>(result: Result<T, E>) -> HsmResult<T> {
     result.map_err(|_| HsmError::InvalidArg)
 }
 
 /// Read a bstr at the decoder's current position and return the
 /// `[start, end)` offsets of its content in the decoder's input.
-fn bytes_span(d: &mut Decoder<'_>) -> HsmResult<(usize, usize)> {
+pub(crate) fn bytes_span(d: &mut Decoder<'_>) -> HsmResult<(usize, usize)> {
     let len = map_decode_err(d.bytes())?.len();
     let end = d.position();
     let start = end.checked_sub(len).ok_or(HsmError::InvalidArg)?;
