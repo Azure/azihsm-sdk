@@ -267,7 +267,7 @@ pub(super) const RSA_2K_MOD_EXP_KAT: RsaModExpKat = RsaModExpKat {
 };
 
 /// Expected KEK recovered by OAEP-decoding (SHA-256, empty label) the RSA-2048
-/// mod-exp plaintext block [`RSA_2K_MOD_EXP_KAT`]`.k`.
+/// mod-exp plaintext block [`RSA_2K_MOD_EXP_KAT`].k.
 ///
 /// This is the tail of the reference firmware's RSA mod-exp self-test: after the
 /// PKA mod-exp produces the padded plaintext, the SHA engine OAEP-decodes it and
