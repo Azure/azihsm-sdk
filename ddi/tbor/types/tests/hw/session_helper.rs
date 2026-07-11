@@ -20,6 +20,10 @@ mod crypto;
 pub mod finish;
 #[path = "../harness/session/init.rs"]
 pub mod init;
+#[path = "../harness/session/part_init.rs"]
+pub mod part_init;
+#[path = "../harness/session/psk_change.rs"]
+pub mod psk_change;
 #[path = "../harness/session/session_close.rs"]
 pub mod session_close;
 
@@ -35,6 +39,11 @@ pub use init::session_open_init;
 pub use init::session_open_init_with_options;
 pub use init::PendingHandshake;
 pub use init::SessionOpenInitOptions;
+pub use part_init::build_part_init_mach_seed_aad;
+pub use part_init::encrypt_mach_seed_envelope;
+pub use part_init::part_init;
+pub use psk_change::encrypt_psk_envelope;
+pub use psk_change::psk_change;
 pub use session_close::session_close;
 
 /// One-shot happy-path handshake: `SessionOpenInit` +

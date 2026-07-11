@@ -48,8 +48,11 @@ use parking_lot::MutexGuard;
 
 pub mod api_rev;
 pub mod assertions;
+pub mod default_psk_gate;
+pub mod harness;
 pub mod open_session;
 pub mod part_info;
+pub mod psk_change;
 pub mod session_helper;
 
 /// Process-global serialisation lock for hardware tests.
