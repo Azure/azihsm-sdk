@@ -630,9 +630,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     ///
     /// - `key_type`: RSA key type (size + format selector).
     /// - `key`: DMA-capable private key buffer. For standard keys this is a
-    ///   `d ‖ n` blob; for CRT keys it is a contiguous `param1 ‖ param2` blob
-    ///   (`param1` = `p ‖ q ‖ dp ‖ dq`, `param2` = `n ‖ n1q ‖ n2p`) at least
-    ///   `5 * mod_size` bytes long.
+    ///   `d ‖ n` blob at least `2 * mod_size` bytes long; for CRT keys it is a
+    ///   contiguous `param1 ‖ param2` blob (`param1` = `p ‖ q ‖ dp ‖ dq`,
+    ///   `param2` = `n ‖ n1q ‖ n2p`) at least `5 * mod_size` bytes long.
     /// - `input`: DMA-capable input block buffer.
     /// - `output`: DMA-capable output block buffer.
     ///
@@ -661,7 +661,10 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
                 key.as_ptr() as u32 + param2_off as u32,
             )
         } else {
-            (!key.is_empty(), 0)
+            // Standard keys are a single `d ‖ n` blob (2·mod_size) read from
+            // arg2; the buffer must be long enough for the hardware's full
+            // fetch to stay in bounds.
+            (key.len() >= 2 * mod_size, 0)
         };
         Self::ensure_cmd_input(key_ok && input.len() == mod_size && output.len() == mod_size)?;
 

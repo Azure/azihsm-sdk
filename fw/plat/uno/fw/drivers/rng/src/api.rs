@@ -310,10 +310,13 @@ impl RngDriver {
     /// its firmware-mode back door: seeds the FW input FIFO with a fixed
     /// vector, runs instantiate + generate, and compares the FW output FIFO
     /// against the expected known answer; then exercises the reseed path with
-    /// a second fixed vector. The production DRBG registers (control word and
-    /// generate/reseed intervals) are saved on entry and restored before
-    /// return, so the RNG is left in its normal operating mode on both the
-    /// success and failure paths.
+    /// a second fixed vector. The generate/reseed intervals are saved on entry
+    /// and restored on every path. On the success path the full saved control
+    /// word is additionally written back; an early-exit (failure) path instead
+    /// returns the control word to normal DRBG mode by clearing the
+    /// FW-mode/instantiate/generate bits it set (matching the reference
+    /// firmware, which heads to a self-test error state on failure). Either
+    /// way the RNG is left in its normal operating mode.
     ///
     /// # Returns
     /// * `Ok(())` if both the generate and reseed outputs match their vectors.
