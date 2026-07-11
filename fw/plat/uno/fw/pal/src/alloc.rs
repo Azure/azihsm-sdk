@@ -48,7 +48,14 @@ pub(crate) const ADMIN_IO_INDEX: u16 = (IO_SLOTS - 2) as u16;
 /// Reserved for the pre-operational and periodic cryptographic
 /// algorithm self-tests, separate from [`ADMIN_IO_INDEX`] so the
 /// periodic self-test never races partition provisioning over a
-/// shared bump heap. Same DMA/NonDma backing as any host slot.
+/// shared bump heap.
+///
+/// Unlike host and admin slots, this slot is **DMA-only**: it has
+/// `SRAM_IO_BUF` (Dma) backing but no `DTCM_IO_BUF` (NonDma) entry —
+/// `DTCM_IO_BUF` covers only the 33 host+admin slots (see
+/// `dtcm_map.rdl`). NonDma allocations against this slot are rejected
+/// by the bump allocator so an accidental one cannot address past the
+/// `DTCM_IO_BUF` region into the crashdump/status area.
 pub(crate) const SELF_TEST_IO_INDEX: u16 = (IO_SLOTS - 1) as u16;
 
 // DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.
@@ -204,6 +211,14 @@ fn bump(
     size: usize,
     align: usize,
 ) -> HsmResult<(usize, &'static mut [u8])> {
+    // The self-test slot is DMA-only: it has SRAM_IO_BUF (Dma) backing but no
+    // DTCM_IO_BUF (NonDma) entry. Reject NonDma allocations rather than
+    // computing a DTCM address past the buffer region, which would overlap the
+    // crashdump/status area.
+    if heap == NONDMA && io_index == SELF_TEST_IO_INDEX {
+        return Err(HsmError::NotEnoughSpace);
+    }
+
     let (base_ptr, cap) = heap_base_cap(io_index, heap);
     let w = wm(pal, io_index, heap);
     let mark = w.with(|v| *v).min(cap);

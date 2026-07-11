@@ -12,7 +12,7 @@
 //!
 //! All tests run on a dedicated, reserved IO slot
 //! ([`crate::alloc::SELF_TEST_IO_INDEX`]) obtained via
-//! [`UnoHsmPal::self_test_io`]. KAT operands are bump-allocated from that
+//! [`UnoHsmIo::self_test`]. KAT operands are bump-allocated from that
 //! slot's `SRAM_IO_BUF`, so the self-tests never contend with host IO or
 //! partition-provisioning crypto (which uses the separate admin slot).
 //!

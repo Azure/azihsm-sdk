@@ -34,6 +34,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSqe;
 use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
+use azihsm_fw_uno_reg_soc::io_gsram::IO_META_COUNT;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_META_CTLR;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_META_QUEUE;
 use azihsm_fw_uno_reg_soc::io_gsram::IoCqEntry;
@@ -105,6 +106,11 @@ impl UnoHsmIo {
     }
 
     /// Returns a reference to the IO_META entry for this slot.
+    ///
+    /// Only valid for host and admin slots — `IO_META` has
+    /// [`IO_META_COUNT`] entries (host `0..32` plus [`ADMIN_IO_INDEX`]).
+    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry;
+    /// callers must guard against it (see [`pid`](HsmIo::pid)).
     #[inline]
     fn io_meta(&self) -> &IoMetaEntry {
         &IO_Q.io_meta[self.index as usize]
@@ -118,17 +124,36 @@ impl HsmIo for UnoHsmIo {
     }
 
     /// Returns the partition ID (controller_id from IO_META).
+    ///
+    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry and
+    /// no partition context, so this returns partition `0` for it rather than
+    /// indexing `IO_META` out of bounds.
     fn pid(&self) -> HsmPartId {
+        if self.index as u32 >= IO_META_COUNT {
+            return HsmPartId::from(0u8);
+        }
         HsmPartId::from(self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8)
     }
 
     /// Returns the queue ID from IO_META.
+    ///
+    /// Returns `0` for the self-test slot ([`SELF_TEST_IO_INDEX`]), which has
+    /// no `IO_META` entry.
     fn queue_id(&self) -> u16 {
+        if self.index as u32 >= IO_META_COUNT {
+            return 0;
+        }
         self.io_meta().queue.read(IO_META_QUEUE::QUEUE_ID) as u16
     }
 
     /// Returns the queue index from IO_META.
+    ///
+    /// Returns `0` for the self-test slot ([`SELF_TEST_IO_INDEX`]), which has
+    /// no `IO_META` entry.
     fn queue_idx(&self) -> u16 {
+        if self.index as u32 >= IO_META_COUNT {
+            return 0;
+        }
         self.io_meta().queue.read(IO_META_QUEUE::QUEUE_INDEX) as u16
     }
 
