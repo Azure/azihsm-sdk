@@ -21,6 +21,7 @@
 //! per-IO allocator scope).
 
 pub(crate) mod api_rev;
+pub(crate) mod from_pal;
 pub(crate) mod key_report;
 pub(crate) mod part_final;
 pub mod part_info;

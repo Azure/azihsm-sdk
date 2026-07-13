@@ -42,10 +42,8 @@ use azihsm_fw_core_crypto_key_report::KeyFlags;
 use azihsm_fw_core_crypto_key_report::KeyReportParams;
 use azihsm_fw_ddi_tbor_types::TborKeyReportReq;
 use azihsm_fw_ddi_tbor_types::TborKeyReportResp;
-use azihsm_fw_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_fw_ddi_tbor_types::KEY_REPORT_MAX_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
-use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
@@ -70,17 +68,6 @@ const APP_UUID_LEN: usize = 16;
 // runtime length check would be unreachable while this holds).
 const _: () = assert!(APP_UUID_LEN == azihsm_fw_hsm_pal_traits::APP_ID_LEN);
 
-/// Map an ECC-private vault key kind to its NIST curve, or `None` if the
-/// kind is not an attestable ECC private key.
-fn ecc_curve_for_kind(kind: HsmVaultKeyKind) -> Option<HsmEccCurve> {
-    match kind {
-        HsmVaultKeyKind::Ecc256Private => Some(HsmEccCurve::P256),
-        HsmVaultKeyKind::Ecc384Private | HsmVaultKeyKind::SdSealing => Some(HsmEccCurve::P384),
-        HsmVaultKeyKind::Ecc521Private => Some(HsmEccCurve::P521),
-        _ => None,
-    }
-}
-
 /// Translate the recovered vault attributes into report [`KeyFlags`].
 fn key_flags_from_attrs(attrs: HsmVaultKeyAttrs) -> KeyFlags {
     KeyFlags::new()
@@ -103,26 +90,19 @@ fn reverse_copy(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-/// Prepare the report payload fields that do not depend on the masked key.
-fn build_report_fields<'a, P: HsmPal>(
+/// Allocate and populate the report's app-UUID field — the session AppId
+/// copied verbatim. It is the only non-key report field that needs owned
+/// storage; `report_data` and `vm_launch_id` are borrowed in place.
+fn build_app_uuid<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
     sess_id: HsmSessId,
-    report_data_src: &DmaBuf,
-) -> HsmResult<(&'a mut DmaBuf, &'a mut DmaBuf)> {
+) -> HsmResult<&'a mut DmaBuf> {
     let app_id = crate::session::session_app_id(pal, io, sess_id)?;
-    if report_data_src.len() != KEY_REPORT_DATA_LEN {
-        return Err(HsmError::InvalidArg);
-    }
-
     let app_uuid = alloc.dma_alloc(APP_UUID_LEN)?;
     app_uuid.copy_from_slice(&app_id);
-
-    let report_data = alloc.dma_alloc(KEY_REPORT_DATA_LEN)?;
-    report_data.copy_from_slice(report_data_src);
-
-    Ok((app_uuid, report_data))
+    Ok(app_uuid)
 }
 
 /// Convert the recovered private key into attestable public-key material.
@@ -133,7 +113,7 @@ async fn attested_pub_key<'a, P: HsmPal>(
     key_kind: HsmVaultKeyKind,
     priv_key: &DmaBuf,
 ) -> HsmResult<AttestedPubKey<'a>> {
-    let Some(curve) = ecc_curve_for_kind(key_kind) else {
+    let Some(curve) = super::from_pal::ecc_curve(key_kind) else {
         // Only ECC-private kinds are attestable.  Symmetric keys have no
         // public component (an empty COSE_Key would tell the caller
         // nothing — not even the key type), RSA-private needs a
@@ -280,13 +260,15 @@ async fn build_signed_report<'a, P: HsmPal>(
 
     let vm_launch_id = part_state::part_vm_launch_guid(pal, io)?;
 
-    let (app_uuid, report_data) = build_report_fields(pal, io, alloc, sess_id, report_data_src)?;
+    let app_uuid = build_app_uuid(pal, io, alloc, sess_id)?;
 
+    // `report_data` borrows straight from the request buffer (no copy);
+    // `key_report` validates its exact `KEY_REPORT_DATA_LEN` length.
     let params = KeyReportParams {
         key,
         flags,
         app_uuid,
-        report_data,
+        report_data: report_data_src,
         vm_launch_id,
     };
 
