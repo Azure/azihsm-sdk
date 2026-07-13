@@ -29,9 +29,9 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
-use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 
 use crate::UnoHsmPal;
 
