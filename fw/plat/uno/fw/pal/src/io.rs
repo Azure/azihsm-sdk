@@ -100,11 +100,10 @@ impl UnoHsmIo {
     ///
     /// # Restrictions
     ///
-    /// This handle is for DMA allocation only. Its index (33) is outside the
-    /// host queue ranges (`IO_SQ_COUNT`/`IO_CQ_COUNT`/`IO_META_COUNT` are all
-    /// ≤ 33), so [`sqe`](HsmIo::sqe) and [`cqe`](HsmIo::cqe) have no backing
-    /// entry and must not be called on it; the host-IO dispatch that reads
-    /// them never runs for the self-test.
+    /// This handle is for DMA allocation only. Its index ([`SELF_TEST_IO_INDEX`]) is outside the
+    /// host queue ranges (`IO_SQ_COUNT`/`IO_CQ_COUNT`/`IO_META_COUNT`), so
+    /// [`sqe`](HsmIo::sqe) and [`cqe`](HsmIo::cqe) have no backing entry and must not be
+    /// called on it; the host-IO dispatch that reads them never runs for the self-test.
     ///
     /// [`SELF_TEST_IO_INDEX`]: crate::alloc::SELF_TEST_IO_INDEX
     pub(crate) fn self_test() -> Self {
