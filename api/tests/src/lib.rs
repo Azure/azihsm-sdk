@@ -12,5 +12,12 @@ mod resiliency_tests;
 mod session_tests;
 mod utils;
 
+#[cfg(feature = "emu")]
+mod emu_helpers;
+#[cfg(feature = "emu")]
+mod partition_ex_tests;
+#[cfg(feature = "emu")]
+mod session_ex_tests;
+
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;

@@ -276,6 +276,10 @@ pub enum TborStatus {
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
 
+    /// A per-command undo-log push failed (mirror of
+    /// `HsmError::UndoLogFull`).
+    UndoLogFull = 0x08700101,
+
     /// A command was asked to operate on a `HsmKeyScope` whose backing
     /// key material does not yet exist (mirror of
     /// `HsmError::UnsupportedKeyScope`).

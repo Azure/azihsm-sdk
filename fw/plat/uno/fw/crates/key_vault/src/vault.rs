@@ -163,8 +163,61 @@ impl<S: TableStorage> KeyVault<S> {
         key_id: HsmKeyId,
     ) -> HsmResult<()> {
         let (table, slot) = split_key_id(key_id);
-        let entry = self.entry(table, slot)?;
+        // Delete operates on any *present* key — live or disabled — so the
+        // undo-log commit path can zeroize a soft-deleted (disabled) key.
+        // Only a genuinely free slot is rejected (matches `delete_by_session`
+        // / `clear`, which already evict on a bare `!is_free()` check).
+        let entry = *self.storage.entry(table, slot)?;
+        if entry.is_free() {
+            return Err(HsmError::KeyNotFound);
+        }
         self.evict(gdma, io, table, slot, entry).await
+    }
+
+    /// Marks a live key as **disabled** without freeing its slot or
+    /// zeroizing its material.
+    ///
+    /// A disabled key is invisible to lookups ([`key`](Self::key),
+    /// [`key_kind`](Self::key_kind), [`key_location`](Self::key_location)
+    /// all return [`HsmError::KeyNotFound`]) but its slot and bytes
+    /// remain reserved.  It can be re-enabled via [`enable`](Self::enable)
+    /// or finalized (zeroized) via [`delete`](Self::delete).
+    ///
+    /// This is the staging half of a reversible delete used by the
+    /// upper-layer undo log: `disable` at mutation time, `enable` to roll
+    /// back on failure, `delete` to commit (zeroize) on success.  Unlike
+    /// `delete` it performs no GDMA, so it is synchronous and infallible
+    /// beyond the liveness check.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a live
+    ///   (present, not-already-disabled) key in this vault.
+    pub fn disable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        let (table, slot) = split_key_id(key_id);
+        // Must currently be live: `entry` rejects free or already-disabled
+        // slots, so this enforces disable-once semantics.
+        let _ = self.entry(table, slot)?;
+        self.storage.entry_mut(table, slot)?.set_disabled(true);
+        Ok(())
+    }
+
+    /// Re-enables a [`disable`](Self::disable)d key, making it visible to
+    /// lookups again.  The inverse of `disable`.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a present
+    ///   slot (a free slot cannot be enabled).
+    pub fn enable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        let (table, slot) = split_key_id(key_id);
+        // Disabled-aware lookup: a disabled entry is hidden from `entry`,
+        // so read it raw and reject only a genuinely free slot.
+        if self.storage.entry(table, slot)?.is_free() {
+            return Err(HsmError::KeyNotFound);
+        }
+        self.storage.entry_mut(table, slot)?.set_disabled(false);
+        Ok(())
     }
 
     /// Deletes every session-scoped key bound to `session`.

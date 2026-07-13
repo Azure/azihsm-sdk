@@ -60,6 +60,7 @@ members = [
   "fw/core/lib",
   "fw/core/oob",
   "fw/core/tracing",
+  "fw/core/undo",
   "fw/pal/traits",
   "fw/plat/std/lib",
   "fw/plat/std/pal",
@@ -150,6 +151,7 @@ azihsm_fw_hsm_oob = { path = "fw/core/oob" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
+azihsm_fw_hsm_undo = { path = "fw/core/undo" }
 
 # Embassy crates
 embassy-executor = "0.10.0"

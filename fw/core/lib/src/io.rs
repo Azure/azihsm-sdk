@@ -46,6 +46,9 @@ use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_types::DdiReqHdr;
 use azihsm_fw_ddi_tbor::RequestView as TborRequestView;
 use azihsm_fw_hsm_oob::OobPtr;
+use azihsm_fw_hsm_undo::UndoLog;
+use azihsm_fw_hsm_undo::WalkOutcome;
+use azihsm_fw_hsm_undo::UNDO_LOG_SIZE;
 
 use super::*;
 
@@ -68,11 +71,20 @@ impl<P: HsmPal> Hsm<P> {
         // and dispatch.
         let (op, validated) = Self::init_cqe_from_sqe(&mut io);
 
+        // The per-command undo log (TBOR only), owned here so it outlives
+        // `complete_io` and the post-completion walk.  Stays `None` for
+        // MBOR / flush / invalid SQEs; a TBOR command binds it on entry and
+        // **fails before mutating** if its DMA buffer can't be carved.
+        let mut undo: Option<UndoLog<'_>> = None;
+
         let op_result = match validated {
             Err(e) => Err(e),
             Ok(()) => match op {
                 OP_MBOR => self.handle_mbor_op(&mut io).await,
-                OP_TBOR => self.handle_tbor_op(&mut io).await,
+                OP_TBOR => match self.bind_undo(&io) {
+                    Ok(log) => self.handle_tbor_op(&mut io, undo.insert(log)).await,
+                    Err(e) => Err(e),
+                },
                 OP_FLUSH => self.handle_flush_op(&mut io).await,
                 _ => Err(OpError::new(
                     HsmError::UnsupportedCmd,
@@ -80,16 +92,77 @@ impl<P: HsmPal> Hsm<P> {
                 )),
             },
         };
+        let handler_ok = op_result.is_ok();
         Self::finalize_cqe(&mut io, op_result);
 
-        if let Err(_e) = self.pal().complete_io(io).await {
-            error!(
-                "core",
-                HsmError::CompleteIoFailure,
-                "complete_io failed: {:?}",
-                _e
-            );
+        // Post the completion (CQE) to the host, then run the undo/commit
+        // walk, then free the slot.  Splitting `complete_io` from
+        // `drop_io` lets the walk run over `io` *after* the CQE post, so a
+        // failed post reverts too.
+        let cqe_ok = match self.pal().complete_io(&mut io).await {
+            Ok(()) => true,
+            Err(_e) => {
+                error!(
+                    "core",
+                    HsmError::CompleteIoFailure,
+                    "complete_io failed: {:?}",
+                    _e
+                );
+                false
+            }
+        };
+
+        // Walk the undo log (TBOR only): commit iff the handler succeeded
+        // *and* the CQE posted; otherwise revert unconditionally.  Safe
+        // without a lock or generation check — admin teardown can't race an
+        // in-flight IO, and this walk runs before `drop_io` frees the slot.
+        if let Some(log) = undo {
+            let outcome = if handler_ok && cqe_ok {
+                log.apply_commit(self.pal(), &io).await
+            } else {
+                log.apply_undo(self.pal(), &io).await
+            };
+            if outcome == WalkOutcome::Poisoned {
+                // A consistency-critical restore failed: the partition's
+                // in-memory state is incoherent.  Quarantine it (Faulted) so
+                // the enable gate drops all further host IO until a
+                // free/realloc (or reboot) clears the fault.
+                error!(
+                    "core",
+                    HsmError::InternalError,
+                    "undo walk poisoned partition {:?}",
+                    io.pid()
+                );
+                if crate::part_state::part_set_faulted(self.pal(), &io).is_err() {
+                    error!(
+                        "core",
+                        HsmError::InternalError,
+                        "failed to fault poisoned partition {:?}",
+                        io.pid()
+                    );
+                }
+            }
         }
+
+        if let Err(_e) = self.pal().drop_io(io).await {
+            error!("core", HsmError::DropIoFailure, "drop_io failed: {:?}", _e);
+        }
+    }
+
+    /// Bind the per-command undo log for a TBOR command, carved from `io`'s
+    /// DMA heap.
+    ///
+    /// [`UNDO_LOG_SIZE`] bytes are taken from `io`'s DMA heap so the byte
+    /// pre-images the undo walk restores are DMA-accessible.  The undo log
+    /// is **mandatory**: if the buffer can't be carved, the command fails
+    /// here (`ALLOC_ERR`) *before* mutating any partition state, rather than
+    /// running with no rollback.
+    fn bind_undo<'s>(&'s self, io: &P::Io) -> Result<UndoLog<'s>, OpError> {
+        let buf = self
+            .pal()
+            .dma_alloc(io, UNDO_LOG_SIZE)
+            .op_status(HostStatus::ALLOC_ERR)?;
+        Ok(UndoLog::new(buf))
     }
 
     /// Returns `true` if the partition for this IO can accept host traffic.
@@ -245,7 +318,11 @@ impl<P: HsmPal> Hsm<P> {
     /// (built by the per-opcode handlers via the encoder API). For now,
     /// dispatch errors that cannot construct a typed error response
     /// surface as CQE-level host status codes.
-    async fn handle_tbor_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+    async fn handle_tbor_op<'s>(
+        &'s self,
+        io: &mut P::Io,
+        undo: &mut UndoLog<'s>,
+    ) -> Result<HsmOpStatus, OpError> {
         let params = Self::decode_io_sqe(io)?;
         let split = params.src_len.next_multiple_of(4);
         let req_buf = self
@@ -303,6 +380,7 @@ impl<P: HsmPal> Hsm<P> {
                     opcode,
                     params.sqe_session_id,
                     params.oob,
+                    undo,
                 )
                 .await;
                 let resp: &DmaBuf = dispatch_result.or_else(|err| {

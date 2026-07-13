@@ -156,13 +156,13 @@ impl HsmIoController for UnoHsmPal {
         Ok(UnoHsmIo { index })
     }
 
-    /// Sends the completed IO back to the host via OIC, then returns
-    /// the IO_SQ slot to the ISQ for reuse.
-    async fn complete_io(&self, io: Self::Io) -> HsmResult<()> {
-        let queue_id = io.queue_id();
-        let result = self.oic.send(io.index)?.await;
-        self.iic.free_io(io.index, queue_id);
-        result
+    /// Posts the completion (CQE) to the host via OIC.
+    ///
+    /// Posts the CQE only; the IO_SQ slot is returned to the ISQ
+    /// separately by [`drop_io`](HsmIoController::drop_io) so the caller
+    /// can run post-completion work over `io` first.
+    async fn complete_io(&self, io: &mut Self::Io) -> HsmResult<()> {
+        self.oic.send(io.index)?.await
     }
 
     /// Drops an IO without sending a completion (e.g. for disabled

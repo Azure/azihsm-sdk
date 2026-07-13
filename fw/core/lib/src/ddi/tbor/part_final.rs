@@ -51,6 +51,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
 
@@ -114,6 +115,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     io: &impl HsmIo,
     req_buf: &mut DmaBuf,
     oob: Option<OobPtr>,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     let req = parse_request(req_buf)?;
 
@@ -180,7 +182,11 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         pal.rng_fill_bytes(io, &mut ephemeral_mk[..])?;
 
         // ── Commit + respond ──────────────────────────────────────────
-        commit(pal, io, ums_key_id, ups, part_local_mk, ephemeral_mk).await?;
+        // Stage the finalized vault keys (async, independent slots) so the
+        // commit below is a single await-free, atomic guards-first block.
+        let (local_id, ephemeral_id, ups_id) =
+            stage_final_keys(pal, io, ups, part_local_mk, ephemeral_mk, undo).await?;
+        commit_final(pal, io, ums_key_id, local_id, ephemeral_id, ups_id, undo)?;
         encode_response(pal, io, curr_backup)
     })
     .await
@@ -475,20 +481,22 @@ fn peek_backup_svn_owner(blob: &DmaBuf) -> HsmResult<(u64, u16)> {
     Ok((meta.svn.get(), meta.owner_seed_id.get()))
 }
 
-/// Commit the finalized partition state: vault the live masking keys and
-/// record their ids, replace UMS with UPS in the root slot, and advance
-/// the lifecycle to [`PartState::Initialized`].
-async fn commit<P: HsmPal>(
+/// Stage the three finalized vault keys — partition-local MK, ephemeral MK,
+/// and the UPS that replaces UMS in the root slot — recording each key's
+/// delete-inverse on the undo log.
+///
+/// Done **before** [`commit_final`] so that block can be a single await-free
+/// (atomic) commit; concurrent `PartFinal`s stage their own keys
+/// independently and only race in the atomic commit, where the loser
+/// fails-fast and its just-staged keys are reaped by the recorded inverses.
+async fn stage_final_keys<'p, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    ums_key_id: HsmKeyId,
     ups: &DmaBuf,
     part_local_mk: &DmaBuf,
     ephemeral_mk: &DmaBuf,
-) -> HsmResult<()> {
-    use super::super::part_state;
-
-    // Vault the partition-local + ephemeral masking keys; record ids.
+    undo: &mut UndoLog<'p>,
+) -> HsmResult<(HsmKeyId, HsmKeyId, HsmKeyId)> {
     let local_id = pal
         .vault_key_create(
             io,
@@ -498,7 +506,7 @@ async fn commit<P: HsmPal>(
             PART_LOCAL_MK_ATTRS,
         )
         .await?;
-    part_state::part_set_local_mk_key_id(pal, io, local_id)?;
+    undo.push_vault_create(local_id)?;
 
     let ephemeral_id = pal
         .vault_key_create(
@@ -509,11 +517,8 @@ async fn commit<P: HsmPal>(
             EPHEMERAL_MK_ATTRS,
         )
         .await?;
-    part_state::part_set_ephemeral_mk_key_id(pal, io, ephemeral_id)?;
+    undo.push_vault_create(ephemeral_id)?;
 
-    // Replace UMS → UPS in the partition root slot.  The id slot is
-    // write-once, so clear it before re-pointing; then free the old UMS
-    // vault key.
     let ups_id = pal
         .vault_key_create(
             io,
@@ -523,11 +528,67 @@ async fn commit<P: HsmPal>(
             PART_ROOT_ATTRS,
         )
         .await?;
+    undo.push_vault_create(ups_id)?;
+
+    Ok((local_id, ephemeral_id, ups_id))
+}
+
+/// Commit the finalized partition state in a single **await-free**
+/// guards-first block: record the masking-key ids, replace UMS → UPS in the
+/// root slot (soft-deleting the old UMS key), and advance the lifecycle to
+/// [`PartState::Initialized`].
+///
+/// The three vault keys are already staged by [`stage_final_keys`]; only
+/// their `key_id`s flow in here.  Each mutation's inverse is recorded
+/// *before* applying, so a partial failure (or a later response/completion
+/// failure) is rolled back by the dispatcher's walk.  The UMS key is
+/// **soft-deleted** ([`UndoLog::push_vault_disable`]) so the undo walk
+/// re-enables it and the commit walk zeroizes it.
+///
+/// Being await-free, this block is **atomic** on the cooperative executor: a
+/// racing `PartFinal` that reaches the guard after this one committed sees
+/// `STATE != Initializing` and **fails-fast without mutating** — so no
+/// partition lock is needed, and its empty field-undo cannot clobber this
+/// commit.
+fn commit_final<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    ums_key_id: HsmKeyId,
+    local_id: HsmKeyId,
+    ephemeral_id: HsmKeyId,
+    ups_id: HsmKeyId,
+    undo: &mut UndoLog<'_>,
+) -> HsmResult<()> {
+    use super::super::part_state;
+
+    // Guards-first: bail before recording or applying any inverse if the
+    // partition is no longer `Initializing` (e.g. a racing PartFinal already
+    // finalized).  Recording the inverses and then failing would otherwise
+    // clobber the winner's just-committed state.
+    if part_state::part_state(pal, io)? != PartState::Initializing {
+        return Err(HsmError::InvalidArg);
+    }
+
+    // Record every inverse *before* applying, in commit order (the undo walk
+    // reverses them): clear the two new masking-key ids, restore UPS_KEY_ID
+    // to the prior UMS id, re-enable the soft-deleted UMS key, and restore
+    // STATE to `Initializing`.
+    undo.push_prop_restore_absent(PartPropId::LOCAL_MK_KEY_ID)?;
+    undo.push_prop_restore_absent(PartPropId::EPHEMERAL_MK_KEY_ID)?;
+    undo.push_prop_restore_scalar(PartPropId::UPS_KEY_ID, u32::from(u16::from(ums_key_id)))?;
+    undo.push_vault_disable(ums_key_id)?;
+    undo.push_prop_restore_scalar(PartPropId::STATE, PartState::Initializing as u32)?;
+
+    // Apply the mutations in the same order as the inverses above.
+    part_state::part_set_local_mk_key_id(pal, io, local_id)?;
+    part_state::part_set_ephemeral_mk_key_id(pal, io, ephemeral_id)?;
+    // The UPS_KEY_ID slot is write-once, so clear it before re-pointing.
     pal.part_prop_clear(io, PartPropId::UPS_KEY_ID)?;
     part_state::part_set_ups_key_id(pal, io, ups_id)?;
-    pal.vault_key_delete(io, ums_key_id).await?;
+    // Soft-delete the old UMS key: the commit walk zeroizes it, the undo
+    // walk re-enables it (see the recorded `push_vault_disable`).
+    pal.vault_key_disable(io, ums_key_id)?;
 
-    // Finalize the lifecycle.
     part_state::part_set_state(pal, io, PartState::Initialized)
 }
 
