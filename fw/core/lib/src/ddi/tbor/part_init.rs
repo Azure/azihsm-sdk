@@ -68,11 +68,14 @@ use azihsm_fw_ddi_tbor_types::PTA_REPORT_MAX_LEN;
 use azihsm_fw_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
+use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
+use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
 
@@ -139,6 +142,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &mut DmaBuf,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     let req = parse_request(req_buf)?;
 
@@ -197,21 +201,29 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         pal.hash(io, HsmHashAlgo::Sha384, policy_dma, policy_hash_dma, true)
             .await?;
 
-        // Commit partition state, then encode the response.
+        // Stage the partition's vault keys (async; independent slots) so the
+        // commit below is a single await-free, atomic block.  Their
+        // delete-inverses are recorded now, so a fail-fast in the commit
+        // guard still reaps the just-created keys.
+        let (root_key_id, pta_key_id) =
+            stage_part_keys(pal, io, root_dma, pta.priv_scalar, undo).await?;
+
+        // Commit partition state (guards-first, atomic), then encode the
+        // response.
         commit_partition_state(
             pal,
             io,
             CommitInputs {
-                root: root_dma,
-                pta_priv: pta.priv_scalar,
                 pta_pub_sec1: pta.pub_sec1,
                 policy_hash: policy_hash_dma,
                 pota_thumb: pota_thumb_dma,
                 sata_thumb: sata_thumb_dma,
                 sapota_thumb: sapota_thumb_dma,
             },
-        )
-        .await?;
+            root_key_id,
+            pta_key_id,
+            undo,
+        )?;
         encode_response(pal, io, &csr_dma[..csr_len], &report_dma[..report_len])
     })
     .await
@@ -574,8 +586,6 @@ async fn build_report_data<'a, P: HsmPal>(
 
 /// Write-once inputs committed by [`commit_partition_state`].
 struct CommitInputs<'a> {
-    root: &'a DmaBuf,
-    pta_priv: &'a DmaBuf,
     pta_pub_sec1: &'a DmaBuf,
     policy_hash: &'a DmaBuf,
     pota_thumb: &'a DmaBuf,
@@ -583,43 +593,85 @@ struct CommitInputs<'a> {
     sapota_thumb: Option<&'a DmaBuf>,
 }
 
-/// Vault the PartRoot and PTA private keys, register the partition
-/// write-once fields (including the security-domain thumbprints), and
-/// publish the `Enabled → Initializing` transition.
+/// Create the partition's two vault keys — the PartRoot UPS secret and the
+/// PTA private key — in independent vault slots, recording each key's
+/// delete-inverse on the undo log.
 ///
-/// Setter order is fixed by [`HsmPartitionManager::part_mark_initializing`]
-/// (the write-once fields must be set first).  Vault entries are
-/// committed as soon as they are created (`vault_key_create` is
-/// awaited), and the returned `key_id`s then flow into the partition
-/// setters.  There is no provisional / `dismiss()` rollback stage;
-/// undoing a partially-applied `PartInit` is a future undo-log TODO.
-async fn commit_partition_state<P: HsmPal>(
+/// Done **before** [`commit_partition_state`] so that block can be a single
+/// await-free (atomic) commit.  Concurrent `PartInit`s stage their own keys
+/// independently and only race in the atomic commit, where the loser
+/// fails-fast; its just-staged keys are reaped by the recorded inverses.
+async fn stage_part_keys<'p, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    inputs: CommitInputs<'_>,
-) -> HsmResult<()> {
-    // The keys are committed as they are created; the partition-state
-    // setters below run afterwards (a future undo log will handle
-    // rollback of a partially-applied PartInit).
+    root: &DmaBuf,
+    pta_priv: &DmaBuf,
+    undo: &mut UndoLog<'p>,
+) -> HsmResult<(HsmKeyId, HsmKeyId)> {
     let root_key_id = pal
         .vault_key_create(
             io,
-            inputs.root,
+            root,
             HsmVaultKeyKind::UniquePartitionSecret,
             None,
             PART_ROOT_VAULT_ATTRS,
         )
         .await?;
+    undo.push_vault_create(root_key_id)?;
 
     let pta_key_id = pal
         .vault_key_create(
             io,
-            inputs.pta_priv,
+            pta_priv,
             HsmVaultKeyKind::PartitionTrustAnchor,
             None,
             PTA_VAULT_ATTRS,
         )
         .await?;
+    undo.push_vault_create(pta_key_id)?;
+
+    Ok((root_key_id, pta_key_id))
+}
+
+/// Register the partition write-once fields (including the security-domain
+/// thumbprints) and publish the `Enabled → Initializing` transition, in a
+/// single **await-free** guards-first block.
+///
+/// The two vault keys are already staged by [`stage_part_keys`]; only their
+/// `key_id`s flow in here.  Setter order is fixed (the write-once fields
+/// must be set before the STATE transition).  Each mutation records its
+/// inverse on the per-command undo log, so a partial failure (or a later
+/// response/completion failure) is rolled back by the dispatcher's walk.
+///
+/// Being await-free, this block is **atomic** on the cooperative executor:
+/// a racing `PartInit` that reaches the guard after this one committed finds
+/// the partition already provisioned and **fails-fast without mutating** — so
+/// no partition lock is needed, and its empty field-undo cannot clobber this
+/// commit.
+fn commit_partition_state<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    inputs: CommitInputs<'_>,
+    root_key_id: HsmKeyId,
+    pta_key_id: HsmKeyId,
+    undo: &mut UndoLog<'_>,
+) -> HsmResult<()> {
+    // Guards-first: reject a racing PartInit (or a re-init) that already
+    // published this partition's write-once provisioning, *before* any field
+    // inverse is recorded — otherwise its restore-to-absent undo would clear
+    // the winner's just-set fields.  Mirrors `part_set_pta_key`'s one-shot
+    // `PtaKeyAlreadySet` guard, hoisted ahead of the undo bookkeeping so the
+    // whole commit stays atomic (await-free) and the loser mutates nothing.
+    // Only a genuinely absent slot (`PartPropNotFound`) means "not set yet";
+    // any other read error is propagated rather than masked as unset.
+    if crate::part_state::prop_present(crate::part_state::part_pta_key_id(pal, io))? {
+        return Err(HsmError::PtaKeyAlreadySet);
+    }
+
+    // Record the write-once / STATE inverses *before* applying them: the
+    // fields are absent now, so "restore to absent" is valid even if a
+    // setter below fails partway (the clear is then a benign no-op).
+    record_field_undo(undo, inputs.sapota_thumb.is_some())?;
 
     crate::part_state::part_set_pta_key(pal, io, pta_key_id, inputs.pta_pub_sec1)?;
     crate::part_state::part_set_ups_key_id(pal, io, root_key_id)?;
@@ -631,6 +683,24 @@ async fn commit_partition_state<P: HsmPal>(
     }
     crate::part_state::part_set_state(pal, io, PartState::Initializing)?;
     Ok(())
+}
+
+/// Push the write-once / STATE undo actions for [`commit_partition_state`]
+/// in commit order (the dispatcher walks them LIFO).  Each write-once
+/// field restores to **absent** (it was unset before PartInit); STATE
+/// restores to its prior `Enabled`.  The two `part_set_pta_key` fields
+/// (`PTA_KEY_ID` + `PTA_PUB_KEY`) are recorded together.
+fn record_field_undo(undo: &mut UndoLog<'_>, has_sapota: bool) -> HsmResult<()> {
+    undo.push_prop_restore_absent(PartPropId::PTA_KEY_ID)?;
+    undo.push_prop_restore_absent(PartPropId::PTA_PUB_KEY)?;
+    undo.push_prop_restore_absent(PartPropId::UPS_KEY_ID)?;
+    undo.push_prop_restore_absent(PartPropId::POLICY_HASH)?;
+    undo.push_prop_restore_absent(PartPropId::POTA_THUMBPRINT)?;
+    undo.push_prop_restore_absent(PartPropId::SATA_THUMBPRINT)?;
+    if has_sapota {
+        undo.push_prop_restore_absent(PartPropId::SAPOTA_THUMBPRINT)?;
+    }
+    undo.push_prop_restore_scalar(PartPropId::STATE, PartState::Enabled as u32)
 }
 
 /// Encode the `TborPartInitResp` into a fresh IO-scoped DmaBuf.

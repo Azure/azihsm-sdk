@@ -31,6 +31,9 @@
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
+use x509::X509Certificate;
+use x509::X509CertificateError;
+use x509::X509CertificateOp;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -45,6 +48,23 @@ impl From<SessionExCryptoError> for HsmError {
             SessionExCryptoError::InvalidInput => HsmError::InvalidArgument,
             SessionExCryptoError::Crypto => HsmError::InternalError,
             SessionExCryptoError::MacMismatch => HsmError::InvalidSignature,
+        }
+    }
+}
+
+impl TryFrom<HsmSessionExType> for SessionType {
+    type Error = HsmError;
+
+    /// Maps the API-layer [`HsmSessionExType`] onto the wire-level
+    /// [`SessionType`]. `HsmSessionExType` is an `#[open_enum]`, so an
+    /// unrecognized discriminant (anything beyond `PlainText` /
+    /// `Authenticated`) surfaces as [`HsmError::InvalidArgument`]
+    /// rather than silently mapping to a default channel profile.
+    fn try_from(session_type: HsmSessionExType) -> Result<Self, Self::Error> {
+        match session_type {
+            HsmSessionExType::PlainText => Ok(SessionType::PlainText),
+            HsmSessionExType::Authenticated => Ok(SessionType::Authenticated),
+            _ => Err(HsmError::InvalidArgument),
         }
     }
 }
@@ -72,39 +92,85 @@ struct PendingHandshake {
     pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
-pub struct OpenSessionExResult {
+pub(crate) struct OpenSessionExResult {
     /// Active session identifier.
-    pub session_id: u16,
+    pub(crate) session_id: u16,
     /// PSK id used for the handshake (0 = CO, 1 = CU).
-    pub psk_id: u8,
+    pub(crate) psk_id: u8,
     /// Channel integrity profile pinned at handshake time.
-    pub session_type: SessionType,
+    pub(crate) session_type: SessionType,
     /// HPKE exported secret (`Nh = 48`) used to derive `param_key`
     /// and (for authenticated sessions) the MAC keys. Retained so
     /// tests can re-derive labelled material on demand. Held in a
     /// [`Zeroizing`] buffer so it is wiped on drop even when this
     /// result is dropped directly (e.g. in tests) rather than moved
     /// into a session.
-    pub exported: Zeroizing<Vec<u8>>,
+    pub(crate) exported: Zeroizing<Vec<u8>>,
     /// Per-session AES-256 wrap key derived from the HPKE export.
-    pub param_key: AesKey,
+    pub(crate) param_key: AesKey,
     /// FW-emitted wrapped masking-key blob — opaque to the host.
     /// Held in a [`Zeroizing`] buffer so it is wiped on drop.
-    pub bmk_session: Zeroizing<Vec<u8>>,
+    pub(crate) bmk_session: Zeroizing<Vec<u8>>,
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
-/// production cert chain. Reuses [`get_part_pub_key`], whose leaf
-/// cert is the partition-ID cert; its SubjectPublicKeyInfo carries
+/// production cert chain. Reuses [`fetch_cert_chain_checked`], whose
+/// leaf cert is the partition-ID cert; its SubjectPublicKeyInfo carries
 /// the P-384 key the FW uses as `pk_s` in HPKE `auth_psk`.
+///
+/// The SD handshake authenticates the entire session against this key,
+/// so the partition cert chain is cryptographically verified (via
+/// [`validate_part_cert_chain`]) before the leaf key is trusted.
 pub(super) fn fetch_pk_hsm(
     dev: &HsmDev,
     rev: HsmApiRev,
 ) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
-    let pk_der = get_part_pub_key(dev, rev)?;
+    let (chain_pem, leaf_der) = fetch_cert_chain_checked(dev, rev, 0)?;
+    validate_part_cert_chain(&chain_pem)?;
+
+    let leaf = X509Certificate::from_der(&leaf_der).map_err(|_| HsmError::InternalError)?;
+    let pk_der = leaf
+        .get_public_key_der()
+        .map_err(|_| HsmError::InternalError)?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| HsmError::InternalError)?;
     let sec1 = ec_pub_to_sec1(&pk)?;
     Ok((pk, sec1))
+}
+
+/// Cryptographically verify the partition cert chain's internal
+/// issuance/order (leaf issued by intermediate ... issued by root)
+/// before its leaf key is trusted as `pk_hsm`.
+///
+/// `chain_pem` is the leaf->root PEM stack returned by
+/// [`fetch_cert_chain_checked`]. [`X509CertificateOp::validate_chain`]
+/// verifies internal consistency, not a pinned trust anchor. A single
+/// self-signed cert (e.g. the sim backend) has no ordering to verify,
+/// so chains shorter than two certs are accepted as-is.
+///
+/// # Errors
+///
+/// Returns [`HsmError::InternalError`] when the PEM stack is empty or
+/// fails to parse, and [`HsmError::InvalidSignature`] when the chain
+/// fails cryptographic verification.
+fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
+    let certs = X509Certificate::from_pem_stack(chain_pem.as_bytes())
+        .map_err(|_| HsmError::InternalError)?;
+    let Some((leaf, rest)) = certs.split_first() else {
+        return Err(HsmError::InternalError);
+    };
+    if rest.is_empty() {
+        // Single self-signed cert (e.g. sim): no chain ordering to verify.
+        return Ok(());
+    }
+    match leaf.validate_chain(rest) {
+        Ok(true) => Ok(()),
+        // A verification failure (bad signature / broken issuance chain)
+        // surfaces as `Ok(false)` on Windows and `Err(VerifyError)` on
+        // Linux; map both to `InvalidSignature`. Parse / store-setup
+        // failures remain `InternalError`.
+        Ok(false) | Err(X509CertificateError::VerifyError) => Err(HsmError::InvalidSignature),
+        Err(_) => Err(HsmError::InternalError),
+    }
 }
 
 /// Opens a session on an HSM partition over the TBOR transport.
@@ -136,8 +202,12 @@ pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
-    session_type: SessionType,
+    session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
+    // Convert the API-layer session type to the wire-level `SessionType`
+    // here in the DDI layer, so the public API surface never handles the
+    // DDI wire type.
+    let session_type: SessionType = session_type.try_into()?;
     let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
     open_session_ex_finish(partition, pending)
 }

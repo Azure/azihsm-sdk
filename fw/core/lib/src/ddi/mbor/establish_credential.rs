@@ -291,6 +291,12 @@ async fn verify_pota_signature<P: HsmPal>(
     let digest = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
     pal.hash(io, HsmHashAlgo::Sha384, id_uncompressed, digest, true)
         .await?;
+    // The POTA signature was produced over the natural big-endian digest; the
+    // LE-native `ecc_verify` consumes the PKA-LE (fully byte-reversed) digest,
+    // so reverse it here in the handler. (SHA's `big_endian = false` does a
+    // per-word byte-swap, not the full-digest reversal the PKA needs.)
+    // Byte-order conversion lives in the handler now, not the PAL.
+    digest[..HsmHashAlgo::Sha384.digest_len()].reverse();
 
     let verify_result = pal.dma_alloc(io, 4)?;
 
@@ -357,6 +363,12 @@ async fn derive_credential_keys<P: HsmPal>(
         )
         .await?;
     }
+
+    // The ECDH secret is returned PKA-native little-endian; reverse it to the
+    // host's big-endian (openssl) order so the firmware HKDF matches the host,
+    // which runs the same HKDF over its openssl-BE secret. Byte-order
+    // conversion lives in the handler now, not the PAL.
+    secret[..HsmEccCurve::P384.secret_len()].reverse();
 
     // HKDF-Extract with the RFC 5869 §2.2 default (absent) salt.
     let prk = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;

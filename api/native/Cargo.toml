@@ -18,6 +18,7 @@ zerocopy = { features = ["derive"], workspace = true }
 
 [features]
 default = []
+emu = ["azihsm_api/emu"]
 mock = ["azihsm_api/mock"]
 
 [lints]

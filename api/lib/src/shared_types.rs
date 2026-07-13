@@ -9,6 +9,36 @@
 use open_enum::open_enum;
 use zerocopy::*;
 
+/// A single DER-encoded certificate in a certificate chain.
+///
+/// Borrowed view over one cert's DER bytes, used by the
+/// partition-provisioning API (e.g. [`HsmSession::part_final_ex`]) to accept
+/// a PTA chain as `&[HsmCert]`. It is a Rust borrow, **not** an
+/// ABI-stable `#[repr(C)]` type; a future native `part_final` FFI would
+/// build it from a C array of `{ data, len }` buffers (borrowing, not
+/// copying). The wire-level `(index, length)` OOB descriptors stay
+/// internal to the SDK.
+///
+/// [`HsmSession::part_final_ex`]: crate::HsmSession::part_final_ex
+#[derive(Debug, Clone, Copy)]
+pub struct HsmCert<'a> {
+    /// DER-encoded bytes of the certificate.
+    pub cert: &'a [u8],
+}
+
+/// Result of a security-domain partition-finalization (`part_final_ex`)
+/// command: the artifacts the device returns after finalizing a
+/// partition's security domain.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborPartFinalResp`) is converted into it inside the DDI layer, so the
+/// wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmPartFinalExResult {
+    /// Current `local_mk` backup envelope the firmware produced.
+    pub local_mk_backup: Vec<u8>,
+}
+
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.
@@ -138,4 +168,37 @@ pub enum HsmPotaEndorsementSource {
 
     /// TPM-generated endorsement.
     Tpm = 2,
+}
+
+/// Channel-level integrity profile for a security-domain (TBOR) session,
+/// selected by the caller when opening a session via `open_session_ex`.
+///
+/// API-layer mirror of `azihsm_ddi_tbor_types::SessionType`; kept as a
+/// separate `#[open_enum]` so the public API surface does not leak the
+/// DDI-layer wire type.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmSessionExType {
+    /// Channel transports bodies without per-message MAC.
+    PlainText = 0,
+
+    /// Channel transports bodies wrapped in an outer per-message HMAC
+    /// envelope.
+    Authenticated = 1,
+}
+
+/// Result of a security-domain partition-provisioning (`part_init_ex`)
+/// command: the artifacts the device returns after initializing a
+/// partition's security domain.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborPartInitResp`) is converted into it inside the DDI layer, so the
+/// wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmPartInitExResult {
+    /// DER-encoded PKCS#10 CertificationRequest for the PTA public key.
+    pub pta_csr: Vec<u8>,
+    /// COSE_Sign1 PTA key-attestation report signed by the PID.
+    pub pta_report: Vec<u8>,
 }

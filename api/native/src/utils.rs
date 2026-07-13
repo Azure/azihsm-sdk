@@ -187,6 +187,22 @@ pub(crate) fn copy_to_key_prop(
     Ok(())
 }
 
+/// Copy a byte slice into a caller-provided output buffer.
+///
+/// On success, writes `bytes` into `output_buf` and sets `output_buf.len`
+/// to the number of bytes written. If the buffer is too small, sets
+/// `output_buf.len` to the required size and returns
+/// [`AzihsmStatus::BufferTooSmall`] without writing.
+pub(crate) fn copy_to_buffer(
+    output_buf: &mut AzihsmBuffer,
+    bytes: &[u8],
+) -> Result<(), AzihsmStatus> {
+    let buf = validate_output_buffer(output_buf, bytes.len())?;
+    buf[..bytes.len()].copy_from_slice(bytes);
+    output_buf.len = bytes.len() as u32;
+    Ok(())
+}
+
 /// Converts an optional AzihsmBuffer pointer to Option<&[u8]>
 ///
 /// # Arguments

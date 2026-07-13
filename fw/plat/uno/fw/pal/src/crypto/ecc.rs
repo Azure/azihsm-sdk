@@ -252,23 +252,23 @@ impl HsmEcc for UnoHsmPal {
         }
         let prime_le = curve_prime_le(pka_curve);
 
-        // Allocate the per-call PKA scratch (LE hash, curve prime, and the
-        // Montgomery-constant result) from a scoped heap so it is released as
-        // soon as the verify completes rather than living for the whole IO. A
-        // single IO that verifies several signatures (e.g. cert-chain
-        // validation) would otherwise accumulate this scratch and can exhaust
-        // the DMA pool.
+        // Allocate the per-call PKA scratch (curve prime + transient
+        // Montgomery-constant scratch) from a scoped heap so it is released
+        // as soon as the verify completes rather than living for the whole
+        // IO. A single IO that verifies several signatures (e.g. cert-chain
+        // validation) would otherwise accumulate this scratch and can
+        // exhaust the DMA pool.
         self.alloc_scoped_async(io, async |scope| {
-            // Callers pass the hash digest big-endian, but the PKA consumes it
-            // little-endian; reverse exactly `hash_size` bytes into LE scratch
-            // (a larger caller buffer must not move the digest out of the
-            // leading bytes the hardware reads). pub_key/signature already
-            // arrive LE via the host DDI serde.
-            let hash_le = scope.dma_alloc(digest_len)?;
-            hash_le.copy_from_slice(&hash[..digest_len]);
-            hash_le.reverse();
+            // The digest arrives PKA-native little-endian: the DDI handler
+            // hashes big-endian and then fully byte-reverses it (a full BE->LE
+            // reversal, not `hash(.., big_endian = false)`, which only swaps
+            // within each 32-bit word). pub_key and signature likewise arrive
+            // LE via the host DDI serde. No byte-order conversion is done below
+            // the PAL.
 
-            // Per-call Montgomery constant from the curve prime (like ecdh_derive).
+            // Per-call Montgomery constant from the curve prime (like
+            // ecdh_derive). `mont_result` is transient scratch consumed
+            // internally by the driver's verify; it is not surfaced back.
             let prime = scope.dma_alloc(prime_le.len())?;
             prime.copy_from_slice(prime_le);
             let mont_result = scope.dma_alloc(prime_le.len())?;
@@ -277,7 +277,7 @@ impl HsmEcc for UnoHsmPal {
                 .ecc_verify(
                     pka_curve,
                     pub_key,
-                    hash_le,
+                    &hash[..digest_len],
                     signature,
                     result,
                     prime,
@@ -334,18 +334,10 @@ impl HsmEcc for UnoHsmPal {
                 .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
                 .await?;
 
-            // pub_key (peer) and priv_key (vault) already pass through in
-            // PKA-native little-endian and are unconverted. The shared secret,
-            // however, is consumed internally by HKDF and never crosses the DDI
-            // boundary; the host derives it big-endian (openssl), so reverse the
-            // PKA's little-endian output. Reverse exactly the `secret_len`
-            // written bytes: the trait allows a larger caller buffer (wire-padded
-            // P-521, 68 vs 66), so reversing the whole buffer would pull trailing
-            // padding to the front and corrupt the HKDF input; slicing by the
-            // wire point size would instead panic when the buffer is exactly
-            // `secret_len`.
-            let secret_len = curve.secret_len();
-            secret[..secret_len].reverse();
+            // The shared secret is returned PKA-native little-endian, like
+            // pub_key and priv_key. Any byte-order conversion (e.g. LE->BE for
+            // an internal HKDF consumer that must match the host's openssl-BE
+            // secret) is the DDI handler's responsibility, not the PAL's.
             Ok(())
         })
         .await

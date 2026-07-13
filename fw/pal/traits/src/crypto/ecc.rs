@@ -304,14 +304,15 @@ pub trait HsmEcc {
     ///   delegate to a big-endian-native primitive (e.g. OpenSSL)
     ///   must strip the per-coordinate padding and reverse each
     ///   coordinate internally.
-    /// - `hash` — message digest that was signed, in natural
-    ///   **big-endian** byte order (as produced by the hash function),
-    ///   at least the curve's digest length.  Unlike `pub_key` /
-    ///   `signature` (little-endian wire format), the digest is a
-    ///   standard big-endian scalar: little-endian-native hardware PALs
-    ///   reverse exactly the curve's digest length internally before
-    ///   feeding the PKA, while big-endian-native PALs consume it
-    ///   as-is.
+    /// - `hash` — message digest that was signed, in **little-endian**
+    ///   byte order: the natural big-endian digest with **all bytes fully
+    ///   reversed** (BE->LE), at least the curve's digest length.  This is a
+    ///   full-digest reversal, distinct from
+    ///   `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within
+    ///   each 32-bit word.  The digest is PKA-native LE like `pub_key` /
+    ///   `signature`; the DDI handler performs the conversion (hash big-endian,
+    ///   then reverse), so PKA-native PALs consume it as-is while
+    ///   big-endian-native PALs (e.g. OpenSSL) reverse it internally.
     /// - `signature` — signature to verify; must be exactly
     ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
     ///   is in little-endian byte order** with P-521 components
@@ -398,8 +399,10 @@ pub trait HsmEcc {
     ///   OpenSSL) must strip the per-coordinate padding and reverse
     ///   each coordinate internally.
     /// - `secret` — output buffer; must be at least
-    ///   `curve.secret_len()` bytes.  On success, holds the
-    ///   x-coordinate of the shared point.
+    ///   `curve.secret_len()` bytes.  On success, holds the x-coordinate of
+    ///   the shared point in **little-endian** (PKA-native) byte order.
+    ///   Byte-order conversion for a specific consumer (e.g. LE->BE before an
+    ///   openssl-matching HKDF) is the DDI handler's responsibility.
     ///
     /// # Returns
     ///
