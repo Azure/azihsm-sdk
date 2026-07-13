@@ -326,9 +326,12 @@ impl ChainValidator {
         let digest_dma = alloc.dma_alloc(digest_len)?;
 
         // Hash the TBSCertificate (already in DMA memory).  The digest is
-        // the natural big-endian SHA value the signer signed over.
+        // the natural big-endian SHA value the signer signed over; reverse it
+        // in place to the PKA-LE order the (now LE-native) `ecc_verify` expects,
+        // like the public key / signature components below.
         pal.hash(io, hash_algo, curr.tbs_raw, digest_dma, true)
             .await?;
+        digest_dma[..digest_len].reverse();
 
         // `HsmEcc::ecc_verify` wants the public key and signature in the
         // little-endian wire form: each component's magnitude in the first

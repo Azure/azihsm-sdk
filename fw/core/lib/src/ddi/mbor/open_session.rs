@@ -240,6 +240,12 @@ async fn derive_session_credential_keys<P: HsmPal>(
         .await?;
     }
 
+    // The ECDH secret is returned PKA-native little-endian; reverse it to the
+    // host's big-endian (openssl) order so the firmware HKDF matches the host,
+    // which runs the same HKDF over its openssl-BE secret. Byte-order
+    // conversion lives in the handler now, not the PAL.
+    secret[..HsmEccCurve::P384.secret_len()].reverse();
+
     // HKDF-Extract with the RFC 5869 §2.2 default (absent) salt.
     let prk = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
     pal.hkdf_extract(io, HsmHashAlgo::Sha384, None, secret, prk)

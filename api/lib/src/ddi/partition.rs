@@ -722,7 +722,7 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 /// it root->leaf; this function reverses it to match the documented
 /// contract). Also returns the DER bytes of the leaf certificate so
 /// callers can extract the partition public key.
-fn fetch_cert_chain_checked(
+pub(super) fn fetch_cert_chain_checked(
     dev: &HsmDev,
     rev: HsmApiRev,
     slot_id: u8,

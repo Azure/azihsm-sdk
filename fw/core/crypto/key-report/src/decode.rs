@@ -222,12 +222,15 @@ where
     minicbor::encode(&sig_struct_val, crate::codec::as_mut_slice(sig_struct))
         .map_err(|_| HsmError::InternalError)?;
 
-    // SHA-384. Unlike the signing path (which feeds `ecc_sign` a
-    // little-endian digest), `ecc_verify` requires the digest in its
-    // natural big-endian byte order, so hash with `big_endian = true`.
+    // SHA-384. `ecc_verify` is PKA little-endian native, so hash
+    // big-endian and then fully byte-reverse the digest into PKA-LE,
+    // matching the other verify callers (establish_credential /
+    // x509-chain). SHA's `big_endian = false` is only a per-word swap,
+    // not the full-digest reversal the PKA needs.
     let digest = alloc.dma_alloc(SHA384_LEN)?;
     pal.hash(io, HsmHashAlgo::Sha384, sig_struct, digest, true)
         .await?;
+    digest[..SHA384_LEN].reverse();
 
     // The COSE signature stores `r || s` big-endian per half; convert
     // to the little-endian `ecc_verify` wire form.

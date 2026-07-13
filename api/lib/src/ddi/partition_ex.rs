@@ -28,20 +28,11 @@ use azihsm_ddi_tbor_types::*;
 
 use super::*;
 
-/// API-layer result of a TBOR `PartInit` provisioning command.
-///
-/// Mirrors [`TborPartInitResp`] with owned bytes so the wire response
-/// type stays confined to the DDI layer and never reaches `HsmSession`
+/// Converts the DDI/wire `PartInit` response into the API-layer
+/// [`HsmPartInitExResult`] with owned bytes, so the wire response type
+/// stays confined to the DDI layer and never reaches `HsmSession`
 /// callers.
-#[derive(Debug, Clone, Default)]
-pub struct PartInitResult {
-    /// DER-encoded PKCS#10 CertificationRequest for the PTA pubkey.
-    pub pta_csr: Vec<u8>,
-    /// COSE_Sign1 PTA key-attestation report signed by the PID.
-    pub pta_report: Vec<u8>,
-}
-
-impl From<TborPartInitResp> for PartInitResult {
+impl From<TborPartInitResp> for HsmPartInitExResult {
     fn from(resp: TborPartInitResp) -> Self {
         Self {
             pta_csr: resp.pta_csr,
@@ -153,7 +144,7 @@ pub(crate) fn part_init_ex(
     pota_thumbprint: &[u8],
     sata_thumbprint: &[u8],
     sapota_thumbprint: Option<&[u8]>,
-) -> HsmResult<PartInitResult> {
+) -> HsmResult<HsmPartInitExResult> {
     if part_policy.len() != PART_POLICY_LEN
         || pota_thumbprint.len() != POTA_THUMBPRINT_LEN
         || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
@@ -183,7 +174,7 @@ pub(crate) fn part_init_ex(
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, None, &mut cookie)
-        .map(PartInitResult::from)
+        .map(HsmPartInitExResult::from)
         .map_err(HsmError::from)
 }
 
@@ -215,14 +206,13 @@ mod emu_tests {
     /// PSK id selecting the Crypto Officer role (`PartInit` is CO-only).
     const CO: u8 = 0;
 
-    /// Serialises tests against the process-global FW emulator
-    /// singleton. `cargo-nextest` runs each test in its own process, but
-    /// this keeps a plain `cargo test` (single process, multi-threaded)
-    /// correct too.
+    /// Serialises tests against the process-global FW emulator singleton.
+    /// `cargo-nextest` runs each test in its own process, but this keeps a
+    /// plain `cargo test` (single process, multi-threaded) correct too.
     static EMU_LOCK: Mutex<()> = Mutex::new(());
 
     /// Open the emu partition at its maximum revision, factory-reset it,
-    /// and bring up a Crypto-Officer V2 session ready for `PartInit`.
+    /// and bring up a Crypto-Officer V2 session ready for `part_init_ex`.
     fn fresh_co_session() -> HsmSession {
         let info = HsmPartitionManager::partition_info_list()
             .into_iter()
@@ -235,7 +225,7 @@ mod emu_tests {
         let part =
             HsmPartitionManager::open_partition(&info.path, rev).expect("open emu partition");
         part.reset().expect("factory-reset emu partition");
-        part.open_session_ex(rev, CO, SessionType::Authenticated)
+        part.open_session_ex(rev, CO, HsmSessionExType::Authenticated)
             .expect("open CO session")
     }
 

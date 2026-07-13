@@ -148,7 +148,7 @@ impl HsmSession {
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
         sapota_thumbprint: Option<&[u8]>,
-    ) -> HsmResult<PartInitResult> {
+    ) -> HsmResult<HsmPartInitExResult> {
         let inner = self.inner.read();
         match &inner.kind {
             SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(

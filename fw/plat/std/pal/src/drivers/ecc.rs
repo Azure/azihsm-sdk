@@ -227,12 +227,9 @@ impl StdEcc {
     /// P-521 per-coordinate de-padding internally so the PAL doesn't
     /// have to.
     ///
-    /// `hash` is passed through to OpenSSL **unmodified** — the PAL
-    /// trait's verify contract says "Raw digest bytes; no endianness
-    /// conversion is applied", so callers pass the BE hash they got
-    /// from SHA directly.  (The asymmetry with [`Self::ecc_sign_le`]
-    /// matches the upstream trait contract; both internal
-    /// firmware callers of verify pass BE digests.)
+    /// `hash` is the wire-LE digest (the PAL trait is now LE-native); it is
+    /// reversed into OpenSSL big-endian form internally, symmetric with
+    /// [`Self::ecc_sign_le`].
     ///
     /// `pub_le.len()` must be `wire_pub_key_len(curve)`
     /// (64 / 96 / 136 for P-256 / P-384 / P-521).
@@ -268,7 +265,20 @@ impl StdEcc {
         reverse_copy(&mut sig_be[..coord_len], &r_wire[..coord_len]);
         reverse_copy(&mut sig_be[coord_len..sig_len], &s_wire[..coord_len]);
 
-        self.ecc_verify(&key, hash, &sig_be[..sig_len]).await
+        // The PAL trait allows a `hash` buffer larger than the curve digest;
+        // verify only the leading curve-digest bytes (matching the uno PAL,
+        // which feeds the PKA exactly `hash_size(curve)`). Reverse that prefix
+        // from wire-LE into BE scratch for OpenSSL (symmetric with
+        // `ecc_sign_le`).
+        let digest_len = ecc_digest_len(curve);
+        if hash.len() < digest_len {
+            return Err(HsmError::InvalidArg);
+        }
+        let mut hash_be = [0u8; 64];
+        reverse_copy(&mut hash_be[..digest_len], &hash[..digest_len]);
+
+        self.ecc_verify(&key, &hash_be[..digest_len], &sig_be[..sig_len])
+            .await
     }
 
     /// ECDH key agreement — derives a shared secret into `secret`.
@@ -319,11 +329,10 @@ impl StdEcc {
     /// per-coordinate padding.
     ///
     /// `pub_le.len()` must be `wire_pub_key_len(curve)`
-    /// (64 / 96 / 136 for P-256 / P-384 / P-521).  The shared
-    /// secret is written into `secret_out` in OpenSSL's native
-    /// big-endian form — the trait contract leaves the secret
-    /// endianness unspecified and current callers consume it as
-    /// opaque HKDF input, so no flip is applied.
+    /// (64 / 96 / 136 for P-256 / P-384 / P-521).  The shared secret is
+    /// written into `secret_out` in wire **little-endian** form to match the
+    /// PKA-native (LE) trait contract; the DDI handler converts to the
+    /// consumer's byte order (e.g. LE->BE before an openssl-matching HKDF).
     pub async fn ecdh_derive_le(
         &self,
         priv_key: &EccPrivateKey,
@@ -346,7 +355,14 @@ impl StdEcc {
         let pubk = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
             .map_err(|_| HsmError::InvalidArg)?;
 
-        self.ecdh_derive(priv_key, &pubk, secret_out).await
+        self.ecdh_derive(priv_key, &pubk, secret_out).await?;
+
+        // OpenSSL derives the secret big-endian; the trait is LE-native, so
+        // reverse the derived x-coordinate into wire-LE. Reverse exactly
+        // `coord_len` bytes so a larger (wire-padded) caller buffer keeps its
+        // trailing padding.
+        secret_out[..coord_len].reverse();
+        Ok(())
     }
 }
 
@@ -359,6 +375,15 @@ fn priv_key_len(curve: EccCurve) -> usize {
         EccCurve::P256 => 32,
         EccCurve::P384 => 48,
         EccCurve::P521 => 66,
+    }
+}
+
+/// ECDSA digest length for the curve's standard hash (SHA-256/384/512).
+fn ecc_digest_len(curve: EccCurve) -> usize {
+    match curve {
+        EccCurve::P256 => 32,
+        EccCurve::P384 => 48,
+        EccCurve::P521 => 64,
     }
 }
 

@@ -11,6 +11,16 @@
 pub trait HsmCrypto: HsmRng + HsmHash + HsmHmac + HsmAes + HsmEcc + HsmRsa + HsmKdf {}
 ```
 
+> **Note — signatures are simplified.** The trait signatures shown throughout
+> this document use plain `&[u8]` / `&mut [u8]` for readability. In the actual
+> firmware PAL traits (`fw/pal/traits/src/crypto/`) the byte-buffer parameters
+> are DMA-capable [`DmaBuf`] buffers (`&DmaBuf` / `&mut DmaBuf`), **not** plain
+> slices, and most methods also take an `io: &impl HsmIo` context. The `DmaBuf`
+> requirement is load-bearing: the Uno PKA/SHA/AES engines DMA directly from
+> these buffers, so non-DMA memory (e.g. DTCM stack/heap) is **not** acceptable
+> on the hardware path. Read the buffers below as "raw byte buffers,
+> conceptually" but `DmaBuf` in practice.
+
 ## Sub-traits
 
 ### HsmRng — Random Number Generation
@@ -80,7 +90,11 @@ pub trait HsmEcc {
 }
 ```
 
-Key parameters are `&[u8]` byte slices: raw HSM-format scalar `d` for private keys (32/48/68 bytes, P-521 4-byte aligned), raw x∥y little-endian coordinates for public keys, raw r∥s for signatures.
+Key parameters are raw byte buffers (DMA-backed `DmaBuf` in the firmware PAL traits — see the note above), all in HSM-native **little-endian** (PKA operand order): raw HSM-format scalar `d` for private keys (32/48/68 bytes, P-521 4-byte aligned), raw x∥y coordinates for public keys, and raw r∥s for signatures (each component little-endian).
+
+Byte order also governs the digest and the ECDH secret:
+- `ecc_sign` / `ecc_verify` take the message `hash` in PKA **little-endian** — a *full byte reversal* of the natural big-endian digest. (This is **not** `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within each 32-bit word.) Callers hash big-endian, then reverse the digest.
+- `ecdh_derive` writes `secret` as the shared x-coordinate in **little-endian**. Consumers that need big-endian — e.g. an openssl-matching HKDF, or HPKE/DHKEM per RFC 9180 — must reverse it to big-endian themselves.
 
 **PCT (Pairwise Consistency Test):** After key generation, a self-test is performed:
 - `SignVerify` — sign + verify a test message
