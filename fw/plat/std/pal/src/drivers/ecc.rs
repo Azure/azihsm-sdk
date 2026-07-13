@@ -265,15 +265,19 @@ impl StdEcc {
         reverse_copy(&mut sig_be[..coord_len], &r_wire[..coord_len]);
         reverse_copy(&mut sig_be[coord_len..sig_len], &s_wire[..coord_len]);
 
-        // Reverse the wire-LE digest into BE scratch for OpenSSL (symmetric
-        // with `ecc_sign_le`).
-        if hash.len() > 64 {
+        // The PAL trait allows a `hash` buffer larger than the curve digest;
+        // verify only the leading curve-digest bytes (matching the uno PAL,
+        // which feeds the PKA exactly `hash_size(curve)`). Reverse that prefix
+        // from wire-LE into BE scratch for OpenSSL (symmetric with
+        // `ecc_sign_le`).
+        let digest_len = ecc_digest_len(curve);
+        if hash.len() < digest_len {
             return Err(HsmError::InvalidArg);
         }
         let mut hash_be = [0u8; 64];
-        reverse_copy(&mut hash_be[..hash.len()], hash);
+        reverse_copy(&mut hash_be[..digest_len], &hash[..digest_len]);
 
-        self.ecc_verify(&key, &hash_be[..hash.len()], &sig_be[..sig_len])
+        self.ecc_verify(&key, &hash_be[..digest_len], &sig_be[..sig_len])
             .await
     }
 
@@ -371,6 +375,15 @@ fn priv_key_len(curve: EccCurve) -> usize {
         EccCurve::P256 => 32,
         EccCurve::P384 => 48,
         EccCurve::P521 => 66,
+    }
+}
+
+/// ECDSA digest length for the curve's standard hash (SHA-256/384/512).
+fn ecc_digest_len(curve: EccCurve) -> usize {
+    match curve {
+        EccCurve::P256 => 32,
+        EccCurve::P384 => 48,
+        EccCurve::P521 => 64,
     }
 }
 

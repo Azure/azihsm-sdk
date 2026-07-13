@@ -305,10 +305,13 @@ pub trait HsmEcc {
     ///   must strip the per-coordinate padding and reverse each
     ///   coordinate internally.
     /// - `hash` — message digest that was signed, in **little-endian**
-    ///   byte order (as `HsmHash::hash(.., big_endian = false)` produces it),
-    ///   at least the curve's digest length.  The digest is PKA-native LE like
-    ///   `pub_key` / `signature`; byte-order conversion is the DDI handler's
-    ///   responsibility, so PKA-native PALs consume it as-is while
+    ///   byte order: the natural big-endian digest with **all bytes fully
+    ///   reversed** (BE->LE), at least the curve's digest length.  This is a
+    ///   full-digest reversal, distinct from
+    ///   `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within
+    ///   each 32-bit word.  The digest is PKA-native LE like `pub_key` /
+    ///   `signature`; the DDI handler performs the conversion (hash big-endian,
+    ///   then reverse), so PKA-native PALs consume it as-is while
     ///   big-endian-native PALs (e.g. OpenSSL) reverse it internally.
     /// - `signature` — signature to verify; must be exactly
     ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
