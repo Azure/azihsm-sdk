@@ -711,8 +711,136 @@ fn test_attest_secret_key() {
     );
 }
 
+/// Attest a derived AES key and assert it reports as an on-device
+/// *generated* (not imported) symmetric key with an empty public key.
+///
+/// Shared by the HKDF- and KBKDF-derived AES attestation tests: both
+/// derive an AES key on-device, so the report must show `is_generated`
+/// (parity with the derived HMAC / secret keys and the simulator).
+fn assert_derived_aes_attestation(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    session_id: u16,
+    aes_key_id: u16,
+) {
+    let report_data = [3u8; REPORT_DATA_SIZE];
+    let result = helper_attest_key_cmd(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        report_data,
+        aes_key_id,
+    );
+    assert!(result.is_ok(), "result {:?}", result);
+    let resp = result.unwrap();
+    let report = resp.data.report.data_take();
+    let report_len = resp.data.report.len();
+    assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+    let cert_chain = helper_get_cert_chain(dev);
+    assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+    let report_payload = verify_report(&report, &cert_chain);
+
+    assert_eq!(report_payload.report_data, report_data);
+
+    let keyflags: KeyFlags = report_payload.flags.into();
+    // Derived on-device → attested as generated, never imported.
+    assert!(!keyflags.is_imported());
+    assert!(keyflags.is_generated());
+    // App availability → not a session key.
+    assert!(!keyflags.is_session_key());
+    assert!(keyflags.can_encrypt());
+    assert!(keyflags.can_decrypt());
+    assert!(!keyflags.can_sign());
+    assert!(!keyflags.can_verify());
+    assert!(!keyflags.can_wrap());
+    assert!(!keyflags.can_unwrap());
+    assert!(!keyflags.can_derive());
+
+    // Symmetric key → empty COSE_Key.
+    assert_eq!(report_payload.public_key_size, 0);
+    for byte in report_payload.public_key.iter() {
+        assert_eq!(*byte, 0);
+    }
+}
+
+#[test]
+fn test_attest_hkdf_derived_aes_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_hkdf_derived_aes_key for virtual device");
+                return;
+            }
+
+            // Derive an AES-256 key on-device via ECDH + HKDF.
+            let (secret_key_id, _) = create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+            let resp = helper_hkdf_derive(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                secret_key_id,
+                DdiHashAlgorithm::Sha256,
+                None,
+                None,
+                DdiKeyType::Aes256,
+                None,
+                key_props,
+                Default::default(),
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let aes_key_id = resp.unwrap().data.key_id;
+
+            assert_derived_aes_attestation(dev, session_id, aes_key_id);
+        },
+    );
+}
+
+#[test]
+fn test_attest_kbkdf_derived_aes_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_kbkdf_derived_aes_key for virtual device");
+                return;
+            }
+
+            // Derive an AES-256 key on-device via ECDH + KBKDF.
+            let (secret_key_id, _) = create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+            let resp = helper_kbkdf_derive(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                secret_key_id,
+                DdiHashAlgorithm::Sha256,
+                None,
+                None,
+                DdiKeyType::Aes256,
+                None,
+                key_props,
+                Default::default(),
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let aes_key_id = resp.unwrap().data.key_id;
+
+            assert_derived_aes_attestation(dev, session_id, aes_key_id);
+        },
+    );
+}
+
 /// Helper function to get certificate chain
-fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<u8>> {
+pub(crate) fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<u8>> {
     tracing::debug!("Getting certificate chain");
     // Gets the cert chain
     // 1. Gets the number of certs in the cert chain using DDI command GetCertChainInfo command
@@ -779,7 +907,7 @@ fn import_rsa_key(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -> (u16, Vec
 }
 
 /// Helper function to verify the report
-fn verify_report(report: &[u8], cert_chain: &[Vec<u8>]) -> KeyAttestationReport {
+pub(crate) fn verify_report(report: &[u8], cert_chain: &[Vec<u8>]) -> KeyAttestationReport {
     tracing::debug!("Verifying report");
     tracing::debug!(?report, ?cert_chain, "Dumping report and certificate chain");
 
@@ -868,12 +996,12 @@ fn decode_report_payload(payload: &[u8]) -> KeyAttestationReport {
 }
 
 #[derive(Debug, PartialEq, PartialOrd)]
-enum CoseKey {
+pub(crate) enum CoseKey {
     RsaPublic { n: Vec<u8>, e: Vec<u8> },
     EccPublic { crv: i8, x: Vec<u8>, y: Vec<u8> },
 }
 
-fn decode_cose_key(data: &[u8]) -> CoseKey {
+pub(crate) fn decode_cose_key(data: &[u8]) -> CoseKey {
     let mut decoder = minicbor::Decoder::new(data);
 
     let result = decoder.map();
@@ -958,7 +1086,7 @@ fn decode_cose_key(data: &[u8]) -> CoseKey {
 }
 
 // Helper function to strip out leading zeros from a public key coordinate.
-fn normalized_key(key: &[u8]) -> Vec<u8> {
+pub(crate) fn normalized_key(key: &[u8]) -> Vec<u8> {
     let mut normalized_key = key.to_vec();
     while normalized_key.len() > 1 && normalized_key[0] == 0 {
         normalized_key.remove(0);

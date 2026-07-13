@@ -48,8 +48,10 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
 
     let algo = super::from_ddi::hash(body.hash_algorithm)?;
     let target = super::kdf::resolve_target(body.key_type, body.key_length)?;
+    // A KDF-derived key is created on-device, so `local = true` (it attests
+    // as generated, not imported — parity with the HMAC path and the sim).
     let attrs = match target.class {
-        KdfClass::Aes => super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?,
+        KdfClass::Aes => super::key_attrs::for_aes(&body.key_properties.key_metadata, true)?,
         KdfClass::Hmac => super::key_attrs::for_var_hmac(&body.key_properties.key_metadata)?,
     };
     super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;
