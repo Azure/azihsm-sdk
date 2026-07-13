@@ -216,7 +216,7 @@ fn bump(
     // computing a DTCM address past the buffer region, which would overlap the
     // crashdump/status area.
     if heap == NONDMA && io_index == SELF_TEST_IO_INDEX {
-        return Err(HsmError::NotEnoughSpace);
+        return Err(HsmError::InvalidArg);
     }
 
     let (base_ptr, cap) = heap_base_cap(io_index, heap);
