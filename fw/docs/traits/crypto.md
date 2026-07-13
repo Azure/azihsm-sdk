@@ -80,7 +80,11 @@ pub trait HsmEcc {
 }
 ```
 
-Key parameters are `&[u8]` byte slices: raw HSM-format scalar `d` for private keys (32/48/68 bytes, P-521 4-byte aligned), raw x∥y little-endian coordinates for public keys, raw r∥s for signatures.
+Key parameters are `&[u8]` byte slices, all in HSM-native **little-endian** (PKA operand order): raw HSM-format scalar `d` for private keys (32/48/68 bytes, P-521 4-byte aligned), raw x∥y coordinates for public keys, and raw r∥s for signatures (each component little-endian).
+
+Byte order also governs the digest and the ECDH secret:
+- `ecc_sign` / `ecc_verify` take the message `hash` in PKA **little-endian** — a *full byte reversal* of the natural big-endian digest. (This is **not** `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within each 32-bit word.) Callers hash big-endian, then reverse the digest.
+- `ecdh_derive` writes `secret` as the shared x-coordinate in **little-endian**. Consumers that need big-endian — e.g. an openssl-matching HKDF, or HPKE/DHKEM per RFC 9180 — must reverse it to big-endian themselves.
 
 **PCT (Pairwise Consistency Test):** After key generation, a self-test is performed:
 - `SignVerify` — sign + verify a test message
