@@ -188,9 +188,9 @@ fn part_init_valid_inputs_pass_host_guards() {
 }
 
 /// Valid-length `PartFinal` inputs pass every host-side guard, so the
-/// request is built — the cert chain is concatenated into the OOB
-/// side-band buffer and its `(offset, length)` descriptors derived — and
-/// shipped to the device. The call is therefore never rejected with
+/// request is built — each cert ships as its own out-of-band SGL Data
+/// Block and its `(index, length)` descriptor is derived — and shipped
+/// to the device. The call is therefore never rejected with
 /// [`HsmError::InvalidArgument`]; it may still fail on-device. This
 /// exercises the request-construction / TBOR-OOB wiring path.
 #[test]
