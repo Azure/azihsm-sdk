@@ -49,6 +49,7 @@ include = [
   "AzihsmResiliencyConfig",
   "AzihsmResiliencyLockOps",
   "AzihsmResiliencyStorageOps",
+  "AzihsmSessExPartInitParams",
   "HsmEccCurve",
   "HsmError",
   "HsmKeyClass",
@@ -99,6 +100,8 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmResiliencyConfig" = "azihsm_resiliency_config"
 "AzihsmResiliencyLockOps" = "azihsm_resiliency_lock_ops"
 "AzihsmResiliencyStorageOps" = "azihsm_resiliency_storage_ops"
+"AzihsmSessExPartInitParams" = "azihsm_sess_ex_part_init_params"
+"AzihsmSessionExType" = "azihsm_session_ex_type"
 "AzihsmSessionProp" = "azihsm_session_prop"
 "AzihsmSessionPropId" = "azihsm_session_prop_id"
 "AzihsmStatus" = "azihsm_status"
@@ -111,6 +114,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
+"HsmSessionExType" = "azihsm_session_ex_type"
 
 [defines]
 "target_os = linux" = "__linux__ "

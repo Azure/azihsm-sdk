@@ -194,7 +194,11 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     /// - `pub_key`: DMA-capable public key buffer.
     /// - `hash`: DMA-capable digest buffer.
     /// - `signature`: DMA-capable signature buffer.
-    /// - `result`: DMA-capable output status word buffer.
+    /// - `result`: DMA-capable output buffer that receives the 4-byte
+    ///   hardware status word.
+    /// - `prime`: DMA-capable curve prime buffer (LE).
+    /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
+    ///   constant setup write. Content is not surfaced to the caller.
     ///
     /// # Returns
     ///
@@ -255,6 +259,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     /// - `priv_key`: DMA-capable private key buffer.
     /// - `pub_key`: DMA-capable peer public key buffer.
     /// - `secret`: DMA-capable output buffer for the derived secret.
+    /// - `prime`: DMA-capable curve prime buffer (LE).
+    /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
+    ///   constant setup write. Content is not surfaced to the caller.
     ///
     /// # Returns
     ///

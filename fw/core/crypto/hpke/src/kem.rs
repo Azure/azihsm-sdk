@@ -240,6 +240,9 @@ where
     let dh = alloc_bytes(ndh, alloc)?;
     pal.ecdh_derive(io, curve, &sk_e[..sk_len], pk_r_le, dh)
         .await?;
+    // `ecdh_derive` returns the shared secret PKA-native little-endian; HPKE
+    // (RFC 9180) feeds the SEC1 big-endian secret to the KDF, so reverse it.
+    dh[..ndh].reverse();
 
     // Serialise ephemeral public key into SEC1 BE wire form for `enc`
     // and the transcript-binding `kem_context`.
@@ -301,6 +304,8 @@ where
     let dh = alloc_bytes(ndh, alloc)?;
     let sk_r_dma = dma_copy_in(alloc, sk_r)?;
     pal.ecdh_derive(io, curve, sk_r_dma, pk_e_le, dh).await?;
+    // PKA-native LE -> SEC1 BE for the HPKE KDF input (RFC 9180).
+    dh[..ndh].reverse();
 
     let kem_context = alloc_bytes(npk_wire * 2, alloc)?;
     build_kem_context(kem_context, npk_wire, enc, pk_r, None);
@@ -389,6 +394,10 @@ where
         .await?;
     pal.ecdh_derive(io, curve, sk_s, pk_r_le, &mut dh[ndh..])
         .await?;
+    // Each ECDH secret is PKA-native LE; reverse each `Ndh` half to SEC1 BE
+    // for the HPKE `dh1 || dh2` KDF input (RFC 9180).
+    dh[..ndh].reverse();
+    dh[ndh..].reverse();
 
     pal_le_to_sec1_be(&pk_e_le[..pk_len], &mut enc[..npk_wire], coord_len)?;
 
@@ -455,6 +464,10 @@ where
         .await?;
     pal.ecdh_derive(io, curve, sk_r_dma, pk_s_le, &mut dh[ndh..])
         .await?;
+    // Each ECDH secret is PKA-native LE; reverse each `Ndh` half to SEC1 BE
+    // for the HPKE `dh1 || dh2` KDF input (RFC 9180).
+    dh[..ndh].reverse();
+    dh[ndh..].reverse();
 
     let kem_context = alloc_bytes(npk_wire * 3, alloc)?;
     build_kem_context(kem_context, npk_wire, enc, pk_r, Some(pk_s));

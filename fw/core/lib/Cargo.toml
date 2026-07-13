@@ -29,6 +29,7 @@ azihsm_fw_hsm_key_decode.workspace = true
 azihsm_fw_hsm_key_unwrap.workspace = true
 azihsm_fw_hsm_oob.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
+azihsm_fw_hsm_undo.workspace = true
 
 zerocopy.workspace = true
 

@@ -472,37 +472,13 @@ impl HsmPartitionManager for UnoHsmPal {
         let part = PartStore::partition(io.pid())?;
         match id {
             PartPropId::STATE => {
+                // Raw mechanism: write the discriminant directly. Transition
+                // validation + the `PartInit` provisioning gate are upper-layer
+                // policy (`part_state::part_set_state`); the undo log restores
+                // prior states through this raw path.
                 let target = PartState::from_u8(value).ok_or(HsmError::InvalidArg)?;
-                let current = part.state()?;
-                match (current, target) {
-                    // The single caller-facing transition: `Enabled →
-                    // Initializing`, which additionally requires the four
-                    // write-once provisioning fields (PTA key, UPS key,
-                    // policy hash, POTA thumbprint) to be present. Mirrors
-                    // the std PAL property-API contract.
-                    (PartState::Enabled, PartState::Initializing) => {
-                        if part.pta_key_id().is_none()
-                            || part.ups_key_id().is_none()
-                            || !part.policy_hash_valid()
-                            || !part.pota_thumbprint_valid()
-                        {
-                            return Err(HsmError::InvalidArg);
-                        }
-                        part.set_state(PartState::Initializing);
-                        Ok(())
-                    }
-                    // `PartFinal` finalizes the partition: the one
-                    // caller-facing transition out of `Initializing`.
-                    (PartState::Initializing, PartState::Initialized) => {
-                        part.set_state(PartState::Initialized);
-                        Ok(())
-                    }
-                    // No-op writes (same state) are accepted as a convenience.
-                    (cur, tgt) if cur == tgt => Ok(()),
-                    // All other transitions are PAL-internal (driven by the
-                    // device-command lifecycle) — reject from the prop API.
-                    _ => Err(HsmError::InvalidArg),
-                }
+                part.set_state(target);
+                Ok(())
             }
             // RES_COUNT is read-only; it is derived from the resource mask.
             _ => Err(HsmError::UnsupportedCmd),
@@ -535,19 +511,11 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::ESTABLISH_CRED_KEY_ID => part.set_ec_key_id(Some(key)),
             PartPropId::LOCAL_MK_KEY_ID => part.set_local_mk_key_id(Some(key)),
             PartPropId::EPHEMERAL_MK_KEY_ID => part.set_ephemeral_mk_key_id(Some(key)),
-            // UPS / PTA key ids are write-once provisioning fields.
-            PartPropId::UPS_KEY_ID => {
-                if part.ups_key_id().is_some() {
-                    return Err(HsmError::UpsKeyAlreadySet);
-                }
-                part.set_ups_key_id(Some(key));
-            }
-            PartPropId::PTA_KEY_ID => {
-                if part.pta_key_id().is_some() {
-                    return Err(HsmError::PtaKeyAlreadySet);
-                }
-                part.set_pta_key_id(Some(key));
-            }
+            // Raw mechanism: UPS / PTA write-once is upper-layer policy
+            // (`part_state::part_set_ups_key_id` / `part_set_pta_key_id`); the
+            // undo log restores a prior id through this raw path.
+            PartPropId::UPS_KEY_ID => part.set_ups_key_id(Some(key)),
+            PartPropId::PTA_KEY_ID => part.set_pta_key_id(Some(key)),
             // ID_KEY_ID / RSA_UNWRAPPING_KEY_ID are read-only.
             _ => return Err(HsmError::UnsupportedCmd),
         }

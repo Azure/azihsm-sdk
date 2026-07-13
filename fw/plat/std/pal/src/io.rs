@@ -65,7 +65,12 @@ pub struct StdHsmIo {
     pub(crate) slot: u16,
 
     /// Oneshot channel for the CQE reply.
-    pub(crate) tx: ReplySender<HsmCqe>,
+    ///
+    /// `Option` so [`complete_io`](HsmIoController::complete_io) can
+    /// `take()` the oneshot sender (which is consumed on send) through a
+    /// `&mut` borrow, leaving the rest of `io` intact for the
+    /// post-completion walk.
+    pub(crate) tx: Option<ReplySender<HsmCqe>>,
 
     /// The 64-byte submission queue entry.
     pub(crate) sqe: HsmSqe,
@@ -86,7 +91,7 @@ impl StdHsmIo {
             qidx: req.qidx,
             sqe: req.sqe,
             slot,
-            tx: req.tx,
+            tx: Some(req.tx),
             cqe: [0; CQE_DWORDS],
         }
     }
@@ -102,7 +107,7 @@ impl StdHsmIo {
             qidx: 0,
             sqe: [0; SQE_DWORDS],
             slot,
-            tx,
+            tx: Some(tx),
             cqe: [0; CQE_DWORDS],
         }
     }
@@ -161,17 +166,17 @@ impl HsmIoController for StdHsmPal {
         Ok(StdHsmIo::new(req, slot))
     }
 
-    /// Complete an IO: send response via OIC driver, then free the buffer.
+    /// Complete an IO: post the response CQE via the OIC driver.
     ///
-    /// 1. Delegates to [`StdOic::send`](crate::drivers::oic::StdOic::send)
-    ///    which simulates the OIC delay and sends the response.
-    /// 2. Frees the buffer slot back to the pool via
-    ///    [`StdIic::free`](crate::drivers::iic::StdIic::free).
-    async fn complete_io(&self, io: Self::Io) -> HsmResult<()> {
-        let slot = io.slot;
-        self.oic.send(io).await;
-        self.iic.free(slot);
-        Ok(())
+    /// Posts the CQE only; the buffer slot is freed separately by
+    /// [`drop_io`](HsmIoController::drop_io) so the caller can run
+    /// post-completion work over `io` first.
+    ///
+    /// Propagates [`HsmError::CompleteIoFailure`] from the OIC driver when
+    /// the CQE cannot be posted (dropped receiver or double-complete) so
+    /// core can treat it as `cqe_ok = false` and roll back.
+    async fn complete_io(&self, io: &mut Self::Io) -> HsmResult<()> {
+        self.oic.send(io)
     }
 
     /// Drop an IO without sending a CQE — frees the buffer slot only.

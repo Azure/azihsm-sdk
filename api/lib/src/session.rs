@@ -148,7 +148,7 @@ impl HsmSession {
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
         sapota_thumbprint: Option<&[u8]>,
-    ) -> HsmResult<PartInitResult> {
+    ) -> HsmResult<HsmPartInitExResult> {
         let inner = self.inner.read();
         match &inner.kind {
             SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
@@ -160,6 +160,31 @@ impl HsmSession {
                 pota_thumbprint,
                 sata_thumbprint,
                 sapota_thumbprint,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `PartFinal` (opcode `0x08`) on this CO session.
+    ///
+    /// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+    /// and the PTA certificate chain (as a list of [`HsmCert`]s),
+    /// optionally restoring a prior `local_mk` backup. Only valid on a V2
+    /// session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn part_final_ex(
+        &self,
+        part_policy: &[u8],
+        pta_cert_chain: &[HsmCert<'_>],
+        prev_local_mk_backup: Option<&[u8]>,
+    ) -> HsmResult<HsmPartFinalExResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::part_final_ex(
+                &inner.partition,
+                inner.id,
+                part_policy,
+                pta_cert_chain,
+                prev_local_mk_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }

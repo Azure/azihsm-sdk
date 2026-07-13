@@ -307,6 +307,65 @@ fn delete_zeroizes_and_frees() {
 }
 
 #[test]
+fn disable_hides_then_enable_restores() {
+    let (mut v, g, io) = vault::<1>();
+    let id = with_key(&[0xCDu8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    assert!(v.key(id).is_ok(), "freshly created key is live");
+
+    // Disable hides the key from lookups without zeroizing or freeing.
+    v.disable(id).unwrap();
+    assert_eq!(v.key(id).unwrap_err(), HsmError::KeyNotFound);
+    assert_eq!(g.zeroizes.get(), 0, "disable must not zeroize");
+
+    // Enable (the undo side) restores it with material intact.
+    v.enable(id).unwrap();
+    assert_eq!(&**v.key(id).unwrap(), &[0xCDu8; 32][..]);
+}
+
+#[test]
+fn disable_then_delete_commits() {
+    let (mut v, g, io) = vault::<1>();
+    let id = with_key(&[0x11u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    v.disable(id).unwrap();
+    // The commit side: delete zeroizes + frees even a disabled key.
+    block_on(v.delete(&g, &io, id)).unwrap();
+    assert_eq!(v.key(id).unwrap_err(), HsmError::KeyNotFound);
+    // Slot is reusable.
+    let id2 = with_key(&[2u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    assert_eq!(u16::from(id2), u16::from(id));
+}
+
+#[test]
+fn disable_enable_reject_non_present() {
+    let (mut v, g, io) = vault::<1>();
+    // Free slots can be neither disabled nor enabled.
+    assert_eq!(
+        v.disable(HsmKeyId::from(0)).unwrap_err(),
+        HsmError::KeyNotFound
+    );
+    assert_eq!(
+        v.enable(HsmKeyId::from(0)).unwrap_err(),
+        HsmError::KeyNotFound
+    );
+
+    let id = with_key(&[0x22u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    v.disable(id).unwrap();
+    // Disable is once-only — an already-disabled key is not "live".
+    assert_eq!(v.disable(id).unwrap_err(), HsmError::KeyNotFound);
+    // Enable is disabled-aware and still finds it.
+    v.enable(id).unwrap();
+    assert!(v.key(id).is_ok());
+}
+
+#[test]
 fn large_key_delete_uses_dma_zeroize() {
     let (mut v, g, io) = vault::<1>();
     let id = with_key(&[7u8; 516], |k| {

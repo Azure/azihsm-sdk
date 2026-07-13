@@ -137,17 +137,54 @@ pub fn part_state(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<
     PartState::from_u8(raw).ok_or(HsmError::InternalError)
 }
 
+/// Presence probe for an `AbsentUntilSet` property slot.
+///
+/// Maps a getter result to a presence flag: `Ok(true)` when the getter
+/// succeeds, `Ok(false)` **only** for [`HsmError::PartPropNotFound`]
+/// (the slot is genuinely absent), and propagates every other read error
+/// so a real fault (e.g. internal corruption / IO failure) is never
+/// silently misread as "absent".  Mirrors the pattern used by
+/// [`part_is_provisioned`].
+#[inline]
+pub(crate) fn prop_present<T>(result: HsmResult<T>) -> HsmResult<bool> {
+    match result {
+        Ok(_) => Ok(true),
+        Err(HsmError::PartPropNotFound) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// Set the partition lifecycle state.
 ///
-/// Wraps [`PartPropId::STATE`].  The PAL impl is responsible for
-/// rejecting any state byte that violates the partition's allowed
-/// transition graph — this wrapper performs no validation of its
-/// own and serialises the discriminant directly.
+/// Wraps [`PartPropId::STATE`].  **Transition policy lives here, in the
+/// upper layer:** the generic PAL `part_prop_set_u8(STATE)` is a raw
+/// mechanism (it writes the discriminant directly), so the undo log can
+/// restore any prior state through it.  This wrapper accepts only the two
+/// caller-facing transitions — `Enabled → Initializing` (`PartInit`,
+/// which additionally requires the four write-once provisioning fields —
+/// PTA key, UPS key, policy hash, POTA thumbprint — to be present) and
+/// `Initializing → Initialized` (`PartFinal`).  A same-state write is a
+/// no-op; any other pair is rejected with [`HsmError::InvalidArg`].
 pub fn part_set_state(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
     s: PartState,
 ) -> HsmResult<()> {
+    let current = part_state(pal, io)?;
+    match (current, s) {
+        (PartState::Enabled, PartState::Initializing) => {
+            let provisioned = prop_present(part_pta_key_id(pal, io))?
+                && prop_present(part_ups_key_id(pal, io))?
+                && prop_present(part_policy_hash(pal, io))?
+                && prop_present(part_pota_thumbprint(pal, io))?;
+            if !provisioned {
+                return Err(HsmError::InvalidArg);
+            }
+        }
+        (PartState::Initializing, PartState::Initialized) => {}
+        (cur, tgt) if cur == tgt => return Ok(()),
+        _ => return Err(HsmError::InvalidArg),
+    }
     pal.part_prop_set_u8(io, PartPropId::STATE, s as u8)
 }
 
@@ -155,6 +192,19 @@ pub fn part_set_state(
 #[inline]
 pub const fn part_state_prop_id() -> PartPropId {
     PartPropId::STATE
+}
+
+/// Quarantine the partition by forcing it to [`PartState::Faulted`].
+///
+/// Called by the dispatcher when an undo walk reports a poisoned
+/// (consistency-critical) failure: the partition's in-memory state is
+/// incoherent, so it is fenced off — the `partition_enabled` gate then drops
+/// all further host IO, and neither `PartInit`/`PartFinal` nor an admin
+/// `PfnEnable` can transition out of `Faulted`.  Only a free/realloc cycle
+/// (or reboot) clears it.  Uses the raw STATE setter because this is an
+/// out-of-band fault transition, not a normal lifecycle step.
+pub fn part_set_faulted(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_u8(io, PartPropId::STATE, PartState::Faulted as u8)
 }
 
 /// Monotonic partition generation counter.
@@ -276,6 +326,25 @@ fn key_id_set(
     pal.part_prop_set_u16(io, id, u16::from(key_id))
 }
 
+/// Enforce write-once for an `AbsentUntilSet` key-id property.
+///
+/// Write-once is **upper-layer policy**: the generic PAL
+/// `part_prop_set_u16` is a raw mechanism (so the undo log can restore a
+/// prior id), so the typed setters that must be write-once gate on the
+/// current presence here.  Returns `err` if the slot is already
+/// populated, and propagates any non-absent read error.
+fn ensure_key_id_unset(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    id: PartPropId,
+    err: HsmError,
+) -> HsmResult<()> {
+    if prop_present(key_id_get(pal, io, id))? {
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Vault id of the partition identity (ECC-P384) key.
 ///
 /// Wraps [`PartPropId::ID_KEY_ID`] (`U16 → HsmKeyId`,
@@ -344,6 +413,7 @@ pub fn part_set_ups_key_id(
     io: &impl HsmIo,
     key_id: HsmKeyId,
 ) -> HsmResult<()> {
+    ensure_key_id_unset(pal, io, PartPropId::UPS_KEY_ID, HsmError::UpsKeyAlreadySet)?;
     key_id_set(pal, io, PartPropId::UPS_KEY_ID, key_id)
 }
 
@@ -367,6 +437,7 @@ pub fn part_set_pta_key_id(
     io: &impl HsmIo,
     key_id: HsmKeyId,
 ) -> HsmResult<()> {
+    ensure_key_id_unset(pal, io, PartPropId::PTA_KEY_ID, HsmError::PtaKeyAlreadySet)?;
     key_id_set(pal, io, PartPropId::PTA_KEY_ID, key_id)
 }
 
@@ -1046,7 +1117,7 @@ pub fn part_set_pta_key(
     pub_sec1: &DmaBuf,
 ) -> HsmResult<()> {
     let raw = pta_sec1_to_raw(pub_sec1)?;
-    key_id_set(pal, io, PartPropId::PTA_KEY_ID, key_id)?;
+    part_set_pta_key_id(pal, io, key_id)?;
     pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_KEY, raw)
 }
 

@@ -46,6 +46,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
 use crate::part_state;
@@ -176,6 +177,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     opcode: u8,
     sqe_session_id: u16,
     oob: Option<OobPtr>,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
@@ -220,12 +222,12 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
 
     match opcode {
         opcode::API_REV => api_rev::handle(pal, io, req_buf),
-        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf).await,
-        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf).await,
+        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf, undo).await,
+        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf, undo).await,
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
-        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf).await,
-        opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
-        opcode::PART_FINAL => part_final::handle(pal, io, req_buf, oob).await,
+        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf, undo).await,
+        opcode::PART_INIT => part_init::handle(pal, io, req_buf, undo).await,
+        opcode::PART_FINAL => part_final::handle(pal, io, req_buf, oob, undo).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         opcode::SD_SEALING_KEY_GEN => sd_sealing_key_gen::handle(pal, io, req_buf).await,
         opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,

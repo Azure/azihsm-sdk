@@ -97,8 +97,13 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     /// Verify an ECDSA signature.
     ///
-    /// `result` is a caller-allocated DMA-capable buffer (at least 4 bytes)
-    /// that receives the hardware status word.
+    /// The verify command internally computes and consumes a Montgomery
+    /// constant for `curve` as a required PKA setup step (performed on the
+    /// same engine acquisition, before the verification), writing the
+    /// transient constant into `mont_result` (see below). All hardware writes
+    /// go through DMA into the caller-provided buffers, so those buffers must
+    /// live in DMA-reachable memory (GSRAM, e.g. from the PAL scoped
+    /// allocator's `dma_alloc`).
     ///
     /// # Parameters
     ///
@@ -106,7 +111,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// - `pub_key`: DMA-capable public key buffer.
     /// - `hash`: DMA-capable digest buffer.
     /// - `signature`: DMA-capable signature buffer.
-    /// - `result`: DMA-capable output status word buffer.
+    /// - `result`: DMA-capable output buffer that receives the 4-byte
+    ///   hardware status word.
+    /// - `prime`: DMA-capable curve prime buffer (LE).
+    /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
+    ///   constant setup write. Its contents are consumed by the engine as
+    ///   part of the verify command's internal state; the DMA output is not
+    ///   surfaced to the caller and the buffer can be released as soon as
+    ///   the verify future resolves.
     ///
     /// # Returns
     ///
@@ -140,8 +152,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
         // Required PKA setup: compute the Montgomery constant for the curve
         // prime on this engine before the verify (mirrors ecdh_derive). The
-        // verify command consumes the engine state this leaves behind; both
-        // run on the same engine acquisition (execute_cmd does not wipe
+        // verify command consumes the engine state this leaves behind; the
+        // `mont_result` DMA output itself is transient scratch. Both commands
+        // run on the same engine acquisition (`execute_cmd` does not wipe
         // between commands).
         self.execute_cmd(
             mont_const_calc_opcode(curve),
@@ -199,12 +212,26 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     /// Derive an ECDH shared secret.
     ///
+    /// The point-multiplication internally computes and consumes a Montgomery
+    /// constant for `curve` as a required PKA setup step (performed on the
+    /// same engine acquisition, before the point-multiply), writing the
+    /// transient constant into `mont_result` (see below). All hardware writes
+    /// go through DMA into the caller-provided buffers, so those buffers must
+    /// live in DMA-reachable memory (GSRAM, e.g. from the PAL scoped
+    /// allocator's `dma_alloc`).
+    ///
     /// # Parameters
     ///
     /// - `curve`: ECC curve selector.
     /// - `priv_key`: DMA-capable private key buffer.
     /// - `pub_key`: DMA-capable peer public key buffer.
     /// - `secret`: DMA-capable output buffer for the derived secret.
+    /// - `prime`: DMA-capable curve prime buffer (LE).
+    /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
+    ///   constant setup write. Its contents are consumed by the engine as
+    ///   part of the point-multiply's internal state; the DMA output is not
+    ///   surfaced to the caller and the buffer can be released as soon as
+    ///   the derive future resolves.
     ///
     /// # Returns
     ///

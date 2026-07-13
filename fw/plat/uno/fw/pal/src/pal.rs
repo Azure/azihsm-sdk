@@ -282,8 +282,10 @@ pub struct UnoHsmPal {
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
-// executor on a single-core Cortex-M7 with no preemptive ISRs.
-// The Cell<BootPhase> field is never accessed from interrupt context.
+// executor on a single-core Cortex-M7 with no preemptive ISRs.  The
+// interior-mutable field (Cell<BootPhase>) is never accessed from
+// interrupt context, so concurrent access is impossible despite the
+// asserted Sync.
 unsafe impl Sync for UnoHsmPal {}
 
 impl Default for UnoHsmPal {
@@ -601,7 +603,10 @@ impl UnoHsmPal {
         // assigned; a VF is enabled after. `part_enable` needs to know which.
         let is_pf = msg.info.pfn == 64;
         // Map the IPC action onto a partition-lifecycle primitive; Migrate
-        // and any unknown action are not supported.
+        // and any unknown action are not supported.  No partition lock: a
+        // partition cannot be disabled/freed while host IOs are in flight,
+        // and admin-IPC is strictly serial, so this cannot race a host
+        // command (see lock.rs).
         let result = match PfnEnableDisableAction(msg.info.action) {
             PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
@@ -660,6 +665,8 @@ impl UnoHsmPal {
         // A zero mask frees the partition; any other mask (re)allocates it.
         // The ACK's owned-table count is a pure function of the mask — an
         // IPC-reply concern, computed here rather than in the partition layer.
+        // No partition lock: a partition cannot be freed/allocated while host
+        // IOs are in flight, and admin-IPC is strictly serial (see lock.rs).
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {
