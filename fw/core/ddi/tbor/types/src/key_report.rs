@@ -122,7 +122,7 @@ mod tests {
     fn response_round_trips_report() {
         let mut buf = [0u8; 1024];
         let report = [0x5Au8; 300];
-        let frame = TborKeyReportResp::encode(&mut buf, 0, true)
+        let frame = TborKeyReportResp::encode(&mut buf, 0, false)
             .unwrap()
             .report(&report)
             .unwrap()
