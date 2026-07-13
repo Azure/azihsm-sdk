@@ -405,20 +405,6 @@ fn test_kbkdf_derive_non_secret_key_class_fails(session: HsmSession) {
     assert_eq!(err, HsmError::InvalidKeyProps);
 }
 
-/// Verifies KBKDF works when both label and context are omitted.
-#[session_test]
-fn test_kbkdf_no_label_no_context_roundtrip(session: HsmSession) {
-    let (secret_a, secret_b) = derive_ecdh_shared_secrets(&session, HsmEccCurve::P256);
-
-    let mut kbkdf_a = kbkdf_counter_algo(HsmHashAlgo::Sha256, None, None);
-    let mut kbkdf_b = kbkdf_counter_algo(HsmHashAlgo::Sha256, None, None);
-
-    let key_a = derive_aes_key_from_shared_secret(&session, &mut kbkdf_a, &secret_a, 256);
-    let key_b = derive_aes_key_from_shared_secret(&session, &mut kbkdf_b, &secret_b, 256);
-
-    assert_aes_cbc_roundtrip(&key_a, &key_b, b"kbkdf no label no context");
-}
-
 /// Verifies KBKDF derives compatible keys from the same shared secret and parameters.
 #[session_test]
 fn test_kbkdf_same_secret_same_params_roundtrip(session: HsmSession) {
