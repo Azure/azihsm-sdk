@@ -48,12 +48,28 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     let params_ident = format_ident!("{}FrameParams", ident);
     let layout_ident = format_ident!("{}Layout", ident);
 
-    // FrameParams needs lifetime parameters when Normal (non-frame)
-    // fields carry borrowed data (e.g., `DdiTargetKeyProperties<'a>`).
-    let params_needs_lifetime = ddi
-        .fields
-        .iter()
-        .any(|f| !f.opt && !f.frame && f.kind == DdiStructFieldKind::Normal && has_lifetime(&f.ty));
+    // `FrameParams` needs the struct's lifetime when any field carried *by
+    // value* there borrows data. A field is carried by value in
+    // `FrameParams` when it is optional (any kind — threaded through as its
+    // own `Option<T>`, e.g. `Option<DdiPublicKey<'a>>` or `Option<&'a [u8]>`)
+    // or a non-frame `Normal`/`Array` field (e.g. `DdiTargetKeyProperties<'a>`).
+    // Reserved fields never contribute a lifetime: a non-optional slice
+    // becomes a `usize` length, and a `#[ddi(frame)]` child becomes a
+    // lifetime-free child `FrameParams`.
+    let params_needs_lifetime = ddi.fields.iter().any(|f| {
+        let by_value = f.opt
+            || (!f.frame
+                && matches!(
+                    f.kind,
+                    DdiStructFieldKind::Normal | DdiStructFieldKind::Array
+                ));
+        by_value && has_lifetime(&f.ty)
+    });
+
+    // A struct with any optional field is a top-level response frame, never
+    // a nested `#[ddi(frame)]` child (whose fields must all be present), so
+    // it does not implement `MborFrameable`.
+    let has_optional_field = ddi.fields.iter().any(|f| f.opt);
     let lifetimes = &ddi.lifetimes;
     let params_lifetimes = if params_needs_lifetime {
         lifetimes.clone()
@@ -103,10 +119,14 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     let params_fields = ddi
         .fields
         .iter()
-        .filter(|f| !f.opt)
         .map(|f| {
             let name = &f.ident;
-            if f.frame {
+            if f.opt {
+                // By-value optional field (never reserved): carried as its
+                // own `Option<T>` type and encoded only when present.
+                let ty = &f.ty;
+                quote! { pub #name: #ty }
+            } else if f.frame {
                 let ty = strip_lifetime(&f.ty);
                 quote! {
                     pub #name: <#ty as azihsm_fw_ddi_mbor::MborFrameable>::FrameParams
@@ -130,10 +150,12 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     let frame_params = ddi
         .fields
         .iter()
-        .filter(|f| !f.opt)
         .map(|f| {
             let name = &f.ident;
-            if f.frame {
+            if f.opt {
+                let ty = &f.ty;
+                quote! { #name: #ty }
+            } else if f.frame {
                 let ty = strip_lifetime(&f.ty);
                 quote! {
                     #name: <#ty as azihsm_fw_ddi_mbor::MborFrameable>::FrameParams
@@ -154,11 +176,21 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
         .collect::<Vec<_>>();
 
     // ── frame() body ──────────────────────────────────────────────────
-    let field_cnt = ddi.fields.iter().filter(|f| !f.opt).count();
+    // The map entry count is resolved at runtime: start from the total
+    // field count and drop one for every `None` optional (mirroring the
+    // normal `MborEncode` path). Reserved fields are always non-optional
+    // and always present.
+    let field_cnt = ddi.fields.len();
+    let enc_cnt = {
+        let checks = ddi.fields.iter().filter(|f| f.opt).map(|f| {
+            let name = &f.ident;
+            quote! { if #name.is_none() { cnt -= 1; } }
+        });
+        quote! { #(#checks)* }
+    };
     let frame_body = ddi
         .fields
         .iter()
-        .filter(|f| !f.opt)
         .map(frame_encode_field)
         .collect::<Vec<_>>();
 
@@ -167,7 +199,6 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     let reserve_body = ddi
         .fields
         .iter()
-        .filter(|f| !f.opt)
         .map(reserve_encode_field)
         .collect::<Vec<_>>();
 
@@ -217,7 +248,7 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     // Structs whose FrameParams need lifetimes (because they have Normal
     // fields with borrowed data) cannot implement MborFrameable — they
     // are top-level response structs, not nested frame children.
-    let frameable_impl = if params_needs_lifetime {
+    let frameable_impl = if params_needs_lifetime || has_optional_field {
         quote! {}
     } else {
         let frameable_destructure = ddi
@@ -315,7 +346,8 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             ) -> Result<#frame_ident<'a>, azihsm_fw_ddi_mbor::MborEncodeError> {
                 use azihsm_fw_ddi_mbor::MborEncode;
 
-                let cnt = #field_cnt as azihsm_fw_ddi_mbor::MborId;
+                let mut cnt = #field_cnt as azihsm_fw_ddi_mbor::MborId;
+                #enc_cnt
                 azihsm_fw_ddi_mbor::MborMap(cnt).mbor_encode(encoder)?;
 
                 #(#frame_body)*
@@ -335,7 +367,8 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             ) -> Result<#layout_ident, azihsm_fw_ddi_mbor::MborEncodeError> {
                 use azihsm_fw_ddi_mbor::MborEncode;
 
-                let cnt = #field_cnt as azihsm_fw_ddi_mbor::MborId;
+                let mut cnt = #field_cnt as azihsm_fw_ddi_mbor::MborId;
+                #enc_cnt
                 azihsm_fw_ddi_mbor::MborMap(cnt).mbor_encode(encoder)?;
 
                 #(#reserve_body)*
@@ -392,10 +425,79 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     })
 }
 
+/// Generate the encode body for a **by-value optional field**, shared by the
+/// frame and reserve paths.
+///
+/// Optional fields are never reserved (see [`is_frameable_field`]), so both
+/// paths encode the value inline and identically. The `if let Some(name) =
+/// name` binding moves the inner value out of the `Option<T>` param, so
+/// `name` is the owned `T` — for a slice that is `&[u8]` (encoded via
+/// [`MborByteSlice`]/[`MborPaddedByteSlice`], **not** `T::mbor_encode`), for
+/// an array `[u8; N]`, and for a primitive/struct the value itself. This
+/// mirrors [`crate::encode::encode_value`] so `frame`/`reserve` produce
+/// byte-identical output to `MborEncode`.
+fn opt_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
+    let id = f.id;
+    let name = &f.ident;
+
+    let value_encode = match f.kind {
+        DdiStructFieldKind::Slice => {
+            // Validate length like `encode.rs`, then encode: fixed-size
+            // (`len`) slices are unpadded; variable-size (`max_len` or
+            // unbounded) slices are padded to 4-byte alignment.
+            let len_check = if let Some(exact) = f.len {
+                quote! {
+                    if #name.len() != #exact {
+                        return Err(azihsm_fw_ddi_mbor::MborEncodeError::InvalidLen);
+                    }
+                }
+            } else if let Some(max) = f.max_len {
+                quote! {
+                    if #name.len() > #max {
+                        return Err(azihsm_fw_ddi_mbor::MborEncodeError::InvalidLen);
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            let encode = if f.len.is_some() {
+                quote! { azihsm_fw_ddi_mbor::MborByteSlice(#name).mbor_encode(encoder)?; }
+            } else {
+                quote! {
+                    let pad = azihsm_fw_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8;
+                    azihsm_fw_ddi_mbor::MborPaddedByteSlice(#name, pad).mbor_encode(encoder)?;
+                }
+            };
+            quote! {
+                #len_check
+                #encode
+            }
+        }
+        DdiStructFieldKind::Array => {
+            quote! { azihsm_fw_ddi_mbor::MborByteSlice(&#name).mbor_encode(encoder)?; }
+        }
+        DdiStructFieldKind::Normal => {
+            quote! { #name.mbor_encode(encoder)?; }
+        }
+    };
+
+    quote! {
+        if let Some(#name) = #name {
+            (#id).mbor_encode(encoder)?;
+            #value_encode
+        }
+    }
+}
+
 /// Generate the frame encode body for a single non-optional field.
 fn frame_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
     let id = f.id;
     let name = &f.ident;
+
+    if f.opt {
+        // By-value optional field: emit the map entry only when present.
+        return opt_encode_field(f);
+    }
 
     if f.frame {
         // Nested frame: delegate to child's MborFrameable::mbor_frame.
@@ -448,6 +550,11 @@ fn frame_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
 fn reserve_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
     let id = f.id;
     let name = &f.ident;
+
+    if f.opt {
+        // By-value optional field (never reserved): emit only when present.
+        return opt_encode_field(f);
+    }
 
     if f.frame {
         let ty = strip_lifetime(&f.ty);
@@ -526,14 +633,18 @@ fn strip_lifetime(ty: &syn::Type) -> proc_macro2::TokenStream {
     }
 }
 
-/// Returns `true` if a type contains any lifetime parameter.
+/// Returns `true` if a type contains any lifetime parameter, recursing
+/// into nested generic type arguments (so e.g. `Option<DdiPublicKey<'a>>`
+/// is detected, not just a directly-applied `Foo<'a>`).
 fn has_lifetime(ty: &syn::Type) -> bool {
     match ty {
         syn::Type::Path(type_path) => type_path.path.segments.iter().any(|seg| {
             if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                args.args
-                    .iter()
-                    .any(|arg| matches!(arg, syn::GenericArgument::Lifetime(_)))
+                args.args.iter().any(|arg| match arg {
+                    syn::GenericArgument::Lifetime(_) => true,
+                    syn::GenericArgument::Type(inner) => has_lifetime(inner),
+                    _ => false,
+                })
             } else {
                 false
             }

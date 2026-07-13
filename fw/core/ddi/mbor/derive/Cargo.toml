@@ -17,5 +17,13 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 
+[dev-dependencies]
+azihsm_fw_ddi_mbor.workspace = true
+azihsm_fw_hsm_pal_traits.workspace = true
+
+[[test]]
+name = "frame_optional"
+path = "tests/frame_optional.rs"
+
 [lints]
 workspace = true
