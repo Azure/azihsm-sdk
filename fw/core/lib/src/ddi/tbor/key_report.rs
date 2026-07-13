@@ -237,7 +237,7 @@ fn encode_response<'p, P: HsmPal>(
     report_bytes: &[u8],
 ) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
-        let frame = TborKeyReportResp::encode(buf, 0, true)?
+        let frame = TborKeyReportResp::encode(buf, 0, false)?
             .report(report_bytes)?
             .finish();
         Ok(frame.as_bytes().len())
