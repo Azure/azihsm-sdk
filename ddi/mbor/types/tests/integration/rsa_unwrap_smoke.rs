@@ -14,11 +14,13 @@
 //! - Tampered blob: a corrupted wrapped blob is rejected (the AES-KWP
 //!   integrity check fails) rather than importing a bogus key.
 //!
-//! We intentionally do *not* assert on `masked_key` (firmware-side masking
-//! is deferred — the emu backend emits an empty placeholder) nor on the
-//! opaque `key_id` (the sim backend may assign `0`).  Functional
-//! verification of the imported key (RSA mod-exp, tag/OpenKey lookup) lives
-//! in the generated-key suite, which needs those additional commands.
+//! Each import is returned as a populated `masked_key` envelope (the
+//! firmware masks the imported key in place into the response's reserved
+//! slot); the AES, RSA, and ECC cases assert it is present and
+//! well-formed.  We do *not* assert on the opaque `key_id` (the sim
+//! backend may assign `0`).  Functional verification of the imported key
+//! (RSA mod-exp, tag/OpenKey lookup) lives in the generated-key suite,
+//! which needs those additional commands.
 
 #![cfg(test)]
 
@@ -61,6 +63,25 @@ fn test_rsa_unwrap_aes_key_smoke() {
             assert!(
                 resp.data.pub_key.is_none(),
                 "AES import must not return a public key"
+            );
+
+            // The imported key is returned as a populated masked-key
+            // envelope with a randomized IV (firmware masks it in place).
+            assert!(
+                !resp.data.masked_key.as_slice().is_empty(),
+                "masked_key must be populated"
+            );
+            assert!(
+                verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                    .unwrap_or(false),
+                "masked_key IV must be randomized",
+            );
+            assert!(
+                verify_masked_key_attributes(
+                    resp.data.masked_key.as_slice(),
+                    MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+                ),
+                "AES unwrap masked_key attributes must include ENCRYPT|DECRYPT",
             );
         },
     );
@@ -157,6 +178,29 @@ fn test_rsa_unwrap_ecc_key_smoke() {
                 assert_eq!(resp.hdr.op, DdiOp::RsaUnwrap);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
                 assert_eq!(resp.data.kind, *expected_kind);
+
+                // The imported key is returned as a populated masked-key
+                // envelope with a randomized IV.
+                assert!(
+                    !resp.data.masked_key.as_slice().is_empty(),
+                    "masked_key must be populated for {:?}",
+                    expected_kind,
+                );
+                assert!(
+                    verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                        .unwrap_or(false),
+                    "masked_key IV must be randomized for {:?}",
+                    expected_kind,
+                );
+                assert!(
+                    verify_masked_key_attributes(
+                        resp.data.masked_key.as_slice(),
+                        MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY
+                    ),
+                    "masked_key attributes must include SIGN|VERIFY for {:?}",
+                    expected_kind,
+                );
+
                 // The returned public key must be the imported key's public
                 // key (derived firmware-side from the private key).
                 let pub_key = resp
@@ -242,6 +286,31 @@ fn test_rsa_unwrap_rsa_key_smoke() {
                 assert_eq!(resp.hdr.op, DdiOp::RsaUnwrap);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
                 assert_eq!(resp.data.kind, *expected_kind);
+
+                // The imported key is returned as a populated masked-key
+                // envelope — even for the largest RSA-4096-CRT key, which
+                // the firmware masks in place into the reserved response
+                // slot to stay within the per-IO DMA budget.
+                assert!(
+                    !resp.data.masked_key.as_slice().is_empty(),
+                    "masked_key must be populated for {:?}",
+                    expected_kind,
+                );
+                assert!(
+                    verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                        .unwrap_or(false),
+                    "masked_key IV must be randomized for {:?}",
+                    expected_kind,
+                );
+                assert!(
+                    verify_masked_key_attributes(
+                        resp.data.masked_key.as_slice(),
+                        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+                    ),
+                    "masked_key attributes must include ENCRYPT|DECRYPT for {:?}",
+                    expected_kind,
+                );
+
                 // The returned public key must be the imported key's public
                 // key (derived firmware-side from the private key).
                 let pub_key = resp

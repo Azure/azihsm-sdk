@@ -19,12 +19,18 @@
 //!   3. create the vault key from the recovered material, and
 //!   4. frame the [`DdiRsaUnwrapResp`].
 //!
-//! `masked_key` is emitted empty for now — firmware-side masking is
-//! deferred, matching the other key-producing handlers.  The AES, RSA
-//! (plain / CRT), and ECC key classes are wired; the AES bulk variants
-//! are not yet supported.  RSA and ECC imports return the imported key's
-//! wire public key.
+//! The recovered key is enveloped into the response's `masked_key` slot
+//! **in place** — the AES-CBC-256 + HMAC-SHA-384 envelope is written
+//! straight into the reserved response region (no scratch buffer, no
+//! copy), matching the zero-copy `reserve` / `from_layout` pattern used
+//! by the other key-producing handlers and the reference firmware.  This
+//! keeps the largest RSA-4096 keys within the fixed per-IO DMA budget.
+//! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES
+//! bulk variants are not yet supported.  RSA and ECC imports return the
+//! imported key's wire public key, re-derived from the committed vault
+//! key.
 
+use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapReq;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapResp;
 use azihsm_fw_ddi_mbor_types::DdiKeyClass;
@@ -108,64 +114,135 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
         _ => return Err(HsmError::UnsupportedCmd),
     };
 
-    // Unwrap the blob (crypto only): OAEP-decrypt the KEK and AES-KWP unwrap
-    // the payload → the raw recovered key material.
-    let material = unwrap_key(
-        pal,
-        io,
-        UnwrapParams {
-            unwrap_key_id,
-            oaep_hash,
-            wrapped_blob: &*body.wrapped_blob,
-        },
-    )
-    .await?;
-
-    // Decode the recovered material into vault-ready form and derive the
-    // wire public key (for the asymmetric classes).
-    let decoded = decode(pal, io, material, key_class).await?;
-
-    // Persist the decoded key.  The handler owns the vault + session
-    // policy: session-bind the key when its attributes request it.
-    let vault_kind = decoded.kind;
-    let session_binding = import_attrs.session().then_some(HsmSessId::from(sess_id));
-    let key_id = pal
-        .vault_key_create(
+    // Durable stash for the imported key's re-derived public bytes,
+    // allocated before the response frame; the framing below copies it
+    // into the response's `pub_key` slot.  RSA `n_le ‖ e_le`, ECC `x ‖ y`;
+    // AES has none.  The unwrap/decode scratch is freed first (below), so
+    // only this small stash plus the response share the arena with the
+    // request — well within the per-IO DMA budget even for RSA-4096-CRT.
+    //
+    // Run OAEP-decrypt, KWP-unwrap, decode, and vault import inside an
+    // allocation scope so the large scratch (multi-KB for RSA) is freed
+    // before the response is built.  The committed vault key outlives the
+    // scope; only its (owned) id and kind escape.  The public key is *not*
+    // ferried out — it is re-derived from the committed vault key below,
+    // so no large public bytes cross the scope.
+    let (key_id, vault_kind) = pal
+        .alloc_scoped_async(
             io,
-            decoded.material,
-            vault_kind,
-            session_binding,
-            import_attrs,
+            async |_scope| -> HsmResult<(HsmKeyId, HsmVaultKeyKind)> {
+                // Unwrap the blob (crypto only): OAEP-decrypt the KEK and
+                // AES-KWP unwrap the payload → raw recovered key material.
+                let material = unwrap_key(
+                    pal,
+                    io,
+                    UnwrapParams {
+                        unwrap_key_id,
+                        oaep_hash,
+                        wrapped_blob: &*body.wrapped_blob,
+                    },
+                )
+                .await?;
+
+                // Decode the recovered material into vault-ready form.
+                let decoded = decode(pal, io, material, key_class).await?;
+                let vault_kind = decoded.kind;
+
+                // Persist the decoded key, session-bound iff its attrs ask.
+                let session_binding = import_attrs.session().then_some(HsmSessId::from(sess_id));
+                let key_id = pal
+                    .vault_key_create(
+                        io,
+                        decoded.material,
+                        vault_kind,
+                        session_binding,
+                        import_attrs,
+                    )
+                    .await?;
+
+                Ok((key_id, vault_kind))
+            },
         )
         .await?;
 
-    // Frame the response.  RSA and ECC keys carry a wire public key
-    // (RSA `n_le || e_le`; ECC `x || y`); AES keys have none.  `masked_key`
-    // is an empty placeholder pending the firmware-side masking path.
-    let kind = ddi_key_type(vault_kind)?;
-    let key_id = u16::from(key_id);
-    let bulk_key_id: Option<u16> = None;
-    let pub_key = match decoded.pub_key {
-        Some(raw) => Some(DdiPublicKey {
-            raw,
-            key_kind: pub_key_type(vault_kind)?,
-        }),
+    // The unwrap/import scratch is now freed.  Read the committed key back
+    // (from vault storage, not the per-IO arena) to drive both the
+    // public-key re-derivation and the masked envelope.
+    let attrs = pal.vault_key_attrs(io, key_id)?;
+    let priv_blob = pal.vault_key(io, key_id)?;
+
+    // Re-derive the wire public key for the asymmetric classes into a
+    // small exact-length stash; AES has none.  Re-deriving from the
+    // committed private key (rather than trusting decoded bytes) mirrors
+    // the unmask path and the reference firmware.
+    let pub_key = match pub_wire_spec(vault_kind) {
+        Some((is_rsa, pub_kind)) => {
+            let pub_len = if is_rsa {
+                pal.rsa_priv_pub_key(io, priv_blob, None)?
+            } else {
+                pal.ecc_priv_pub_key(io, priv_blob, None).await?
+            };
+            let pub_buf = pal.dma_alloc(io, pub_len)?;
+            if is_rsa {
+                pal.rsa_priv_pub_key(io, priv_blob, Some(pub_buf))?;
+            } else {
+                pal.ecc_priv_pub_key(io, priv_blob, Some(pub_buf)).await?;
+            }
+            Some(DdiPublicKey {
+                raw: pub_buf,
+                key_kind: pub_kind,
+            })
+        }
         None => None,
     };
 
-    let resp = pal.dma_alloc_var(io, |buf| {
-        encode_resp(
-            &success_hdr_sess(hdr, DdiOp::RsaUnwrap, sess_id),
-            &DdiRsaUnwrapResp {
-                key_id,
-                pub_key,
-                bulk_key_id,
-                kind,
-                masked_key: &[],
-            },
+    // Resolve the masking key + metadata and query the envelope length so
+    // the response's `masked_key` region can be reserved to fit exactly.
+    let masking_key =
+        super::masking::resolve_masking_key(pal, io, HsmSessId::from(sess_id), attrs.session())?;
+    let metadata = super::masking::masked_metadata(
+        pal,
+        super::from_pal::vault_kind_ddi(vault_kind)?,
+        attrs,
+        body.key_properties.key_label,
+        priv_blob.len() as u16,
+    )?;
+    let masked_len = mask(pal, io, masking_key, priv_blob, &metadata, None).await?;
+
+    // Frame the response — reserving the `pub_key` (copied) and `masked_key`
+    // (in place) regions — then envelope the private material directly into
+    // the reserved `masked_key` slot: no separate buffer, no copy.
+    let kind = ddi_key_type(vault_kind)?;
+    let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
+        let mut encoder = super::encode_resp_hdr(
+            &super::success_hdr_sess(hdr, DdiOp::RsaUnwrap, sess_id),
             buf,
-        )
+        )?;
+        let layout = DdiRsaUnwrapResp::reserve(
+            &mut encoder,
+            u16::from(key_id),
+            pub_key,
+            None,
+            kind,
+            masked_len,
+        )?;
+        Ok((encoder.position(), layout))
     })?;
+
+    // `mask` requires `out[..total_len]` zeroed on entry; the encoder does
+    // not zero the reserved slot, so clear it before filling.
+    let frame = DdiRsaUnwrapResp::from_layout(resp, &layout);
+    frame.masked_key.fill(0);
+    mask(
+        pal,
+        io,
+        masking_key,
+        priv_blob,
+        &metadata,
+        Some(frame.masked_key),
+    )
+    .await?;
+
     Ok(resp)
 }
 
@@ -191,24 +268,24 @@ fn ddi_key_type(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
     }
 }
 
-/// Map an imported asymmetric private key kind to its public wire key
-/// type (for the response `pub_key.key_kind`).  Only RSA / ECC private
-/// kinds carry a public key here; any other kind is an internal invariant
-/// break.
-fn pub_key_type(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
+/// Map an imported asymmetric private key kind to `(is_rsa, wire public
+/// key type)` for re-deriving and framing the response `pub_key`.  Only
+/// RSA / ECC private kinds carry a public key here; AES (and any other
+/// kind) returns `None`.
+fn pub_wire_spec(kind: HsmVaultKeyKind) -> Option<(bool, DdiKeyType)> {
     match kind {
         HsmVaultKeyKind::Rsa2kPrivate | HsmVaultKeyKind::Rsa2kPrivateCrt => {
-            Ok(DdiKeyType::Rsa2kPublic)
+            Some((true, DdiKeyType::Rsa2kPublic))
         }
         HsmVaultKeyKind::Rsa3kPrivate | HsmVaultKeyKind::Rsa3kPrivateCrt => {
-            Ok(DdiKeyType::Rsa3kPublic)
+            Some((true, DdiKeyType::Rsa3kPublic))
         }
         HsmVaultKeyKind::Rsa4kPrivate | HsmVaultKeyKind::Rsa4kPrivateCrt => {
-            Ok(DdiKeyType::Rsa4kPublic)
+            Some((true, DdiKeyType::Rsa4kPublic))
         }
-        HsmVaultKeyKind::Ecc256Private => Ok(DdiKeyType::Ecc256Public),
-        HsmVaultKeyKind::Ecc384Private => Ok(DdiKeyType::Ecc384Public),
-        HsmVaultKeyKind::Ecc521Private => Ok(DdiKeyType::Ecc521Public),
-        _ => Err(HsmError::InternalError),
+        HsmVaultKeyKind::Ecc256Private => Some((false, DdiKeyType::Ecc256Public)),
+        HsmVaultKeyKind::Ecc384Private => Some((false, DdiKeyType::Ecc384Public)),
+        HsmVaultKeyKind::Ecc521Private => Some((false, DdiKeyType::Ecc521Public)),
+        _ => None,
     }
 }
