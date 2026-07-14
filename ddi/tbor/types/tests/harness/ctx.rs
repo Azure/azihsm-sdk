@@ -99,6 +99,18 @@ impl TestCtx {
         self.dev.exec_op_tbor(req, None, &mut cookie)
     }
 
+    /// Issue an `OP_TBOR` request carrying out-of-band SGL items.
+    ///
+    /// Each slice in `oob_items` becomes one NVMe SGL Data Block
+    /// descriptor the emulator writes into a 4-KiB descriptor page; the
+    /// firmware indexes them by position (see the OOB transport). Used by
+    /// commands whose bulk evidence rides outside the 4-KiB request
+    /// buffer (e.g. `SdCreateRemoteBackup`'s receiver `KeyReport`).
+    pub fn tbor_oob<R: TborOpReq>(&self, req: &R, oob_items: &[&[u8]]) -> DdiResult<R::OpResp> {
+        let mut cookie = None;
+        self.dev.exec_op_tbor(req, Some(oob_items), &mut cookie)
+    }
+
     /// Issue `req`, assert the FW dispatcher rejected it with exactly
     /// `expected`, and return the matched [`DdiError`] for any further
     /// caller-side inspection.
@@ -115,6 +127,30 @@ impl TestCtx {
         match self.tbor(req) {
             Ok(resp) => panic!(
                 "expected FW reject {expected:?} (0x{:08X}), got Ok({resp:?})",
+                expected.0,
+            ),
+            Err(err) => {
+                assert_fw_rejects(&err, expected);
+                err
+            }
+        }
+    }
+
+    /// [`Self::expect_fw_reject`] for a request carrying out-of-band SGL
+    /// items (see [`Self::tbor_oob`]).
+    #[track_caller]
+    pub fn expect_fw_reject_oob<R: TborOpReq>(
+        &self,
+        req: &R,
+        oob_items: &[&[u8]],
+        expected: TborStatus,
+    ) -> DdiError
+    where
+        R::OpResp: core::fmt::Debug,
+    {
+        match self.tbor_oob(req, oob_items) {
+            Ok(_resp) => panic!(
+                "expected FW reject {expected:?} (0x{:08X}), got unexpected success",
                 expected.0,
             ),
             Err(err) => {

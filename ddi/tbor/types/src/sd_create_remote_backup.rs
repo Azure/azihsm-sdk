@@ -19,31 +19,41 @@ use alloc::vec::Vec;
 
 use crate::evidence::ReportDescriptor;
 use crate::policy::PartPolicy;
+use crate::sd_sealing_key_gen::MASKED_SEALING_KEY_LEN;
 use crate::tbor;
 use crate::CertDescriptor;
 
 /// TBOR opcode for `SdCreateRemoteBackup`.
 pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
 
-/// Exact on-the-wire length of the masked security-domain blob (a masked
-/// BKS3).  Mirrors
-/// `azihsm_fw_ddi_tbor_types::sd_create_remote_backup::MASKED_SD_LEN`; the
-/// firmware schema is the length authority.
+/// Exact on-the-wire length of a **masked** security-domain blob (a
+/// masked BKS3).  Retained as the shared length authority for the rest
+/// of the Security-Domain backup family (`SdReseal`, `SdRestore*`), which
+/// re-export it; **this** command's response is an HPKE-Auth seal sized
+/// by [`POK_REMOTE_BACKUP_LEN`].
 pub const MASKED_SD_LEN: usize = 180;
+
+/// Exact on-the-wire length of the remote partition-owner-key backup (an
+/// HPKE-Auth seal of BKS3: `enc(97) ‖ ct(64)`).  Mirrors
+/// `azihsm_fw_ddi_tbor_types::sd_create_remote_backup::
+/// POK_REMOTE_BACKUP_LEN`; the firmware schema is the length authority.
+pub const POK_REMOTE_BACKUP_LEN: usize = 161;
 
 /// Host-facing TBOR `SdCreateRemoteBackup` request.
 #[tbor(opcode = TBOR_OP_SD_CREATE_REMOTE_BACKUP, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TborSdCreateRemoteBackupReq {
     /// CO session id this request is bound to.  Cross-checked against the
     /// SQE-carried session id by the dispatcher.
     #[tbor(session_id)]
     pub session_id: u16,
 
-    /// Sender key id (`KeyId`, inline TOC entry type 1) the masked
-    /// security domain is wrapped under.
-    #[tbor(key_id)]
-    pub sender_key: u16,
+    /// The sender's masked SD-sealing key (from `SdSealingKeyGen`),
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// recover the sender's private ECDH key.  A fixed-length `[u8; N]`
+    /// field (a `min_len == max_len` buffer): the array type is the host
+    /// derive's exact-length form, mirroring the firmware `len = 180`.
+    pub masked_sealing_key: [u8; MASKED_SEALING_KEY_LEN],
 
     /// Receiver manufacturer certificate-chain descriptors.  Flattened
     /// from the firmware `receiver_evidence` field group (first of its
@@ -69,12 +79,14 @@ pub struct TborSdCreateRemoteBackupReq {
 
 /// Host-facing TBOR `SdCreateRemoteBackup` response.
 #[tbor(response)]
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TborSdCreateRemoteBackupResp {
-    /// Remote partition-owner-key backup, a masked BKS3 (exactly
-    /// [`MASKED_SD_LEN`] = 180 B on the wire; the firmware schema is the
-    /// length authority).
-    pub pok_remote_backup: Vec<u8>,
+    /// Remote partition-owner-key backup: an HPKE-Auth seal of BKS3
+    /// (exactly [`POK_REMOTE_BACKUP_LEN`] = 161 B on the wire; the
+    /// firmware schema is the length authority).  A fixed-length `[u8; N]`
+    /// field so host decode enforces the exact length — rejecting any
+    /// malformed frame — instead of allocating from the encoded length.
+    pub pok_remote_backup: [u8; POK_REMOTE_BACKUP_LEN],
 }
 
 #[cfg(test)]
@@ -87,9 +99,12 @@ mod tests {
     fn request_encodes_session_and_policy() {
         let req = TborSdCreateRemoteBackupReq {
             session_id: 9,
-            sender_key: 0x1234,
+            masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
+            receiver_mfgr_cert_chain: Vec::new(),
+            receiver_owner_cert_chain: Vec::new(),
+            receiver_part_owner_cert_chain: Vec::new(),
+            receiver_report: ReportDescriptor::default(),
             policy: PartPolicy::zeroed(),
-            ..Default::default()
         };
 
         let mut buf = [0u8; 1024];

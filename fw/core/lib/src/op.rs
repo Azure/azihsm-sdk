@@ -262,6 +262,7 @@ impl SessionCtrl {
             | opcode::PART_INIT
             | opcode::PART_FINAL
             | opcode::SD_SEALING_KEY_GEN
+            | opcode::SD_CREATE_REMOTE_BACKUP
             | opcode::KEY_REPORT => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,

@@ -58,7 +58,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x07` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
 | `0x08` | `PartFinal` | InSession | [`commands/part_final.md`](./commands/part_final.md) |
 | `0x09` | `SdSealingKeyGen` | InSession | [`commands/sd_sealing_key_gen.md`](./commands/sd_sealing_key_gen.md) |
-| `0x0A` | `SdCreateRemoteBackup` (schema-only) | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
+| `0x0A` | `SdCreateRemoteBackup` | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
 | `0x0B` | `SdResealBackup` (schema-only) | InSession | [`commands/sd_reseal_backup.md`](./commands/sd_reseal_backup.md) |
 | `0x0C` | `SdRestoreRemoteBackup` (schema-only) | InSession | [`commands/sd_restore_remote_backup.md`](./commands/sd_restore_remote_backup.md) |
 | `0x0D` | `SdRestoreLocalBackup` (schema-only) | InSession | [`commands/sd_restore_local_backup.md`](./commands/sd_restore_local_backup.md) |
