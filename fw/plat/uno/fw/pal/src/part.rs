@@ -470,8 +470,10 @@ impl UnoHsmPal {
     /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, and
     /// `Masked_BK_BOOT`). Because the vault wipe also removes the identity
     /// private key, a fresh partition identity (keypair + id blob) is
-    /// regenerated — matching the reference firmware, which always provisions a
-    /// fresh identity on NSSR. Finally regenerates the enable-time
+    /// regenerated — matching the *std* reference firmware, whose NSSR/erase
+    /// always provisions a fresh identity. Note this intentionally diverges
+    /// from mcr-hsm, whose `state.migrate()` preserves the PID keypair inline
+    /// in its persistent store. Finally regenerates the enable-time
     /// establish-credential and session-encryption keys.
     ///
     /// The net effect matches the reference: the partition keeps its
@@ -494,10 +496,15 @@ impl UnoHsmPal {
                 // Clear per-tenant persistent state, preserving provisioning.
                 part.clear_state(PartResetKind::Migrate);
                 // The `vault.clear()` above also deleted the identity private
-                // key, so regenerate a fresh partition identity (new keypair +
-                // id blob) before anything else. This matches the reference
-                // firmware, which always provisions a fresh identity on NSSR,
-                // and prevents `id_key_id` from dangling at a deleted key.
+                // key. Zero the identity fields (id, `id_key_id`, cached public
+                // key) *before* awaiting so no concurrent reader can observe
+                // `id_key_id` dangling at a deleted vault key while a fresh
+                // identity is being provisioned across the await points below.
+                part.clear_identity();
+                // Regenerate a fresh partition identity (new keypair + id blob).
+                // Matches the std reference firmware, which always provisions a
+                // fresh identity on NSSR (diverges from mcr-hsm, which preserves
+                // the PID keypair).
                 self.provision_identity(pid).await?;
                 // Regenerate the enable-time establish-credential and
                 // session-encryption keys (this PAL provisions them eagerly).

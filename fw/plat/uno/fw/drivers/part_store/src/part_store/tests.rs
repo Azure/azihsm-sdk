@@ -138,3 +138,43 @@ fn preserves_provisioning_and_clears_tenant_state() {
         "pin policy lockout_time must reset"
     );
 }
+
+/// `clear_identity` must zero the 16-byte id, drop the identity key handle
+/// (dropping `partition_id_valid` with it), and zero the cached public key.
+///
+/// The NSSR migrate path relies on this to erase the stale `id_key_id` before
+/// re-provisioning a fresh identity, so this guards that the identity fields
+/// don't linger and dangle at a deleted vault key.
+#[test]
+fn clear_identity_zeros_id_handle_and_pub_key() {
+    let pid = 9usize;
+
+    let id = [0x5Au8; ID_LEN];
+    let id_pub = [0xA5u8; PUB_KEY_LEN];
+
+    {
+        let mut p = Partition(pid);
+        p.set_id(buf(&id)).unwrap();
+        p.set_id_key_id(Some(HsmKeyId::from(0x1234u16)));
+        p.id_pub_key_mut().copy_from_slice(&id_pub);
+    }
+
+    // Precondition: identity is present.
+    {
+        let p = Partition(pid);
+        assert!(p.id_key_id().is_some(), "id key handle must be seeded");
+        assert_eq!(&p.id()[..], &id[..], "id must be seeded");
+    }
+
+    // Act.
+    Partition(pid).clear_identity();
+
+    let p = Partition(pid);
+    assert!(p.id_key_id().is_none(), "id key handle must be cleared");
+    assert_eq!(&p.id()[..], &[0u8; ID_LEN][..], "id must be zeroed");
+    assert_eq!(
+        &p.id_pub_key()[..],
+        &[0u8; PUB_KEY_LEN][..],
+        "id public key must be zeroed"
+    );
+}
