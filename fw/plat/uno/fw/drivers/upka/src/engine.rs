@@ -420,6 +420,157 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
+    // =====================================================================
+    // Deterministic-sign step primitives (RFC 6979 P-384 ECDSA)
+    // =====================================================================
+    //
+    // Public single-command PKA ops the PAL orchestrates (via `with_engine`)
+    // to build the deterministic ECDSA sign for the on-the-fly cert-chain PID
+    // leaf. The PAL allocates every operand/scratch DMA buffer and keeps the
+    // whole sequence on ONE held engine so a `mont_const_calc`'s Montgomery
+    // state stays resident for the ops that follow (`execute_cmd` does not wipe
+    // between commands). All operands are PKA little-endian. The six modular
+    // ops are P-384 only — the PID leaf is always signed with the P-384 alias
+    // key; other curves are rejected.
+
+    /// Resolve a P-384-only modular opcode, rejecting other curves.
+    fn p384_modular(curve: UpkaEccCurve, opcode: u32) -> HsmResult<u32> {
+        match curve {
+            UpkaEccCurve::P384 => Ok(opcode),
+            _ => Err(UpkaError::CMD_ERROR),
+        }
+    }
+
+    /// Compute the Montgomery constant for `modulus` (curve prime or order)
+    /// and leave it resident in the engine for the next op to consume.
+    /// `mont_result` is scratch for the constant; its contents are not used
+    /// by the caller directly.
+    pub async fn mont_const_calc(
+        &mut self,
+        curve: UpkaEccCurve,
+        modulus: &DmaBuf,
+        mont_result: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.execute_cmd(
+            mont_const_calc_opcode(curve),
+            mont_result.as_mut_ptr() as u32,
+            modulus.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Point-multiply `result = (scalar * point).x`, where `point` is the
+    /// affine `x ‖ y` (contiguous, PKA little-endian). Requires a prior
+    /// `mont_const_calc` over the curve prime on this engine.
+    pub async fn point_mul(
+        &mut self,
+        curve: UpkaEccCurve,
+        point_xy: &DmaBuf,
+        scalar: &DmaBuf,
+        result: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.execute_cmd(
+            ecc_point_mul_opcode(curve),
+            result.as_mut_ptr() as u32,
+            point_xy.as_ptr() as u32,
+            scalar.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
+    /// Modular reduction `result = arg1 mod n` (P-384 only). Requires a prior
+    /// `mont_const_calc` over the order `n`.
+    pub async fn mod_reduction(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MOD_REDUCTION_384)?;
+        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
+            .await
+    }
+
+    /// Convert `arg1` into Montgomery representation (P-384 only).
+    pub async fn mont_repr_in(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MONT_REPR_IN_384)?;
+        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
+            .await
+    }
+
+    /// Convert `arg1` out of Montgomery representation (P-384 only).
+    pub async fn mont_repr_out(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MONT_REPR_OUT_384)?;
+        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
+            .await
+    }
+
+    /// Modular inverse `result = arg1^-1 mod n` (P-384 only). Requires a prior
+    /// `mont_const_calc` over the order `n`.
+    pub async fn mod_inverse(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MOD_INVERSE_384)?;
+        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
+            .await
+    }
+
+    /// Modular multiplication `result = arg1 * arg2 mod n` (P-384 only).
+    /// Operands and result are in Montgomery representation.
+    pub async fn mod_multiplication(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+        arg2: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MOD_MULTIPLICATION_384)?;
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            arg2.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
+    /// Modular addition `result = arg1 + arg2 mod n` (P-384 only). Operands
+    /// and result are in Montgomery representation.
+    pub async fn mod_addition(
+        &mut self,
+        curve: UpkaEccCurve,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+        arg2: &DmaBuf,
+    ) -> HsmResult<()> {
+        let opcode = Self::p384_modular(curve, MOD_ADDITION_384)?;
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            arg2.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
     /// Wipe the engine's internal state.
     ///
     /// # Returns

@@ -35,19 +35,14 @@ pub(crate) const MONT_CONST_CALC_521: u32 = 0x500c_0008;
 // ECC-sign self-test; encodings mirror `PkaCommandCode` in mcr-hsm
 // `cp/hsm/types/src/crypto/pka.rs`. Only P-384 is needed (alias key curve).
 //
-// `allow(dead_code)` until the deterministic-sign wrappers (`ecc_sign_with_k`)
-// consume them.
-#[allow(dead_code)]
+// Consumed by the `UpkaEngine` deterministic-sign step primitives
+// (`mod_reduction`, `mont_repr_in`/`mont_repr_out`, `mod_inverse`,
+// `mod_multiplication`, `mod_addition`) that the PAL orchestrates for the sign.
 pub(crate) const MOD_REDUCTION_384: u32 = 0x5009_0001;
-#[allow(dead_code)]
 pub(crate) const MONT_REPR_IN_384: u32 = 0x500b_0001;
-#[allow(dead_code)]
 pub(crate) const MONT_REPR_OUT_384: u32 = 0x500a_0001;
-#[allow(dead_code)]
 pub(crate) const MOD_INVERSE_384: u32 = 0x5007_0001;
-#[allow(dead_code)]
 pub(crate) const MOD_MULTIPLICATION_384: u32 = 0x5004_0001;
-#[allow(dead_code)]
 pub(crate) const MOD_ADDITION_384: u32 = 0x5005_0001;
 pub(crate) const RSA_PRIV_2K: u32 = 0x5000_0003;
 pub(crate) const RSA_PRIV_3K: u32 = 0x5000_0004;
