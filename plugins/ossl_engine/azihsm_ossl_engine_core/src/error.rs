@@ -60,6 +60,9 @@ pub enum EngineError {
     #[error("ENGINE_set_destroy_function failed")]
     SetDestroyFailed,
 
+    #[error("ENGINE_set_load_privkey_function failed")]
+    SetLoadPrivKeyFailed,
+
     /// A standalone message with no underlying error.
     #[error("{0}")]
     Other(String),
@@ -162,6 +165,23 @@ pub fn result_to_int<T>(result: EngineResult<T>) -> c_int {
             openssl_err(reason, &e.to_string());
             tracing::error!("{e}");
             RetCode::Fail.into()
+        }
+    }
+}
+
+/// Convert an [`EngineResult`] holding a raw pointer into that pointer, for a
+/// C callback that returns `*mut T` (e.g. the `load_privkey` hook returning
+/// `*mut EVP_PKEY`). On `Err`, push the message onto the OpenSSL ERR queue,
+/// log via `tracing`, and return NULL — the pointer-returning analogue of
+/// [`result_to_int`].
+pub fn result_to_ptr<T>(result: EngineResult<*mut T>) -> *mut T {
+    match result {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            let reason = c_int::from(&e);
+            openssl_err(reason, &e.to_string());
+            tracing::error!("{e}");
+            std::ptr::null_mut()
         }
     }
 }
