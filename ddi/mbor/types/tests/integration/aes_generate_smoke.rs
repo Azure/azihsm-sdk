@@ -3,9 +3,9 @@
 
 //! AesGenerateKey smoke tests for the emu backend.
 //!
-//! - Happy path: generate an AES-128 encrypt/decrypt key in an open
-//!   session and confirm the response carries a non-zero `key_id`
-//!   and the expected (empty placeholder) masked-key envelope.
+//! - Happy path: generate an AES-128/192/256 encrypt/decrypt key in an
+//!   open session and confirm the response carries a non-zero `key_id`
+//!   and a populated masked-key envelope (randomized IV).
 //! - Without a session: rejected by the host-side dev validator
 //!   before the request reaches firmware.
 
@@ -24,25 +24,52 @@ fn test_aes_generate_smoke() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let key_props =
-                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
-            let resp = helper_aes_generate(
-                dev,
-                Some(session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
+            // Every AES key size must import cleanly and return a
+            // populated masked-key envelope.
+            for key_size in [
                 DdiAesKeySize::Aes128,
-                None,
-                key_props,
-            )
-            .unwrap();
+                DdiAesKeySize::Aes192,
+                DdiAesKeySize::Aes256,
+            ] {
+                let key_props =
+                    helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+                let resp = helper_aes_generate(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_size,
+                    None,
+                    key_props,
+                )
+                .unwrap();
 
-            assert_eq!(resp.hdr.op, DdiOp::AesGenerateKey);
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-            assert_ne!(resp.data.key_id, 0, "key_id must be non-zero");
-            assert!(
-                resp.data.bulk_key_id.is_none(),
-                "non-bulk AES request must carry bulk_key_id = None"
-            );
+                assert_eq!(resp.hdr.op, DdiOp::AesGenerateKey);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+                assert_ne!(resp.data.key_id, 0, "key_id must be non-zero");
+                assert!(
+                    resp.data.bulk_key_id.is_none(),
+                    "non-bulk AES request must carry bulk_key_id = None"
+                );
+
+                // The generated key is returned as a populated masked-key
+                // envelope with a randomized IV and the requested attributes.
+                assert!(
+                    !resp.data.masked_key.as_slice().is_empty(),
+                    "masked_key must be populated for {key_size:?}",
+                );
+                assert!(
+                    verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                        .unwrap_or(false),
+                    "masked_key IV must be randomized for {key_size:?}",
+                );
+                assert!(
+                    verify_masked_key_attributes(
+                        resp.data.masked_key.as_slice(),
+                        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+                    ),
+                    "masked_key attributes must include ENCRYPT|DECRYPT for {key_size:?}",
+                );
+            }
         },
     );
 }

@@ -57,6 +57,25 @@ fn test_ecdh_key_exchange_smoke() {
             assert_eq!(resp1.hdr.status, DdiStatus::Success);
             assert_ne!(resp1.data.key_id, 0);
 
+            // The derived shared secret is returned as a populated
+            // masked-key envelope with a randomized IV.
+            assert!(
+                !resp1.data.masked_key.as_slice().is_empty(),
+                "ECDH masked_key must be populated"
+            );
+            assert!(
+                verify_iv_not_default_from_masked_key(resp1.data.masked_key.as_slice())
+                    .unwrap_or(false),
+                "ECDH masked_key IV must be randomized",
+            );
+            assert!(
+                verify_masked_key_attributes(
+                    resp1.data.masked_key.as_slice(),
+                    MaskedKeyAttributes::DERIVE
+                ),
+                "ECDH masked_key attributes must include DERIVE",
+            );
+
             // Side B: derive Secret256 from (priv2, pub1).  Both sides
             // must succeed; the fact that both ECDH operations produce
             // a vault entry is the firmware-side smoke contract — the

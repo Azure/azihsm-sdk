@@ -56,11 +56,30 @@ fn test_kbkdf_aes_derive_smoke() {
                     None,
                 )
                 .expect("KBKDF AES-256 derive should succeed")
-                .data
-                .key_id
             };
-            let key1 = derive(dev, secret1);
-            let key2 = derive(dev, secret2);
+            let resp1 = derive(dev, secret1);
+
+            // The derived key is returned as a populated masked-key
+            // envelope with a randomized IV.
+            assert!(
+                !resp1.data.masked_key.as_slice().is_empty(),
+                "KBKDF AES-256 masked_key must be populated"
+            );
+            assert!(
+                verify_iv_not_default_from_masked_key(resp1.data.masked_key.as_slice())
+                    .unwrap_or(false),
+                "KBKDF AES-256 masked_key IV must be randomized",
+            );
+            assert!(
+                verify_masked_key_attributes(
+                    resp1.data.masked_key.as_slice(),
+                    MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+                ),
+                "KBKDF AES-256 masked_key attributes must include ENCRYPT|DECRYPT",
+            );
+
+            let key1 = resp1.data.key_id;
+            let key2 = derive(dev, secret2).data.key_id;
 
             // Encrypt with key1, decrypt with key2 — recovers the input
             // iff both derivations produced the same usable AES key.
@@ -140,6 +159,22 @@ fn test_kbkdf_hmac_derive_smoke() {
                 let resp = resp.unwrap();
                 assert_eq!(resp.hdr.op, DdiOp::KbkdfCounterHmacDerive);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+                assert!(
+                    !resp.data.masked_key.as_slice().is_empty(),
+                    "KBKDF {key_type:?} masked_key must be populated",
+                );
+                assert!(
+                    verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                        .unwrap_or(false),
+                    "KBKDF {key_type:?} masked_key IV must be randomized",
+                );
+                assert!(
+                    verify_masked_key_attributes(
+                        resp.data.masked_key.as_slice(),
+                        MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY
+                    ),
+                    "KBKDF {key_type:?} masked_key attributes must include SIGN|VERIFY",
+                );
             }
         },
     );
@@ -170,6 +205,22 @@ fn test_kbkdf_var_hmac_derive_smoke() {
                 let resp = resp.unwrap();
                 assert_eq!(resp.hdr.op, DdiOp::KbkdfCounterHmacDerive);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+                assert!(
+                    !resp.data.masked_key.as_slice().is_empty(),
+                    "KBKDF {key_type:?} len {key_len} masked_key must be populated",
+                );
+                assert!(
+                    verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                        .unwrap_or(false),
+                    "KBKDF {key_type:?} len {key_len} masked_key IV must be randomized",
+                );
+                assert!(
+                    verify_masked_key_attributes(
+                        resp.data.masked_key.as_slice(),
+                        MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY
+                    ),
+                    "KBKDF {key_type:?} len {key_len} masked_key attrs must include SIGN|VERIFY",
+                );
             }
         },
     );

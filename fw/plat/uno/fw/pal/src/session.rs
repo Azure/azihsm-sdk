@@ -327,6 +327,10 @@ impl HsmSessionManager for UnoHsmPal {
             .0)
     }
 
+    fn session_masking_key(&self, _io: &impl HsmIo, _id: HsmSessId) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let mut table = SessionStore::partition(io.pid())?;
         table.try_consume_psk_change(id)

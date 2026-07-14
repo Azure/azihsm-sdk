@@ -4,11 +4,10 @@
 //! GetUnwrappingKey smoke tests.
 //!
 //! - Happy path: with an open session, the command returns an RSA-2048
-//!   public key and a vault key id.  We intentionally do *not* assert
-//!   on `masked_key` — the firmware emits an empty placeholder until
-//!   vault-key masking is wired up — nor on the exact `key_id` value,
-//!   which is an opaque handle (the sim backend legitimately assigns
-//!   `0`).
+//!   public key, a vault key id, and a populated masked-key envelope
+//!   (the partition unwrapping key, masked for host re-import).  We do
+//!   not assert on the exact `key_id` value, which is an opaque handle
+//!   (the sim backend legitimately assigns `0`).
 //! - Stability: two calls on the same partition return the same key id
 //!   and public-key bytes — the key is partition-cached and lazily
 //!   generated on first use.
@@ -48,6 +47,25 @@ fn test_get_unwrapping_key_smoke() {
                 resp.data.pub_key.key_kind,
                 DdiKeyType::Rsa2kPublic,
                 "unwrap key must be RSA-2048"
+            );
+
+            // The unwrapping key is returned as a populated masked-key
+            // envelope with a randomized IV, for host re-import.
+            assert!(
+                !resp.data.masked_key.as_slice().is_empty(),
+                "unwrap masked_key must be populated"
+            );
+            assert!(
+                verify_iv_not_default_from_masked_key(resp.data.masked_key.as_slice())
+                    .unwrap_or(false),
+                "unwrap masked_key IV must be randomized",
+            );
+            assert!(
+                verify_masked_key_attributes(
+                    resp.data.masked_key.as_slice(),
+                    MaskedKeyAttributes::UNWRAP
+                ),
+                "unwrap masked_key attributes must include UNWRAP",
             );
         },
     );

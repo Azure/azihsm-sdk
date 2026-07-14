@@ -76,10 +76,7 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
         .await?;
     }
 
-    // RAII vault entry — rolls back if response encoding below fails.
-    // `masked_key` is the host's opaque re-import blob; firmware-side
-    // masking is pending the `UnmaskKey` handler, so we emit an empty
-    // placeholder for wire validity.
+    // Commit the derived key to the vault, session-scoped iff requested.
     let key_id: u16 = pal
         .vault_key_create(
             io,
@@ -91,12 +88,27 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
         .await?
         .into();
 
+    // Envelope the derived key into the host's opaque re-import blob.
+    let masked_key = super::masking::mask_blob(
+        pal,
+        io,
+        HsmSessId::from(sess_id),
+        super::masking::MaskSpec {
+            attrs,
+            key_type: super::from_pal::vault_kind_ddi(target.kind)?,
+            key_label: body.key_properties.key_label,
+            key_length: out.len() as u16,
+        },
+        &out[..],
+    )
+    .await?;
+
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
             &super::success_hdr_sess(hdr, DdiOp::KbkdfCounterHmacDerive, sess_id),
             &DdiKbkdfCounterHmacDeriveResp {
                 key_id,
-                masked_key: &[],
+                masked_key,
                 bulk_key_id: None,
             },
             buf,

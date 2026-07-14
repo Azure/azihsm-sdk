@@ -10,6 +10,7 @@
 //! the public key plus an opaque masked-key envelope the host may
 //! re-import on a future session.
 
+use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairReq;
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairResp;
 
@@ -88,10 +89,25 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
         .await?
         .into();
 
-    // Build the response.  `masked_key` is the host's opaque
-    // re-import blob; firmware-side masking against the session BK is
-    // pending the corresponding `UnmaskKey` handler — emit an empty
-    // placeholder for now so the response is wire-valid.
+    // Build the host's re-import blob.  ECC envelopes the private-key
+    // blob followed by the public point so the unmask path can restore
+    // both; `key_length` records the private-key length so the importer
+    // can split the plaintext.  Session-scoped keys use the session
+    // masking key; persistent keys use the partition masking key (`MK`).
+    let key_plain = pal.dma_alloc(io, priv_len + pub_len)?;
+    key_plain[..priv_len].copy_from_slice(&priv_key[..priv_len]);
+    key_plain[priv_len..priv_len + pub_len].copy_from_slice(&pub_key[..pub_len]);
+    let masking_key =
+        super::masking::resolve_masking_key(pal, io, HsmSessId::from(sess_id), attrs.session())?;
+    let metadata = super::masking::masked_metadata(
+        pal,
+        super::from_pal::vault_kind_ddi(vault_kind)?,
+        attrs,
+        body.key_properties.key_label,
+        priv_len as u16,
+    )?;
+    let masked_len = mask(pal, io, masking_key, &key_plain[..], &metadata, None).await?;
+
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
         let mut encoder = super::encode_resp_hdr(
             &super::success_hdr_sess(hdr, DdiOp::EccGenerateKeyPair, sess_id),
@@ -104,7 +120,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
                 raw_len: pub_len,
                 key_kind: super::from_pal::ecc_public_ddi(pal_curve),
             },
-            0, /* masked_key length — empty placeholder */
+            masked_len,
         )?;
         Ok((encoder.position(), layout))
     })?;
@@ -113,6 +129,19 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     // PAL already emitted the public key in wire format (LE + P-521
     // padding), so copy directly without further reordering.
     frame.pub_key.raw.copy_from_slice(&pub_key[..pub_len]);
+
+    // `mask` requires `out[..total_len]` to be zero on entry; zero the
+    // reserved slot before filling it with the envelope.
+    frame.masked_key.fill(0);
+    mask(
+        pal,
+        io,
+        masking_key,
+        &key_plain[..],
+        &metadata,
+        Some(frame.masked_key),
+    )
+    .await?;
 
     Ok(resp)
 }

@@ -25,6 +25,7 @@ pub(crate) mod init_bk3;
 pub(crate) mod kbkdf_derive;
 pub(crate) mod kdf;
 pub(crate) mod key_attrs;
+pub(crate) mod masking;
 pub(crate) mod open_session;
 pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
