@@ -97,6 +97,58 @@ fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
 }
 
 // =============================================================================
+// P-384 deterministic-sign constants (RFC 6979)
+// =============================================================================
+//
+// The on-the-fly partition-id (PID) certificate leaf is signed with the P-384
+// alias key using a PKA-primitive ECDSA sign (see the A1 modular opcodes in the
+// upka driver). That path needs the curve order `n` and base point `G` in
+// addition to the prime `p` above. P-384 only — the alias key curve. Values are
+// the significant 48 little-endian operand bytes (no PKA slot padding), matching
+// `PRIME384_LE`. `allow(dead_code)` until the sign wrappers (A4) consume them.
+
+/// NIST P-384 curve order `n` in PKA little-endian operand order.
+///
+/// Modulus for the scalar arithmetic in the ECDSA sign
+/// (`s = k⁻¹·(e + r·d) mod n`).
+#[allow(dead_code)]
+const ORDER384_LE: [u8; 48] = [
+    0x73, 0x29, 0xc5, 0xcc, 0x6a, 0x19, 0xec, 0xec, 0x7a, 0xa7, 0xb0, 0x48, 0xb2, 0x0d, 0x1a, 0x58,
+    0xdf, 0x2d, 0x37, 0xf4, 0x81, 0x4d, 0x63, 0xc7, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-384 base point `G` x-coordinate in PKA little-endian operand order.
+#[allow(dead_code)]
+const BASE384_X_LE: [u8; 48] = [
+    0xb7, 0x0a, 0x76, 0x72, 0x38, 0x5e, 0x54, 0x3a, 0x6c, 0x29, 0x55, 0xbf, 0x5d, 0xf2, 0x02, 0x55,
+    0x38, 0x2a, 0x54, 0x82, 0xe0, 0x41, 0xf7, 0x59, 0x98, 0x9b, 0xa7, 0x8b, 0x62, 0x3b, 0x1d, 0x6e,
+    0x74, 0xad, 0x20, 0xf3, 0x1e, 0xc7, 0xb1, 0x8e, 0x37, 0x05, 0x8b, 0xbe, 0x22, 0xca, 0x87, 0xaa,
+];
+
+/// NIST P-384 base point `G` y-coordinate in PKA little-endian operand order.
+#[allow(dead_code)]
+const BASE384_Y_LE: [u8; 48] = [
+    0x5f, 0x0e, 0xea, 0x90, 0x7c, 0x1d, 0x43, 0x7a, 0x9d, 0x81, 0x7e, 0x1d, 0xce, 0xb1, 0x60, 0x0a,
+    0xc0, 0xb8, 0xf0, 0xb5, 0x13, 0x31, 0xda, 0xe9, 0x7c, 0x14, 0x9a, 0x28, 0xbd, 0x1d, 0xf4, 0xf8,
+    0x29, 0xdc, 0x92, 0x92, 0xbf, 0x98, 0x9e, 0x5d, 0x6f, 0x2c, 0x26, 0x96, 0x4a, 0xde, 0x17, 0x36,
+];
+
+/// Montgomery-representation operand width, in bytes, for the selected curve.
+///
+/// The PKA `mont_const_calc` / Montgomery-domain operands are wider than the
+/// raw field element (field size rounded up to the engine's Montgomery slot):
+/// 36 B for P-256, 52 B for P-384, 72 B for P-521.
+#[allow(dead_code)]
+fn montgomery_size(curve: UpkaEccCurve) -> usize {
+    match curve {
+        UpkaEccCurve::P256 => 36,
+        UpkaEccCurve::P384 => 52,
+        UpkaEccCurve::P521 => 72,
+    }
+}
+
+// =============================================================================
 // HsmEcc trait impl
 // =============================================================================
 //
