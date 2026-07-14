@@ -105,13 +105,12 @@ fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
 // upka driver). That path needs the curve order `n` and base point `G` in
 // addition to the prime `p` above. P-384 only — the alias key curve. Values are
 // the significant 48 little-endian operand bytes (no PKA slot padding), matching
-// `PRIME384_LE`. `allow(dead_code)` until the sign wrappers (A4) consume them.
+// `PRIME384_LE`. Consumed by `ecc_sign_with_k` (A4).
 
 /// NIST P-384 curve order `n` in PKA little-endian operand order.
 ///
 /// Modulus for the scalar arithmetic in the ECDSA sign
 /// (`s = k⁻¹·(e + r·d) mod n`).
-#[allow(dead_code)]
 const ORDER384_LE: [u8; 48] = [
     0x73, 0x29, 0xc5, 0xcc, 0x6a, 0x19, 0xec, 0xec, 0x7a, 0xa7, 0xb0, 0x48, 0xb2, 0x0d, 0x1a, 0x58,
     0xdf, 0x2d, 0x37, 0xf4, 0x81, 0x4d, 0x63, 0xc7, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -119,7 +118,6 @@ const ORDER384_LE: [u8; 48] = [
 ];
 
 /// NIST P-384 base point `G` x-coordinate in PKA little-endian operand order.
-#[allow(dead_code)]
 const BASE384_X_LE: [u8; 48] = [
     0xb7, 0x0a, 0x76, 0x72, 0x38, 0x5e, 0x54, 0x3a, 0x6c, 0x29, 0x55, 0xbf, 0x5d, 0xf2, 0x02, 0x55,
     0x38, 0x2a, 0x54, 0x82, 0xe0, 0x41, 0xf7, 0x59, 0x98, 0x9b, 0xa7, 0x8b, 0x62, 0x3b, 0x1d, 0x6e,
@@ -127,7 +125,6 @@ const BASE384_X_LE: [u8; 48] = [
 ];
 
 /// NIST P-384 base point `G` y-coordinate in PKA little-endian operand order.
-#[allow(dead_code)]
 const BASE384_Y_LE: [u8; 48] = [
     0x5f, 0x0e, 0xea, 0x90, 0x7c, 0x1d, 0x43, 0x7a, 0x9d, 0x81, 0x7e, 0x1d, 0xce, 0xb1, 0x60, 0x0a,
     0xc0, 0xb8, 0xf0, 0xb5, 0x13, 0x31, 0xda, 0xe9, 0x7c, 0x14, 0x9a, 0x28, 0xbd, 0x1d, 0xf4, 0xf8,
@@ -139,12 +136,159 @@ const BASE384_Y_LE: [u8; 48] = [
 /// The PKA `mont_const_calc` / Montgomery-domain operands are wider than the
 /// raw field element (field size rounded up to the engine's Montgomery slot):
 /// 36 B for P-256, 52 B for P-384, 72 B for P-521.
-#[allow(dead_code)]
 fn montgomery_size(curve: UpkaEccCurve) -> usize {
     match curve {
         UpkaEccCurve::P256 => 36,
         UpkaEccCurve::P384 => 52,
         UpkaEccCurve::P521 => 72,
+    }
+}
+
+// =============================================================================
+// Deterministic P-384 ECDSA sign (RFC 6979) — PAL orchestration
+// =============================================================================
+
+impl UnoHsmPal {
+    /// Deterministic ECDSA-P384 sign with a caller-supplied per-message secret
+    /// `k` (RFC 6979): computes `(r, s)` for `digest` under private key `d`.
+    /// All operands are PKA little-endian, 48 bytes.
+    ///
+    /// The on-the-fly PID cert leaf is regenerated lazily, so its signature
+    /// must be byte-stable — hence `k` is supplied by the caller (RFC 6979)
+    /// rather than drawn from the PKA RNG. This ports the mcr-hsm ECC-sign
+    /// self-test step sequence, orchestrated on ONE held PKA engine so a
+    /// `mont_const_calc`'s Montgomery state persists across the modular ops.
+    /// Every operand/scratch buffer is DMA-allocated from the per-IO scope
+    /// (~1 KB total) since the PKA engine DMAs its operands.
+    ///
+    /// # Parameters
+    /// * `k`, `digest`, `d` — 48-byte P-384 scalars (LE): per-message secret,
+    ///   hash `e`, and private key.
+    /// * `r`, `s` — 48-byte output signature components (LE).
+    ///
+    /// # Errors
+    /// * [`HsmError::InvalidArg`] — a bad operand length, or a degenerate
+    ///   `r == 0` / `s == 0` result.
+    /// * Any [`HsmError`] surfaced by the PKA driver.
+    #[allow(dead_code)] // consumed by ecc_sign_deterministic (A6) / PID cert gen (B)
+    pub(crate) async fn ecc_sign_with_k(
+        &self,
+        io: &impl HsmIo,
+        k: &[u8],
+        digest: &[u8],
+        d: &[u8],
+        r: &mut [u8],
+        s: &mut [u8],
+    ) -> HsmResult<()> {
+        const CURVE: UpkaEccCurve = UpkaEccCurve::P384;
+        let field = PRIME384_LE.len();
+        let mont = montgomery_size(CURVE);
+
+        if k.len() != field
+            || digest.len() != field
+            || d.len() != field
+            || r.len() != field
+            || s.len() != field
+        {
+            return Err(HsmError::InvalidArg);
+        }
+
+        self.alloc_scoped_async(io, async |scope| {
+            // Curve constants (LE) into DMA buffers.
+            let prime = scope.dma_alloc(field)?;
+            prime.copy_from_slice(&PRIME384_LE);
+            let order = scope.dma_alloc(field)?;
+            order.copy_from_slice(&ORDER384_LE);
+            let base_xy = scope.dma_alloc(field * 2)?;
+            base_xy[..field].copy_from_slice(&BASE384_X_LE);
+            base_xy[field..].copy_from_slice(&BASE384_Y_LE);
+
+            // Inputs into DMA buffers (a non-DMA operand source hardfaults the
+            // PKA engine).
+            let k_buf = scope.dma_alloc(field)?;
+            k_buf.copy_from_slice(k);
+            let e_buf = scope.dma_alloc(field)?;
+            e_buf.copy_from_slice(digest);
+            let d_buf = scope.dma_alloc(field)?;
+            d_buf.copy_from_slice(d);
+
+            // Scratch + intermediates. Normal operands are `field` (48) bytes;
+            // Montgomery-form operands are `mont` (52) bytes.
+            let mont_scratch = scope.dma_alloc(mont)?;
+            let xr = scope.dma_alloc(field)?;
+            let r_buf = scope.dma_alloc(field)?;
+            let s_buf = scope.dma_alloc(field)?;
+            let k_mont = scope.dma_alloc(mont)?;
+            let r_mont = scope.dma_alloc(mont)?;
+            let e_mont = scope.dma_alloc(mont)?;
+            let d_mont = scope.dma_alloc(mont)?;
+            let k_inv = scope.dma_alloc(mont)?;
+            let s_mont = scope.dma_alloc(mont)?;
+            let t_mont = scope.dma_alloc(mont)?;
+            let t_dot_r = scope.dma_alloc(mont)?;
+            let s_plus_t = scope.dma_alloc(mont)?;
+
+            // Drive the whole sequence on one held engine so the Montgomery
+            // constant set below stays resident for the ops that follow.
+            self.pka
+                .with_engine(async |eng| {
+                    // Montgomery constant = curve prime p, then xR = (k·G).x.
+                    eng.mont_const_calc(CURVE, prime, mont_scratch).await?;
+                    eng.point_mul(CURVE, base_xy, k_buf, xr).await?;
+
+                    // Switch the Montgomery constant to the order n for the
+                    // scalar arithmetic, then r = xR mod n (must be non-zero).
+                    eng.mont_const_calc(CURVE, order, mont_scratch).await?;
+                    eng.mod_reduction(CURVE, r_buf, xr).await?;
+                    if r_buf.iter().all(|&b| b == 0) {
+                        return Err(HsmError::InvalidArg);
+                    }
+
+                    // Montgomery form of k, r, e, d.
+                    eng.mont_repr_in(CURVE, k_mont, k_buf).await?;
+                    eng.mont_repr_in(CURVE, r_mont, r_buf).await?;
+                    eng.mont_repr_in(CURVE, e_mont, e_buf).await?;
+                    eng.mont_repr_in(CURVE, d_mont, d_buf).await?;
+
+                    // k⁻¹ mod n, then s = k⁻¹·(e + r·d) mod n:
+                    //   s = k⁻¹·e ; t = k⁻¹·d ; t = t·r ; s = s + t.
+                    eng.mod_inverse(CURVE, k_inv, k_mont).await?;
+                    eng.mod_multiplication(CURVE, s_mont, k_inv, e_mont).await?;
+                    eng.mod_multiplication(CURVE, t_mont, k_inv, d_mont).await?;
+                    eng.mod_multiplication(CURVE, t_dot_r, t_mont, r_mont).await?;
+                    eng.mod_addition(CURVE, s_plus_t, s_mont, t_dot_r).await?;
+
+                    // Back to normal representation (must be non-zero).
+                    eng.mont_repr_out(CURVE, s_buf, s_plus_t).await?;
+                    if s_buf.iter().all(|&b| b == 0) {
+                        return Err(HsmError::InvalidArg);
+                    }
+
+                    // Copy results out while the DMA buffers are still live.
+                    r.copy_from_slice(&r_buf[..field]);
+                    s.copy_from_slice(&s_buf[..field]);
+
+                    // Scrub secret-bearing scratch: k and everything derived
+                    // from k/d. `DmaBuf::zeroize` uses volatile writes + a
+                    // compiler fence (not an elidable `fill`), and the scoped
+                    // allocator only rewinds a watermark on release — it does
+                    // not clear freed DMA — so without this the material would
+                    // linger in, and leak through, a later per-IO allocation.
+                    // Leaking k recovers the private key d.
+                    k_buf.zeroize();
+                    d_buf.zeroize();
+                    k_mont.zeroize();
+                    d_mont.zeroize();
+                    k_inv.zeroize();
+                    s_mont.zeroize();
+                    t_mont.zeroize();
+                    t_dot_r.zeroize();
+                    s_plus_t.zeroize();
+                    Ok(())
+                })
+                .await
+        })
+        .await
     }
 }
 
