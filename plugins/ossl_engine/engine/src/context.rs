@@ -531,3 +531,36 @@ mod tests {
         assert_eq!(got, def);
     }
 }
+
+/// Hardware smoke test. Drives the full device open (`open_hsm_from_env`:
+/// partition open → init → session) using the ambient `AZIHSM_*` environment,
+/// so a real HSM host can validate a configuration end to end — e.g. the TPM
+/// OBK/POTA sources, which the mock cannot exercise.
+///
+/// Compiled only in non-mock builds and `#[ignore]`d, so it never runs in the
+/// normal (mock) CI cell — invoke it explicitly on a provisioned host:
+///
+/// ```text
+/// export AZIHSM_CREDENTIALS_ID=<32 hex>  AZIHSM_CREDENTIALS_PIN=<32 hex>
+/// export AZIHSM_RESILIENCY_ENABLED=1        # required, else OBK/POTA source is ignored
+/// export AZIHSM_OBK_SOURCE=tpm  AZIHSM_POTA_SOURCE=tpm
+/// export AZIHSM_RESILIENCY_STORAGE_DIR=/run/azihsm/resiliency   # mode 0700
+/// umask 0077
+/// cargo test -p azihsm_engine --features engine open_from_env_smoke -- --ignored --nocapture
+/// ```
+#[cfg(all(test, not(feature = "mock")))]
+mod hw_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn open_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        assert!(
+            data.is_hsm_open(),
+            "HSM should be open after open_hsm_from_env"
+        );
+        Ok(())
+    }
+}
