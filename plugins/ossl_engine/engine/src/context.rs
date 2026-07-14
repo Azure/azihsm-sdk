@@ -544,7 +544,10 @@ mod tests {
 /// export AZIHSM_CREDENTIALS_ID=<32 hex>  AZIHSM_CREDENTIALS_PIN=<32 hex>
 /// export AZIHSM_RESILIENCY_ENABLED=1        # required, else OBK/POTA source is ignored
 /// export AZIHSM_OBK_SOURCE=tpm  AZIHSM_POTA_SOURCE=tpm
-/// export AZIHSM_RESILIENCY_STORAGE_DIR=/run/azihsm/resiliency   # mode 0700
+/// # Storage dir must already exist, be mode 0700, and be owned by you. The
+/// # default is /var/lib/azihsm/resiliency; create it once (override with
+/// # AZIHSM_RESILIENCY_STORAGE_DIR to use e.g. a path under $HOME):
+/// sudo install -d -m 700 -o "$USER" /var/lib/azihsm/resiliency
 /// umask 0077
 /// cargo test -p azihsm_engine --features engine open_from_env_smoke -- --ignored --nocapture
 /// ```

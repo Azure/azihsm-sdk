@@ -64,8 +64,8 @@ pub enum ConfigError {
     #[error("env var {0} is required but unset")]
     Missing(&'static str),
 
-    #[error("resiliency storage directory {0:?} could not be created or is insecure")]
-    StorageDir(PathBuf),
+    #[error("resiliency storage directory {0:?} {1}")]
+    StorageDir(PathBuf, &'static str),
 
     #[error("env var {0} has unsafe path {1:?} (must be non-empty and contain no \"..\")")]
     UnsafePath(&'static str, PathBuf),
@@ -259,23 +259,40 @@ fn current_uid() -> u32 {
 /// provider's storage-directory setup so misconfiguration fails up front
 /// rather than as a generic IO error on the first write.
 fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
-    let err = || ConfigError::StorageDir(dir.to_path_buf());
+    use std::io::ErrorKind;
+
+    let err = |reason: &'static str| ConfigError::StorageDir(dir.to_path_buf(), reason);
     match fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
             // symlink_metadata (lstat) so a symlink at `dir` is rejected here
             // rather than silently followed.
-            let meta = fs::symlink_metadata(dir).map_err(|_| err())?;
+            let meta = fs::symlink_metadata(dir)
+                .map_err(|_| err("exists but its metadata could not be read"))?;
             // Require exactly owner-rwx, no group/other (i.e. mode 0700, what
             // we create above): rejecting too-loose perms protects the key
             // material, and rejecting too-tight owner perms surfaces the
             // misconfig here rather than as a generic IO error on first write.
-            if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o777 != 0o700 {
-                return Err(err());
+            if !meta.is_dir() {
+                return Err(err("exists but is not a directory"));
+            }
+            if meta.uid() != current_uid() {
+                return Err(err("exists but is not owned by the current user"));
+            }
+            if meta.mode() & 0o777 != 0o700 {
+                return Err(err("has insecure permissions (must be mode 0700, owner-only)"));
             }
             Ok(())
         }
-        Err(_) => Err(err()),
+        // DirBuilder is non-recursive, so NotFound means the parent is missing.
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(err(
+            "does not exist and its parent directory is missing; create it first \
+             (e.g. `sudo install -d -m 700 -o \"$USER\" <dir>`)",
+        )),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => Err(err(
+            "does not exist and cannot be created: permission denied for the current user",
+        )),
+        Err(_) => Err(err("could not be created")),
     }
 }
 
@@ -356,7 +373,7 @@ mod tests {
         let s = caller_caller_settings(dir);
         assert!(matches!(
             s.into_resiliency_config(),
-            Err(ConfigError::StorageDir(_))
+            Err(ConfigError::StorageDir(_, _))
         ));
     }
 
@@ -371,8 +388,23 @@ mod tests {
         let s = caller_caller_settings(dir);
         assert!(matches!(
             s.into_resiliency_config(),
-            Err(ConfigError::StorageDir(_))
+            Err(ConfigError::StorageDir(_, _))
         ));
+    }
+
+    #[test]
+    fn reports_missing_storage_dir_with_clear_message() {
+        // Parent "nope" does not exist, so the non-recursive create fails with
+        // NotFound and must surface a "does not exist" message, not a generic one.
+        let scratch = Scratch::new("cfg-missing");
+        let s = caller_caller_settings(scratch.0.join("nope").join("store"));
+        assert!(
+            matches!(
+                s.into_resiliency_config(),
+                Err(ConfigError::StorageDir(_, reason)) if reason.contains("does not exist")
+            ),
+            "expected a missing-directory message"
+        );
     }
 
     #[test]
