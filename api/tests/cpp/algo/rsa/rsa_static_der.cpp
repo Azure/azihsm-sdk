@@ -9,7 +9,7 @@
 // NIST Cryptographic Algorithm Validation Program (CAVP)
 // RSA PKCS#1 v1.5 signature validation vectors.
 //
-// Only the private PKCS#8 DER is needed by key_unwrap_pair 
+// Only the private PKCS#8 DER is needed by key_unwrap_pair
 //
 
 // clang-format off
