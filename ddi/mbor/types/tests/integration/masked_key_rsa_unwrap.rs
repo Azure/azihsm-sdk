@@ -56,7 +56,7 @@ fn test_masked_key_rsa_unwrap_rsa_key() {
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
                 unwrapped_key_id,
-                true,
+                false,
                 masked_key,
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -157,7 +157,7 @@ fn test_masked_key_rsa_unwrap_rsa_crt_key() {
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
                 unwrapped_key_id,
-                true,
+                false,
                 masked_key,
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -273,29 +273,22 @@ fn test_masked_key_rsa_unwrap_ecc_key() {
                     MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY
                 ));
 
-                let resp = helper_get_new_key_id_from_unmask(
+                let del = helper_delete_key(
                     dev,
                     Some(session_id),
                     Some(DdiApiRev { major: 1, minor: 0 }),
                     unwrapped_key_id,
-                    true,
-                    masked_key,
                 );
-                assert!(resp.is_ok(), "resp {:?}", resp);
-                let (new_key_id, _, _) = resp.unwrap();
+                assert!(del.is_ok(), "delete_key {:?}", del);
 
-                // Confirm we can find the unwrapped key by tag
-                let resp = helper_open_key(
+                let resp = helper_unmask_key(
                     dev,
                     Some(session_id),
                     Some(DdiApiRev { major: 1, minor: 0 }),
-                    *key_tag,
+                    masked_key,
                 );
-                assert!(resp.is_ok(), "resp {:?}", resp);
-                let resp = resp.unwrap();
-
-                assert_eq!(resp.data.key_id, new_key_id);
-                assert_eq!(resp.data.key_kind, *expected_key_type);
+                assert!(resp.is_ok(), "unmask {:?}", resp);
+                assert_eq!(resp.unwrap().data.kind, *expected_key_type);
             }
         },
     );
@@ -345,29 +338,22 @@ fn test_masked_key_rsa_unwrap_aes_key() {
                 MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
             ));
 
-            let resp = helper_get_new_key_id_from_unmask(
+            let del = helper_delete_key(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
                 unwrapped_key_id,
-                true,
-                masked_key,
             );
-            assert!(resp.is_ok(), "resp {:?}", resp);
-            let (new_key_id, _, _) = resp.unwrap();
+            assert!(del.is_ok(), "delete_key {:?}", del);
 
-            // Confirm we can find the unwrapped key by tag
-            let resp = helper_open_key(
+            let resp = helper_unmask_key(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
-                key_tag,
+                masked_key,
             );
-            assert!(resp.is_ok(), "resp {:?}", resp);
-            let resp = resp.unwrap();
-
-            assert_eq!(resp.data.key_id, new_key_id);
-            assert_eq!(resp.data.key_kind, DdiKeyType::Aes256);
+            assert!(resp.is_ok(), "unmask {:?}", resp);
+            assert_eq!(resp.unwrap().data.kind, DdiKeyType::Aes256);
         },
     );
 }

@@ -197,7 +197,7 @@ fn test_ecc_key_gen(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, curve: Ddi
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         private_key_id,
-        true,
+        false,
         masked_key,
     );
     assert!(resp.is_ok(), "resp {:?}", resp);

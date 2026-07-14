@@ -667,7 +667,7 @@ fn test_secret_hkdf_helper(
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         derived_key_id1,
-        true,
+        false,
         masked_key,
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -788,7 +788,7 @@ fn test_secret_hkdf_aes_gcm_helper(
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         derived_key_id1,
-        true,
+        false,
         masked_key,
     );
     assert!(resp.is_ok(), "resp {:?}", resp);

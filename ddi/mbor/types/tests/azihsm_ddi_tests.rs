@@ -83,4 +83,5 @@ mod integration {
     pub mod sealed_bk3_smoke;
     pub mod secret_hkdf_derive;
     pub mod secret_kbkdf_derive;
+    pub mod unmask_key_smoke;
 }

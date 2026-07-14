@@ -128,7 +128,7 @@ fn test_masked_key_aes_gen(
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         key_id,
-        true,
+        false,
         masked_key,
     );
     assert!(resp.is_ok(), "resp {:?}", resp);

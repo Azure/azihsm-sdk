@@ -32,6 +32,7 @@ pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
+pub(crate) mod unmask_key;
 
 pub(crate) use aes_encrypt_decrypt::*;
 pub(crate) use aes_generate_key::*;
@@ -64,6 +65,7 @@ pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
+pub(crate) use unmask_key::*;
 
 use super::*;
 
@@ -166,6 +168,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetSessionEncryptionKey => get_session_encryption_key(pal, io, decoder, hdr).await,
         DdiOp::GetUnwrappingKey => get_unwrapping_key(pal, io, decoder, hdr).await,
         DdiOp::RsaUnwrap => rsa_unwrap(pal, io, decoder, hdr).await,
+        DdiOp::UnmaskKey => unmask_key(pal, io, decoder, hdr).await,
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
