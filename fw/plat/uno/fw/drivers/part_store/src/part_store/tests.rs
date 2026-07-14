@@ -12,7 +12,12 @@ use super::*;
 
 /// Views a fixed-length test pattern as a `&DmaBuf` for the setters.
 fn buf(bytes: &[u8]) -> &DmaBuf {
-    // SAFETY: `bytes` outlives the borrow; `DmaBuf` is a `[u8]` newtype.
+    // SAFETY: `DmaBuf::from_raw` requires `bytes` to lie in a DMA-addressable
+    // region. That requirement is vacuous in these host unit tests: there is
+    // no DMA engine off-target, and the branded buffer is only ever consumed
+    // by CPU-side `copy_from_slice` into the partition store, never handed to
+    // hardware. `bytes` outlives the returned borrow and `DmaBuf` is a `[u8]`
+    // newtype, so the reference cast is layout-compatible.
     unsafe { DmaBuf::from_raw(bytes) }
 }
 

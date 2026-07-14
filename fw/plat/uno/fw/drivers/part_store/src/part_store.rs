@@ -125,7 +125,10 @@ fn store_base() -> usize {
 
     static BASE: OnceLock<usize> = OnceLock::new();
     *BASE.get_or_init(|| {
-        let layout = Layout::from_size_align(NUM_PARTITIONS * STRIDE, align_of::<Storage>())
+        let size = NUM_PARTITIONS
+            .checked_mul(STRIDE)
+            .expect("part-store test size overflow");
+        let layout = Layout::from_size_align(size, align_of::<Storage>())
             .expect("valid part-store test layout");
         // SAFETY: `layout` has a non-zero size and an all-zero bit pattern is a
         // valid `Storage` (every field is a byte array or a zero-valued scalar).
