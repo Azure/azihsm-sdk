@@ -429,17 +429,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     // leaf. The PAL allocates every operand/scratch DMA buffer and keeps the
     // whole sequence on ONE held engine so a `mont_const_calc`'s Montgomery
     // state stays resident for the ops that follow (`execute_cmd` does not wipe
-    // between commands). All operands are PKA little-endian. The six modular
-    // ops are P-384 only — the PID leaf is always signed with the P-384 alias
-    // key; other curves are rejected.
-
-    /// Resolve a P-384-only modular opcode, rejecting other curves.
-    fn p384_modular(curve: UpkaEccCurve, opcode: u32) -> HsmResult<u32> {
-        match curve {
-            UpkaEccCurve::P384 => Ok(opcode),
-            _ => Err(UpkaError::CMD_ERROR),
-        }
-    }
+    // between commands). All operands are PKA little-endian. The modular ops are
+    // exposed for all three NIST curves via the driver's per-op opcode selectors;
+    // the deterministic PID-leaf sign only exercises P-384 (the alias key curve).
 
     /// Compute the Montgomery constant for `modulus` (curve prime or order)
     /// and leave it resident in the engine for the next op to consume.
@@ -481,7 +473,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
-    /// Modular reduction `result = arg1 mod n` (P-384 only). Requires a prior
+    /// Modular reduction `result = arg1 mod n`. Requires a prior
     /// `mont_const_calc` over the order `n`.
     pub async fn mod_reduction(
         &mut self,
@@ -489,36 +481,36 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         result: &mut DmaBuf,
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MOD_REDUCTION_384)?;
+        let opcode = mod_reduction_opcode(curve);
         self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
             .await
     }
 
-    /// Convert `arg1` into Montgomery representation (P-384 only).
+    /// Convert `arg1` into Montgomery representation.
     pub async fn mont_repr_in(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MONT_REPR_IN_384)?;
+        let opcode = mont_repr_in_opcode(curve);
         self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
             .await
     }
 
-    /// Convert `arg1` out of Montgomery representation (P-384 only).
+    /// Convert `arg1` out of Montgomery representation.
     pub async fn mont_repr_out(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MONT_REPR_OUT_384)?;
+        let opcode = mont_repr_out_opcode(curve);
         self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
             .await
     }
 
-    /// Modular inverse `result = arg1^-1 mod n` (P-384 only). Requires a prior
+    /// Modular inverse `result = arg1^-1 mod n`. Requires a prior
     /// `mont_const_calc` over the order `n`.
     pub async fn mod_inverse(
         &mut self,
@@ -526,12 +518,12 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         result: &mut DmaBuf,
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MOD_INVERSE_384)?;
+        let opcode = mod_inverse_opcode(curve);
         self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
             .await
     }
 
-    /// Modular multiplication `result = arg1 * arg2 mod n` (P-384 only).
+    /// Modular multiplication `result = arg1 * arg2 mod n`.
     /// Operands and result are in Montgomery representation.
     pub async fn mod_multiplication(
         &mut self,
@@ -540,7 +532,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
         arg2: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MOD_MULTIPLICATION_384)?;
+        let opcode = mod_multiplication_opcode(curve);
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -551,7 +543,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
-    /// Modular addition `result = arg1 + arg2 mod n` (P-384 only). Operands
+    /// Modular addition `result = arg1 + arg2 mod n`. Operands
     /// and result are in Montgomery representation.
     pub async fn mod_addition(
         &mut self,
@@ -560,7 +552,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
         arg2: &DmaBuf,
     ) -> HsmResult<()> {
-        let opcode = Self::p384_modular(curve, MOD_ADDITION_384)?;
+        let opcode = mod_addition_opcode(curve);
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,

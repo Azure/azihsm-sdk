@@ -26,24 +26,32 @@ pub(crate) const MONT_CONST_CALC_256: u32 = 0x500c_0000;
 pub(crate) const MONT_CONST_CALC_384: u32 = 0x500c_0001;
 pub(crate) const MONT_CONST_CALC_521: u32 = 0x500c_0008;
 
-// ── P-384 modular / Montgomery opcodes for deterministic ECDSA (RFC 6979) ──
+// ── Modular / Montgomery opcodes (per-curve) ──
 //
-// These drive the firmware-side ECDSA sign used to generate the on-the-fly
-// partition-id (PID) certificate leaf, which is signed with the P-384 alias
-// key and must be byte-stable across lazy regeneration. The sign is built
-// from PKA modular primitives (no firmware big-int) mirroring the mcr-hsm
-// ECC-sign self-test; encodings mirror `PkaCommandCode` in mcr-hsm
-// `cp/hsm/types/src/crypto/pka.rs`. Only P-384 is needed (alias key curve).
-//
-// Consumed by the `UpkaEngine` deterministic-sign step primitives
-// (`mod_reduction`, `mont_repr_in`/`mont_repr_out`, `mod_inverse`,
-// `mod_multiplication`, `mod_addition`) that the PAL orchestrates for the sign.
+// PKA modular primitives used to assemble a firmware-side ECDSA sign from
+// scalar arithmetic (no firmware big-int), mirroring the mcr-hsm ECC-sign
+// self-test. Exposed for all three NIST curves via the `*_opcode` selectors
+// below; the deterministic cert-chain PID-leaf sign only exercises P-384 (the
+// alias key curve). Encodings mirror `PkaCommandCode` in mcr-hsm
+// `cp/hsm/types/src/crypto/pka.rs`.
+pub(crate) const MOD_REDUCTION_256: u32 = 0x5009_0000;
 pub(crate) const MOD_REDUCTION_384: u32 = 0x5009_0001;
+pub(crate) const MOD_REDUCTION_521: u32 = 0x5009_0008;
+pub(crate) const MONT_REPR_IN_256: u32 = 0x500b_0000;
 pub(crate) const MONT_REPR_IN_384: u32 = 0x500b_0001;
+pub(crate) const MONT_REPR_IN_521: u32 = 0x500b_0008;
+pub(crate) const MONT_REPR_OUT_256: u32 = 0x500a_0000;
 pub(crate) const MONT_REPR_OUT_384: u32 = 0x500a_0001;
+pub(crate) const MONT_REPR_OUT_521: u32 = 0x500a_0008;
+pub(crate) const MOD_INVERSE_256: u32 = 0x5007_0000;
 pub(crate) const MOD_INVERSE_384: u32 = 0x5007_0001;
+pub(crate) const MOD_INVERSE_521: u32 = 0x5007_0008;
+pub(crate) const MOD_MULTIPLICATION_256: u32 = 0x5004_0000;
 pub(crate) const MOD_MULTIPLICATION_384: u32 = 0x5004_0001;
+pub(crate) const MOD_MULTIPLICATION_521: u32 = 0x5004_0008;
+pub(crate) const MOD_ADDITION_256: u32 = 0x5005_0000;
 pub(crate) const MOD_ADDITION_384: u32 = 0x5005_0001;
+pub(crate) const MOD_ADDITION_521: u32 = 0x5005_0008;
 pub(crate) const RSA_PRIV_2K: u32 = 0x5000_0003;
 pub(crate) const RSA_PRIV_3K: u32 = 0x5000_0004;
 pub(crate) const RSA_PRIV_4K: u32 = 0x5000_0005;
@@ -150,6 +158,60 @@ pub(crate) fn mont_const_calc_opcode(curve: UpkaEccCurve) -> u32 {
         UpkaEccCurve::P256 => MONT_CONST_CALC_256,
         UpkaEccCurve::P384 => MONT_CONST_CALC_384,
         UpkaEccCurve::P521 => MONT_CONST_CALC_521,
+    }
+}
+
+/// Return the modular-reduction opcode for the selected curve.
+pub(crate) fn mod_reduction_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MOD_REDUCTION_256,
+        UpkaEccCurve::P384 => MOD_REDUCTION_384,
+        UpkaEccCurve::P521 => MOD_REDUCTION_521,
+    }
+}
+
+/// Return the "to Montgomery representation" opcode for the selected curve.
+pub(crate) fn mont_repr_in_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MONT_REPR_IN_256,
+        UpkaEccCurve::P384 => MONT_REPR_IN_384,
+        UpkaEccCurve::P521 => MONT_REPR_IN_521,
+    }
+}
+
+/// Return the "from Montgomery representation" opcode for the selected curve.
+pub(crate) fn mont_repr_out_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MONT_REPR_OUT_256,
+        UpkaEccCurve::P384 => MONT_REPR_OUT_384,
+        UpkaEccCurve::P521 => MONT_REPR_OUT_521,
+    }
+}
+
+/// Return the modular-inverse opcode for the selected curve.
+pub(crate) fn mod_inverse_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MOD_INVERSE_256,
+        UpkaEccCurve::P384 => MOD_INVERSE_384,
+        UpkaEccCurve::P521 => MOD_INVERSE_521,
+    }
+}
+
+/// Return the modular-multiplication opcode for the selected curve.
+pub(crate) fn mod_multiplication_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MOD_MULTIPLICATION_256,
+        UpkaEccCurve::P384 => MOD_MULTIPLICATION_384,
+        UpkaEccCurve::P521 => MOD_MULTIPLICATION_521,
+    }
+}
+
+/// Return the modular-addition opcode for the selected curve.
+pub(crate) fn mod_addition_opcode(curve: UpkaEccCurve) -> u32 {
+    match curve {
+        UpkaEccCurve::P256 => MOD_ADDITION_256,
+        UpkaEccCurve::P384 => MOD_ADDITION_384,
+        UpkaEccCurve::P521 => MOD_ADDITION_521,
     }
 }
 
