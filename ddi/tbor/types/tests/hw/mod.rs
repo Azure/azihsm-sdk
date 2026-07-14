@@ -53,6 +53,7 @@ pub mod default_psk_gate;
 pub mod harness;
 pub mod open_session;
 pub mod part_info;
+pub mod part_init;
 pub mod psk_change;
 pub mod session_helper;
 
