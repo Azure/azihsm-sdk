@@ -27,6 +27,12 @@ pub mod context;
 mod logging;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod uri;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod keyload;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod engine_impl {
     use std::ffi::CStr;
     use std::ffi::c_int;
@@ -36,6 +42,7 @@ mod engine_impl {
 
     use azihsm_ossl_engine_core::engine::DestroyHandler;
     use azihsm_ossl_engine_core::engine::Engine;
+    use azihsm_ossl_engine_core::engine::LoadPrivKeyHandler;
     use azihsm_ossl_engine_core::error::EngineError;
     use azihsm_ossl_engine_core::error::EngineResult;
     use azihsm_ossl_engine_core::error::RetCode;
@@ -69,6 +76,20 @@ mod engine_impl {
         let slot = EngineExData::<EngineData>::register()?;
         let _ = ENGINE_DATA_SLOT.set(slot);
         Ok(slot)
+    }
+
+    struct AzihsmLoadPrivKey;
+    impl LoadPrivKeyHandler for AzihsmLoadPrivKey {
+        fn load(engine: &Engine, key_id: &CStr) -> EngineResult<*mut ffi::EVP_PKEY> {
+            let slot = engine_data_slot()?;
+            let data = slot
+                .get(engine)
+                .ok_or(EngineError::NullParam("engine_data"))?;
+            let key_id = key_id
+                .to_str()
+                .map_err(|_| EngineError::Other("key id is not valid UTF-8".into()))?;
+            crate::keyload::load_key(data, key_id)
+        }
     }
 
     struct AzihsmDestroy;
@@ -158,6 +179,7 @@ mod engine_impl {
         engine.set_id(ENGINE_ID)?;
         engine.set_name(ENGINE_NAME)?;
         engine.set_destroy::<AzihsmDestroy>()?;
+        engine.set_load_privkey::<AzihsmLoadPrivKey>()?;
 
         // Park an empty EngineData. Its HSM session is opened on demand via
         // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and
