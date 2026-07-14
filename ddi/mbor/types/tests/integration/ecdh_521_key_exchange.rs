@@ -691,6 +691,7 @@ fn test_ecdh_521_key_exchange() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_ecdh_521_key_exchange_key_tag() {
     ddi_dev_test(

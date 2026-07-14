@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 #![cfg(test)]
+// AES GCM/XTS are not yet supported on emu; disable these tests until support is added.
+#![cfg(not(feature = "emu"))]
 
 use azihsm_crypto::*;
 use azihsm_ddi::*;

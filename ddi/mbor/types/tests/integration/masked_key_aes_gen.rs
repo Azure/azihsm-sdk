@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#[cfg(not(feature = "emu"))]
 use std::cmp::min;
+#[cfg(not(feature = "emu"))]
 use std::thread;
 
 use azihsm_ddi::*;
@@ -46,6 +48,7 @@ fn test_masked_key_aes_256_gen() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_masked_key_aes_bulk_256_gen() {
     ddi_dev_test(
@@ -153,6 +156,7 @@ fn test_masked_key_aes_gen(
     assert_eq!(resp.data.msg.len(), RAW_MSG.len());
 }
 
+#[cfg(not(feature = "emu"))]
 fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
     device_path: String,
     max_attempts: usize,
@@ -412,6 +416,7 @@ fn test_unmask_session_key() {
 
 // Create named key, delete the key
 // Unmask the key, should still be named key
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_unmask_named_key() {
     ddi_dev_test(
@@ -615,6 +620,7 @@ fn test_unmask_session_key_different_session() {
 /// 4. Unmask the key from the masked blob.
 /// 5. Extract metadata/attributes from the unmasked key's masked blob.
 /// 6. Assert that attributes, raw attribute blob, and metadata fields match exactly.
+#[cfg(not(feature = "emu"))]
 fn unmask_bulk_key_and_verify_attributes(
     dev: &mut <DdiTest as Ddi>::Dev,
     session_id: u16,
@@ -710,6 +716,7 @@ fn unmask_bulk_key_and_verify_attributes(
 }
 
 // Generate an AES XTS Bulk 256 App key, unmask it, and verify all attributes are preserved.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_unmask_xts_bulk_key_preserves_attributes() {
     ddi_dev_test(
@@ -729,6 +736,7 @@ fn test_unmask_xts_bulk_key_preserves_attributes() {
 
 // Generate an AES XTS Bulk 256 Session key, unmask it, and verify all attributes
 // (including the SESSION flag) are preserved.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_unmask_xts_bulk_session_key_preserves_attributes() {
     ddi_dev_test(
@@ -747,6 +755,7 @@ fn test_unmask_xts_bulk_session_key_preserves_attributes() {
 }
 
 // Generate an AES GCM Bulk 256 App key, unmask it, and verify all attributes are preserved.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_unmask_gcm_bulk_key_preserves_attributes() {
     ddi_dev_test(
@@ -766,6 +775,7 @@ fn test_unmask_gcm_bulk_key_preserves_attributes() {
 
 // Generate an AES GCM Bulk 256 Session key, unmask it, and verify all attributes
 // (including the SESSION flag) are preserved.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_unmask_gcm_bulk_session_key_preserves_attributes() {
     ddi_dev_test(

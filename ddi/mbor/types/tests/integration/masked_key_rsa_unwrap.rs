@@ -358,6 +358,7 @@ fn test_masked_key_rsa_unwrap_aes_key() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_masked_key_rsa_unwrap_aes_bulk_key() {
     ddi_dev_test(

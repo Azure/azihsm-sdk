@@ -784,6 +784,7 @@ fn test_secret_kbkdf_aes192() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_name() {
     ddi_dev_test(
@@ -825,6 +826,7 @@ fn test_secret_kbkdf_name() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[allow(clippy::too_many_arguments)]
 fn test_secret_kbkdf_aes_gcm_helper(
     dev: &mut <DdiTest as Ddi>::Dev,
@@ -954,6 +956,7 @@ fn test_secret_kbkdf_aes_gcm_helper(
     close_app_session(dev, session_id);
 }
 
+#[cfg(not(feature = "emu"))]
 #[allow(clippy::too_many_arguments)]
 fn test_secret_kbkdf_aes_xts_helper(
     dev: &mut <DdiTest as Ddi>::Dev,
@@ -1098,6 +1101,7 @@ fn test_secret_kbkdf_aes_xts_helper(
     close_app_session(dev, session_id);
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_unapproved_secret256() {
     ddi_dev_test(
@@ -1130,6 +1134,7 @@ fn test_secret_kbkdf_aes_gcm_unapproved_secret256() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_unapproved_secret384() {
     ddi_dev_test(
@@ -1162,6 +1167,7 @@ fn test_secret_kbkdf_aes_gcm_unapproved_secret384() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_unapproved_secret521() {
     ddi_dev_test(
@@ -1194,6 +1200,7 @@ fn test_secret_kbkdf_aes_gcm_unapproved_secret521() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_approved_secret256() {
     ddi_dev_test(
@@ -1226,6 +1233,7 @@ fn test_secret_kbkdf_aes_gcm_approved_secret256() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_approved_secret384() {
     ddi_dev_test(
@@ -1258,6 +1266,7 @@ fn test_secret_kbkdf_aes_gcm_approved_secret384() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_gcm_approved_secret521() {
     ddi_dev_test(
@@ -1290,6 +1299,7 @@ fn test_secret_kbkdf_aes_gcm_approved_secret521() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_xts_secret256() {
     ddi_dev_test(
@@ -1322,6 +1332,7 @@ fn test_secret_kbkdf_aes_xts_secret256() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_xts_secret384() {
     ddi_dev_test(
@@ -1354,6 +1365,7 @@ fn test_secret_kbkdf_aes_xts_secret384() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_secret_kbkdf_aes_xts_secret521() {
     ddi_dev_test(
