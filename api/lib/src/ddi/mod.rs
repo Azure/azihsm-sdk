@@ -13,6 +13,7 @@ mod masked_key;
 mod partition;
 mod partition_ex;
 mod rsa;
+mod sd_sealing_key_gen;
 mod session;
 mod session_ex;
 mod tpm;
@@ -32,6 +33,7 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
+pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
@@ -97,6 +99,12 @@ impl From<DdiError> for HsmError {
 }
 
 pub(crate) type HsmKeyHandle = u32;
+
+/// Marker handle for a non-resident key: its material lives only as a
+/// masked blob in its props, never in the vault. Delete is a no-op
+/// since there is nothing device-side to release.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct HsmNoKeyHandle;
 
 /// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
 pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;

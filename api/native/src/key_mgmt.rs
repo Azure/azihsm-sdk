@@ -9,6 +9,7 @@ use crate::algo::ecc::*;
 use crate::algo::hmac::*;
 use crate::algo::kdf::*;
 use crate::algo::rsa::*;
+use crate::algo::sealing::*;
 use crate::algo::secret::*;
 
 /// Generate a symmetric key
@@ -45,6 +46,8 @@ pub unsafe extern "C" fn azihsm_key_gen(
             AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesGcmKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
                 aes_generate_key(&session, algo, key_props)?
             }
+            // Security-domain sealing key
+            AzihsmAlgoId::SdSealingKeyGen => sealing_generate_key(&session, algo, key_props)?,
             // Unknown or unsupported algorithms
             _ => Err(AzihsmStatus::InvalidArgument)?,
         };
@@ -163,6 +166,10 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
             }
             HandleType::HmacKey => {
                 let key: Box<HsmHmacKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::SealingKey => {
+                let key: Box<HsmSealingKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
