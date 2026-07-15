@@ -380,6 +380,44 @@ pub trait HsmEcc {
         pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize>;
 
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Computes the public point by base-point scalar multiplication and
+    /// serializes it in the little-endian DDI wire form. Performs no
+    /// hashing and no signing.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve the private key is on.
+    /// - `priv_key` — private key in raw HSM-format scalar bytes
+    ///   (`curve.wire_priv_key_len()`: 32 / 48 / 68 bytes for
+    ///   P-256 / P-384 / P-521), **little-endian** to match the
+    ///   wire-native format produced by real PKA hardware.
+    /// - `pub_key` — output buffer for the uncompressed point `x || y`;
+    ///   must be **at least** `curve.wire_pub_key_len()` bytes. Only the
+    ///   first `wire_pub_key_len()` bytes are written (any tail is left
+    ///   untouched — see *Returns*). **Each coordinate is written
+    ///   little-endian** with P-521 coordinates padded to 68 bytes —
+    ///   matching the on-wire DDI representation and real PKA hardware.
+    ///   Implementations that delegate to a big-endian-native primitive
+    ///   (e.g. OpenSSL) must reverse each coordinate internally.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `pub_key[..wire_pub_key_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `priv_key` not `wire_priv_key_len()`
+    ///   bytes, `pub_key` shorter than `wire_pub_key_len()`, or an invalid
+    ///   private scalar.
+    /// - `Err(HsmError)` — propagated from the PKA driver.
+    async fn ecc_pub_from_priv(
+        &self,
+        io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
     /// ECDH key agreement: derives a shared secret from a local
     /// private key and a remote public key.
     ///

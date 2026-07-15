@@ -155,6 +155,15 @@ impl HsmGdmaController for FakeGdma {
     ) -> HsmResult<()> {
         unimplemented!("vault does not use host copies")
     }
+    async fn copy_mem_from_host_raw(
+        &self,
+        _io: &impl HsmIo,
+        _desc: &[u8; 16],
+        _dst: &mut DmaBuf,
+        _prp: bool,
+    ) -> HsmResult<()> {
+        unimplemented!("vault does not use host copies")
+    }
     async fn copy_mem_to_host(
         &self,
         _io: &impl HsmIo,

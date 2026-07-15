@@ -8,8 +8,10 @@
 //! `key_metadata` bitflags into the firmware-side vault attribute
 //! set the corresponding key kind is allowed to carry.  All builders
 //! share the same skeleton — exactly one of the five usage flag
-//! groups must be set, `local` reflects PKCS#11 `CKA_LOCAL` (set only for
-//! on-device key *generation*, not derive / import), and `session` is
+//! groups must be set, `local` marks provenance — `true` for keys created
+//! on-device (generated *or* derived), `false` only for imported /
+//! unwrapped keys, matching the attestation report's `is_generated` /
+//! `is_imported` flags — and `session` is
 //! independent — but each
 //! enforces a per-algorithm policy on which usage(s) are valid.
 //!
@@ -77,8 +79,9 @@ pub(crate) fn for_ecc(metadata: &DdiTargetKeyMetadata, local: bool) -> HsmResult
 
 /// Build vault attrs for a non-bulk AES key.
 ///
-/// `local` records provenance: `true` only for a key generated on this device,
-/// `false` for derived and imported / unwrapped keys (e.g. recovered via RsaUnwrap).
+/// `local` records provenance: `true` for a key created on this device
+/// (generated *or* derived), `false` only for imported / unwrapped keys
+/// (e.g. recovered via RsaUnwrap).  The caller passes the right value.
 ///
 /// AES (non-bulk) keys can only carry `EncryptDecrypt`.  Any other
 /// usage flag — sign, verify, derive, wrap, or unwrap — is rejected
@@ -159,15 +162,17 @@ pub(crate) fn for_rsa(metadata: &DdiTargetKeyMetadata, local: bool) -> HsmResult
 
 /// Build vault attrs for an ECDH-derived shared secret.
 ///
-/// The secret is *derived* (ECDH key agreement), so it is never marked
-/// `local` — PKCS#11 sets `CKA_LOCAL` only for on-device key generation.
+/// The secret is created on-device (ECDH key agreement), so it is marked
+/// `local`: the attestation report treats generated *and* on-device-derived
+/// keys as `is_generated` (matching the reference firmware / simulator);
+/// only imported / unwrapped keys are non-`local`.
 ///
 /// Derived secrets are HKDF / KBKDF inputs, so the only valid usage
 /// is `derive` (PKCS#11 `CKA_DERIVE`).  Any other usage is rejected
 /// with [`HsmError::InvalidPermissions`].
 pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
     validate_pairs(metadata)?;
-    let mut attrs = HsmVaultKeyAttrs::new().with_local(false);
+    let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
 
     let sign_verify = metadata.sign() && metadata.verify();
     let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();
@@ -198,8 +203,10 @@ pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmV
 
 /// Build vault attrs for a derived variable-length HMAC key.
 ///
-/// These keys are *derived* (HKDF / KBKDF), so they are never marked
-/// `local` — PKCS#11 sets `CKA_LOCAL` only for on-device key generation.
+/// These keys are created on-device (HKDF / KBKDF derive), so they are
+/// marked `local`: the attestation report treats generated *and*
+/// on-device-derived keys as `is_generated` (matching the reference
+/// firmware / simulator); only imported / unwrapped keys are non-`local`.
 ///
 /// HMAC keys produced by HKDF / KBKDF can sign / verify MACs or act
 /// as a key-derivation key (`derive`) for a further KDF.  Exactly one
@@ -207,7 +214,7 @@ pub(crate) fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmV
 /// and `unwrap` are rejected with [`HsmError::InvalidPermissions`].
 pub(crate) fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
     validate_pairs(metadata)?;
-    let mut attrs = HsmVaultKeyAttrs::new().with_local(false);
+    let mut attrs = HsmVaultKeyAttrs::new().with_local(true);
 
     let sign_verify = metadata.sign() && metadata.verify();
     let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();

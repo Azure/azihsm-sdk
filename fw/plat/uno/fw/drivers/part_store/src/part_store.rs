@@ -96,10 +96,47 @@ fn write_handle(key: Option<HsmKeyId>) -> [u8; 2] {
 }
 
 /// Absolute GSRAM base address of partition slot 0.
+#[cfg_attr(test, allow(dead_code))]
 const PART_STORE_BASE: usize = (IO_GSRAM_BASE + PART_STORE_T_BASE) as usize;
 
 /// Bytes between consecutive partition slots.
 const STRIDE: usize = size_of::<Storage>();
+
+/// Base address of partition slot 0's backing store.
+///
+/// In production this resolves to the fixed GSRAM MMIO region
+/// ([`PART_STORE_BASE`]). Host unit tests have no such region, so a single
+/// leaked, zero-initialised heap allocation laid out identically
+/// (`NUM_PARTITIONS` x `STRIDE`, `Storage` alignment) stands in for it, letting
+/// every [`Partition`] handle address real memory so the lifecycle clears can
+/// be exercised and asserted off-target.
+#[cfg(not(test))]
+#[inline]
+fn store_base() -> usize {
+    PART_STORE_BASE
+}
+
+#[cfg(test)]
+fn store_base() -> usize {
+    use core::mem::align_of;
+    use std::alloc::alloc_zeroed;
+    use std::alloc::Layout;
+    use std::sync::OnceLock;
+
+    static BASE: OnceLock<usize> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        let size = NUM_PARTITIONS
+            .checked_mul(STRIDE)
+            .expect("part-store test size overflow");
+        let layout = Layout::from_size_align(size, align_of::<Storage>())
+            .expect("valid part-store test layout");
+        // SAFETY: `layout` has a non-zero size and an all-zero bit pattern is a
+        // valid `Storage` (every field is a byte array or a zero-valued scalar).
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert!(!ptr.is_null(), "part-store test backing allocation failed");
+        ptr as usize
+    })
+}
 
 // ── Lockout policy (reference `PinPolicy`) ───────────────────────────────
 
@@ -244,15 +281,8 @@ struct Storage {
     reserved3: [u8; RESERVED3_LEN],
 }
 
-// Lock the layout to the reference 3072-byte slot. The whole partition-store
-// GSRAM region (`PART_STORE_T_BASE`..key vault) is sized for exactly
-// `NUM_PARTITIONS` of these.
-const _: () = assert!(size_of::<Storage>() == STORE_SIZE);
-const _: () = assert!(STRIDE == STORE_SIZE);
-// The ECC keygen engine writes the public keys directly into these fields
-// via DMA, which requires 4-byte alignment (see `Storage` field ordering).
-const _: () = assert!(core::mem::offset_of!(Storage, ec_pub_key) % 4 == 0);
-const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
+// Compile-time layout assertions (see `part_store/layout_asserts.rs`).
+mod layout_asserts;
 
 /// GSRAM-backed partition persistent store.
 ///
@@ -262,6 +292,20 @@ const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
 /// every slot at PAL boot.
 #[derive(Debug)]
 pub struct PartStore;
+
+/// Selects how much partition state [`Partition::clear_state`] wipes.
+///
+/// Both kinds clear the per-tenant runtime state (enable-time keys,
+/// credential, BK3 session key, nonce, session table, and PIN policy);
+/// they differ only in whether the write-once provisioning material is
+/// preserved. Future reset flavours can be added as additional variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartResetKind {
+    /// NSSR `Migrate`: preserve the partition's provisioning material.
+    Migrate,
+    /// Partition deallocation / disable: also wipe the provisioning material.
+    Disable,
+}
 
 /// A validated partition-store slot.
 ///
@@ -303,7 +347,7 @@ impl Partition {
     #[inline]
     fn slot_ptr(self) -> *mut Storage {
         // `self.0 < NUM_PARTITIONS` by construction (see `PartStore::partition`).
-        (PART_STORE_BASE + self.0 * STRIDE) as *mut Storage
+        (store_base() + self.0 * STRIDE) as *mut Storage
     }
 
     /// Shared reference to this partition's slot.
@@ -382,51 +426,69 @@ impl Partition {
         self.se_pub_key_mut().fill(0);
     }
 
-    /// Zeroizes all per-tenant state established at enable and `PartInit`.
+    /// Clears a partition's state for a given [`PartResetKind`].
     ///
-    /// Clears the enable-time and provisioning vault-key handles (the
-    /// vault deletions themselves are the PAL's responsibility), the
-    /// cached public keys, every caller-presented secret and write-once
-    /// provisioning field (with their presence flags), the nonce, VM
-    /// launch GUID, BK3 incarnation flag, and the per-partition session
-    /// table.
+    /// The shared core (cleared for every kind) drops the enable-time and
+    /// provisioning vault-key handles (the vault deletions themselves are the
+    /// PAL's responsibility), the cached public keys, the caller-presented
+    /// credential, the derived BK3 session key, the nonce, the per-partition
+    /// session table + metadata, and the PIN lockout policy — matching the
+    /// reference `state.disable()` / `state.migrate()`, which both reset the
+    /// policy.
     ///
-    /// The partition identity and `Masked_BK_BOOT` are deliberately
-    /// preserved — they are torn down only on free (see [`reset`]). The
-    /// resource mask, generation counter, and lifecycle state are left
-    /// for the caller to manage.
+    /// [`PartResetKind::Disable`] additionally wipes the write-once
+    /// provisioning material (PTA public key, policy hash, POTA/SATA/SAPOTA
+    /// thumbprints, sealed BK3 + incarnation flag, rotated PSKs, and the VM
+    /// launch GUID); [`PartResetKind::Migrate`] preserves it so a host that
+    /// resets via NSSR keeps its provisioning and only re-establishes its
+    /// credential. The partition identity and `Masked_BK_BOOT` are preserved
+    /// for both — they are torn down only on free (see [`reset`]). The
+    /// resource mask, generation counter, and lifecycle state are left for the
+    /// caller to manage.
     ///
     /// [`reset`]: Self::reset
     #[inline(never)]
-    pub fn clear_enabled_state(mut self) {
+    pub fn clear_state(mut self, kind: PartResetKind) {
+        // ── Per-tenant runtime state (cleared for every reset kind) ──
         // Enable-time keys + cached public keys.
         self.clear_enabled_keys();
-        // Provisioning vault-key handles.
+        // Provisioning vault-key handles (material wiped wholesale by caller).
         self.set_mk_key_id(None);
         self.set_ups_key_id(None);
         self.set_pta_key_id(None);
         self.set_local_mk_key_id(None);
         self.set_ephemeral_mk_key_id(None);
         self.set_unwrapping_key_id(None);
-        // Write-once provisioning material + presence flags.
-        self.clear_pta_pub_key();
-        self.clear_policy_hash();
-        self.clear_pota_thumbprint();
-        self.clear_sata_thumbprint();
-        self.clear_sapota_thumbprint();
+        // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
-        // BK3 session/sealed material + incarnation flag.
         self.clear_bk3_session();
-        self.clear_sealed_bk3();
-        self.set_bk3_initialized(false);
-        // Rotated PSKs, nonce, VM launch GUID, and session table.
-        let slot = self.slot_mut();
-        slot.psk_co = [0u8; PSK_LEN];
-        slot.psk_cu = [0u8; PSK_LEN];
-        slot.nonce = [0u8; NONCE_LEN];
-        slot.vm_launch_guid = [0u8; GUID_LEN];
-        slot.session_table = [0u8; SESSION_TABLE_LEN];
-        slot.session_meta = [0u8; 2];
+        // Reset the PIN lockout policy to default (matches the reference
+        // `state.disable()` and `state.migrate()`).
+        self.set_pin_policy(PinPolicy::default());
+        // Per-tenant runtime: nonce, session table, session metadata.
+        {
+            let slot = self.slot_mut();
+            slot.nonce = [0u8; NONCE_LEN];
+            slot.session_table = [0u8; SESSION_TABLE_LEN];
+            slot.session_meta = [0u8; 2];
+        }
+
+        // ── Write-once provisioning material ──
+        // Preserved by `Migrate` (NSSR keeps provisioning); wiped by `Disable`
+        // (partition deallocation).
+        if matches!(kind, PartResetKind::Disable) {
+            self.clear_pta_pub_key();
+            self.clear_policy_hash();
+            self.clear_pota_thumbprint();
+            self.clear_sata_thumbprint();
+            self.clear_sapota_thumbprint();
+            self.clear_sealed_bk3();
+            self.set_bk3_initialized(false);
+            let slot = self.slot_mut();
+            slot.psk_co = [0u8; PSK_LEN];
+            slot.psk_cu = [0u8; PSK_LEN];
+            slot.vm_launch_guid = [0u8; GUID_LEN];
+        }
     }
 
     /// Borrows the partition's 16-byte identity.
@@ -1290,17 +1352,4 @@ impl Partition {
 }
 
 #[cfg(test)]
-mod align_probe {
-    use core::mem::offset_of;
-
-    use super::*;
-    #[test]
-    fn pub_key_offsets() {
-        std::eprintln!(
-            "id_pub  = {}",
-            offset_of!(Storage, partition_identifier) + 16 + 48
-        );
-        std::eprintln!("ec_pub  = {}", offset_of!(Storage, ec_pub_key));
-        std::eprintln!("se_pub  = {}", offset_of!(Storage, se_pub_key));
-    }
-}
+mod tests;

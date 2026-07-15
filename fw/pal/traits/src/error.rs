@@ -370,6 +370,14 @@ pub enum HsmError {
     /// request is well-formed, the scope is simply unsupported for now.
     UnsupportedKeyScope = 0x08700102,
 
+    /// Returned by `KeyReport` when the masked key's kind cannot be
+    /// attested: symmetric keys (no public component to bind), RSA
+    /// private keys (public-modulus extraction not yet implemented), and
+    /// every non-attestable / internal kind.  Distinct from
+    /// [`UnsupportedCmd`](Self::UnsupportedCmd) (an unknown command) —
+    /// the command is supported, the key type simply is not.
+    UnsupportedKeyType = 0x08700103,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed: not a whole number of 16-byte SGL descriptors, or
     /// larger than a single descriptor page.

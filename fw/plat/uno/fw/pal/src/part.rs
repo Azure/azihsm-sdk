@@ -30,6 +30,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_uno_drivers_part_store::PartResetKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_session_store::SessionStore;
 
@@ -396,7 +397,7 @@ impl UnoHsmPal {
                 self.delete_key(pid, key_id).await;
             }
         }
-        part.clear_enabled_state();
+        part.clear_state(PartResetKind::Disable);
     }
 
     /// Enables partition `pid` (mirrors the reference firmware's
@@ -452,6 +453,62 @@ impl UnoHsmPal {
                 self.clear_enabled_state(pid).await;
                 part.set_state(PartState::Disabled);
                 Ok(())
+            }
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Resets partition `pid`'s per-tenant state for an NSSR `Migrate`,
+    /// mirroring the reference firmware's `state.migrate()`.
+    ///
+    /// Wipes ALL vault key material (app, session, and internal keys — the
+    /// reference does `vault().clear()` / `KeyStore::nuke()`) so no prior
+    /// tenant key survives, then clears only the per-tenant persistent state
+    /// (credential, enable-time/provisioning key handles, nonce, session table,
+    /// BK3 session key, PIN policy) while PRESERVING the provisioning material
+    /// (sealed BK3 + incarnation flag, PTA public key, policy hash,
+    /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, and
+    /// `Masked_BK_BOOT`). Because the vault wipe also removes the identity
+    /// private key, a fresh partition identity (keypair + id blob) is
+    /// regenerated — matching the *std* reference firmware, whose NSSR/erase
+    /// always provisions a fresh identity. Note this intentionally diverges
+    /// from mcr-hsm, whose `state.migrate()` preserves the PID keypair inline
+    /// in its persistent store. Finally regenerates the enable-time
+    /// establish-credential and session-encryption keys.
+    ///
+    /// The net effect matches the reference: the partition keeps its
+    /// provisioning across the reset — with a freshly regenerated identity —
+    /// and only needs its credential re-established, preserving the
+    /// impactless-update guarantee — unlike a full [`part_disable`], which
+    /// additionally tears down the provisioning material.
+    ///
+    /// [`part_disable`]: Self::part_disable
+    pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
+        let part = PartStore::partition(pid)?;
+        match part.state()? {
+            PartState::Enabled => {
+                // Wipe every vault key (app + session + internal) so no prior
+                // tenant key material survives the reset.
+                let admin_io = UnoHsmIo::admin(pid);
+                crate::vault::vault(&admin_io)
+                    .clear(self, &admin_io)
+                    .await?;
+                // Clear per-tenant persistent state, preserving provisioning.
+                part.clear_state(PartResetKind::Migrate);
+                // The `vault.clear()` above also deleted the identity private
+                // key. Zero the identity fields (id, `id_key_id`, cached public
+                // key) *before* awaiting so no concurrent reader can observe
+                // `id_key_id` dangling at a deleted vault key while a fresh
+                // identity is being provisioned across the await points below.
+                part.clear_identity();
+                // Regenerate a fresh partition identity (new keypair + id blob).
+                // Matches the std reference firmware, which always provisions a
+                // fresh identity on NSSR (diverges from mcr-hsm, which preserves
+                // the PID keypair).
+                self.provision_identity(pid).await?;
+                // Regenerate the enable-time establish-credential and
+                // session-encryption keys (this PAL provisions them eagerly).
+                self.provision_enabled_keys(pid).await
             }
             _ => Err(HsmError::InvalidArg),
         }

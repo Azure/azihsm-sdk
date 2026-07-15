@@ -51,24 +51,40 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     // Store in the vault, session-scoped iff requested.
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-    let key_id: u16 = pal
+    let key_handle = pal
         .vault_key_create(io, key_buf, vault_kind, session_binding, attrs)
-        .await?
-        .into();
+        .await?;
+    let key_id: u16 = key_handle.into();
 
-    // Build the response.  `masked_key` is the host's opaque
-    // re-import blob; firmware-side masking against the session BK is
-    // pending the corresponding `UnmaskKey` handler — emit an empty
-    // placeholder for now so the response is wire-valid.  `bulk_key_id`
-    // is reserved for the AES-XTS / AES-GCM bulk variants which this
-    // handler rejects; non-bulk keys always report `None`.
+    // Build the host's opaque re-import blob: envelope the freshly
+    // stored key under the per-session masking key (session-scoped
+    // keys) or the partition masking key (persistent keys).  The key
+    // is read back from the vault so the masked bytes match the bytes
+    // the host will re-import.  `bulk_key_id` is reserved for the
+    // AES-XTS / AES-GCM bulk variants which this handler rejects;
+    // non-bulk keys always report `None`.
+    let plaintext = pal.vault_key(io, key_handle)?;
+    let masked_key = super::masking::mask_blob(
+        pal,
+        io,
+        HsmSessId::from(sess_id),
+        super::masking::MaskSpec {
+            attrs,
+            key_type: super::from_pal::vault_kind_ddi(vault_kind)?,
+            key_label: body.key_properties.key_label,
+            key_length: plaintext.len() as u16,
+        },
+        plaintext,
+    )
+    .await?;
+
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
             &super::success_hdr_sess(hdr, DdiOp::AesGenerateKey, sess_id),
             &DdiAesGenerateKeyResp {
                 key_id,
                 bulk_key_id: None,
-                masked_key: &[],
+                masked_key,
             },
             buf,
         )

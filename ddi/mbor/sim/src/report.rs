@@ -27,6 +27,14 @@ pub const PAYLOAD_MAX_SIZE: usize = REPORT_MAX_ENCODING_BYTES
     + VM_LAUNCH_ID_SIZE
     + REPORT_DATA_SIZE;
 
+/// Maximum payload size of a **v2** report: [`PAYLOAD_MAX_SIZE`] plus the
+/// optional `policy_hash` map entry (1-byte key + 2-byte bstr header +
+/// [`POLICY_HASH_SIZE`] bytes). Firmware-minted v2 reports (KeyReport,
+/// PartInit) are verified through [`KeyAttester`](crate::attestation::KeyAttester),
+/// so its parse buffer is sized to this bound. The MBOR AttestKey path and
+/// the sim's own (v1) report generation keep using [`PAYLOAD_MAX_SIZE`].
+pub const PAYLOAD_MAX_SIZE_V2: usize = PAYLOAD_MAX_SIZE + 3 + POLICY_HASH_SIZE;
+
 /// Signature size for ES384.
 pub const SIGNATURE_SIZE: usize = 96;
 
@@ -152,6 +160,10 @@ pub const REPORT_DATA_SIZE: usize = 128;
 /// Size of the launch id.
 pub const VM_LAUNCH_ID_SIZE: usize = 16;
 
+/// Size of the optional v2 `policy_hash` field (SHA-384 digest). v1 reports
+/// omit it; reserved in the max payload size so a v2 report still fits.
+pub const POLICY_HASH_SIZE: usize = 48;
+
 /// Set of flags denoting capabilities and attributes of the key.
 #[bitfield(u32)]
 pub struct KeyFlags {
@@ -250,11 +262,20 @@ pub const COSE_SIGN1_ARRAY_4: u8 = 0x84;
 /// The encoding byte of 10-length string.
 pub const COSE_SIGN1_STR_10: u8 = 0x6a;
 
-/// Maximum size of the SigStructure
+/// Maximum size of the SigStructure (v1 payload).
 pub const SIG_STRUCTURE_MAX_SIZE: usize = SIG_STRUCTURE_ENCODING_BYTES
     + SIG_STRUCTURE_CONTEXT_SIZE
     + PROTECTED_HEADER_SIZE
     + PAYLOAD_MAX_SIZE;
+
+/// Maximum size of the SigStructure over a **v2** payload. The verify path
+/// rebuilds the `Sig_structure` over a firmware-minted v2 report's payload,
+/// so [`create_tbs`](crate::attestation) sizes its buffer to this; the sign
+/// path emits v1 and uses less.
+pub const SIG_STRUCTURE_MAX_SIZE_V2: usize = SIG_STRUCTURE_ENCODING_BYTES
+    + SIG_STRUCTURE_CONTEXT_SIZE
+    + PROTECTED_HEADER_SIZE
+    + PAYLOAD_MAX_SIZE_V2;
 
 /// Create the encoding of `SigStructure`.
 /// See Section 4.4, <https://www.rfc-editor.org/rfc/rfc9052> for more details.

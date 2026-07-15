@@ -40,6 +40,20 @@ pub(crate) use tpm::*;
 
 use super::*;
 
+/// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
+pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Maximum number of certificates in a `part_final` PTA chain.
+pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
+pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
+/// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
+pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+
+// Pin the shared-module `PSK_LEN` (defined in `shared_types`, which is
+// shared with the native crate) to the wire-schema value so the two
+// cannot drift.
+const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
+
 /// Converts a DDI error into the corresponding `HsmError`.
 ///
 /// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
@@ -105,20 +119,6 @@ pub(crate) type HsmKeyHandle = u32;
 /// since there is nothing device-side to release.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct HsmNoKeyHandle;
-
-/// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
-pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
-/// Maximum number of certificates in a `part_final` PTA chain.
-pub use azihsm_ddi_tbor_types::MAX_CERTS;
-/// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
-pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
-/// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
-pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
-
-// Pin the shared-module `PSK_LEN` (defined in `shared_types`, which is
-// shared with the native crate) to the wire-schema value so the two
-// cannot drift.
-const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 
 /// Extracts the key ID from a packed HSM key handle.
 ///

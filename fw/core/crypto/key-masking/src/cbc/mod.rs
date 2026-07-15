@@ -13,6 +13,7 @@ mod decode;
 mod encode;
 mod format;
 
+pub use decode::peek_metadata;
 pub use decode::unmask;
 pub use decode::UnmaskLayout;
 pub use encode::mask;

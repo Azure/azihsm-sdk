@@ -261,7 +261,9 @@ impl SessionCtrl {
             | opcode::PSK_CHANGE
             | opcode::PART_INIT
             | opcode::PART_FINAL
-            | opcode::SD_SEALING_KEY_GEN => Self::InSession,
+            | opcode::SD_SEALING_KEY_GEN
+            | opcode::SD_CREATE_REMOTE_BACKUP
+            | opcode::KEY_REPORT => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

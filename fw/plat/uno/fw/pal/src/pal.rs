@@ -602,14 +602,21 @@ impl UnoHsmPal {
         // PF (PcieFunction::Pf == 64) is enabled before its resources are
         // assigned; a VF is enabled after. `part_enable` needs to know which.
         let is_pf = msg.info.pfn == 64;
-        // Map the IPC action onto a partition-lifecycle primitive; Migrate
-        // and any unknown action are not supported.  No partition lock: a
+        // Map the IPC action onto a partition-lifecycle primitive. `Migrate`
+        // drives an NSSR reset (handled by `part_migrate` below); only an
+        // unknown action is rejected as unsupported. No partition lock: a
         // partition cannot be disabled/freed while host IOs are in flight,
         // and admin-IPC is strictly serial, so this cannot race a host
         // command (see lock.rs).
         let result = match PfnEnableDisableAction(msg.info.action) {
             PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
+            // NSSR: the Admin sends `Migrate` to reset a partition's per-tenant
+            // state. `part_migrate` mirrors the reference `state.migrate()`:
+            // wipe the key vault and clear the per-tenant state while preserving
+            // the partition's provisioning, then regenerate the enable-time
+            // keys, leaving the partition enabled and re-provisionable.
+            PfnEnableDisableAction::Migrate => self.part_migrate(pid).await,
             _ => Err(HsmError::UnsupportedCmd),
         };
         let status = match result {

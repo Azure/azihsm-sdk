@@ -21,11 +21,12 @@
 //! buffers are handed out as [`DmaBuf`](azihsm_fw_hsm_pal_traits::DmaBuf) so
 //! the PAL can feed them straight to the crypto / DMA engines.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(unsafe_code)]
 
 mod part_store;
 
+pub use part_store::PartResetKind;
 pub use part_store::PartStore;
 pub use part_store::Partition;
 pub use part_store::PinPolicy;

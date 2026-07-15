@@ -12,23 +12,24 @@
 //!
 //! Layout discipline:
 //!
-//! * Every multi-byte scalar is stored as a little-endian byte array
-//!   native `#[repr(C)]` `u16` (alignment-2); a trailing `_reserved`
-//!   byte pads [`PartPolicy`] to an even, padding-free size. All
-//!   supported targets are little-endian, so the in-memory image equals
-//!   the wire image. The firmware copies the policy out of the wire
-//!   buffer (`try_read_from_bytes`), so no buffer-alignment plumbing is
-//!   needed.
+//! * Every multi-byte scalar is stored as an alignment-1 little-endian
+//!   [`U16`], so every type here — and [`PartPolicy`] as a whole — is
+//!   alignment-1 / [`Unaligned`]. A trailing `_reserved` byte pads
+//!   [`PartPolicy`] to an even, padding-free size. The firmware borrows
+//!   the policy zero-copy from the wire buffer (`try_ref_from_bytes`),
+//!   so no buffer-alignment plumbing is needed.
 //! * `#[repr(C)]` + zerocopy [`TryFromBytes`] / [`IntoBytes`] /
-//!   [`Immutable`] / [`KnownLayout`] derives reject any padding /
-//!   alignment drift at compile time.
+//!   [`Immutable`] / [`KnownLayout`] / [`Unaligned`] derives reject any
+//!   padding / alignment drift at compile time.
 
 use bitfield_struct::bitfield;
 use open_enum::open_enum;
+use zerocopy::little_endian::U16;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 use zerocopy::KnownLayout;
 use zerocopy::TryFromBytes;
+use zerocopy::Unaligned;
 
 /// Maximum key length for [`PolicyPubKey::data`] (bytes).
 ///
@@ -63,7 +64,9 @@ pub enum PolicyKeyKind {
 /// Two-byte policy version (`major.minor`).
 ///
 /// Layout (alignment 1, size 2 B): `major(1) ‖ minor(1)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
 #[repr(C)]
 pub struct PolicyVer {
     /// Major version number.  Must equal [`POLICY_VERSION_MAJOR`].
@@ -75,20 +78,57 @@ pub struct PolicyVer {
 
 /// POTA public key embedded in [`PartPolicy`].
 ///
-/// Layout (alignment 2, size 100 B): `kind(2 LE) ‖ len(2 LE) ‖ data(96)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+/// Layout (alignment 1, size 100 B): `kind(2 LE) ‖ len(2 LE) ‖ data(96)`.
+///
+/// `kind` and `len` are stored as alignment-1 little-endian [`U16`] so
+/// the whole struct (and [`PartPolicy`]) is [`Unaligned`] and can be
+/// borrowed zero-copy from an arbitrarily-aligned wire buffer; read them
+/// through [`kind`](Self::kind) / [`len`](Self::len).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
 #[repr(C)]
 pub struct PolicyPubKey {
-    /// [`PolicyKeyKind`] discriminant. Native, little-endian on all
-    /// supported targets (open-enum newtype over `u16`).
-    pub kind: PolicyKeyKind,
+    /// [`PolicyKeyKind`] discriminant, little-endian.  Read via
+    /// [`kind`](Self::kind).
+    kind: U16,
 
-    /// Active prefix length of `data` (`0..=POLICY_MAX_KEY_LEN`).
-    /// For `Ecc384` must equal [`POLICY_MAX_KEY_LEN`].
-    pub len: u16,
+    /// Active prefix length of `data` (`0..=POLICY_MAX_KEY_LEN`),
+    /// little-endian.  Read via [`len`](Self::len).  For `Ecc384` must
+    /// equal [`POLICY_MAX_KEY_LEN`].
+    len: U16,
 
-    /// Key bytes; only the first `len` bytes are meaningful.
+    /// Key bytes; only the first `len()` bytes are meaningful.
     pub data: [u8; POLICY_MAX_KEY_LEN],
+}
+
+impl PolicyPubKey {
+    /// Construct a key slot from its raw discriminant, length, and data.
+    pub const fn new(kind: PolicyKeyKind, len: u16, data: [u8; POLICY_MAX_KEY_LEN]) -> Self {
+        Self {
+            kind: U16::new(kind.0),
+            len: U16::new(len),
+            data,
+        }
+    }
+
+    /// The [`PolicyKeyKind`] discriminant.
+    #[inline]
+    pub fn kind(&self) -> PolicyKeyKind {
+        PolicyKeyKind(self.kind.get())
+    }
+
+    /// Active prefix length of [`data`](Self::data).
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len.get() as usize
+    }
+
+    /// `true` iff the key slot is absent (`len == 0`).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len.get() == 0
+    }
 }
 
 /// Boolean policy flags, packed into a single byte (alignment 1).
@@ -104,7 +144,7 @@ pub struct PolicyPubKey {
 /// contract "reserved bits MUST be zero" is enforced separately by
 /// [`PolicyFlags::is_valid`].
 #[bitfield(u8)]
-#[derive(PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 pub struct PolicyFlags {
     /// Bit 0: include the First Mutable Composite Device Identity
     /// (CDI-FMC) in key derivations.
@@ -158,7 +198,7 @@ impl PolicyFlags {
 /// peer-cloning flags).  Pubkey slots that are not in use carry
 /// `len = 0` (see [`PolicyPubKey`]).
 ///
-/// Layout (alignment 2, size 484 B):
+/// Layout (alignment 1, size 484 B):
 ///
 /// | Field                 | Offset | Size |
 /// |-----------------------|--------|------|
@@ -171,7 +211,9 @@ impl PolicyFlags {
 /// | `flags`               | 418    | 1    |
 /// | `info`                | 419    | 64   |
 /// | `_reserved`           | 483    | 1    |
-#[derive(Debug, Clone, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
+)]
 #[repr(C)]
 pub struct PartPolicy {
     /// Policy version (major.minor).
@@ -205,7 +247,7 @@ pub struct PartPolicy {
     pub info: [u8; POLICY_INFO_LEN],
 
     /// Reserved padding byte (MUST be zero) that rounds the struct to an
-    /// even, alignment-2-clean size with no implicit padding.
+    /// even size with no implicit padding.
     pub _reserved: u8,
 }
 
@@ -214,11 +256,8 @@ impl PartPolicy {
     /// default for owned request structs (the contained byte arrays are
     /// larger than 32 B, so `#[derive(Default)]` is unavailable).
     pub const fn zeroed() -> Self {
-        const ZERO_KEY: PolicyPubKey = PolicyPubKey {
-            kind: PolicyKeyKind(0),
-            len: 0,
-            data: [0; POLICY_MAX_KEY_LEN],
-        };
+        const ZERO_KEY: PolicyPubKey =
+            PolicyPubKey::new(PolicyKeyKind(0), 0, [0; POLICY_MAX_KEY_LEN]);
         Self {
             version: PolicyVer { major: 0, minor: 0 },
             pota_pub_key: ZERO_KEY,
@@ -243,9 +282,9 @@ impl Default for PartPolicy {
 pub const PART_POLICY_LEN: usize = core::mem::size_of::<PartPolicy>();
 
 const _: () = assert!(PART_POLICY_LEN == 484);
-const _: () = assert!(core::mem::align_of::<PartPolicy>() == 2);
+const _: () = assert!(core::mem::align_of::<PartPolicy>() == 1);
 const _: () = assert!(core::mem::size_of::<PolicyPubKey>() == 100);
-const _: () = assert!(core::mem::align_of::<PolicyPubKey>() == 2);
+const _: () = assert!(core::mem::align_of::<PolicyPubKey>() == 1);
 const _: () = assert!(core::mem::size_of::<PolicyVer>() == 2);
 const _: () = assert!(core::mem::size_of::<PolicyFlags>() == 1);
 
@@ -256,7 +295,7 @@ mod tests {
     #[test]
     fn layout_is_pinned() {
         assert_eq!(PART_POLICY_LEN, 484);
-        assert_eq!(core::mem::align_of::<PartPolicy>(), 2);
+        assert_eq!(core::mem::align_of::<PartPolicy>(), 1);
     }
 
     #[test]

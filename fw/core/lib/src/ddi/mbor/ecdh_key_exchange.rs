@@ -75,10 +75,8 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
     )
     .await?;
 
-    // RAII vault entry — rolls back if response encoding below
-    // fails.  `masked_key` is the host's opaque re-import blob;
-    // firmware-side masking is pending the `UnmaskKey` handler, so
-    // we emit an empty placeholder for wire validity.
+    // Commit the derived shared secret to the vault, session-scoped
+    // iff requested.
     let key_id: u16 = pal
         .vault_key_create(
             io,
@@ -90,13 +88,25 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
         .await?
         .into();
 
+    // Envelope the derived shared secret into the host's re-import blob.
+    let masked_key = super::masking::mask_blob(
+        pal,
+        io,
+        HsmSessId::from(sess_id),
+        super::masking::MaskSpec {
+            attrs: target_attrs,
+            key_type: super::from_pal::ecdh_secret_ddi(curve),
+            key_label: body.key_properties.key_label,
+            key_length: secret.len() as u16,
+        },
+        &secret[..],
+    )
+    .await?;
+
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
             &super::success_hdr_sess(hdr, DdiOp::EcdhKeyExchange, sess_id),
-            &DdiEcdhKeyExchangeResp {
-                key_id,
-                masked_key: &[],
-            },
+            &DdiEcdhKeyExchangeResp { key_id, masked_key },
             buf,
         )
     })?;

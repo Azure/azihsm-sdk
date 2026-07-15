@@ -49,6 +49,10 @@ pub struct KeyReportParams<'a> {
     pub report_data: &'a DmaBuf,
     /// VM launch ID; must be [`VM_LAUNCH_ID_LEN`] bytes.
     pub vm_launch_id: &'a DmaBuf,
+    /// Optional SHA-384 PartPolicy digest. When `Some`, the report is
+    /// emitted as **v2** (carrying `policy_hash`); when `None`, as **v1**.
+    /// Must be [`POLICY_HASH_LEN`] bytes when present.
+    pub policy_hash: Option<&'a DmaBuf>,
 }
 
 impl KeyReportParams<'_> {
@@ -58,6 +62,11 @@ impl KeyReportParams<'_> {
             || self.vm_launch_id.len() != VM_LAUNCH_ID_LEN
         {
             return Err(HsmError::InvalidArg);
+        }
+        if let Some(policy_hash) = self.policy_hash {
+            if policy_hash.len() != POLICY_HASH_LEN {
+                return Err(HsmError::InvalidArg);
+            }
         }
         self.key.validate()
     }
@@ -114,19 +123,30 @@ where
 
 /// Encode the inner COSE_Key into `cose_key` scratch and build the
 /// payload codec struct describing it.
+///
+/// The report format version follows the presence of `policy_hash`:
+/// [`REPORT_VERSION_V2`] when set (the payload carries the hash),
+/// [`REPORT_VERSION`] otherwise — so there is no separate v1/v2 code path.
 fn build_payload_struct<'a>(
     params: &'a KeyReportParams<'a>,
     cose_key: &'a DmaBuf,
     cose_len: usize,
 ) -> KeyReportPayload<'a> {
+    let policy_hash = params.policy_hash.map(|d| &**d);
+    let version = if policy_hash.is_some() {
+        REPORT_VERSION_V2
+    } else {
+        REPORT_VERSION
+    };
     KeyReportPayload {
-        version: REPORT_VERSION,
+        version,
         public_key: cose_key,
         public_key_size: cose_len as u16,
         flags: params.flags,
         app_uuid: params.app_uuid,
         report_data: params.report_data,
         vm_launch_id: params.vm_launch_id,
+        policy_hash,
     }
 }
 

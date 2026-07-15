@@ -3,6 +3,7 @@
 
 pub(crate) mod aes_encrypt_decrypt;
 pub(crate) mod aes_generate_key;
+pub(crate) mod attest_key;
 pub(crate) mod close_session;
 pub(crate) mod delete_key;
 pub(crate) mod ecc_generate_key_pair;
@@ -25,14 +26,17 @@ pub(crate) mod init_bk3;
 pub(crate) mod kbkdf_derive;
 pub(crate) mod kdf;
 pub(crate) mod key_attrs;
+pub(crate) mod masking;
 pub(crate) mod open_session;
 pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
+pub(crate) mod unmask_key;
 
 pub(crate) use aes_encrypt_decrypt::*;
 pub(crate) use aes_generate_key::*;
+pub(crate) use attest_key::*;
 use azihsm_fw_ddi_mbor::*;
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
@@ -61,6 +65,7 @@ pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
+pub(crate) use unmask_key::*;
 
 use super::*;
 
@@ -163,6 +168,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetSessionEncryptionKey => get_session_encryption_key(pal, io, decoder, hdr).await,
         DdiOp::GetUnwrappingKey => get_unwrapping_key(pal, io, decoder, hdr).await,
         DdiOp::RsaUnwrap => rsa_unwrap(pal, io, decoder, hdr).await,
+        DdiOp::UnmaskKey => unmask_key(pal, io, decoder, hdr).await,
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
@@ -178,6 +184,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::KbkdfCounterHmacDerive => kbkdf_counter_hmac_derive(pal, io, decoder, hdr).await,
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
+        DdiOp::AttestKey => attest_key(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }?;
     Ok(DispatchResult::from_resp(resp))

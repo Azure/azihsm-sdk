@@ -137,7 +137,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // Trust gate: walk the supplied PTA certificate chain, proving it
         // chains to the policy `POTAPubKey` and that its terminal (PTA)
         // certificate carries this partition's PTA key.
-        validate_pta_chain(pal, io, alloc, oob, req.cert_descriptors, &policy).await?;
+        validate_pta_chain(pal, io, alloc, oob, req.cert_descriptors, policy).await?;
 
         // Platform identity that binds the masking keys / backup
         // envelope: SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
@@ -347,7 +347,7 @@ async fn derive_local_bmk<'a, P: HsmPal>(
 
 /// Verify `SHA-384(part_policy)` equals the partition's stored
 /// `policy_hash` (bound at `PartInit`).
-async fn verify_policy_hash<P: HsmPal>(
+pub(crate) async fn verify_policy_hash<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &impl HsmScopedAlloc,

@@ -50,6 +50,34 @@ pub struct UnmaskLayout {
     pub plaintext_max_len: usize,
 }
 
+/// Locate the (unauthenticated) cleartext metadata region of a `MaskedKey`
+/// AES-CBC-256 + HMAC-SHA-384 blob **without** verifying its HMAC — a
+/// key-free analogue of [`unmask`]'s header parse.
+///
+/// Callers may inspect the returned bytes to select the masking key (for
+/// example by the recorded scope): because [`unmask`] authenticates before
+/// use, a wrong selection from a tampered scope is still rejected by the
+/// HMAC check, so trusting the peeked bytes for key *selection* only is
+/// safe.  They must not otherwise be trusted until `unmask` succeeds.
+///
+/// # Errors
+///
+/// * [`HsmError::MaskedKeyDecodeFailed`] — the headers are malformed, or
+///   `blob.len()` does not match the on-wire length they declare.
+pub fn peek_metadata(blob: &DmaBuf) -> HsmResult<&[u8]> {
+    // Structural header parse only (no key, no tag verification); mirrors
+    // the header handling at the top of `unmask`.
+    MaskedKeyHeader::parse_cbc(blob)?;
+    let hdr = MaskedKeyAesHeader::parse_cbc(&blob[MaskedKeyHeader::SIZE..])?;
+    if blob.len() != hdr.total_len() {
+        return Err(HsmError::MaskedKeyDecodeFailed);
+    }
+    let off = hdr.metadata_offset();
+    let len = hdr.metadata_len_bytes();
+    blob.get(off..off + len)
+        .ok_or(HsmError::MaskedKeyDecodeFailed)
+}
+
 /// In-place authenticate-and-decrypt a `MaskedKey` AES-CBC-256 +
 /// HMAC-SHA-384 blob.
 ///

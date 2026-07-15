@@ -13,26 +13,33 @@
 //! * `session_id` — TOC-carried CO session id; cross-checked against the
 //!   SQE-carried session id by the dispatcher (parity with the other
 //!   in-session commands).
-//! * `sender_key` — sender key id ([`KeyId`](azihsm_fw_ddi_tbor_api::KeyId),
-//!   TOC entry type 1) the masked security domain is wrapped under.
+//! * `masked_sealing_key` — the sender's masked SD-sealing key (the
+//!   `masked_key` returned by
+//!   [`SdSealingKeyGen`](crate::sd_sealing_key_gen)), exactly
+//!   [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover
+//!   the sender's private ECDH key (`SndrPriv`); never a vault handle.
 //! * `receiver_evidence` — receiver side-band attestation evidence
 //!   ([`Evidence`](crate::evidence::Evidence) field group: manufacturer /
-//!   owner / partition-owner certificate chains plus the attestation
-//!   report).
+//!   owner / partition-owner certificate-chain descriptors plus the
+//!   attestation-report descriptor).  The report descriptor indexes the
+//!   receiver's `KeyReport` in the out-of-band SGL page; its COSE_Key
+//!   supplies the recipient public key (`RcvrPub`).
 //! * `policy` — the unified [`PartPolicy`] describing the security domain
 //!   to create.  Length pinned to [`PART_POLICY_LEN`] (484 B).
 //!
 //! Output:
 //!
-//! * `pok_remote_backup` — the remote partition-owner-key backup (a
-//!   masked BKS3), exactly [`MASKED_SD_LEN`] (180 B): an AEAD-GCM-256
-//!   masked-key envelope whose plaintext is the 48-byte BKS3 and whose
-//!   AAD is the 96-byte `MaskedKeyMetadata`.
+//! * `pok_remote_backup` — the remote partition-owner-key backup: an
+//!   **HPKE-Auth seal** of the fresh 48-byte BKS3 to `RcvrPub` with
+//!   `SndrPriv` as the sender-authentication key, exactly
+//!   [`POK_REMOTE_BACKUP_LEN`] (161 B) = `enc(97) ‖ ct(64)` under the
+//!   `DHKemP384Sha384AesGcm256` suite.
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
 use crate::evidence::*;
 pub use crate::policy::PART_POLICY_LEN;
+pub use crate::sd_sealing_key_gen::MASKED_SEALING_KEY_LEN;
 
 /// TBOR opcode for `SdCreateRemoteBackup`.
 pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
@@ -42,14 +49,32 @@ pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
 // against the canonical value here.
 const _: () = assert!(PART_POLICY_LEN == 484);
 
-/// Exact on-the-wire length of the masked security-domain blob.
+// `masked_sealing_key` is spelled out as `180` on the field (the derive
+// needs an integer literal) and pinned against the canonical
+// `MASKED_SEALING_KEY_LEN` here.
+const _: () = assert!(MASKED_SEALING_KEY_LEN == 180);
+
+/// Exact on-the-wire length of a **masked** security-domain blob (a
+/// masked BKS3): an AEAD-GCM-256 masked-key envelope
+/// (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖ tag(16)`) whose plaintext
+/// is the 48-byte BKS3 and whose AAD is the 96-byte `MaskedKeyMetadata`.
 ///
-/// Sized as a masked BKS3: an AEAD-GCM-256 masked-key envelope
-/// (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖ tag(16)`) where the
-/// plaintext is the 48-byte BKS3 and the AAD is the 96-byte
-/// `MaskedKeyMetadata`.
+/// Retained here as the shared length authority for the rest of the
+/// Security-Domain backup family (`SdReseal`, `SdRestore*`,
+/// `SdCreatePeerBackup`), which re-export it.  **This command's**
+/// response is an HPKE-Auth seal sized by [`POK_REMOTE_BACKUP_LEN`], not
+/// a masked blob.
 pub const MASKED_SD_LEN: usize = 8 + 12 + 96 + 48 + 16;
 const _: () = assert!(MASKED_SD_LEN == 180);
+
+/// Exact on-the-wire length of the remote partition-owner-key backup.
+///
+/// An HPKE-Auth seal under `DHKemP384Sha384AesGcm256`: the encapsulated
+/// key `enc` (P-384 SEC1 uncompressed, 97 B) followed by the AEAD
+/// ciphertext `ct` over the 48-byte BKS3 plus the 16-byte GCM tag
+/// (`48 + 16 = 64`).
+pub const POK_REMOTE_BACKUP_LEN: usize = 97 + (48 + 16);
+const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
 
 /// `SdCreateRemoteBackup` request schema.
 #[tbor(opcode = 0x0A)]
@@ -60,14 +85,25 @@ pub struct TborSdCreateRemoteBackupReq<'a> {
     #[tbor(session_id)]
     pub session_id: SessionId,
 
-    /// The sender key id.
-    #[tbor(key_id)]
-    pub sender_key: KeyId,
+    /// The sender's masked SD-sealing key (from `SdSealingKeyGen`),
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// recover `SndrPriv`.
+    ///
+    /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open (unmask)
+    /// the blob **in place** in the request buffer via
+    /// [`decode_mut`](TborSdCreateRemoteBackupReq::decode_mut), avoiding a
+    /// scratch copy.  The `#[tbor(include)]` evidence group that follows is
+    /// omitted from the generated `ViewMut` (its accessors remain on the
+    /// shared [`decode`](TborSdCreateRemoteBackupReq::decode) view), so the
+    /// handler reads evidence via `decode` and unmasks via `decode_mut`.
+    #[tbor(buffer, len = 180, mutable)]
+    pub masked_sealing_key: &'a [u8],
 
     /// Side-band attestation evidence (manufacturer / owner /
-    /// partition-owner certificate chains plus the attestation report).
-    /// Spliced in as the [`Evidence`](crate::evidence::Evidence) field
-    /// group's four TOC entries.
+    /// partition-owner certificate-chain descriptors plus the attestation
+    /// report descriptor).  Spliced in as the
+    /// [`Evidence`](crate::evidence::Evidence) field group's four TOC
+    /// entries.
     #[tbor(include)]
     pub receiver_evidence: Evidence<'a>,
 
@@ -82,9 +118,9 @@ pub struct TborSdCreateRemoteBackupReq<'a> {
 /// `SdCreateRemoteBackup` response schema.
 #[tbor(response)]
 pub struct TborSdCreateRemoteBackupResp<'a> {
-    /// Remote partition-owner-key backup (a masked BKS3).  Always exactly
-    /// [`MASKED_SD_LEN`] (180 B).
-    #[tbor(buffer, len = 180)]
+    /// Remote partition-owner-key backup (an HPKE-Auth seal of BKS3).
+    /// Always exactly [`POK_REMOTE_BACKUP_LEN`] (161 B).
+    #[tbor(buffer, len = 161)]
     pub pok_remote_backup: &'a [u8],
 }
 
@@ -92,27 +128,27 @@ pub struct TborSdCreateRemoteBackupResp<'a> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use azihsm_fw_ddi_tbor_api::KeyId;
     use azihsm_fw_ddi_tbor_api::SessionId;
 
     use super::*;
 
     #[test]
-    fn masked_sd_len_matches_masked_bks3_envelope() {
-        // header(8) + iv(12) + meta-aad(96) + bks3(48) + tag(16).
-        const _: () = assert!(MASKED_SD_LEN == 180);
-        assert_eq!(MASKED_SD_LEN, 180);
+    fn pok_remote_backup_len_matches_hpke_auth_seal() {
+        // enc(97) + ct(BKS3 48 + GCM tag 16 = 64).
+        const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
+        assert_eq!(POK_REMOTE_BACKUP_LEN, 161);
     }
 
     #[test]
-    fn request_round_trips_policy() {
+    fn request_round_trips_masked_key_and_policy() {
+        let masked = [0u8; MASKED_SEALING_KEY_LEN];
         let policy = [0u8; PART_POLICY_LEN];
         let cert = CertDescriptor {
             index: 0,
             length: crate::tbor_int::U16::new(8),
         };
         let report = ReportDescriptor {
-            index: 1,
+            index: 8,
             length: crate::tbor_int::U16::new(16),
         };
         let chain = [cert];
@@ -121,7 +157,7 @@ mod tests {
             .unwrap()
             .session_id(SessionId(7))
             .unwrap()
-            .sender_key(KeyId(0x5678))
+            .masked_sealing_key(&masked)
             .unwrap()
             .receiver_evidence(|e| {
                 e.mfgr_cert_chain(&chain)?
@@ -133,18 +169,19 @@ mod tests {
             .policy(&policy)
             .unwrap()
             .finish();
+        assert_eq!(frame.masked_sealing_key().len(), MASKED_SEALING_KEY_LEN);
         assert_eq!(frame.policy().len(), PART_POLICY_LEN);
     }
 
     #[test]
     fn response_round_trips_pok_remote_backup() {
-        let masked = [0xABu8; MASKED_SD_LEN];
+        let sealed = [0xABu8; POK_REMOTE_BACKUP_LEN];
         let mut buf = [0u8; 512];
         let frame = TborSdCreateRemoteBackupResp::encode(&mut buf, 0, true)
             .unwrap()
-            .pok_remote_backup(&masked)
+            .pok_remote_backup(&sealed)
             .unwrap()
             .finish();
-        assert_eq!(frame.pok_remote_backup().len(), MASKED_SD_LEN);
+        assert_eq!(frame.pok_remote_backup().len(), POK_REMOTE_BACKUP_LEN);
     }
 }

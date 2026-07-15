@@ -493,6 +493,35 @@ pub trait HsmSessionManager {
     ///   than expected (corruption indicator).
     fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf>;
 
+    /// Returns a borrowed view of the active session's 80-byte masking
+    /// key (the AES-CBC-256 ‖ HMAC-SHA-384 key installed at session
+    /// creation).
+    ///
+    /// Zero-copy: like [`session_param_key`](Self::session_param_key)
+    /// the returned `&DmaBuf` borrows directly from the PAL's
+    /// session-schedule storage, so in-session key-creating handlers
+    /// can hand it to the masking primitive without an intermediate
+    /// allocation to envelope a session-scoped key into a
+    /// host-re-importable masked-key blob (persistent keys use the
+    /// partition masking key instead).  This hides the schedule blob
+    /// layout from handlers.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `id` — Active session slot.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(&DmaBuf)` — a sub-view of the schedule blob, exactly
+    ///   [`SESSION_MASKING_KEY_LEN`] bytes long.
+    /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to a
+    ///   live Active session in the caller's partition (slot free,
+    ///   destroyed, or still Pending).
+    /// - `Err(HsmError::InternalError)` — schedule blob is shorter
+    ///   than expected (corruption indicator).
+    fn session_masking_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf>;
+
     /// Atomically reserves the session's one-shot "PSK change"
     /// budget.  Each session may successfully consume this budget at
     /// most once.

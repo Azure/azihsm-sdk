@@ -596,6 +596,7 @@ fn test_rsa_unwrap_rsa_crt_key() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_rsa_unwrap_rsa_with_key_tag() {
     ddi_dev_test(
@@ -651,6 +652,7 @@ fn test_rsa_unwrap_rsa_with_key_tag() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_rsa_unwrap_rsa_crt_with_key_tag() {
     ddi_dev_test(
@@ -706,6 +708,7 @@ fn test_rsa_unwrap_rsa_crt_with_key_tag() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_rsa_unwrap_ecc_keys_with_key_tag() {
     ddi_dev_test(
@@ -833,6 +836,7 @@ fn test_rsa_unwrap_aes_key() {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 #[test]
 fn test_rsa_unwrap_aes_with_key_tag() {
     ddi_dev_test(

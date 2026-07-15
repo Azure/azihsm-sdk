@@ -379,4 +379,41 @@ impl HsmEcc for UnoHsmPal {
         // key on Uno PKA (RsaUnwrap ECC import).
         Err(HsmError::UnsupportedCmd)
     }
+
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Delegates to [`UnoHsmPal::pka.ecc_gen_pub_key`] (PKA base-point
+    /// scalar multiplication) after curve mapping. Both buffers are in
+    /// the little-endian PKA wire format.
+    ///
+    /// # Parameters
+    /// * `curve` — NIST curve the private key is on.
+    /// * `priv_key` — raw HSM-format private scalar
+    ///   ([`HsmEccCurve::wire_priv_key_len`] bytes).
+    /// * `pub_key` — output buffer for `X ‖ Y`
+    ///   ([`HsmEccCurve::wire_pub_key_len`] bytes).
+    ///
+    /// # Errors
+    /// * [`HsmError::InvalidArg`] if `curve` is unsupported or a buffer is
+    ///   undersized.
+    /// * Any [`HsmError`] surfaced by the PKA driver.
+    async fn ecc_pub_from_priv(
+        &self,
+        _io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let pka_curve = map_ecc_curve(curve)?;
+        let wire_pub_len = curve.wire_pub_key_len();
+        if priv_key.len() != curve.wire_priv_key_len() || pub_key.len() < wire_pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+        // Pass an exact-sized sub-view: the PKA writes a fixed number of
+        // bytes per curve and is not given a length, so an oversized caller
+        // buffer would otherwise keep stale bytes in its tail.
+        self.pka
+            .ecc_gen_pub_key(pka_curve, priv_key, &mut pub_key[..wire_pub_len])
+            .await
+    }
 }

@@ -40,6 +40,7 @@ use azihsm_crypto::PrivateKey;
 use azihsm_crypto::SignOp;
 use azihsm_crypto::VerifyOp;
 use azihsm_fw_hsm_pal_traits::*;
+use zeroize::Zeroizing;
 
 use super::reverse_copy;
 use crate::worker::WorkerPool;
@@ -364,6 +365,57 @@ impl StdEcc {
         secret_out[..coord_len].reverse();
         Ok(())
     }
+
+    /// Derive the public key from a raw HSM-format private scalar
+    /// (`pub = priv · G`) and serialize it as wire-LE `x || y`.
+    ///
+    /// All OpenSSL work — key reconstruction (which computes
+    /// `Q = d · G`), public-point extraction, and coordinate readout —
+    /// runs on the worker pool. The BE→LE per-coordinate flip (and
+    /// P-521 padding) is applied here, mirroring [`Self::pub_coords`].
+    ///
+    /// `priv_hsm.len()` must be `wire_coord_len(curve)` and `out.len()`
+    /// must be `wire_pub_key_len(curve)` (`2 × wire_coord_len`).
+    pub async fn pub_from_priv_le(
+        &self,
+        curve: EccCurve,
+        priv_hsm: &[u8],
+        out: &mut [u8],
+    ) -> HsmResult<()> {
+        let coord_len = priv_key_len(curve);
+        let wire_coord = wire_coord_len(curve);
+        if priv_hsm.len() != wire_coord || out.len() != wire_coord * 2 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // `Zeroizing` scrubs this transient heap copy of the private
+        // scalar when the worker closure drops it, so the plaintext key
+        // bytes don't linger in freed process heap memory.
+        let priv_owned = Zeroizing::new(priv_hsm.to_vec());
+        let (x_be, y_be) = self
+            .pool
+            .submit_with_result(async move {
+                let pk =
+                    EccPrivateKey::from_hsm_bytes(&priv_owned).map_err(|_| HsmError::InvalidArg)?;
+                let pub_key = pk
+                    .public_key()
+                    .map_err(|_| HsmError::EccGetCoordinatesError)?;
+                let mut x_be = [0u8; 66];
+                let mut y_be = [0u8; 66];
+                pub_key
+                    .coord(Some((&mut x_be[..coord_len], &mut y_be[..coord_len])))
+                    .map_err(|_| HsmError::EccGetCoordinatesError)?;
+                Ok::<_, HsmError>((x_be, y_be))
+            })
+            .await?;
+
+        // BE→LE per coordinate; the driver owns the byte-order flip.
+        out.fill(0);
+        let (x_dst, y_dst) = out.split_at_mut(wire_coord);
+        reverse_copy(x_dst, &x_be[..coord_len]);
+        reverse_copy(y_dst, &y_be[..coord_len]);
+        Ok(())
+    }
 }
 
 /// Raw private-key (and per-coordinate) length in bytes for the
@@ -455,7 +507,61 @@ mod tests {
         assert_eq!(le, expected);
     }
 
-    // ── Sign / verify roundtrip ─────────────────────────────────
+    // ── Public-key derivation from private scalar ───────────────
+
+    async fn pub_from_priv_roundtrip(curve: EccCurve, priv_len: usize, pub_len: usize) {
+        use azihsm_crypto::ExportableHsmKey;
+        let driver = make_driver();
+        let (priv_key, pub_key) = driver.gen_keypair(curve).await.unwrap();
+
+        // Export the private scalar in the HSM-bytes format the mask /
+        // unmask pipeline round-trips (the same format `ecc_sign` reads).
+        let mut priv_hsm = [0u8; 68];
+        let n = priv_key.to_hsm_bytes(&mut priv_hsm[..priv_len]).unwrap();
+        assert_eq!(n, priv_len);
+
+        // Derive the public key from the private scalar.
+        let mut derived_le = [0u8; 136];
+        driver
+            .pub_from_priv_le(curve, &priv_hsm[..priv_len], &mut derived_le[..pub_len])
+            .await
+            .unwrap();
+
+        // It must equal the generated public key serialized wire-LE.
+        let mut expected_le = [0u8; 136];
+        driver
+            .pub_coords(&pub_key, false, &mut expected_le[..pub_len])
+            .await
+            .unwrap();
+
+        assert_eq!(derived_le[..pub_len], expected_le[..pub_len]);
+    }
+
+    #[tokio::test]
+    async fn pub_from_priv_matches_gen_p256() {
+        pub_from_priv_roundtrip(EccCurve::P256, 32, 64).await;
+    }
+
+    #[tokio::test]
+    async fn pub_from_priv_matches_gen_p384() {
+        pub_from_priv_roundtrip(EccCurve::P384, 48, 96).await;
+    }
+
+    #[tokio::test]
+    async fn pub_from_priv_matches_gen_p521() {
+        pub_from_priv_roundtrip(EccCurve::P521, 68, 136).await;
+    }
+
+    #[tokio::test]
+    async fn pub_from_priv_rejects_wrong_out_len() {
+        let driver = make_driver();
+        let priv_hsm = [1u8; 48];
+        let mut out = [0u8; 64]; // wrong: P-384 needs 96
+        let err = driver
+            .pub_from_priv_le(EccCurve::P384, &priv_hsm, &mut out)
+            .await;
+        assert!(err.is_err());
+    }
 
     #[tokio::test]
     async fn sign_verify_p256() {

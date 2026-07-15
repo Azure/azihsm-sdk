@@ -43,6 +43,14 @@ impl From<HsmVaultKeyAttrs> for DdiMaskedKeyAttributes {
     }
 }
 
+impl From<DdiMaskedKeyAttributes> for HsmVaultKeyAttrs {
+    fn from(value: DdiMaskedKeyAttributes) -> Self {
+        let mut bits = [0u8; 8];
+        bits.copy_from_slice(&value.blob[0..8]);
+        HsmVaultKeyAttrs::from_bits(u64::from_le_bytes(bits))
+    }
+}
+
 /// Cleartext metadata embedded inside a masked-key blob.
 ///
 /// MBOR-encoded into the metadata slot of an

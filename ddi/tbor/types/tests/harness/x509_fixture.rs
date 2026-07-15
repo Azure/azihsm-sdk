@@ -14,6 +14,8 @@
 
 use azihsm_crypto::x509_builder::cert_builder;
 use azihsm_crypto::x509_builder::cert_builder::IntermediateCertParams;
+use azihsm_crypto::x509_builder::cert_builder::KeyUsage;
+use azihsm_crypto::x509_builder::cert_builder::LeafCertParams;
 use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
 use azihsm_crypto::x509_builder::cert_builder::CN_LEN;
 use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
@@ -37,6 +39,8 @@ const ROOT_CN: &str = "AZIHSM POTA Root CA";
 const ROOT_SN: &str = "POTAROOT1";
 const PTA_CN: &str = "AZIHSM PTA Intermediate CA";
 const PTA_SN: &str = "PTAINT001";
+const LEAF_CN: &str = "AZIHSM Evidence Leaf";
+const LEAF_SN: &str = "EVLEAF001";
 
 /// A synthetic P-384 CA key (e.g. a policy POTA trust anchor) that can
 /// sign certificates and expose its public key.
@@ -201,6 +205,71 @@ pub fn make_pta_chain(pota_ca: &CaKey, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> Pta
     }
 }
 
+/// Build an **end-entity** leaf certificate whose subject public key is
+/// `leaf_pub_sec1` (e.g. an attestation-report signer's key), signed by
+/// `issuer` (a self-signed CA).  Unlike [`build_pta_intermediate`], the
+/// leaf is `cA=false` with `digitalSignature` key usage.
+pub fn build_leaf(leaf_pub_sec1: &[u8; SEC1_PUB_LEN], issuer: &CaKey) -> Vec<u8> {
+    let params = LeafCertParams {
+        public_key: leaf_pub_sec1,
+        serial_number: &serial(3),
+        not_before: NOT_BEFORE,
+        not_after: NOT_AFTER,
+        subject_cn: LEAF_CN,
+        subject_sn: LEAF_SN,
+        issuer_cn: ROOT_CN,
+        issuer_sn: ROOT_SN,
+        subject_key_id: &sha1_ski(leaf_pub_sec1),
+        authority_key_id: &issuer.ski(),
+        key_usage: KeyUsage::DIGITAL_SIGNATURE,
+    };
+
+    let mut tbs = azihsm_crypto::x509_builder::leaf_cert::TBS_TEMPLATE;
+    patch_tbs_leaf(&mut tbs, &params);
+    let (r, s) = issuer.sign(&tbs);
+
+    let mut out = vec![0u8; 1024];
+    let len = cert_builder::build_leaf_cert(&params, &r, &s, &mut out).expect("leaf cert");
+    out.truncate(len);
+    out
+}
+
+/// A generated root→leaf attestation-evidence chain, DER-encoded.
+///
+/// `root_der` is a self-signed CA certificate; `leaf_der` is an
+/// end-entity certificate signed by the root whose subject public key is
+/// the caller-supplied report-signer key.
+pub struct GeneratedChain {
+    /// Self-signed root CA certificate (DER).
+    pub root_der: Vec<u8>,
+    /// End-entity leaf certificate carrying the report-signer key (DER).
+    pub leaf_der: Vec<u8>,
+}
+
+impl GeneratedChain {
+    /// The chain's certificate DERs in root → leaf order.
+    pub fn der_items(&self) -> [&[u8]; 2] {
+        [self.root_der.as_slice(), self.leaf_der.as_slice()]
+    }
+}
+
+/// Build a root→leaf chain: a self-signed root CA (`ca`) certifying an
+/// end-entity leaf that carries `leaf_pub_raw` (raw `X ‖ Y`, the report
+/// signer's public key).
+///
+/// Pass a caller-controlled `ca` (e.g. the SATA anchor key) when the chain
+/// must be anchored to a known public key; otherwise use a fresh
+/// [`CaKey::generate`].
+pub fn make_chain(ca: &CaKey, leaf_pub_raw: &[u8; RAW_PUB_LEN]) -> GeneratedChain {
+    let mut leaf_sec1 = [0u8; SEC1_PUB_LEN];
+    leaf_sec1[0] = 0x04;
+    leaf_sec1[1..].copy_from_slice(leaf_pub_raw);
+    GeneratedChain {
+        root_der: build_root(ca),
+        leaf_der: build_leaf(&leaf_sec1, ca),
+    }
+}
+
 /// Extract the SEC1 public key (`0x04 ‖ X ‖ Y`, 97 bytes) from a DER
 /// PKCS#10 CSR, parsed structurally per
 /// [RFC 2986](https://datatracker.ietf.org/doc/html/rfc2986):
@@ -296,4 +365,24 @@ fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
     tbs[AUTHORITY_KEY_ID_OFFSET..AUTHORITY_KEY_ID_OFFSET + 20]
         .copy_from_slice(params.authority_key_id);
     tbs[PATH_LEN_OFFSET] = params.path_len;
+}
+
+fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
+    use azihsm_crypto::x509_builder::leaf_cert::*;
+    let s_cn = pad_cn(params.subject_cn);
+    let i_cn = pad_cn(params.issuer_cn);
+    let s_sn = pad_sn(params.subject_sn);
+    let i_sn = pad_sn(params.issuer_sn);
+    tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
+    tbs[SERIAL_NUMBER_OFFSET..SERIAL_NUMBER_OFFSET + 20].copy_from_slice(params.serial_number);
+    tbs[NOT_BEFORE_OFFSET..NOT_BEFORE_OFFSET + 15].copy_from_slice(params.not_before);
+    tbs[NOT_AFTER_OFFSET..NOT_AFTER_OFFSET + 15].copy_from_slice(params.not_after);
+    tbs[ISSUER_CN_OFFSET..ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&i_cn);
+    tbs[SUBJECT_CN_OFFSET..SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&s_cn);
+    tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&i_sn);
+    tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&s_sn);
+    tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
+    tbs[AUTHORITY_KEY_ID_OFFSET..AUTHORITY_KEY_ID_OFFSET + 20]
+        .copy_from_slice(params.authority_key_id);
+    tbs[KEY_USAGE_OFFSET..KEY_USAGE_OFFSET + 2].copy_from_slice(&params.key_usage.to_bytes());
 }

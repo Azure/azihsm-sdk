@@ -32,11 +32,6 @@ const P384_COORD: usize = 48;
 /// COSE elliptic-curve identifier for P-384 (RFC 9053 Table 18).
 const COSE_CRV_P384: i8 = 2;
 
-/// Reborrow a `&DmaBuf` as its underlying byte slice.
-fn as_bytes(d: &DmaBuf) -> &[u8] {
-    d
-}
-
 /// The firmware and simulator must agree on the fixed `public_key` size.
 #[test]
 fn public_key_max_size_matches_sim() {
@@ -165,12 +160,12 @@ fn fw_decodes_sim_encoded_report() {
     assert_eq!(view.version, SIM_REPORT_VERSION);
     assert_eq!(view.public_key_size, cose_len);
     assert_eq!(view.flags, flags);
-    assert_eq!(as_bytes(view.public_key), &public_key[..]);
-    assert_eq!(as_bytes(view.app_uuid), &app_uuid[..]);
-    assert_eq!(as_bytes(view.report_data), &report_data[..]);
-    assert_eq!(as_bytes(view.vm_launch_id), &vm_launch_id[..]);
-    assert_eq!(as_bytes(view.protected_header), &PROTECTED_HEADER[..]);
-    assert_eq!(as_bytes(view.signature), &signature[..]);
+    assert_eq!(*view.public_key, public_key[..]);
+    assert_eq!(*view.app_uuid, app_uuid[..]);
+    assert_eq!(*view.report_data, report_data[..]);
+    assert_eq!(*view.vm_launch_id, vm_launch_id[..]);
+    assert_eq!(*view.protected_header, PROTECTED_HEADER[..]);
+    assert_eq!(*view.signature, signature[..]);
 }
 
 /// The firmware decoder and the simulator decoder agree on the same
@@ -192,26 +187,10 @@ fn fw_and_sim_decoders_agree() {
         assert_eq!(fw.version, sim.version, "flags={flags:#x}");
         assert_eq!(fw.public_key_size, sim.public_key_size, "flags={flags:#x}");
         assert_eq!(fw.flags, sim.flags, "flags={flags:#x}");
-        assert_eq!(
-            as_bytes(fw.public_key),
-            &sim.public_key[..],
-            "flags={flags:#x}"
-        );
-        assert_eq!(as_bytes(fw.app_uuid), &sim.app_uuid[..], "flags={flags:#x}");
-        assert_eq!(
-            as_bytes(fw.report_data),
-            &sim.report_data[..],
-            "flags={flags:#x}"
-        );
-        assert_eq!(
-            as_bytes(fw.vm_launch_id),
-            &sim.vm_launch_id[..],
-            "flags={flags:#x}"
-        );
-        assert_eq!(
-            as_bytes(fw.signature),
-            &cose.signature[..],
-            "flags={flags:#x}"
-        );
+        assert_eq!(*fw.public_key, sim.public_key[..], "flags={flags:#x}");
+        assert_eq!(*fw.app_uuid, sim.app_uuid[..], "flags={flags:#x}");
+        assert_eq!(*fw.report_data, sim.report_data[..], "flags={flags:#x}");
+        assert_eq!(*fw.vm_launch_id, sim.vm_launch_id[..], "flags={flags:#x}");
+        assert_eq!(*fw.signature, cose.signature[..], "flags={flags:#x}");
     }
 }

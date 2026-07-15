@@ -80,6 +80,42 @@ pub(crate) fn rsa_key(kind: HsmVaultKeyKind) -> HsmResult<HsmRsaKey> {
     }
 }
 
+/// Map a vault key kind to the on-wire [`DdiKeyType`] tag recorded in
+/// a masked-key blob's metadata.  Only the kinds that a key-creating
+/// or key-importing handler can mask are accepted; public, internal,
+/// and session-schedule kinds return [`HsmError::InvalidKeyType`].
+///
+/// The unwrapping key is an RSA private key in the vault but is
+/// tagged `RsaUnwrap` in its masked metadata by the
+/// [`get_unwrapping_key`](super::get_unwrapping_key) handler, which
+/// passes that type explicitly rather than going through this map.
+pub(crate) fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
+    match kind {
+        HsmVaultKeyKind::Rsa2kPrivate => Ok(DdiKeyType::Rsa2kPrivate),
+        HsmVaultKeyKind::Rsa3kPrivate => Ok(DdiKeyType::Rsa3kPrivate),
+        HsmVaultKeyKind::Rsa4kPrivate => Ok(DdiKeyType::Rsa4kPrivate),
+        HsmVaultKeyKind::Rsa2kPrivateCrt => Ok(DdiKeyType::Rsa2kPrivateCrt),
+        HsmVaultKeyKind::Rsa3kPrivateCrt => Ok(DdiKeyType::Rsa3kPrivateCrt),
+        HsmVaultKeyKind::Rsa4kPrivateCrt => Ok(DdiKeyType::Rsa4kPrivateCrt),
+        HsmVaultKeyKind::Ecc256Private => Ok(DdiKeyType::Ecc256Private),
+        HsmVaultKeyKind::Ecc384Private => Ok(DdiKeyType::Ecc384Private),
+        HsmVaultKeyKind::Ecc521Private => Ok(DdiKeyType::Ecc521Private),
+        HsmVaultKeyKind::Aes128 => Ok(DdiKeyType::Aes128),
+        HsmVaultKeyKind::Aes192 => Ok(DdiKeyType::Aes192),
+        HsmVaultKeyKind::Aes256 => Ok(DdiKeyType::Aes256),
+        HsmVaultKeyKind::AesXtsBulk256 => Ok(DdiKeyType::AesXtsBulk256),
+        HsmVaultKeyKind::AesGcmBulk256 => Ok(DdiKeyType::AesGcmBulk256),
+        HsmVaultKeyKind::AesGcmBulk256Unapproved => Ok(DdiKeyType::AesGcmBulk256Unapproved),
+        HsmVaultKeyKind::Secret256 => Ok(DdiKeyType::Secret256),
+        HsmVaultKeyKind::Secret384 => Ok(DdiKeyType::Secret384),
+        HsmVaultKeyKind::Secret521 => Ok(DdiKeyType::Secret521),
+        HsmVaultKeyKind::VarLenHmacSha256 => Ok(DdiKeyType::VarHmac256),
+        HsmVaultKeyKind::VarLenHmacSha384 => Ok(DdiKeyType::VarHmac384),
+        HsmVaultKeyKind::VarLenHmacSha512 => Ok(DdiKeyType::VarHmac512),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
+
 // ── HsmEccCurve → … ───────────────────────────────────────────────
 
 /// Map a [`HsmEccCurve`] to its private ECC vault kind.

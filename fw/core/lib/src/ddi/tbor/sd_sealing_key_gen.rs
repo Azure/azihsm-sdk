@@ -49,12 +49,12 @@ use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
-use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
-use azihsm_fw_hsm_pal_traits::SessionRole;
 
+use super::masking_key_id_for_scope;
+use super::validate_crypto_officer_active_session;
 use crate::part_state;
 
 /// NIST curve for security-domain sealing keys.  Fixed at P-384 to match
@@ -64,25 +64,6 @@ const SD_SEALING_CURVE: HsmEccCurve = HsmEccCurve::P384;
 
 /// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
 const SEALING_KEY_LABEL: &[u8] = b"SDSealingKey";
-
-fn validate_crypto_officer_active_session<P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    sess_id: HsmSessId,
-) -> HsmResult<()> {
-    // SdSealingKeyGen is Crypto-Officer-only.
-    if sess_id.role() != SessionRole::CryptoOfficer {
-        return Err(HsmError::InvalidPermissions);
-    }
-
-    // The dispatcher validates only SQE/body consistency; the slot must
-    // still be checked for liveness at the handler boundary.
-    if !matches!(pal.session_state(io, sess_id), HsmSessionState::Active) {
-        return Err(HsmError::SessionNotFound);
-    }
-
-    Ok(())
-}
 
 /// Attributes recorded in the masked blob's metadata (restored on
 /// re-import).  Per the SD-sealing-key contract the only usage attribute
@@ -95,26 +76,6 @@ fn sealing_key_attrs(scope: HsmKeyScope) -> HsmVaultKeyAttrs {
         .with_never_extractable(true)
         .with_derive(true)
         .with_scope(scope)
-}
-
-/// Resolve the vault id of the masking key associated with `scope`.
-///
-/// Only [`Ephemeral`](HsmKeyScope::Ephemeral) and
-/// [`Local`](HsmKeyScope::Local) are supported for now (their masking
-/// keys are provisioned by `PartFinal`).  Every other scope —
-/// [`Session`](HsmKeyScope::Session),
-/// [`SecurityDomain`](HsmKeyScope::SecurityDomain), or an unrecognized
-/// discriminant — is rejected with [`HsmError::UnsupportedKeyScope`].
-fn masking_key_id_for_scope<P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    scope: HsmKeyScope,
-) -> HsmResult<HsmKeyId> {
-    match scope {
-        HsmKeyScope::Ephemeral => part_state::part_ephemeral_mk_key_id(pal, io),
-        HsmKeyScope::Local => part_state::part_local_mk_key_id(pal, io),
-        _ => Err(HsmError::UnsupportedKeyScope),
-    }
 }
 
 async fn generate_sealing_keypair<'p, P: HsmPal>(

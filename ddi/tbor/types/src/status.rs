@@ -285,6 +285,10 @@ pub enum TborStatus {
     /// `HsmError::UnsupportedKeyScope`).
     UnsupportedKeyScope = 0x08700102,
 
+    /// Returned by `KeyReport` when the masked key's kind cannot be
+    /// attested (mirror of `HsmError::UnsupportedKeyType`).
+    UnsupportedKeyType = 0x08700103,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed (mirror of `HsmError::IoChannelInvalidOobLen`).
     IoChannelInvalidOobLen = 0x08700104,

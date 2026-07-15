@@ -54,6 +54,7 @@ members = [
   "fw/core/ddi/tbor/codec",
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
+  "fw/core/evidence",
   "fw/core/io",
   "fw/core/key-decode",
   "fw/core/key-unwrap",
@@ -139,6 +140,7 @@ azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
 azihsm_fw_core_crypto_x509_builder = { path = "fw/core/crypto/x509-builder" }
 azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/gen" }
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
+azihsm_fw_core_evidence = { path = "fw/core/evidence" }
 
 # Firmware crates — common
 azihsm_crypto_x509_builder_gen = { path = "crates/crypto/x509_builder/gen" }
