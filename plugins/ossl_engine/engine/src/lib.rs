@@ -11,9 +11,9 @@
 //! Azure Integrated HSM -- OpenSSL 1.1.x Engine. Linux only.
 
 // `context` is `pub` so the engine's HSM-open API (EngineData and its
-// open_hsm_* methods) counts as reachable crate API rather than dead code.
-// The cdylib glue only calls EngineData::new today; the open path is wired
-// by later algorithm callbacks.
+// open_hsm_* methods) is public crate API rather than dead code. The cdylib
+// entry point (`bind_helper`) constructs an EngineData and parks it in the
+// ENGINE's ex_data.
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod context;
 
@@ -153,10 +153,9 @@ mod engine_impl {
         engine.set_name(ENGINE_NAME)?;
         engine.set_destroy::<AzihsmDestroy>()?;
 
-        // Park an empty EngineData. The HSM session opens on demand (later
-        // algorithm callbacks will call EngineData::open_hsm_from_env on
-        // first use); AzihsmDestroy::destroy takes() and drops the Box at
-        // ENGINE_free time.
+        // Park an empty EngineData. Its HSM session is opened on demand via
+        // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and
+        // drops the Box at ENGINE_free time.
         let slot = engine_data_slot()?;
         slot.set(engine, Box::new(EngineData::new()))?;
 

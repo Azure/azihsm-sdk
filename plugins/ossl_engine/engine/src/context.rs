@@ -3,8 +3,8 @@
 
 //! Engine context parked in `ENGINE` ex_data.
 //!
-//! [`EngineData`] is the per-engine state OpenSSL will hand back to every
-//! algorithm callback via `ENGINE_get_ex_data`. It owns one lazily-populated
+//! [`EngineData`] is the per-engine state stored in the `ENGINE`'s ex_data
+//! and retrieved via `ENGINE_get_ex_data`. It owns one lazily-populated
 //! [`HsmContext`] (partition + session).
 
 use std::path::Path;
@@ -98,9 +98,9 @@ impl EngineData {
 
 /// Live HSM partition + session.
 ///
-/// Both fields are RAII holders: they are never read, but dropping them
-/// closes the session and releases the partition. Later algorithm
-/// callbacks will read `session` to issue crypto operations.
+/// Both fields are RAII holders: dropping them closes the session and
+/// releases the partition. They are held (not currently read) to keep the
+/// session open for the lifetime of the `EngineData`.
 struct HsmContext {
     #[allow(dead_code)]
     partition: HsmPartition,
@@ -516,8 +516,8 @@ mod tests {
         );
     }
 
-    // SEC-4: an unset credential with no default must be a hard error, not a
-    // silent fallback. (In production builds cred_field is called with None.)
+    // An unset credential with no default must be a hard error, not a silent
+    // fallback. (In production builds cred_field is called with None.)
     #[test]
     fn cred_field_missing_without_default_errors() {
         let r = cred_field("AZIHSM_CRED_FIELD_DEFINITELY_UNSET_XYZ", None);
