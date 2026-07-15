@@ -264,12 +264,18 @@ async fn build_signed_report<'a, P: HsmPal>(
 
     // `report_data` borrows straight from the request buffer (no copy);
     // `key_report` validates its exact `KEY_REPORT_DATA_LEN` length.
+    //
+    // TBOR-minted reports are v2: bind the attested key to the partition's
+    // provisioned PartPolicy digest (SHA-384) so a verifier can check the
+    // report against a policy.
+    let policy_hash = part_state::part_policy_hash(pal, io)?;
     let params = KeyReportParams {
         key,
         flags,
         app_uuid,
         report_data: report_data_src,
         vm_launch_id,
+        policy_hash: Some(policy_hash),
     };
 
     // Two-pass: query the exact size, then build into an exact buffer.

@@ -17,6 +17,8 @@
 
 use azihsm_fw_core_crypto_key_report::parse_key_report;
 use azihsm_fw_core_crypto_key_report::APP_UUID_LEN;
+use azihsm_fw_core_crypto_key_report::KEY_REPORT_MAX_LEN;
+use azihsm_fw_core_crypto_key_report::POLICY_HASH_LEN;
 use azihsm_fw_core_crypto_key_report::PUBLIC_KEY_MAX_SIZE;
 use azihsm_fw_core_crypto_key_report::REPORT_DATA_LEN;
 use azihsm_fw_core_crypto_key_report::SIGNATURE_LEN;
@@ -108,6 +110,60 @@ fn payload(
     buf
 }
 
+/// Inline 8-entry v2 payload map: the 7 v1 entries plus key 7
+/// (`policy_hash`), and `version = 2`.
+fn payload_v2(
+    pubkey_525: &[u8],
+    cose_len: u16,
+    flags: u32,
+    uuid: &[u8],
+    rd: &[u8],
+    vm: &[u8],
+    policy_hash: &[u8],
+) -> Vec<u8> {
+    let mut buf = vec![0u8; 1024];
+    let n = {
+        let mut e = Encoder::new(&mut buf[..]);
+        e.map(8)
+            .unwrap()
+            .u8(0)
+            .unwrap()
+            .u16(2)
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .bytes(pubkey_525)
+            .unwrap()
+            .u8(2)
+            .unwrap()
+            .u16(cose_len)
+            .unwrap()
+            .u8(3)
+            .unwrap()
+            .u32(flags)
+            .unwrap()
+            .u8(4)
+            .unwrap()
+            .bytes(uuid)
+            .unwrap()
+            .u8(5)
+            .unwrap()
+            .bytes(rd)
+            .unwrap()
+            .u8(6)
+            .unwrap()
+            .bytes(vm)
+            .unwrap()
+            .u8(7)
+            .unwrap()
+            .bytes(policy_hash)
+            .unwrap();
+        1024 - e.writer().len()
+    };
+    buf.truncate(n);
+    buf
+}
+
 /// Inline tagged COSE_Sign1: `D2 84 <protected> <map(0)> <payload> <sig>`.
 fn cose_sign1(payload: &[u8], signature: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(2048);
@@ -182,6 +238,9 @@ fn parse_decodes_all_fields_zero_copy() {
     assert_eq!(*view.protected_header, PROTECTED_HEADER[..]);
     assert_eq!(*view.signature, sig[..]);
 
+    // A v1 report carries no policy hash.
+    assert!(view.policy_hash.is_none());
+
     // Every byte view must borrow INTO the report buffer (zero-copy).
     let base = report.as_ptr() as usize;
     let end = base + report.len();
@@ -210,6 +269,138 @@ fn parse_handles_all_flags_widths() {
         let view = parse_key_report(dma).unwrap();
         assert_eq!(view.flags, flags, "flags={flags:#x}");
     }
+}
+
+/// Build a v2 report (8-entry payload with `policy_hash`).
+///
+/// Uses worst-case CBOR integer widths (`flags = u32::MAX` → 5 bytes,
+/// `public_key_size = PUBLIC_KEY_MAX_SIZE` → 3 bytes) so the size-cap
+/// assertion in `parse_decodes_v2_policy_hash` exercises the true upper
+/// bound the report can reach.
+fn build_report_v2(policy_hash: &[u8]) -> Vec<u8> {
+    let x = [0x11u8; P384_COORD];
+    let y = [0x22u8; P384_COORD];
+    let uuid = [0xA1u8; APP_UUID_LEN];
+    let rd: Vec<u8> = (0..REPORT_DATA_LEN).map(|i| i as u8).collect();
+    let vm = [0xC3u8; VM_LAUNCH_ID_LEN];
+    let sig = [0x40u8; SIGNATURE_LEN];
+
+    let ck = cose_key(&x, &y);
+    let mut pubkey_525 = vec![0u8; PUBLIC_KEY_MAX_SIZE];
+    pubkey_525[..ck.len()].copy_from_slice(&ck);
+
+    let pl = payload_v2(
+        &pubkey_525,
+        PUBLIC_KEY_MAX_SIZE as u16,
+        u32::MAX,
+        &uuid,
+        &rd,
+        &vm,
+        policy_hash,
+    );
+    cose_sign1(&pl, &sig)
+}
+
+#[test]
+fn parse_decodes_v2_policy_hash() {
+    let policy_hash = [0x5Au8; POLICY_HASH_LEN];
+    let report = build_report_v2(&policy_hash);
+
+    // A v2 report (with the extra policy_hash entry) must still fit the
+    // response cap used by the KeyReport / PartInit handlers.
+    assert!(
+        report.len() <= KEY_REPORT_MAX_LEN,
+        "v2 report ({}) must fit KEY_REPORT_MAX_LEN ({KEY_REPORT_MAX_LEN})",
+        report.len(),
+    );
+
+    // SAFETY: in-process test heap buffer; branding as a DmaBuf is sound.
+    let dma = unsafe { DmaBuf::from_raw(&report) };
+    let view = parse_key_report(dma).unwrap();
+
+    assert_eq!(view.version, 2);
+    let ph = view.policy_hash.expect("v2 report carries a policy hash");
+    assert_eq!(**ph, policy_hash[..]);
+
+    // The policy hash view must borrow INTO the report buffer (zero-copy).
+    let base = report.as_ptr() as usize;
+    let end = base + report.len();
+    let p = ph.as_ptr() as usize;
+    assert!(
+        p >= base && p < end,
+        "policy_hash must borrow the input buffer"
+    );
+}
+
+#[test]
+fn parse_rejects_v2_wrong_policy_hash_len() {
+    // A policy hash that isn't exactly POLICY_HASH_LEN bytes is rejected.
+    let short = [0x5Au8; POLICY_HASH_LEN - 1];
+    let report = build_report_v2(&short);
+    // SAFETY: in-process test heap buffer; branding as a DmaBuf is sound.
+    let dma = unsafe { DmaBuf::from_raw(&report) };
+    assert!(parse_key_report(dma).is_err());
+}
+
+#[test]
+fn parse_rejects_version_presence_mismatch() {
+    // 8-entry map (policy_hash present) but version claims v1 → rejected.
+    let policy_hash = [0x5Au8; POLICY_HASH_LEN];
+    let x = [0x11u8; P384_COORD];
+    let y = [0x22u8; P384_COORD];
+    let uuid = [0xA1u8; APP_UUID_LEN];
+    let rd: Vec<u8> = (0..REPORT_DATA_LEN).map(|i| i as u8).collect();
+    let vm = [0xC3u8; VM_LAUNCH_ID_LEN];
+    let sig = [0x40u8; SIGNATURE_LEN];
+    let ck = cose_key(&x, &y);
+    let mut pubkey_525 = vec![0u8; PUBLIC_KEY_MAX_SIZE];
+    pubkey_525[..ck.len()].copy_from_slice(&ck);
+
+    // Encode an 8-entry map but set version = 1 (should be 2 for v2).
+    let mut buf = vec![0u8; 1024];
+    let n = {
+        let mut e = Encoder::new(&mut buf[..]);
+        e.map(8)
+            .unwrap()
+            .u8(0)
+            .unwrap()
+            .u16(1) // wrong: 8 entries but claims v1
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .bytes(&pubkey_525)
+            .unwrap()
+            .u8(2)
+            .unwrap()
+            .u16(ck.len() as u16)
+            .unwrap()
+            .u8(3)
+            .unwrap()
+            .u32(4)
+            .unwrap()
+            .u8(4)
+            .unwrap()
+            .bytes(&uuid)
+            .unwrap()
+            .u8(5)
+            .unwrap()
+            .bytes(&rd)
+            .unwrap()
+            .u8(6)
+            .unwrap()
+            .bytes(&vm)
+            .unwrap()
+            .u8(7)
+            .unwrap()
+            .bytes(&policy_hash)
+            .unwrap();
+        1024 - e.writer().len()
+    };
+    buf.truncate(n);
+    let report = cose_sign1(&buf, &sig);
+    // SAFETY: in-process test heap buffer; branding as a DmaBuf is sound.
+    let dma = unsafe { DmaBuf::from_raw(&report) };
+    assert!(parse_key_report(dma).is_err());
 }
 
 #[test]

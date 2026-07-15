@@ -30,8 +30,11 @@ pub const PROTECTED_HEADER: [u8; 22] = [
 
 // ─── Payload fields ─────────────────────────────────────────────────────────
 
-/// Report format version.
+/// Report format version for a v1 report (no `policy_hash`).
 pub const REPORT_VERSION: u16 = 1;
+
+/// Report format version for a v2 report (carries a `policy_hash`).
+pub const REPORT_VERSION_V2: u16 = 2;
 
 /// Length of the app-UUID field (RFC 4122 binary form).
 pub const APP_UUID_LEN: usize = 16;
@@ -75,9 +78,13 @@ const _: () = assert!(
 /// `public_key`, 128-byte `report_data`, 96-byte signature, etc.), so
 /// its length is effectively constant; this bound additionally allows
 /// every CBOR integer field (`version`, `public_key_size`, `flags`) to
-/// encode at its maximum width. The `report_fits_max_len` test pins it
-/// against the byte-identical simulator encoder, and consumers (e.g.
-/// the PartInit handler) `const`-assert their response caps against it.
+/// encode at its maximum width, and leaves headroom for the optional
+/// 48-byte v2 [`policy_hash`](crate::KeyReportView::policy_hash) map entry.
+/// The `report_fits_max_len` test pins the **v1** bound against the
+/// byte-identical simulator encoder (which has no `policy_hash`); the
+/// `parse_decodes_v2_policy_hash` wire test checks that a worst-case **v2**
+/// report still fits. Consumers (e.g. the PartInit handler) `const`-assert
+/// their response caps against it.
 pub const KEY_REPORT_MAX_LEN: usize = 896;
 
 // ─── Signing (ES384 / ECDSA-P384) ──────────────────────────────────────────
@@ -90,6 +97,10 @@ pub const PRIV_KEY_LEN: usize = 48;
 
 /// SHA-384 digest length.
 pub const SHA384_LEN: usize = 48;
+
+/// Length of the optional `policy_hash` field carried by v2 reports: the
+/// SHA-384 digest of the PartPolicy blob.
+pub const POLICY_HASH_LEN: usize = SHA384_LEN;
 
 // ─── KeyFlags ───────────────────────────────────────────────────────────────
 

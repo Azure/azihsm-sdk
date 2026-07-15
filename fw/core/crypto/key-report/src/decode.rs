@@ -44,6 +44,9 @@ pub struct KeyReportView<'a> {
     pub report_data: &'a DmaBuf,
     /// VM launch ID.
     pub vm_launch_id: &'a DmaBuf,
+    /// Optional SHA-384 PartPolicy digest. `Some` iff the report is v2
+    /// (carries map key 7); `None` for a v1 report.
+    pub policy_hash: Option<&'a DmaBuf>,
     /// COSE_Sign1 protected header (signed input).
     pub protected_header: &'a DmaBuf,
     /// Encoded payload bytes (the Sig_structure input).
@@ -106,7 +109,9 @@ pub fn parse_key_report(report: &DmaBuf) -> HsmResult<KeyReportView<'_>> {
     let payload = &rest[payload_span.0..payload_span.1];
     let signature = &rest[sig.0..sig.1];
 
-    // Payload = 7-entry integer-keyed map; keys 0..=6 each exactly once.
+    // Payload = integer-keyed map. v1 has 7 entries (keys 0..=6); v2 adds
+    // an 8th (key 7 = policy_hash). All of keys 0..=6 are mandatory; key 7
+    // is optional and, when present, marks the report as v2.
     let mut version = 0u16;
     let mut public_key_size = 0u16;
     let mut flags = 0u32;
@@ -114,15 +119,18 @@ pub fn parse_key_report(report: &DmaBuf) -> HsmResult<KeyReportView<'_>> {
     let mut uuid = (0usize, 0usize);
     let mut rd = (0usize, 0usize);
     let mut vm = (0usize, 0usize);
+    let mut ph = (0usize, 0usize);
+    let mut have_policy_hash = false;
     {
         let mut d = Decoder::new(payload);
-        if map_decode_err(d.map())? != Some(7) {
+        let entries = map_decode_err(d.map())?.ok_or(HsmError::InvalidArg)?;
+        if entries != 7 && entries != 8 {
             return Err(HsmError::InvalidArg);
         }
         let mut seen = 0u8;
-        for _ in 0..7 {
+        for _ in 0..entries {
             let key = map_decode_err(d.u8())?;
-            if key > 6 || seen & (1 << key) != 0 {
+            if key > 7 || seen & (1 << key) != 0 {
                 // Unknown or duplicate key.
                 return Err(HsmError::InvalidArg);
             }
@@ -134,8 +142,17 @@ pub fn parse_key_report(report: &DmaBuf) -> HsmResult<KeyReportView<'_>> {
                 3 => flags = map_decode_err(d.u32())?,
                 4 => uuid = bytes_span(&mut d)?,
                 5 => rd = bytes_span(&mut d)?,
-                _ => vm = bytes_span(&mut d)?, // key == 6
+                6 => vm = bytes_span(&mut d)?,
+                _ => {
+                    // key == 7: policy_hash (v2 only).
+                    ph = bytes_span(&mut d)?;
+                    have_policy_hash = true;
+                }
             }
+        }
+        // Keys 0..=6 must each appear exactly once.
+        if seen & 0x7f != 0x7f {
+            return Err(HsmError::InvalidArg);
         }
         // Reject trailing bytes inside the payload.
         if d.position() != payload.len() {
@@ -145,16 +162,26 @@ pub fn parse_key_report(report: &DmaBuf) -> HsmResult<KeyReportView<'_>> {
 
     // Enforce fixed payload field lengths and value bounds so callers can
     // slice the returned views (e.g. `public_key[..public_key_size]`)
-    // without any risk of out-of-bounds panics on untrusted input.
+    // without any risk of out-of-bounds panics on untrusted input. The
+    // expected version is fixed by whether `policy_hash` is present, so a
+    // v1 report claiming v2 (or vice versa) is rejected.
+    let expected_version = if have_policy_hash {
+        REPORT_VERSION_V2
+    } else {
+        REPORT_VERSION
+    };
     if pk.1 - pk.0 != PUBLIC_KEY_MAX_SIZE
         || uuid.1 - uuid.0 != APP_UUID_LEN
         || rd.1 - rd.0 != REPORT_DATA_LEN
         || vm.1 - vm.0 != VM_LAUNCH_ID_LEN
-        || version != REPORT_VERSION
+        || version != expected_version
         || public_key_size as usize > PUBLIC_KEY_MAX_SIZE
+        || (have_policy_hash && ph.1 - ph.0 != POLICY_HASH_LEN)
     {
         return Err(HsmError::InvalidArg);
     }
+
+    let policy_hash = have_policy_hash.then(|| &payload[ph.0..ph.1]);
 
     Ok(KeyReportView {
         version,
@@ -164,6 +191,7 @@ pub fn parse_key_report(report: &DmaBuf) -> HsmResult<KeyReportView<'_>> {
         app_uuid: &payload[uuid.0..uuid.1],
         report_data: &payload[rd.0..rd.1],
         vm_launch_id: &payload[vm.0..vm.1],
+        policy_hash,
         protected_header,
         payload,
         signature,

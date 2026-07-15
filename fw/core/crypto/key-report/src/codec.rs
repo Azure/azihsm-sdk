@@ -70,7 +70,10 @@ pub(crate) struct CoseSign1<'a> {
     pub signature: &'a [u8],
 }
 
-/// Key-attestation report payload: a 7-entry integer-keyed CBOR map.
+/// Key-attestation report payload: an integer-keyed CBOR map. v1 reports
+/// carry 7 entries (keys 0–6); v2 reports add an 8th entry (key 7) with the
+/// `policy_hash`. `policy_hash` is `Option`: minicbor omits the entry when
+/// `None`, so a v1 report's map is byte-identical to before.
 #[derive(Encode, CborLen)]
 #[cbor(map)]
 pub(crate) struct KeyReportPayload<'a> {
@@ -100,6 +103,11 @@ pub(crate) struct KeyReportPayload<'a> {
     #[n(6)]
     #[cbor(with = "minicbor::bytes")]
     pub vm_launch_id: &'a [u8],
+    /// Optional SHA-384 digest of the PartPolicy (v2 only; map key 7).
+    /// Present iff the report is v2; omitted from the wire map when `None`.
+    #[n(7)]
+    #[cbor(with = "minicbor::bytes")]
+    pub policy_hash: Option<&'a [u8]>,
 }
 
 /// The `Sig_structure` context literal (`"Signature1"`).

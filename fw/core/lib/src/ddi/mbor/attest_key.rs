@@ -169,6 +169,8 @@ pub(crate) async fn attest_key<'p, P: HsmPal>(
         app_uuid,
         report_data: body.report_data,
         vm_launch_id,
+        // MBOR AttestKey emits v1 reports (no policy hash).
+        policy_hash: None,
     };
 
     // Two-pass build: query the exact report size, reserve the response

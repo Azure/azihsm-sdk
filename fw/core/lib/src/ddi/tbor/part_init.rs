@@ -501,6 +501,14 @@ async fn build_pta_report<'a, P: HsmPal>(
     // (bound via `report_data`) for finer-grained authorization.
     let flags: u32 = KeyFlags::new().with_is_generated(true).into();
     let pub_xy = &pub_sec1[1..];
+
+    // v2 report: bind the PTA attestation to the PartPolicy digest
+    // (SHA-384, big-endian — the same digest persisted at commit and
+    // surfaced later by the KeyReport command as the provisioned hash).
+    let policy_hash_dma = alloc.dma_alloc(SHA384_LEN)?;
+    pal.hash(io, HsmHashAlgo::Sha384, policy, policy_hash_dma, true)
+        .await?;
+
     let params = KeyReportParams {
         key: AttestedPubKey::Ecc {
             curve: azihsm_fw_hsm_pal_traits::HsmEccCurve::P384,
@@ -511,6 +519,7 @@ async fn build_pta_report<'a, P: HsmPal>(
         app_uuid,
         report_data,
         vm_launch_id,
+        policy_hash: Some(&*policy_hash_dma),
     };
 
     // Two-pass query/copy: the `None` pass computes the exact report size
