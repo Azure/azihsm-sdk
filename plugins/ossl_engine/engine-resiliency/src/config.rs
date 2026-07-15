@@ -280,7 +280,9 @@ fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
                 return Err(err("exists but is not owned by the current user"));
             }
             if meta.mode() & 0o777 != 0o700 {
-                return Err(err("has insecure permissions (must be mode 0700, owner-only)"));
+                return Err(err(
+                    "has insecure permissions (must be mode 0700, owner-only)",
+                ));
             }
             Ok(())
         }
