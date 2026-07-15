@@ -155,10 +155,10 @@ impl UnoHsmPal {
     /// The on-the-fly PID cert leaf is regenerated lazily, so its signature
     /// must be byte-stable — hence `k` is supplied by the caller (RFC 6979)
     /// rather than drawn from the PKA RNG. This is orchestrated on ONE held
-    /// PKA engine so a single `mont_const_calc`'s Montgomery state persists 
-    /// across the modular ops. Follows the zero-copy driver convention: 
+    /// PKA engine so a single `mont_const_calc`'s Montgomery state persists
+    /// across the modular ops. Follows the zero-copy driver convention:
     /// operands/results are supplied by the caller already in DMA-accessible
-    /// GSRAM (as with `ecc_verify`/`ecdh_derive`); only the internal scratch 
+    /// GSRAM (as with `ecc_verify`/`ecdh_derive`); only the internal scratch
     /// (~0.7 KB) is allocated here.
     /// # Parameters
     /// * `curve` — must be [`UpkaEccCurve::P384`]; any other curve returns
@@ -493,12 +493,14 @@ impl UnoHsmPal {
         }
 
         // (d) K = HMAC_K(V ‖ 0x00 ‖ x ‖ h1) ; (e) V = HMAC_K(V)
-        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN).await?;
+        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN)
+            .await?;
         self.rfc6979_update_v(io, drbg).await?;
         // (f) K = HMAC_K(V ‖ 0x01 ‖ x ‖ h1) ; (g) V = HMAC_K(V)
         drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
         drbg.msg[field] = 0x01;
-        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN).await?;
+        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN)
+            .await?;
         self.rfc6979_update_v(io, drbg).await?;
         Ok(())
     }
@@ -541,10 +543,15 @@ impl UnoHsmPal {
     /// DMA `tag` slot, then rotates `v`/`tag` *by reference* so `drbg.v` holds
     /// the new `V` (the next candidate, big-endian) with no copy.
     async fn rfc6979_update_v(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg<'_>) -> HsmResult<()> {
-        self.hmac_sign(io, HsmHashAlgo::Sha384, &*drbg.key, &*drbg.v, &mut *drbg.tag)
-            .await?;
+        self.hmac_sign(
+            io,
+            HsmHashAlgo::Sha384,
+            &*drbg.key,
+            &*drbg.v,
+            &mut *drbg.tag,
+        )
+        .await?;
         core::mem::swap(&mut drbg.v, &mut drbg.tag);
         Ok(())
     }
-
 }

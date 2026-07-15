@@ -482,8 +482,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_reduction_opcode(curve);
-        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
-            .await
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
     }
 
     /// Convert `arg1` into Montgomery representation.
@@ -494,8 +500,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mont_repr_in_opcode(curve);
-        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
-            .await
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
     }
 
     /// Convert `arg1` out of Montgomery representation.
@@ -506,8 +518,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mont_repr_out_opcode(curve);
-        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
-            .await
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
     }
 
     /// Modular inverse `result = arg1^-1 mod n`. Requires a prior
@@ -519,8 +537,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_inverse_opcode(curve);
-        self.execute_cmd(opcode, result.as_mut_ptr() as u32, arg1.as_ptr() as u32, 0, 0)
-            .await
+        self.execute_cmd(
+            opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
     }
 
     /// Modular multiplication `result = arg1 * arg2 mod n`.
