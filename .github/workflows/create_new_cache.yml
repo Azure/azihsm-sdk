@@ -10,31 +10,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create_new_cache_ubuntu:
+  create_new_cache:
+    name: create_new_cache (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025-vs2026]
 
-    runs-on: ubuntu-24.04
-
-    defaults:
-      run:
-        working-directory: .
-
-    steps:
-    - uses: actions/checkout@v6
-    - name: Run Setup
-      run: cargo xtask precheck --setup
-    - name: Save Cargo cache
-      uses: actions/cache/save@v5
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ github.sha }}
-
-  create_new_cache_windows:
-
-    runs-on: windows-2025-vs2026
+    runs-on: ${{ matrix.os }}
 
     defaults:
       run:
