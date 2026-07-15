@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_key_derive = { workspace = true }
+azihsm_fw_core_crypto_x509_builder = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
