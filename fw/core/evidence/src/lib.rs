@@ -36,6 +36,7 @@ use azihsm_fw_core_crypto_key_report::parse_ec2_cose_key;
 use azihsm_fw_core_crypto_key_report::parse_key_report;
 use azihsm_fw_core_crypto_key_report::verify_key_report;
 use azihsm_fw_core_crypto_key_report::KEY_REPORT_MAX_LEN;
+use azihsm_fw_core_crypto_key_report::POLICY_HASH_LEN;
 use azihsm_fw_core_crypto_x509_chain::validate_chain as validate_cert_chain;
 use azihsm_fw_ddi_tbor_types::CertDescriptor;
 use azihsm_fw_ddi_tbor_types::ReportDescriptor;
@@ -109,12 +110,19 @@ pub struct TrustAnchors<'a> {
 /// is written to `attested_key` in SEC1 uncompressed big-endian form
 /// (`0x04 ‖ X ‖ Y`, [`ATTESTED_KEY_LEN`] bytes).
 ///
+/// When `policy_hash_out` is `Some`, the report's v2 `policy_hash` (the
+/// SHA-384 PartPolicy digest) is copied into it ([`POLICY_HASH_LEN`]
+/// bytes); the report must be **v2** (a v1 report with no `policy_hash` is
+/// rejected). This lets callers (e.g. the security-domain reseal flow) bind
+/// the attested key to a specific policy. Pass `None` to ignore it.
+///
 /// # Errors
 ///
 /// * [`HsmError::InvalidArg`] — a chain is empty, the partition-owner chain
 ///   is not anchored to `anchors.sata`, the chains disagree on a leaf key,
 ///   the report signature does not verify, the attested key is not P-384,
-///   or `attested_key` is too small.
+///   `attested_key` is too small, or `policy_hash_out` is `Some` but the
+///   report carries no v2 `policy_hash` (or the buffer is too small).
 /// * `X509…` errors — a certificate is malformed or its signature / chain
 ///   linkage is invalid (propagated from the chain validator).
 /// * Other [`HsmError`] values propagated from the PAL / OOB copy.
@@ -125,6 +133,7 @@ pub async fn verify_evidence<P>(
     refs: &EvidenceRefs<'_>,
     anchors: &TrustAnchors<'_>,
     attested_key: &mut DmaBuf,
+    policy_hash_out: Option<&mut DmaBuf>,
 ) -> HsmResult<()>
 where
     P: HsmGdmaController + HsmAlloc + HsmCrypto,
@@ -198,6 +207,17 @@ where
         attested_key[0] = SEC1_UNCOMPRESSED;
         attested_key[1..1 + coord].copy_from_slice(rcvr.x);
         attested_key[1 + coord..1 + 2 * coord].copy_from_slice(rcvr.y);
+
+        // When requested, surface the report's v2 PartPolicy digest so the
+        // caller can bind the attested key to a policy (used by the
+        // security-domain reseal flow). The report must be v2.
+        if let Some(out) = policy_hash_out {
+            let ph = view.policy_hash.ok_or(HsmError::InvalidArg)?;
+            if out.len() < POLICY_HASH_LEN || ph.len() != POLICY_HASH_LEN {
+                return Err(HsmError::InvalidArg);
+            }
+            out[..POLICY_HASH_LEN].copy_from_slice(&ph[..POLICY_HASH_LEN]);
+        }
         Ok(())
     })
     .await

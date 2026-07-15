@@ -211,6 +211,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                     sata: &sata.data[..POLICY_MAX_KEY_LEN],
                 },
                 pk_r,
+                None,
             )
             .await?;
         }

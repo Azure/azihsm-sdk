@@ -29,6 +29,7 @@ pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
 pub(crate) mod sd_create_remote_backup;
+pub(crate) mod sd_reseal_remote_backup;
 pub(crate) mod sd_sealing_key_gen;
 pub(crate) mod session_close;
 pub(crate) mod session_open_finish;
@@ -117,6 +118,13 @@ pub(crate) mod opcode {
     /// by the sender's masked SD sealing key.  See
     /// [`super::sd_create_remote_backup`].
     pub(crate) const SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
+
+    /// `SdResealRemoteBackup` — reseal a security-domain remote backup from a
+    /// source recipient to a destination recipient: HPKE-Auth-open the
+    /// source backup with the masked receiver key, then HPKE-Auth-seal the
+    /// recovered BKS3 to the destination receiver.  See
+    /// [`super::sd_reseal_remote_backup`].
+    pub(crate) const SD_RESEAL_REMOTE_BACKUP: u8 = 0x0B;
 
     /// `KeyReport` — attest a masked key: unmask it, derive its public
     /// component on-device, and return a PID-signed COSE_Sign1
@@ -242,6 +250,9 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::SD_CREATE_REMOTE_BACKUP => {
             sd_create_remote_backup::handle(pal, io, req_buf, oob).await
         }
+        opcode::SD_RESEAL_REMOTE_BACKUP => {
+            sd_reseal_remote_backup::handle(pal, io, req_buf, oob).await
+        }
         opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
@@ -264,6 +275,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::PART_INFO
             | opcode::SD_SEALING_KEY_GEN
             | opcode::SD_CREATE_REMOTE_BACKUP
+            | opcode::SD_RESEAL_REMOTE_BACKUP
             | opcode::KEY_REPORT
     )
 }
@@ -293,6 +305,7 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::PART_FINAL
         | opcode::SD_SEALING_KEY_GEN
         | opcode::SD_CREATE_REMOTE_BACKUP
+        | opcode::SD_RESEAL_REMOTE_BACKUP
         | opcode::KEY_REPORT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
@@ -330,6 +343,7 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::PART_FINAL
         | opcode::SD_SEALING_KEY_GEN
         | opcode::SD_CREATE_REMOTE_BACKUP
+        | opcode::SD_RESEAL_REMOTE_BACKUP
         | opcode::KEY_REPORT => true,
         _ => true,
     }
@@ -418,6 +432,7 @@ mod tests {
             opcode::PART_FINAL,
             opcode::SD_SEALING_KEY_GEN,
             opcode::SD_CREATE_REMOTE_BACKUP,
+            opcode::SD_RESEAL_REMOTE_BACKUP,
             opcode::KEY_REPORT,
         ] {
             assert!(is_known_opcode(op), "{op:#04x} should be known");

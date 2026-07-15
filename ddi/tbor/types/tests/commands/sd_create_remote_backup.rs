@@ -107,7 +107,7 @@ fn backing_part_policy(
 /// (needed verbatim by `SdCreateRemoteBackup` for the `policy_hash`
 /// re-check), and the partition-identity (PID) public key that every
 /// evidence leaf certificate must carry.
-fn finalized_backing_session(
+pub(crate) fn finalized_backing_session(
     ctx: &TestCtx,
     sata_key: &CaKey,
 ) -> (SessionHandshake, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
@@ -141,7 +141,7 @@ fn finalized_backing_session(
 /// `(masked_sealing_key, key_report_bytes)`.  In the self-backup tests
 /// this key is both the sender's authentication key and (via its report)
 /// the receiver's `RcvrPub` source; the report is signed by the PID key.
-fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {
+pub(crate) fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {
     let seal = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id,
@@ -164,7 +164,7 @@ fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {
 
 /// Receiver attestation evidence: the OOB items (three cert chains then
 /// the report, in index order) plus the descriptors referencing them.
-struct ReceiverEvidence {
+pub(crate) struct ReceiverEvidence {
     /// OOB SGL items in index order: `[mfgr root, mfgr leaf, owner root,
     /// owner leaf, part-owner root, part-owner leaf, report]`.
     oob_items: Vec<Vec<u8>>,
@@ -176,7 +176,7 @@ struct ReceiverEvidence {
 
 impl ReceiverEvidence {
     /// Borrow the OOB items as the `&[&[u8]]` slice `tbor_oob` expects.
-    fn oob(&self) -> Vec<&[u8]> {
+    pub(crate) fn oob(&self) -> Vec<&[u8]> {
         self.oob_items.iter().map(Vec::as_slice).collect()
     }
 }
@@ -230,7 +230,7 @@ fn evidence_from_chains(
 /// owner chains rooted at fresh CAs, and a partition-owner chain rooted at
 /// the policy `sata_key`.  Every leaf certifies `pid_pub` (the report
 /// signer), so all three share one leaf key.
-fn build_receiver_evidence(
+pub(crate) fn build_receiver_evidence(
     pid_pub: &[u8; RAW_PUB_LEN],
     sata_key: &CaKey,
     report: &[u8],
@@ -243,7 +243,7 @@ fn build_receiver_evidence(
 
 /// Assemble a `SdCreateRemoteBackup` request carrying the three receiver
 /// certificate chains and the attestation-report descriptor.
-fn backup_request(
+pub(crate) fn backup_request(
     session_id: u16,
     masked_sealing_key: Vec<u8>,
     evidence: &ReceiverEvidence,
