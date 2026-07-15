@@ -104,35 +104,34 @@ fn be_sub_assign(a: &mut [u8], b: &[u8]) {
     }
 }
 
-/// Securely wipe a stack buffer of secret-derived bytes.
+/// RFC 6979 §3.2 DRBG message-assembly length for P-384:
+/// `V ‖ 0x00/0x01 ‖ int2octets(x) ‖ bits2octets(h1)` = 48 + 1 + 48 + 48.
+const RFC6979_SEED_MSG_LEN: usize = 48 + 1 + 48 + 48;
+
+/// RFC 6979 HMAC-SHA384 DRBG for P-384, backed by DMA scratch.
 ///
-/// Mirrors [`DmaBuf::zeroize`]: per-byte volatile writes plus a compiler fence
-/// so the wipe survives optimization. Used to scrub the RFC 6979 DRBG state
-/// (which is derived from the private key) before it leaves scope.
-fn secure_zero(buf: &mut [u8]) {
-    for b in buf.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, writable byte of this buffer.
-        unsafe { core::ptr::write_volatile(b, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+/// `K`, `V`, and a `tag` output slot are 48-byte DMA buffers; `msg` is the
+/// reusable [`RFC6979_SEED_MSG_LEN`]-byte input-assembly buffer. Keeping the
+/// state DMA-resident lets the SHA engine read and write it in place, so each
+/// HMAC step avoids per-call staging copies and allocations: `V = HMAC_K(V)`
+/// writes into `tag`, then rotates `v`/`tag` *by reference* (zero-copy). All
+/// four buffers hold key-derived material and are wiped by [`Self::scrub`].
+/// `n_be` is the curve order `n` (big-endian) for the candidate-range test.
+struct Rfc6979Drbg<'a> {
+    key: &'a mut DmaBuf,
+    v: &'a mut DmaBuf,
+    tag: &'a mut DmaBuf,
+    msg: &'a mut DmaBuf,
+    n_be: [u8; 48],
 }
 
-/// RFC 6979 HMAC-SHA384 DRBG state for P-384 (48-byte `K` and `V`).
-///
-/// Seeded from the private key and message hash by
-/// [`UnoHsmPal::rfc6979_seed`]; advanced by
-/// [`UnoHsmPal::rfc6979_generate`] / [`UnoHsmPal::rfc6979_reseed`]. Both
-/// fields are derived from the private key, so [`Self::scrub`] wipes them.
-struct Rfc6979Drbg {
-    key: [u8; 48],
-    v: [u8; 48],
-}
-
-impl Rfc6979Drbg {
-    /// Volatile-scrub the DRBG state.
+impl Rfc6979Drbg<'_> {
+    /// Volatile-scrub every key-derived DMA buffer.
     fn scrub(&mut self) {
-        secure_zero(&mut self.key);
-        secure_zero(&mut self.v);
+        self.key.zeroize();
+        self.v.zeroize();
+        self.tag.zeroize();
+        self.msg.zeroize();
     }
 }
 
@@ -335,36 +334,48 @@ impl UnoHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        let (n_be, mut drbg) = self.rfc6979_seed(io, d, digest).await?;
+        self.alloc_scoped_async(io, async |scope| {
+            let mut n_be = ORDER384_LE;
+            n_be.reverse();
+            let mut drbg = Rfc6979Drbg {
+                key: scope.dma_alloc(field)?,
+                v: scope.dma_alloc(field)?,
+                tag: scope.dma_alloc(field)?,
+                msg: scope.dma_alloc(RFC6979_SEED_MSG_LEN)?,
+                n_be,
+            };
+            self.rfc6979_seed(io, &mut drbg, d, digest).await?;
 
-        // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n.
-        let mut result = Err(HsmError::InvalidArg);
-        for _ in 0..RFC6979_MAX_TRIES {
-            self.rfc6979_generate(io, &mut drbg).await?;
-            if drbg.v.iter().any(|&b| b != 0) && drbg.v[..] < n_be[..] {
-                for i in 0..field {
-                    k[i] = drbg.v[field - 1 - i];
+            // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n.
+            let mut outcome = Err(HsmError::InvalidArg);
+            for _ in 0..RFC6979_MAX_TRIES {
+                self.rfc6979_generate(io, &mut drbg).await?;
+                let v_be: &[u8] = &drbg.v[..];
+                if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                    // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
+                    k[..field].copy_from_slice(&drbg.v[..field]);
+                    k[..field].reverse();
+                    outcome = Ok(());
+                    break;
                 }
-                result = Ok(());
-                break;
+                self.rfc6979_reseed(io, &mut drbg).await?;
             }
-            self.rfc6979_reseed(io, &mut drbg).await?;
-        }
-
-        drbg.scrub();
-        result
+            drbg.scrub();
+            outcome
+        })
+        .await
     }
 
     /// Deterministic ECDSA-P384 sign (RFC 6979): derive the per-message secret
     /// `k` from `d`/`digest` and produce the signature `(r, s)`.
     ///
-    /// Composes the RFC 6979 HMAC-SHA384 DRBG (A5) with the PKA sign (A4) on
-    /// one held engine. On the astronomically unlikely degenerate result
-    /// (`r == 0` or `s == 0`) the DRBG is advanced to the next candidate, as
-    /// required by RFC 6979 §3.2; because this function supplies valid P-384
-    /// operands, [`ecc_sign_with_k`](Self::ecc_sign_with_k)'s only
-    /// [`HsmError::InvalidArg`] is that degenerate check, which is treated as
-    /// a retry signal.
+    /// Composes the RFC 6979 HMAC-SHA384 DRBG (A5) with the PKA sign (A4). The
+    /// DRBG state, its `k` output, and the sign scratch all live in one scope.
+    /// On the astronomically unlikely degenerate result (`r == 0` or `s == 0`)
+    /// the DRBG is advanced to the next candidate, as required by RFC 6979
+    /// §3.2; because this function supplies valid P-384 operands,
+    /// [`ecc_sign_with_k`](Self::ecc_sign_with_k)'s only [`HsmError::InvalidArg`]
+    /// is that degenerate check, which is treated as a retry signal.
     ///
     /// # Parameters
     /// * `curve` — must be [`UpkaEccCurve::P384`]; other curves return
@@ -398,143 +409,142 @@ impl UnoHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        let (n_be, mut drbg) = self.rfc6979_seed(io, d, digest).await?;
+        self.alloc_scoped_async(io, async |scope| {
+            let mut n_be = ORDER384_LE;
+            n_be.reverse();
+            let mut drbg = Rfc6979Drbg {
+                key: scope.dma_alloc(field)?,
+                v: scope.dma_alloc(field)?,
+                tag: scope.dma_alloc(field)?,
+                msg: scope.dma_alloc(RFC6979_SEED_MSG_LEN)?,
+                n_be,
+            };
+            let k = scope.dma_alloc(field)?;
 
-        let result = self
-            .alloc_scoped_async(io, async |scope| {
-                let k = scope.dma_alloc(field)?;
-                let mut outcome = Err(HsmError::InvalidArg);
-                for _ in 0..RFC6979_MAX_TRIES {
-                    self.rfc6979_generate(io, &mut drbg).await?;
-                    if drbg.v.iter().any(|&b| b != 0) && drbg.v[..] < n_be[..] {
-                        // Candidate k in [1, n-1]; stage LE and attempt the sign.
-                        for i in 0..field {
-                            k[i] = drbg.v[field - 1 - i];
+            self.rfc6979_seed(io, &mut drbg, d, digest).await?;
+
+            let mut outcome = Err(HsmError::InvalidArg);
+            for _ in 0..RFC6979_MAX_TRIES {
+                self.rfc6979_generate(io, &mut drbg).await?;
+                let v_be: &[u8] = &drbg.v[..];
+                if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                    // Candidate k in [1, n-1]; stage little-endian and sign.
+                    k[..field].copy_from_slice(&drbg.v[..field]);
+                    k[..field].reverse();
+                    match self.ecc_sign_with_k(io, curve, k, digest, d, r, s).await {
+                        Ok(()) => {
+                            outcome = Ok(());
+                            break;
                         }
-                        match self
-                            .ecc_sign_with_k(io, curve, k, digest, d, r, s)
-                            .await
-                        {
-                            Ok(()) => {
-                                outcome = Ok(());
-                                break;
-                            }
-                            // Degenerate r/s — advance the DRBG and retry.
-                            Err(HsmError::InvalidArg) => {}
-                            Err(e) => {
-                                outcome = Err(e);
-                                break;
-                            }
+                        // Degenerate r/s — advance the DRBG and retry.
+                        Err(HsmError::InvalidArg) => {}
+                        Err(e) => {
+                            outcome = Err(e);
+                            break;
                         }
                     }
-                    self.rfc6979_reseed(io, &mut drbg).await?;
                 }
-                k.zeroize();
-                outcome
-            })
-            .await;
-
-        drbg.scrub();
-        result
+                self.rfc6979_reseed(io, &mut drbg).await?;
+            }
+            k.zeroize();
+            drbg.scrub();
+            outcome
+        })
+        .await
     }
 
     /// RFC 6979 §3.2 (b)-(g): seed the HMAC-SHA384 DRBG for P-384 from the
-    /// private key `d` and message hash `digest` (both 48-byte LE). Returns the
-    /// big-endian order `n` (for the candidate range test) and the seeded DRBG.
+    /// private key `d` and message hash `digest` (both 48-byte LE).
     ///
     /// The RFC's integer/octet conversions are big-endian, so `d`/`digest` are
-    /// byte-reversed into `x = int2octets(d)` and `h1 = bits2octets(digest)`.
-    /// Since `hlen == qlen == 384` and `n > 2^383` (so `digest < 2n`), `h1`
-    /// reduces mod `n` with a single conditional subtraction. Key-derived stack
-    /// scratch is scrubbed before return.
+    /// byte-reversed into `x = int2octets(d)` and `h1 = bits2octets(digest)`
+    /// directly inside the DMA-resident assembly buffer. Since `hlen == qlen ==
+    /// 384` and `n > 2^383` (so `digest < 2n`), `h1` reduces mod `n` with a
+    /// single conditional subtraction. `x`/`h1` stay fixed across both key
+    /// derivations, so only the `V`-prefix and the tag byte change between them.
+    /// Assumes `drbg.n_be` is already set.
     async fn rfc6979_seed(
         &self,
         io: &impl HsmIo,
+        drbg: &mut Rfc6979Drbg<'_>,
         d: &DmaBuf,
         digest: &DmaBuf,
-    ) -> HsmResult<([u8; 48], Rfc6979Drbg)> {
+    ) -> HsmResult<()> {
         let field = PRIME384_LE.len();
-        let mut n_be = ORDER384_LE;
-        n_be.reverse();
-        let mut x = [0u8; 48];
-        let mut h1 = [0u8; 48];
-        for i in 0..field {
-            x[i] = d[field - 1 - i];
-            h1[i] = digest[field - 1 - i];
+
+        // K = 0x00…, V = 0x01…
+        drbg.key.fill(0x00);
+        drbg.v.fill(0x01);
+
+        // msg = V ‖ 0x00 ‖ int2octets(x) ‖ bits2octets(h1).
+        drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
+        drbg.msg[field] = 0x00;
+        drbg.msg[field + 1..field + 1 + field].copy_from_slice(&d[..field]);
+        drbg.msg[field + 1..field + 1 + field].reverse();
+        {
+            // h1 = bits2octets(digest): big-endian digest reduced mod n.
+            let (_, tail) = drbg.msg.split_at_mut(field + 1 + field);
+            let h1: &mut [u8] = &mut tail[..field];
+            h1.copy_from_slice(&digest[..field]);
+            h1.reverse();
+            if h1[..] >= drbg.n_be[..] {
+                be_sub_assign(h1, &drbg.n_be);
+            }
         }
-        if h1[..] >= n_be[..] {
-            be_sub_assign(&mut h1, &n_be);
-        }
 
-        //   K = 0x00…, V = 0x01…
-        //   K = HMAC_K(V ‖ 0x00 ‖ x ‖ h1) ; V = HMAC_K(V)
-        //   K = HMAC_K(V ‖ 0x01 ‖ x ‖ h1) ; V = HMAC_K(V)
-        let mut v = [0x01u8; 48];
-        let mut key = [0x00u8; 48];
-        let mut seed = [0u8; 48 + 1 + 48 + 48]; // V ‖ tag ‖ x ‖ h1
-        seed[..field].copy_from_slice(&v);
-        seed[field + 1..field + 1 + field].copy_from_slice(&x);
-        seed[field + 1 + field..].copy_from_slice(&h1);
-
-        seed[field] = 0x00;
-        key = self.hmac_sha384_bytes(io, &key, &seed).await?;
-        v = self.hmac_sha384_bytes(io, &key, &v).await?;
-        seed[..field].copy_from_slice(&v);
-        seed[field] = 0x01;
-        key = self.hmac_sha384_bytes(io, &key, &seed).await?;
-        v = self.hmac_sha384_bytes(io, &key, &v).await?;
-
-        secure_zero(&mut x);
-        secure_zero(&mut h1);
-        secure_zero(&mut seed);
-        Ok((n_be, Rfc6979Drbg { key, v }))
+        // (d) K = HMAC_K(V ‖ 0x00 ‖ x ‖ h1) ; (e) V = HMAC_K(V)
+        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN).await?;
+        self.rfc6979_update_v(io, drbg).await?;
+        // (f) K = HMAC_K(V ‖ 0x01 ‖ x ‖ h1) ; (g) V = HMAC_K(V)
+        drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
+        drbg.msg[field] = 0x01;
+        self.rfc6979_update_key(io, drbg, RFC6979_SEED_MSG_LEN).await?;
+        self.rfc6979_update_v(io, drbg).await?;
+        Ok(())
     }
 
-    /// RFC 6979 §3.2 (h) one generate block: `V = HMAC_K(V)`. `T = V` since
-    /// `hlen == qlen == 384`, so the candidate is `drbg.v` (big-endian) on
-    /// return.
-    async fn rfc6979_generate(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg) -> HsmResult<()> {
-        drbg.v = self.hmac_sha384_bytes(io, &drbg.key, &drbg.v).await?;
-        Ok(())
+    /// RFC 6979 §3.2 (h) one generate block: `V = HMAC_K(V)`. Because
+    /// `hlen == qlen == 384`, `T = V`, so the candidate is `drbg.v`
+    /// (big-endian) on return.
+    async fn rfc6979_generate(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg<'_>) -> HsmResult<()> {
+        self.rfc6979_update_v(io, drbg).await
     }
 
     /// RFC 6979 §3.2 (h) reseed after a rejected candidate:
     /// `K = HMAC_K(V ‖ 0x00)` then `V = HMAC_K(V)`.
-    async fn rfc6979_reseed(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg) -> HsmResult<()> {
-        let mut buf = [0u8; 49]; // V ‖ 0x00
-        buf[..48].copy_from_slice(&drbg.v);
-        buf[48] = 0x00;
-        drbg.key = self.hmac_sha384_bytes(io, &drbg.key, &buf).await?;
-        drbg.v = self.hmac_sha384_bytes(io, &drbg.key, &drbg.v).await?;
-        secure_zero(&mut buf);
+    async fn rfc6979_reseed(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg<'_>) -> HsmResult<()> {
+        let field = PRIME384_LE.len();
+        drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
+        drbg.msg[field] = 0x00;
+        self.rfc6979_update_key(io, drbg, field + 1).await?;
+        self.rfc6979_update_v(io, drbg).await?;
         Ok(())
     }
 
-    /// One-shot HMAC-SHA384 over stack byte slices, returning the 48-byte tag.
-    ///
-    /// The SHA/HMAC engine requires DMA-accessible operands, so `key`/`data`
-    /// are staged into scoped DMA scratch; the key copy is scrubbed before
-    /// return. Helper for [`ecc_generate_k_rfc6979`](Self::ecc_generate_k_rfc6979).
-    async fn hmac_sha384_bytes(
+    /// `K = HMAC_K(msg[..len])` (RFC 6979 §3.2 (d)/(f) and reseed). Writes the
+    /// tag into the DMA `tag` slot, then rotates `key`/`tag` *by reference* so
+    /// `drbg.key` holds the new `K` with no copy. The caller stages `msg`.
+    async fn rfc6979_update_key(
         &self,
         io: &impl HsmIo,
-        key: &[u8],
-        data: &[u8],
-    ) -> HsmResult<[u8; 48]> {
-        self.alloc_scoped_async(io, async |scope| {
-            let key_buf = scope.dma_alloc(key.len())?;
-            key_buf.copy_from_slice(key);
-            let data_buf = scope.dma_alloc(data.len())?;
-            data_buf.copy_from_slice(data);
-            let tag = scope.dma_alloc(48)?;
-            self.hmac_sign(io, HsmHashAlgo::Sha384, key_buf, data_buf, tag)
-                .await?;
-            let mut out = [0u8; 48];
-            out.copy_from_slice(&tag[..48]);
-            key_buf.zeroize();
-            Ok(out)
-        })
-        .await
+        drbg: &mut Rfc6979Drbg<'_>,
+        len: usize,
+    ) -> HsmResult<()> {
+        let (data, _) = drbg.msg.split_at(len);
+        self.hmac_sign(io, HsmHashAlgo::Sha384, &*drbg.key, data, &mut *drbg.tag)
+            .await?;
+        core::mem::swap(&mut drbg.key, &mut drbg.tag);
+        Ok(())
+    }
+
+    /// `V = HMAC_K(V)` (RFC 6979 §3.2 (e)/(g)/(h2)). Writes the tag into the
+    /// DMA `tag` slot, then rotates `v`/`tag` *by reference* so `drbg.v` holds
+    /// the new `V` (the next candidate, big-endian) with no copy.
+    async fn rfc6979_update_v(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg<'_>) -> HsmResult<()> {
+        self.hmac_sign(io, HsmHashAlgo::Sha384, &*drbg.key, &*drbg.v, &mut *drbg.tag)
+            .await?;
+        core::mem::swap(&mut drbg.v, &mut drbg.tag);
+        Ok(())
     }
 
     /// THROWAWAY: one-shot ECDSA-P384 known-answer self-test for
