@@ -206,7 +206,11 @@ fn check_fail_fast<P: HsmPal>(
 /// the `EstablishCred` private key.
 ///
 /// `okm_out` must be exactly [`BK_LEN`] (80) bytes.
-async fn derive_session_credential_keys<P: HsmPal>(
+///
+/// Exposed to sibling handlers (e.g. [`change_pin`](super::change_pin))
+/// that also authenticate an in-session payload keyed by the
+/// session-encryption key.
+pub(super) async fn derive_session_credential_keys<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     host_eph_pub_key_raw: &DmaBuf,

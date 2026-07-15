@@ -4,6 +4,7 @@
 pub(crate) mod aes_encrypt_decrypt;
 pub(crate) mod aes_generate_key;
 pub(crate) mod attest_key;
+pub(crate) mod change_pin;
 pub(crate) mod close_session;
 pub(crate) mod delete_key;
 pub(crate) mod ecc_generate_key_pair;
@@ -42,6 +43,7 @@ use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
+pub(crate) use change_pin::*;
 pub(crate) use close_session::*;
 pub(crate) use delete_key::*;
 pub(crate) use ecc_generate_key_pair::*;
@@ -173,6 +175,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::InitBk3 => init_bk3(pal, io, decoder, hdr).await,
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
+        DdiOp::ChangePin => change_pin(pal, io, decoder, hdr).await,
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr).await,
         DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr).await,
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,

@@ -14,6 +14,7 @@ mod integration {
     pub mod attest_key;
     pub mod attest_key_smoke;
     pub mod change_pin;
+    pub mod change_pin_smoke;
     pub mod close_session;
     pub mod close_session_smoke;
     pub mod common;
