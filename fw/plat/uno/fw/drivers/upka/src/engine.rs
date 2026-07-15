@@ -443,6 +443,10 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         modulus: &DmaBuf,
         mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            modulus.len() >= hsm_point_size(curve) && mont_result.len() >= mont_operand_size(curve),
+        )?;
+
         self.execute_cmd(
             mont_const_calc_opcode(curve),
             mont_result.as_mut_ptr() as u32,
@@ -463,6 +467,12 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         scalar: &DmaBuf,
         result: &mut DmaBuf,
     ) -> HsmResult<()> {
+        Self::ensure_cmd_input(
+            point_xy.len() >= hsm_point_size(curve) * 2
+                && scalar.len() >= hsm_point_size(curve)
+                && result.len() >= point_size(curve),
+        )?;
+
         self.execute_cmd(
             ecc_point_mul_opcode(curve),
             result.as_mut_ptr() as u32,
@@ -482,6 +492,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_reduction_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve) && arg1.len() >= hsm_point_size(curve) * 2,
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -500,6 +513,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mont_repr_in_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= mont_operand_size(curve) && arg1.len() >= hsm_point_size(curve),
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -518,6 +534,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mont_repr_out_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= point_size(curve) && arg1.len() >= mont_operand_size(curve),
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -537,6 +556,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg1: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_inverse_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= mont_operand_size(curve) && arg1.len() >= mont_operand_size(curve),
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -557,6 +579,11 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg2: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_multiplication_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= mont_operand_size(curve)
+                && arg1.len() >= mont_operand_size(curve)
+                && arg2.len() >= mont_operand_size(curve),
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,
@@ -577,6 +604,11 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         arg2: &DmaBuf,
     ) -> HsmResult<()> {
         let opcode = mod_addition_opcode(curve);
+        Self::ensure_cmd_input(
+            result.len() >= mont_operand_size(curve)
+                && arg1.len() >= mont_operand_size(curve)
+                && arg2.len() >= mont_operand_size(curve),
+        )?;
         self.execute_cmd(
             opcode,
             result.as_mut_ptr() as u32,

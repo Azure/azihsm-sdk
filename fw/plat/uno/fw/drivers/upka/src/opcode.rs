@@ -303,6 +303,23 @@ pub const fn hsm_point_size(curve: UpkaEccCurve) -> usize {
     }
 }
 
+/// Return the Montgomery-domain operand width, in bytes, for the modular
+/// step primitives.
+///
+/// Montgomery-form operands are wider than the raw field element (the field
+/// size rounded up to the engine's Montgomery slot):
+///
+///   - P256: 36
+///   - P384: 52
+///   - P521: 72
+pub(crate) const fn mont_operand_size(curve: UpkaEccCurve) -> usize {
+    match curve {
+        UpkaEccCurve::P256 => 36,
+        UpkaEccCurve::P384 => 52,
+        UpkaEccCurve::P521 => 72,
+    }
+}
+
 /// Return the encoded signature size for the selected ECC curve.
 ///
 /// # Parameters

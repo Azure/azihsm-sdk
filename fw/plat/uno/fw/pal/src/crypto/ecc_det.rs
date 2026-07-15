@@ -165,10 +165,13 @@ impl Rfc6979Drbg<'_> {
 
 /// Upper bound on RFC 6979 candidate attempts before giving up.
 ///
-/// Each rejection (candidate out of `[1, n-1]`, or a degenerate `r == 0` /
-/// `s == 0` signature) has probability ~`2^-384` for P-384, so the first
-/// attempt always succeeds in practice; the bound only guarantees the loop
-/// terminates.
+/// Two independent rejections can advance the DRBG: the candidate falling
+/// outside `[1, n-1]`, and a degenerate `r == 0` / `s == 0` signature. For
+/// P-384 the range check is the dominant one at ~`2^-194` (the top 192 bits
+/// of `n` are 1s, so `n` is within ~`2^190` of `2^384`); the
+/// degenerate-signature cases are ~`2^-384`. Both are astronomically rare, so
+/// the first attempt always succeeds in practice; the bound only guarantees
+/// the loop terminates.
 const RFC6979_MAX_TRIES: usize = 8;
 
 // =============================================================================
