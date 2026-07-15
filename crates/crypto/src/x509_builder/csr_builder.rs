@@ -9,17 +9,17 @@
 //!
 //! # Usage
 //!
-//! 1. Fill a [`DeviceCsrParams`](crate::csr_builder::DeviceCsrParams) with the public key, CN, and SN.
+//! 1. Fill a [`DeviceCsrParams`](super::csr_builder::DeviceCsrParams) with the public key, CN, and SN.
 //! 2. Sign the patched TBS externally (template available as
-//!    [`device_csr::TBS_TEMPLATE`](crate::device_csr::TBS_TEMPLATE)).
-//! 3. Call [`build_device_csr`](crate::csr_builder::build_device_csr) with the params, raw ECDSA (r, s), and
+//!    [`device_csr::TBS_TEMPLATE`](super::device_csr::TBS_TEMPLATE)).
+//! 3. Call [`build_device_csr`](super::csr_builder::build_device_csr) with the params, raw ECDSA (r, s), and
 //!    an output buffer.
 
-use crate::cert_builder::pad_cn;
-use crate::cert_builder::pad_sn;
-use crate::der_helpers::ECDSA_SHA384_ALG_ID;
-use crate::der_helpers::MAX_ECDSA384_SIG_DER_LEN;
-use crate::der_helpers::{self};
+use super::cert_builder::pad_cn;
+use super::cert_builder::pad_sn;
+use super::der_helpers::ECDSA_SHA384_ALG_ID;
+use super::der_helpers::MAX_ECDSA384_SIG_DER_LEN;
+use super::der_helpers::{self};
 
 /// Parameters for building a device CSR (PKCS#10 CertificationRequest).
 ///
@@ -27,15 +27,15 @@ use crate::der_helpers::{self};
 pub struct DeviceCsrParams<'a> {
     /// Uncompressed P-384 public key (97 bytes: `0x04 || x || y`).
     pub public_key: &'a [u8; 97],
-    /// Subject Common Name (ASCII, max [`CN_LEN`](crate::cert_builder::CN_LEN) bytes;
+    /// Subject Common Name (ASCII, max [`CN_LEN`](super::cert_builder::CN_LEN) bytes;
     /// space-padded internally).
     pub subject_cn: &'a str,
-    /// Subject serialNumber (max [`SN_LEN`](crate::cert_builder::SN_LEN) bytes;
+    /// Subject serialNumber (max [`SN_LEN`](super::cert_builder::SN_LEN) bytes;
     /// zero-padded internally).
     pub subject_sn: &'a str,
 }
 
-/// Build a device CSR from the [`device_csr`](crate::device_csr) template.
+/// Build a device CSR from the [`device_csr`](super::device_csr) template.
 ///
 /// # Arguments
 /// * `params` — CSR field values (see [`DeviceCsrParams`]).
@@ -52,7 +52,7 @@ pub fn build_device_csr(
     sig_s: &[u8; 48],
     out: &mut [u8],
 ) -> Option<usize> {
-    use crate::device_csr::*;
+    use super::device_csr::*;
 
     let mut tbs = TBS_TEMPLATE;
     let subject_cn = pad_cn(params.subject_cn)?;

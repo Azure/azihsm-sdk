@@ -11,8 +11,10 @@ members = [
   "api/tests/macro",
   "crates/cred_encrypt",
   "crates/crypto",
+  "crates/crypto/x509_builder/gen",
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
+  "crates/session_ex_crypto",
   "crates/test_with_tracing",
   "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
@@ -54,13 +56,14 @@ members = [
   "fw/core/ddi/tbor/derive",
   "fw/core/ddi/tbor/types",
   "fw/core/io",
+  "fw/core/key-decode",
+  "fw/core/key-unwrap",
   "fw/core/lib",
+  "fw/core/oob",
   "fw/core/tracing",
   "fw/pal/traits",
   "fw/plat/std/lib",
   "fw/plat/std/pal",
-  "fw/plat/std/x509",
-  "fw/plat/std/x509/gen",
   "plugins/ossl_engine/engine",
   "plugins/ossl_engine/engine-resiliency",
   "plugins/ossl_engine/openssl-engine",
@@ -104,6 +107,7 @@ azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
+azihsm_session_ex_crypto = { path = "crates/session_ex_crypto" }
 azihsm_tpm = { path = "crates/tpm" }
 openssl-engine = { path = "plugins/ossl_engine/openssl-engine" }
 openssl-sys-engine = { path = "plugins/ossl_engine/openssl-sys-engine" }
@@ -137,14 +141,16 @@ azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/g
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
 
 # Firmware crates — common
+azihsm_crypto_x509_builder_gen = { path = "crates/crypto/x509_builder/gen" }
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_io = { path = "fw/core/io" }
+azihsm_fw_hsm_key_decode = { path = "fw/core/key-decode" }
+azihsm_fw_hsm_key_unwrap = { path = "fw/core/key-unwrap" }
+azihsm_fw_hsm_oob = { path = "fw/core/oob" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
 azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
-azihsm_fw_hsm_std_x509 = { path = "fw/plat/std/x509" }
-azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
 
 # Embassy crates
 embassy-executor = "0.10.0"
@@ -175,14 +181,14 @@ glob = "0.3"
 hex = "0.4.3"
 is-terminal = "0.4"
 itertools = "0.14.0"
-junit-parser = "1.5.0"
+junit-parser = "1.5.1"
 jzon = "0.12.5"
 lazy_static = "1.5.0"
 libc = "0.2"
 libtest-mimic = "0.8.1"
 lit = "1.0.4"
 log = "0.4"
-memmap2 = "0.9"
+memmap2 = "0.9.11"
 minicbor = "0.19.1"
 nix = "0.26"
 num-bigint = "0.4"

@@ -69,6 +69,7 @@ jobs:
             lib_dir:       /usr/lib/x86_64-linux-gnu
             openssl_minor: "3.0"
             nginx:         false
+            cov:           false
 
           - distro:        u2404
             label:         Ubuntu 24.04 (OpenSSL 3.0.13)
@@ -77,6 +78,17 @@ jobs:
             lib_dir:       /usr/lib/x86_64-linux-gnu
             openssl_minor: "3.0"
             nginx:         true
+            cov:           false
+
+          # Use Ubuntu 24.04 for collecting code coverage
+          - distro:        u2404-cov
+            label:         Ubuntu 24.04 (OpenSSL 3.0.13) with coverage
+            image:         ubuntu:24.04
+            family:        debian
+            lib_dir:       /usr/lib/x86_64-linux-gnu
+            openssl_minor: "3.0"
+            nginx:         true
+            cov:           true
 
           - distro:        debian12
             label:         Debian 12 (OpenSSL 3.0.11)
@@ -85,6 +97,7 @@ jobs:
             lib_dir:       /usr/lib/x86_64-linux-gnu
             openssl_minor: "3.0"
             nginx:         true
+            cov:           false
 
           - distro:        alma9
             label:         AlmaLinux 9.2 (OpenSSL 3.0.7)
@@ -95,6 +108,7 @@ jobs:
             lib_dir:       /usr/lib64
             openssl_minor: "3.0"
             nginx:         false
+            cov:           false
 
           - distro:        rocky9
             label:         Rocky 9.2 (OpenSSL 3.0.7)
@@ -105,6 +119,7 @@ jobs:
             lib_dir:       /usr/lib64
             openssl_minor: "3.0"
             nginx:         false
+            cov:           false
 
           # OpenSSL 3.5.x via system packages on the current LTS.  3.5 is well
           # past the openssl#18262 STORE-dispatch fix, so nginx runs here.
@@ -115,6 +130,7 @@ jobs:
             lib_dir:       /usr/lib/x86_64-linux-gnu
             openssl_minor: "3.5"
             nginx:         true
+            cov:           false
 
     steps:
       # Containers need git before actions/checkout, and the build deps
@@ -198,6 +214,15 @@ jobs:
         run: cargo xtask setup --skip-taplo --skip-audit
 
       - name: Build provider
+        if: ${{ !matrix.cov }}
+        run: |
+          cargo build -p azihsm_api_native --features mock
+          cargo build -p azihsm_ossl_provider --features mock
+
+      - name: Build provider with coverage
+        if: ${{ matrix.cov }}
+        env:
+          RUSTFLAGS: -C instrument-coverage
         run: |
           cargo build -p azihsm_api_native --features mock
           cargo build -p azihsm_ossl_provider --features mock
@@ -208,7 +233,7 @@ jobs:
       # current release, so pin the archived .deb from the pool (which keeps
       # every past version) directly.
       - name: Install nginx 1.29.0 (OpenSSL 3.0)
-        if: matrix.nginx && matrix.openssl_minor == '3.0'
+        if: ${{ matrix.nginx && matrix.openssl_minor == '3.0' }}
         run: |
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           host=$(. /etc/os-release && echo "$ID")
@@ -222,7 +247,7 @@ jobs:
       # mainline build for the 26.04 codename (resolute), and 1.29.1+ linking
       # against OPENSSL_3.2.0+ is fine here since system OpenSSL is 3.5.x.
       - name: Install nginx 1.29.8 (OpenSSL 3.5)
-        if: matrix.nginx && matrix.openssl_minor == '3.5'
+        if: ${{ matrix.nginx && matrix.openssl_minor == '3.5' }}
         run: |
           apt-get update
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
@@ -235,21 +260,54 @@ jobs:
       # run even when cli fails, so the cell's PR check list shows three
       # independent pass/fail indicators instead of one.
       - name: Run cli suite
+        if: ${{ !matrix.cov }}
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-cli \
             --profile ci-provider-integration --no-fail-fast
 
       - name: Run capi suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !matrix.cov }}
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-capi \
             --profile ci-provider-integration --no-fail-fast
 
       - name: Run nginx suite
-        if: ${{ !cancelled() && matrix.nginx }}
+        if: ${{ !cancelled() && matrix.nginx && !matrix.cov }}
         run: |
           cargo nextest run --features integration \
             -p provider-integration-tests-nginx \
             --profile ci-provider-integration --no-fail-fast
+
+      - name: Run cli suite with coverage
+        if: ${{ matrix.cov }}
+        run: |
+          cargo xtask precheck --coverage --features integration \
+            -p provider-integration-tests-cli \
+            --profile ci-provider-integration
+
+      - name: Run capi suite with coverage
+        if: ${{ !cancelled() && matrix.cov }}
+        run: |
+          cargo xtask precheck --coverage --skip-clean --features integration \
+            -p provider-integration-tests-capi \
+            --profile ci-provider-integration
+
+      - name: Run nginx suite with coverage
+        if: ${{ !cancelled() && matrix.nginx && matrix.cov }}
+        run: |
+          cargo xtask precheck --coverage --skip-clean --features integration \
+            -p provider-integration-tests-nginx \
+            --profile ci-provider-integration
+
+      - name: Code Coverage Summary Report
+        if: ${{ matrix.cov }}
+        run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths $PROVIDER_PATH/libazihsm_api_native.so
+
+      - name: Upload coverage report
+        if: ${{ matrix.cov }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report-provider-matrix-${{ matrix.distro }}
+          path: ./target/reports/

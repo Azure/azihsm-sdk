@@ -32,6 +32,7 @@ mod rand;
 mod rsa;
 mod secret;
 mod x509;
+pub mod x509_builder;
 
 mod op;
 mod traits;

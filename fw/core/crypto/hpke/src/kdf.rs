@@ -23,8 +23,6 @@ use azihsm_fw_hsm_pal_traits::HsmKdf;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 
-use crate::helpers::dma_copy_in;
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -77,14 +75,15 @@ fn concat_alloc<'a>(parts: &[&[u8]], alloc: &'a impl HsmScopedAlloc) -> HsmResul
 /// * `algo` — hash algorithm used by HKDF (selects `Nh`).
 /// * `suite_id` — HPKE suite identifier (`"HPKE" || I2OSP(kem_id,
 ///   2) || …`, opaque to this function).
-/// * `salt` — HKDF salt (may be empty).
+/// * `salt` — HKDF salt as a DMA buffer, or `None` for the RFC 5869
+///   default (all-zero) salt.
 /// * `label` — context-specific label (e.g. `b"eae_prk"`).
 /// * `ikm` — input keying material.
-/// * `prk_out` — destination buffer for the pseudo-random key;
+/// * `prk_out` — destination DMA buffer for the pseudo-random key;
 ///   must be at least `algo.digest_len()` bytes.  Only the leading
-///   `digest_len` bytes are written.
-/// * `alloc` — scoped allocator used for the labelled input buffer
-///   and output scratch.
+///   `digest_len` bytes are written.  The PAL writes into it directly —
+///   no intermediate scratch or copy.
+/// * `alloc` — scoped allocator used for the labelled input buffer.
 ///
 /// # Returns
 ///
@@ -98,22 +97,17 @@ pub async fn labeled_extract<'a, P>(
     io: &impl HsmIo,
     algo: HsmHashAlgo,
     suite_id: &[u8],
-    salt: &[u8],
+    salt: Option<&DmaBuf>,
     label: &[u8],
     ikm: &[u8],
-    prk_out: &mut [u8],
+    prk_out: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
     P: HsmKdf + HsmAlloc + 'a,
 {
     let labeled_ikm = concat_alloc(&[HPKE_V1, suite_id, label, ikm], alloc)?;
-    let salt_dma = dma_copy_in(alloc, salt)?;
-    let prk_scratch = alloc.dma_alloc(prk_out.len())?;
-    pal.hkdf_extract(io, algo, Some(salt_dma), labeled_ikm, prk_scratch)
-        .await?;
-    prk_out.copy_from_slice(prk_scratch);
-    Ok(())
+    pal.hkdf_extract(io, algo, salt, labeled_ikm, prk_out).await
 }
 
 /// HPKE `LabeledExpand` (RFC 9180 §4):
@@ -136,15 +130,15 @@ where
 /// * `io` — caller's I/O context (per-IO scope).
 /// * `algo` — hash algorithm used by HKDF.
 /// * `suite_id` — HPKE suite identifier.
-/// * `prk` — pseudo-random key from a prior
+/// * `prk` — pseudo-random key DMA buffer from a prior
 ///   [`labeled_extract`] call.
 /// * `label` — context-specific label (e.g. `b"shared_secret"`).
 /// * `info` — application-specific context bytes (may be empty).
-/// * `out` — destination buffer; `L = out.len()` is encoded as a
+/// * `out` — destination DMA buffer; `L = out.len()` is encoded as a
 ///   2-byte big-endian prefix in `labeled_info`.  RFC 9180 caps
-///   `L` at `255 * Nh`.
-/// * `alloc` — scoped allocator used for the labelled input buffer
-///   and output scratch.
+///   `L` at `255 * Nh`.  The PAL writes into it directly — no
+///   intermediate scratch or copy.
+/// * `alloc` — scoped allocator used for the labelled input buffer.
 ///
 /// # Returns
 ///
@@ -160,21 +154,17 @@ pub async fn labeled_expand<'a, P>(
     io: &impl HsmIo,
     algo: HsmHashAlgo,
     suite_id: &[u8],
-    prk: &[u8],
+    prk: &DmaBuf,
     label: &[u8],
     info: &[u8],
-    out: &mut [u8],
+    out: &mut DmaBuf,
     alloc: &'a impl HsmScopedAlloc,
 ) -> HsmResult<()>
 where
     P: HsmKdf + HsmAlloc + 'a,
 {
     let l_bytes = (out.len() as u16).to_be_bytes();
-    let prk_dma = dma_copy_in(alloc, prk)?;
     let labeled_info = concat_alloc(&[&l_bytes, HPKE_V1, suite_id, label, info], alloc)?;
-    let out_scratch = alloc.dma_alloc(out.len())?;
-    pal.hkdf_expand(io, algo, prk_dma, Some(labeled_info), out_scratch)
-        .await?;
-    out.copy_from_slice(out_scratch);
-    Ok(())
+    pal.hkdf_expand(io, algo, prk, Some(labeled_info), out)
+        .await
 }

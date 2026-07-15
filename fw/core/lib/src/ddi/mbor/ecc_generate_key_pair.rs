@@ -33,7 +33,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
     let pal_curve = super::from_ddi::curve(body.curve)?;
     let vault_kind = super::from_pal::ecc_private(pal_curve);
-    let attrs = super::key_attrs::for_ecc(pal_curve, &body.key_properties.key_metadata)?;
+    let attrs = super::key_attrs::for_ecc(&body.key_properties.key_metadata, true)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
     // `key_tag` because the key cannot be looked up across sessions.

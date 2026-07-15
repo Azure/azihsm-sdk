@@ -14,7 +14,7 @@ use azihsm_crypto::HashAlgo;
 
 use super::*;
 
-fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
+pub(crate) fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     match algo {
         HsmHashAlgo::Sha1 => HashAlgo::sha1(),
         HsmHashAlgo::Sha256 => HashAlgo::sha256(),

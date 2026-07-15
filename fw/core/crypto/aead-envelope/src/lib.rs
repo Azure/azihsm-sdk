@@ -86,10 +86,12 @@ mod gcm;
 mod ops;
 
 pub use ops::open;
+pub use ops::peek;
 pub use ops::seal;
 pub use ops::AeadAlg;
 pub use ops::AeadEnvelope;
 pub use ops::AeadError;
+pub use ops::AeadPeek;
 pub use ops::FORMAT_TAG;
 pub use ops::HEADER_LEN;
 pub use ops::MAX_AAD_LEN;

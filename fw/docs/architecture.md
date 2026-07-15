@@ -359,7 +359,6 @@ fw/
 │   │   └── lib/         azihsm_fw_ddi               DDI encoder/decoder facade
 │   └── lib/             azihsm_fw_hsm_core          Core application logic (IO pipeline, DDI dispatch)
 └── plat/std/
-    ├── x509/            azihsm_fw_hsm_std_x509      X.509 certificate template builder
     ├── pal/             azihsm_fw_hsm_pal_std        Standard PAL implementation (host-native)
     └── lib/             azihsm_fw_hsm_std            StdHsm entry point (Embassy executor + tokio)
 ```
@@ -376,7 +375,7 @@ azihsm_fw_hsm_std
   │     └── azihsm_fw_hsm_pal_traits
   └── azihsm_fw_hsm_pal_std
         ├── azihsm_fw_hsm_pal_traits
-        └── azihsm_fw_hsm_std_x509
+        └── azihsm_crypto (incl. x509_builder templates)
 ```
 
 Both `azihsm_fw_hsm_core` and `azihsm_fw_hsm_pal_std` depend on `azihsm_fw_hsm_pal_traits` — but the core only uses it as a trait bound (`P: HsmPal`) while the PAL provides the concrete implementation. The core never depends on platform-specific code.

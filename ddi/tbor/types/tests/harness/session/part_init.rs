@@ -76,7 +76,7 @@ pub fn part_init(
         req.sapota_thumbprint = s.to_vec();
     }
 
-    dev.exec_op_tbor(&req, &mut None)
+    dev.exec_op_tbor(&req, None, &mut None)
 }
 
 /// Build the wire-ready AEAD-GCM envelope for a `PartInit` `mach_seed`

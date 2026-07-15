@@ -105,19 +105,19 @@ impl Xtask for CoverageReport {
         log::info!("Generating cobertura report");
         cmd!(
             sh,
-            "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --ignore-filename-regex xtask*"
+            "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --ignore-filename-regex xtask[/\\\\]"
         ).run()?;
 
         // Generate json report
         log::info!("Generating json report");
         cmd!(
             sh,
-            "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --ignore-filename-regex xtask*"
+            "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --ignore-filename-regex xtask[/\\\\]"
         ).run()?;
 
         // Generate HTML report
         log::info!("Generating HTML report");
-        cmd!(sh, "cargo llvm-cov report --html --output-dir ./target/reports/sdk-cov/ --ignore-filename-regex xtask*").run()?;
+        cmd!(sh, "cargo llvm-cov report --html --output-dir ./target/reports/sdk-cov/ --ignore-filename-regex xtask[/\\\\]").run()?;
 
         let json_path = ctx.root.join("target").join("reports").join("sdk-cov.json");
 

@@ -9,16 +9,16 @@
 //!
 //! # Key Functions
 //!
-//! - [`encode_ecdsa_signature`](crate::der_helpers::encode_ecdsa_signature): Encodes raw `(r, s)` into DER BIT STRING
+//! - [`encode_ecdsa_signature`](super::der_helpers::encode_ecdsa_signature): Encodes raw `(r, s)` into DER BIT STRING
 //!   wrapping a SEQUENCE of two INTEGERs.
-//! - [`encode_der_length`](crate::der_helpers::encode_der_length) / [`der_length_size`](crate::der_helpers::der_length_size): Write or compute the size
+//! - [`encode_der_length`](super::der_helpers::encode_der_length) / [`der_length_size`](super::der_helpers::der_length_size): Write or compute the size
 //!   of a DER definite-length field.
 //!
 //! # Constants
 //!
-//! - [`MAX_ECDSA384_SIG_DER_LEN`](crate::der_helpers::MAX_ECDSA384_SIG_DER_LEN): Upper bound on encoded sig size (108 bytes).
-//! - [`MAX_CERT_DER_LEN`](crate::der_helpers::MAX_CERT_DER_LEN): Upper bound on a complete certificate (1024 bytes).
-//! - [`ECDSA_SHA384_ALG_ID`](crate::der_helpers::ECDSA_SHA384_ALG_ID): Pre-encoded AlgorithmIdentifier for ECDSA-SHA384.
+//! - [`MAX_ECDSA384_SIG_DER_LEN`](super::der_helpers::MAX_ECDSA384_SIG_DER_LEN): Upper bound on encoded sig size (108 bytes).
+//! - [`MAX_CERT_DER_LEN`](super::der_helpers::MAX_CERT_DER_LEN): Upper bound on a complete certificate (1024 bytes).
+//! - [`ECDSA_SHA384_ALG_ID`](super::der_helpers::ECDSA_SHA384_ALG_ID): Pre-encoded AlgorithmIdentifier for ECDSA-SHA384.
 
 /// Maximum DER-encoded ECDSA-384 signature size in bytes.
 ///

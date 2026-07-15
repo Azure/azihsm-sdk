@@ -9,8 +9,8 @@
 //!
 //! # Usage
 //!
-//! 1. Fill a params struct ([`RootCertParams`](crate::cert_builder::RootCertParams), [`IntermediateCertParams`](crate::cert_builder::IntermediateCertParams),
-//!    or [`LeafCertParams`](crate::cert_builder::LeafCertParams)) with the variable field values.
+//! 1. Fill a params struct ([`RootCertParams`](super::cert_builder::RootCertParams), [`IntermediateCertParams`](super::cert_builder::IntermediateCertParams),
+//!    or [`LeafCertParams`](super::cert_builder::LeafCertParams)) with the variable field values.
 //! 2. Sign the patched TBS externally (the TBS template is available as a
 //!    public `const` in the corresponding template module).
 //! 3. Call the matching `build_*` function with the params, the raw ECDSA
@@ -27,9 +27,9 @@
 
 use bitfield_struct::bitfield;
 
-use crate::der_helpers::ECDSA_SHA384_ALG_ID;
-use crate::der_helpers::MAX_ECDSA384_SIG_DER_LEN;
-use crate::der_helpers::{self};
+use super::der_helpers::ECDSA_SHA384_ALG_ID;
+use super::der_helpers::MAX_ECDSA384_SIG_DER_LEN;
+use super::der_helpers::{self};
 
 /// Length of Common Name field (space-padded ASCII, 32 bytes).
 pub const CN_LEN: usize = 32;
@@ -241,7 +241,7 @@ pub fn pad_sn(sn: &str) -> Option<[u8; SN_LEN]> {
     Some(result)
 }
 
-/// Build a self-signed Root CA certificate from the [`root_cert`](crate::root_cert) template.
+/// Build a self-signed Root CA certificate from the [`root_cert`](super::root_cert) template.
 ///
 /// The issuer DN is set equal to the subject DN (self-signed).
 ///
@@ -260,7 +260,7 @@ pub fn build_root_cert(
     sig_s: &[u8; 48],
     out: &mut [u8],
 ) -> Option<usize> {
-    use crate::root_cert::*;
+    use super::root_cert::*;
 
     validate_serial(params.serial_number)?;
 
@@ -281,7 +281,7 @@ pub fn build_root_cert(
     assemble_cert(&tbs, sig_r, sig_s, out)
 }
 
-/// Build an Intermediate CA certificate from the [`intermediate_cert`](crate::intermediate_cert) template.
+/// Build an Intermediate CA certificate from the [`intermediate_cert`](super::intermediate_cert) template.
 ///
 /// # Arguments
 /// * `params` — Certificate field values (see [`IntermediateCertParams`]).
@@ -299,7 +299,7 @@ pub fn build_intermediate_cert(
     sig_s: &[u8; 48],
     out: &mut [u8],
 ) -> Option<usize> {
-    use crate::intermediate_cert::*;
+    use super::intermediate_cert::*;
 
     validate_serial(params.serial_number)?;
     if params.path_len > 127 {
@@ -327,7 +327,7 @@ pub fn build_intermediate_cert(
     assemble_cert(&tbs, sig_r, sig_s, out)
 }
 
-/// Build a Leaf (end-entity) certificate from the [`leaf_cert`](crate::leaf_cert) template.
+/// Build a Leaf (end-entity) certificate from the [`leaf_cert`](super::leaf_cert) template.
 ///
 /// # Arguments
 /// * `params` — Certificate field values (see [`LeafCertParams`]).
@@ -344,7 +344,7 @@ pub fn build_leaf_cert(
     sig_s: &[u8; 48],
     out: &mut [u8],
 ) -> Option<usize> {
-    use crate::leaf_cert::*;
+    use super::leaf_cert::*;
 
     validate_serial(params.serial_number)?;
 

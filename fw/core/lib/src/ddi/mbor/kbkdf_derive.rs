@@ -53,7 +53,7 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
     let algo = super::from_ddi::hash(body.hash_algorithm)?;
     let target = super::kdf::resolve_target(body.key_type, body.key_length)?;
     let attrs = match target.class {
-        KdfClass::Aes => super::key_attrs::for_aes(&body.key_properties.key_metadata)?,
+        KdfClass::Aes => super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?,
         KdfClass::Hmac => super::key_attrs::for_var_hmac(&body.key_properties.key_metadata)?,
     };
     super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;

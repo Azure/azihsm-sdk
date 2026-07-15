@@ -35,7 +35,9 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
 pub use crate::alg::AeadAlg;
+use crate::envelope::region_offsets;
 pub use crate::envelope::AeadEnvelope;
+pub use crate::envelope::AeadPeek;
 use crate::error::Error;
 pub use crate::error::Error as AeadError;
 use crate::format::is_valid_aad_len;
@@ -149,4 +151,50 @@ pub async fn open<'a>(
         AeadAlg::AesGcm256 => open_gcm(crypto, io, key, buf, header).await?,
     };
     Ok(env)
+}
+
+/// Parse and validate an envelope's header and framing **without the
+/// AEAD key**, borrowing its cleartext regions.
+///
+/// `peek` performs exactly the same envelope-framing validation as
+/// [`open`] — magic, reserved byte, `alg`, `aad_len` granularity, and
+/// the minimum envelope length (`HEADER + iv + aad + tag`, with
+/// `iv_len` / `tag_len` derived from the parsed `alg`) — but does
+/// **not** verify the authentication tag or decrypt the payload. It
+/// touches no crypto and no I/O, and takes no `key`.
+///
+/// It exists for callers that must read a cleartext binding carried in
+/// the `aad` region (e.g. a routing / identity tag) *before* they hold
+/// the key. Because the tag is not verified, the returned [`AeadPeek`]
+/// regions are cleartext but **UNAUTHENTICATED**: a tampered blob would
+/// still fail [`open`]. Callers MUST NOT trust the peeked bytes until a
+/// subsequent `open` verifies the tag.
+///
+/// # Parameters
+///
+/// * `buf` — the complete envelope. `buf.len()` is treated as the
+///   exact envelope length; a buffer shorter than
+///   `HEADER + iv + aad + tag` is rejected.
+///
+/// # Returns
+///
+/// * `Ok(peek)` — header and framing are well-formed; `iv` / `aad`
+///   borrow the corresponding regions of `buf`.
+/// * `Err(_)` — the same header / framing failures as [`open`]:
+///   [`AeadError::InvalidFormat`] (bad magic or reserved byte),
+///   [`AeadError::UnsupportedAlg`], [`AeadError::InvalidAadLength`], or
+///   [`AeadError::BufferTooSmall`] (buffer shorter than the framing
+///   implies).
+pub fn peek(buf: &DmaBuf) -> HsmResult<AeadPeek<'_>> {
+    let header = read_header(buf)?;
+    // Validates the minimum envelope length (HEADER + iv + aad + tag)
+    // and yields the region boundaries; iv_len / tag_len are derived
+    // from the `alg` parsed above. The payload / tag offsets are
+    // unused here — a peek never touches ciphertext or the tag.
+    let (iv_off, aad_off, payload_off, _tag_off) = region_offsets(header, buf.len())?;
+    Ok(AeadPeek {
+        alg: header.alg,
+        iv: &buf[iv_off..aad_off],
+        aad: &buf[aad_off..payload_off],
+    })
 }

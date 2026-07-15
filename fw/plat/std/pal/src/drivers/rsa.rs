@@ -49,6 +49,7 @@
 
 use azihsm_crypto::DecryptOp;
 use azihsm_crypto::EncryptOp;
+use azihsm_crypto::HashAlgo;
 use azihsm_crypto::KeyGenerationOp;
 use azihsm_crypto::PrivateKey;
 use azihsm_crypto::RsaEncryptAlgo;
@@ -239,6 +240,66 @@ impl StdRsa {
         y.copy_from_slice(&result);
         Ok(())
     }
+
+    /// RSA-OAEP decrypt (EME-OAEP, RFC 8017 §7.1.2).
+    ///
+    /// `ciphertext_le` is the on-wire little-endian RSA block; OpenSSL
+    /// expects the standard big-endian byte string, so the block is
+    /// reversed here in the driver (the BE↔LE flip lives in the driver,
+    /// mirroring [`rsa_pub_wire`] — real PKA hardware is LE-native).
+    ///
+    /// # Parameters
+    /// - `priv_key` — the RSA private key handle.
+    /// - `hash` — OAEP hash (label hash + MGF1).
+    /// - `label` — optional OAEP label (`None` for the empty label).
+    /// - `ciphertext_le` — little-endian RSA ciphertext (modulus-sized).
+    /// - `output` — plaintext destination; must hold the recovered
+    ///   message (`<= modulus_len`).
+    ///
+    /// # Returns
+    /// - `Ok(len)` — recovered plaintext length; `output[..len]` valid.
+    ///
+    /// # Errors
+    /// - [`HsmError::RsaDecryptFailed`] — OAEP unpadding detected
+    ///   tampering, wrong key, or a label mismatch.
+    pub async fn oaep_decrypt(
+        &self,
+        priv_key: &RsaPrivateKey,
+        hash: HashAlgo,
+        label: Option<Vec<u8>>,
+        ciphertext_le: &[u8],
+        output: &mut [u8],
+    ) -> HsmResult<usize> {
+        let key = priv_key.clone();
+        // Wire ciphertext is little-endian; OpenSSL RSA expects big-endian.
+        let mut ct_be = ciphertext_le.to_vec();
+        ct_be.reverse();
+        // OpenSSL sizes the decrypt output from a query that returns an
+        // upper bound (up to the modulus size), so the scratch buffer
+        // must be modulus-sized even though the recovered OAEP plaintext
+        // is smaller.  `ct_be.len()` is the modulus length.
+        let scratch_len = ct_be.len();
+        let caller_len = output.len();
+
+        let result = self
+            .pool
+            .submit_with_result(async move {
+                let mut algo = RsaEncryptAlgo::with_oaep_padding(hash, label.as_deref());
+                let mut buf = vec![0u8; scratch_len];
+                let written = algo
+                    .decrypt(&key, &ct_be, Some(&mut buf))
+                    .map_err(|_| HsmError::RsaDecryptFailed)?;
+                buf.truncate(written);
+                Ok::<_, HsmError>(buf)
+            })
+            .await?;
+
+        if result.len() > caller_len {
+            return Err(HsmError::RsaInvalidKeyLength);
+        }
+        output[..result.len()].copy_from_slice(&result);
+        Ok(result.len())
+    }
 }
 
 #[cfg(test)]
@@ -345,5 +406,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(recovered, plaintext);
+    }
+
+    // ── OAEP decrypt (wire-LE ciphertext → recovered plaintext) ──
+
+    #[tokio::test]
+    async fn oaep_decrypt_2048_roundtrip() {
+        let driver = make_driver();
+        let (priv_key, pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        // A representative 32-byte KEK (AES-256).
+        let plaintext = b"a 32-byte AES-256 KEK for unwrap";
+        assert_eq!(plaintext.len(), 32);
+
+        // Encrypt with OAEP — OpenSSL emits a big-endian ciphertext.
+        let mut ct_be = vec![0u8; 256];
+        {
+            let mut algo = RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None);
+            let written = algo.encrypt(&pub_key, plaintext, Some(&mut ct_be)).unwrap();
+            assert_eq!(written, 256);
+        }
+
+        // The wire carries the RSA block little-endian; reverse it so the
+        // driver's LE->BE flip restores the original before OpenSSL.
+        let mut ct_le = ct_be.clone();
+        ct_le.reverse();
+
+        let mut out = vec![0u8; 256];
+        let len = driver
+            .oaep_decrypt(&priv_key, HashAlgo::sha256(), None, &ct_le, &mut out)
+            .await
+            .unwrap();
+        assert_eq!(&out[..len], plaintext);
+    }
+
+    #[tokio::test]
+    async fn oaep_decrypt_2048_tamper_fails() {
+        let driver = make_driver();
+        let (priv_key, pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        let mut ct_be = vec![0u8; 256];
+        {
+            let mut algo = RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None);
+            algo.encrypt(&pub_key, b"secret", Some(&mut ct_be)).unwrap();
+        }
+        let mut ct_le = ct_be.clone();
+        ct_le.reverse();
+        ct_le[0] ^= 0xff; // corrupt the ciphertext
+
+        let mut out = vec![0u8; 256];
+        let res = driver
+            .oaep_decrypt(&priv_key, HashAlgo::sha256(), None, &ct_le, &mut out)
+            .await;
+        assert!(res.is_err());
     }
 }

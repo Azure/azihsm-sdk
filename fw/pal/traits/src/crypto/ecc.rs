@@ -333,6 +333,46 @@ pub trait HsmEcc {
         result: &mut DmaBuf,
     ) -> HsmResult<()>;
 
+    /// Convert a PKCS#8 DER-encoded ECC private key (recovered from a
+    /// `CKM_RSA_AES_KEY_WRAP` unwrap) into the PAL's vault representation
+    /// (raw HSM-format scalar bytes), returning the key's curve.
+    ///
+    /// Follows the query/alloc/use convention: pass `out = None` to query
+    /// the vault byte length the caller must allocate (the curve's
+    /// [`wire_coord_len`](HsmEccCurve::wire_coord_len)), then
+    /// `out = Some(buf)` to serialize.
+    ///
+    /// # Errors
+    /// - [`HsmError::InvalidArg`] — `der` is not a valid PKCS#8 ECC
+    ///   private key, or `out` is too small.
+    fn ecc_priv_der_to_vault(
+        &self,
+        io: &impl HsmIo,
+        der: &DmaBuf,
+        out: Option<&mut DmaBuf>,
+    ) -> HsmResult<(usize, HsmEccCurve)>;
+
+    /// Derive the wire-format public key (`x || y`, wire-LE, P-521
+    /// padded) from a vault-stored ECC private key.
+    ///
+    /// The ECC analogue of
+    /// [`HsmRsa::rsa_priv_pub_key`](crate::HsmRsa::rsa_priv_pub_key):
+    /// `priv_key` is in the PAL's vault representation (raw HSM-format
+    /// scalar bytes).  Follows the query/alloc/use convention — pass
+    /// `pub_out = None` to query the wire length
+    /// ([`wire_pub_key_len`](HsmEccCurve::wire_pub_key_len)), then
+    /// `pub_out = Some(buf)` to serialize.
+    ///
+    /// # Errors
+    /// - [`HsmError::InvalidArg`] — `priv_key` is not a valid vault-format
+    ///   ECC private key, or `pub_out` is too small.
+    async fn ecc_priv_pub_key(
+        &self,
+        io: &impl HsmIo,
+        priv_key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
+    ) -> HsmResult<usize>;
+
     /// ECDH key agreement: derives a shared secret from a local
     /// private key and a remote public key.
     ///
