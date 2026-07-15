@@ -25,6 +25,7 @@
 
 use std::env;
 use std::fs::OpenOptions;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -135,6 +136,26 @@ fn open_file_layer(
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
         .map_err(|e| EngineError::wrap(format!("AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
+
+    // O_NOFOLLOW already refuses a symlink at `path`. Also refuse a
+    // pre-existing non-regular file (fifo, device, …) or one accessible by
+    // group/other, so enabling logging can't append into an unexpected file
+    // type or leak events through a world-readable file.
+    let meta = file
+        .metadata()
+        .map_err(|e| EngineError::wrap(format!("stat AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
+    if !meta.is_file() {
+        return Err(EngineError::Other(format!(
+            "AZIHSM_ENGINE_LOG_FILE {path:?} is not a regular file"
+        )));
+    }
+    if meta.mode() & 0o077 != 0 {
+        return Err(EngineError::Other(format!(
+            "AZIHSM_ENGINE_LOG_FILE {path:?} has insecure permissions \
+             (must be owner-only, mode 0600)"
+        )));
+    }
+
     let (writer, guard) = tracing_appender::non_blocking(file);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(writer)
@@ -170,5 +191,27 @@ mod tests {
             file: Some(PathBuf::from("/no/such/directory/engine.log")),
         };
         assert!(install(s).is_err());
+    }
+
+    #[test]
+    fn install_rejects_group_or_other_accessible_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // A pre-existing log file readable by group/other must be rejected
+        // (checked before any subscriber is installed, so this stays hermetic).
+        let path = std::env::temp_dir().join(format!("engine-log-perm-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let r = install(LogSettings {
+            stderr: false,
+            file: Some(path.clone()),
+        });
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            r.is_err(),
+            "group/other-accessible log file must be rejected"
+        );
     }
 }
