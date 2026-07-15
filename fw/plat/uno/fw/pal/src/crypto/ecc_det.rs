@@ -235,7 +235,8 @@ impl UnoHsmPal {
 
             // Drive the whole sequence on one held engine so the Montgomery
             // constant set below stays resident for the ops that follow.
-            self.pka
+            let res = self
+                .pka
                 .with_engine(async |eng| {
                     // Montgomery constant = curve prime p, then xR = (k·G).x.
                     eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
@@ -272,22 +273,28 @@ impl UnoHsmPal {
                         return Err(HsmError::InvalidArg);
                     }
 
-                    // Scrub secret-bearing *internal* scratch (everything derived
-                    // from k/d). `DmaBuf::zeroize` uses volatile writes + a
-                    // compiler fence (not an elidable `fill`), and the scoped
-                    // allocator only rewinds a watermark on release — it does not
-                    // clear freed DMA. The caller owns scrubbing the k/d it
-                    // supplied; r/s are the public signature.
-                    k_mont.zeroize();
-                    d_mont.zeroize();
-                    k_inv.zeroize();
-                    s_mont.zeroize();
-                    t_mont.zeroize();
-                    t_dot_r.zeroize();
-                    s_plus_t.zeroize();
                     Ok(())
                 })
-                .await
+                .await;
+
+            // Scrub secret-bearing internal scratch on EVERY exit path (success,
+            // degenerate r/s, or a mid-sequence PKA error): the scoped allocator
+            // only rewinds a watermark on release — it does not clear freed DMA,
+            // so key-derived bytes must be wiped here. `DmaBuf::zeroize` uses
+            // volatile writes + a compiler fence (not an elidable `fill`). `xr` /
+            // `xr_wide` hold (k·G).x — public as `r`, but k-derived, so they are
+            // scrubbed as defense-in-depth. The caller owns scrubbing the k/d it
+            // supplied; r/s are the public signature.
+            xr.zeroize();
+            xr_wide.zeroize();
+            k_mont.zeroize();
+            d_mont.zeroize();
+            k_inv.zeroize();
+            s_mont.zeroize();
+            t_mont.zeroize();
+            t_dot_r.zeroize();
+            s_plus_t.zeroize();
+            res
         })
         .await
     }
@@ -344,22 +351,30 @@ impl UnoHsmPal {
                 msg: scope.dma_alloc(RFC6979_SEED_MSG_LEN)?,
                 n_be,
             };
-            self.rfc6979_seed(io, &mut drbg, d, digest).await?;
+            // Run the fallible DRBG sequence in an inner block so the secret
+            // state (`K`, `V`, and the assembled `x ‖ h1` in `msg`) is scrubbed
+            // on EVERY exit path — including an early `?` from
+            // seed/generate/reseed. The scoped allocator only rewinds its
+            // watermark on release; it does not clear freed DMA.
+            let outcome = async {
+                self.rfc6979_seed(io, &mut drbg, d, digest).await?;
 
-            // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n.
-            let mut outcome = Err(HsmError::InvalidArg);
-            for _ in 0..RFC6979_MAX_TRIES {
-                self.rfc6979_generate(io, &mut drbg).await?;
-                let v_be: &[u8] = &drbg.v[..];
-                if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
-                    // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
-                    k[..field].copy_from_slice(&drbg.v[..field]);
-                    k[..field].reverse();
-                    outcome = Ok(());
-                    break;
+                // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n.
+                for _ in 0..RFC6979_MAX_TRIES {
+                    self.rfc6979_generate(io, &mut drbg).await?;
+                    let v_be: &[u8] = &drbg.v[..];
+                    if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                        // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
+                        k[..field].copy_from_slice(&drbg.v[..field]);
+                        k[..field].reverse();
+                        return Ok(());
+                    }
+                    self.rfc6979_reseed(io, &mut drbg).await?;
                 }
-                self.rfc6979_reseed(io, &mut drbg).await?;
+                Err(HsmError::InvalidArg)
             }
+            .await;
+
             drbg.scrub();
             outcome
         })
@@ -421,31 +436,33 @@ impl UnoHsmPal {
             };
             let k = scope.dma_alloc(field)?;
 
-            self.rfc6979_seed(io, &mut drbg, d, digest).await?;
+            // Run the fallible derive+sign in an inner block so `k` and the DRBG
+            // state are wiped on EVERY exit path — including an early `?` from
+            // seed/generate/reseed. The scoped allocator only rewinds its
+            // watermark on release; it does not clear freed DMA.
+            let outcome = async {
+                self.rfc6979_seed(io, &mut drbg, d, digest).await?;
 
-            let mut outcome = Err(HsmError::InvalidArg);
-            for _ in 0..RFC6979_MAX_TRIES {
-                self.rfc6979_generate(io, &mut drbg).await?;
-                let v_be: &[u8] = &drbg.v[..];
-                if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
-                    // Candidate k in [1, n-1]; stage little-endian and sign.
-                    k[..field].copy_from_slice(&drbg.v[..field]);
-                    k[..field].reverse();
-                    match self.ecc_sign_with_k(io, curve, k, digest, d, r, s).await {
-                        Ok(()) => {
-                            outcome = Ok(());
-                            break;
-                        }
-                        // Degenerate r/s — advance the DRBG and retry.
-                        Err(HsmError::InvalidArg) => {}
-                        Err(e) => {
-                            outcome = Err(e);
-                            break;
+                for _ in 0..RFC6979_MAX_TRIES {
+                    self.rfc6979_generate(io, &mut drbg).await?;
+                    let v_be: &[u8] = &drbg.v[..];
+                    if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                        // Candidate k in [1, n-1]; stage little-endian and sign.
+                        k[..field].copy_from_slice(&drbg.v[..field]);
+                        k[..field].reverse();
+                        match self.ecc_sign_with_k(io, curve, k, digest, d, r, s).await {
+                            Ok(()) => return Ok(()),
+                            // Degenerate r/s — advance the DRBG and retry.
+                            Err(HsmError::InvalidArg) => {}
+                            Err(e) => return Err(e),
                         }
                     }
+                    self.rfc6979_reseed(io, &mut drbg).await?;
                 }
-                self.rfc6979_reseed(io, &mut drbg).await?;
+                Err(HsmError::InvalidArg)
             }
+            .await;
+
             k.zeroize();
             drbg.scrub();
             outcome
