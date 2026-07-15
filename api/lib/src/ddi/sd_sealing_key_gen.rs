@@ -38,6 +38,25 @@ use super::*;
 /// masked-key metadata record.
 const SEALING_META_LEN: usize = 96;
 
+/// Length, in bytes, of the P-384 private scalar carried (encrypted) in
+/// the masked sealing-key blob.
+const SEALING_PRIV_SCALAR_LEN: usize = 48;
+
+/// Length, in bytes, of the AES-256-GCM tag on the masked blob.
+const SEALING_GCM_TAG_LEN: usize = 16;
+
+/// Pin `SEALING_META_LEN` to the wire schema so a future
+/// `MASKED_SEALING_KEY_LEN` change can't silently desync the validator.
+/// The blob is `AEAD header ‖ IV ‖ AAD ‖ P-384 scalar ‖ GCM tag`.
+const _: () = assert!(
+    MASKED_SEALING_KEY_LEN
+        == aead_envelope::HEADER_LEN
+            + AES_GCM_IV_SIZE
+            + SEALING_META_LEN
+            + SEALING_PRIV_SCALAR_LEN
+            + SEALING_GCM_TAG_LEN
+);
+
 /// Sanity-checks the firmware-returned masked sealing key before it is
 /// cached and later handed back for unmask-on-use.
 ///

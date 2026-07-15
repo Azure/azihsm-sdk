@@ -31,6 +31,10 @@ enum KeyScope {
     Internal = 5,
 }
 
+/// Bit length of a security-domain sealing key. `SdSealingKeyGen` always
+/// produces an ECC P-384 keypair, so the props must be sized to match.
+const SEALING_KEY_BITS: u32 = 384;
+
 impl HsmSealingKey {
     /// No-op: non-resident, so there is no device handle to restore.
     /// Kept for `#[resiliency_key_op]` compatibility.
@@ -40,9 +44,11 @@ impl HsmSealingKey {
     }
 
     /// Validates that `props` describe a supported HSM sealing key: a
-    /// `Sealing`-kind secret key permitted for derivation only.
+    /// `Sealing`-kind secret key, P-384 sized, permitted for derivation
+    /// only.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         if props.class() != HsmKeyClass::Secret
+            || props.bits() != SEALING_KEY_BITS
             || !Self::check_key_kind(props)
             || !Self::check_key_usage(props)
         {
@@ -138,6 +144,22 @@ mod tests {
         let props = HsmKeyPropsBuilder::default()
             .class(HsmKeyClass::Secret)
             .key_kind(HsmKeyKind::Aes)
+            .bits(256)
+            .can_derive(true)
+            .build()
+            .expect("build props");
+        assert_eq!(
+            HsmSealingKey::validate_props(&props),
+            Err(HsmError::InvalidKeyProps),
+        );
+    }
+
+    #[test]
+    fn validate_props_rejects_wrong_bits() {
+        // A `Sealing` secret derive key that isn't P-384 must be rejected.
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Sealing)
             .bits(256)
             .can_derive(true)
             .build()
