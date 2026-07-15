@@ -202,13 +202,14 @@ pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
+    psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
     // Convert the API-layer session type to the wire-level `SessionType`
     // here in the DDI layer, so the public API surface never handles the
     // DDI wire type.
     let session_type: SessionType = session_type.try_into()?;
-    let pending = open_session_ex_init(partition, rev, psk_id, session_type)?;
+    let pending = open_session_ex_init(partition, rev, psk_id, psk, session_type)?;
     open_session_ex_finish(partition, pending)
 }
 
@@ -220,8 +221,8 @@ pub(crate) fn open_session_ex(
 /// response, and verifies the Phase-1 confirm MAC. Returns a
 /// [`PendingHandshake`] for [`open_session_ex_finish`] to consume.
 ///
-/// Uses the partition default PSK for `psk_id` (CO = 0, CU = 1); PSK
-/// rotation is out of scope for now.
+/// Uses the caller-supplied PSK when present, otherwise the partition
+/// default PSK for `psk_id` (CO = 0, CU = 1).
 ///
 /// `rev` is the negotiated API revision selected by the caller
 /// ([`open_session_ex`]); it is used for the `pk_hsm` cert-chain
@@ -237,6 +238,7 @@ fn open_session_ex_init(
     partition: &HsmPartition,
     rev: HsmApiRev,
     psk_id: u8,
+    psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: SessionType,
 ) -> HsmResult<PendingHandshake> {
     let inner = partition.inner().read();
@@ -266,7 +268,12 @@ fn open_session_ex_init(
     // Derive the 48-byte HPKE `exported` secret, then verify the FW's
     // Phase-1 confirm MAC binds the negotiated role/type/suite.
     let info = build_hpke_info(psk_id, session_type.to_u8(), suite_id);
-    let psk = default_psk(psk_id)?;
+    // Use the caller-supplied PSK when present, else the partition
+    // default PSK for the role (required before the default is rotated).
+    let psk: &[u8; crate::PSK_LEN] = match psk {
+        Some(p) => p,
+        None => default_psk(psk_id)?,
+    };
     let exported = Zeroizing::new(receive_exported(
         &eph.sk,
         &eph.pk,
@@ -364,6 +371,72 @@ fn open_session_ex_finish(
     })
 }
 
+/// Issue `PskChange` (opcode `0x06`) on the active session.
+///
+/// Seals `new_psk` under the session `param_key` (AAD-bound to the
+/// session id via [`build_psk_change_aad`]) and ships it as the
+/// `psk_envelope`. The firmware rotates the PSK slot implied by the
+/// session role (CO session → CO slot, CU session → CU slot); the
+/// request carries no slot-selection field.
+///
+/// # Arguments
+///
+/// * `partition` - The HSM partition handle.
+/// * `session_id` - The active session id this request binds to.
+/// * `param_key` - The session's per-session AES wrap key used to seal
+///   the new PSK.
+/// * `new_psk` - The 32-byte replacement PSK ([`crate::PSK_LEN`]).
+///
+/// # Errors
+///
+/// Propagates [`HsmError::InternalError`] on an RNG / AEAD seal failure
+/// and surfaces DDI/device failures from the round-trip.
+pub(crate) fn psk_change(
+    partition: &HsmPartition,
+    session_id: u16,
+    param_key: &AesKey,
+    new_psk: &[u8; crate::PSK_LEN],
+) -> HsmResult<()> {
+    let aad = build_psk_change_aad(session_id);
+    let iv = Rng::rand_vec(12).map_err(|_| HsmError::InternalError)?;
+
+    // First pass sizes the output buffer; second pass writes the sealed
+    // envelope into it.
+    let total = azihsm_crypto::aead_envelope::seal(
+        azihsm_crypto::aead_envelope::AeadAlg::AesGcm256,
+        param_key,
+        &iv,
+        &aad,
+        new_psk,
+        None,
+    )
+    .map_err(|_| HsmError::InternalError)?;
+    let mut envelope = vec![0u8; total];
+    let written = azihsm_crypto::aead_envelope::seal(
+        azihsm_crypto::aead_envelope::AeadAlg::AesGcm256,
+        param_key,
+        &iv,
+        &aad,
+        new_psk,
+        Some(&mut envelope),
+    )
+    .map_err(|_| HsmError::InternalError)?;
+    envelope.truncate(written);
+
+    let req = TborPskChangeReq {
+        session_id,
+        psk_envelope: envelope,
+    };
+
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let mut cookie = None;
+    let _resp: TborPskChangeResp = dev
+        .exec_op_tbor(&req, None, &mut cookie)
+        .map_err(HsmError::from)?;
+    Ok(())
+}
+
 /// Closes an active TBOR security-domain session — `CloseSession`
 /// (opcode `0x12`).
 ///
@@ -444,7 +517,7 @@ mod tests {
         let part = fresh_emu_partition();
         let rev = part.inner().read().api_rev();
 
-        let pending = open_session_ex_init(&part, rev, psk_id, session_type)
+        let pending = open_session_ex_init(&part, rev, psk_id, None, session_type)
             .expect("phase 1 (open_session_ex_init) should succeed against emu");
         assert_eq!(
             pending.psk_id, psk_id,
@@ -496,7 +569,7 @@ mod tests {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
         let rev = part.inner().read().api_rev();
-        let result = open_session_ex_init(&part, rev, 2, SessionType::Authenticated);
+        let result = open_session_ex_init(&part, rev, 2, None, SessionType::Authenticated);
         assert!(
             result.is_err(),
             "unknown psk_id must not produce a pending handshake"

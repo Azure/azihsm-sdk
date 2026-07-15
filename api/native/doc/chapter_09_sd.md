@@ -10,14 +10,17 @@ provisioning command in this chapter.
 Open a security-domain session to the device.
 
 The session uses the API revision that was selected when the partition was
-opened with [`azihsm_part_open`](#azihsm_part_open). The `session_type`
-selects the channel integrity profile pinned for the session (see
+opened with [`azihsm_part_open`](#azihsm_part_open). `psk` selects the role
+slot and (optionally) the PSK — when its `psk` buffer is NULL the partition
+default PSK for the slot is used. The `session_type` selects the channel
+integrity profile pinned for the session (see
 [azihsm_session_ex_type](#azihsm_session_ex_type)), and a handle to the new
 session is returned.
 
 ```cpp
 azihsm_status azihsm_sess_ex_open(
     azihsm_handle dev_handle,
+    const azihsm_session_psk *psk,
     azihsm_session_ex_type session_type,
     azihsm_handle *sess_handle
     );
@@ -28,6 +31,7 @@ azihsm_status azihsm_sess_ex_open(
  | Parameter         | Name                                                | Description                                    |
  | ----------------- | --------------------------------------------------- | ---------------------------------------------- |
  | [in] dev_handle   | [azihsm_handle](#azihsm_handle)                     | partition handle                               |
+ | [in] psk          | const azihsm_session_psk *                          | PSK slot + optional PSK (NULL buffer = default)|
  | [in] session_type | [azihsm_session_ex_type](#azihsm_session_ex_type)   | channel integrity profile to pin               |
  | [out] sess_handle | [azihsm_handle *](#azihsm_handle)                   | new security-domain session handle      &nbsp; |
 

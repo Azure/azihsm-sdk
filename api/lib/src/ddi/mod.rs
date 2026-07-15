@@ -98,15 +98,17 @@ impl From<DdiError> for HsmError {
 
 pub(crate) type HsmKeyHandle = u32;
 
-/// Maximum size, in bytes, of the `pta_csr` buffer written by the
-/// partition-provisioning `part_init` command. Owned by the API layer
-/// but pinned to the TBOR wire-schema bound so the two cannot drift.
-pub const PTA_CSR_MAX_LEN: usize = azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
+/// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
+pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
+pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
+/// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
+pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
 
-/// Maximum size, in bytes, of the `pta_report` buffer written by the
-/// partition-provisioning `part_init` command. Owned by the API layer
-/// but pinned to the TBOR wire-schema bound so the two cannot drift.
-pub const PTA_REPORT_MAX_LEN: usize = azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+// Pin the shared-module `PSK_LEN` (defined in `shared_types`, which is
+// shared with the native crate) to the wire-schema value so the two
+// cannot drift.
+const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 
 /// Extracts the key ID from a packed HSM key handle.
 ///

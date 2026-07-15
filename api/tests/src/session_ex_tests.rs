@@ -21,7 +21,11 @@ fn open_session_ex_co_authenticated() {
     let (part, rev) = fresh_emu_partition();
 
     let session = part
-        .open_session_ex(rev, CO, HsmSessionExType::Authenticated)
+        .open_session_ex(
+            rev,
+            HsmSessionPsk::new(HsmPskId::CO),
+            HsmSessionExType::Authenticated,
+        )
         .expect("CO/Authenticated open_session_ex should succeed against emu");
 
     // The V2 session must carry the negotiated api revision through.
@@ -40,7 +44,11 @@ fn open_session_ex_cu_plaintext() {
     let (part, rev) = fresh_emu_partition();
 
     let session = part
-        .open_session_ex(rev, CU, HsmSessionExType::PlainText)
+        .open_session_ex(
+            rev,
+            HsmSessionPsk::new(HsmPskId::CU),
+            HsmSessionExType::PlainText,
+        )
         .expect("CU/PlainText open_session_ex should succeed against emu");
 
     let sess_rev = session.api_rev();
@@ -51,14 +59,47 @@ fn open_session_ex_cu_plaintext() {
     );
 }
 
-/// Negative path: an unknown `psk_id` (neither CO nor CU) is rejected by
-/// the FW during Phase 1.
+/// PSK-rotation round trip: after rotating the CO PSK from the default,
+/// the partition accepts the new secret and rejects the default — the
+/// full `change_psk` + optional-PSK-`open_session_ex` flow end to end.
 #[test]
-fn open_session_ex_rejects_unknown_psk_id() {
+fn change_psk_rotates_co_psk() {
     let _guard = EMU_LOCK.lock();
     let (part, rev) = fresh_emu_partition();
 
-    let result = part.open_session_ex(rev, 2, HsmSessionExType::Authenticated);
+    // A non-default replacement CO PSK.
+    let new_psk = [0x5Au8; PSK_LEN];
 
-    assert!(result.is_err(), "unknown psk_id must not yield a session");
+    // Open with the default CO PSK, rotate it, then close the session.
+    {
+        let session = part
+            .open_session_ex(
+                rev,
+                HsmSessionPsk::new(HsmPskId::CO),
+                HsmSessionExType::Authenticated,
+            )
+            .expect("open with the default CO PSK");
+        session
+            .change_psk(&new_psk)
+            .expect("rotate the CO PSK to the new secret");
+    }
+
+    // Reopening with the rotated secret must now succeed.
+    part.open_session_ex(
+        rev,
+        HsmSessionPsk::with_psk(HsmPskId::CO, &new_psk),
+        HsmSessionExType::Authenticated,
+    )
+    .expect("open with the rotated CO PSK should succeed");
+
+    // Reopening with the (now stale) default CO PSK must be rejected.
+    let stale = part.open_session_ex(
+        rev,
+        HsmSessionPsk::new(HsmPskId::CO),
+        HsmSessionExType::Authenticated,
+    );
+    assert!(
+        stale.is_err(),
+        "the default CO PSK must be rejected after rotation",
+    );
 }

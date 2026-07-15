@@ -574,16 +574,17 @@ impl HsmPartition {
     /// # Arguments
     ///
     /// * `api_rev` - The negotiated API revision.
-    /// * `psk_id` - PSK identity selecting the role (0 = CO, 1 = CU).
+    /// * `psk` - PSK credential: the role slot plus an optional
+    ///   caller-supplied PSK (`None` selects the partition default PSK).
     /// * `session_type` - Channel integrity profile to pin.
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session_ex(
         &self,
         api_rev: HsmApiRev,
-        psk_id: u8,
+        psk: HsmSessionPsk<'_>,
         session_type: HsmSessionExType,
     ) -> HsmResult<HsmSession> {
-        let result = ddi::open_session_ex(self, api_rev, psk_id, session_type)?;
+        let result = ddi::open_session_ex(self, api_rev, psk.psk_id as u8, psk.psk, session_type)?;
         Ok(HsmSession::new_ex(api_rev, self.clone(), result))
     }
 

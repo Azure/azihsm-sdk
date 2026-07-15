@@ -12,11 +12,6 @@
 use azihsm_api::*;
 use parking_lot::Mutex;
 
-/// PSK id selecting the Crypto Officer role.
-pub(crate) const CO: u8 = 0;
-/// PSK id selecting the Crypto User role.
-pub(crate) const CU: u8 = 1;
-
 /// Serialises tests against the process-global FW emulator singleton.
 /// `cargo-nextest` runs each test in its own process, but this keeps a
 /// plain `cargo test` (single process, multi-threaded) correct too.
@@ -45,6 +40,10 @@ pub(crate) fn fresh_emu_partition() -> (HsmPartition, HsmApiRev) {
 /// `part_final_ex`).
 pub(crate) fn fresh_co_session() -> HsmSession {
     let (part, rev) = fresh_emu_partition();
-    part.open_session_ex(rev, CO, HsmSessionExType::Authenticated)
-        .expect("open CO session")
+    part.open_session_ex(
+        rev,
+        HsmSessionPsk::new(HsmPskId::CO),
+        HsmSessionExType::Authenticated,
+    )
+    .expect("open CO session")
 }

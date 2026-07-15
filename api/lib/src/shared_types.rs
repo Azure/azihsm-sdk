@@ -188,6 +188,55 @@ pub enum HsmSessionExType {
     Authenticated = 1,
 }
 
+/// Length, in bytes, of a partition PSK (Pre-Shared Key). This module is
+/// shared with the native crate (which does not depend on the wire-types
+/// crate), so the value is a literal here and pinned to the wire-schema
+/// `PSK_LEN` by a static assert in the DDI layer.
+pub const PSK_LEN: usize = 32;
+
+/// Partition PSK slot for a security-domain (TBOR) session, selecting
+/// which PSK the handshake authenticates with. The `#[repr(u8)]`
+/// discriminant is the wire `psk_id`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HsmPskId {
+    /// Crypto Officer — PSK slot 0.
+    CO = 0,
+    /// Crypto User — PSK slot 1.
+    CU = 1,
+}
+
+/// PSK credential for opening a security-domain session: the PSK slot
+/// and, optionally, the caller's PSK.
+///
+/// When `psk` is `None`, the partition **default** PSK for the slot is
+/// used — required for the first session, before the default PSK is
+/// rotated. After rotation, pass the rotated secret via `psk`.
+#[derive(Debug, Clone, Copy)]
+pub struct HsmSessionPsk<'a> {
+    /// PSK slot this session authenticates as.
+    pub psk_id: HsmPskId,
+    /// Caller-supplied PSK (exactly [`PSK_LEN`] bytes); `None` selects
+    /// the partition default PSK for the slot.
+    pub psk: Option<&'a [u8; PSK_LEN]>,
+}
+
+impl<'a> HsmSessionPsk<'a> {
+    /// Opens the given slot with the partition **default** PSK — used
+    /// for the first session, before the default PSK is rotated.
+    pub fn new(psk_id: HsmPskId) -> Self {
+        Self { psk_id, psk: None }
+    }
+
+    /// Opens the given slot with a caller-supplied (rotated) PSK.
+    pub fn with_psk(psk_id: HsmPskId, psk: &'a [u8; PSK_LEN]) -> Self {
+        Self {
+            psk_id,
+            psk: Some(psk),
+        }
+    }
+}
+
 /// Result of a security-domain partition-provisioning (`part_init_ex`)
 /// command: the artifacts the device returns after initializing a
 /// partition's security domain.

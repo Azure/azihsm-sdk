@@ -9,14 +9,33 @@
 
 use super::*;
 
+/// PSK credential for opening a security-domain session.
+///
+/// Pairs the PSK slot with an optional caller-supplied PSK. When `psk`
+/// is NULL, the partition **default** PSK for the slot is used — required
+/// for the first session, before the default is rotated via
+/// `azihsm_sess_ex_psk_change`. After rotation, point `psk` at the
+/// rotated secret.
+#[repr(C)]
+pub struct AzihsmSessionPsk {
+    /// PSK slot: 0 = Crypto Officer, 1 = Crypto User.
+    pub psk_id: u8,
+    /// Optional PSK buffer (exactly `PSK_LEN` bytes); NULL selects the
+    /// partition default PSK for the slot.
+    pub psk: *const AzihsmBuffer,
+}
+
 /// @brief Open a security-domain session to the device
 ///
 /// Opens a security-domain session using the API revision negotiated when
 /// the partition was opened, and returns a handle to the resulting
-/// session. `session_type` selects the channel integrity profile pinned
-/// for the session.
+/// session. `psk` selects the role slot and (optionally) the PSK, and
+/// `session_type` selects the channel integrity profile pinned for the
+/// session.
 ///
 /// @param[in] dev_handle Handle to the HSM partition
+/// @param[in] psk PSK credential — slot plus optional PSK
+///            (see `azihsm_session_psk`)
 /// @param[in] session_type Channel integrity profile to pin for the session
 /// @param[out] sess_handle Pointer to the session handle to be allocated
 ///
@@ -25,26 +44,45 @@ use super::*;
 /// # Safety
 ///
 /// - `dev_handle` must be a valid partition handle.
+/// - `psk` must be a valid pointer to an `azihsm_session_psk` whose `psk`
+///   field is NULL or a valid `azihsm_buffer` holding exactly `PSK_LEN`
+///   bytes.
 /// - `sess_handle` must be a valid pointer to memory where the session handle
 ///   will be written.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_ex_open(
     dev_handle: AzihsmHandle,
+    psk: *const AzihsmSessionPsk,
     session_type: AzihsmSessionExType,
     sess_handle: *mut AzihsmHandle,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(sess_handle)?;
 
+        let psk = deref_ptr(psk)?;
+        let psk_id = match psk.psk_id {
+            0 => api::HsmPskId::CO,
+            1 => api::HsmPskId::CU,
+            _ => Err(AzihsmStatus::InvalidArgument)?,
+        };
+        // NULL `psk` buffer selects the partition default PSK; otherwise
+        // the caller-supplied PSK must be exactly `PSK_LEN` bytes.
+        let session_psk = match buffer_to_optional_slice(psk.psk)? {
+            Some(bytes) => {
+                let key: &[u8; api::PSK_LEN] = bytes
+                    .try_into()
+                    .map_err(|_| AzihsmStatus::InvalidArgument)?;
+                api::HsmSessionPsk::with_psk(psk_id, key)
+            }
+            None => api::HsmSessionPsk::new(psk_id),
+        };
+
         // Get the partition from the handle
         let partition = &api::HsmPartition::try_from(dev_handle)?;
-        // PSK id selecting the role (0 = CO, 1 = CU). Hardcoded to CO for
-        // now; role selection is not yet exposed on this entry point.
-        let psk_id = 0;
         let session = Box::new(partition.open_session_ex(
             partition.api_rev(),
-            psk_id,
+            session_psk,
             api::HsmSessionExType::from(session_type),
         )?);
 
@@ -195,6 +233,144 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
 
         copy_to_buffer(pta_csr, &result.pta_csr)?;
         copy_to_buffer(pta_report, &result.pta_report)?;
+
+        Ok(())
+    })
+}
+
+/// Input buffers for [`azihsm_sess_ex_part_final`].
+///
+/// Groups the security-domain finalization inputs into a single struct so
+/// the call site does not pass them as separate arguments. `pta_cert_chain`
+/// points to an array of `pta_cert_chain_len` `azihsm_buffer`s, each holding
+/// one DER-encoded PTA certificate (leaf to root). `prev_local_mk_backup` is
+/// optional and may be NULL to omit it.
+#[repr(C)]
+pub struct AzihsmSessExPartFinalParams {
+    /// Unified partition policy image buffer, re-supplied for `POTAPubKey`
+    /// recovery; must match the policy given to `part_init`.
+    pub part_policy: *const AzihsmBuffer,
+    /// Pointer to an array of `pta_cert_chain_len` `azihsm_buffer`s, each a
+    /// DER-encoded PTA certificate (leaf to root).
+    pub pta_cert_chain: *const AzihsmBuffer,
+    /// Number of certificates in `pta_cert_chain`.
+    pub pta_cert_chain_len: u32,
+    /// Optional previous `local_mk` backup envelope to restore; NULL to omit.
+    pub prev_local_mk_backup: *const AzihsmBuffer,
+}
+
+/// @brief Finalize a partition's security domain
+///
+/// Completes provisioning started by `azihsm_sess_ex_part_init`: re-supplies
+/// the unified partition policy and the PTA certificate chain (leaf to root),
+/// optionally restoring a prior `local_mk` backup, and returns the current
+/// `local_mk` backup envelope the firmware produced.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Finalization input buffers
+///            (see `azihsm_sess_ex_part_final_params`)
+/// @param[in,out] local_mk_backup Output buffer for the `local_mk` backup
+///                envelope. On input `len` is the capacity; on success it is
+///                set to the number of bytes written. If the buffer is too
+///                small (or `ptr` is NULL with `len == 0`), `len` is set to
+///                the maximum possible output size and
+///                `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned **before** the
+///                partition is finalized, so the standard two-call probe
+///                (call once with a zero-length buffer to learn the required
+///                capacity, then retry) is safe for this one-shot command. A
+///                NULL `ptr` with a non-zero `len` is rejected with
+///                `AZIHSM_STATUS_INVALID_ARGUMENT`.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` must be a valid pointer to an `azihsm_sess_ex_part_final_params`
+///   whose `part_policy` is a valid `azihsm_buffer` pointer, whose
+///   `pta_cert_chain` points to `pta_cert_chain_len` valid `azihsm_buffer`s,
+///   and whose `prev_local_mk_backup` is NULL or a valid `azihsm_buffer`
+///   pointer.
+/// - `local_mk_backup` must be a valid pointer to an `azihsm_buffer` with
+///   writable backing storage of the advertised length.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_part_final(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExPartFinalParams,
+    local_mk_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+        let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
+
+        // Build the PTA cert chain (borrowing, not copying) from the C
+        // array of `azihsm_buffer`s.
+        let chain_len = params.pta_cert_chain_len as usize;
+        let certs: Vec<api::HsmCert<'_>> = if chain_len == 0 {
+            Vec::new()
+        } else {
+            validate_ptr(params.pta_cert_chain)?;
+            // SAFETY: the caller guarantees `pta_cert_chain` points to
+            // `chain_len` valid `azihsm_buffer`s (documented above).
+            let raw = unsafe { std::slice::from_raw_parts(params.pta_cert_chain, chain_len) };
+            let mut certs = Vec::with_capacity(chain_len);
+            for buf in raw {
+                let der: &[u8] = buf.try_into()?;
+                certs.push(api::HsmCert { cert: der });
+            }
+            certs
+        };
+
+        // Validate the output buffer up-front against the fixed
+        // wire-schema bound so the partition is not finalized when the
+        // buffer is too small.
+        validate_ptr(local_mk_backup)?;
+        let local_mk_backup = deref_mut_ptr(local_mk_backup)?;
+        validate_output_buffer(local_mk_backup, api::LOCAL_MK_BACKUP_LEN)?;
+
+        let result = session.part_final_ex(part_policy, &certs, prev_local_mk_backup)?;
+
+        copy_to_buffer(local_mk_backup, &result.local_mk_backup)?;
+
+        Ok(())
+    })
+}
+
+/// @brief Rotate the calling session's partition PSK
+///
+/// Replaces the PSK of the slot implied by the session role (CO session
+/// → CO, CU session → CU) with `new_psk`, sealed under the session key.
+/// Required once on a fresh partition to move past the default-PSK gate
+/// before provisioning.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] new_psk New PSK buffer; must be exactly `PSK_LEN` (32 B)
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `new_psk` must be a valid pointer to an `azihsm_buffer` whose
+///   backing storage holds exactly `PSK_LEN` bytes.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_psk_change(
+    sess_handle: AzihsmHandle,
+    new_psk: *const AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let new_psk: &[u8] = deref_ptr(new_psk)?.try_into()?;
+        let new_psk: &[u8; api::PSK_LEN] = new_psk
+            .try_into()
+            .map_err(|_| AzihsmStatus::InvalidArgument)?;
+
+        session.change_psk(new_psk)?;
 
         Ok(())
     })

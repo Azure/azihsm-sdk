@@ -57,8 +57,13 @@ class azihsm_sess_ex : public ::testing::Test
     static azihsm_handle open_sd_session(azihsm_handle part_handle)
     {
         azihsm_handle sess_handle = 0;
-        auto err =
-            azihsm_sess_ex_open(part_handle, AZIHSM_SESSION_EX_TYPE_AUTHENTICATED, &sess_handle);
+        azihsm_session_psk psk{ 0, nullptr };
+        auto err = azihsm_sess_ex_open(
+            part_handle,
+            &psk,
+            AZIHSM_SESSION_EX_TYPE_AUTHENTICATED,
+            &sess_handle
+        );
         if (err != AZIHSM_STATUS_SUCCESS || sess_handle == 0)
         {
             ADD_FAILURE() << "azihsm_sess_ex_open failed: " << err;
@@ -85,8 +90,13 @@ TEST_F(azihsm_sess_ex, open_and_close)
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
 
         azihsm_handle sess_handle = 0;
-        auto err =
-            azihsm_sess_ex_open(part_handle, AZIHSM_SESSION_EX_TYPE_AUTHENTICATED, &sess_handle);
+        azihsm_session_psk psk{ 0, nullptr };
+        auto err = azihsm_sess_ex_open(
+            part_handle,
+            &psk,
+            AZIHSM_SESSION_EX_TYPE_AUTHENTICATED,
+            &sess_handle
+        );
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(sess_handle, 0);
@@ -109,7 +119,9 @@ TEST_F(azihsm_sess_ex, open_null_sess_handle)
         auto part_guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
 
-        auto err = azihsm_sess_ex_open(part_handle, AZIHSM_SESSION_EX_TYPE_AUTHENTICATED, nullptr);
+        azihsm_session_psk psk{ 0, nullptr };
+        auto err =
+            azihsm_sess_ex_open(part_handle, &psk, AZIHSM_SESSION_EX_TYPE_AUTHENTICATED, nullptr);
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -122,8 +134,13 @@ TEST_F(azihsm_sess_ex, open_invalid_partition_handle)
 
         azihsm_handle sess_handle = 0;
 
-        auto err =
-            azihsm_sess_ex_open(bad_handle, AZIHSM_SESSION_EX_TYPE_AUTHENTICATED, &sess_handle);
+        azihsm_session_psk psk{ 0, nullptr };
+        auto err = azihsm_sess_ex_open(
+            bad_handle,
+            &psk,
+            AZIHSM_SESSION_EX_TYPE_AUTHENTICATED,
+            &sess_handle
+        );
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });

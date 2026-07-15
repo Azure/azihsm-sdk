@@ -135,6 +135,24 @@ impl HsmSession {
         self.inner.write().set_bmk_session(bmk_session);
     }
 
+    /// Issues TBOR `PskChange` (opcode `0x06`) on this session.
+    ///
+    /// Rotates this session's own partition PSK to `new_psk`, sealed
+    /// under the session `param_key`. The slot is implied by the session
+    /// role (CO session → CO, CU session → CU). Required once on a fresh
+    /// partition to move past the default-PSK gate before provisioning.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn change_psk(&self, new_psk: &[u8; PSK_LEN]) -> HsmResult<()> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { param_key, .. } => {
+                ddi::psk_change(&inner.partition, inner.id, param_key, new_psk)
+            }
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
     /// Issues TBOR `PartInit` (opcode `0x07`) on this CO session.
     ///
     /// Seals `mach_seed` under the session `param_key` and ships it
