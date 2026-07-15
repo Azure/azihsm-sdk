@@ -1159,7 +1159,7 @@ fn test_attest_rsa_der_import(
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         key_id_priv,
-        true,
+        false,
         masked_key,
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
