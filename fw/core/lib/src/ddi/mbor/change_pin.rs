@@ -29,10 +29,10 @@ const CRED_FIELD_LEN: usize = 16;
 
 /// Handle `DdiChangePinCmd`.
 ///
-/// Runs entirely under the partition lock: DDI commands execute on a
-/// single-threaded cooperative executor with one command in flight per
-/// partition, so the fail-fast state checks stay consistent with the
-/// credential update at the end.
+/// Runs under the partition lock.  DDI commands execute on a
+/// single-threaded cooperative executor, but multiple IOs are in flight
+/// and interleave at await points, so the lock serializes this handler's
+/// multi-step fail-fast checks with the credential update at the end.
 pub(crate) async fn change_pin<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
