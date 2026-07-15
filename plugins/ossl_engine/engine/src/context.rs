@@ -232,21 +232,24 @@ fn persist_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp_name.push(format!(".tmp.{}.{seq}", std::process::id()));
     let tmp = path.with_file_name(tmp_name);
 
-    // On any failure remove the temp so a partial copy of key material is not
-    // left behind.
-    let write = || -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&tmp)?;
+    // Exclusive-create (O_EXCL via create_new): if a file already exists at
+    // this temp name — a crash leftover or a planted file in a shared dir —
+    // fail instead of truncating it, so secret material is never written into
+    // a file we did not just create with 0600.
+    let mut f = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&tmp)?;
+
+    // We own `tmp` now, so on any later failure remove it (and only it) so a
+    // partial copy of key material is not left behind.
+    if let Err(e) = (|| -> std::io::Result<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         std::fs::rename(&tmp, path)
-    };
-    if let Err(e) = write() {
+    })() {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
