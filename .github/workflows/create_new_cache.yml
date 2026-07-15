@@ -45,7 +45,11 @@ jobs:
 
   create_new_cache_windows:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=create_new_cache_windows-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
