@@ -22,7 +22,11 @@ env:
 jobs:
   # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
   copilot-setup-steps:
-    runs-on: ubuntu-24.04
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-ubuntu-image # TODO: Update this to a real image once it's available
+    - JobId=copilot-setup-steps-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     # Set the permissions to the lowest permissions possible needed for your steps.
     # Copilot will be given its own token for its operations.

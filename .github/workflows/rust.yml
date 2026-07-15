@@ -17,7 +17,18 @@ env:
 jobs:
   build_ubuntu:
 
-    runs-on: ubuntu-24.04
+    name: build_ubuntu (${{ matrix.image }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=${{ matrix.image }}
+    - JobId=build_ubuntu-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -44,7 +55,18 @@ jobs:
 
   test_ubuntu_mock:
 
-    runs-on: ubuntu-24.04
+    name: test_ubuntu_mock (${{ matrix.image }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=${{ matrix.image }}
+    - JobId=test_ubuntu_mock-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -68,7 +90,18 @@ jobs:
 
   test_ubuntu_api:
 
-    runs-on: ubuntu-24.04
+    name: test_ubuntu_api (${{ matrix.image }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=${{ matrix.image }}
+    - JobId=test_ubuntu_api-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -92,7 +125,18 @@ jobs:
 
   test_ubuntu_misc:
 
-    runs-on: ubuntu-24.04
+    name: test_ubuntu_misc (${{ matrix.image }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=${{ matrix.image }}
+    - JobId=test_ubuntu_misc-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -128,7 +172,18 @@ jobs:
 
   test_ubuntu_smoke:
 
-    runs-on: ubuntu-24.04
+    name: test_ubuntu_smoke (${{ matrix.image }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=${{ matrix.image }}
+    - JobId=test_ubuntu_smoke-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -152,7 +207,11 @@ jobs:
 
   build_windows:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=build_windows-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -179,7 +238,11 @@ jobs:
 
   test_windows_mock:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=test_windows_mock-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -203,7 +266,11 @@ jobs:
 
   test_windows_api:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=test_windows_api-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -227,7 +294,11 @@ jobs:
 
   test_windows_misc:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=test_windows_misc-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -251,7 +322,11 @@ jobs:
 
   test_windows_smoke:
 
-    runs-on: windows-2025-vs2026
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=test_windows_smoke-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:

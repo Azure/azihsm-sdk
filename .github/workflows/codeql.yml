@@ -19,7 +19,11 @@ env:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-24.04
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-ubuntu-image # TODO: Update this to a real image once it's available
+    - JobId=analyze-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
     permissions:
       security-events: write
       packages: read
