@@ -155,18 +155,22 @@ impl UnoHsmPal {
     ///
     /// The on-the-fly PID cert leaf is regenerated lazily, so its signature
     /// must be byte-stable — hence `k` is supplied by the caller (RFC 6979)
-    /// rather than drawn from the PKA RNG. This ports the mcr-hsm ECC-sign
-    /// self-test step sequence, orchestrated on ONE held PKA engine so a
-    /// `mont_const_calc`'s Montgomery state persists across the modular ops.
-    /// Every operand/scratch buffer is DMA-allocated from the per-IO scope
-    /// (~1 KB total) since the PKA engine DMAs its operands.
-    ///
+    /// rather than drawn from the PKA RNG. This is orchestrated on ONE held
+    /// PKA engine so a single `mont_const_calc`'s Montgomery state persists 
+    /// across the modular ops. Follows the zero-copy driver convention: 
+    /// operands/results are supplied by the caller already in DMA-accessible
+    /// GSRAM (as with `ecc_verify`/`ecdh_derive`); only the internal scratch 
+    /// (~0.7 KB) is allocated here.
     /// # Parameters
-    /// * `k`, `digest`, `d` — 48-byte P-384 scalars (LE): per-message secret,
-    ///   hash `e`, and private key.
-    /// * `r`, `s` — 48-byte output signature components (LE).
+    /// * `curve` — must be [`UpkaEccCurve::P384`]; any other curve returns
+    ///   [`HsmError::UnsupportedCmd`].
+    /// * `k`, `digest`, `d` — 48-byte P-384 scalars (LE) in caller-owned DMA
+    ///   buffers: per-message secret, hash `e`, and private key.
+    /// * `r`, `s` — caller-owned DMA output buffers (≥ 48 B) for the LE
+    ///   signature components.
     ///
     /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] — `curve` is not P-384.
     /// * [`HsmError::InvalidArg`] — a bad operand length, or a degenerate
     ///   `r == 0` / `s == 0` result.
     /// * Any [`HsmError`] surfaced by the PKA driver.
@@ -174,21 +178,27 @@ impl UnoHsmPal {
     pub(crate) async fn ecc_sign_with_k(
         &self,
         io: &impl HsmIo,
-        k: &[u8],
-        digest: &[u8],
-        d: &[u8],
-        r: &mut [u8],
-        s: &mut [u8],
+        curve: UpkaEccCurve,
+        k: &DmaBuf,
+        digest: &DmaBuf,
+        d: &DmaBuf,
+        r: &mut DmaBuf,
+        s: &mut DmaBuf,
     ) -> HsmResult<()> {
-        const CURVE: UpkaEccCurve = UpkaEccCurve::P384;
+        // Implemented for P-384 only (the cert-chain PID leaf is signed with the
+        // P-384 alias key). Other curves are rejected until their constants /
+        // sizes are wired in.
+        if curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
         let field = PRIME384_LE.len();
-        let mont = montgomery_size(CURVE);
+        let mont = montgomery_size(curve);
 
         if k.len() != field
             || digest.len() != field
             || d.len() != field
-            || r.len() != field
-            || s.len() != field
+            || r.len() < field
+            || s.len() < field
         {
             return Err(HsmError::InvalidArg);
         }
@@ -203,21 +213,17 @@ impl UnoHsmPal {
             base_xy[..field].copy_from_slice(&BASE384_X_LE);
             base_xy[field..].copy_from_slice(&BASE384_Y_LE);
 
-            // Inputs into DMA buffers (a non-DMA operand source hardfaults the
-            // PKA engine).
-            let k_buf = scope.dma_alloc(field)?;
-            k_buf.copy_from_slice(k);
-            let e_buf = scope.dma_alloc(field)?;
-            e_buf.copy_from_slice(digest);
-            let d_buf = scope.dma_alloc(field)?;
-            d_buf.copy_from_slice(d);
-
-            // Scratch + intermediates. Normal operands are `field` (48) bytes;
-            // Montgomery-form operands are `mont` (52) bytes.
+            // Internal scratch. Normal operands are `field` (48) bytes;
+            // Montgomery-form operands are `mont` (52) bytes. Each buffer is
+            // fully overwritten by its producing PKA op before it is read, so
+            // only `xr_wide` needs zero-init: modular reduction is a
+            // *double-width* primitive (the hardware reads a `2 * field`
+            // dividend), so `xr_wide` holds `xR ‖ 0` — its zeroed high half is
+            // essential, or the reduction sees `xR ‖ garbage` and yields a
+            // wrong `r`.
             let mont_scratch = scope.dma_alloc(mont)?;
             let xr = scope.dma_alloc(field)?;
-            let r_buf = scope.dma_alloc(field)?;
-            let s_buf = scope.dma_alloc(field)?;
+            let xr_wide = scope.dma_alloc_zeroed(field * 2)?;
             let k_mont = scope.dma_alloc(mont)?;
             let r_mont = scope.dma_alloc(mont)?;
             let e_mont = scope.dma_alloc(mont)?;
@@ -233,50 +239,46 @@ impl UnoHsmPal {
             self.pka
                 .with_engine(async |eng| {
                     // Montgomery constant = curve prime p, then xR = (k·G).x.
-                    eng.mont_const_calc(CURVE, prime, mont_scratch).await?;
-                    eng.point_mul(CURVE, base_xy, k_buf, xr).await?;
+                    eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
+                    eng.ecc_point_mul(curve, base_xy, k, xr).await?;
 
                     // Switch the Montgomery constant to the order n for the
                     // scalar arithmetic, then r = xR mod n (must be non-zero).
-                    eng.mont_const_calc(CURVE, order, mont_scratch).await?;
-                    eng.mod_reduction(CURVE, r_buf, xr).await?;
-                    if r_buf.iter().all(|&b| b == 0) {
+                    // Reduction is double-width: stage xR into the low half of
+                    // the zeroed xr_wide so the hardware reduces `xR ‖ 0`.
+                    eng.ecc_mont_const_calc(curve, order, mont_scratch).await?;
+                    xr_wide[..field].copy_from_slice(&xr[..field]);
+                    eng.ecc_mod_reduction(curve, r, xr_wide).await?;
+                    if r[..field].iter().all(|&b| b == 0) {
                         return Err(HsmError::InvalidArg);
                     }
 
                     // Montgomery form of k, r, e, d.
-                    eng.mont_repr_in(CURVE, k_mont, k_buf).await?;
-                    eng.mont_repr_in(CURVE, r_mont, r_buf).await?;
-                    eng.mont_repr_in(CURVE, e_mont, e_buf).await?;
-                    eng.mont_repr_in(CURVE, d_mont, d_buf).await?;
+                    eng.ecc_mont_repr_in(curve, k_mont, k).await?;
+                    eng.ecc_mont_repr_in(curve, r_mont, r).await?;
+                    eng.ecc_mont_repr_in(curve, e_mont, digest).await?;
+                    eng.ecc_mont_repr_in(curve, d_mont, d).await?;
 
                     // k⁻¹ mod n, then s = k⁻¹·(e + r·d) mod n:
                     //   s = k⁻¹·e ; t = k⁻¹·d ; t = t·r ; s = s + t.
-                    eng.mod_inverse(CURVE, k_inv, k_mont).await?;
-                    eng.mod_multiplication(CURVE, s_mont, k_inv, e_mont).await?;
-                    eng.mod_multiplication(CURVE, t_mont, k_inv, d_mont).await?;
-                    eng.mod_multiplication(CURVE, t_dot_r, t_mont, r_mont).await?;
-                    eng.mod_addition(CURVE, s_plus_t, s_mont, t_dot_r).await?;
+                    eng.ecc_mod_inverse(curve, k_inv, k_mont).await?;
+                    eng.ecc_mod_mul(curve, s_mont, k_inv, e_mont).await?;
+                    eng.ecc_mod_mul(curve, t_mont, k_inv, d_mont).await?;
+                    eng.ecc_mod_mul(curve, t_dot_r, t_mont, r_mont).await?;
+                    eng.ecc_mod_add(curve, s_plus_t, s_mont, t_dot_r).await?;
 
                     // Back to normal representation (must be non-zero).
-                    eng.mont_repr_out(CURVE, s_buf, s_plus_t).await?;
-                    if s_buf.iter().all(|&b| b == 0) {
+                    eng.ecc_mont_repr_out(curve, s, s_plus_t).await?;
+                    if s[..field].iter().all(|&b| b == 0) {
                         return Err(HsmError::InvalidArg);
                     }
 
-                    // Copy results out while the DMA buffers are still live.
-                    r.copy_from_slice(&r_buf[..field]);
-                    s.copy_from_slice(&s_buf[..field]);
-
-                    // Scrub secret-bearing scratch: k and everything derived
-                    // from k/d. `DmaBuf::zeroize` uses volatile writes + a
+                    // Scrub secret-bearing *internal* scratch (everything derived
+                    // from k/d). `DmaBuf::zeroize` uses volatile writes + a
                     // compiler fence (not an elidable `fill`), and the scoped
-                    // allocator only rewinds a watermark on release — it does
-                    // not clear freed DMA — so without this the material would
-                    // linger in, and leak through, a later per-IO allocation.
-                    // Leaking k recovers the private key d.
-                    k_buf.zeroize();
-                    d_buf.zeroize();
+                    // allocator only rewinds a watermark on release — it does not
+                    // clear freed DMA. The caller owns scrubbing the k/d it
+                    // supplied; r/s are the public signature.
                     k_mont.zeroize();
                     d_mont.zeroize();
                     k_inv.zeroize();
@@ -287,6 +289,67 @@ impl UnoHsmPal {
                     Ok(())
                 })
                 .await
+        })
+        .await
+    }
+
+    /// THROWAWAY: one-shot ECDSA-P384 known-answer self-test for
+    /// `ecc_sign_with_k`. Signs the NIST CAVP 186-3 P-384 SigGen vector with
+    /// its published per-message secret `k` and compares `(r, s)` to the
+    /// expected values (all PKA little-endian, 48 bytes). Runs on the internal
+    /// admin IO slot; returns `(pass, r, s)` so the caller can log the computed
+    /// components. Remove once the sign is validated on hardware.
+    pub async fn ecdsa_sign_self_test(&self) -> HsmResult<(bool, [u8; 48], [u8; 48])> {
+        const K: [u8; 48] = [
+            0x43, 0x24, 0xa3, 0xf3, 0x24, 0x7e, 0x87, 0x04, 0xa8, 0xd4, 0xea, 0x36, 0x3d, 0xcd,
+            0x0f, 0xb3, 0xcc, 0x57, 0xc7, 0x6c, 0xaf, 0xe7, 0xd1, 0x0d, 0x8c, 0x79, 0x9b, 0x29,
+            0xb5, 0x96, 0x24, 0x93, 0xc0, 0xcd, 0x97, 0x86, 0xd8, 0xd0, 0x27, 0x78, 0x0b, 0x3d,
+            0x68, 0xc4, 0x25, 0x5c, 0x0b, 0xc1,
+        ];
+        const DIGEST: [u8; 48] = [
+            0xd1, 0x3e, 0x7f, 0x7d, 0x01, 0xcd, 0x18, 0x3e, 0x83, 0xc2, 0xfb, 0xe0, 0x00, 0xff,
+            0x9d, 0x5f, 0x45, 0x99, 0xb2, 0x72, 0xd1, 0x88, 0xe2, 0x10, 0xda, 0x3f, 0x5d, 0x64,
+            0x5f, 0x0a, 0xbd, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        const D: [u8; 48] = [
+            0x6b, 0x9e, 0x7f, 0x6d, 0x47, 0x87, 0xc9, 0x83, 0x77, 0x5a, 0x85, 0x9b, 0xd9, 0xf0,
+            0x52, 0x4b, 0x18, 0x30, 0x26, 0x16, 0x58, 0xf0, 0x89, 0x2a, 0xc4, 0x6c, 0x67, 0x74,
+            0x72, 0x20, 0xf7, 0x84, 0x2c, 0x83, 0xe0, 0x61, 0x96, 0x56, 0xa6, 0x11, 0xc3, 0x92,
+            0x45, 0xa3, 0x74, 0xbc, 0x02, 0xc6,
+        ];
+        const EXP_R: [u8; 48] = [
+            0x78, 0xe8, 0x40, 0xd4, 0x46, 0x79, 0x26, 0xc3, 0x2e, 0xaa, 0x88, 0x17, 0x85, 0x61,
+            0x8c, 0x97, 0x59, 0x03, 0xab, 0xa0, 0x1d, 0x55, 0x54, 0x90, 0x60, 0xad, 0xc2, 0xeb,
+            0xd7, 0x7e, 0x47, 0x48, 0x59, 0x78, 0x02, 0xcd, 0x38, 0x3f, 0x48, 0xd4, 0x86, 0x32,
+            0xf5, 0xda, 0x0c, 0xb0, 0x1d, 0xb1,
+        ];
+        const EXP_S: [u8; 48] = [
+            0xf2, 0xcb, 0xf8, 0x7d, 0x02, 0xac, 0x48, 0x10, 0x67, 0x87, 0x78, 0x4b, 0xe7, 0x27,
+            0x8b, 0xc9, 0xd7, 0x12, 0x65, 0x07, 0x5a, 0x06, 0xf5, 0x2f, 0x76, 0x3a, 0x68, 0x9c,
+            0x31, 0xe3, 0xb6, 0xe2, 0xe8, 0x73, 0xe9, 0xfe, 0xa8, 0x12, 0x81, 0xe6, 0x4c, 0x60,
+            0xb0, 0xc5, 0x73, 0x78, 0x00, 0x16,
+        ];
+
+        let io = crate::io::UnoHsmIo::admin(azihsm_fw_hsm_pal_traits::HsmPartId::from(0u8));
+        self.alloc_scoped_async(&io, async |scope| {
+            // Stage the caller-owned operands/results into DMA (as a real caller
+            // would); ecc_sign_with_k allocates only its own scratch (nested).
+            let k = scope.dma_alloc(48)?;
+            k.copy_from_slice(&K);
+            let digest = scope.dma_alloc(48)?;
+            digest.copy_from_slice(&DIGEST);
+            let d = scope.dma_alloc(48)?;
+            d.copy_from_slice(&D);
+            let r = scope.dma_alloc_zeroed(48)?;
+            let s = scope.dma_alloc_zeroed(48)?;
+            self.ecc_sign_with_k(&io, UpkaEccCurve::P384, k, digest, d, r, s)
+                .await?;
+            let mut ro = [0u8; 48];
+            ro.copy_from_slice(&r[..48]);
+            let mut so = [0u8; 48];
+            so.copy_from_slice(&s[..48]);
+            Ok((ro == EXP_R && so == EXP_S, ro, so))
         })
         .await
     }

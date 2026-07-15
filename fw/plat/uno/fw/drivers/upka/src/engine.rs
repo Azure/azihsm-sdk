@@ -427,7 +427,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     // Public single-command PKA ops the PAL orchestrates (via `with_engine`)
     // to build the deterministic ECDSA sign for the on-the-fly cert-chain PID
     // leaf. The PAL allocates every operand/scratch DMA buffer and keeps the
-    // whole sequence on ONE held engine so a `mont_const_calc`'s Montgomery
+    // whole sequence on ONE held engine so a `ecc_mont_const_calc`'s Montgomery
     // state stays resident for the ops that follow (`execute_cmd` does not wipe
     // between commands). All operands are PKA little-endian. The modular ops are
     // exposed for all three NIST curves via the driver's per-op opcode selectors;
@@ -437,7 +437,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// and leave it resident in the engine for the next op to consume.
     /// `mont_result` is scratch for the constant; its contents are not used
     /// by the caller directly.
-    pub async fn mont_const_calc(
+    pub async fn ecc_mont_const_calc(
         &mut self,
         curve: UpkaEccCurve,
         modulus: &DmaBuf,
@@ -455,8 +455,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     /// Point-multiply `result = (scalar * point).x`, where `point` is the
     /// affine `x ‖ y` (contiguous, PKA little-endian). Requires a prior
-    /// `mont_const_calc` over the curve prime on this engine.
-    pub async fn point_mul(
+    /// `ecc_mont_const_calc` over the curve prime on this engine.
+    pub async fn ecc_point_mul(
         &mut self,
         curve: UpkaEccCurve,
         point_xy: &DmaBuf,
@@ -474,8 +474,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     }
 
     /// Modular reduction `result = arg1 mod n`. Requires a prior
-    /// `mont_const_calc` over the order `n`.
-    pub async fn mod_reduction(
+    /// `ecc_mont_const_calc` over the order `n`.
+    pub async fn ecc_mod_reduction(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
@@ -487,7 +487,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     }
 
     /// Convert `arg1` into Montgomery representation.
-    pub async fn mont_repr_in(
+    pub async fn ecc_mont_repr_in(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
@@ -499,7 +499,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     }
 
     /// Convert `arg1` out of Montgomery representation.
-    pub async fn mont_repr_out(
+    pub async fn ecc_mont_repr_out(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
@@ -511,8 +511,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     }
 
     /// Modular inverse `result = arg1^-1 mod n`. Requires a prior
-    /// `mont_const_calc` over the order `n`.
-    pub async fn mod_inverse(
+    /// `ecc_mont_const_calc` over the order `n`.
+    pub async fn ecc_mod_inverse(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
@@ -525,7 +525,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     /// Modular multiplication `result = arg1 * arg2 mod n`.
     /// Operands and result are in Montgomery representation.
-    pub async fn mod_multiplication(
+    pub async fn ecc_mod_mul(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
@@ -545,7 +545,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     /// Modular addition `result = arg1 + arg2 mod n`. Operands
     /// and result are in Montgomery representation.
-    pub async fn mod_addition(
+    pub async fn ecc_mod_add(
         &mut self,
         curve: UpkaEccCurve,
         result: &mut DmaBuf,
