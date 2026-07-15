@@ -41,7 +41,6 @@
 mod trampoline;
 
 use azihsm_fw_hsm_core::Hsm;
-use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_hsm_core_tracing::info;
 use azihsm_fw_hsm_pal_traits::*;
 use azihsm_fw_uno_drivers_profile as _;
@@ -148,42 +147,6 @@ async fn poll_ipc(spawner: Spawner) -> ! {
         if !booted && hsm.pal().boot_phase() == BootPhase::Running {
             booted = true;
             info!("app", "boot complete, spawning poll_io");
-            // THROWAWAY: on-device KAT for the deterministic ECDSA-P384 sign.
-            match hsm.pal().ecdsa_sign_self_test().await {
-                Ok((true, _, _)) => {
-                    info!("selftest", "ECDSA P384 KAT self-test: PASS");
-                }
-                Ok((false, r, s)) => {
-                    info!("selftest", "ECDSA P384 KAT self-test: FAIL r={:02x?} s={:02x?}", &r[..8], &s[..8]);
-                }
-                Err(_) => {
-                    info!("selftest", "ECDSA P384 KAT self-test: ERROR");
-                }
-            }
-            // THROWAWAY: on-device KAT for the RFC 6979 deterministic-k derivation.
-            match hsm.pal().rfc6979_k_self_test().await {
-                Ok((true, _)) => {
-                    info!("selftest", "RFC6979 P384 k self-test: PASS");
-                }
-                Ok((false, k)) => {
-                    info!("selftest", "RFC6979 P384 k self-test: FAIL k={:02x?}", &k[..8]);
-                }
-                Err(_) => {
-                    info!("selftest", "RFC6979 P384 k self-test: ERROR");
-                }
-            }
-            // THROWAWAY: on-device KAT for the full deterministic ECDSA-P384 sign.
-            match hsm.pal().ecdsa_deterministic_sign_self_test().await {
-                Ok((true, _, _)) => {
-                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: PASS");
-                }
-                Ok((false, r, s)) => {
-                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: FAIL r={:02x?} s={:02x?}", &r[..8], &s[..8]);
-                }
-                Err(_) => {
-                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: ERROR");
-                }
-            }
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
             }
