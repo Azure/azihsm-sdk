@@ -9,7 +9,7 @@
 #include <cstring>
 #include <vector>
 
-#include "../ecc/helpers.hpp"
+#include "algo/ecc/helpers.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
