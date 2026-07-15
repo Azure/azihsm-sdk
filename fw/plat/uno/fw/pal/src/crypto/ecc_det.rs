@@ -205,6 +205,7 @@ impl UnoHsmPal {
     ///   `r == 0` / `s == 0` result.
     /// * Any [`HsmError`] surfaced by the PKA driver.
     #[allow(dead_code)] // consumed by ecc_sign_deterministic (A6) / PID cert gen (B)
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn ecc_sign_with_k(
         &self,
         io: &impl HsmIo,
