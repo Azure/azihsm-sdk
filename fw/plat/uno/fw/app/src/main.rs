@@ -160,6 +160,18 @@ async fn poll_ipc(spawner: Spawner) -> ! {
                     info!("selftest", "ECDSA P384 KAT self-test: ERROR");
                 }
             }
+            // THROWAWAY: on-device KAT for the RFC 6979 deterministic-k derivation.
+            match hsm.pal().rfc6979_k_self_test().await {
+                Ok((true, _)) => {
+                    info!("selftest", "RFC6979 P384 k self-test: PASS");
+                }
+                Ok((false, k)) => {
+                    info!("selftest", "RFC6979 P384 k self-test: FAIL k={:02x?}", &k[..8]);
+                }
+                Err(_) => {
+                    info!("selftest", "RFC6979 P384 k self-test: ERROR");
+                }
+            }
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
             }

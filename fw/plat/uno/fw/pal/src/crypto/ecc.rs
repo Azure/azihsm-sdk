@@ -26,6 +26,8 @@ use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
 use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
+use azihsm_fw_hsm_pal_traits::HsmHmac;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
@@ -142,6 +144,38 @@ fn montgomery_size(curve: UpkaEccCurve) -> usize {
         UpkaEccCurve::P384 => 52,
         UpkaEccCurve::P521 => 72,
     }
+}
+
+/// Big-endian `a -= b` for equal-length operands, assuming `a >= b`.
+///
+/// Used for the single conditional subtraction in RFC 6979 `bits2octets`
+/// (`digest mod n`). Operates from the least-significant byte with a running
+/// borrow.
+fn be_sub_assign(a: &mut [u8], b: &[u8]) {
+    let mut borrow = 0i16;
+    for i in (0..a.len()).rev() {
+        let diff = a[i] as i16 - b[i] as i16 - borrow;
+        if diff < 0 {
+            a[i] = (diff + 256) as u8;
+            borrow = 1;
+        } else {
+            a[i] = diff as u8;
+            borrow = 0;
+        }
+    }
+}
+
+/// Securely wipe a stack buffer of secret-derived bytes.
+///
+/// Mirrors [`DmaBuf::zeroize`]: per-byte volatile writes plus a compiler fence
+/// so the wipe survives optimization. Used to scrub the RFC 6979 DRBG state
+/// (which is derived from the private key) before it leaves scope.
+fn secure_zero(buf: &mut [u8]) {
+    for b in buf.iter_mut() {
+        // SAFETY: `b` is a valid, aligned, writable byte of this buffer.
+        unsafe { core::ptr::write_volatile(b, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 // =============================================================================
@@ -293,6 +327,139 @@ impl UnoHsmPal {
         .await
     }
 
+    /// RFC 6979 deterministic per-message secret `k` for ECDSA-P384.
+    ///
+    /// Derives `k` from the private key `d` and message hash `digest` via the
+    /// HMAC-SHA384 DRBG of RFC 6979 §3.2, so the lazily regenerated PID cert
+    /// signature is byte-stable without drawing `k` from a PRNG.
+    ///
+    /// All PAL operands are little-endian, but RFC 6979's integer/octet
+    /// conversions are big-endian, so `d`/`digest` are byte-reversed on input
+    /// and `k` on output. Because `hlen == qlen == 384` for P-384, each DRBG
+    /// block yields exactly one candidate (`T = V`) and `bits2octets(digest)`
+    /// reduces mod `n` with a single conditional subtraction (`n > 2^383`, so
+    /// `digest < 2n`).
+    ///
+    /// # Parameters
+    /// * `curve` — must be [`UpkaEccCurve::P384`]; other curves return
+    ///   [`HsmError::UnsupportedCmd`].
+    /// * `d` — 48-byte P-384 private key (LE) in a caller-owned DMA buffer.
+    /// * `digest` — 48-byte message hash `e` (LE, SHA-384) in a caller-owned
+    ///   DMA buffer.
+    /// * `k` — caller-owned DMA output buffer (>= 48 B) for the LE secret.
+    ///
+    /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] — `curve` is not P-384.
+    /// * [`HsmError::InvalidArg`] — a bad operand length.
+    /// * Any [`HsmError`] surfaced by the HMAC driver.
+    #[allow(dead_code)] // consumed by ecc_sign_deterministic (A6) / PID cert gen (B)
+    pub(crate) async fn ecc_generate_k_rfc6979(
+        &self,
+        io: &impl HsmIo,
+        curve: UpkaEccCurve,
+        d: &DmaBuf,
+        digest: &DmaBuf,
+        k: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        if curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
+        let field = PRIME384_LE.len(); // 48; also the SHA-384 digest length
+        if d.len() != field || digest.len() != field || k.len() < field {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // Big-endian views for the RFC's integer arithmetic: order n,
+        // int2octets(d) = x, bits2octets(digest) = h1 (reduced mod n).
+        let mut n_be = ORDER384_LE;
+        n_be.reverse();
+        let mut x = [0u8; 48];
+        let mut h1 = [0u8; 48];
+        for i in 0..field {
+            x[i] = d[field - 1 - i];
+            h1[i] = digest[field - 1 - i];
+        }
+        if h1[..] >= n_be[..] {
+            be_sub_assign(&mut h1, &n_be);
+        }
+
+        // RFC 6979 §3.2 (b)-(g): seed the HMAC_DRBG with x ‖ h1.
+        //   K = 0x00…, V = 0x01…
+        //   K = HMAC_K(V ‖ 0x00 ‖ x ‖ h1) ; V = HMAC_K(V)
+        //   K = HMAC_K(V ‖ 0x01 ‖ x ‖ h1) ; V = HMAC_K(V)
+        let mut v = [0x01u8; 48];
+        let mut key = [0x00u8; 48];
+        let mut seed = [0u8; 48 + 1 + 48 + 48]; // V ‖ tag ‖ x ‖ h1
+        seed[..field].copy_from_slice(&v);
+        seed[field + 1..field + 1 + field].copy_from_slice(&x);
+        seed[field + 1 + field..].copy_from_slice(&h1);
+
+        seed[field] = 0x00;
+        key = self.hmac_sha384_bytes(io, &key, &seed).await?;
+        v = self.hmac_sha384_bytes(io, &key, &v).await?;
+        seed[..field].copy_from_slice(&v);
+        seed[field] = 0x01;
+        key = self.hmac_sha384_bytes(io, &key, &seed).await?;
+        v = self.hmac_sha384_bytes(io, &key, &v).await?;
+
+        // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n. Rejection is
+        // astronomically unlikely for P-384 but the loop is required for
+        // correctness.
+        let mut retry = [0u8; 49]; // V ‖ 0x00
+        let mut result = Err(HsmError::InvalidArg);
+        loop {
+            // T = V (a single HMAC block, since hlen == qlen == 384).
+            v = self.hmac_sha384_bytes(io, &key, &v).await?;
+            if v.iter().any(|&b| b != 0) && v[..] < n_be[..] {
+                for i in 0..field {
+                    k[i] = v[field - 1 - i];
+                }
+                result = Ok(());
+                break;
+            }
+            retry[..field].copy_from_slice(&v);
+            retry[field] = 0x00;
+            key = self.hmac_sha384_bytes(io, &key, &retry).await?;
+            v = self.hmac_sha384_bytes(io, &key, &v).await?;
+        }
+
+        // Scrub every stack buffer derived from the private key.
+        secure_zero(&mut x);
+        secure_zero(&mut h1);
+        secure_zero(&mut key);
+        secure_zero(&mut v);
+        secure_zero(&mut seed);
+        secure_zero(&mut retry);
+        result
+    }
+
+    /// One-shot HMAC-SHA384 over stack byte slices, returning the 48-byte tag.
+    ///
+    /// The SHA/HMAC engine requires DMA-accessible operands, so `key`/`data`
+    /// are staged into scoped DMA scratch; the key copy is scrubbed before
+    /// return. Helper for [`ecc_generate_k_rfc6979`](Self::ecc_generate_k_rfc6979).
+    async fn hmac_sha384_bytes(
+        &self,
+        io: &impl HsmIo,
+        key: &[u8],
+        data: &[u8],
+    ) -> HsmResult<[u8; 48]> {
+        self.alloc_scoped_async(io, async |scope| {
+            let key_buf = scope.dma_alloc(key.len())?;
+            key_buf.copy_from_slice(key);
+            let data_buf = scope.dma_alloc(data.len())?;
+            data_buf.copy_from_slice(data);
+            let tag = scope.dma_alloc(48)?;
+            self.hmac_sign(io, HsmHashAlgo::Sha384, key_buf, data_buf, tag)
+                .await?;
+            let mut out = [0u8; 48];
+            out.copy_from_slice(&tag[..48]);
+            key_buf.zeroize();
+            Ok(out)
+        })
+        .await
+    }
+
     /// THROWAWAY: one-shot ECDSA-P384 known-answer self-test for
     /// `ecc_sign_with_k`. Signs the NIST CAVP 186-3 P-384 SigGen vector with
     /// its published per-message secret `k` and compares `(r, s)` to the
@@ -350,6 +517,48 @@ impl UnoHsmPal {
             let mut so = [0u8; 48];
             so.copy_from_slice(&s[..48]);
             Ok((ro == EXP_R && so == EXP_S, ro, so))
+        })
+        .await
+    }
+
+    /// THROWAWAY: known-answer self-test for `ecc_generate_k_rfc6979`.
+    /// Derives `k` from the RFC 6979 Appendix A.2.6 P-384 example (private key
+    /// `x`, `digest = SHA-384("sample")`) and compares it to the published
+    /// `k` (all PKA little-endian, 48 bytes). Runs on the internal admin IO
+    /// slot; returns `(pass, k)` so the caller can log the derived value.
+    /// Remove once the derivation is validated on hardware.
+    pub async fn rfc6979_k_self_test(&self) -> HsmResult<(bool, [u8; 48])> {
+        const D: [u8; 48] = [
+            0xf5, 0xed, 0xd2, 0x60, 0xea, 0xc9, 0x72, 0xf8, 0x25, 0xa8, 0x70, 0x4c, 0x4e, 0x72,
+            0xd5, 0x96, 0xd8, 0x37, 0x71, 0x78, 0x40, 0x77, 0xa4, 0x9a, 0xba, 0x97, 0xf2, 0x7b,
+            0x66, 0x3b, 0x3c, 0xe2, 0x4d, 0x9f, 0x65, 0xb6, 0x75, 0x98, 0xb1, 0x05, 0x1c, 0x8c,
+            0x1b, 0x2e, 0xad, 0x3d, 0x9d, 0x6b,
+        ];
+        const DIGEST: [u8; 48] = [
+            0xfe, 0x25, 0xee, 0xb1, 0x77, 0x2c, 0xe4, 0xfe, 0x0e, 0x89, 0x5b, 0x9b, 0x4a, 0xca,
+            0x3b, 0x31, 0x12, 0x53, 0x58, 0x40, 0xf3, 0x29, 0xa0, 0x96, 0x11, 0x38, 0xbd, 0x4b,
+            0x3f, 0x60, 0xbf, 0xf3, 0x7b, 0xef, 0x96, 0x26, 0x31, 0xbe, 0xc4, 0xae, 0x76, 0x22,
+            0xc9, 0x5b, 0x50, 0x83, 0x90, 0x9a,
+        ];
+        const EXP_K: [u8; 48] = [
+            0xf9, 0x5c, 0x91, 0x86, 0x46, 0x8c, 0x3b, 0x62, 0x68, 0x53, 0xa9, 0x3b, 0xe8, 0xe3,
+            0x07, 0x29, 0xca, 0xfb, 0x10, 0x6d, 0xd5, 0x5f, 0x55, 0x7a, 0xa8, 0x0c, 0xaf, 0x8e,
+            0x16, 0x15, 0xba, 0xe4, 0xbd, 0x5a, 0xe8, 0x2a, 0x24, 0xe9, 0x54, 0x32, 0xad, 0x9d,
+            0x09, 0x1a, 0x0d, 0x91, 0xed, 0x94,
+        ];
+
+        let io = crate::io::UnoHsmIo::admin(azihsm_fw_hsm_pal_traits::HsmPartId::from(0u8));
+        self.alloc_scoped_async(&io, async |scope| {
+            let digest = scope.dma_alloc(48)?;
+            digest.copy_from_slice(&DIGEST);
+            let d = scope.dma_alloc(48)?;
+            d.copy_from_slice(&D);
+            let k = scope.dma_alloc_zeroed(48)?;
+            self.ecc_generate_k_rfc6979(&io, UpkaEccCurve::P384, d, digest, k)
+                .await?;
+            let mut ko = [0u8; 48];
+            ko.copy_from_slice(&k[..48]);
+            Ok((ko == EXP_K, ko))
         })
         .await
     }
