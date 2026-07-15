@@ -172,6 +172,18 @@ async fn poll_ipc(spawner: Spawner) -> ! {
                     info!("selftest", "RFC6979 P384 k self-test: ERROR");
                 }
             }
+            // THROWAWAY: on-device KAT for the full deterministic ECDSA-P384 sign.
+            match hsm.pal().ecdsa_deterministic_sign_self_test().await {
+                Ok((true, _, _)) => {
+                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: PASS");
+                }
+                Ok((false, r, s)) => {
+                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: FAIL r={:02x?} s={:02x?}", &r[..8], &s[..8]);
+                }
+                Err(_) => {
+                    info!("selftest", "RFC6979 P384 deterministic-sign self-test: ERROR");
+                }
+            }
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
             }

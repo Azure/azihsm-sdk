@@ -178,6 +178,33 @@ fn secure_zero(buf: &mut [u8]) {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+/// RFC 6979 HMAC-SHA384 DRBG state for P-384 (48-byte `K` and `V`).
+///
+/// Seeded from the private key and message hash by
+/// [`UnoHsmPal::rfc6979_seed`]; advanced by
+/// [`UnoHsmPal::rfc6979_generate`] / [`UnoHsmPal::rfc6979_reseed`]. Both
+/// fields are derived from the private key, so [`Self::scrub`] wipes them.
+struct Rfc6979Drbg {
+    key: [u8; 48],
+    v: [u8; 48],
+}
+
+impl Rfc6979Drbg {
+    /// Volatile-scrub the DRBG state.
+    fn scrub(&mut self) {
+        secure_zero(&mut self.key);
+        secure_zero(&mut self.v);
+    }
+}
+
+/// Upper bound on RFC 6979 candidate attempts before giving up.
+///
+/// Each rejection (candidate out of `[1, n-1]`, or a degenerate `r == 0` /
+/// `s == 0` signature) has probability ~`2^-384` for P-384, so the first
+/// attempt always succeeds in practice; the bound only guarantees the loop
+/// terminates.
+const RFC6979_MAX_TRIES: usize = 8;
+
 // =============================================================================
 // Deterministic P-384 ECDSA sign (RFC 6979) — PAL orchestration
 // =============================================================================
@@ -369,8 +396,125 @@ impl UnoHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        // Big-endian views for the RFC's integer arithmetic: order n,
-        // int2octets(d) = x, bits2octets(digest) = h1 (reduced mod n).
+        let (n_be, mut drbg) = self.rfc6979_seed(io, d, digest).await?;
+
+        // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n.
+        let mut result = Err(HsmError::InvalidArg);
+        for _ in 0..RFC6979_MAX_TRIES {
+            self.rfc6979_generate(io, &mut drbg).await?;
+            if drbg.v.iter().any(|&b| b != 0) && drbg.v[..] < n_be[..] {
+                for i in 0..field {
+                    k[i] = drbg.v[field - 1 - i];
+                }
+                result = Ok(());
+                break;
+            }
+            self.rfc6979_reseed(io, &mut drbg).await?;
+        }
+
+        drbg.scrub();
+        result
+    }
+
+    /// Deterministic ECDSA-P384 sign (RFC 6979): derive the per-message secret
+    /// `k` from `d`/`digest` and produce the signature `(r, s)`.
+    ///
+    /// Composes the RFC 6979 HMAC-SHA384 DRBG (A5) with the PKA sign (A4) on
+    /// one held engine. On the astronomically unlikely degenerate result
+    /// (`r == 0` or `s == 0`) the DRBG is advanced to the next candidate, as
+    /// required by RFC 6979 §3.2; because this function supplies valid P-384
+    /// operands, [`ecc_sign_with_k`](Self::ecc_sign_with_k)'s only
+    /// [`HsmError::InvalidArg`] is that degenerate check, which is treated as
+    /// a retry signal.
+    ///
+    /// # Parameters
+    /// * `curve` — must be [`UpkaEccCurve::P384`]; other curves return
+    ///   [`HsmError::UnsupportedCmd`].
+    /// * `digest` — 48-byte message hash `e` (LE, SHA-384) in a caller-owned
+    ///   DMA buffer.
+    /// * `d` — 48-byte P-384 private key (LE) in a caller-owned DMA buffer.
+    /// * `r`, `s` — caller-owned DMA output buffers (>= 48 B) for the LE
+    ///   signature components.
+    ///
+    /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] — `curve` is not P-384.
+    /// * [`HsmError::InvalidArg`] — a bad operand length, or every candidate in
+    ///   [`RFC6979_MAX_TRIES`] was exhausted (unreachable in practice).
+    /// * Any [`HsmError`] surfaced by the HMAC or PKA drivers.
+    #[allow(dead_code)] // consumed by PID cert gen (B)
+    pub(crate) async fn ecc_sign_deterministic(
+        &self,
+        io: &impl HsmIo,
+        curve: UpkaEccCurve,
+        digest: &DmaBuf,
+        d: &DmaBuf,
+        r: &mut DmaBuf,
+        s: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        if curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
+        let field = PRIME384_LE.len();
+        if digest.len() != field || d.len() != field || r.len() < field || s.len() < field {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let (n_be, mut drbg) = self.rfc6979_seed(io, d, digest).await?;
+
+        let result = self
+            .alloc_scoped_async(io, async |scope| {
+                let k = scope.dma_alloc(field)?;
+                let mut outcome = Err(HsmError::InvalidArg);
+                for _ in 0..RFC6979_MAX_TRIES {
+                    self.rfc6979_generate(io, &mut drbg).await?;
+                    if drbg.v.iter().any(|&b| b != 0) && drbg.v[..] < n_be[..] {
+                        // Candidate k in [1, n-1]; stage LE and attempt the sign.
+                        for i in 0..field {
+                            k[i] = drbg.v[field - 1 - i];
+                        }
+                        match self
+                            .ecc_sign_with_k(io, curve, k, digest, d, r, s)
+                            .await
+                        {
+                            Ok(()) => {
+                                outcome = Ok(());
+                                break;
+                            }
+                            // Degenerate r/s — advance the DRBG and retry.
+                            Err(HsmError::InvalidArg) => {}
+                            Err(e) => {
+                                outcome = Err(e);
+                                break;
+                            }
+                        }
+                    }
+                    self.rfc6979_reseed(io, &mut drbg).await?;
+                }
+                k.zeroize();
+                outcome
+            })
+            .await;
+
+        drbg.scrub();
+        result
+    }
+
+    /// RFC 6979 §3.2 (b)-(g): seed the HMAC-SHA384 DRBG for P-384 from the
+    /// private key `d` and message hash `digest` (both 48-byte LE). Returns the
+    /// big-endian order `n` (for the candidate range test) and the seeded DRBG.
+    ///
+    /// The RFC's integer/octet conversions are big-endian, so `d`/`digest` are
+    /// byte-reversed into `x = int2octets(d)` and `h1 = bits2octets(digest)`.
+    /// Since `hlen == qlen == 384` and `n > 2^383` (so `digest < 2n`), `h1`
+    /// reduces mod `n` with a single conditional subtraction. Key-derived stack
+    /// scratch is scrubbed before return.
+    async fn rfc6979_seed(
+        &self,
+        io: &impl HsmIo,
+        d: &DmaBuf,
+        digest: &DmaBuf,
+    ) -> HsmResult<([u8; 48], Rfc6979Drbg)> {
+        let field = PRIME384_LE.len();
         let mut n_be = ORDER384_LE;
         n_be.reverse();
         let mut x = [0u8; 48];
@@ -383,7 +527,6 @@ impl UnoHsmPal {
             be_sub_assign(&mut h1, &n_be);
         }
 
-        // RFC 6979 §3.2 (b)-(g): seed the HMAC_DRBG with x ‖ h1.
         //   K = 0x00…, V = 0x01…
         //   K = HMAC_K(V ‖ 0x00 ‖ x ‖ h1) ; V = HMAC_K(V)
         //   K = HMAC_K(V ‖ 0x01 ‖ x ‖ h1) ; V = HMAC_K(V)
@@ -402,35 +545,30 @@ impl UnoHsmPal {
         key = self.hmac_sha384_bytes(io, &key, &seed).await?;
         v = self.hmac_sha384_bytes(io, &key, &v).await?;
 
-        // RFC 6979 §3.2 (h): generate candidates until 1 <= k < n. Rejection is
-        // astronomically unlikely for P-384 but the loop is required for
-        // correctness.
-        let mut retry = [0u8; 49]; // V ‖ 0x00
-        let mut result = Err(HsmError::InvalidArg);
-        loop {
-            // T = V (a single HMAC block, since hlen == qlen == 384).
-            v = self.hmac_sha384_bytes(io, &key, &v).await?;
-            if v.iter().any(|&b| b != 0) && v[..] < n_be[..] {
-                for i in 0..field {
-                    k[i] = v[field - 1 - i];
-                }
-                result = Ok(());
-                break;
-            }
-            retry[..field].copy_from_slice(&v);
-            retry[field] = 0x00;
-            key = self.hmac_sha384_bytes(io, &key, &retry).await?;
-            v = self.hmac_sha384_bytes(io, &key, &v).await?;
-        }
-
-        // Scrub every stack buffer derived from the private key.
         secure_zero(&mut x);
         secure_zero(&mut h1);
-        secure_zero(&mut key);
-        secure_zero(&mut v);
         secure_zero(&mut seed);
-        secure_zero(&mut retry);
-        result
+        Ok((n_be, Rfc6979Drbg { key, v }))
+    }
+
+    /// RFC 6979 §3.2 (h) one generate block: `V = HMAC_K(V)`. `T = V` since
+    /// `hlen == qlen == 384`, so the candidate is `drbg.v` (big-endian) on
+    /// return.
+    async fn rfc6979_generate(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg) -> HsmResult<()> {
+        drbg.v = self.hmac_sha384_bytes(io, &drbg.key, &drbg.v).await?;
+        Ok(())
+    }
+
+    /// RFC 6979 §3.2 (h) reseed after a rejected candidate:
+    /// `K = HMAC_K(V ‖ 0x00)` then `V = HMAC_K(V)`.
+    async fn rfc6979_reseed(&self, io: &impl HsmIo, drbg: &mut Rfc6979Drbg) -> HsmResult<()> {
+        let mut buf = [0u8; 49]; // V ‖ 0x00
+        buf[..48].copy_from_slice(&drbg.v);
+        buf[48] = 0x00;
+        drbg.key = self.hmac_sha384_bytes(io, &drbg.key, &buf).await?;
+        drbg.v = self.hmac_sha384_bytes(io, &drbg.key, &drbg.v).await?;
+        secure_zero(&mut buf);
+        Ok(())
     }
 
     /// One-shot HMAC-SHA384 over stack byte slices, returning the 48-byte tag.
@@ -559,6 +697,60 @@ impl UnoHsmPal {
             let mut ko = [0u8; 48];
             ko.copy_from_slice(&k[..48]);
             Ok((ko == EXP_K, ko))
+        })
+        .await
+    }
+
+    /// THROWAWAY: end-to-end known-answer self-test for
+    /// `ecc_sign_deterministic`. Signs the RFC 6979 Appendix A.2.6 P-384 /
+    /// SHA-384 example (private key `x`, `digest = SHA-384("sample")`) and
+    /// compares `(r, s)` to the published signature (all PKA little-endian, 48
+    /// bytes). Exercises the full deterministic path (RFC 6979 `k` derivation
+    /// composed with the PKA sign). Runs on the internal admin IO slot; returns
+    /// `(pass, r, s)`. Remove once validated on hardware.
+    pub async fn ecdsa_deterministic_sign_self_test(
+        &self,
+    ) -> HsmResult<(bool, [u8; 48], [u8; 48])> {
+        const D: [u8; 48] = [
+            0xf5, 0xed, 0xd2, 0x60, 0xea, 0xc9, 0x72, 0xf8, 0x25, 0xa8, 0x70, 0x4c, 0x4e, 0x72,
+            0xd5, 0x96, 0xd8, 0x37, 0x71, 0x78, 0x40, 0x77, 0xa4, 0x9a, 0xba, 0x97, 0xf2, 0x7b,
+            0x66, 0x3b, 0x3c, 0xe2, 0x4d, 0x9f, 0x65, 0xb6, 0x75, 0x98, 0xb1, 0x05, 0x1c, 0x8c,
+            0x1b, 0x2e, 0xad, 0x3d, 0x9d, 0x6b,
+        ];
+        const DIGEST: [u8; 48] = [
+            0xfe, 0x25, 0xee, 0xb1, 0x77, 0x2c, 0xe4, 0xfe, 0x0e, 0x89, 0x5b, 0x9b, 0x4a, 0xca,
+            0x3b, 0x31, 0x12, 0x53, 0x58, 0x40, 0xf3, 0x29, 0xa0, 0x96, 0x11, 0x38, 0xbd, 0x4b,
+            0x3f, 0x60, 0xbf, 0xf3, 0x7b, 0xef, 0x96, 0x26, 0x31, 0xbe, 0xc4, 0xae, 0x76, 0x22,
+            0xc9, 0x5b, 0x50, 0x83, 0x90, 0x9a,
+        ];
+        const EXP_R: [u8; 48] = [
+            0x46, 0xbe, 0xfa, 0x80, 0x1e, 0xdd, 0x36, 0x6e, 0xf9, 0xac, 0x44, 0x2e, 0x15, 0x48,
+            0xa6, 0x81, 0x3c, 0x13, 0xad, 0x95, 0xea, 0xc4, 0x64, 0x3d, 0xa7, 0x9f, 0xce, 0x66,
+            0x06, 0x14, 0x88, 0x3f, 0x6b, 0x91, 0x91, 0xc6, 0x56, 0x6e, 0x73, 0xd4, 0xaa, 0xb8,
+            0xec, 0xa5, 0x92, 0xbb, 0xed, 0x94,
+        ];
+        const EXP_S: [u8; 48] = [
+            0xc8, 0x8a, 0x62, 0x38, 0x1a, 0xc7, 0x82, 0x7b, 0x9e, 0x67, 0x6e, 0x78, 0x45, 0xc1,
+            0x29, 0xa3, 0x4f, 0xa9, 0xa3, 0xd0, 0x51, 0x63, 0x3b, 0x20, 0x26, 0x45, 0x62, 0x19,
+            0x0a, 0x74, 0x0e, 0x13, 0x8f, 0x13, 0x03, 0x26, 0xdb, 0x40, 0xfe, 0xa1, 0xce, 0x78,
+            0xf1, 0x15, 0xeb, 0x4a, 0xef, 0x99,
+        ];
+
+        let io = crate::io::UnoHsmIo::admin(azihsm_fw_hsm_pal_traits::HsmPartId::from(0u8));
+        self.alloc_scoped_async(&io, async |scope| {
+            let digest = scope.dma_alloc(48)?;
+            digest.copy_from_slice(&DIGEST);
+            let d = scope.dma_alloc(48)?;
+            d.copy_from_slice(&D);
+            let r = scope.dma_alloc_zeroed(48)?;
+            let s = scope.dma_alloc_zeroed(48)?;
+            self.ecc_sign_deterministic(&io, UpkaEccCurve::P384, digest, d, r, s)
+                .await?;
+            let mut ro = [0u8; 48];
+            ro.copy_from_slice(&r[..48]);
+            let mut so = [0u8; 48];
+            so.copy_from_slice(&s[..48]);
+            Ok((ro == EXP_R && so == EXP_S, ro, so))
         })
         .await
     }
