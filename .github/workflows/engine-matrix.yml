@@ -119,10 +119,9 @@ jobs:
         run: cargo nextest run -p openssl-engine --features engine
 
       # azihsm_engine's mock lifecycle tests drive the HSM open path against the
-      # mock DDI. umask 0077 so the resiliency storage dir is created 0700 (the
-      # open path rejects a group/other-accessible dir).
+      # mock DDI.
       - name: Test azihsm_engine (mock lifecycle)
-        run: umask 0077 && cargo nextest run -p azihsm_engine --features engine,mock
+        run: cargo nextest run -p azihsm_engine --features engine,mock
 
       - name: Test azihsm_crypto
         run: cargo nextest run -p azihsm_crypto

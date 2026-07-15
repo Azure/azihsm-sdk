@@ -468,8 +468,9 @@ mod tests {
     #[serial]
     fn open_hsm_with_resiliency_succeeds() {
         let scratch = Scratch::new("open");
-        fs::create_dir_all(scratch.0.join("res")).unwrap();
-
+        // The storage dir is created by the open path (setup_storage_dir) with
+        // mode 0700; pre-creating it here would inherit the umask and could be
+        // rejected, so leave it to the open path to stay umask-independent.
         let settings = caller_settings(&scratch);
         let creds = HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN);
 
@@ -483,8 +484,8 @@ mod tests {
     #[serial]
     fn open_hsm_is_idempotent() {
         let scratch = Scratch::new("idem");
-        fs::create_dir_all(scratch.0.join("res")).unwrap();
-
+        // See open_hsm_with_resiliency_succeeds: let the open path create the
+        // storage dir at 0700 rather than depending on the umask here.
         let data = EngineData::new();
         let creds = HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN);
 
