@@ -100,6 +100,8 @@ pub(crate) type HsmKeyHandle = u32;
 
 /// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
 pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Maximum number of certificates in a `part_final` PTA chain.
+pub use azihsm_ddi_tbor_types::MAX_CERTS;
 /// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.

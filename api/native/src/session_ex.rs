@@ -308,22 +308,24 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
 
         // Build the PTA cert chain (borrowing, not copying) from the C
-        // array of `azihsm_buffer`s.
+        // array of `azihsm_buffer`s. Reject an empty or oversized chain
+        // up front so a bogus `pta_cert_chain_len` cannot trigger an
+        // unbounded allocation ahead of the `part_final_ex` validation;
+        // the firmware accepts at most `MAX_CERTS` certificates.
         let chain_len = params.pta_cert_chain_len as usize;
-        let certs: Vec<api::HsmCert<'_>> = if chain_len == 0 {
-            Vec::new()
-        } else {
-            validate_ptr(params.pta_cert_chain)?;
-            // SAFETY: the caller guarantees `pta_cert_chain` points to
-            // `chain_len` valid `azihsm_buffer`s (documented above).
-            let raw = unsafe { std::slice::from_raw_parts(params.pta_cert_chain, chain_len) };
-            let mut certs = Vec::with_capacity(chain_len);
-            for buf in raw {
-                let der: &[u8] = buf.try_into()?;
-                certs.push(api::HsmCert { cert: der });
-            }
-            certs
-        };
+        if chain_len == 0 || chain_len > api::MAX_CERTS {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+        validate_ptr(params.pta_cert_chain)?;
+        // SAFETY: the caller guarantees `pta_cert_chain` points to
+        // `chain_len` valid `azihsm_buffer`s (documented above), and
+        // `chain_len` is bounded by `MAX_CERTS` above.
+        let raw = unsafe { std::slice::from_raw_parts(params.pta_cert_chain, chain_len) };
+        let mut certs: Vec<api::HsmCert<'_>> = Vec::with_capacity(chain_len);
+        for buf in raw {
+            let der: &[u8] = buf.try_into()?;
+            certs.push(api::HsmCert { cert: der });
+        }
 
         // Validate the output buffer up-front against the fixed
         // wire-schema bound so the partition is not finalized when the

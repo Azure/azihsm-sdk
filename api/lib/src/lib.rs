@@ -13,6 +13,7 @@ pub mod traits;
 
 pub use algo::*;
 pub use ddi::LOCAL_MK_BACKUP_LEN;
+pub use ddi::MAX_CERTS;
 pub use ddi::PTA_CSR_MAX_LEN;
 pub use ddi::PTA_REPORT_MAX_LEN;
 pub use error::*;

@@ -39,6 +39,27 @@ azihsm_status azihsm_sess_ex_open(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
+### azihsm_session_psk
+
+PSK credential for [`azihsm_sess_ex_open`](#azihsm_sess_ex_open): the PSK
+slot plus an optional caller-supplied PSK. When the `psk` buffer is NULL,
+the partition **default** PSK for the slot is used — required for the first
+session, before the default is rotated via
+[`azihsm_sess_ex_psk_change`](#azihsm_sess_ex_psk_change). After rotation,
+point `psk` at the rotated 32-byte secret.
+
+```cpp
+struct azihsm_session_psk {
+    uint8_t psk_id;
+    const struct azihsm_buffer *psk;
+};
+```
+
+ | Field  | Name                             | Description                                        |
+ | ------ | -------------------------------- | -------------------------------------------------- |
+ | psk_id | uint8_t                          | PSK slot: 0 = Crypto Officer, 1 = Crypto User      |
+ | psk    | [azihsm_buffer*](#azihsm_buffer) | optional PSK (exactly 32 bytes); NULL = default PSK |
+
 ## azihsm_sess_ex_part_init
 
 Provision a partition's security domain over a security-domain session.
@@ -113,3 +134,95 @@ struct azihsm_sess_ex_part_init_params {
  | pota_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | POTA public-key thumbprint               |
  | sata_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | SATA public-key thumbprint               |
  | sapota_thumbprint | [azihsm_buffer*](#azihsm_buffer) | optional SAPOTA thumbprint (may be NULL) |
+
+## azihsm_sess_ex_part_final
+
+Finalize a partition's security domain over a security-domain session.
+
+Completes provisioning started by
+[`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init): re-supplies the
+unified partition policy and the PTA certificate chain (leaf to root),
+optionally restoring a prior `local_mk` backup, and returns the current
+`local_mk` backup envelope the firmware produced.
+
+The inputs are grouped into an
+[`azihsm_sess_ex_part_final_params`](#azihsm_sess_ex_part_final_params)
+structure. `local_mk_backup` is a caller-provided output buffer with the
+same capacity/length contract and two-call size-probe behavior as the
+`azihsm_sess_ex_part_init` outputs: an undersized buffer (or a NULL `ptr`
+with `len == 0`) is rejected with `AZIHSM_STATUS_BUFFER_TOO_SMALL` and
+`len` set to the maximum **before** the partition is finalized. A NULL
+`ptr` with a non-zero `len` is rejected with
+`AZIHSM_STATUS_INVALID_ARGUMENT`.
+
+```cpp
+azihsm_status azihsm_sess_ex_part_final(
+    azihsm_handle sess_handle,
+    const struct azihsm_sess_ex_part_final_params *params,
+    struct azihsm_buffer *local_mk_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                 | Name                                                                      | Description                                  |
+ | ------------------------- | ------------------------------------------------------------------------- | -------------------------------------------- |
+ | [in] sess_handle          | [azihsm_handle](#azihsm_handle)                                           | security-domain session handle               |
+ | [in] params               | [azihsm_sess_ex_part_final_params*](#azihsm_sess_ex_part_final_params)     | finalization input buffers                   |
+ | [in, out] local_mk_backup | [azihsm_buffer *](#azihsm_buffer)                                         | output buffer for the local_mk backup &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sess_ex_part_final_params
+
+Finalization input buffers for
+[`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final). `pta_cert_chain`
+points to an array of `pta_cert_chain_len` [azihsm_buffer](#azihsm_buffer)s,
+each holding one DER-encoded PTA certificate (leaf to root; at most
+`MAX_CERTS`). `prev_local_mk_backup` is optional and may be NULL to omit it.
+
+```cpp
+struct azihsm_sess_ex_part_final_params {
+    const struct azihsm_buffer *part_policy;
+    const struct azihsm_buffer *pta_cert_chain;
+    uint32_t pta_cert_chain_len;
+    const struct azihsm_buffer *prev_local_mk_backup;
+};
+```
+
+ | Field                | Name                             | Description                                     |
+ | -------------------- | -------------------------------- | ----------------------------------------------- |
+ | part_policy          | [azihsm_buffer*](#azihsm_buffer) | unified partition policy (must match part_init) |
+ | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (leaf to root)    |
+ | pta_cert_chain_len   | uint32_t                         | number of certificates in the chain             |
+ | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL)    |
+
+## azihsm_sess_ex_psk_change
+
+Rotate the calling session's own partition PSK.
+
+Replaces the PSK of the slot implied by the session role (CO session → CO,
+CU session → CU) with `new_psk`, sealed under the session key. This is
+required **once** on a fresh partition to move past the default-PSK gate
+before provisioning, and may also be used later to re-rotate. `new_psk`
+must be exactly 32 bytes.
+
+```cpp
+azihsm_status azihsm_sess_ex_psk_change(
+    azihsm_handle sess_handle,
+    const struct azihsm_buffer *new_psk
+    );
+```
+
+**Parameters**
+
+ | Parameter        | Name                              | Description                              |
+ | ---------------- | --------------------------------- | ---------------------------------------- |
+ | [in] sess_handle | [azihsm_handle](#azihsm_handle)   | security-domain session handle           |
+ | [in] new_psk     | [azihsm_buffer *](#azihsm_buffer) | new PSK buffer (exactly 32 bytes) &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
