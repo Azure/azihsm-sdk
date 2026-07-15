@@ -104,7 +104,35 @@ fn be_sub_assign(a: &mut [u8], b: &[u8]) {
     }
 }
 
-/// RFC 6979 §3.2 DRBG message-assembly length for P-384:
+/// Constant-time check that the big-endian candidate `v` is in `[1, n-1]`.
+///
+/// `v` is the RFC 6979 DRBG output — i.e. the secret per-message nonce
+/// candidate — so the accept/reject decision must not leak its magnitude via
+/// timing (cf. the Minerva / TPM-Fail ECDSA nonce-leak attacks, which recover
+/// the private key from a few biased/leaked nonce bits). Both operands are
+/// equal-length big-endian; every byte is read with no data-dependent early
+/// exit.
+fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
+    // v != 0: OR all bytes, then test the accumulator once.
+    let mut acc = 0u8;
+    for &b in v {
+        acc |= b;
+    }
+    let nonzero = acc != 0;
+
+    // v < n: full-width big-endian subtraction (LSB->MSB) with an 8-bit
+    // borrow; the final borrow is 1 iff v < n. `diff >> 8` is -1 (=> `& 1` is
+    // 1) exactly on underflow, so the loop is branch-free over the byte values.
+    let mut borrow = 0i32;
+    for i in (0..v.len()).rev() {
+        let diff = v[i] as i32 - n[i] as i32 - borrow;
+        borrow = (diff >> 8) & 1;
+    }
+    let lt = borrow == 1;
+
+    nonzero & lt
+}
+
 /// `V ‖ 0x00/0x01 ‖ int2octets(x) ‖ bits2octets(h1)` = 48 + 1 + 48 + 48.
 const RFC6979_SEED_MSG_LEN: usize = 48 + 1 + 48 + 48;
 
@@ -363,7 +391,7 @@ impl UnoHsmPal {
                 for _ in 0..RFC6979_MAX_TRIES {
                     self.rfc6979_generate(io, &mut drbg).await?;
                     let v_be: &[u8] = &drbg.v[..];
-                    if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                    if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
                         k[..field].copy_from_slice(&drbg.v[..field]);
                         k[..field].reverse();
@@ -446,7 +474,7 @@ impl UnoHsmPal {
                 for _ in 0..RFC6979_MAX_TRIES {
                     self.rfc6979_generate(io, &mut drbg).await?;
                     let v_be: &[u8] = &drbg.v[..];
-                    if v_be.iter().any(|&b| b != 0) && v_be[..field] < drbg.n_be[..field] {
+                    if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate k in [1, n-1]; stage little-endian and sign.
                         k[..field].copy_from_slice(&drbg.v[..field]);
                         k[..field].reverse();
