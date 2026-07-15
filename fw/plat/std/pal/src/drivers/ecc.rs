@@ -353,8 +353,30 @@ impl StdEcc {
         let mut y_be = [0u8; 66];
         reverse_copy(&mut x_be[..coord_len], &x_wire[..coord_len]);
         reverse_copy(&mut y_be[..coord_len], &y_wire[..coord_len]);
-        let pubk = EccPublicKey::from_coordinates(curve, &x_be[..coord_len], &y_be[..coord_len])
-            .map_err(|_| HsmError::InvalidArg)?;
+
+        // Peer-key validation (FIPS 186-5 / SP 800-56A) and peer-key
+        // construction are OpenSSL/CNG operations, so run them on the worker
+        // pool per this driver's thread model rather than blocking the executor.
+        // Mirrors the HW PKA point validation the Uno driver performs: reject
+        // any affine coordinate outside `[1, p-1]`
+        // (`EccPublicKeyValidationFailed`) and points that are not on the curve
+        // (`EccPointValidationFailed`).
+        let pubk = self
+            .pool
+            .submit_with_result(async move {
+                let x = &x_be[..coord_len];
+                let y = &y_be[..coord_len];
+                if !curve.coordinate_in_range(x) || !curve.coordinate_in_range(y) {
+                    return Err(HsmError::EccPublicKeyValidationFailed);
+                }
+                if !EccPublicKey::is_on_curve(curve, x, y)
+                    .map_err(|_| HsmError::EccPointValidationFailed)?
+                {
+                    return Err(HsmError::EccPointValidationFailed);
+                }
+                EccPublicKey::from_coordinates(curve, x, y).map_err(|_| HsmError::InvalidArg)
+            })
+            .await?;
 
         self.ecdh_derive(priv_key, &pubk, secret_out).await?;
 
