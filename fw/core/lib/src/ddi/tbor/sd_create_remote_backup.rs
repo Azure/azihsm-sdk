@@ -391,7 +391,16 @@ async fn commit_sd_to_vault<'p, P: HsmPal>(
     // Atomic one-shot claim first (the race-winner gate); the recorded
     // inverse clears the flag on rollback.
     part_state::part_mark_sd_initialized(pal, io)?;
-    undo.push_prop_restore_scalar(PartPropId::SD_INITIALIZED, 0)?;
+    if let Err(e) = undo.push_prop_restore_scalar(PartPropId::SD_INITIALIZED, 0) {
+        // The claim succeeded but its rollback inverse could not be
+        // recorded (e.g. `UndoLogFull`); clear the flag now (best-effort)
+        // so a full undo log cannot permanently wedge the partition's
+        // one-shot SD gate.  Safe against a concurrent create: this task
+        // owns the just-made claim and there is no await between the mark
+        // and here.
+        let _ = part_state::part_clear_sd_initialized(pal, io);
+        return Err(e);
+    }
 
     // Vault SDMK as the partition's SecurityDomain-scope masking key,
     // then record its id so `masking_key_id_for_scope` resolves it.

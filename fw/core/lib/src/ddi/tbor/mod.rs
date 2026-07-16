@@ -161,17 +161,17 @@ fn masking_key_id_for_scope<P: HsmPal>(
     match scope {
         HsmKeyScope::Ephemeral => part_state::part_ephemeral_mk_key_id(pal, io),
         HsmKeyScope::Local => part_state::part_local_mk_key_id(pal, io),
-        // The SecurityDomain masking key (`SDMK`) exists only once a
-        // security domain has been created (`SdCreateRemoteBackup`); until
-        // then the scope has no backing key and is reported as
-        // unsupported (parity with the `Session` / other scopes).
-        HsmKeyScope::SecurityDomain => {
-            if part_state::part_is_sd_initialized(pal, io)? {
-                part_state::part_sd_mk_key_id(pal, io)
-            } else {
-                Err(HsmError::UnsupportedKeyScope)
-            }
-        }
+        // Resolve the SecurityDomain masking key (`SDMK`) by `SD_MK_KEY_ID`
+        // presence — the single source of truth.  A request that observes a
+        // partially-written commit (the `SD_INITIALIZED` claim is set but
+        // `SD_MK_KEY_ID` is not yet written, or a rollback is in flight)
+        // gets the documented `UnsupportedKeyScope` rather than a leaked
+        // `PartPropNotFound`; genuine read faults still propagate.
+        HsmKeyScope::SecurityDomain => match part_state::part_sd_mk_key_id(pal, io) {
+            Ok(id) => Ok(id),
+            Err(HsmError::PartPropNotFound) => Err(HsmError::UnsupportedKeyScope),
+            Err(e) => Err(e),
+        },
         _ => Err(HsmError::UnsupportedKeyScope),
     }
 }

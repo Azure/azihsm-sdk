@@ -1191,6 +1191,16 @@ pub fn part_mark_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo)
     pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, true)
 }
 
+/// Clear the partition's one-shot security-domain init flag.
+///
+/// Used only to best-effort roll back a just-made claim when its undo
+/// inverse could not be recorded, so a full undo log cannot permanently
+/// wedge the partition's SD gate.  (The one-shot setter permits
+/// `→ false`; the normal rollback path is the undo log.)
+pub fn part_clear_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, false)
+}
+
 /// Current owner-seed (BKS2) selector (BKS2 lineage; always 0 today).
 ///
 /// Device-global (not per-partition); served by
