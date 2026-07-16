@@ -1,0 +1,222 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Integration tests for the security-domain sealing-key generation API
+//! ([`HsmSealingKeyGenAlgo`] via [`HsmKeyManager::generate_key`]).
+//!
+//! These exercise the public `azihsm_api` surface against the FW
+//! emulator. The property-validation guards return before the device
+//! round-trip, so they are deterministic. The
+//! `valid_props_pass_host_guards` test deliberately clears the host
+//! guards and reaches the device to exercise the TBOR request-construction
+//! path (`ddi::sd_sealing_key_gen`).
+//!
+//! A *complete* end-to-end generation (asserting the returned masked blob
+//! and public key parse) is intentionally not covered here: the FW
+//! `SdSealingKeyGen` handler requires the partition in the `Initialized`
+//! lifecycle state (masking keys provisioned by `PartFinal` with a signed
+//! PTA cert chain), which the emulator test harness does not set up. So a
+//! freshly reset partition can only exercise the path up to the device
+//! round-trip, matching the `partition_ex` host-guard tests.
+
+use azihsm_api::*;
+
+use crate::emu_helpers::*;
+
+/// Well-formed sealing key props: a `Sealing`-kind P-384 secret key
+/// permitted for derivation only, matching the wire contract.
+fn sealing_props() -> HsmKeyProps {
+    HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .build()
+        .expect("build sealing props")
+}
+
+/// A `Sealing` key that is not P-384 sized is rejected up front, before
+/// any device round-trip: `SdSealingKeyGen` always produces a 384-bit
+/// scalar.
+#[test]
+fn sealing_key_gen_rejects_wrong_bits() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(256)
+        .can_derive(true)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// A `Sealing` key without derive usage is rejected: derivation is the
+/// only permitted usage for a sealing key.
+#[test]
+fn sealing_key_gen_rejects_missing_derive() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// A non-`Sealing` key kind is rejected, even with an otherwise valid
+/// secret derive key.
+#[test]
+fn sealing_key_gen_rejects_wrong_kind() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_derive(true)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// A `Sealing` derive key that is not a `Secret` is rejected.
+#[test]
+fn sealing_key_gen_rejects_wrong_class() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// Derivation is the only permitted usage; an additional capability (here
+/// `sign`) fails the supported-flags check.
+#[test]
+fn sealing_key_gen_rejects_extra_capability() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .can_sign(true)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// Valid sealing props pass every host-side guard, so the request is
+/// sealed, constructed, and shipped to the device. The call is therefore
+/// never rejected with the host-guard errors ([`HsmError::InvalidKeyProps`]
+/// / [`HsmError::InvalidArgument`]); it may still fail on-device because a
+/// freshly reset partition is not provisioned. This exercises the
+/// property-conversion and TBOR request-construction path that the
+/// negative guard tests skip.
+#[test]
+fn sealing_key_gen_valid_props_pass_host_guards() {
+    let _guard = EMU_LOCK.lock();
+    let session = fresh_co_session();
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, sealing_props());
+
+    // `HsmSealingKey` is not `Debug`, so inspect only the error variant.
+    assert!(
+        !matches!(
+            res.as_ref().err(),
+            Some(HsmError::InvalidKeyProps) | Some(HsmError::InvalidArgument)
+        ),
+        "valid sealing props must pass the host guards, got error: {:?}",
+        res.err(),
+    );
+}
+
+/// Full round trip: on a fully provisioned partition, generating a sealing
+/// key succeeds and yields a usable key — the pinned 180-byte masked blob
+/// plus a P-384 public key — with the expected typed properties.
+#[test]
+fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
+    let _guard = EMU_LOCK.lock();
+    let session = super::provision::finalized_co_session();
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
+        .expect("generate sealing key on a provisioned partition");
+
+    // Typed properties describe a P-384 `Sealing` secret derive key.
+    assert_eq!(key.kind(), HsmKeyKind::Sealing);
+    assert_eq!(key.class(), HsmKeyClass::Secret);
+    assert_eq!(key.bits(), 384);
+    assert!(key.can_derive());
+
+    // The masked private-key blob is the pinned wire length and non-zero.
+    let masked = key.masked_key_vec().expect("masked key");
+    assert_eq!(masked.len(), 180);
+    assert!(
+        masked.iter().any(|&b| b != 0),
+        "masked key must not be all-zero"
+    );
+
+    // The public key is retrievable as DER SubjectPublicKeyInfo.
+    let pub_der = key.pub_key_der_vec().expect("public key der");
+    assert!(!pub_der.is_empty());
+}
+
+/// Each `SdSealingKeyGen` call produces fresh key material: two keys
+/// generated on the same provisioned session have distinct masked blobs
+/// and distinct public keys.
+#[test]
+fn sealing_key_gen_roundtrip_yields_distinct_keys() {
+    let _guard = EMU_LOCK.lock();
+    let session = super::provision::finalized_co_session();
+
+    let generate = || {
+        let mut algo = HsmSealingKeyGenAlgo::default();
+        let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
+            .expect("generate sealing key");
+        let masked = key.masked_key_vec().expect("masked key");
+        let pub_der = key.pub_key_der_vec().expect("public key der");
+        (masked, pub_der)
+    };
+
+    let (masked1, pub1) = generate();
+    let (masked2, pub2) = generate();
+
+    assert_eq!(masked1.len(), 180);
+    assert_eq!(masked2.len(), 180);
+    assert!(!pub1.is_empty());
+
+    // Fresh randomness → distinct masked blobs and public keys.
+    assert_ne!(masked1, masked2);
+    assert_ne!(pub1, pub2);
+}

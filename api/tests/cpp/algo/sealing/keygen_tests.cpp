@@ -3,6 +3,7 @@
 
 #include <azihsm_api.h>
 #include <cstdint>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <scope_guard.hpp>
 #include <vector>
@@ -389,16 +390,38 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_generates_usable_sealing_key)
         auto key_guard =
             scope_guard::make_scope_exit([&key_handle] { azihsm_key_delete(key_handle); });
 
-        // Read the masked private-key blob back and check it is the pinned
-        // wire length and non-zero — proving the generated key is usable
-        // (a real consumer re-imports this blob on use).
-        azihsm_key_prop masked{ AZIHSM_KEY_PROP_ID_MASKED_KEY, nullptr, 0 };
-        ASSERT_EQ(azihsm_key_get_prop(key_handle, &masked), AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        std::vector<uint8_t> blob(masked.len);
-        masked.val = blob.data();
-        ASSERT_EQ(azihsm_key_get_prop(key_handle, &masked), AZIHSM_STATUS_SUCCESS);
+        // Read a property into `out` using the standard two-call size probe.
+        auto read_prop =
+            [key_handle](azihsm_key_prop_id id, std::vector<uint8_t> &out) -> azihsm_status {
+            azihsm_key_prop prop{ id, nullptr, 0 };
+            auto err = azihsm_key_get_prop(key_handle, &prop);
+            if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                return err;
+            }
+            out.resize(prop.len);
+            prop.val = out.data();
+            return azihsm_key_get_prop(key_handle, &prop);
+        };
+        auto read_u32 = [&](azihsm_key_prop_id id, uint32_t &value) -> azihsm_status {
+            std::vector<uint8_t> bytes;
+            auto err = read_prop(id, bytes);
+            if (err == AZIHSM_STATUS_SUCCESS)
+            {
+                if (bytes.size() != sizeof(uint32_t))
+                {
+                    return AZIHSM_STATUS_INTERNAL_ERROR;
+                }
+                std::memcpy(&value, bytes.data(), sizeof(value));
+            }
+            return err;
+        };
 
-        // MASKED_SEALING_KEY_LEN = 8 + 12 + 96 + 48 + 16.
+        // Masked private-key blob: the pinned wire length and non-zero —
+        // proving the generated key is usable (a real consumer re-imports
+        // this blob on use). MASKED_SEALING_KEY_LEN = 8 + 12 + 96 + 48 + 16.
+        std::vector<uint8_t> blob;
+        ASSERT_EQ(read_prop(AZIHSM_KEY_PROP_ID_MASKED_KEY, blob), AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(blob.size(), 180u);
         bool all_zero = true;
         for (uint8_t b : blob)
@@ -410,6 +433,96 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_generates_usable_sealing_key)
             }
         }
         ASSERT_FALSE(all_zero);
+
+        // Typed properties describe a P-384 `Sealing` secret derive key.
+        uint32_t kind = 0;
+        uint32_t key_class = 0;
+        uint32_t bits = 0;
+        ASSERT_EQ(read_u32(AZIHSM_KEY_PROP_ID_KIND, kind), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(kind, static_cast<uint32_t>(AZIHSM_KEY_KIND_SEALING));
+        ASSERT_EQ(read_u32(AZIHSM_KEY_PROP_ID_CLASS, key_class), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(key_class, static_cast<uint32_t>(AZIHSM_KEY_CLASS_SECRET));
+        ASSERT_EQ(read_u32(AZIHSM_KEY_PROP_ID_BIT_LEN, bits), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(bits, 384u);
+
+        // Derivation is permitted.
+        std::vector<uint8_t> derive;
+        ASSERT_EQ(read_prop(AZIHSM_KEY_PROP_ID_DERIVE, derive), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(derive.size(), 1u);
+        ASSERT_NE(derive[0], 0);
+
+        // The public key is retrievable as DER SubjectPublicKeyInfo.
+        std::vector<uint8_t> pub_der;
+        ASSERT_EQ(read_prop(AZIHSM_KEY_PROP_ID_PUB_KEY_INFO, pub_der), AZIHSM_STATUS_SUCCESS);
+        ASSERT_FALSE(pub_der.empty());
+    });
+}
+
+// Each `SdSealingKeyGen` call must produce fresh key material: two keys
+// generated on the same provisioned session have distinct masked blobs and
+// distinct public keys.
+TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_yields_distinct_keys)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = provision_sd_co_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        // Generate a sealing key and return its masked blob + public key.
+        auto gen_key = [sess_handle](std::vector<uint8_t> &masked, std::vector<uint8_t> &pub)
+            -> azihsm_status {
+            SealingProps props;
+            auto algo = sealing_algo();
+            auto prop_list = props.list();
+            azihsm_handle key = 0;
+            auto err = azihsm_key_gen(sess_handle, &algo, &prop_list, &key);
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                return err;
+            }
+            auto read = [key](azihsm_key_prop_id id, std::vector<uint8_t> &out) -> azihsm_status {
+                azihsm_key_prop prop{ id, nullptr, 0 };
+                auto e = azihsm_key_get_prop(key, &prop);
+                if (e != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                {
+                    return e;
+                }
+                out.resize(prop.len);
+                prop.val = out.data();
+                return azihsm_key_get_prop(key, &prop);
+            };
+            auto masked_err = read(AZIHSM_KEY_PROP_ID_MASKED_KEY, masked);
+            auto pub_err = read(AZIHSM_KEY_PROP_ID_PUB_KEY_INFO, pub);
+            azihsm_key_delete(key);
+            return masked_err != AZIHSM_STATUS_SUCCESS ? masked_err : pub_err;
+        };
+
+        std::vector<uint8_t> masked1;
+        std::vector<uint8_t> pub1;
+        std::vector<uint8_t> masked2;
+        std::vector<uint8_t> pub2;
+        ASSERT_EQ(gen_key(masked1, pub1), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(gen_key(masked2, pub2), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(masked1.size(), 180u);
+        ASSERT_EQ(masked2.size(), 180u);
+        ASSERT_FALSE(pub1.empty());
+
+        // Fresh randomness → distinct masked blobs and public keys.
+        ASSERT_NE(masked1, masked2);
+        ASSERT_NE(pub1, pub2);
     });
 }
 #endif // AZIHSM_FEATURE_EMU

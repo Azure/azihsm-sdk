@@ -17,8 +17,6 @@ mod emu_helpers;
 #[cfg(feature = "emu")]
 mod partition_ex_tests;
 #[cfg(feature = "emu")]
-mod sealing_ex_tests;
-#[cfg(feature = "emu")]
 mod session_ex_tests;
 
 use azihsm_api::*;
