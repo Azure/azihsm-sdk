@@ -270,10 +270,10 @@ struct Storage {
     ephemeral_mk_key_id: [u8; 2],
     sd_mk_key_id: [u8; 2],
     // Presence flags for `AbsentUntilSet` byte fields plus the one-shot
-    // InitBk3 gate, bit-packed into a single byte (see the `FLAG_*`
-    // constants).  Placed after the key handles, before `reserved3`,
-    // where 1-byte alignment is harmless and the DMA-target public keys
-    // above stay 4-aligned.
+    // InitBk3 and security-domain (`SD_INITIALIZED`) gates, bit-packed into
+    // a single byte (see the `FLAG_*` constants).  Placed after the key
+    // handles, before `reserved3`, where 1-byte alignment is harmless and
+    // the DMA-target public keys above stay 4-aligned.
     valid_flags: u8,
     // Volatile TBOR session slot metadata: byte 0 = pending_mask
     // (bit N set while slot N's handshake is in flight), byte 1 =
