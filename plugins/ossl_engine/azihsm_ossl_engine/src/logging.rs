@@ -31,8 +31,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use openssl_engine::error::EngineError;
-use openssl_engine::error::EngineResult;
+use azihsm_ossl_engine_core::error::EngineError;
+use azihsm_ossl_engine_core::error::EngineResult;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
@@ -139,7 +139,7 @@ fn open_file_layer(
     // O_NONBLOCK so opening a FIFO at `path` can't block waiting for a reader
     // before the is_file() check below runs (it fails fast / is then rejected);
     // a no-op for a regular file. Mirrors read_regular_hardened in
-    // engine-resiliency.
+    // azihsm_ossl_engine_resiliency.
     let file = OpenOptions::new()
         .create(true)
         .append(true)
