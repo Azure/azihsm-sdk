@@ -27,6 +27,19 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - uses: ./.github/actions/ubuntu-setup
+    - name: Free disk space
+      run: |
+        # The two coverage steps below run with --skip-clean, so the
+        # instrumented mock-test artifacts stay on disk while the resiliency
+        # step builds a second, fully instrumented copy of the native
+        # api_tests harness (googletest + cbindgen + a duplicate dependency
+        # tree). Together they can exhaust the runner's disk ("No space left
+        # on device"). Reclaim ~25 GB by removing large preinstalled
+        # toolchains this project does not use.
+        echo "Disk space before cleanup:" && df -h /
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force || true
+        echo "Disk space after cleanup:" && df -h /
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
       run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
