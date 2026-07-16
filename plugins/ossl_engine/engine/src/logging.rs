@@ -39,6 +39,8 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use crate::SECRET_FILE_MODE;
+
 const ENV_LOG_STDERR: &str = "AZIHSM_ENGINE_LOG_STDERR";
 const ENV_LOG_FILE: &str = "AZIHSM_ENGINE_LOG_FILE";
 
@@ -132,7 +134,7 @@ fn open_file_layer(
     let file = OpenOptions::new()
         .create(true)
         .append(true)
-        .mode(0o600)
+        .mode(SECRET_FILE_MODE)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
         .map_err(|e| EngineError::wrap(format!("AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
@@ -150,7 +152,7 @@ fn open_file_layer(
             "AZIHSM_ENGINE_LOG_FILE {path:?} is not a regular file"
         )));
     }
-    if meta.mode() & 0o777 != 0o600 {
+    if meta.mode() & 0o777 != SECRET_FILE_MODE {
         return Err(EngineError::Other(format!(
             "AZIHSM_ENGINE_LOG_FILE {path:?} has insecure permissions \
              (must be owner-only, mode 0600)"

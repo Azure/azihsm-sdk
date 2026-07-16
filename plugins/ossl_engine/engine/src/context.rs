@@ -5,7 +5,7 @@
 //!
 //! [`EngineData`] is the per-engine state stored in the `ENGINE`'s ex_data
 //! and retrieved via `ENGINE_get_ex_data`. It owns one lazily-populated
-//! [`HsmContext`] (partition + session).
+//! [`HsmEngineContext`] (partition + session).
 
 use std::path::Path;
 
@@ -31,6 +31,8 @@ use parking_lot::Mutex;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
+use crate::SECRET_FILE_MODE;
+
 /// Test-only credentials. Match the values used throughout the API test
 /// suite (`api/tests/src/utils/partition.rs`), so the mock DDI accepts
 /// the engine out of the box. Compiled in **only** for `mock` builds: a
@@ -46,7 +48,7 @@ const ENV_CREDENTIALS_PIN: &str = "AZIHSM_CREDENTIALS_PIN";
 
 /// Per-engine state stored in `ENGINE` ex_data.
 pub struct EngineData {
-    hsm: Mutex<Option<HsmContext>>,
+    hsm: Mutex<Option<HsmEngineContext>>,
 }
 
 impl Default for EngineData {
@@ -62,7 +64,7 @@ impl EngineData {
         }
     }
 
-    /// True once an `HsmContext` has been installed via `open_hsm_*`.
+    /// True once an `HsmEngineContext` has been installed via `open_hsm_*`.
     pub fn is_hsm_open(&self) -> bool {
         self.hsm.lock().is_some()
     }
@@ -70,7 +72,7 @@ impl EngineData {
     /// Open the HSM using `settings` (already parsed) and `creds`.
     /// Idempotent: subsequent calls return `Ok(())` without re-opening.
     ///
-    /// The lock is held across `HsmContext::open` so concurrent first-use
+    /// The lock is held across `HsmEngineContext::open` so concurrent first-use
     /// callers serialize on the open instead of racing two sessions open
     /// and discarding one.
     pub fn open_hsm_with(
@@ -82,7 +84,7 @@ impl EngineData {
         if guard.is_some() {
             return Ok(());
         }
-        *guard = Some(HsmContext::open(settings, creds)?);
+        *guard = Some(HsmEngineContext::open(settings, creds)?);
         Ok(())
     }
 
@@ -101,14 +103,14 @@ impl EngineData {
 /// Both fields are RAII holders: dropping them closes the session and
 /// releases the partition. They are held (not currently read) to keep the
 /// session open for the lifetime of the `EngineData`.
-struct HsmContext {
+struct HsmEngineContext {
     #[allow(dead_code)]
     partition: HsmPartition,
     #[allow(dead_code)]
     session: HsmSession,
 }
 
-impl HsmContext {
+impl HsmEngineContext {
     fn open(settings: ResiliencySettings, creds: HsmCredentials) -> EngineResult<Self> {
         let info = HsmPartitionManager::partition_info_list()
             .into_iter()
@@ -152,35 +154,7 @@ impl HsmContext {
         match first {
             Ok(()) => {}
             Err(HsmError::Bk3AlreadyInitialized) if caller_obk => {
-                let mobk = Zeroizing::new(
-                    FileMobkCallback::new(settings.mobk_path.clone())
-                        .get_mobk()
-                        .map_err(|e| {
-                            EngineError::wrap(
-                                format!(
-                                    "device reports BK3 already initialized but cached MOBK \
-                                     '{}' is unusable — restore it or reset/power-cycle the \
-                                     device",
-                                    settings.mobk_path.display()
-                                ),
-                                e,
-                            )
-                        })?,
-                );
-                let obk_config = HsmOwnerBackupKeyConfig::new(
-                    HsmOwnerBackupKeySource::Caller,
-                    HsmOwnerBackupKey::from_masked_key(mobk.as_slice()),
-                );
-                partition
-                    .init(
-                        creds,
-                        None,
-                        None,
-                        obk_config,
-                        pota,
-                        build_resiliency_config(&settings)?,
-                    )
-                    .map_err(|e| EngineError::wrap("partition init (MOBK retry)", e))?;
+                reinit_with_cached_mobk(&partition, creds, &settings, pota)?;
             }
             Err(e) => return Err(EngineError::wrap("partition init", e)),
         }
@@ -212,6 +186,46 @@ impl HsmContext {
     }
 }
 
+/// Warm-device re-init: the plaintext OBK was rejected with
+/// `Bk3AlreadyInitialized`, so re-init from the MOBK a previous cold init
+/// persisted at `settings.mobk_path`. Caller-OBK source only.
+fn reinit_with_cached_mobk(
+    partition: &HsmPartition,
+    creds: HsmCredentials,
+    settings: &ResiliencySettings,
+    pota: HsmPotaEndorsement,
+) -> EngineResult<()> {
+    let mobk = Zeroizing::new(
+        FileMobkCallback::new(settings.mobk_path.clone())
+            .get_mobk()
+            .map_err(|e| {
+                EngineError::wrap(
+                    format!(
+                        "device reports BK3 already initialized but cached MOBK \
+                         '{}' is unusable — restore it or reset/power-cycle the \
+                         device",
+                        settings.mobk_path.display()
+                    ),
+                    e,
+                )
+            })?,
+    );
+    let obk_config = HsmOwnerBackupKeyConfig::new(
+        HsmOwnerBackupKeySource::Caller,
+        HsmOwnerBackupKey::from_masked_key(mobk.as_slice()),
+    );
+    partition
+        .init(
+            creds,
+            None,
+            None,
+            obk_config,
+            pota,
+            build_resiliency_config(settings)?,
+        )
+        .map_err(|e| EngineError::wrap("partition init (MOBK retry)", e))
+}
+
 /// Persist key material to `path` durably: write a `0600` temp file, flush it,
 /// then atomically rename into place, so a torn write can't leave a corrupt
 /// MOBK that would break a later warm re-init.
@@ -239,7 +253,7 @@ fn persist_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut f = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
-        .mode(0o600)
+        .mode(SECRET_FILE_MODE)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&tmp)?;
 
@@ -312,7 +326,7 @@ fn build_pota_endorsement(
 
 /// Build the OBK config for the *first* `partition.init` attempt: Caller
 /// source supplies the plaintext OBK (which runs `init_bk3`); Tpm supplies an
-/// empty key. The warm-device MOBK retry is handled in [`HsmContext::open`].
+/// empty key. The warm-device MOBK retry is handled in [`HsmEngineContext::open`].
 fn build_obk_config(settings: &ResiliencySettings) -> EngineResult<HsmOwnerBackupKeyConfig> {
     match settings.obk_source {
         HsmOwnerBackupKeySource::Caller => {

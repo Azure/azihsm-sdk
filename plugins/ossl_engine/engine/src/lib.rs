@@ -10,6 +10,12 @@
 
 //! Azure Integrated HSM -- OpenSSL 1.1.x Engine. Linux only.
 
+/// File mode for secret material the engine writes (the cached MOBK and the
+/// log file): owner read/write only, no group/other. Mirrors the provider's
+/// 0600 hardening.
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub(crate) const SECRET_FILE_MODE: u32 = 0o600;
+
 // `context` is `pub` so the engine's HSM-open API (EngineData and its
 // open_hsm_* methods) is public crate API rather than dead code. The cdylib
 // entry point (`bind_helper`) constructs an EngineData and parks it in the
