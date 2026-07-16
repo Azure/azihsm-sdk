@@ -24,11 +24,15 @@ use azihsm_ddi_mbor_codec::MborDecode;
 use azihsm_ddi_mbor_codec::MborDecoder;
 use azihsm_ddi_mbor_codec::MborEncoder;
 use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiApiRev;
+use azihsm_ddi_mbor_types::DdiCloseSessionCmdReq;
+use azihsm_ddi_mbor_types::DdiCloseSessionReq;
 use azihsm_ddi_mbor_types::DdiDecoder;
 use azihsm_ddi_mbor_types::DdiDeviceKind;
 use azihsm_ddi_mbor_types::DdiOp;
 use azihsm_ddi_mbor_types::DdiOpReq;
 use azihsm_ddi_mbor_types::DdiOpenSessionCmdResp;
+use azihsm_ddi_mbor_types::DdiReqHdr;
 use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
@@ -133,6 +137,30 @@ impl DdiEmuDev {
             session: Arc::new(Mutex::new(SessionState::default())),
             device_kind: DdiDeviceKind::Physical,
         })
+    }
+
+    /// Best-effort close of the device's live session.
+    fn close_live_session(&self) {
+        let session_id = self.session.lock().session_id;
+        let Some(sess_id) = session_id else {
+            return;
+        };
+        let req = DdiCloseSessionCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::CloseSession,
+                sess_id: Some(sess_id),
+                rev: Some(DdiApiRev { major: 1, minor: 0 }),
+            },
+            data: DdiCloseSessionReq {},
+            ext: None,
+        };
+        let _ = self.exec_op_mbor(&req, &mut None);
+    }
+}
+
+impl Drop for DdiEmuDev {
+    fn drop(&mut self) {
+        self.close_live_session();
     }
 }
 
@@ -359,7 +387,41 @@ impl DdiDev for DdiEmuDev {
             resp_buf
         );
 
-        <T::OpResp>::decode_response(resp_buf).map_err(Into::into)
+        // `decode_response` returns `DecodeError::FwError` on a non-`Success`
+        // firmware status, so decoding first gates session tracking on
+        // success: a failed command must not change the tracked session id —
+        // a rejected `SessionClose` leaves the session live, so its id must
+        // stay tracked for the close-on-drop retry.
+        let resp = <T::OpResp>::decode_response(resp_buf).map_err(DdiError::from)?;
+
+        // Update session tracking on Open / Close success, mirroring
+        // `exec_op_mbor`.  The firmware allocates the session id and returns
+        // it in the `SessionOpenInit` response — the TBOR analog of MBOR's
+        // `hdr.sess_id`, carried here as a `SessionId` TOC entry — so record
+        // it from the Open response and clear it on Close.  In-session ops
+        // (including `SessionOpenFinish`) leave the tracked id unchanged.
+        match session_ctrl {
+            azihsm_ddi_tbor_types::SessionControlKind::Open => {
+                if let Some(id) = azihsm_ddi_tbor_codec::ResponseView::parse(resp_buf)
+                    .ok()
+                    .and_then(|view| {
+                        view.toc_iter().find_map(|entry| match entry {
+                            azihsm_ddi_tbor_codec::TocEntry::SessionId(id) => Some(id),
+                            _ => None,
+                        })
+                    })
+                {
+                    self.session.lock().session_id = Some(id);
+                }
+            }
+            azihsm_ddi_tbor_types::SessionControlKind::Close => {
+                self.session.lock().session_id = None
+            }
+            azihsm_ddi_tbor_types::SessionControlKind::InSession
+            | azihsm_ddi_tbor_types::SessionControlKind::NoSession => {}
+        }
+
+        Ok(resp)
     }
 
     fn exec_op_fp_gcm_slice(
@@ -404,12 +466,12 @@ impl DdiDev for DdiEmuDev {
         Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))
     }
 
-    /// Erase the device.
+    /// Erase the device: disable and re-enable the emulator partition,
+    /// matching what real hardware does on NSSR.
     ///
-    /// For the emulator backend, this disables and re-enables the
-    /// emulator partition (matching what real hardware does on NSSR)
-    /// and clears the session state, returning the device to a clean
-    /// state.
+    /// The host-side session state is deliberately preserved so the host
+    /// can re-establish it with an in-session `ReopenSession`; clearing it
+    /// would fail that reopen with `FileHandleNoExistingSession`.
     fn erase(&self) -> Result<(), DdiError> {
         // Reset partition state: disable then re-enable. This
         // matches what real hardware does on NSSR.
@@ -420,11 +482,6 @@ impl DdiDev for DdiEmuDev {
                 Ok::<_, ()>(())
             })
             .map_err(|_| DdiError::DeviceNotReady)?;
-
-        // Clear session state for this device handle.
-        let mut session = self.session.lock();
-        session.session_id = None;
-        session.short_app_id = None;
 
         Ok(())
     }

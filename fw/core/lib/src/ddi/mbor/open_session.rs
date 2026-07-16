@@ -37,9 +37,11 @@
 
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
+use azihsm_fw_ddi_mbor_types::open_session::DdiEncryptedSessionCredential;
 use azihsm_fw_ddi_mbor_types::open_session::DdiOpenSessionReq;
 use azihsm_fw_ddi_mbor_types::open_session::DdiOpenSessionResp;
 use azihsm_fw_ddi_mbor_types::DdiKeyType;
+use azihsm_fw_ddi_mbor_types::DdiPublicKey;
 
 use super::*;
 
@@ -50,7 +52,7 @@ const SESSION_BK_LABEL: &[u8] = b"SESSION_BK";
 
 /// Cleartext label embedded in the BMK_SESSION metadata identifying
 /// the wrapped key as the session masking key.
-const SMK_KEY_LABEL: &[u8] = b"SMK";
+pub(super) const SMK_KEY_LABEL: &[u8] = b"SMK";
 
 /// Handle `DdiOpenSessionCmd`.
 ///
@@ -68,65 +70,28 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
 
     let _lock = pal.partition_lock(io).await?;
 
-    check_fail_fast(pal, io, &body)?;
-    let api_rev = hdr.rev.ok_or(HsmError::UnsupportedRevision)?;
-
-    // ── Steps 2-3: ECDH + HKDF → 80-byte OKM (aes_key ‖ hmac_key) ────
-    let okm = pal.dma_alloc(io, BK_LEN)?;
-    derive_session_credential_keys(
+    check_fail_fast(
         pal,
         io,
-        body.pub_key.raw,
         body.encrypted_credential.nonce,
-        okm,
-    )
-    .await?;
-    let (aes_key, hmac_key) = okm.split_at(okm.len() - HsmHashAlgo::Sha384.digest_len());
+        &body.pub_key,
+        false,
+    )?;
+    let api_rev = hdr.rev.ok_or(HsmError::UnsupportedRevision)?;
 
-    // ── Step 4: HMAC verify the credential ───────────────────────────
-    verify_credential_hmac(pal, io, &body.encrypted_credential, hmac_key).await?;
+    // ── Steps 2-7: authenticate the credential and derive BK_SESSION ──
+    let pub_key_raw = body.pub_key.raw;
+    let bk_session =
+        authenticate_and_derive_bk_session(pal, io, &mut body.encrypted_credential, pub_key_raw)
+            .await?;
 
-    // ── Step 5: Reset nonce, then AES-CBC decrypt id, pin, seed ──────
+    // ── Step 8: fresh random MK_SESSION, then allocate a new slot ────
     //
-    // Reset the partition nonce *before* decrypting / verifying the
-    // credential so the nonce that authenticated this request cannot
-    // be replayed if a later step fails partway through.
-    {
-        let nonce = pal.dma_alloc(io, crate::part_state::NONCE_LEN)?;
-        pal.rng_fill_bytes(io, nonce)?;
-        crate::part_state::part_set_nonce(pal, io, nonce)?;
-    }
-    decrypt_session_credential(pal, io, &mut body.encrypted_credential, aes_key).await?;
-
-    // ── Step 6: Verify decrypted credential matches persisted ────────
-    let id: &[u8] = body.encrypted_credential.encrypted_id;
-    let pin: &[u8] = body.encrypted_credential.encrypted_pin;
-    if id == [0u8; CRED_FIELD_LEN] || pin == [0u8; CRED_FIELD_LEN] {
-        return Err(HsmError::InvalidAppCredentials);
-    }
-    crate::part_state::part_verify_credential(pal, io, id, pin)?;
-
-    // ── Step 7: Fresh MK_SESSION + derived BK_SESSION ────────────────
+    // The host stores the wrapped MK_SESSION (`bmk_session`, below) and
+    // re-presents it on `ReopenSession` after a migration / NSSR.
     let mk_session = pal.dma_alloc(io, BK_LEN)?;
     pal.rng_fill_bytes(io, mk_session)?;
 
-    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
-    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
-
-    let bk_session = pal.dma_alloc(io, BK_LEN)?;
-    let session_bk_label = pal.dma_alloc(io, SESSION_BK_LABEL.len())?;
-    session_bk_label.copy_from_slice(SESSION_BK_LABEL);
-    pal.sp800_108_kdf(
-        io,
-        HsmHashAlgo::Sha384,
-        bk_boot,
-        Some(session_bk_label),
-        Some(body.encrypted_credential.encrypted_seed),
-        bk_session,
-    )
-    .await?;
-
-    // ── Step 8: Allocate the session table entry ─────────────────────
     let api_rev_bytes = pack_api_rev(api_rev);
     let sess_id = pal
         .session_create(io, &api_rev_bytes, mk_session, None)
@@ -155,19 +120,24 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     })
 }
 
-/// Performs all fail-fast checks before any cryptographic work.
+/// Performs all fail-fast checks before any cryptographic work, shared
+/// by `OpenSession` and `ReopenSession`.
 ///
 /// Must be called under the partition lock so the partition-state
 /// checks (nonce, credential-set, provisioned, session-table) stay
-/// consistent with the subsequent state mutations.
+/// consistent with the subsequent state mutations.  `is_reopen` skips
+/// the free-slot check, since `ReopenSession` recreates the migrated
+/// session's own slot rather than allocating a new one.
 ///
 /// Session-id and api-rev presence are validated centrally — see
 /// `validate_session` (io.rs) and `check_api_rev` (mod.rs) — so they
 /// are not re-checked here.
-fn check_fail_fast<P: HsmPal>(
+pub(super) fn check_fail_fast<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
-    body: &DdiOpenSessionReq<'_>,
+    nonce: &DmaBuf,
+    pub_key: &DdiPublicKey<'_>,
+    is_reopen: bool,
 ) -> HsmResult<()> {
     // Credential / provisioning state is checked BEFORE the nonce.
     // Matches the mcr-hsm reference (which gates on `verify_cred_is_set`
@@ -176,26 +146,105 @@ fn check_fail_fast<P: HsmPal>(
     // partition: NonceMismatch could be hit by any random replay,
     // whereas CredentialsNotEstablished tells the host it must
     // EstablishCredential first.
-    if !crate::part_state::part_is_credential_set(pal, io)? {
-        return Err(HsmError::CredentialsNotEstablished);
-    }
-    if !crate::part_state::part_is_provisioned(pal, io)? {
+    //
+    // The report order differs for ReopenSession: it re-keys a session
+    // that migrated away and carries its own credential in the request,
+    // so a missing provisioning root (BK/MK) is the more actionable
+    // failure and is surfaced first as PartitionNotProvisioned. That
+    // matches the simulator's reopen contract and the live-migration
+    // recovery flow, which re-provisions the partition (`restore_partition`)
+    // before reopening the session.
+    let cred_set = crate::part_state::part_is_credential_set(pal, io)?;
+    let provisioned = crate::part_state::part_is_provisioned(pal, io)?;
+    if is_reopen && !provisioned {
         return Err(HsmError::PartitionNotProvisioned);
     }
-    if pal.session_limit_reached(io) {
+    if !cred_set {
+        return Err(HsmError::CredentialsNotEstablished);
+    }
+    if !provisioned {
+        return Err(HsmError::PartitionNotProvisioned);
+    }
+    // ReopenSession reuses the migrated-away session's slot, so it is not
+    // gated on free-slot availability (mirrors the reference firmware).
+    if !is_reopen && pal.session_limit_reached(io) {
         return Err(HsmError::VaultSessionLimitReached);
     }
 
-    crate::part_state::part_verify_nonce(pal, io, body.encrypted_credential.nonce)?;
+    crate::part_state::part_verify_nonce(pal, io, nonce)?;
 
-    if body.pub_key.key_kind != DdiKeyType::Ecc384Public {
+    if pub_key.key_kind != DdiKeyType::Ecc384Public {
         return Err(HsmError::InvalidKeyType);
     }
-    if body.pub_key.raw.len() != HsmEccCurve::P384.pub_key_len() {
+    if pub_key.raw.len() != HsmEccCurve::P384.pub_key_len() {
         return Err(HsmError::InvalidArg);
     }
 
     Ok(())
+}
+
+/// Shared `OpenSession` / `ReopenSession` credential authentication and
+/// `BK_SESSION` derivation (steps 2-7).
+///
+/// Runs ECDH-P384 + HKDF, HMAC-verifies the credential, resets the
+/// partition nonce, AES-CBC decrypts and constant-time verifies the
+/// credential, then derives the 80-byte `BK_SESSION` by SP 800-108
+/// KBKDF rooted in `BK_BOOT` (label `SESSION_BK`, context = decrypted
+/// seed).  `enc_cred` is decrypted in place; the returned buffer is
+/// `BK_SESSION`.
+///
+/// Both handlers derive `BK_SESSION` here, so the blob `OpenSession`
+/// masks under it is exactly what `ReopenSession` unmasks with it.
+pub(super) async fn authenticate_and_derive_bk_session<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
+    enc_cred: &mut DdiEncryptedSessionCredential<'_>,
+    pub_key_raw: &DmaBuf,
+) -> HsmResult<&'p mut DmaBuf> {
+    // Steps 2-3: ECDH + HKDF → 80-byte OKM (aes_key ‖ hmac_key).
+    let okm = pal.dma_alloc(io, BK_LEN)?;
+    derive_session_credential_keys(pal, io, pub_key_raw, enc_cred.nonce, okm).await?;
+    let (aes_key, hmac_key) = okm.split_at(okm.len() - HsmHashAlgo::Sha384.digest_len());
+
+    // Step 4: HMAC verify the credential.
+    verify_credential_hmac(pal, io, enc_cred, hmac_key).await?;
+
+    // Step 5: reset the nonce *before* decrypting / verifying so it
+    // cannot be replayed if a later step fails, then AES-CBC decrypt id,
+    // pin, and seed in place.
+    {
+        let nonce = pal.dma_alloc(io, crate::part_state::NONCE_LEN)?;
+        pal.rng_fill_bytes(io, nonce)?;
+        crate::part_state::part_set_nonce(pal, io, nonce)?;
+    }
+    decrypt_session_credential(pal, io, enc_cred, aes_key).await?;
+
+    // Step 6: verify the decrypted credential matches the persisted one.
+    let id: &[u8] = enc_cred.encrypted_id;
+    let pin: &[u8] = enc_cred.encrypted_pin;
+    if id == [0u8; CRED_FIELD_LEN] || pin == [0u8; CRED_FIELD_LEN] {
+        return Err(HsmError::InvalidAppCredentials);
+    }
+    crate::part_state::part_verify_credential(pal, io, id, pin)?;
+
+    // Step 7: BK_SESSION = SP800-108(BK_BOOT, "SESSION_BK", seed).
+    let bk_boot = pal.dma_alloc(io, BK_BOOT_LEN)?;
+    crate::ddi::recover_bk_boot(pal, io, bk_boot).await?;
+
+    let bk_session = pal.dma_alloc(io, BK_LEN)?;
+    let session_bk_label = pal.dma_alloc(io, SESSION_BK_LABEL.len())?;
+    session_bk_label.copy_from_slice(SESSION_BK_LABEL);
+    pal.sp800_108_kdf(
+        io,
+        HsmHashAlgo::Sha384,
+        bk_boot,
+        Some(session_bk_label),
+        Some(enc_cred.encrypted_seed),
+        bk_session,
+    )
+    .await?;
+
+    Ok(bk_session)
 }
 
 /// Derives the AES-256 ‖ HMAC-SHA-384 OKM used to authenticate and
@@ -416,7 +465,7 @@ async fn encode_response<'p, P: HsmPal>(
 
 /// Pack a [`DdiApiRev`] into the 8-byte little-endian form expected by
 /// [`HsmSessionManager::session_create`].
-fn pack_api_rev(rev: azihsm_fw_ddi_mbor_types::DdiApiRev) -> [u8; 8] {
+pub(super) fn pack_api_rev(rev: azihsm_fw_ddi_mbor_types::DdiApiRev) -> [u8; 8] {
     let mut out = [0u8; 8];
     out[..4].copy_from_slice(&rev.major.to_le_bytes());
     out[4..].copy_from_slice(&rev.minor.to_le_bytes());

@@ -888,8 +888,16 @@ impl StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        Self::clear_enabled_state(&mut table.entries[idx]);
-        table.entries[idx].state = PartState::Disabled;
+        // Preserve any live sessions across the NSSR as
+        // NeedsRenegotiation so a subsequent ReopenSession can re-key
+        // them (mirrors the reference firmware's `disable`, which does
+        // `restore(backup())`).  The snapshot must be taken *before*
+        // `clear_enabled_state` wipes the session table and vault.
+        let entry = &mut table.entries[idx];
+        let session_backup = entry.session_table.backup();
+        Self::clear_enabled_state(entry);
+        entry.session_table.restore(session_backup);
+        entry.state = PartState::Disabled;
         Ok(())
     }
 

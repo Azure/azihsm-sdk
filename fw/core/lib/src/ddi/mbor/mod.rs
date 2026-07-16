@@ -29,6 +29,7 @@ pub(crate) mod kdf;
 pub(crate) mod key_attrs;
 pub(crate) mod masking;
 pub(crate) mod open_session;
+pub(crate) mod reopen_session;
 pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
@@ -63,6 +64,7 @@ pub(crate) use hmac::*;
 pub(crate) use init_bk3::*;
 pub(crate) use kbkdf_derive::*;
 pub(crate) use open_session::*;
+pub(crate) use reopen_session::*;
 pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
@@ -177,6 +179,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::EstablishCredential => establish_credential(pal, io, decoder, hdr).await,
         DdiOp::ChangePin => change_pin(pal, io, decoder, hdr).await,
         DdiOp::CloseSession => close_session(pal, io, decoder, hdr).await,
+        DdiOp::ReopenSession => reopen_session(pal, io, decoder, hdr).await,
         DdiOp::DeleteKey => delete_key(pal, io, decoder, hdr).await,
         DdiOp::AesGenerateKey => aes_generate_key(pal, io, decoder, hdr).await,
         DdiOp::AesEncryptDecrypt => aes_encrypt_decrypt(pal, io, decoder, hdr).await,
