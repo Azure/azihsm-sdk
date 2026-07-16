@@ -17,6 +17,7 @@ azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
 azihsm_fw_static_ref = { workspace = true }
+azihsm_fw_uno_cert_blob = { workspace = true }
 azihsm_fw_uno_drivers_aes = { workspace = true }
 azihsm_fw_uno_drivers_bks_store = { workspace = true }
 azihsm_fw_uno_drivers_boot_status = { workspace = true }

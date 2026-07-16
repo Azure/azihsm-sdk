@@ -115,7 +115,8 @@ pub struct TborPartInfoResp<'a> {
     #[tbor(buffer, len = 16)]
     pub pid: &'a [u8],
 
-    /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B).
+    /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B) in
+    /// natural big-endian (SEC1) order.
     #[tbor(buffer, len = 96)]
     pub pid_pub_key: &'a [u8],
 }

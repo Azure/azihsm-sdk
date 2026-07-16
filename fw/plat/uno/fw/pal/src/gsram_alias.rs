@@ -15,9 +15,6 @@
 //! Each blob is preceded by a `u32` length; the SP writes `-1`
 //! (`0xFFFF_FFFF`) when the value did not fit, which we treat as "absent".
 
-// Wired into the cert store in a later commit; allow until then.
-#![allow(dead_code)]
-
 /// `alias_key_length` (u32).
 const ALIAS_KEY_LEN_ADDR: usize = 0x6100_0B30;
 /// `alias_key` — CP alias private key.
@@ -32,19 +29,17 @@ const ALIAS_CERT_ADDR: usize = 0x6100_0B78;
 /// Maximum alias-cert length (`GSRAM_MEM_MAP_ALIAS_CERT_SIZE`).
 const ALIAS_CERT_MAX: usize = 0x488;
 
-/// Read a length prefix, mapping the SP "too long" sentinel (`-1`) to 0 and
-/// clamping to the field's storage capacity.
+/// Read a length prefix, mapping the SP "too long" sentinel (`u32::MAX`) and
+/// any out-of-range length (larger than the field's storage capacity) to 0
+/// (absent). A length past capacity would otherwise yield truncated, non-empty
+/// data, so it is treated as unprovisioned rather than silently clamped.
 #[inline]
 fn read_len(len_addr: usize, max: usize) -> usize {
     // SAFETY: `len_addr` is a fixed, 4-byte-aligned GSRAM address the HSP
     // populated before the CP cores were released; the read is within the
     // reserved SP-shared block.
-    let len = unsafe { core::ptr::read_volatile(len_addr as *const u32) };
-    if len == u32::MAX {
-        0
-    } else {
-        (len as usize).min(max)
-    }
+    let len = unsafe { core::ptr::read_volatile(len_addr as *const u32) } as usize;
+    if len > max { 0 } else { len }
 }
 
 /// The alias certificate DER bytes, or an empty slice if the SP did not

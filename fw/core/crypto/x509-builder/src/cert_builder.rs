@@ -258,7 +258,11 @@ pub async fn build_leaf_cert<'a>(
     // variant has no priv_key to check, so this preflight is exclusive to
     // this default-signer entry point.
     preflight(priv_key, crate::leaf_cert::TBS_TEMPLATE.len())?;
-    let signer = EccP384Signer { pal, priv_key };
+    let signer = EccP384Signer {
+        pal,
+        alloc,
+        priv_key,
+    };
     build_leaf_cert_with_signer(pal, io, alloc, params, &signer, out).await
 }
 
@@ -272,8 +276,12 @@ pub async fn build_leaf_cert<'a>(
 /// regenerations (required for cacheable, lazily-regenerated leaf certs).
 ///
 /// [`HsmEcc::ecc_sign`]: azihsm_fw_hsm_pal_traits::HsmEcc::ecc_sign
+#[allow(async_fn_in_trait)]
 pub trait TbsSigner {
-    /// Sign `digest` (48-byte SHA-384) into `sig` (`r || s`, LE-by-half, 96 B).
+    /// Sign `digest` (48-byte SHA-384, natural big-endian) into `sig`
+    /// (`r || s`, LE-by-half, 96 B). The signer converts the digest to its
+    /// backend's operand order (a PKA/`ecc_sign_deterministic` signer reverses
+    /// it to little-endian).
     async fn sign_digest(
         &self,
         io: &impl HsmIo,
@@ -342,7 +350,10 @@ async fn build_signed_from_template<'a>(
     patch(tbs_dma)?;
 
     let digest_dma = alloc.dma_alloc(SHA384_DIGEST_LEN)?;
-    pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, false)
+    // Natural big-endian SHA-384 over the TBS; the `TbsSigner` reverses it to
+    // the PKA little-endian message hash (`big_endian = false` would be a
+    // per-word swap, not the full reversal the PKA sign needs).
+    pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, true)
         .await?;
 
     let sig_dma = alloc.dma_alloc(SIGNATURE_LEN)?;
@@ -351,20 +362,28 @@ async fn build_signed_from_template<'a>(
     assemble_signed(out, tbs_dma, sig_dma)
 }
 
-struct EccP384Signer<'a, P: HsmCrypto> {
+struct EccP384Signer<'a, P: HsmCrypto, A: HsmScopedAlloc> {
     pal: &'a P,
+    alloc: &'a A,
     priv_key: &'a DmaBuf,
 }
 
-impl<P: HsmCrypto> TbsSigner for EccP384Signer<'_, P> {
+impl<P: HsmCrypto, A: HsmScopedAlloc> TbsSigner for EccP384Signer<'_, P, A> {
     async fn sign_digest(
         &self,
         io: &impl HsmIo,
         digest: &DmaBuf,
         sig: &mut DmaBuf,
     ) -> HsmResult<()> {
+        // `ecc_sign` consumes the message hash in PKA-native little-endian: the
+        // full byte reversal of the natural big-endian SHA-384 digest that
+        // `build_signed_from_template` produces (per the `TbsSigner` contract).
+        let e = self.alloc.dma_alloc(SHA384_DIGEST_LEN)?;
+        for i in 0..SHA384_DIGEST_LEN {
+            e[i] = digest[SHA384_DIGEST_LEN - 1 - i];
+        }
         self.pal
-            .ecc_sign(io, HsmEccCurve::P384, self.priv_key, digest, sig)
+            .ecc_sign(io, HsmEccCurve::P384, self.priv_key, e, sig)
             .await
     }
 }
@@ -398,11 +417,19 @@ where
     patch(tbs_dma)?;
 
     let digest_dma = alloc.dma_alloc(SHA384_DIGEST_LEN)?;
-    pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, false)
+    // Natural big-endian SHA-384, then a FULL byte reversal to the PKA-native
+    // little-endian message hash `ecc_sign` consumes. `big_endian = false` is
+    // only a per-word swap on Uno, not the full reversal the PKA path needs.
+    pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, true)
         .await?;
 
+    let hash_le = alloc.dma_alloc(SHA384_DIGEST_LEN)?;
+    for i in 0..SHA384_DIGEST_LEN {
+        hash_le[i] = digest_dma[SHA384_DIGEST_LEN - 1 - i];
+    }
+
     let sig_dma = alloc.dma_alloc(SIGNATURE_LEN)?;
-    pal.ecc_sign(io, HsmEccCurve::P384, priv_key, digest_dma, sig_dma)
+    pal.ecc_sign(io, HsmEccCurve::P384, priv_key, hash_le, sig_dma)
         .await?;
 
     Ok((tbs_dma, sig_dma))
