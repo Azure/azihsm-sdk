@@ -281,7 +281,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // they survive the crypto scratch allocator's reset.
     let pok = pal.dma_alloc(io, POK_REMOTE_BACKUP_LEN)?;
     let pok_local = pal.dma_alloc(io, MASKED_SD_LEN)?;
-    let sd_mk = pal.dma_alloc(io, LOCAL_MK_BACKUP_LEN)?;
+    let sd_mk_backup = pal.dma_alloc(io, LOCAL_MK_BACKUP_LEN)?;
 
     pal.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
         // `pk_r` (the attested `RcvrPub`) is recovered by the evidence
@@ -353,7 +353,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 // Derive SDBMK, mint + vault SDMK, and write the local +
                 // masking-key backups.  Undo-guarded; the atomic
                 // `SD_INITIALIZED` claim inside is the race-winner gate.
-                provision_security_domain(pal, io, alloc, undo, bks3, sd_mk, pok_local).await
+                provision_security_domain(pal, io, alloc, undo, bks3, sd_mk_backup, pok_local).await
             }
             .await;
 
@@ -376,7 +376,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     })
     .await?;
 
-    encode_response(pal, io, pok, pok_local, sd_mk)
+    encode_response(pal, io, pok, pok_local, sd_mk_backup)
 }
 
 /// Commit the security domain: mark it initialized, vault the `SDMK`, and
@@ -539,13 +539,13 @@ fn encode_response<'p, P: HsmPal>(
     io: &impl HsmIo,
     pok: &DmaBuf,
     pok_local: &DmaBuf,
-    sd_mk: &DmaBuf,
+    sd_mk_backup: &DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborSdCreateRemoteBackupResp::encode(buf, 0, false)?
             .pok_remote_backup(pok)?
             .pok_local_backup(pok_local)?
-            .sd_mk_backup(sd_mk)?
+            .sd_mk_backup(sd_mk_backup)?
             .finish();
         Ok(frame.as_bytes().len())
     })?;
