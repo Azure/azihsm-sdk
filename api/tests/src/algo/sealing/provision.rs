@@ -200,20 +200,24 @@ fn pta_pub_from_csr(csr: &[u8]) -> [u8; SEC1_PUB_LEN] {
     point.try_into().expect("SEC1 point")
 }
 
-/// Read one DER TLV: returns `(tag, contents, rest)`.
+/// Read one DER TLV: returns `(tag, contents, rest)`. Panics with a clear
+/// message (rather than an out-of-bounds slice) if `der` is truncated.
 fn der_tlv(der: &[u8]) -> (u8, &[u8], &[u8]) {
+    assert!(der.len() >= 2, "DER TLV: missing tag/length octet");
     let tag = der[0];
     let len_octet = der[1];
     let (len, header) = if len_octet & 0x80 == 0 {
         (usize::from(len_octet), 2)
     } else {
         let n = usize::from(len_octet & 0x7F);
+        assert!(der.len() >= 2 + n, "DER TLV: truncated long-form length");
         let mut len = 0usize;
         for &b in &der[2..2 + n] {
             len = (len << 8) | usize::from(b);
         }
         (len, 2 + n)
     };
+    assert!(der.len() >= header + len, "DER TLV: truncated content");
     (tag, &der[header..header + len], &der[header + len..])
 }
 

@@ -11,13 +11,12 @@
 //! guards and reaches the device to exercise the TBOR request-construction
 //! path (`ddi::sd_sealing_key_gen`).
 //!
-//! A *complete* end-to-end generation (asserting the returned masked blob
-//! and public key parse) is intentionally not covered here: the FW
-//! `SdSealingKeyGen` handler requires the partition in the `Initialized`
-//! lifecycle state (masking keys provisioned by `PartFinal` with a signed
-//! PTA cert chain), which the emulator test harness does not set up. So a
-//! freshly reset partition can only exercise the path up to the device
-//! round-trip, matching the `partition_ex` host-guard tests.
+//! The `sealing_key_gen_roundtrip_*` tests go further: they provision the
+//! partition to the `Initialized` lifecycle state via
+//! [`super::provision::finalized_co_session`] (rotate the CO PSK ->
+//! `part_init_ex` -> POTA-anchored PTA cert chain -> `part_final_ex`), then
+//! generate a sealing key end to end and validate the returned masked blob
+//! and public key.
 
 use azihsm_api::*;
 

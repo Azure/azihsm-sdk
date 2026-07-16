@@ -215,18 +215,24 @@ std::array<uint8_t, 20> sha1(const uint8_t *data, size_t len)
 {
     std::array<uint8_t, 20> out{};
     BCRYPT_ALG_HANDLE alg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA1_ALGORITHM, nullptr, 0) == 0)
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA1_ALGORITHM, nullptr, 0) != 0)
     {
-        BCryptHash(
-            alg,
-            nullptr,
-            0,
-            const_cast<PUCHAR>(data),
-            static_cast<ULONG>(len),
-            out.data(),
-            static_cast<ULONG>(out.size())
-        );
-        BCryptCloseAlgorithmProvider(alg, 0);
+        ADD_FAILURE() << "BCryptOpenAlgorithmProvider(SHA1) failed";
+        return out;
+    }
+    NTSTATUS status = BCryptHash(
+        alg,
+        nullptr,
+        0,
+        const_cast<PUCHAR>(data),
+        static_cast<ULONG>(len),
+        out.data(),
+        static_cast<ULONG>(out.size())
+    );
+    BCryptCloseAlgorithmProvider(alg, 0);
+    if (status != 0)
+    {
+        ADD_FAILURE() << "BCryptHash(SHA1) failed: " << status;
     }
     return out;
 }
@@ -345,7 +351,11 @@ std::array<uint8_t, 20> sha1(const uint8_t *data, size_t len)
 {
     std::array<uint8_t, 20> out{};
     unsigned int out_len = 0;
-    EVP_Digest(data, len, out.data(), &out_len, EVP_sha1(), nullptr);
+    if (EVP_Digest(data, len, out.data(), &out_len, EVP_sha1(), nullptr) != 1 ||
+        out_len != out.size())
+    {
+        ADD_FAILURE() << "EVP_Digest(SHA1) failed";
+    }
     return out;
 }
 
