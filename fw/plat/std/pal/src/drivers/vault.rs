@@ -103,6 +103,8 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::PartitionLocalMaskingKey
         | HsmVaultKeyKind::PartitionEphemeralMaskingKey => 32,
         HsmVaultKeyKind::SdSealing => 48,
+        HsmVaultKeyKind::SdMasking => 32,
+        HsmVaultKeyKind::SdPartitionOwnerSeed => 48,
         // SessionEx is length-discriminated by session type
         // (PlainText=120, Authenticated=216); reported as variable
         // length, same handling as VarLenHmac*.
@@ -692,6 +694,8 @@ mod tests {
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
             (HsmVaultKeyKind::SdSealing, 48),
+            (HsmVaultKeyKind::SdMasking, 32),
+            (HsmVaultKeyKind::SdPartitionOwnerSeed, 48),
         ];
         for &(kind, expected) in cases {
             assert_eq!(

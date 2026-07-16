@@ -3,20 +3,26 @@
 
 //! Integration tests for the TBOR `SdCreateRemoteBackup` command.
 //!
-//! `SdCreateRemoteBackup` seals a fresh BKS3 to a receiver's SD sealing
-//! public key (recovered from the receiver's `KeyReport`, carried out of
-//! band) authenticated by the sender's masked SD sealing key, returning a
-//! 161-byte HPKE-Auth remote backup.  Nothing is persisted.
+//! `SdCreateRemoteBackup` creates a security domain: it mints a fresh
+//! BKS3 and a random security-domain masking key (`SDMK`), provisions
+//! `SDMK` in the vault as the partition's SecurityDomain-scope masking
+//! key, and returns three backups — the 161-byte HPKE-Auth
+//! `pok_remote_backup`, the 180-byte `pok_local_backup` (BKS3 masked
+//! under `PartLocalMK`), and the 164-byte `sd_mk_backup` (`SDMK` masked
+//! under the derived `SDBMK`).
 //!
 //! These tests run a **self-backup** (sender == receiver): one partition
 //! mints an SD sealing key, attests it via `KeyReport`, then seals to its
 //! own attested public key.  This exercises the full path — the OOB SGL
 //! transport, the COSE_Key `RcvrPub` extraction, the sealing-key unmask,
-//! and the HPKE-Auth seal — without a second device.
+//! the HPKE-Auth seal, and the SDMK provisioning — without a second
+//! device.
 //!
 //! Coverage:
-//! * Happy path — a 161-byte, non-zero `pok_remote_backup`; each call
-//!   re-randomizes BKS3, so two backups differ.
+//! * Happy path — non-zero `pok_remote_backup` (161 B), `pok_local_backup`
+//!   (180 B), and `sd_mk_backup` (164 B).
+//! * One-shot: a second create on the now-initialized partition →
+//!   `SdAlreadyInitialized`.
 //! * Missing OOB evidence → `InvalidArg`.
 //! * Policy that does not name this partition as the backing partition
 //!   (`backup_part_id` / `backup_part_pub_key` absent) → `InvalidArg`.
@@ -34,9 +40,11 @@ use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
+use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
+use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use zerocopy::TryFromBytes;
 
 use crate::commands::part_init::bootstrap_rotated_co;
@@ -298,10 +306,25 @@ fn sd_create_remote_backup_roundtrip_emu() {
         resp.pok_remote_backup.iter().any(|&b| b != 0),
         "pok_remote_backup must not be all-zero",
     );
+
+    // Local backup: BKS3 masked under PartLocalMK, 180 B, non-zero.
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
+    assert!(
+        resp.pok_local_backup.iter().any(|&b| b != 0),
+        "pok_local_backup must not be all-zero",
+    );
+
+    // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
+    // non-zero.
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+    assert!(
+        resp.sd_mk_backup.iter().any(|&b| b != 0),
+        "sd_mk_backup must not be all-zero",
+    );
 }
 
 #[test]
-fn sd_create_remote_backup_rerandomizes_bks3_emu() {
+fn sd_create_remote_backup_is_one_shot_emu() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -309,14 +332,15 @@ fn sd_create_remote_backup_rerandomizes_bks3_emu() {
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     let req = backup_request(session.session_id, masked, &evidence, &policy);
-    let first = ctx.tbor_oob(&req, &evidence.oob()).expect("first backup");
-    let second = ctx.tbor_oob(&req, &evidence.oob()).expect("second backup");
-
-    // Fresh BKS3 + fresh HPKE ephemeral each call → distinct backups.
-    assert_ne!(
-        first.pok_remote_backup, second.pok_remote_backup,
-        "each backup must re-randomize BKS3 and the HPKE encapsulation",
+    let first = ctx.tbor_oob(&req, &evidence.oob()).expect("first create");
+    assert!(
+        first.pok_remote_backup.iter().any(|&b| b != 0),
+        "first backup must be a real seal",
     );
+
+    // The security domain is now initialized (SDMK provisioned); a second
+    // create on the same partition is rejected by the one-shot gate.
+    ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::SdAlreadyInitialized);
 }
 
 #[test]

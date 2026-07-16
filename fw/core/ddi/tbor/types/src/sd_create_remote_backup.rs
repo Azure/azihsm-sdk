@@ -34,10 +34,19 @@
 //!   `SndrPriv` as the sender-authentication key, exactly
 //!   [`POK_REMOTE_BACKUP_LEN`] (161 B) = `enc(97) ‖ ct(64)` under the
 //!   `DHKemP384Sha384AesGcm256` suite.
+//! * `pok_local_backup` — the local partition-owner-key backup: the same
+//!   fresh BKS3 masked under the partition-local masking key
+//!   (`PartLocalMK`), exactly [`MASKED_SD_LEN`] (180 B).  Persisted by
+//!   the host and replayed to recover the security domain locally.
+//! * `sd_mk_backup` — the security-domain masking-key backup: the freshly
+//!   minted `SDMK` masked under the derived `SDBMK`, exactly
+//!   [`LOCAL_MK_BACKUP_LEN`] (164 B).  Persisted by the host and replayed
+//!   on restore.
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
 use crate::evidence::*;
+pub use crate::part_final::LOCAL_MK_BACKUP_LEN;
 pub use crate::policy::PART_POLICY_LEN;
 pub use crate::sd_sealing_key_gen::MASKED_SEALING_KEY_LEN;
 
@@ -75,6 +84,11 @@ const _: () = assert!(MASKED_SD_LEN == 180);
 /// (`48 + 16 = 64`).
 pub const POK_REMOTE_BACKUP_LEN: usize = 97 + (48 + 16);
 const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
+
+// `sd_mk_backup` is a `local_mk`-style masking-key backup envelope; the
+// derive needs an integer literal on the field, so the length is spelled
+// out as `164` and pinned against the canonical value here.
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
 /// `SdCreateRemoteBackup` request schema.
 #[tbor(opcode = 0x0A)]
@@ -122,6 +136,20 @@ pub struct TborSdCreateRemoteBackupResp<'a> {
     /// Always exactly [`POK_REMOTE_BACKUP_LEN`] (161 B).
     #[tbor(buffer, len = 161)]
     pub pok_remote_backup: &'a [u8],
+
+    /// Local partition-owner-key backup: the fresh BKS3 masked under the
+    /// partition-local masking key (`PartLocalMK`), to be persisted by
+    /// the host and replayed to recover the security domain locally.
+    /// Always exactly [`MASKED_SD_LEN`] (180 B).
+    #[tbor(buffer, len = 180)]
+    pub pok_local_backup: &'a [u8],
+
+    /// Security-domain masking-key backup: the freshly minted `SDMK`
+    /// masked under the derived `SDBMK`, to be persisted by the host and
+    /// replayed on restore.  Always exactly [`LOCAL_MK_BACKUP_LEN`]
+    /// (164 B).
+    #[tbor(buffer, len = 164)]
+    pub sd_mk_backup: &'a [u8],
 }
 
 #[cfg(test)]
@@ -174,14 +202,22 @@ mod tests {
     }
 
     #[test]
-    fn response_round_trips_pok_remote_backup() {
-        let sealed = [0xABu8; POK_REMOTE_BACKUP_LEN];
-        let mut buf = [0u8; 512];
+    fn response_round_trips_backups() {
+        let remote = [0xABu8; POK_REMOTE_BACKUP_LEN];
+        let local = [0xCDu8; MASKED_SD_LEN];
+        let sd_mk = [0xEFu8; LOCAL_MK_BACKUP_LEN];
+        let mut buf = [0u8; 1024];
         let frame = TborSdCreateRemoteBackupResp::encode(&mut buf, 0, true)
             .unwrap()
-            .pok_remote_backup(&sealed)
+            .pok_remote_backup(&remote)
+            .unwrap()
+            .pok_local_backup(&local)
+            .unwrap()
+            .sd_mk_backup(&sd_mk)
             .unwrap()
             .finish();
         assert_eq!(frame.pok_remote_backup().len(), POK_REMOTE_BACKUP_LEN);
+        assert_eq!(frame.pok_local_backup().len(), MASKED_SD_LEN);
+        assert_eq!(frame.sd_mk_backup().len(), LOCAL_MK_BACKUP_LEN);
     }
 }

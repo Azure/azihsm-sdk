@@ -161,6 +161,17 @@ fn masking_key_id_for_scope<P: HsmPal>(
     match scope {
         HsmKeyScope::Ephemeral => part_state::part_ephemeral_mk_key_id(pal, io),
         HsmKeyScope::Local => part_state::part_local_mk_key_id(pal, io),
+        // The SecurityDomain masking key (`SDMK`) exists only once a
+        // security domain has been created (`SdCreateRemoteBackup`); until
+        // then the scope has no backing key and is reported as
+        // unsupported (parity with the `Session` / other scopes).
+        HsmKeyScope::SecurityDomain => {
+            if part_state::part_is_sd_initialized(pal, io)? {
+                part_state::part_sd_mk_key_id(pal, io)
+            } else {
+                Err(HsmError::UnsupportedKeyScope)
+            }
+        }
         _ => Err(HsmError::UnsupportedKeyScope),
     }
 }
@@ -248,7 +259,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
         opcode::SD_SEALING_KEY_GEN => sd_sealing_key_gen::handle(pal, io, req_buf).await,
         opcode::SD_CREATE_REMOTE_BACKUP => {
-            sd_create_remote_backup::handle(pal, io, req_buf, oob).await
+            sd_create_remote_backup::handle(pal, io, req_buf, oob, undo).await
         }
         opcode::SD_RESEAL_REMOTE_BACKUP => {
             sd_reseal_remote_backup::handle(pal, io, req_buf, oob).await

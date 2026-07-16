@@ -771,6 +771,15 @@ impl PartPropId {
     /// PAL-internally on partition free / NSSR.
     pub const BK3_INITIALIZED: PartPropId = PartPropId(0x0008);
 
+    /// One-shot security-domain initialization flag.  Bool,
+    /// `RequiredPresent`, `Rw`.  A redundant `true` write (the flag is
+    /// already set in this incarnation) is rejected with
+    /// [`HsmError::SdAlreadyInitialized`] — the atomic race-winner gate
+    /// for `SdCreateRemoteBackup`.  A `false` write is permitted so the
+    /// TBOR undo log can roll the claim back on a failed command; the
+    /// flag is also reset PAL-internally on partition free / NSSR.
+    pub const SD_INITIALIZED: PartPropId = PartPropId(0x0009);
+
     // ── Vault references (0x0010..) ───────────────────────────────
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition identity
@@ -813,6 +822,12 @@ impl PartPropId {
     /// key masking key (`EphemeralMK`).  Bound by the TBOR `PartFinal`
     /// handler; freshly generated each launch (never backed up).
     pub const EPHEMERAL_MK_KEY_ID: PartPropId = PartPropId(0x001C);
+
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the security-domain key
+    /// masking key (`SDMK`).  Bound by the TBOR `SdCreateRemoteBackup`
+    /// handler; resolves the [`SecurityDomain`](crate::HsmKeyScope::SecurityDomain)
+    /// scope to its live masking key.
+    pub const SD_MK_KEY_ID: PartPropId = PartPropId(0x001D);
 
     /// Raw ECC-P384 public-key coordinates (x ∥ y, 96 B) of the
     /// partition identity key.  Read-only from caller perspective;
@@ -961,6 +976,7 @@ impl PartPropId {
             Self::GEN => PartPropMeta::scalar(U32, Ro, Req, false),
             Self::RES_COUNT => PartPropMeta::scalar(U8, Ro, Req, false),
             Self::BK3_INITIALIZED => PartPropMeta::scalar(Bool, Rw, Req, false),
+            Self::SD_INITIALIZED => PartPropMeta::scalar(Bool, Rw, Req, false),
 
             // ── Vault refs (HsmKeyId as u16) ──
             Self::ID_KEY_ID | Self::RSA_UNWRAPPING_KEY_ID => VAULT_REF_RO,
@@ -970,7 +986,8 @@ impl PartPropId {
             | Self::SESSION_ENC_KEY_ID
             | Self::ESTABLISH_CRED_KEY_ID
             | Self::LOCAL_MK_KEY_ID
-            | Self::EPHEMERAL_MK_KEY_ID => VAULT_REF_RW,
+            | Self::EPHEMERAL_MK_KEY_ID
+            | Self::SD_MK_KEY_ID => VAULT_REF_RW,
 
             // ── Public-key views (fixed P-384 sizes) ──
             Self::ID_PUB_KEY | Self::SESSION_ENC_PUB_KEY | Self::ESTABLISH_CRED_PUB_KEY => {
