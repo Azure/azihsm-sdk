@@ -17,8 +17,8 @@ mock = ["azihsm_api/mock"]
 
 [dependencies]
 azihsm_api.workspace = true
-azihsm_ossl_engine_resiliency.workspace = true
 azihsm_ossl_engine_core.workspace = true
+azihsm_ossl_engine_resiliency.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
