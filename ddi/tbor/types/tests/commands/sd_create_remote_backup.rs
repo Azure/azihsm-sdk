@@ -176,10 +176,10 @@ pub(crate) struct ReceiverEvidence {
     /// OOB SGL items in index order: `[mfgr root, mfgr leaf, owner root,
     /// owner leaf, part-owner root, part-owner leaf, report]`.
     oob_items: Vec<Vec<u8>>,
-    mfgr: Vec<CertDescriptor>,
-    owner: Vec<CertDescriptor>,
-    part_owner: Vec<CertDescriptor>,
-    report: ReportDescriptor,
+    pub(crate) mfgr: Vec<CertDescriptor>,
+    pub(crate) owner: Vec<CertDescriptor>,
+    pub(crate) part_owner: Vec<CertDescriptor>,
+    pub(crate) report: ReportDescriptor,
 }
 
 impl ReceiverEvidence {
