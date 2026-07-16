@@ -61,7 +61,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x0A` | `SdCreateRemoteBackup` | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
 | `0x0B` | `SdResealRemoteBackup` | InSession | [`commands/sd_reseal_remote_backup.md`](./commands/sd_reseal_remote_backup.md) |
 | `0x0C` | `SdRestoreRemoteBackup` (schema-only) | InSession | [`commands/sd_restore_remote_backup.md`](./commands/sd_restore_remote_backup.md) |
-| `0x0D` | `SdRestoreLocalBackup` (schema-only) | InSession | [`commands/sd_restore_local_backup.md`](./commands/sd_restore_local_backup.md) |
+| `0x0D` | `SdRestoreLocalBackup` | InSession | [`commands/sd_restore_local_backup.md`](./commands/sd_restore_local_backup.md) |
 | `0x0E` | `SdCreatePeerBackup` (schema-only) | InSession | [`commands/sd_create_peer_backup.md`](./commands/sd_create_peer_backup.md) |
 | `0x0F` | `SdRestorePeerBackup` (schema-only) | InSession | [`commands/sd_restore_peer_backup.md`](./commands/sd_restore_peer_backup.md) |
 | `0x10` | `KeyReport` | InSession | [`commands/key_report.md`](./commands/key_report.md) |

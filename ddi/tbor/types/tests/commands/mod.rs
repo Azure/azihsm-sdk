@@ -17,6 +17,7 @@ pub mod part_init;
 pub mod psk_change;
 pub mod sd_create_remote_backup;
 pub mod sd_reseal_remote_backup;
+pub mod sd_restore_local_backup;
 pub mod sd_sealing_key_gen;
 pub mod session_close;
 pub mod unexpected_toc_type;

@@ -85,7 +85,7 @@ const BACKUP_PART_ID_LEN: usize = 16;
 /// The caller learns the PID / PID public key from `PartInfo` (before
 /// `PartInit`); the SATA key is a synthetic trust anchor the test also
 /// uses to sign the partition-owner certificate chain.
-fn backing_part_policy(
+pub(crate) fn backing_part_policy(
     pid: &[u8],
     pid_pub: &[u8],
     sata_pub: &[u8; RAW_PUB_LEN],

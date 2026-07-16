@@ -412,6 +412,16 @@ pub enum HsmError {
     /// partition free / NSSR.
     SdAlreadyInitialized = 0x08700108,
 
+    /// A `SdRestore*` handler was asked to restore a security-domain
+    /// backup whose bound SVN is **newer** than the current firmware SVN.
+    /// A backup minted under a newer SVN cannot be restored on this
+    /// (older) firmware (anti-rollback); older-or-equal SVNs are accepted
+    /// since the masking keys are re-derivable from the versioned device
+    /// seeds.  Enforced only after the AEAD tag authenticates the
+    /// envelope, so a tampered cleartext SVN fails the tag rather than
+    /// spoofing this error.
+    SdBackupSvnRollback = 0x08700109,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

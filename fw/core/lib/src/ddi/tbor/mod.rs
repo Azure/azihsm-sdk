@@ -28,8 +28,10 @@ pub mod part_info;
 pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
+pub(crate) mod sd_backup;
 pub(crate) mod sd_create_remote_backup;
 pub(crate) mod sd_reseal_remote_backup;
+pub(crate) mod sd_restore_local_backup;
 pub(crate) mod sd_sealing_key_gen;
 pub(crate) mod session_close;
 pub(crate) mod session_open_finish;
@@ -125,6 +127,13 @@ pub(crate) mod opcode {
     /// recovered BKS3 to the destination receiver.  See
     /// [`super::sd_reseal_remote_backup`].
     pub(crate) const SD_RESEAL_REMOTE_BACKUP: u8 = 0x0B;
+
+    /// `SdRestoreLocalBackup` — restore a security domain from its
+    /// device-local backups: unmask `pok_local_backup` (BKS3 under
+    /// `PartLocalMK`) and `sd_mk_backup` (SDMK under the derived SDBMK),
+    /// re-mask both at the current SVN, and re-provision the SD.  See
+    /// [`super::sd_restore_local_backup`].
+    pub(crate) const SD_RESTORE_LOCAL_BACKUP: u8 = 0x0D;
 
     /// `KeyReport` — attest a masked key: unmask it, derive its public
     /// component on-device, and return a PID-signed COSE_Sign1
@@ -264,6 +273,9 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::SD_RESEAL_REMOTE_BACKUP => {
             sd_reseal_remote_backup::handle(pal, io, req_buf, oob).await
         }
+        opcode::SD_RESTORE_LOCAL_BACKUP => {
+            sd_restore_local_backup::handle(pal, io, req_buf, undo).await
+        }
         opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
@@ -287,6 +299,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::SD_SEALING_KEY_GEN
             | opcode::SD_CREATE_REMOTE_BACKUP
             | opcode::SD_RESEAL_REMOTE_BACKUP
+            | opcode::SD_RESTORE_LOCAL_BACKUP
             | opcode::KEY_REPORT
     )
 }
@@ -317,6 +330,7 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SD_SEALING_KEY_GEN
         | opcode::SD_CREATE_REMOTE_BACKUP
         | opcode::SD_RESEAL_REMOTE_BACKUP
+        | opcode::SD_RESTORE_LOCAL_BACKUP
         | opcode::KEY_REPORT => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
@@ -355,6 +369,7 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::SD_SEALING_KEY_GEN
         | opcode::SD_CREATE_REMOTE_BACKUP
         | opcode::SD_RESEAL_REMOTE_BACKUP
+        | opcode::SD_RESTORE_LOCAL_BACKUP
         | opcode::KEY_REPORT => true,
         _ => true,
     }
