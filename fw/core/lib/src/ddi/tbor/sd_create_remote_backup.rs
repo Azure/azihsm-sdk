@@ -407,7 +407,13 @@ async fn commit_sd_to_vault<'p, P: HsmPal>(
     let sdmk_id = pal
         .vault_key_create(io, sdmk, HsmVaultKeyKind::SdMasking, None, SDMK_ATTRS)
         .await?;
-    undo.push_vault_create(sdmk_id)?;
+    if let Err(e) = undo.push_vault_create(sdmk_id) {
+        // The key exists but could not be tracked for rollback (e.g.
+        // `UndoLogFull`); best-effort delete it so a full undo log does not
+        // leak the vault slot for an untracked key.
+        let _ = pal.vault_key_delete(io, sdmk_id).await;
+        return Err(e);
+    }
     undo.push_prop_restore_absent(part_state::part_sd_mk_key_id_prop_id())?;
     part_state::part_set_sd_mk_key_id(pal, io, sdmk_id)?;
     Ok(())
