@@ -519,6 +519,7 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_yields_distinct_keys)
         ASSERT_EQ(masked1.size(), 180u);
         ASSERT_EQ(masked2.size(), 180u);
         ASSERT_FALSE(pub1.empty());
+        ASSERT_FALSE(pub2.empty());
 
         // Fresh randomness → distinct masked blobs and public keys.
         ASSERT_NE(masked1, masked2);

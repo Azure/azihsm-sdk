@@ -214,7 +214,7 @@ fn sealing_key_gen_roundtrip_yields_distinct_keys() {
     assert_eq!(masked1.len(), 180);
     assert_eq!(masked2.len(), 180);
     assert!(!pub1.is_empty());
-
+    assert!(!pub2.is_empty());
     // Fresh randomness → distinct masked blobs and public keys.
     assert_ne!(masked1, masked2);
     assert_ne!(pub1, pub2);
