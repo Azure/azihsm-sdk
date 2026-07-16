@@ -376,6 +376,10 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let key = HsmHmacKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
+            HandleType::SealingKey => {
+                let key = HsmSealingKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
             _ => Err(AzihsmStatus::InvalidHandle),
         }
     })

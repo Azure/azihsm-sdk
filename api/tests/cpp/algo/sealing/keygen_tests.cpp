@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "handle/part_list_handle.hpp"
+#include "utils/sd_provision.hpp"
 #include "utils/utils.hpp"
 
 /// Test fixture for security-domain sealing key generation
@@ -346,6 +347,69 @@ TEST_F(azihsm_sealing_keygen, key_gen_valid_props_pass_host_guards)
         {
             azihsm_key_delete(key_handle);
         }
+    });
+}
+#endif // AZIHSM_FEATURE_EMU
+
+// Full provisioning round trip (emu + platform cert building).
+// Unlike the host-guard tests above, this provisions the partition end to end
+// (rotate CO PSK -> PartInit -> POTA-anchored PTA chain -> PartFinal) so the
+// device is `Initialized` and actually generates a sealing key. The PTA chain
+// is built with the platform host crypto (OpenSSL on Linux, BCrypt on Windows).
+#ifdef AZIHSM_FEATURE_EMU
+TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_generates_usable_sealing_key)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        // Drive the partition to `Initialized` on a live CO session.
+        azihsm_handle sess_handle = provision_sd_co_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return; // provisioning recorded its own failure
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        // Generate a sealing key against the provisioned partition.
+        SealingProps props;
+        auto algo = sealing_algo();
+        auto prop_list = props.list();
+
+        azihsm_handle key_handle = 0;
+        auto err = azihsm_key_gen(sess_handle, &algo, &prop_list, &key_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(key_handle, 0u);
+        auto key_guard =
+            scope_guard::make_scope_exit([&key_handle] { azihsm_key_delete(key_handle); });
+
+        // Read the masked private-key blob back and check it is the pinned
+        // wire length and non-zero — proving the generated key is usable
+        // (a real consumer re-imports this blob on use).
+        azihsm_key_prop masked{ AZIHSM_KEY_PROP_ID_MASKED_KEY, nullptr, 0 };
+        ASSERT_EQ(azihsm_key_get_prop(key_handle, &masked), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        std::vector<uint8_t> blob(masked.len);
+        masked.val = blob.data();
+        ASSERT_EQ(azihsm_key_get_prop(key_handle, &masked), AZIHSM_STATUS_SUCCESS);
+
+        // MASKED_SEALING_KEY_LEN = 8 + 12 + 96 + 48 + 16.
+        ASSERT_EQ(blob.size(), 180u);
+        bool all_zero = true;
+        for (uint8_t b : blob)
+        {
+            if (b != 0)
+            {
+                all_zero = false;
+                break;
+            }
+        }
+        ASSERT_FALSE(all_zero);
     });
 }
 #endif // AZIHSM_FEATURE_EMU

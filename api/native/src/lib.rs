@@ -554,6 +554,15 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
     }
 }
 
+impl TryFrom<AzihsmHandle> for api::HsmSealingKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmSealingKey, Self::Error> {
+        let key: &api::HsmSealingKey = HANDLE_TABLE.as_ref(value, HandleType::SealingKey)?;
+        Ok(key.clone())
+    }
+}
+
 impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
     type Error = AzihsmStatus;
 

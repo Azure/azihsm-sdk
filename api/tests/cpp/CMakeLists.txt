@@ -65,6 +65,7 @@ set(SOURCE
     utils/shared_secret.cpp
     utils/part_init_config.cpp
     utils/resiliency_config.cpp
+    utils/sd_provision.cpp
     partition_tests.cpp 
     session_tests.cpp 
     session_ex_tests.cpp 
