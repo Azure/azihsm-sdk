@@ -34,15 +34,15 @@ mod engine_impl {
     use std::ptr::NonNull;
     use std::sync::OnceLock;
 
-    use openssl_engine::engine::DestroyHandler;
-    use openssl_engine::engine::Engine;
-    use openssl_engine::error::EngineError;
-    use openssl_engine::error::EngineResult;
-    use openssl_engine::error::RetCode;
-    use openssl_engine::error::catch_panic;
-    use openssl_engine::error::result_to_int;
-    use openssl_engine::exdata::EngineExData;
-    use openssl_engine::ffi;
+    use azihsm_ossl_engine_core::engine::DestroyHandler;
+    use azihsm_ossl_engine_core::engine::Engine;
+    use azihsm_ossl_engine_core::error::EngineError;
+    use azihsm_ossl_engine_core::error::EngineResult;
+    use azihsm_ossl_engine_core::error::RetCode;
+    use azihsm_ossl_engine_core::error::catch_panic;
+    use azihsm_ossl_engine_core::error::result_to_int;
+    use azihsm_ossl_engine_core::exdata::EngineExData;
+    use azihsm_ossl_engine_core::ffi;
     use parking_lot::Mutex;
 
     use crate::context::EngineData;

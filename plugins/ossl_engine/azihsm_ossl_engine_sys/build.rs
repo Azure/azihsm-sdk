@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Build script for openssl-sys-engine.
+//! Build script for azihsm_ossl_engine_sys.
 //!
 //! Discovers a system OpenSSL 1.1.x via pkg-config (honoring an externally
 //! set `PKG_CONFIG_PATH`) and runs bindgen to generate Rust FFI bindings
