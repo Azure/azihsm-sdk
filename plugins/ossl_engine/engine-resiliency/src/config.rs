@@ -55,6 +55,13 @@ const DEFAULT_STORAGE_DIR: &str = "/var/lib/azihsm/resiliency";
 const DEFAULT_OBK_PATH: &str = "./obk.bin";
 const DEFAULT_MOBK_PATH: &str = "./mobk.bin";
 
+/// Required mode for the resiliency storage directory: owner rwx only.
+const STORAGE_DIR_MODE: u32 = 0o700;
+/// Permission bits masked out of a directory's mode for the comparison.
+/// The special bits (setuid/setgid/sticky) are intentionally excluded — unlike
+/// the engine's log-file check — since they can be legitimate on a directory.
+const PERMISSION_BITS_MASK: u32 = 0o777;
+
 /// Error from reading the engine's resiliency environment variables.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -267,7 +274,7 @@ fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
     use std::io::ErrorKind;
 
     let err = |reason: &'static str| ConfigError::StorageDir(dir.to_path_buf(), reason);
-    match fs::DirBuilder::new().mode(0o700).create(dir) {
+    match fs::DirBuilder::new().mode(STORAGE_DIR_MODE).create(dir) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
             // symlink_metadata (lstat) so a symlink at `dir` is rejected here
@@ -284,7 +291,7 @@ fn setup_storage_dir(dir: &Path) -> Result<(), ConfigError> {
             if meta.uid() != current_uid() {
                 return Err(err("exists but is not owned by the current user"));
             }
-            if meta.mode() & 0o777 != 0o700 {
+            if meta.mode() & PERMISSION_BITS_MASK != STORAGE_DIR_MODE {
                 return Err(err(
                     "has insecure permissions (must be mode 0700, owner-only)",
                 ));

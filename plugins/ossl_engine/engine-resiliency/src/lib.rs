@@ -50,6 +50,10 @@ const MAX_STORAGE_FILE_SIZE: u64 = 64 * 1024;
 /// storage key so storage operations can't clobber the lock.
 pub(crate) const LOCK_FILE_NAME: &str = ".lock";
 
+/// Mode for files the resiliency layer creates (state + lock): owner
+/// read/write only, since they can hold or guard key material.
+const SECRET_FILE_MODE: u32 = 0o600;
+
 /// Reject empty, over-long, or path-traversal keys, keys with a separator or
 /// interior NUL, and the reserved lock-file name, so `dir.join(key)` can never
 /// escape the storage directory or clobber the lock file, and an invalid key
@@ -128,7 +132,7 @@ impl FileStorage {
             .create(true)
             .truncate(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .mode(0o600)
+            .mode(SECRET_FILE_MODE)
             .open(tmp_path)?;
         file.write_all(data)?;
         file.sync_all()?;
@@ -238,7 +242,7 @@ impl ResiliencyLock for FileLock {
             .create(true)
             .truncate(false)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .mode(0o600)
+            .mode(SECRET_FILE_MODE)
             .open(&self.path)
             .map_err(|_| HsmError::InternalError)?;
         // Reject a FIFO/device/etc. at the lock path (O_NOFOLLOW only blocks

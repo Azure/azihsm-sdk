@@ -44,6 +44,11 @@ use crate::SECRET_FILE_MODE;
 const ENV_LOG_STDERR: &str = "AZIHSM_ENGINE_LOG_STDERR";
 const ENV_LOG_FILE: &str = "AZIHSM_ENGINE_LOG_FILE";
 
+/// Mode bits compared against [`SECRET_FILE_MODE`]: the 9 permission bits plus
+/// the setuid/setgid/sticky bits (i.e. everything but the file-type bits), so
+/// the check is truly "exactly 0600" and rejects special-bit files too.
+const MODE_BITS_MASK: u32 = 0o7777;
+
 /// Owns the non-blocking writer's worker thread for the lifetime of the process.
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
@@ -152,7 +157,7 @@ fn open_file_layer(
             "AZIHSM_ENGINE_LOG_FILE {path:?} is not a regular file"
         )));
     }
-    if meta.mode() & 0o777 != SECRET_FILE_MODE {
+    if meta.mode() & MODE_BITS_MASK != SECRET_FILE_MODE {
         return Err(EngineError::Other(format!(
             "AZIHSM_ENGINE_LOG_FILE {path:?} has insecure permissions \
              (must be owner-only, mode 0600)"
