@@ -4,13 +4,11 @@
 //! Security-domain provisioning fixture for the api-level sealing round
 //! trip.
 //!
-//! Reaching the `Initialized` lifecycle state (required by
-//! `SdSealingKeyGen`) needs the full provisioning flow — rotate the CO
-//! PSK, `part_init_ex`, build a POTA-anchored PTA certificate chain,
-//! `part_final_ex` — through the public `azihsm_api` surface. The chain is
-//! built on the host with [`azihsm_crypto`] (P-384 keygen + ECDSA-P384
-//! signing + the `x509_builder` TBS templates), mirroring the wire-level
-//! `ddi/tbor/types/tests/harness/x509_fixture.rs`.
+//! Drives the full flow through the public `azihsm_api` surface — rotate
+//! the CO PSK, `part_init_ex`, build a POTA-anchored PTA chain,
+//! `part_final_ex` — to reach the `Initialized` state `SdSealingKeyGen`
+//! requires. The chain is built on the host with [`azihsm_crypto`],
+//! mirroring the wire-level `ddi/tbor/types/tests/harness/x509_fixture.rs`.
 
 use azihsm_api::*;
 use azihsm_crypto::EccCurve;
@@ -26,9 +24,15 @@ use azihsm_crypto::x509_builder::cert_builder::IntermediateCertParams;
 use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
 use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::PartPolicy;
+use azihsm_ddi_tbor_types::PolicyKeyKind;
+use azihsm_ddi_tbor_types::PolicyPubKey;
+use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
+use zerocopy::IntoBytes;
 
 use crate::emu_helpers::fresh_emu_partition;
 
@@ -80,9 +84,10 @@ impl CaKey {
 
     /// ECDSA-P384 / SHA-384 sign `tbs`, returning `(r, s)` (48 bytes each).
     fn sign(&self, tbs: &[u8]) -> ([u8; 48], [u8; 48]) {
+        // A raw P-384 ECDSA signature is always 96 bytes (r ‖ s); sign
+        // once into a fixed buffer.
         let mut algo = EcdsaAlgo::new(HashAlgo::sha384());
-        let len = algo.sign(&self.private_key, tbs, None).expect("sig len");
-        let mut sig = vec![0u8; len];
+        let mut sig = [0u8; 96];
         let written = algo
             .sign(&self.private_key, tbs, Some(&mut sig))
             .expect("sign");
@@ -90,7 +95,7 @@ impl CaKey {
         let mut r = [0u8; 48];
         let mut s = [0u8; 48];
         r.copy_from_slice(&sig[..48]);
-        s.copy_from_slice(&sig[48..96]);
+        s.copy_from_slice(&sig[48..]);
         (r, s)
     }
 }
@@ -256,34 +261,21 @@ fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
     tbs[PATH_LEN_OFFSET] = params.path_len;
 }
 
-/// Build a 484-byte unified `PartPolicy` image binding the real POTA
-/// public key, so `part_final_ex` can validate a chain anchored to it.
-fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> [u8; PART_POLICY_LEN] {
-    const OFF_POTA: usize = 2;
-    const OFF_SATA: usize = 102;
-    const OFF_INFO: usize = 419;
-
-    // Write an `Ecc384` (kind 0) raw X‖Y pubkey slot at `off`.
-    fn write_key_slot(bytes: &mut [u8], off: usize, data: &[u8; RAW_PUB_LEN]) {
-        bytes[off..off + 2].copy_from_slice(&0u16.to_le_bytes()); // kind = Ecc384
-        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-        bytes[off + 4..off + 4 + 96].copy_from_slice(data);
-    }
-
-    let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[0] = 1; // version major
-    write_key_slot(&mut bytes, OFF_POTA, pota_raw);
-
-    let mut sata_fill = [0u8; RAW_PUB_LEN];
-    for (i, b) in sata_fill.iter_mut().enumerate() {
+/// Build a unified `PartPolicy` binding the real POTA public key, so
+/// `part_final_ex` can validate a chain anchored to it. SATA carries a
+/// filler key (not chain-validated in this flow).
+fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
+    let mut sata = [0u8; POLICY_MAX_KEY_LEN];
+    for (i, b) in sata.iter_mut().enumerate() {
         *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
     }
-    write_key_slot(&mut bytes, OFF_SATA, &sata_fill);
-
-    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-        *b = 0xAB;
+    PartPolicy {
+        version: PolicyVer { major: 1, minor: 0 },
+        pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
+        sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
+        info: [0xAB; POLICY_INFO_LEN],
+        ..PartPolicy::zeroed()
     }
-    bytes
 }
 
 fn mach_seed() -> [u8; MACH_SEED_LEN] {
@@ -344,10 +336,11 @@ pub(crate) fn finalized_co_session() -> HsmSession {
 
     let pota = CaKey::generate();
     let policy = part_policy_with_pota(&pota.raw_pub());
+    let policy_bytes = policy.as_bytes();
     let init = session
         .part_init_ex(
             &mach_seed(),
-            &policy,
+            policy_bytes,
             &pota_thumbprint(),
             &sata_thumbprint(),
             None,
@@ -364,7 +357,7 @@ pub(crate) fn finalized_co_session() -> HsmSession {
         },
     ];
     session
-        .part_final_ex(&policy, &certs, None)
+        .part_final_ex(policy_bytes, &certs, None)
         .expect("part_final_ex");
 
     session

@@ -117,6 +117,11 @@ azihsm_algo sealing_algo()
     algo.len = 0;
     return algo;
 }
+
+// Pinned masked sealing-key blob length (header 8 + iv 12 + meta 96 + scalar
+// 48 + tag 16). Mirrors `azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN`, which
+// is not exposed in the C header.
+constexpr uint32_t kMaskedSealingKeyLen = 180;
 } // namespace
 
 // ── FFI boundary (backend-agnostic) ─────────────────────────────────────────
@@ -417,12 +422,12 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_generates_usable_sealing_key)
             return err;
         };
 
-        // Masked private-key blob: the pinned wire length and non-zero —
+        // Masked private-key blob: the pinned wire length and non-zero,
         // proving the generated key is usable (a real consumer re-imports
-        // this blob on use). MASKED_SEALING_KEY_LEN = 8 + 12 + 96 + 48 + 16.
+        // this blob on use).
         std::vector<uint8_t> blob;
         ASSERT_EQ(read_prop(AZIHSM_KEY_PROP_ID_MASKED_KEY, blob), AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(blob.size(), 180u);
+        ASSERT_EQ(blob.size(), kMaskedSealingKeyLen);
         bool all_zero = true;
         for (uint8_t b : blob)
         {
@@ -516,8 +521,8 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_yields_distinct_keys)
         ASSERT_EQ(gen_key(masked1, pub1), AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(gen_key(masked2, pub2), AZIHSM_STATUS_SUCCESS);
 
-        ASSERT_EQ(masked1.size(), 180u);
-        ASSERT_EQ(masked2.size(), 180u);
+        ASSERT_EQ(masked1.size(), kMaskedSealingKeyLen);
+        ASSERT_EQ(masked2.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(pub1.empty());
         ASSERT_FALSE(pub2.empty());
 

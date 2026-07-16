@@ -2,23 +2,17 @@
 // Licensed under the MIT License.
 
 //! Integration tests for the security-domain sealing-key generation API
-//! ([`HsmSealingKeyGenAlgo`] via [`HsmKeyManager::generate_key`]).
+//! ([`HsmSealingKeyGenAlgo`] via [`HsmKeyManager::generate_key`]) against
+//! the FW emulator.
 //!
-//! These exercise the public `azihsm_api` surface against the FW
-//! emulator. The property-validation guards return before the device
-//! round-trip, so they are deterministic. The
-//! `valid_props_pass_host_guards` test deliberately clears the host
-//! guards and reaches the device to exercise the TBOR request-construction
-//! path (`ddi::sd_sealing_key_gen`).
-//!
-//! The `sealing_key_gen_roundtrip_*` tests go further: they provision the
-//! partition to the `Initialized` lifecycle state via
-//! [`super::provision::finalized_co_session`] (rotate the CO PSK ->
-//! `part_init_ex` -> POTA-anchored PTA cert chain -> `part_final_ex`), then
-//! generate a sealing key end to end and validate the returned masked blob
-//! and public key.
+//! Property-validation guards run before the device round-trip, so they are
+//! deterministic. The `roundtrip_*` tests provision the partition to
+//! `Initialized` via [`super::provision::finalized_co_session`], then
+//! generate a sealing key end to end and validate the masked blob and
+//! public key.
 
 use azihsm_api::*;
+use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 
 use crate::emu_helpers::*;
 
@@ -134,13 +128,10 @@ fn sealing_key_gen_rejects_extra_capability() {
     assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
 }
 
-/// Valid sealing props pass every host-side guard, so the request is
-/// sealed, constructed, and shipped to the device. The call is therefore
-/// never rejected with the host-guard errors ([`HsmError::InvalidKeyProps`]
-/// / [`HsmError::InvalidArgument`]); it may still fail on-device because a
-/// freshly reset partition is not provisioned. This exercises the
-/// property-conversion and TBOR request-construction path that the
-/// negative guard tests skip.
+/// Valid props pass the host-side guards and reach the device, so the call
+/// is never rejected with [`HsmError::InvalidKeyProps`] /
+/// [`HsmError::InvalidArgument`] (it may still fail on-device on an
+/// unprovisioned partition).
 #[test]
 fn sealing_key_gen_valid_props_pass_host_guards() {
     let _guard = EMU_LOCK.lock();
@@ -180,7 +171,7 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
 
     // The masked private-key blob is the pinned wire length and non-zero.
     let masked = key.masked_key_vec().expect("masked key");
-    assert_eq!(masked.len(), 180);
+    assert_eq!(masked.len(), MASKED_SEALING_KEY_LEN);
     assert!(
         masked.iter().any(|&b| b != 0),
         "masked key must not be all-zero"
@@ -211,8 +202,8 @@ fn sealing_key_gen_roundtrip_yields_distinct_keys() {
     let (masked1, pub1) = generate();
     let (masked2, pub2) = generate();
 
-    assert_eq!(masked1.len(), 180);
-    assert_eq!(masked2.len(), 180);
+    assert_eq!(masked1.len(), MASKED_SEALING_KEY_LEN);
+    assert_eq!(masked2.len(), MASKED_SEALING_KEY_LEN);
     assert!(!pub1.is_empty());
     assert!(!pub2.is_empty());
     // Fresh randomness → distinct masked blobs and public keys.

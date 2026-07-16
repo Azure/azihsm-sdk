@@ -46,10 +46,9 @@ constexpr std::array<uint8_t, kPskLen> kRotatedCoPsk = { {
 } };
 
 // ── Minimal portable DER encoder ─────────────────────────────────────────────
-// The PTA certificate chain is assembled as standard RFC 5280 DER (the
-// firmware `x509-chain` validator is a general parser), so the encoding is
-// platform-independent. Only the crypto primitives (keygen / ECDSA sign /
-// SHA-1) are platform-specific — see the backend section below.
+// The PTA chain is standard RFC 5280 DER (the firmware validator is a general
+// parser), so the encoding is platform-independent; only the crypto
+// primitives (keygen / ECDSA sign / SHA-1) are platform-specific.
 
 void append(Bytes &dst, const Bytes &src)
 {
@@ -204,9 +203,7 @@ Bytes der_ca_extensions(const uint8_t ski[20], const uint8_t *aki)
 }
 
 // ── Platform crypto backend (keygen / ECDSA sign / SHA-1) ────────────────────
-// Everything above is portable; the primitives below are the only
-// platform-specific code. Linux uses OpenSSL; Windows uses BCrypt (the same
-// stack `part_init_config.cpp` uses for POTA endorsement signing).
+// The only platform-specific code: OpenSSL on Linux, BCrypt on Windows.
 
 #ifdef _WIN32
 

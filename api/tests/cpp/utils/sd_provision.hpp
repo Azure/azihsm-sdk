@@ -5,30 +5,24 @@
 
 #include <azihsm_api.h>
 
-// Security-domain provisioning helper for the TBOR sealing round-trip test.
+// Security-domain provisioning helper for the sealing round-trip test.
 //
-// A complete `SdSealingKeyGen` round trip needs a partition in the
-// `Initialized` lifecycle state on a Crypto-Officer session. Reaching that
-// state requires the full TBOR provisioning flow — rotate the CO PSK,
-// `PartInit`, build a POTA-anchored PTA certificate chain, `PartFinal` —
-// exactly the sequence a real C SDK consumer performs (except the consumer
-// supplies their own PKI-issued chain instead of synthesizing one).
+// `SdSealingKeyGen` needs a partition in the `Initialized` state on a CO
+// session, reached via the full provisioning flow (rotate CO PSK ->
+// `PartInit` -> POTA-anchored PTA chain -> `PartFinal`) — the same sequence
+// a real C consumer performs, except the consumer brings its own PKI chain.
 //
-// The chain is built with the platform host crypto (no HSM session):
-// OpenSSL on Linux, BCrypt on Windows. This is gated to the emu backend
-// (the flow is only meaningful against the in-process firmware).
+// The chain is built with the platform host crypto (OpenSSL on Linux,
+// BCrypt on Windows), no HSM session. Gated to the emu backend.
 #if defined(AZIHSM_FEATURE_EMU)
 
 /// Provision a freshly-reset partition's security domain and return a live,
-/// provisioned Crypto-Officer session handle (`Initialized` state).
+/// provisioned Crypto-Officer session handle (`Initialized` state):
+/// open CO under the default PSK, rotate it, reopen, `PartInit`, build a
+/// POTA-anchored root -> PTA chain from the CSR, then `PartFinal`.
 ///
-/// Steps: open a CO session under the default PSK, rotate it, reopen under
-/// the rotated PSK, `PartInit`, build a POTA-anchored root -> PTA chain from
-/// the returned CSR, then `PartFinal`.
-///
-/// Records a gtest failure and returns 0 on any error. On success the caller
-/// owns the returned session handle and must close it with
-/// `azihsm_sess_close`.
+/// Records a gtest failure and returns 0 on error. The caller owns the
+/// returned handle and must close it with `azihsm_sess_close`.
 ///
 /// @param part_handle An opened, factory-reset partition handle.
 /// @return A provisioned CO session handle, or 0 on failure.
