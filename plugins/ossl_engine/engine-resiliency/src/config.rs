@@ -23,7 +23,7 @@
 //! | `AZIHSM_OBK_PATH`                | `./obk.bin`                      | plaintext OBK, first init; used when `OBK_SOURCE=caller` |
 //! | `AZIHSM_MOBK_PATH`               | `./mobk.bin`                     | cached MOBK, written after init / read to re-init a warm device |
 //! | `AZIHSM_POTA_SOURCE`             | `caller`                         | `caller` or `tpm` |
-//! | `AZIHSM_POTA_PRIVATE_KEY_PATH`   | none                             | required when `POTA_SOURCE=caller` and resiliency enabled |
+//! | `AZIHSM_POTA_PRIVATE_KEY_PATH`   | none                             | required when `POTA_SOURCE=caller` (validated at parse time, regardless of `RESILIENCY_ENABLED`) |
 //! | `AZIHSM_POTA_PUBLIC_KEY_PATH`    | none                             | same |
 
 use std::fs;

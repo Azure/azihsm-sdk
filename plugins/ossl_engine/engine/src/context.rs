@@ -560,8 +560,8 @@ mod tests {
 ///
 /// ```text
 /// export AZIHSM_CREDENTIALS_ID=<32 hex>  AZIHSM_CREDENTIALS_PIN=<32 hex>
-/// export AZIHSM_RESILIENCY_ENABLED=1        # required, else OBK/POTA source is ignored
-/// export AZIHSM_OBK_SOURCE=tpm  AZIHSM_POTA_SOURCE=tpm
+/// export AZIHSM_RESILIENCY_ENABLED=1        # turns on resiliency persistence (storage dir + MOBK/POTA callbacks)
+/// export AZIHSM_OBK_SOURCE=tpm  AZIHSM_POTA_SOURCE=tpm  # source selection applies regardless of the flag above
 /// # Storage dir must already exist, be mode 0700, and be owned by you. The
 /// # default is /var/lib/azihsm/resiliency; create it once (override with
 /// # AZIHSM_RESILIENCY_STORAGE_DIR to use e.g. a path under $HOME):
