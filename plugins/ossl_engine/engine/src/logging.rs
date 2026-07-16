@@ -261,4 +261,37 @@ mod tests {
         });
         assert!(r.is_err(), "a non-regular log file must be rejected");
     }
+
+    #[test]
+    fn file_layer_actually_emits() {
+        use std::io::Read;
+
+        // Guards against the "compiles but silently drops the layers" failure
+        // mode: build the exact Vec<Box<dyn Layer>> stack install() composes,
+        // make it the *scoped* default (with_default, so we avoid the global
+        // one-shot try_init), emit an event, flush the appender, and assert the
+        // file actually received it.
+        let path = std::env::temp_dir().join(format!("engine-log-emit-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let (layer, guard) = open_file_layer(&path).unwrap();
+        let subscriber = tracing_subscriber::registry()
+            .with(vec![layer])
+            .with(EnvFilter::new("info"));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "azihsm", "canary-emit-check");
+        });
+        drop(guard); // flush the non-blocking appender's worker thread
+
+        let mut contents = String::new();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            contents.contains("canary-emit-check"),
+            "the Vec-of-layers stack did not emit the event (silent drop?): {contents:?}"
+        );
+    }
 }
