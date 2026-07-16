@@ -127,12 +127,17 @@ impl ResiliencySettings {
             validate_path(ENV_MOBK_PATH, &mobk_path)?;
         }
         if matches!(pota_source, HsmPotaEndorsementSource::Caller) {
-            if let Some(p) = &pota_priv_path {
-                validate_path(ENV_POTA_PRIV, p)?;
-            }
-            if let Some(p) = &pota_pub_path {
-                validate_path(ENV_POTA_PUB, p)?;
-            }
+            // Caller POTA needs both key paths; require them here so a
+            // misconfiguration fails at parse time with a consistent
+            // ConfigError rather than later in the open path.
+            let priv_p = pota_priv_path
+                .as_ref()
+                .ok_or(ConfigError::Missing(ENV_POTA_PRIV))?;
+            validate_path(ENV_POTA_PRIV, priv_p)?;
+            let pub_p = pota_pub_path
+                .as_ref()
+                .ok_or(ConfigError::Missing(ENV_POTA_PUB))?;
+            validate_path(ENV_POTA_PUB, pub_p)?;
         }
 
         Ok(Self {

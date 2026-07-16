@@ -138,9 +138,10 @@ fn open_file_layer(
         .map_err(|e| EngineError::wrap(format!("AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
 
     // O_NOFOLLOW already refuses a symlink at `path`. Also refuse a
-    // pre-existing non-regular file (fifo, device, …) or one accessible by
-    // group/other, so enabling logging can't append into an unexpected file
-    // type or leak events through a world-readable file.
+    // pre-existing non-regular file (fifo, device, …) or one whose mode is not
+    // exactly 0600, so enabling logging can't append into an unexpected file
+    // type or leak events through a group/other-accessible file. Mirrors the
+    // exact-mode requirement setup_storage_dir enforces for the storage dir.
     let meta = file
         .metadata()
         .map_err(|e| EngineError::wrap(format!("stat AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
@@ -149,7 +150,7 @@ fn open_file_layer(
             "AZIHSM_ENGINE_LOG_FILE {path:?} is not a regular file"
         )));
     }
-    if meta.mode() & 0o077 != 0 {
+    if meta.mode() & 0o777 != 0o600 {
         return Err(EngineError::Other(format!(
             "AZIHSM_ENGINE_LOG_FILE {path:?} has insecure permissions \
              (must be owner-only, mode 0600)"
@@ -212,6 +213,28 @@ mod tests {
         assert!(
             r.is_err(),
             "group/other-accessible log file must be rejected"
+        );
+    }
+
+    #[test]
+    fn install_rejects_owner_exec_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // 0700 has no group/other access but is not exactly 0600; it must be
+        // rejected to match the documented owner-only-0600 requirement.
+        let path = std::env::temp_dir().join(format!("engine-log-exec-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let r = install(LogSettings {
+            stderr: false,
+            file: Some(path.clone()),
+        });
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            r.is_err(),
+            "a non-0600 (owner-exec) log file must be rejected"
         );
     }
 }
