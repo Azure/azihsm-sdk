@@ -136,11 +136,15 @@ fn open_file_layer(
     Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync + 'static>,
     WorkerGuard,
 )> {
+    // O_NONBLOCK so opening a FIFO at `path` can't block waiting for a reader
+    // before the is_file() check below runs (it fails fast / is then rejected);
+    // a no-op for a regular file. Mirrors read_regular_hardened in
+    // engine-resiliency.
     let file = OpenOptions::new()
         .create(true)
         .append(true)
         .mode(SECRET_FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
         .map_err(|e| EngineError::wrap(format!("AZIHSM_ENGINE_LOG_FILE {path:?}"), e))?;
 
@@ -243,5 +247,18 @@ mod tests {
             r.is_err(),
             "a non-0600 (owner-exec) log file must be rejected"
         );
+    }
+
+    #[test]
+    fn install_rejects_non_regular_file() {
+        // A character device is not a regular file; the is_file() check must
+        // reject it. O_NONBLOCK also keeps a special file's open from hanging
+        // before that check runs. Uses /dev/null (opens without blocking),
+        // since creating a FIFO would need unsafe mkfifo.
+        let r = install(LogSettings {
+            stderr: false,
+            file: Some(PathBuf::from("/dev/null")),
+        });
+        assert!(r.is_err(), "a non-regular log file must be rejected");
     }
 }
