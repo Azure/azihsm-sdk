@@ -531,12 +531,24 @@ pub const fn part_sd_mk_key_id_prop_id() -> PartPropId {
 /// Vault id of the partition's unwrapping key.
 ///
 /// Wraps [`PartPropId::RSA_UNWRAPPING_KEY_ID`] (`U16 → HsmKeyId`,
-/// `AbsentUntilSet`, **read-only**).
+/// `AbsentUntilSet`).
 pub fn part_unwrapping_key_id(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<HsmKeyId> {
     key_id_get(pal, io, PartPropId::RSA_UNWRAPPING_KEY_ID)
+}
+
+/// Set the partition's unwrapping key id.
+///
+/// Used by `EstablishCredential` to re-import the host-persisted key
+/// after a live migration.
+pub fn part_set_unwrapping_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::RSA_UNWRAPPING_KEY_ID, key_id)
 }
 
 /// [`PartPropId`] backing [`part_unwrapping_key_id`].

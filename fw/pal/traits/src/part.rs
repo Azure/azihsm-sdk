@@ -800,8 +800,8 @@ impl PartPropId {
     pub const PTA_KEY_ID: PartPropId = PartPropId(0x0013);
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's
-    /// unwrapping key.  Read-only from caller perspective; assigned
-    /// by the PAL when the key is materialised.
+    /// unwrapping key.  Writable so `EstablishCredential` can re-import
+    /// the host-persisted key after a live migration.
     pub const RSA_UNWRAPPING_KEY_ID: PartPropId = PartPropId(0x0014);
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's
@@ -979,7 +979,7 @@ impl PartPropId {
             Self::SD_INITIALIZED => PartPropMeta::scalar(Bool, Rw, Req, false),
 
             // ── Vault refs (HsmKeyId as u16) ──
-            Self::ID_KEY_ID | Self::RSA_UNWRAPPING_KEY_ID => VAULT_REF_RO,
+            Self::ID_KEY_ID => VAULT_REF_RO,
             Self::MK_KEY_ID
             | Self::UPS_KEY_ID
             | Self::PTA_KEY_ID
@@ -987,7 +987,8 @@ impl PartPropId {
             | Self::ESTABLISH_CRED_KEY_ID
             | Self::LOCAL_MK_KEY_ID
             | Self::EPHEMERAL_MK_KEY_ID
-            | Self::SD_MK_KEY_ID => VAULT_REF_RW,
+            | Self::SD_MK_KEY_ID
+            | Self::RSA_UNWRAPPING_KEY_ID => VAULT_REF_RW,
 
             // ── Public-key views (fixed P-384 sizes) ──
             Self::ID_PUB_KEY | Self::SESSION_ENC_PUB_KEY | Self::ESTABLISH_CRED_PUB_KEY => {
