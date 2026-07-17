@@ -312,7 +312,7 @@ pub const fn hsm_point_size(curve: UpkaEccCurve) -> usize {
 ///   - P256: 36
 ///   - P384: 52
 ///   - P521: 72
-pub(crate) const fn mont_operand_size(curve: UpkaEccCurve) -> usize {
+pub const fn mont_operand_size(curve: UpkaEccCurve) -> usize {
     match curve {
         UpkaEccCurve::P256 => 36,
         UpkaEccCurve::P384 => 52,

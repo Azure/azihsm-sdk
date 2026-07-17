@@ -31,6 +31,7 @@ use azihsm_fw_hsm_pal_traits::HsmHmac;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_uno_drivers_upka::mont_operand_size;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 
 use super::ecc::PRIME384_LE;
@@ -91,19 +92,6 @@ const BASE384_Y_LE: [u8; 48] = [
     0xc0, 0xb8, 0xf0, 0xb5, 0x13, 0x31, 0xda, 0xe9, 0x7c, 0x14, 0x9a, 0x28, 0xbd, 0x1d, 0xf4, 0xf8,
     0x29, 0xdc, 0x92, 0x92, 0xbf, 0x98, 0x9e, 0x5d, 0x6f, 0x2c, 0x26, 0x96, 0x4a, 0xde, 0x17, 0x36,
 ];
-
-/// Montgomery-representation operand width, in bytes, for the selected curve.
-///
-/// The PKA `mont_const_calc` / Montgomery-domain operands are wider than the
-/// raw field element (field size rounded up to the engine's Montgomery slot):
-/// 36 B for P-256, 52 B for P-384, 72 B for P-521.
-fn montgomery_size(curve: UpkaEccCurve) -> usize {
-    match curve {
-        UpkaEccCurve::P256 => 36,
-        UpkaEccCurve::P384 => 52,
-        UpkaEccCurve::P521 => 72,
-    }
-}
 
 /// Big-endian `a -= b` for equal-length operands, assuming `a >= b`.
 ///
@@ -243,7 +231,7 @@ impl UnoHsmPal {
             return Err(HsmError::UnsupportedCmd);
         }
         let field = PRIME384_LE.len();
-        let mont = montgomery_size(curve);
+        let mont = mont_operand_size(curve);
 
         if k.len() != field
             || digest.len() != field

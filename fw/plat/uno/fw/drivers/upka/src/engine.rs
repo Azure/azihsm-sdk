@@ -436,7 +436,9 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// Compute the Montgomery constant for `modulus` (curve prime or order)
     /// and leave it resident in the engine for the next op to consume.
     /// `mont_result` is scratch for the constant; its contents are not used
-    /// by the caller directly.
+    /// by the caller directly. The constant is a value `< modulus`, so it fits
+    /// the curve point width (matching `ecc_verify`/`ecdh_derive`, which issue
+    /// the same opcode with a `hsm_point_size` scratch buffer).
     pub async fn ecc_mont_const_calc(
         &mut self,
         curve: UpkaEccCurve,
@@ -444,7 +446,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         mont_result: &mut DmaBuf,
     ) -> HsmResult<()> {
         Self::ensure_cmd_input(
-            modulus.len() >= hsm_point_size(curve) && mont_result.len() >= mont_operand_size(curve),
+            modulus.len() >= hsm_point_size(curve) && mont_result.len() >= hsm_point_size(curve),
         )?;
 
         self.execute_cmd(
