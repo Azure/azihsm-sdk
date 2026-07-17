@@ -58,6 +58,26 @@ const ORDER384_LE: [u8; 48] = [
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 ];
 
+/// Reverse a 48-byte operand at compile time.
+const fn reverse48(mut a: [u8; 48]) -> [u8; 48] {
+    let mut i = 0;
+    while i < 24 {
+        let t = a[i];
+        a[i] = a[47 - i];
+        a[47 - i] = t;
+        i += 1;
+    }
+    a
+}
+
+/// NIST P-384 curve order `n` in big-endian.
+///
+/// The RFC 6979 DRBG emits candidates big-endian (`bits2int`), so the
+/// candidate-range check ([`ct_in_range`]) compares big-endian. Derived from
+/// [`ORDER384_LE`] at compile time so the sign hot path does not reverse the
+/// order on every call.
+const ORDER384_BE: [u8; 48] = reverse48(ORDER384_LE);
+
 /// NIST P-384 base point `G` x-coordinate in PKA little-endian operand order.
 const BASE384_X_LE: [u8; 48] = [
     0xb7, 0x0a, 0x76, 0x72, 0x38, 0x5e, 0x54, 0x3a, 0x6c, 0x29, 0x55, 0xbf, 0x5d, 0xf2, 0x02, 0x55,
@@ -374,14 +394,12 @@ impl UnoHsmPal {
         }
 
         self.alloc_scoped_async(io, async |scope| {
-            let mut n_be = ORDER384_LE;
-            n_be.reverse();
             let mut drbg = Rfc6979Drbg {
                 key: scope.dma_alloc(field)?,
                 v: scope.dma_alloc(field)?,
                 tag: scope.dma_alloc(field)?,
                 msg: scope.dma_alloc(RFC6979_SEED_MSG_LEN)?,
-                n_be,
+                n_be: ORDER384_BE,
             };
             // Run the fallible DRBG sequence in an inner block so the secret
             // state (`K`, `V`, and the assembled `x ‖ h1` in `msg`) is scrubbed
@@ -457,14 +475,12 @@ impl UnoHsmPal {
         }
 
         self.alloc_scoped_async(io, async |scope| {
-            let mut n_be = ORDER384_LE;
-            n_be.reverse();
             let mut drbg = Rfc6979Drbg {
                 key: scope.dma_alloc(field)?,
                 v: scope.dma_alloc(field)?,
                 tag: scope.dma_alloc(field)?,
                 msg: scope.dma_alloc(RFC6979_SEED_MSG_LEN)?,
-                n_be,
+                n_be: ORDER384_BE,
             };
             let k = scope.dma_alloc(field)?;
 
