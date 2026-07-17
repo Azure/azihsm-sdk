@@ -7,14 +7,14 @@
 //!
 //! Property-validation guards run before the device round-trip, so they are
 //! deterministic. The `roundtrip_*` tests provision the partition to
-//! `Initialized` via [`super::provision::finalized_co_session`], then
+//! `Initialized` via [`crate::utils::sd_provision::finalized_co_session`], then
 //! generate a sealing key end to end and validate the masked blob and
 //! public key.
 
 use azihsm_api::*;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 
-use crate::emu_helpers::*;
+use crate::utils::emu_helpers::*;
 
 /// Well-formed sealing key props: a `Sealing`-kind P-384 secret key
 /// permitted for derivation only, matching the wire contract.
@@ -157,7 +157,7 @@ fn sealing_key_gen_valid_props_pass_host_guards() {
 #[test]
 fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
     let _guard = EMU_LOCK.lock();
-    let session = super::provision::finalized_co_session();
+    let session = crate::utils::sd_provision::finalized_co_session();
 
     let mut algo = HsmSealingKeyGenAlgo::default();
     let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
@@ -188,7 +188,7 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
 #[test]
 fn sealing_key_gen_roundtrip_yields_distinct_keys() {
     let _guard = EMU_LOCK.lock();
-    let session = super::provision::finalized_co_session();
+    let session = crate::utils::sd_provision::finalized_co_session();
 
     let generate = || {
         let mut algo = HsmSealingKeyGenAlgo::default();

@@ -3,6 +3,7 @@
 
 mod aes;
 mod aes_xts_key;
+mod descriptor_utils;
 mod dev;
 mod ecc;
 mod hkdf;
@@ -13,6 +14,9 @@ mod masked_key;
 mod partition;
 mod partition_ex;
 mod rsa;
+mod sd_create_remote_backup;
+mod sd_evidence;
+mod sd_reseal_remote_backup;
 mod sd_sealing_key_gen;
 mod session;
 mod session_ex;
@@ -31,6 +35,8 @@ pub use azihsm_ddi_tbor_types::MAX_CERTS;
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
 pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+use azihsm_ddi_tbor_types::TborStatus;
+pub(crate) use descriptor_utils::*;
 pub(crate) use dev::*;
 pub(crate) use ecc::*;
 pub(crate) use hkdf::*;
@@ -41,6 +47,9 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
+pub(crate) use sd_create_remote_backup::*;
+pub(crate) use sd_evidence::*;
+pub(crate) use sd_reseal_remote_backup::*;
 pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
@@ -102,6 +111,9 @@ impl From<DdiError> for HsmError {
             DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
             DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
                 HsmError::CannotDeleteInternalKeys
+            }
+            DdiError::TborStatus(TborStatus::SdAlreadyInitialized) => {
+                HsmError::SdAlreadyInitialized
             }
             _ => {
                 tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");

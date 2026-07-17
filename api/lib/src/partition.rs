@@ -841,6 +841,26 @@ impl HsmPartition {
         ddi::get_cert_chain(self, slot)
     }
 
+    /// Queries the partition's stable identity (PID) via `PartInfo`.
+    ///
+    /// Returns the 16-byte PID, which a caller uses to name this
+    /// partition as the backing partition when building a
+    /// security-domain backup policy.
+    pub fn pid(&self) -> HsmResult<Vec<u8>> {
+        Ok(ddi::part_info(self)?.pid)
+    }
+
+    /// Queries the partition's raw identity public key via `PartInfo`.
+    ///
+    /// Returns the raw ECC-P384 identity public-key coordinates
+    /// (`x ‖ y`, 96 B). Unlike [`Self::pub_key`] — which returns the
+    /// DER-encoded public key parsed from the PID certificate — this
+    /// comes straight from the `PartInfo` query and is available before
+    /// the partition is endorsed.
+    pub fn ex_pub_key(&self) -> HsmResult<Vec<u8>> {
+        Ok(ddi::part_info(self)?.pid_pub_key)
+    }
+
     /// Retrieves the public key of the partition identity (PID) certificate.
     ///
     /// # Returns

@@ -13,6 +13,10 @@
 //!   not stored on the device; the masked blob is returned to the host
 //!   and unmasked on-use by the security-domain backup commands.
 //!
+//! It also hosts the companion **`KeyReport`** dispatch, which attests a
+//! non-resident masked key (the sealing key) by its masked-key envelope
+//! rather than a device handle.
+//!
 //! It runs **inside an already-open session** established by
 //! [`super::session_ex::open_session_ex`]: the request carries the
 //! active session id, which the firmware dispatcher cross-checks
@@ -134,6 +138,74 @@ pub(crate) fn sd_sealing_key_gen(
     validate_masked_sealing_key(&resp.masked_key)?;
     let pub_key_der = sealing_pub_key_to_der(&resp.pub_key)?;
     Ok((resp.masked_key, pub_key_der))
+}
+
+/// Issue `KeyReport` on the active session to attest a non-resident
+/// masked key (such as the sealing key produced by
+/// [`sd_sealing_key_gen`]).
+///
+/// The key is attested by its masked-key envelope rather than a device
+/// handle. Ships the active session id, the masked-key envelope, and the
+/// caller's [`KEY_REPORT_DATA_LEN`]-byte report data; returns the tagged
+/// COSE_Sign1 attestation report signed by the PID key.
+///
+/// Follows the size-query convention: a `None` `report` returns the
+/// maximum report size ([`KEY_REPORT_MAX_LEN`]) without a round-trip.
+///
+/// # Arguments
+///
+/// * `session` - The active security-domain (V2) session.
+/// * `masked_key` - The masked-key envelope to attest (at most
+///   [`KEY_REPORT_MASKED_KEY_MAX_LEN`] bytes).
+/// * `report_data` - Caller-supplied [`KEY_REPORT_DATA_LEN`]-byte report
+///   data bound into the report.
+/// * `report` - Optional output buffer for the report; `None` returns the
+///   maximum report size.
+///
+/// # Errors
+///
+/// Returns [`HsmError::InvalidArgument`] when `report_data` is not
+/// [`KEY_REPORT_DATA_LEN`] bytes or `masked_key` is empty or exceeds
+/// [`KEY_REPORT_MASKED_KEY_MAX_LEN`], [`HsmError::BufferTooSmall`] when
+/// the supplied buffer is shorter than the returned report, and surfaces
+/// DDI/device failures from the round-trip.
+pub(crate) fn masked_key_report(
+    session: &HsmSession,
+    masked_key: &[u8],
+    report_data: &[u8],
+    report: Option<&mut [u8]>,
+) -> HsmResult<usize> {
+    if report_data.len() != KEY_REPORT_DATA_LEN
+        || masked_key.is_empty()
+        || masked_key.len() > KEY_REPORT_MASKED_KEY_MAX_LEN
+    {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    let Some(report) = report else {
+        return Ok(KEY_REPORT_MAX_LEN);
+    };
+
+    let mut report_data_arr = [0u8; KEY_REPORT_DATA_LEN];
+    report_data_arr.copy_from_slice(report_data);
+
+    let req = TborKeyReportReq {
+        session_id: session.ex_session_id()?,
+        masked_key: masked_key.to_vec(),
+        report_data: report_data_arr,
+    };
+
+    let mut cookie = None;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    if report.len() < resp.report.len() {
+        return Err(HsmError::BufferTooSmall);
+    }
+    report[..resp.report.len()].copy_from_slice(&resp.report);
+    Ok(resp.report.len())
 }
 
 #[cfg(test)]

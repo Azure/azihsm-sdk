@@ -220,6 +220,66 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdCreateRemoteBackup` (opcode `0x0A`) on this CO
+    /// session.
+    ///
+    /// Creates a new security domain from the caller-supplied unified
+    /// `policy`, using the sender's `masked_sealing_key` (from
+    /// `SdSealingKeyGen`) and the receiver's attestation `evidence`.
+    /// Returns the remote backup together with the device-local backups.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_create_remote_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        receiver_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+    ) -> HsmResult<HsmSdRemoteBackupResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_create_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                receiver_evidence,
+                policy,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdResealRemoteBackup` (opcode `0x0B`) on this CO
+    /// session.
+    ///
+    /// HPKE-opens `src_remote_backup` with the receiver's
+    /// `masked_sealing_key` (authenticated by the source sender in
+    /// `src_evidence`) and reseals the recovered backup to the destination
+    /// receiver (`dest_evidence`), returning the resealed remote backup.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_reseal_remote_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        src_evidence: &HsmSdEvidence<'_>,
+        dest_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        src_remote_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_reseal_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                src_evidence,
+                dest_evidence,
+                policy,
+                src_remote_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.
