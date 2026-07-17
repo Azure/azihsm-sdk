@@ -114,10 +114,14 @@ jobs:
         run: curl -LsSf https://get.nexte.st/0.9.132/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
       # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
-      # only on the 1.1 FFI, so they run here. The azihsm_engine mock lifecycle
-      # tests pull the OpenSSL-3.x SDK and need separate handling (roadmap #19).
+      # only on the 1.1 FFI, so they run here.
       - name: Test openssl-engine
         run: cargo nextest run -p openssl-engine --features engine
+
+      # azihsm_engine's mock lifecycle tests drive the HSM open path against the
+      # mock DDI.
+      - name: Test azihsm_engine (mock lifecycle)
+        run: cargo nextest run -p azihsm_engine --features engine,mock
 
       - name: Test azihsm_crypto
         run: cargo nextest run -p azihsm_crypto

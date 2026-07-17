@@ -10,16 +10,30 @@ Licensed under the MIT License.
 
 ## Description
 
-Creates a security-domain **remote backup**: a fresh 48-byte BKS3
-HPKE-Auth-sealed to the *receiver's* SD sealing public key (`RcvrPub`,
-recovered from the receiver's `KeyReport` carried out of band) and
-authenticated by the *sender's* SD sealing private key (`SndrPriv`,
-recovered by unmasking `masked_sealing_key`).  Maps to manticore
-`CreateSD`, reduced to its remote-backup output.
+Creates a security domain on the partition (manticore `CreateSD`). It
+mints a fresh 48-byte BKS3 and a random 32-byte security-domain masking
+key (`SDMK`), provisions `SDMK` in the vault as the partition's
+`SecurityDomain`-scope masking key, and returns three backups:
 
-The command is **stateless** — nothing is persisted (no vault writes, no
-undo log). It requires an `Initialized` partition whose bound policy
-names this partition as the backing partition.
+- **`pok_remote_backup`** — the fresh BKS3 HPKE-Auth-sealed to the
+  *receiver's* SD sealing public key (`RcvrPub`, recovered from the
+  receiver's `KeyReport` carried out of band), authenticated by the
+  *sender's* SD sealing private key (`SndrPriv`, recovered by unmasking
+  `masked_sealing_key`).
+- **`pok_local_backup`** — the same BKS3 masked under the partition-local
+  masking key (`PartLocalMK`), for on-device (local) recovery of the
+  security domain.
+- **`sd_mk_backup`** — `SDMK` masked under `SDBMK` (a backup masking key
+  derived from BKS3, the platform seeds, and the policy hash), the
+  SVN-monotonic backup of the masking key.
+
+The command is **stateful**: it vaults `SDMK` and marks the partition
+security-domain-initialized. Every persistent mutation is recorded on the
+per-command undo log, so a handler failure — or a failed completion —
+rolls the whole command back. It is **one-shot** per partition
+incarnation: a second create returns `SdAlreadyInitialized` (the atomic
+claim is the race-winner gate). It requires an `Initialized` partition
+whose bound policy names this partition as the backing partition.
 
 The receiver attestation **evidence** is validated on-device
 ([`verify_evidence`](../../../fw/core/evidence/src/lib.rs)): the three
@@ -69,10 +83,13 @@ section.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 8 | `pok_remote_backup` | `buffer` (fixed 161 B) | Remote partition-owner-key backup: an HPKE-Auth seal of BKS3 under `DHKemP384Sha384AesGcm256`, `enc(97) ‖ ct(64)` = `POK_REMOTE_BACKUP_LEN` (161 B). |
+| 12 | `pok_local_backup` | `buffer` (fixed 180 B) | Local partition-owner-key backup: BKS3 masked under `PartLocalMK`. `MASKED_SD_LEN` (180 B). |
+| 16 | `sd_mk_backup` | `buffer` (fixed 164 B) | Security-domain masking-key backup: `SDMK` masked under the derived `SDBMK`. `LOCAL_MK_BACKUP_LEN` (164 B). |
 
 ### Data section
 
-Carries the 161-byte `pok_remote_backup` seal.
+Carries the 161-byte `pok_remote_backup` seal, the 180-byte
+`pok_local_backup`, and the 164-byte `sd_mk_backup` envelope.
 
 ## Errors
 
@@ -80,6 +97,7 @@ Carries the 161-byte `pok_remote_backup` seal.
 |---|---|
 | `TborInvalidFixedLength` | `masked_sealing_key` (180 B) or `policy` (484 B) is the wrong length (rejected at decode before the handler runs) |
 | `InvalidArg` | Not `Initialized`; missing out-of-band evidence; policy hash mismatch; or the policy does not name this partition as the backing partition |
+| `SdAlreadyInitialized` | A security domain is already initialized on this partition incarnation (one-shot gate) |
 | `InvalidPermissions` | Not a Crypto-Officer session |
 | `UnsupportedKeyScope` | The masked sealing key's scope has no provisioned masking key |
 | `UnsupportedKeyType` | The unmasked key is not an `SdSealing` key |

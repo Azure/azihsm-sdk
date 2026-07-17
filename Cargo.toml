@@ -110,6 +110,7 @@ azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
 azihsm_session_ex_crypto = { path = "crates/session_ex_crypto" }
 azihsm_tpm = { path = "crates/tpm" }
+engine-resiliency = { path = "plugins/ossl_engine/engine-resiliency" }
 openssl-engine = { path = "plugins/ossl_engine/openssl-engine" }
 openssl-sys-engine = { path = "plugins/ossl_engine/openssl-sys-engine" }
 resiliency_macro = { path = "crates/resiliency_macro" }
@@ -219,6 +220,7 @@ thiserror = "1.0"
 tokio = "1.0.0"
 toml_edit = "0.25.11"
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = "0.3.16"
 tracing-tree = "0.4.1"
 trybuild = "1.0.114"

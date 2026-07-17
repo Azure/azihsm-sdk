@@ -403,6 +403,15 @@ pub enum HsmError {
     /// cryptographically valid, its identity is simply wrong.
     PartFinalPtaMismatch = 0x08700107,
 
+    /// The TBOR `SdCreateRemoteBackup` handler was asked to create a
+    /// security domain on a partition whose one-shot
+    /// [`SD_INITIALIZED`](crate::PartPropId::SD_INITIALIZED) flag is
+    /// already set (the security-domain masking key `SDMK` is already
+    /// provisioned in this partition incarnation).  The one-shot gate
+    /// permits only `false → true`; reset happens PAL-internally on
+    /// partition free / NSSR.
+    SdAlreadyInitialized = 0x08700108,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

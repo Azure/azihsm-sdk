@@ -232,6 +232,14 @@ pub(crate) struct PartitionEntry {
     /// one-shot gate for `InitBk3`.
     bk3_initialized: bool,
 
+    /// Security-domain initialization state for the current partition
+    /// incarnation.
+    ///
+    /// `false` on every enable; set to `true` by a successful
+    /// `part_mark_sd_initialized`.  Acts as the authoritative one-shot
+    /// gate for `SdCreateRemoteBackup`.
+    sd_initialized: bool,
+
     /// User credential blob (`id ‖ pin`, 16 + 16 = 32 bytes).  Zeroed
     /// until set via the `CREDENTIAL` property.
     credential: [u8; 32],
@@ -277,6 +285,10 @@ pub(crate) struct PartitionEntry {
     /// (`EphemeralMK`), bound by `PartFinal`.
     ephemeral_mk_key_id: Option<HsmKeyId>,
 
+    /// Vault key ID of the security-domain key masking key (`SDMK`),
+    /// bound by `SdCreateRemoteBackup`.
+    sd_mk_key_id: Option<HsmKeyId>,
+
     /// SEC1 uncompressed P-384 public key for the Partition Trust Anchor.
     pta_pub_key: Option<[u8; P384_PUB_KEY_LEN]>,
 
@@ -319,6 +331,7 @@ impl Default for PartitionEntry {
             masked_bk_boot_len: 0,
             vm_launch_guid: [0u8; VM_LAUNCH_GUID_LEN],
             bk3_initialized: false,
+            sd_initialized: false,
             credential: [0u8; 32],
             credential_set: false,
             bk3_session: [0u8; 48],
@@ -331,6 +344,7 @@ impl Default for PartitionEntry {
             ups_key_id: None,
             local_mk_key_id: None,
             ephemeral_mk_key_id: None,
+            sd_mk_key_id: None,
             pta_pub_key: None,
             policy_hash: None,
             pota_thumbprint: None,
@@ -867,6 +881,7 @@ impl StdHsmPal {
 
         entry.vm_launch_guid = STD_VM_LAUNCH_GUID;
         entry.bk3_initialized = false;
+        entry.sd_initialized = false;
 
         entry.state = PartState::Enabled;
         Ok(())
@@ -888,8 +903,16 @@ impl StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        Self::clear_enabled_state(&mut table.entries[idx]);
-        table.entries[idx].state = PartState::Disabled;
+        // Preserve any live sessions across the NSSR as
+        // NeedsRenegotiation so a subsequent ReopenSession can re-key
+        // them (mirrors the reference firmware's `disable`, which does
+        // `restore(backup())`).  The snapshot must be taken *before*
+        // `clear_enabled_state` wipes the session table and vault.
+        let entry = &mut table.entries[idx];
+        let session_backup = entry.session_table.backup();
+        Self::clear_enabled_state(entry);
+        entry.session_table.restore(session_backup);
+        entry.state = PartState::Disabled;
         Ok(())
     }
 
@@ -1058,6 +1081,7 @@ impl StdHsmPal {
         drop_key(&mut entry.vault, &mut entry.ups_key_id);
         drop_key(&mut entry.vault, &mut entry.local_mk_key_id);
         drop_key(&mut entry.vault, &mut entry.ephemeral_mk_key_id);
+        drop_key(&mut entry.vault, &mut entry.sd_mk_key_id);
         entry.id_key_id = None;
 
         // Public-key mirrors and other non-secret fixed buffers.
@@ -1082,6 +1106,7 @@ impl StdHsmPal {
         // grouping.
         entry.vm_launch_guid.fill(0);
         entry.bk3_initialized = false;
+        entry.sd_initialized = false;
 
         // Caller-presented secrets and per-session derived material.
         entry.credential.fill(0);
@@ -1199,6 +1224,7 @@ impl PartitionEntry {
             PartPropId::GEN => Ok(self.gen),
             PartPropId::RES_COUNT => Ok(self.res_mask.count_ones()),
             PartPropId::BK3_INITIALIZED => Ok(u32::from(self.bk3_initialized)),
+            PartPropId::SD_INITIALIZED => Ok(u32::from(self.sd_initialized)),
             PartPropId::ID_KEY_ID => key_id_to_u32(self.id_key_id),
             PartPropId::MK_KEY_ID => key_id_to_u32(self.mk_key_id),
             PartPropId::UPS_KEY_ID => key_id_to_u32(self.ups_key_id),
@@ -1208,6 +1234,7 @@ impl PartitionEntry {
             PartPropId::ESTABLISH_CRED_KEY_ID => key_id_to_u32(self.establish_cred_key_id),
             PartPropId::LOCAL_MK_KEY_ID => key_id_to_u32(self.local_mk_key_id),
             PartPropId::EPHEMERAL_MK_KEY_ID => key_id_to_u32(self.ephemeral_mk_key_id),
+            PartPropId::SD_MK_KEY_ID => key_id_to_u32(self.sd_mk_key_id),
             _ => Err(HsmError::InvalidArg),
         }
     }
@@ -1252,6 +1279,10 @@ impl PartitionEntry {
                 self.ephemeral_mk_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
+            PartPropId::SD_MK_KEY_ID => {
+                self.sd_mk_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
             PartPropId::ESTABLISH_CRED_KEY_ID => {
                 self.establish_cred_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
@@ -1270,6 +1301,19 @@ impl PartitionEntry {
                     return Err(HsmError::Bk3AlreadyInitialized);
                 }
                 self.bk3_initialized = true;
+                Ok(())
+            }
+            PartPropId::SD_INITIALIZED => {
+                // One-shot claim: a redundant `true` fails the race and
+                // returns SdAlreadyInitialized.  `false` is permitted so
+                // the TBOR undo log can roll the claim back on a failed
+                // command; PAL-internal reset also clears it on free /
+                // NSSR.
+                let want = value != 0;
+                if want && self.sd_initialized {
+                    return Err(HsmError::SdAlreadyInitialized);
+                }
+                self.sd_initialized = want;
                 Ok(())
             }
             // GEN/SVN/RES_COUNT/ID_KEY_ID/RSA_UNWRAPPING_KEY_ID are Ro
@@ -1507,6 +1551,10 @@ impl PartitionEntry {
             }
             PartPropId::EPHEMERAL_MK_KEY_ID => {
                 self.ephemeral_mk_key_id = None;
+                Ok(())
+            }
+            PartPropId::SD_MK_KEY_ID => {
+                self.sd_mk_key_id = None;
                 Ok(())
             }
             PartPropId::ESTABLISH_CRED_KEY_ID => {
@@ -1998,6 +2046,27 @@ mod tests {
             e.prop_set_scalar(PartPropId::BK3_INITIALIZED, 0),
             Err(HsmError::InvalidArg)
         ));
+    }
+
+    #[test]
+    fn sd_initialized_one_shot_claim_and_undo_clear() {
+        let mut e = fresh_entry();
+        assert_eq!(e.prop_get_scalar(PartPropId::SD_INITIALIZED).unwrap(), 0);
+        // First true write (the atomic claim) succeeds.
+        e.prop_set_scalar(PartPropId::SD_INITIALIZED, 1).unwrap();
+        assert!(e.sd_initialized);
+        // Re-asserting true fails the one-shot race.
+        assert!(matches!(
+            e.prop_set_scalar(PartPropId::SD_INITIALIZED, 1),
+            Err(HsmError::SdAlreadyInitialized)
+        ));
+        // Unlike BK3, clearing to false IS permitted so the TBOR undo log
+        // can roll the claim back on a failed command.
+        e.prop_set_scalar(PartPropId::SD_INITIALIZED, 0).unwrap();
+        assert!(!e.sd_initialized);
+        // After a rollback the claim can be re-made.
+        e.prop_set_scalar(PartPropId::SD_INITIALIZED, 1).unwrap();
+        assert!(e.sd_initialized);
     }
 
     #[test]

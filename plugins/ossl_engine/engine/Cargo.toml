@@ -13,9 +13,28 @@ crate-type = ["cdylib", "lib"]
 [features]
 default = []
 engine = ["openssl-engine/engine"]
+mock = ["azihsm_api/mock"]
 
 [dependencies]
+azihsm_api.workspace = true
+engine-resiliency.workspace = true
 openssl-engine.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { features = ["env-filter"], workspace = true }
+zeroize.workspace = true
+
+# libc backs the O_NOFOLLOW hardening on the Linux-only file opens.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# Only the Linux-only `context` tests use these; gating keeps the workspace
+# `--all-targets` build on Windows from pulling OpenSSL (openssl-sys won't build
+# there). Mirrors engine-resiliency.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+serial_test.workspace = true
 
 [lints]
 workspace = true

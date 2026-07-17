@@ -52,13 +52,13 @@ const RESERVED3_LEN: usize = 626
     - 4  // state
     - 4  // generation
     - RES_MASK_LEN
-    - 9 * 2  // key handles (u16 + sentinel)
+    - 10 * 2  // key handles (u16 + sentinel)
     - PUB_KEY_LEN  // ec_pub_key
     - PUB_KEY_LEN  // se_pub_key
     - PSK_LEN  // psk_co
     - PSK_LEN  // psk_cu
     - CREDENTIAL_LEN
-    - 1  // valid_flags (7 packed presence/init bits)
+    - 1  // valid_flags (8 packed presence/init bits)
     - PUB_KEY_LEN  // pta_pub_key
     - 2; // session_meta (pending_mask + psk_change_mask)
 
@@ -70,6 +70,7 @@ const FLAG_SAPOTA_THUMBPRINT_VALID: u8 = 1 << 3;
 const FLAG_PTA_PUB_KEY_VALID: u8 = 1 << 4;
 const FLAG_POLICY_HASH_VALID: u8 = 1 << 5;
 const FLAG_BK3_INITIALIZED: u8 = 1 << 6;
+const FLAG_SD_INITIALIZED: u8 = 1 << 7;
 
 /// Total per-partition slot size (matches the reference layout).
 const STORE_SIZE: usize = 3072;
@@ -267,11 +268,12 @@ struct Storage {
     unwrapping_key_id: [u8; 2],
     local_mk_key_id: [u8; 2],
     ephemeral_mk_key_id: [u8; 2],
+    sd_mk_key_id: [u8; 2],
     // Presence flags for `AbsentUntilSet` byte fields plus the one-shot
-    // InitBk3 gate, bit-packed into a single byte (see the `FLAG_*`
-    // constants).  Placed after the key handles, before `reserved3`,
-    // where 1-byte alignment is harmless and the DMA-target public keys
-    // above stay 4-aligned.
+    // InitBk3 and security-domain (`SD_INITIALIZED`) gates, bit-packed into
+    // a single byte (see the `FLAG_*` constants).  Placed after the key
+    // handles, before `reserved3`, where 1-byte alignment is harmless and
+    // the DMA-target public keys above stay 4-aligned.
     valid_flags: u8,
     // Volatile TBOR session slot metadata: byte 0 = pending_mask
     // (bit N set while slot N's handshake is in flight), byte 1 =
@@ -404,6 +406,7 @@ impl Partition {
         slot.pta_key_id = absent;
         slot.local_mk_key_id = absent;
         slot.ephemeral_mk_key_id = absent;
+        slot.sd_mk_key_id = absent;
         slot.unwrapping_key_id = absent;
     }
 
@@ -458,6 +461,7 @@ impl Partition {
         self.set_pta_key_id(None);
         self.set_local_mk_key_id(None);
         self.set_ephemeral_mk_key_id(None);
+        self.set_sd_mk_key_id(None);
         self.set_unwrapping_key_id(None);
         // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
@@ -484,6 +488,7 @@ impl Partition {
             self.clear_sapota_thumbprint();
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
+            self.set_sd_initialized(false);
             let slot = self.slot_mut();
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];
@@ -764,6 +769,24 @@ impl Partition {
             slot.valid_flags |= FLAG_BK3_INITIALIZED;
         } else {
             slot.valid_flags &= !FLAG_BK3_INITIALIZED;
+        }
+    }
+
+    /// Whether a security domain has already been created for this
+    /// partition (one-shot gate).
+    #[inline(never)]
+    pub fn sd_initialized(self) -> bool {
+        self.slot().valid_flags & FLAG_SD_INITIALIZED != 0
+    }
+
+    /// Sets the one-shot security-domain init gate.
+    #[inline(never)]
+    pub fn set_sd_initialized(mut self, valid: bool) {
+        let slot = self.slot_mut();
+        if valid {
+            slot.valid_flags |= FLAG_SD_INITIALIZED;
+        } else {
+            slot.valid_flags &= !FLAG_SD_INITIALIZED;
         }
     }
 
@@ -1116,6 +1139,18 @@ impl Partition {
     #[inline(never)]
     pub fn set_ephemeral_mk_key_id(mut self, key: Option<HsmKeyId>) {
         self.slot_mut().ephemeral_mk_key_id = write_handle(key);
+    }
+
+    /// Reads the security-domain masking key (`SDMK`) handle.
+    #[inline(never)]
+    pub fn sd_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().sd_mk_key_id)
+    }
+
+    /// Sets (or clears) the security-domain masking key handle.
+    #[inline(never)]
+    pub fn set_sd_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().sd_mk_key_id = write_handle(key);
     }
 
     // ── cached public keys (establish-cred / session-enc) ────────────────

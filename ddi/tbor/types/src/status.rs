@@ -306,6 +306,12 @@ pub enum TborStatus {
     /// POTA-anchored, but its leaf public key does not match the
     /// partition's PTA key (mirror of `HsmError::PartFinalPtaMismatch`).
     PartFinalPtaMismatch = 0x08700107,
+
+    /// `SdCreateRemoteBackup` was asked to create a security domain on a
+    /// partition whose security-domain masking key (`SDMK`) is already
+    /// provisioned in this incarnation (mirror of
+    /// `HsmError::SdAlreadyInitialized`).
+    SdAlreadyInitialized = 0x08700108,
 }
 
 impl core::fmt::Debug for TborStatus {

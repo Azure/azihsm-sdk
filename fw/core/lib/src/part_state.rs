@@ -502,6 +502,32 @@ pub const fn part_ephemeral_mk_key_id_prop_id() -> PartPropId {
     PartPropId::EPHEMERAL_MK_KEY_ID
 }
 
+/// Vault id of the security-domain key masking key (`SDMK`).
+///
+/// Wraps [`PartPropId::SD_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `SdCreateRemoteBackup` handler;
+/// resolves the [`SecurityDomain`](azihsm_fw_hsm_pal_traits::HsmKeyScope::SecurityDomain)
+/// scope to its live masking key.
+pub fn part_sd_mk_key_id(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::SD_MK_KEY_ID)
+}
+
+/// Set the security-domain masking-key id.
+pub fn part_set_sd_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::SD_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_sd_mk_key_id`] /
+/// [`part_set_sd_mk_key_id`].
+#[inline]
+pub const fn part_sd_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::SD_MK_KEY_ID
+}
+
 /// Vault id of the partition's unwrapping key.
 ///
 /// Wraps [`PartPropId::RSA_UNWRAPPING_KEY_ID`] (`U16 → HsmKeyId`,
@@ -1149,6 +1175,30 @@ pub fn part_is_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) 
 /// authoritative race-winner gate for `DdiInitBk3`.
 pub fn part_mark_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
     pal.part_prop_set_bool(io, PartPropId::BK3_INITIALIZED, true)
+}
+
+/// Whether the partition has completed one-shot security-domain
+/// initialization (its `SDMK` is provisioned).
+pub fn part_is_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<bool> {
+    pal.part_prop_get_bool(io, PartPropId::SD_INITIALIZED)
+}
+
+/// Atomically commit the partition's one-shot security-domain init
+/// state to `true`.  Returns [`HsmError::SdAlreadyInitialized`] if the
+/// flag was already set in the current partition incarnation.  This is
+/// the authoritative race-winner gate for `SdCreateRemoteBackup`.
+pub fn part_mark_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, true)
+}
+
+/// Clear the partition's one-shot security-domain init flag.
+///
+/// Used only to best-effort roll back a just-made claim when its undo
+/// inverse could not be recorded, so a full undo log cannot permanently
+/// wedge the partition's SD gate.  (The one-shot setter permits
+/// `→ false`; the normal rollback path is the undo log.)
+pub fn part_clear_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, false)
 }
 
 /// Current owner-seed (BKS2) selector (BKS2 lineage; always 0 today).
