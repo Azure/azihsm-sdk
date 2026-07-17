@@ -585,6 +585,9 @@ impl UnoHsmPal {
         drbg: &mut Rfc6979Drbg<'_>,
         len: usize,
     ) -> HsmResult<()> {
+        if len > drbg.msg.len() {
+            return Err(HsmError::InvalidArg);
+        }
         let (data, _) = drbg.msg.split_at(len);
         self.hmac_sign(io, HsmHashAlgo::Sha384, &*drbg.key, data, &mut *drbg.tag)
             .await?;
