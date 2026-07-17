@@ -13,6 +13,7 @@ mod masked_key;
 mod partition;
 mod partition_ex;
 mod rsa;
+mod sd_sealing_key_gen;
 mod session;
 mod session_ex;
 mod tpm;
@@ -22,6 +23,14 @@ pub(crate) use aes_xts_key::*;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::*;
 use azihsm_ddi_mbor_types::*;
+/// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
+pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Maximum number of certificates in a `part_final` PTA chain.
+pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
+pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
+/// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
+pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
 pub(crate) use dev::*;
 pub(crate) use ecc::*;
 pub(crate) use hkdf::*;
@@ -32,11 +41,17 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
+pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
 pub(crate) use tpm::*;
 
 use super::*;
+
+// Pin the shared-module `PSK_LEN` (defined in `shared_types`, which is
+// shared with the native crate) to the wire-schema value so the two
+// cannot drift.
+const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 
 /// Converts a DDI error into the corresponding `HsmError`.
 ///
@@ -98,19 +113,11 @@ impl From<DdiError> for HsmError {
 
 pub(crate) type HsmKeyHandle = u32;
 
-/// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
-pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
-/// Maximum number of certificates in a `part_final` PTA chain.
-pub use azihsm_ddi_tbor_types::MAX_CERTS;
-/// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
-pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
-/// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
-pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
-
-// Pin the shared-module `PSK_LEN` (defined in `shared_types`, which is
-// shared with the native crate) to the wire-schema value so the two
-// cannot drift.
-const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
+/// Marker handle for a non-resident key: its material lives only as a
+/// masked blob in its props, never in the vault. Delete is a no-op
+/// since there is nothing device-side to release.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct HsmNoKeyHandle;
 
 /// Extracts the key ID from a packed HSM key handle.
 ///

@@ -99,15 +99,22 @@ pub async fn derive_masking_key<P: HsmPal>(
         label_dma.copy_from_slice(label);
     }
 
-    pal.sp800_108_kdf(
-        io,
-        HsmHashAlgo::Sha384,
-        kdk,
-        Some(label_dma),
-        Some(ctx),
-        output,
-    )
-    .await
+    let res = pal
+        .sp800_108_kdf(
+            io,
+            HsmHashAlgo::Sha384,
+            kdk,
+            Some(label_dma),
+            Some(ctx),
+            output,
+        )
+        .await;
+
+    // Scrub the seed material (`mfgr_seed ‖ owner_seed`) staged in the
+    // reusable IO-scoped context buffer once the KDF has consumed it; scope
+    // rewind does not clear DMA memory, so wipe it explicitly on every path.
+    ctx.zeroize();
+    res
 }
 
 /// Derives the partition's `BKx` (the `BK_BOOT` masking key) into

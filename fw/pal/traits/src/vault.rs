@@ -70,6 +70,8 @@ use super::*;
 /// | 37–38 | Partition incarnation keys | `PartitionTrustAnchor`, `UniquePartitionSecret` |
 /// | 39–40 | PartFinal masking keys | `PartitionLocalMaskingKey`, `PartitionEphemeralMaskingKey` |
 /// | 41 | Security-domain sealing key | `SdSealing` |
+/// | 42 | Security-domain masking key | `SdMasking` |
+/// | 43 | Security-domain partition-owner seed | `SdPartitionOwnerSeed` |
 #[repr(u8)]
 #[open_enum]
 #[derive(Clone, Copy, Debug)]
@@ -217,6 +219,32 @@ pub enum HsmVaultKeyKind {
     /// field.  Represented as the 48-byte raw private scalar, mirroring
     /// [`PartitionTrustAnchor`](Self::PartitionTrustAnchor).
     SdSealing = 41,
+
+    /// Security-domain key masking key (`SDMK`) — 32 B AES-256-GCM
+    /// masking key.
+    ///
+    /// Minted (random) on device by the TBOR `SdCreateRemoteBackup`
+    /// handler when a security domain is created, vaulted with
+    /// [`HsmKeyScope::SecurityDomain`] scope, and backed up to the caller
+    /// as `sd_mk_backup` (masked under the derived `SDBMK`).  It is the
+    /// live masking key that
+    /// [`SecurityDomain`](HsmKeyScope::SecurityDomain)-scoped keys are
+    /// masked under; recovered across launches from the caller-replayed
+    /// `sd_mk_backup` (parity with
+    /// [`PartitionLocalMaskingKey`](Self::PartitionLocalMaskingKey)).
+    SdMasking = 42,
+
+    /// Security-domain partition-owner seed (`BKS3`) — the 48 B root
+    /// secret of a security domain (firmware `BK3`).
+    ///
+    /// Never stored live on-device: minted (random) by
+    /// `SdCreateRemoteBackup`, HPKE-Auth-sealed to a recipient as
+    /// `pok_remote_backup` and masked under the partition-local masking
+    /// key (`PartLocalMK`) as `pok_local_backup`.  This kind is recorded
+    /// only as the masked blob's `key_kind` metadata (parity with
+    /// [`SdSealing`](Self::SdSealing)); the on-device security domain is
+    /// re-derived from it on restore.
+    SdPartitionOwnerSeed = 43,
 }
 
 /// Key scope: the lifecycle / visibility domain a vault key belongs

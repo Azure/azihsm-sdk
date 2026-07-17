@@ -3,6 +3,10 @@
 
 #![cfg(test)]
 
+use azihsm_crypto::AesCbcAlgo;
+use azihsm_crypto::AesKey;
+use azihsm_crypto::Decrypter;
+use azihsm_crypto::ImportableKey;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::MborByteArray;
 use azihsm_ddi_mbor_types::*;
@@ -817,21 +821,46 @@ fn test_rsa_unwrap_aes_key() {
             assert!(resp.is_ok(), "resp {:?}", resp);
             let resp = resp.unwrap();
             assert_eq!(resp.data.kind, DdiKeyType::Aes256);
-            let unwrapped_key_id = resp.data.key_id;
             assert!(resp.data.pub_key.is_none());
+            let unwrapped_key_id = resp.data.key_id;
 
-            // Confirm we can find the unwrapped key by tag
-            let resp = helper_open_key(
+            // Prove the device unwrapped the exact key material: encrypt a
+            // block on the device with the unwrapped key, then decrypt it
+            // locally with the known plaintext key (TEST_AES_256) and confirm
+            // the round trip recovers the plaintext.
+            let plaintext = [0xA5u8; 32];
+            let iv = [0x11u8; 16];
+
+            let mut msg_buf = [0u8; 1024];
+            msg_buf[..plaintext.len()].copy_from_slice(&plaintext);
+            let enc = helper_aes_encrypt_decrypt(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
-                key_tag,
-            );
-            assert!(resp.is_ok(), "resp {:?}", resp);
-            let resp = resp.unwrap();
+                unwrapped_key_id,
+                DdiAesOp::Encrypt,
+                MborByteArray::new(msg_buf, plaintext.len())
+                    .expect("failed to create msg byte array"),
+                MborByteArray::new(iv, 16).expect("failed to create iv byte array"),
+            )
+            .expect("device AES-CBC encrypt with the unwrapped key must succeed");
 
-            assert_eq!(resp.data.key_id, unwrapped_key_id);
-            assert_eq!(resp.data.key_kind, DdiKeyType::Aes256);
+            let ct_len = enc.data.msg.len();
+            let ct = enc.data.msg.data_take();
+            let ciphertext = &ct[..ct_len];
+
+            let key = AesKey::from_bytes(TEST_AES_256.as_slice())
+                .expect("local AES key from known material");
+            let mut algo = AesCbcAlgo::with_no_padding(iv.as_slice());
+            let recovered = Decrypter::decrypt_vec(&mut algo, &key, ciphertext)
+                .expect("local AES-CBC decrypt must succeed");
+
+            assert_eq!(
+                recovered.as_slice(),
+                plaintext.as_slice(),
+                "locally decrypting the device ciphertext with the known key must \
+                 recover the plaintext, proving the unwrapped key matches"
+            );
         },
     );
 }

@@ -11,11 +11,11 @@ use super::*;
 
 /// PSK credential for opening a security-domain session.
 ///
-/// Pairs the PSK slot with an optional caller-supplied PSK. When `psk`
-/// is NULL, the partition **default** PSK for the slot is used — required
-/// for the first session, before the default is rotated via
-/// `azihsm_sess_ex_psk_change`. After rotation, point `psk` at the
-/// rotated secret.
+/// Pairs the PSK slot (`psk_id`) with an optional caller-supplied PSK.
+/// When the `psk` **field** (below) is NULL, the partition **default** PSK
+/// for the slot is used — required for the first session, before the
+/// default is rotated via `azihsm_sess_ex_psk_change`. After rotation,
+/// point the `psk` field at the rotated secret.
 #[repr(C)]
 pub struct AzihsmSessionPsk {
     /// PSK slot: 0 = Crypto Officer, 1 = Crypto User.

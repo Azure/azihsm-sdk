@@ -65,6 +65,7 @@ set(SOURCE
     utils/shared_secret.cpp
     utils/part_init_config.cpp
     utils/resiliency_config.cpp
+    utils/sd_provision.cpp
     partition_tests.cpp 
     session_tests.cpp 
     session_ex_tests.cpp 
@@ -86,13 +87,16 @@ set(SOURCE
     algo/rsa/keygen_tests.cpp
     algo/rsa/keyreport_tests.cpp
     algo/rsa/enc_dec_tests.cpp
+    algo/rsa/rsa_static_der.cpp
     algo/rsa/sign_verify_tests.cpp
+    algo/rsa/unwrap_tests.cpp
     algo/sha/digest_tests.cpp
     algo/hmac/sign_verify_tests.cpp
     algo/hmac/keygen_tests.cpp
     algo/secret/unmask_tests.cpp
     algo/kdf/hkdf_tests.cpp
     algo/kdf/kbkdf_tests.cpp
+    algo/sealing/keygen_tests.cpp
     resiliency/init_stress_tests.cpp
     resiliency/aes_stress_tests.cpp
     resiliency/ecc_stress_tests.cpp

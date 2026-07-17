@@ -329,12 +329,17 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     PartInitConfig init_config{};
     make_part_init_config(part_handle, init_config);
+    // Function-scoped so its address stays valid for azihsm_part_init() below.
+    azihsm_buffer obk_buf{};
     if (!obk.empty())
     {
-        // Override OBK with the deserialized key from parent process
-        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+        // Override with the parent's raw OBK. Clear masked_owner_backup_key
+        // (possibly set by make_part_init_config from a cached MOBK): the
+        // Caller source requires exactly one of the two to be non-NULL.
+        obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
         init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
         init_config.backup_config.owner_backup_key = &obk_buf;
+        init_config.backup_config.masked_owner_backup_key = nullptr;
     }
 
     // Child process re-init: the device may have BK3 already initialized

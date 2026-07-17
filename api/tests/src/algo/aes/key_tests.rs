@@ -951,7 +951,19 @@ fn test_aes_cbc_wrong_key_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, Some(&mut out));
 
-    assert!(result.is_err());
+    // Wrong-key decrypt yields random plaintext, so PKCS#7 unpadding passes
+    // ~1/256 of the time (valid final byte). Asserting it always errors is
+    // flaky; the real invariant is that it must never recover the plaintext.
+    match result {
+        Err(_) => {}
+        Ok(written) => {
+            out.truncate(written);
+            assert_ne!(
+                out, plaintext,
+                "decryption with the wrong key must not recover the original plaintext"
+            );
+        }
+    }
 
     HsmKeyManager::delete_key(key1).unwrap();
     HsmKeyManager::delete_key(key2).unwrap();

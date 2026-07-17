@@ -20,11 +20,14 @@ use super::*;
 
 /// Handle `DdiAesGenerateKeyCmd`.
 ///
-/// No `partition_lock` is needed.  Although `vault_key_create` is now
-/// awaited (it can yield on Uno during the GDMA key copy), DDI commands
-/// run on a single-threaded cooperative executor with one command in
-/// flight per partition, so no concurrent handler can interleave with
-/// this one — there is nothing for a lock to serialize.
+/// No `partition_lock` is needed.  DDI commands execute on a
+/// single-threaded cooperative executor; multiple IOs are in flight and
+/// interleave at await points — including inside the awaited
+/// `vault_key_create` (which can yield on Uno during the GDMA key copy) —
+/// but this handler's only partition-state mutation is that single,
+/// self-contained `vault_key_create`, with no multi-step
+/// read-modify-write across an await for an interleaved handler to
+/// corrupt.
 pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,

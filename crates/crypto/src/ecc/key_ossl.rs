@@ -714,6 +714,45 @@ impl OsslEccPublicKey {
         Ok(Self::new(pkey, curve))
     }
 
+    /// Returns `true` iff the affine point (`x`, `y`) is a valid, non-identity
+    /// point that lies on `curve`.
+    ///
+    /// `x` and `y` are big-endian coordinate bytes. The caller is expected to
+    /// have already range-checked the coordinates
+    /// (see [`EccCurve::coordinate_in_range`]); this method answers only the
+    /// on-curve question needed for ECDH point validation (FIPS 186-5 /
+    /// SP 800-56A). Coordinates that cannot be turned into a curve point
+    /// (off-curve or out-of-range) yield `Ok(false)` rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::EccError`] only if an underlying OpenSSL
+    /// primitive (group construction, bignum/context allocation, or the
+    /// on-curve predicate) fails.
+    pub fn is_on_curve(curve: EccCurve, x: &[u8], y: &[u8]) -> Result<bool, CryptoError> {
+        let nid: Nid = curve.into();
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccError)?;
+        let x_bn = BigNum::from_slice(x).map_err(|_| CryptoError::EccError)?;
+        let y_bn = BigNum::from_slice(y).map_err(|_| CryptoError::EccError)?;
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccError)?;
+        let mut point = EcPoint::new(&group).map_err(|_| CryptoError::EccError)?;
+        // On OpenSSL 3.x `set_affine_coordinates` itself rejects off-curve
+        // points; on 1.1.x it does not. Treat a set failure as "not a valid
+        // point" and verify on-curve explicitly for the 1.1.x path.
+        if point
+            .set_affine_coordinates_gfp(&group, &x_bn, &y_bn, &mut ctx)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        if point.is_infinity(&group) {
+            return Ok(false);
+        }
+        point
+            .is_on_curve(&group, &mut ctx)
+            .map_err(|_| CryptoError::EccError)
+    }
+
     /// Extracts both X and Y coordinates of the public key point.
     ///
     /// This is an internal helper method that retrieves the affine coordinates

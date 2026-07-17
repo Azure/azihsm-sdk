@@ -138,6 +138,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
             10 => Ok(AzihsmKeyKind::AesGcm),
+            11 => Ok(AzihsmKeyKind::Sealing),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
@@ -549,6 +550,15 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
         let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
+        Ok(key.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmSealingKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmSealingKey, Self::Error> {
+        let key: &api::HsmSealingKey = HANDLE_TABLE.as_ref(value, HandleType::SealingKey)?;
         Ok(key.clone())
     }
 }

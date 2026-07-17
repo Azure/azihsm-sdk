@@ -1,0 +1,40 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_ossl_engine"
+publish = false
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+engine = ["azihsm_ossl_engine_core/engine"]
+mock = ["azihsm_api/mock"]
+
+[dependencies]
+azihsm_api.workspace = true
+azihsm_ossl_engine_core.workspace = true
+azihsm_ossl_engine_resiliency.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { features = ["env-filter"], workspace = true }
+zeroize.workspace = true
+
+# libc backs the O_NOFOLLOW hardening on the Linux-only file opens.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# Only the Linux-only `context` tests use these; gating keeps the workspace
+# `--all-targets` build on Windows from pulling OpenSSL (openssl-sys won't build
+# there). Mirrors azihsm_ossl_engine_resiliency.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+serial_test.workspace = true
+
+[lints]
+workspace = true

@@ -148,6 +148,131 @@ fn test_open_session_without_establish_cred_smoke() {
     });
 }
 
+/// Fill the partition's session table, then confirm a further
+/// `OpenSession` is rejected with `VaultSessionLimitReached`, and that
+/// closing a session frees its slot for a subsequent handshake.
+///
+/// Each `OpenSession` uses its own device handle: a handle rejects a
+/// second `OpenSession` while it already owns a session, so distinct
+/// handles are needed to hold `MAX_SESSIONS` sessions open at once.
+#[test]
+fn test_open_session_limit_reached_smoke() {
+    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let rev = Some(DdiApiRev { major: 1, minor: 0 });
+
+        let open_on_new_handle = |ddi: &DdiTest| {
+            let handle = ddi.open_dev(path).unwrap();
+            let (cred, pub_key) = encrypt_userid_pin_for_open_session(
+                &handle,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
+            let resp = helper_open_session(&handle, None, rev, cred, pub_key);
+            (handle, resp)
+        };
+
+        // Fill every session slot.
+        let mut sessions = Vec::new();
+        for _ in 0..MAX_SESSIONS {
+            let (handle, resp) = open_on_new_handle(ddi);
+            let resp = resp.expect("OpenSession must succeed until the table is full");
+            sessions.push((
+                handle,
+                resp.hdr.sess_id.expect("open must return a sess_id"),
+            ));
+        }
+
+        // The table is now full: a further OpenSession is rejected.
+        let (spare_handle, resp) = open_on_new_handle(ddi);
+        assert!(
+            matches!(
+                resp,
+                Err(DdiError::DdiStatus(DdiStatus::VaultSessionLimitReached))
+            ),
+            "OpenSession on a full table must return VaultSessionLimitReached, got {:?}",
+            resp
+        );
+
+        // Closing a session frees its slot; the next OpenSession succeeds.
+        let (freed_handle, freed_id) = sessions.pop().unwrap();
+        helper_close_session(&freed_handle, Some(freed_id), rev)
+            .expect("CloseSession must succeed");
+        let (cred, pub_key) = encrypt_userid_pin_for_open_session(
+            &spare_handle,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
+        let resp = helper_open_session(&spare_handle, None, rev, cred, pub_key)
+            .expect("OpenSession must succeed after a slot is freed");
+        assert_eq!(resp.hdr.status, DdiStatus::Success);
+    });
+}
+
+/// Fill the session table, confirm a further `OpenSession` is rejected,
+/// then *drop* one session handle and confirm the freed slot admits a
+/// new session.
+///
+/// This exercises the close-on-drop path: `DdiEmuDev::drop` issues a
+/// best-effort `CloseSession` for the handle's live session, so releasing
+/// a handle must free its slot just like an explicit `CloseSession`.
+#[test]
+fn test_open_session_freed_by_handle_drop_smoke() {
+    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let rev = Some(DdiApiRev { major: 1, minor: 0 });
+
+        let open_on_new_handle = |ddi: &DdiTest| {
+            let handle = ddi.open_dev(path).unwrap();
+            let (cred, pub_key) = encrypt_userid_pin_for_open_session(
+                &handle,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
+            let resp = helper_open_session(&handle, None, rev, cred, pub_key);
+            (handle, resp)
+        };
+
+        // Fill every session slot, each on its own handle.
+        let mut sessions = Vec::new();
+        for _ in 0..MAX_SESSIONS {
+            let (handle, resp) = open_on_new_handle(ddi);
+            resp.expect("OpenSession must succeed until the table is full");
+            sessions.push(handle);
+        }
+
+        // The table is now full: a further OpenSession is rejected.
+        let (spare_handle, resp) = open_on_new_handle(ddi);
+        assert!(
+            matches!(
+                resp,
+                Err(DdiError::DdiStatus(DdiStatus::VaultSessionLimitReached))
+            ),
+            "OpenSession on a full table must return VaultSessionLimitReached, got {:?}",
+            resp
+        );
+
+        // Dropping a session handle closes its session on Drop, which
+        // frees the slot -- no explicit CloseSession required.
+        let dropped_handle = sessions.pop().unwrap();
+        drop(dropped_handle);
+
+        // The freed slot now admits a new session.
+        let (cred, pub_key) = encrypt_userid_pin_for_open_session(
+            &spare_handle,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
+        let resp = helper_open_session(&spare_handle, None, rev, cred, pub_key)
+            .expect("OpenSession must succeed after a handle drop frees a slot");
+        assert_eq!(resp.hdr.status, DdiStatus::Success);
+    });
+}
+
 /// Build an OpenSession request body that the host MBOR codec will
 /// accept (correct field lengths and a wire-valid `DdiDerPublicKey`),
 /// for use by tests that exercise pre-crypto fail-fast paths.

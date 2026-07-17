@@ -612,6 +612,25 @@ impl CngEccPublicKey {
         })
     }
 
+    /// Returns `true` iff the affine point (`x`, `y`) is a valid, non-identity
+    /// point that lies on `curve`.
+    ///
+    /// `x` and `y` are big-endian coordinate bytes. The caller is expected to
+    /// have already range-checked the coordinates
+    /// (see [`EccCurve::coordinate_in_range`]); this method answers only the
+    /// on-curve question needed for ECDH point validation (FIPS 186-5 /
+    /// SP 800-56A). CNG validates the public point on import, so an import
+    /// failure means the point is not a valid on-curve point and yields
+    /// `Ok(false)`.
+    ///
+    /// # Errors
+    ///
+    /// Never returns `Err`; the signature mirrors the OpenSSL backend so the
+    /// callers are platform-agnostic.
+    pub fn is_on_curve(curve: EccCurve, x: &[u8], y: &[u8]) -> Result<bool, CryptoError> {
+        Ok(Self::from_coordinates(curve, x, y).is_ok())
+    }
+
     /// Returns the ECDSA key handle for verification operations.
     pub(super) fn ecdsa_handle(&self) -> BCRYPT_KEY_HANDLE {
         self.ecdsa_key.handle()

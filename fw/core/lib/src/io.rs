@@ -43,6 +43,7 @@
 //! reflects the slot teardown.
 
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
+use azihsm_fw_ddi_mbor_types::DdiOp;
 use azihsm_fw_ddi_mbor_types::DdiReqHdr;
 use azihsm_fw_ddi_tbor::RequestView as TborRequestView;
 use azihsm_fw_hsm_oob::OobPtr;
@@ -252,7 +253,9 @@ impl<P: HsmPal> Hsm<P> {
                 session_ctrl,
                 params.session_flags,
                 params.sqe_session_id,
-            ) {
+            )
+            .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
+            {
                 Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
                 Err(e) => Err(e),
             };
@@ -479,6 +482,40 @@ impl<P: HsmPal> Hsm<P> {
         Ok(())
     }
 
+    /// Central session-liveness gate for session-referencing MBOR
+    /// commands.
+    ///
+    /// [`Self::validate_session`] only checks the SQE flag / id *shape*;
+    /// it does not confirm that `sess_id` names a live session.  The FW
+    /// is the trust boundary — the host is untrusted and can bypass the
+    /// host-side file-handle ↔ session binding — so every command that
+    /// operates on an existing session must confirm the referenced slot
+    /// is usable, or a forged `sess_id` would grant unauthenticated use
+    /// of a victim partition's keys and credential.
+    ///
+    /// The decision is split into two pure helpers so the policy is unit
+    /// testable without a PAL (the host layer rejects a mismatched
+    /// `sess_id` before it ever reaches the device, so this gate cannot
+    /// be exercised end-to-end with a forged id):
+    /// [`session_ctrl_requires_live_session`] selects which commands need
+    /// a live slot, and [`classify_session_state`] maps the slot state to
+    /// the protocol status.
+    ///
+    /// Mirrors the mcr-hsm central check in `validate_req_hdr`.
+    fn validate_session_live(
+        &self,
+        io: &P::Io,
+        hdr: &DdiReqHdr,
+        session_ctrl: SessionCtrl,
+    ) -> HsmResult<()> {
+        if !session_ctrl_requires_live_session(session_ctrl, hdr.op) {
+            return Ok(());
+        }
+        let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
+        let state = self.pal().session_state(io, HsmSessId::from(sess_id));
+        classify_session_state(session_ctrl, state)
+    }
+
     /// TBOR-side analogue of [`Self::validate_session`] that checks
     /// only the SQE-flag shape against the opcode's expected
     /// [`SessionCtrl`].
@@ -524,4 +561,117 @@ struct IoSqeParams {
     /// `None` when `oob_len == 0`.  Threaded to TBOR handlers that pull
     /// bulk side-band data (e.g. PartFinal's PTA cert chain).
     oob: Option<OobPtr>,
+}
+
+/// Whether an MBOR command referenced by `session_ctrl` / `op` requires
+/// a usable (live) session slot before dispatch.
+///
+/// - `NoSession` / `Open` reference no existing slot → `false`.
+/// - `Close` tears down an existing slot → `true`.
+/// - `InSession` operates within a slot → `true`, **except**
+///   [`DdiOp::ReopenSession`], which is classified `InSession` but by
+///   design re-keys a renegotiation-pending (non-Active) slot and
+///   validates that state in its own handler.
+fn session_ctrl_requires_live_session(session_ctrl: SessionCtrl, op: DdiOp) -> bool {
+    match session_ctrl {
+        SessionCtrl::InSession => op != DdiOp::ReopenSession,
+        SessionCtrl::Close => true,
+        SessionCtrl::NoSession | SessionCtrl::Open => false,
+    }
+}
+
+/// Maps a referenced slot's [`HsmSessionState`] to the protocol status,
+/// mirroring the mcr-hsm `validate_req_hdr` gate:
+///
+/// - `Active` → proceed.
+/// - `NeedsRenegotiation` → `CloseSession` may still tear the slot down
+///   (post-migration cleanup); any other in-session op must renegotiate
+///   first ([`HsmError::SessionNeedsRenegotiation`]).
+/// - `Pending` / `Invalid` → [`HsmError::SessionNotFound`] (the slot is
+///   free, destroyed, forged, or mid-handshake — not a usable session).
+fn classify_session_state(session_ctrl: SessionCtrl, state: HsmSessionState) -> HsmResult<()> {
+    match state {
+        HsmSessionState::Active => Ok(()),
+        HsmSessionState::NeedsRenegotiation if session_ctrl == SessionCtrl::Close => Ok(()),
+        HsmSessionState::NeedsRenegotiation => Err(HsmError::SessionNeedsRenegotiation),
+        HsmSessionState::Pending | HsmSessionState::Invalid => Err(HsmError::SessionNotFound),
+    }
+}
+
+#[cfg(test)]
+mod session_gate_tests {
+    use super::*;
+
+    #[test]
+    fn no_session_and_open_never_require_a_live_slot() {
+        for op in [DdiOp::GetApiRev, DdiOp::OpenSession, DdiOp::EccSign] {
+            assert!(!session_ctrl_requires_live_session(
+                SessionCtrl::NoSession,
+                op
+            ));
+            assert!(!session_ctrl_requires_live_session(SessionCtrl::Open, op));
+        }
+    }
+
+    #[test]
+    fn in_session_requires_live_slot_except_reopen() {
+        assert!(session_ctrl_requires_live_session(
+            SessionCtrl::InSession,
+            DdiOp::EcdhKeyExchange
+        ));
+        assert!(session_ctrl_requires_live_session(
+            SessionCtrl::InSession,
+            DdiOp::ChangePin
+        ));
+        // ReopenSession re-keys a renegotiation-pending slot; it is not
+        // gated centrally.
+        assert!(!session_ctrl_requires_live_session(
+            SessionCtrl::InSession,
+            DdiOp::ReopenSession
+        ));
+    }
+
+    #[test]
+    fn close_always_requires_the_slot_to_be_checked() {
+        assert!(session_ctrl_requires_live_session(
+            SessionCtrl::Close,
+            DdiOp::CloseSession
+        ));
+    }
+
+    #[test]
+    fn active_slot_is_accepted_for_every_gated_ctrl() {
+        for ctrl in [SessionCtrl::InSession, SessionCtrl::Close] {
+            assert!(classify_session_state(ctrl, HsmSessionState::Active).is_ok());
+        }
+    }
+
+    #[test]
+    fn in_session_on_renego_slot_must_renegotiate() {
+        assert_eq!(
+            classify_session_state(SessionCtrl::InSession, HsmSessionState::NeedsRenegotiation),
+            Err(HsmError::SessionNeedsRenegotiation)
+        );
+    }
+
+    #[test]
+    fn close_on_renego_slot_is_allowed() {
+        // A renegotiation-pending slot can still be torn down without a
+        // prior reopen (mirrors mcr-hsm's reopen/close carve-out).
+        assert!(
+            classify_session_state(SessionCtrl::Close, HsmSessionState::NeedsRenegotiation).is_ok()
+        );
+    }
+
+    #[test]
+    fn pending_and_invalid_slots_are_not_found_for_every_gated_ctrl() {
+        for ctrl in [SessionCtrl::InSession, SessionCtrl::Close] {
+            for state in [HsmSessionState::Pending, HsmSessionState::Invalid] {
+                assert_eq!(
+                    classify_session_state(ctrl, state),
+                    Err(HsmError::SessionNotFound)
+                );
+            }
+        }
+    }
 }

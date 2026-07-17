@@ -554,6 +554,7 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::SESSION_ENC_KEY_ID => part.se_key_id(),
             PartPropId::LOCAL_MK_KEY_ID => part.local_mk_key_id(),
             PartPropId::EPHEMERAL_MK_KEY_ID => part.ephemeral_mk_key_id(),
+            PartPropId::SD_MK_KEY_ID => part.sd_mk_key_id(),
             _ => return Err(HsmError::UnsupportedCmd),
         };
         key.map(u16::from).ok_or(HsmError::PartPropNotFound)
@@ -568,6 +569,7 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::ESTABLISH_CRED_KEY_ID => part.set_ec_key_id(Some(key)),
             PartPropId::LOCAL_MK_KEY_ID => part.set_local_mk_key_id(Some(key)),
             PartPropId::EPHEMERAL_MK_KEY_ID => part.set_ephemeral_mk_key_id(Some(key)),
+            PartPropId::SD_MK_KEY_ID => part.set_sd_mk_key_id(Some(key)),
             // Raw mechanism: UPS / PTA write-once is upper-layer policy
             // (`part_state::part_set_ups_key_id` / `part_set_pta_key_id`); the
             // undo log restores a prior id through this raw path.
@@ -595,6 +597,7 @@ impl HsmPartitionManager for UnoHsmPal {
         let part = PartStore::partition(io.pid())?;
         match id {
             PartPropId::BK3_INITIALIZED => Ok(part.bk3_initialized()),
+            PartPropId::SD_INITIALIZED => Ok(part.sd_initialized()),
             _ => Err(HsmError::UnsupportedCmd),
         }
     }
@@ -614,6 +617,14 @@ impl HsmPartitionManager for UnoHsmPal {
                     return Err(HsmError::Bk3AlreadyInitialized);
                 }
                 part.set_bk3_initialized(true);
+                Ok(())
+            }
+            PartPropId::SD_INITIALIZED => {
+                // One-shot claim; `false` permitted for undo rollback.
+                if value && part.sd_initialized() {
+                    return Err(HsmError::SdAlreadyInitialized);
+                }
+                part.set_sd_initialized(value);
                 Ok(())
             }
             _ => Err(HsmError::UnsupportedCmd),
@@ -709,6 +720,7 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::ESTABLISH_CRED_KEY_ID => p.set_ec_key_id(None),
             PartPropId::LOCAL_MK_KEY_ID => p.set_local_mk_key_id(None),
             PartPropId::EPHEMERAL_MK_KEY_ID => p.set_ephemeral_mk_key_id(None),
+            PartPropId::SD_MK_KEY_ID => p.set_sd_mk_key_id(None),
             // AbsentUntilSet byte fields zeroize and reset to absent.
             PartPropId::CREDENTIAL => p.clear_credential(),
             PartPropId::POTA_THUMBPRINT => p.clear_pota_thumbprint(),
