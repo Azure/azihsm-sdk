@@ -30,6 +30,9 @@ use super::*;
 /// [`init_bk3`](super::init_bk3).
 const BK3_LEN: usize = 48;
 
+/// Length of a raw P-384 identity public key (`x || y`, 48-byte coordinates).
+const P384_PUB_RAW_LEN: usize = 2 * 48;
+
 // ── Labels and metadata ──────────────────────────────────────────────
 
 /// KBKDF label for the BK3 session key derivation.
@@ -370,9 +373,16 @@ async fn verify_pota_signature<P: HsmPal>(
     signer_pub_key_raw: &DmaBuf,
     signature_raw: &DmaBuf,
 ) -> HsmResult<()> {
-    // `part_id_pub_key` returns the raw `x ‖ y` form (96 B); prepend
-    // the SEC1 `0x04` uncompressed-point tag in a fresh DMA buffer.
-    let id_pub_key_len = crate::part_state::part_id_pub_key(pal, io)?.len();
+    // `part_id_pub_key` returns the raw `x ‖ y` form (96 B) in natural
+    // big-endian; prepend the SEC1 `0x04` uncompressed-point tag to build the
+    // `0x04 ‖ x_be ‖ y_be` form the host (and X.509 leaf) signs over.
+    let id_pub_key_len = {
+        let pk = crate::part_state::part_id_pub_key(pal, io)?;
+        if pk.len() != P384_PUB_RAW_LEN {
+            return Err(HsmError::EccInvalidKeyLength);
+        }
+        pk.len()
+    };
     let id_uncompressed = pal.dma_alloc(io, id_pub_key_len + 1)?;
     id_uncompressed[0] = 0x04;
     {

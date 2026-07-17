@@ -55,12 +55,10 @@ pub(crate) fn handle<'p, P: HsmPal>(
     let mfgr_svn = part_state::part_mfgr_svn(pal);
     let pid = part_state::part_id(pal, io)?;
 
-    // The identity public key is stored PKA-native **little-endian** (`x_le ‖
-    // y_le`, like all PAL key material). Reverse each coordinate to the natural
-    // **big-endian** SEC1 order for the host, matching the get-cert-chain leaf
-    // certificate and the `EstablishCredential` POTA check (which hashes the
-    // big-endian SEC1 form). Byte-order conversion for host-facing key material
-    // lives in the handler, not the PAL.
+    // The identity public key is returned in natural big-endian SEC1 order by
+    // `part_id_pub_key` (normalized at the PAL), which is exactly what the host
+    // wants — matching the get-cert-chain leaf and the `EstablishCredential`
+    // POTA check. Copy it through directly.
     let key_len = {
         let pk = part_state::part_id_pub_key(pal, io)?;
         if pk.len() != P384_PUB_RAW_LEN {
@@ -68,14 +66,10 @@ pub(crate) fn handle<'p, P: HsmPal>(
         }
         pk.len()
     };
-    let coord_len = key_len / 2;
-    let pid_pub_key_be = pal.dma_alloc(io, key_len)?;
+    let pid_pub_key = pal.dma_alloc(io, key_len)?;
     {
         let pk = part_state::part_id_pub_key(pal, io)?;
-        for i in 0..coord_len {
-            pid_pub_key_be[i] = pk[coord_len - 1 - i];
-            pid_pub_key_be[coord_len + i] = pk[2 * coord_len - 1 - i];
-        }
+        pid_pub_key[..key_len].copy_from_slice(&pk[..key_len]);
     }
 
     let resp = pal.dma_alloc_var(io, |buf| {
@@ -86,7 +80,7 @@ pub(crate) fn handle<'p, P: HsmPal>(
             .owner_svn(U64::new(owner_svn))?
             .mfgr_svn(U64::new(mfgr_svn))?
             .pid(pid)?
-            .pid_pub_key(pid_pub_key_be)?
+            .pid_pub_key(pid_pub_key)?
             .finish();
         Ok(frame.as_bytes().len())
     })?;

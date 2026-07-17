@@ -17,7 +17,7 @@
 //! | `IO_SQ[index]`  | 64B SQE           | Submission queue entry (read-only)   |
 //! | `IO_CQ[index]`  | 16B CQE           | Completion queue entry (write)       |
 //! | `IO_META[index]` | 8B metadata      | Controller/queue IDs from IIC recv   |
-//! | `DTCM_IO_BUF[index]` | 2KB fmem     | Fast DTCM workspace buffer           |
+//! | `DTCM_IO_BUF[index]` | 1.5KB fmem   | Fast DTCM workspace buffer           |
 //! | `SRAM_IO_BUF[index]` | 8KB smem     | Large SRAM workspace buffer          |
 //!
 //! The IIC controller DMAs incoming SQE data directly into `IO_SQ[index]`
