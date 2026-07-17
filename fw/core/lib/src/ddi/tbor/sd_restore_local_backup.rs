@@ -42,8 +42,8 @@
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupResp;
-use azihsm_fw_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_fw_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_fw_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -95,7 +95,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // Allocate the two fixed-size response backups in the IO scope so they
     // survive the crypto scratch allocator's reset.
     let pok_local_out = pal.dma_alloc(io, MASKED_SD_LEN)?;
-    let sd_mk_out = pal.dma_alloc(io, LOCAL_MK_BACKUP_LEN)?;
+    let sd_mk_out = pal.dma_alloc(io, SD_MK_BACKUP_LEN)?;
 
     pal.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
         let (svn, owner) = sd_backup::platform_svn_owner(pal)?;
@@ -104,7 +104,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // (decrypted) in place without borrowing the request buffer across
         // the re-mask / vault steps.
         let pok_scratch = alloc.dma_alloc(MASKED_SD_LEN)?;
-        let mk_scratch = alloc.dma_alloc(LOCAL_MK_BACKUP_LEN)?;
+        let mk_scratch = alloc.dma_alloc(SD_MK_BACKUP_LEN)?;
         {
             let req = TborSdRestoreLocalBackupReq::decode(&*req_buf)?;
             pok_scratch.copy_from_slice(req.pok_local_backup());

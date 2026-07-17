@@ -85,10 +85,15 @@ const _: () = assert!(MASKED_SD_LEN == 180);
 pub const POK_REMOTE_BACKUP_LEN: usize = 97 + (48 + 16);
 const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
 
-// `sd_mk_backup` is a `local_mk`-style masking-key backup envelope; the
-// derive needs an integer literal on the field, so the length is spelled
-// out as `164` and pinned against the canonical value here.
-const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+/// Exact on-the-wire length of the **SD masking-key backup** envelope
+/// (`sd_mk_backup`): the 32-byte SD masking key (`SDMK`) wrapped as a
+/// `local_mk`-style AEAD-GCM-256 masked-key envelope.  Equal to
+/// [`LOCAL_MK_BACKUP_LEN`] because both wrap a 32-byte key in the same
+/// envelope format, but named SD-specifically — and re-exported by the
+/// rest of the SD backup family — so the intent is explicit at each sizing
+/// site and the two can diverge without silent copy/paste breakage.
+pub const SD_MK_BACKUP_LEN: usize = LOCAL_MK_BACKUP_LEN;
+const _: () = assert!(SD_MK_BACKUP_LEN == 164);
 
 /// `SdCreateRemoteBackup` request schema.
 #[tbor(opcode = 0x0A)]

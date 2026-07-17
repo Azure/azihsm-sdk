@@ -25,8 +25,8 @@ use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::aead::mask;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
-use azihsm_fw_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_fw_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_fw_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -123,7 +123,7 @@ pub(super) async fn derive_sdbmk<'a, P: HsmPal>(
 }
 
 /// Mask `sdmk` under `sdbmk` into `out`, producing the `sd_mk_backup`
-/// envelope (exactly [`LOCAL_MK_BACKUP_LEN`], 164 B).
+/// envelope (exactly [`SD_MK_BACKUP_LEN`], 164 B).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn mask_sd_mk_backup<P: HsmPal>(
     pal: &P,
@@ -155,7 +155,7 @@ pub(super) async fn mask_sd_mk_backup<P: HsmPal>(
         Some(out),
     )
     .await?;
-    if n != LOCAL_MK_BACKUP_LEN {
+    if n != SD_MK_BACKUP_LEN {
         return Err(HsmError::InternalError);
     }
     Ok(())
