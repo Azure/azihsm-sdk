@@ -199,7 +199,11 @@ fn pta_pub_from_csr(csr: &[u8]) -> [u8; SEC1_PUB_LEN] {
     let (_, _algorithm, after_algorithm) = der_tlv(spki);
     let (tag, bit_string, _) = der_tlv(after_algorithm);
     assert_eq!(tag, 0x03, "subjectPublicKey must be a BIT STRING");
-    let point = &bit_string[1..]; // drop the unused-bits octet
+    // Drop the leading unused-bits octet; `get` avoids an OOB slice on a
+    // truncated BIT STRING.
+    let point = bit_string
+        .get(1..)
+        .expect("BIT STRING missing unused-bits octet");
     assert_eq!(point.len(), SEC1_PUB_LEN, "P-384 uncompressed point");
     assert_eq!(point[0], 0x04, "uncompressed point tag");
     point.try_into().expect("SEC1 point")

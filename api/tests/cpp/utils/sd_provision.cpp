@@ -293,6 +293,13 @@ class CaKey
         {
             return {};
         }
+        raw.resize(sig_len);
+        // A P-384 ECDSA signature is raw r‖s, 48 bytes each.
+        if (raw.size() < 96)
+        {
+            ADD_FAILURE() << "BCryptSignHash returned " << raw.size() << " bytes, expected 96";
+            return {};
+        }
         // Raw r‖s (48 bytes each) → DER SEQUENCE { INTEGER r, INTEGER s }.
         Bytes r = der_int(raw.data(), 48);
         Bytes s = der_int(raw.data() + 48, 48);
