@@ -97,6 +97,8 @@ set(SOURCE
     algo/kdf/hkdf_tests.cpp
     algo/kdf/kbkdf_tests.cpp
     algo/sealing/keygen_tests.cpp
+    sd/create_backup_tests.cpp
+    sd/reseal_tests.cpp
     resiliency/init_stress_tests.cpp
     resiliency/aes_stress_tests.cpp
     resiliency/ecc_stress_tests.cpp

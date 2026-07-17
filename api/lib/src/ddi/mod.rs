@@ -27,14 +27,22 @@ pub(crate) use aes_xts_key::*;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::*;
 use azihsm_ddi_mbor_types::*;
+/// Maximum number of certificates in one SD-evidence certificate chain.
+pub use azihsm_ddi_tbor_types::EVIDENCE_CHAIN_MAX_CERTS;
 /// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
 pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Exact length of the local (masked) security-domain backup.
+pub use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 /// Maximum number of certificates in a `part_final` PTA chain.
 pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Exact length of the remote partition-owner-key backup (`SdCreate`/`SdReseal`).
+pub use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
 pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+/// Exact length of the security-domain masking-key backup envelope.
+pub use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::TborStatus;
 pub(crate) use descriptor_utils::*;
 pub(crate) use dev::*;

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <scope_guard.hpp>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -202,9 +203,40 @@ Bytes der_ca_extensions(const uint8_t ski[20], const uint8_t *aki)
     return tlv(0xA3, tlv(0x30, list));
 }
 
+/// The `[3] EXPLICIT` extensions block for an **end-entity** leaf
+/// certificate: BasicConstraints (empty SEQUENCE, so `cA` defaults FALSE),
+/// KeyUsage (`digitalSignature` only), SubjectKeyIdentifier, and (for a
+/// non-self-signed cert) an AuthorityKeyIdentifier referencing the issuer
+/// SKI.
+Bytes der_leaf_extensions(const uint8_t ski[20], const uint8_t *aki)
+{
+    Bytes list;
+    // BasicConstraints: empty SEQUENCE (cA defaults to FALSE).
+    append(list, der_ext(kOidBasicConstraints, true, tlv(0x30, Bytes{})));
+    // KeyUsage: BIT STRING with digitalSignature (bit 0) → { 0x07, 0x80 }
+    // (7 unused trailing bits, bit 0 set).
+    append(list, der_ext(kOidKeyUsage, true, tlv(0x03, Bytes{ 0x07, 0x80 })));
+    // SubjectKeyIdentifier: OCTET STRING of the 20-byte key id.
+    append(list, der_ext(kOidSki, false, tlv(0x04, Bytes(ski, ski + 20))));
+    if (aki != nullptr)
+    {
+        // AuthorityKeyIdentifier: SEQUENCE { [0] keyIdentifier }.
+        Bytes akid = tlv(0x30, tlv(0x80, Bytes(aki, aki + 20)));
+        append(list, der_ext(kOidAki, false, akid));
+    }
+    return tlv(0xA3, tlv(0x30, list));
+}
+
+} // namespace
+
 // ── Platform crypto backend (keygen / ECDSA sign / SHA-1) ────────────────────
 // The only platform-specific code: OpenSSL on Linux, BCrypt on Windows.
-
+//
+// `CaKey` is defined in the **global** namespace (not the anonymous one
+// above) so it matches the `class CaKey;` forward declaration in the
+// header: the public API hands the SATA anchor back through an opaque
+// `std::shared_ptr<CaKey>`. Its members are still only referenced from
+// this file.
 #ifdef _WIN32
 
 /// SHA-1 of `data` (RFC 5280 key-identifier method 1).
@@ -444,6 +476,9 @@ class CaKey
 
 #endif // _WIN32
 
+namespace
+{
+
 // ── Portable X.509 assembly + CSR parsing ────────────────────────────────────
 // Structure and identity mirror the Rust
 // `ddi/tbor/types/tests/harness/x509_fixture.rs` (which itself hand-assembles
@@ -455,6 +490,8 @@ constexpr const char *kRootCn = "AZIHSM POTA Root CA";
 constexpr const char *kRootSn = "POTAROOT1";
 constexpr const char *kPtaCn = "AZIHSM PTA Intermediate CA";
 constexpr const char *kPtaSn = "PTAINT001";
+constexpr const char *kLeafCn = "AZIHSM Evidence Leaf";
+constexpr const char *kLeafSn = "EVLEAF001";
 
 /// A 20-byte positive DER serial number seeded from `tag`.
 Bytes serial(uint8_t tag)
@@ -474,6 +511,43 @@ std::array<uint8_t, 20> sha1_ski(const uint8_t sec1[kSec1PubLen])
     return sha1(sec1, kSec1PubLen);
 }
 
+/// Assemble and sign a certificate from its parts and a ready-made
+/// `[3] EXPLICIT` extensions block (`extensions`), returning the DER
+/// `Certificate`. Shared by the CA and leaf builders.
+Bytes build_cert_der(
+    const CaKey &ca,
+    const uint8_t subject_sec1[kSec1PubLen],
+    const char *subject_cn,
+    const char *subject_sn,
+    const char *issuer_cn,
+    const char *issuer_sn,
+    uint8_t serial_tag,
+    const Bytes &extensions
+)
+{
+    Bytes sig_alg = tlv(0x30, der_oid(kOidEcdsaSha384));
+    Bytes tbs =
+        tlv(0x30,
+            concat({
+                tlv(0xA0, der_small_int(2)), // version v3
+                serial(serial_tag),
+                sig_alg,
+                der_name(issuer_cn, issuer_sn),
+                tlv(0x30, concat({ der_gtime(kNotBefore), der_gtime(kNotAfter) })),
+                der_name(subject_cn, subject_sn),
+                der_spki(subject_sec1),
+                extensions,
+            }));
+
+    Bytes sig = ca.sign(tbs);
+    if (sig.empty())
+    {
+        return {};
+    }
+    Bytes sig_value = tlv(0x03, concat({ Bytes{ 0x00 }, sig }));
+    return tlv(0x30, concat({ tbs, sig_alg, sig_value }));
+}
+
 /// Assemble a signed CA certificate (`cA=TRUE`, `keyCertSign`) from its parts.
 /// `aki` is the issuer's SKI for a non-self-signed cert, or null for a root.
 Bytes build_ca_cert(
@@ -488,28 +562,39 @@ Bytes build_ca_cert(
 )
 {
     std::array<uint8_t, 20> ski = sha1_ski(subject_sec1);
+    return build_cert_der(
+        ca,
+        subject_sec1,
+        subject_cn,
+        subject_sn,
+        issuer_cn,
+        issuer_sn,
+        serial_tag,
+        der_ca_extensions(ski.data(), aki)
+    );
+}
 
-    Bytes sig_alg = tlv(0x30, der_oid(kOidEcdsaSha384));
-    Bytes tbs =
-        tlv(0x30,
-            concat({
-                tlv(0xA0, der_small_int(2)), // version v3
-                serial(serial_tag),
-                sig_alg,
-                der_name(issuer_cn, issuer_sn),
-                tlv(0x30, concat({ der_gtime(kNotBefore), der_gtime(kNotAfter) })),
-                der_name(subject_cn, subject_sn),
-                der_spki(subject_sec1),
-                der_ca_extensions(ski.data(), aki),
-            }));
-
-    Bytes sig = ca.sign(tbs);
-    if (sig.empty())
-    {
-        return {};
-    }
-    Bytes sig_value = tlv(0x03, concat({ Bytes{ 0x00 }, sig }));
-    return tlv(0x30, concat({ tbs, sig_alg, sig_value }));
+/// Assemble a signed **end-entity** leaf certificate (`cA=false`,
+/// `digitalSignature`) carrying `subject_sec1`, subject `kLeafCn/kLeafSn`,
+/// issued by `kRootCn/kRootSn`. `aki` references the issuer's SKI.
+Bytes build_leaf_cert(
+    const CaKey &ca,
+    const uint8_t subject_sec1[kSec1PubLen],
+    const uint8_t *aki,
+    uint8_t serial_tag
+)
+{
+    std::array<uint8_t, 20> ski = sha1_ski(subject_sec1);
+    return build_cert_der(
+        ca,
+        subject_sec1,
+        kLeafCn,
+        kLeafSn,
+        kRootCn,
+        kRootSn,
+        serial_tag,
+        der_leaf_extensions(ski.data(), aki)
+    );
 }
 
 /// Build a self-signed POTA Root CA certificate (DER).
@@ -538,6 +623,29 @@ struct PtaChain
 PtaChain make_pta_chain(const CaKey &pota_ca, const uint8_t pta_sec1[kSec1PubLen])
 {
     return PtaChain{ build_root(pota_ca), build_pta_intermediate(pta_sec1, pota_ca) };
+}
+
+/// A generated root -> leaf attestation-evidence chain, DER-encoded.
+/// `root_der` is a self-signed CA certificate; `leaf_der` is the
+/// end-entity certificate signed by that root whose subject public key is
+/// the report signer.
+struct GeneratedChain
+{
+    Bytes root_der;
+    Bytes leaf_der;
+};
+
+/// Build a root -> leaf chain: a self-signed root CA (`ca`) certifying an
+/// end-entity leaf carrying `leaf_pub_raw` (raw `X ‖ Y`, the report signer).
+/// Pass a caller-controlled `ca` (e.g. the SATA anchor key) to anchor the
+/// chain to a known public key; otherwise pass a fresh `CaKey::generate()`.
+GeneratedChain make_chain(const CaKey &ca, const uint8_t leaf_pub_raw[kRawPubLen])
+{
+    uint8_t leaf_sec1[kSec1PubLen];
+    leaf_sec1[0] = 0x04;
+    std::memcpy(leaf_sec1 + 1, leaf_pub_raw, kRawPubLen);
+    std::array<uint8_t, 20> aki = sha1_ski(ca.sec1().data());
+    return GeneratedChain{ build_root(ca), build_leaf_cert(ca, leaf_sec1, aki.data(), 3) };
 }
 
 /// Read one DER TLV: on success advances `pos` past it and yields the tag +
@@ -673,6 +781,34 @@ std::vector<uint8_t> build_part_policy(const uint8_t pota_raw[kRawPubLen])
     {
         policy[kOffInfo + i] = 0xAB;
     }
+    return policy;
+}
+
+/// Build a 484-byte backing-partition `PartPolicy` image: start from the
+/// unified POTA-anchored policy, then overwrite the SATA slot with the real
+/// anchor key and record this partition (`pid` / `pid_pub`) as the backup
+/// backing partition. Mirrors the Rust `backing_part_policy` fixture.
+std::vector<uint8_t> build_backing_part_policy(
+    const uint8_t pid[16],
+    const uint8_t pid_pub[kRawPubLen],
+    const uint8_t sata_raw[kRawPubLen],
+    const uint8_t pota_raw[kRawPubLen]
+)
+{
+    constexpr size_t kOffSata = 102;
+    constexpr size_t kOffBackupPartId = 302;
+    constexpr size_t kOffBackupPartPubKey = 318;
+    constexpr size_t kBackupPartIdLen = 16;
+
+    std::vector<uint8_t> policy = build_part_policy(pota_raw);
+
+    // Overwrite the placeholder SATA key with the anchor's real P-384 key.
+    write_key_slot(policy, kOffSata, sata_raw);
+
+    // Name this partition as the backup backing partition.
+    std::memcpy(&policy[kOffBackupPartId], pid, kBackupPartIdLen);
+    write_key_slot(policy, kOffBackupPartPubKey, pid_pub);
+
     return policy;
 }
 
@@ -815,6 +951,296 @@ azihsm_handle provision_sd_co_session(azihsm_handle part_handle)
     }
 
     return session;
+}
+
+SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
+{
+    // 1. Bootstrap a CO session under the default PSK and rotate it.
+    azihsm_handle bootstrap = open_co_session(part_handle, nullptr);
+    if (bootstrap == 0)
+    {
+        return {};
+    }
+    azihsm_buffer psk_buf{ const_cast<uint8_t *>(kRotatedCoPsk.data()),
+                           static_cast<uint32_t>(kRotatedCoPsk.size()) };
+    auto rotate_err = azihsm_sess_ex_psk_change(bootstrap, &psk_buf);
+    azihsm_sess_close(bootstrap);
+    if (rotate_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "azihsm_sess_ex_psk_change failed: " << rotate_err;
+        return {};
+    }
+
+    // 2. Reopen the CO session under the rotated PSK for provisioning.
+    azihsm_handle session = open_co_session(part_handle, &psk_buf);
+    if (session == 0)
+    {
+        return {};
+    }
+    auto fail = [&session](const char *msg, azihsm_status err) -> SdBackingContext {
+        ADD_FAILURE() << msg << ": " << err;
+        azihsm_sess_close(session);
+        return {};
+    };
+
+    // 3. Materialize the partition identity (PID + raw public key) before
+    // PartInit; the backing policy names this partition as the backup
+    // backing partition. Both properties use the standard size probe.
+    auto read_part_prop =
+        [part_handle](azihsm_part_prop_id id, std::vector<uint8_t> &out) -> azihsm_status {
+        azihsm_part_prop prop{ id, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part_handle, &prop);
+        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            return err;
+        }
+        out.resize(prop.len);
+        prop.val = out.data();
+        return azihsm_part_get_prop(part_handle, &prop);
+    };
+    std::vector<uint8_t> pid;
+    std::vector<uint8_t> pid_pub;
+    if (read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PID, pid) != AZIHSM_STATUS_SUCCESS ||
+        pid.size() != 16)
+    {
+        return fail("PartInfo PID query failed", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+    if (read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY, pid_pub) != AZIHSM_STATUS_SUCCESS ||
+        pid_pub.size() != kRawPubLen)
+    {
+        return fail("PartInfo PID public key query failed", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+
+    // 4. Mint the POTA anchor (for the PTA chain) and the SATA anchor (which
+    // roots the partition-owner evidence chain), then build the backing
+    // policy. The SATA key is handed back to the caller as an opaque handle.
+    std::unique_ptr<CaKey> pota_ca = CaKey::generate();
+    if (!pota_ca)
+    {
+        return fail("POTA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+    std::shared_ptr<CaKey> sata_key = CaKey::generate();
+    if (!sata_key)
+    {
+        return fail("SATA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+    uint8_t pota_raw[kRawPubLen];
+    std::memcpy(pota_raw, pota_ca->sec1().data() + 1, kRawPubLen);
+    uint8_t sata_raw[kRawPubLen];
+    std::memcpy(sata_raw, sata_key->sec1().data() + 1, kRawPubLen);
+    std::vector<uint8_t> policy =
+        build_backing_part_policy(pid.data(), pid_pub.data(), sata_raw, pota_raw);
+
+    // Deterministic provisioning fixtures (thumbprints are stored, not
+    // chain-validated in this flow).
+    std::array<uint8_t, kMachSeedLen> mach_seed{};
+    for (size_t i = 0; i < mach_seed.size(); ++i)
+    {
+        mach_seed[i] = static_cast<uint8_t>(0x40 + i);
+    }
+    std::array<uint8_t, kThumbprintLen> pota_tp{};
+    std::array<uint8_t, kThumbprintLen> sata_tp{};
+    for (size_t i = 0; i < kThumbprintLen; ++i)
+    {
+        pota_tp[i] = static_cast<uint8_t>(0x80 ^ i);
+        sata_tp[i] = static_cast<uint8_t>(0x40 ^ i);
+    }
+
+    azihsm_buffer mach_buf{ mach_seed.data(), static_cast<uint32_t>(mach_seed.size()) };
+    azihsm_buffer policy_buf{ policy.data(), static_cast<uint32_t>(policy.size()) };
+    azihsm_buffer pota_buf{ pota_tp.data(), static_cast<uint32_t>(pota_tp.size()) };
+    azihsm_buffer sata_buf{ sata_tp.data(), static_cast<uint32_t>(sata_tp.size()) };
+    azihsm_sess_ex_part_init_params init_params{};
+    init_params.mach_seed = &mach_buf;
+    init_params.part_policy = &policy_buf;
+    init_params.pota_thumbprint = &pota_buf;
+    init_params.sata_thumbprint = &sata_buf;
+    init_params.sapota_thumbprint = nullptr;
+
+    // 5. PartInit: probe for the CSR/report sizes, then retrieve them.
+    azihsm_buffer csr{ nullptr, 0 };
+    azihsm_buffer report{ nullptr, 0 };
+    auto probe = azihsm_sess_ex_part_init(session, &init_params, &csr, &report);
+    if (probe != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        return fail("PartInit size probe unexpected status", probe);
+    }
+    std::vector<uint8_t> csr_bytes(csr.len);
+    std::vector<uint8_t> report_bytes(report.len);
+    csr = { csr_bytes.data(), static_cast<uint32_t>(csr_bytes.size()) };
+    report = { report_bytes.data(), static_cast<uint32_t>(report_bytes.size()) };
+    auto init_err = azihsm_sess_ex_part_init(session, &init_params, &csr, &report);
+    if (init_err != AZIHSM_STATUS_SUCCESS)
+    {
+        return fail("PartInit failed", init_err);
+    }
+    csr_bytes.resize(csr.len); // shrink to the bytes actually written
+
+    // 6. Build the POTA-anchored root -> PTA chain from the CSR public key.
+    uint8_t pta_sec1[kSec1PubLen];
+    if (!pta_pub_from_csr(csr_bytes.data(), csr_bytes.size(), pta_sec1))
+    {
+        return fail("failed to parse PTA public key from CSR", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+    PtaChain chain = make_pta_chain(*pota_ca, pta_sec1);
+    if (chain.root_der.empty() || chain.pta_der.empty())
+    {
+        return fail("failed to build PTA certificate chain", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+
+    // 7. PartFinal: re-supply the policy + chain (root -> PTA) out of band.
+    azihsm_buffer chain_bufs[2] = {
+        { chain.root_der.data(), static_cast<uint32_t>(chain.root_der.size()) },
+        { chain.pta_der.data(), static_cast<uint32_t>(chain.pta_der.size()) },
+    };
+    azihsm_sess_ex_part_final_params final_params{};
+    final_params.part_policy = &policy_buf;
+    final_params.pta_cert_chain = chain_bufs;
+    final_params.pta_cert_chain_len = 2;
+    final_params.prev_local_mk_backup = nullptr;
+
+    azihsm_buffer mk_backup{ nullptr, 0 };
+    auto fin_probe = azihsm_sess_ex_part_final(session, &final_params, &mk_backup);
+    if (fin_probe != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        return fail("PartFinal size probe unexpected status", fin_probe);
+    }
+    std::vector<uint8_t> mk_bytes(mk_backup.len);
+    mk_backup = { mk_bytes.data(), static_cast<uint32_t>(mk_bytes.size()) };
+    auto final_err = azihsm_sess_ex_part_final(session, &final_params, &mk_backup);
+    if (final_err != AZIHSM_STATUS_SUCCESS)
+    {
+        return fail("PartFinal failed", final_err);
+    }
+
+    return SdBackingContext{ session, std::move(policy), std::move(pid_pub), std::move(sata_key) };
+}
+
+SealingKeyMaterial sealing_key_and_report(azihsm_handle session)
+{
+    // Sealing-key props: a `Sealing`-kind P-384 secret key permitted for
+    // derivation only, matching the wire contract.
+    azihsm_key_kind kind = AZIHSM_KEY_KIND_SEALING;
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    uint32_t bits = 384;
+    uint8_t derive_val = 1;
+    azihsm_key_prop props[] = {
+        { AZIHSM_KEY_PROP_ID_KIND, &kind, sizeof(kind) },
+        { AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) },
+        { AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) },
+        { AZIHSM_KEY_PROP_ID_DERIVE, &derive_val, sizeof(derive_val) },
+    };
+    azihsm_key_prop_list prop_list{ props,
+                                    static_cast<uint32_t>(sizeof(props) / sizeof(props[0])) };
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_SD_SEALING_KEY_GEN;
+    algo.params = nullptr;
+    algo.len = 0;
+
+    azihsm_handle key = 0;
+    auto err = azihsm_key_gen(session, &algo, &prop_list, &key);
+    if (err != AZIHSM_STATUS_SUCCESS || key == 0)
+    {
+        ADD_FAILURE() << "azihsm_key_gen(sealing) failed: " << err;
+        return {};
+    }
+    auto key_guard = scope_guard::make_scope_exit([&key] { azihsm_key_delete(key); });
+
+    SealingKeyMaterial material;
+
+    // Masked private-key blob (standard size probe/fill).
+    azihsm_key_prop masked_prop{ AZIHSM_KEY_PROP_ID_MASKED_KEY, nullptr, 0 };
+    auto masked_probe = azihsm_key_get_prop(key, &masked_prop);
+    if (masked_probe != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "masked key size probe unexpected status: " << masked_probe;
+        return {};
+    }
+    material.masked.resize(masked_prop.len);
+    masked_prop.val = material.masked.data();
+    auto masked_err = azihsm_key_get_prop(key, &masked_prop);
+    if (masked_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "masked key fetch failed: " << masked_err;
+        return {};
+    }
+
+    // COSE_Sign1 KeyReport over 128 zero report-data bytes (probe/fill).
+    std::array<uint8_t, 128> report_data{};
+    azihsm_buffer report_data_buf{ report_data.data(), static_cast<uint32_t>(report_data.size()) };
+    azihsm_buffer report_buf{ nullptr, 0 };
+    auto report_probe = azihsm_generate_key_report(key, &report_data_buf, &report_buf);
+    if (report_probe != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "key report size probe unexpected status: " << report_probe;
+        return {};
+    }
+    material.report.resize(report_buf.len);
+    report_buf = { material.report.data(), static_cast<uint32_t>(material.report.size()) };
+    auto report_err = azihsm_generate_key_report(key, &report_data_buf, &report_buf);
+    if (report_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "key report fetch failed: " << report_err;
+        return {};
+    }
+    material.report.resize(report_buf.len); // shrink to the bytes written
+
+    return material;
+}
+
+void SdEvidenceHolder::wire()
+{
+    mfgr_bufs_[0] = { mfgr_root_.data(), static_cast<uint32_t>(mfgr_root_.size()) };
+    mfgr_bufs_[1] = { mfgr_leaf_.data(), static_cast<uint32_t>(mfgr_leaf_.size()) };
+    owner_bufs_[0] = { owner_root_.data(), static_cast<uint32_t>(owner_root_.size()) };
+    owner_bufs_[1] = { owner_leaf_.data(), static_cast<uint32_t>(owner_leaf_.size()) };
+    po_bufs_[0] = { po_root_.data(), static_cast<uint32_t>(po_root_.size()) };
+    po_bufs_[1] = { po_leaf_.data(), static_cast<uint32_t>(po_leaf_.size()) };
+    report_buf_ = { report_.data(), static_cast<uint32_t>(report_.size()) };
+
+    ev_.mfgr_cert_chain = { mfgr_bufs_, 2 };
+    ev_.owner_cert_chain = { owner_bufs_, 2 };
+    ev_.part_owner_cert_chain = { po_bufs_, 2 };
+    ev_.report = &report_buf_;
+}
+
+SdEvidenceHolder build_receiver_evidence(
+    const SdBackingContext &ctx,
+    const std::vector<uint8_t> &report
+)
+{
+    SdEvidenceHolder holder;
+    if (ctx.pid_pub.size() != kRawPubLen)
+    {
+        ADD_FAILURE() << "backing context PID public key must be " << kRawPubLen << " bytes";
+        return holder;
+    }
+
+    // Manufacturer and owner chains root at fresh CAs; the partition-owner
+    // chain roots at the policy SATA anchor. Every leaf certifies the same
+    // partition-identity key (the report signer).
+    std::unique_ptr<CaKey> mfgr_ca = CaKey::generate();
+    std::unique_ptr<CaKey> owner_ca = CaKey::generate();
+    if (!mfgr_ca || !owner_ca || !ctx.sata_key)
+    {
+        ADD_FAILURE() << "evidence CA key generation failed";
+        return holder;
+    }
+
+    GeneratedChain mfgr = make_chain(*mfgr_ca, ctx.pid_pub.data());
+    GeneratedChain owner = make_chain(*owner_ca, ctx.pid_pub.data());
+    GeneratedChain part_owner = make_chain(*ctx.sata_key, ctx.pid_pub.data());
+
+    holder.mfgr_root_ = std::move(mfgr.root_der);
+    holder.mfgr_leaf_ = std::move(mfgr.leaf_der);
+    holder.owner_root_ = std::move(owner.root_der);
+    holder.owner_leaf_ = std::move(owner.leaf_der);
+    holder.po_root_ = std::move(part_owner.root_der);
+    holder.po_leaf_ = std::move(part_owner.leaf_der);
+    holder.report_ = report;
+    holder.wire();
+
+    return holder;
 }
 
 #endif // defined(AZIHSM_FEATURE_EMU)

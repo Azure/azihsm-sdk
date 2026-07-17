@@ -483,6 +483,9 @@ pub unsafe extern "C" fn azihsm_generate_key_report(
             HandleType::RsaPrivKey => {
                 rsa_generate_key_report(key_handle, report_data_buf, report_buf)?;
             }
+            HandleType::SealingKey => {
+                sealing_generate_key_report(key_handle, report_data_buf, report_buf)?;
+            }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         }
 
