@@ -90,6 +90,44 @@ pub(super) fn platform_svn_owner<P: HsmPal>(pal: &P) -> HsmResult<(u64, u16)> {
     Ok((svn, owner))
 }
 
+/// Recover **BKS3** from a device-local partition-owner-key backup.
+///
+/// Unmasks `pok_scratch` (a caller-staged `pok_local_backup` = masked BKS3)
+/// in place under the partition-local masking key (`PartLocalMK`, from
+/// `PartFinal`) and returns the recovered BKS3 as a view into `pok_scratch`.
+/// The blob must be an [`SdPartitionOwnerSeed`](HsmVaultKeyKind::SdPartitionOwnerSeed)
+/// envelope, and its bound SVN must not be newer than `svn` (anti-rollback,
+/// enforced only after the AEAD tag authenticates the envelope so a tampered
+/// cleartext SVN fails the tag rather than spoofing the check).
+///
+/// Shared by the local restore (recovers BKS3 to re-provision the SD) and
+/// the peer-backup create (recovers BKS3 to re-seal it to a peer).  The
+/// caller wipes `pok_scratch`.
+pub(super) async fn recover_bks3_from_pok_local<'a, P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    svn: u64,
+    pok_scratch: &'a mut DmaBuf,
+) -> HsmResult<&'a DmaBuf> {
+    let local_mk_id = part_state::part_local_mk_key_id(pal, io)?;
+    let local_mk = pal.vault_key(io, local_mk_id)?;
+    let view = unmask(pal, io, local_mk, pok_scratch).await?;
+    if !matches!(view.key_kind, HsmVaultKeyKind::SdPartitionOwnerSeed) {
+        return Err(HsmError::UnsupportedKeyType);
+    }
+    if view.svn > svn {
+        return Err(HsmError::SdBackupSvnRollback);
+    }
+    // Firmware invariant: the AEAD tag has authenticated the envelope, so a
+    // genuine backup always carries a `BKS3_LEN` seed; a mismatch signals
+    // corruption / a sizing bug, not a client error.  Mirrors
+    // `restore_part_local_mk` in `part_final`.
+    if view.target_key.len() != BKS3_LEN {
+        return Err(HsmError::InternalError);
+    }
+    Ok(view.target_key)
+}
+
 /// Derive `SDBMK` for `bks3` at `{svn, owner}` into a fresh scoped buffer.
 ///
 /// `SDBMK = KBKDF(BKS3, mfgr_seed[svn] ‖ owner_seed[owner] ‖ policy_hash)`.

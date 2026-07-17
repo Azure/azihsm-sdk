@@ -266,6 +266,8 @@ impl SessionCtrl {
             | opcode::SD_RESEAL_REMOTE_BACKUP
             | opcode::SD_RESTORE_REMOTE_BACKUP
             | opcode::SD_RESTORE_LOCAL_BACKUP
+            | opcode::SD_CREATE_PEER_BACKUP
+            | opcode::SD_RESTORE_PEER_BACKUP
             | opcode::KEY_REPORT => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
