@@ -235,14 +235,15 @@ fn sd_restore_local_backup_rejects_tampered_pok_emu() {
     let n = tampered.len();
     tampered[n - 1] ^= 0xFF;
 
-    let err = ctx
-        .tbor(&TborSdRestoreLocalBackupReq {
+    // A byte-flipped local backup fails the AEAD tag check inside `unmask`;
+    // assert the exact status so the contract is locked in — the command must
+    // not succeed or provision the SD under any other failure mode.
+    ctx.expect_fw_reject(
+        &TborSdRestoreLocalBackupReq {
             session_id: session.session_id,
             pok_local_backup: tampered,
             sd_mk_backup: created.sd_mk_backup.clone(),
-        })
-        .expect_err("a tampered pok_local_backup must be rejected");
-    // The exact status is the AEAD tag-mismatch surfaced by `unmask`; the
-    // command must not succeed and must not provision the SD.
-    let _ = err;
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
 }

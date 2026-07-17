@@ -133,27 +133,35 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 view.target_key
             };
 
-            // ── Derive SDBMK, recover SDMK from sd_mk_backup ──
+            // ── Derive SDBMK, recover SDMK, re-mask, and commit ──
+            // SDBMK is its own scratch allocation (not a view into the
+            // scrubbed staging buffers), so it is zeroized on EVERY path
+            // below: scope rewind does not clear DMA memory.
             let sdbmk = sd_backup::derive_sdbmk(pal, io, alloc, bks3, svn, owner).await?;
-            let sdmk = {
-                let view = unmask(pal, io, sdbmk, mk_scratch).await?;
-                if !matches!(view.key_kind, HsmVaultKeyKind::SdMasking) {
-                    return Err(HsmError::UnsupportedKeyType);
-                }
-                if view.svn > svn {
-                    return Err(HsmError::SdBackupSvnRollback);
-                }
-                view.target_key
-            };
+            let inner = async {
+                let sdmk = {
+                    let view = unmask(pal, io, sdbmk, mk_scratch).await?;
+                    if !matches!(view.key_kind, HsmVaultKeyKind::SdMasking) {
+                        return Err(HsmError::UnsupportedKeyType);
+                    }
+                    if view.svn > svn {
+                        return Err(HsmError::SdBackupSvnRollback);
+                    }
+                    view.target_key
+                };
 
-            // ── Re-mask both at the current {svn, owner} ──
-            sd_backup::mask_pok_local_backup(pal, io, alloc, bks3, svn, owner, pok_local_out)
-                .await?;
-            sd_backup::mask_sd_mk_backup(pal, io, alloc, sdbmk, sdmk, svn, owner, sd_mk_out)
-                .await?;
+                // ── Re-mask both at the current {svn, owner} ──
+                sd_backup::mask_pok_local_backup(pal, io, alloc, bks3, svn, owner, pok_local_out)
+                    .await?;
+                sd_backup::mask_sd_mk_backup(pal, io, alloc, sdbmk, sdmk, svn, owner, sd_mk_out)
+                    .await?;
 
-            // ── Commit: vault SDMK, mark SD-initialized (undo-guarded) ──
-            sd_backup::commit_sd_to_vault(pal, io, undo, sdmk).await
+                // ── Commit: vault SDMK, mark SD-initialized (undo-guarded) ──
+                sd_backup::commit_sd_to_vault(pal, io, undo, sdmk).await
+            }
+            .await;
+            sdbmk.zeroize();
+            inner
         }
         .await;
 
