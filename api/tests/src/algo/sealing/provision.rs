@@ -59,6 +59,7 @@ struct CaKey {
 }
 
 impl CaKey {
+    /// Generate a fresh P-384 CA key.
     fn generate() -> Self {
         let private_key = EccPrivateKey::from_curve(EccCurve::P384).expect("P-384 key");
         let (x, y) = private_key.coord_vec().expect("coords");
@@ -78,6 +79,7 @@ impl CaKey {
         self.pub_sec1[1..].try_into().expect("raw pub")
     }
 
+    /// SHA-1 of the SEC1 public key — the Subject Key Identifier.
     fn ski(&self) -> [u8; 20] {
         sha1_ski(&self.pub_sec1)
     }
@@ -100,6 +102,7 @@ impl CaKey {
     }
 }
 
+/// SHA-1 of a SEC1 public key (Subject / Authority Key Identifier).
 fn sha1_ski(sec1: &[u8; SEC1_PUB_LEN]) -> [u8; 20] {
     let mut algo = HashAlgo::sha1();
     let mut out = [0u8; 20];
@@ -107,6 +110,7 @@ fn sha1_ski(sec1: &[u8; SEC1_PUB_LEN]) -> [u8; 20] {
     out
 }
 
+/// A 20-byte positive DER serial number seeded from `tag`.
 fn serial(tag: u8) -> [u8; 20] {
     let mut s = [0u8; 20];
     s[0] = tag & 0x7F;
@@ -116,12 +120,14 @@ fn serial(tag: u8) -> [u8; 20] {
     s
 }
 
+/// Pad a common name to the template's fixed CN field width.
 fn pad_cn(cn: &str) -> [u8; CN_LEN] {
     let mut out = [b' '; CN_LEN];
     out[..cn.len()].copy_from_slice(cn.as_bytes());
     out
 }
 
+/// Pad a serial-number string to the template's fixed SN field width.
 fn pad_sn(sn: &str) -> [u8; SN_LEN] {
     let mut out = [b'0'; SN_LEN];
     out[..sn.len()].copy_from_slice(sn.as_bytes());
@@ -230,6 +236,7 @@ fn der_tlv(der: &[u8]) -> (u8, &[u8], &[u8]) {
     (tag, &der[header..header + len], &der[header + len..])
 }
 
+/// Patch a root-cert TBS template with the variable field values.
 fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
     use azihsm_crypto::x509_builder::root_cert::*;
     let cn = pad_cn(params.subject_cn);
@@ -245,6 +252,7 @@ fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
     tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
 }
 
+/// Patch an intermediate-cert TBS template with the variable field values.
 fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
     use azihsm_crypto::x509_builder::intermediate_cert::*;
     let s_cn = pad_cn(params.subject_cn);
@@ -282,6 +290,7 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
     }
 }
 
+/// Deterministic machine-seed fixture.
 fn mach_seed() -> [u8; MACH_SEED_LEN] {
     let mut v = [0u8; MACH_SEED_LEN];
     for (i, b) in v.iter_mut().enumerate() {
@@ -290,6 +299,7 @@ fn mach_seed() -> [u8; MACH_SEED_LEN] {
     v
 }
 
+/// Deterministic POTA thumbprint fixture (stored, not chain-validated).
 fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     let mut v = [0u8; POTA_THUMBPRINT_LEN];
     for (i, b) in v.iter_mut().enumerate() {
@@ -298,6 +308,7 @@ fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     v
 }
 
+/// Deterministic SATA thumbprint fixture (stored, not chain-validated).
 fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
     let mut v = [0u8; SATA_THUMBPRINT_LEN];
     for (i, b) in v.iter_mut().enumerate() {
