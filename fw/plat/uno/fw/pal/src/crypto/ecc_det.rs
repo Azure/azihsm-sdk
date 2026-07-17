@@ -31,8 +31,8 @@ use azihsm_fw_hsm_pal_traits::HsmHmac;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
-use azihsm_fw_uno_drivers_upka::mont_operand_size;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
+use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
 use super::ecc::PRIME384_LE;
 use crate::UnoHsmPal;
