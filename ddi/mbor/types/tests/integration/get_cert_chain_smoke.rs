@@ -16,7 +16,6 @@
 
 #![cfg(test)]
 
-use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
 use test_with_tracing::test;
 
