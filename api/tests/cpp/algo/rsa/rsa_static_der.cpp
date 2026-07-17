@@ -212,7 +212,7 @@ static const uint8_t k_nist_rsa_3072_pkcs8_der[] = {
 
 // RSA-4096 PKCS#8 DER generated for static native test coverage.
 // This key is not from the supplied NIST vectors; those inputs include only
-// RSA-2048 and RSA-3072 private keys.  it's generate by openssl Keygen
+// RSA-2048 and RSA-3072 private keys. It was generated via OpenSSL key generation.
 static const uint8_t k_generated_rsa_4096_pkcs8_der[] = {
     0x30, 0x82, 0x09, 0x41, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a,
     0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82,
