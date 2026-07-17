@@ -575,7 +575,8 @@ impl HsmPartitionManager for UnoHsmPal {
             // undo log restores a prior id through this raw path.
             PartPropId::UPS_KEY_ID => part.set_ups_key_id(Some(key)),
             PartPropId::PTA_KEY_ID => part.set_pta_key_id(Some(key)),
-            // ID_KEY_ID / RSA_UNWRAPPING_KEY_ID are read-only.
+            PartPropId::RSA_UNWRAPPING_KEY_ID => part.set_unwrapping_key_id(Some(key)),
+            // ID_KEY_ID is read-only.
             _ => return Err(HsmError::UnsupportedCmd),
         }
         Ok(())
