@@ -243,7 +243,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
 /// Groups the security-domain finalization inputs into a single struct so
 /// the call site does not pass them as separate arguments. `pta_cert_chain`
 /// points to an array of `pta_cert_chain_len` `azihsm_buffer`s, each holding
-/// one DER-encoded PTA certificate (leaf to root). `prev_local_mk_backup` is
+/// one DER-encoded PTA certificate (root to leaf). `prev_local_mk_backup` is
 /// optional and may be NULL to omit it.
 #[repr(C)]
 pub struct AzihsmSessExPartFinalParams {
@@ -251,7 +251,7 @@ pub struct AzihsmSessExPartFinalParams {
     /// recovery; must match the policy given to `part_init`.
     pub part_policy: *const AzihsmBuffer,
     /// Pointer to an array of `pta_cert_chain_len` `azihsm_buffer`s, each a
-    /// DER-encoded PTA certificate (leaf to root).
+    /// DER-encoded PTA certificate (root to leaf).
     pub pta_cert_chain: *const AzihsmBuffer,
     /// Number of certificates in `pta_cert_chain`.
     pub pta_cert_chain_len: u32,
@@ -262,7 +262,7 @@ pub struct AzihsmSessExPartFinalParams {
 /// @brief Finalize a partition's security domain
 ///
 /// Completes provisioning started by `azihsm_sess_ex_part_init`: re-supplies
-/// the unified partition policy and the PTA certificate chain (leaf to root),
+/// the unified partition policy and the PTA certificate chain (root to leaf),
 /// optionally restoring a prior `local_mk` backup, and returns the current
 /// `local_mk` backup envelope the firmware produced.
 ///
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_psk_change(
 }
 
 /// One certificate chain in an SD attestation-evidence party: an array of
-/// `len` `azihsm_buffer`s, each a DER-encoded certificate (leaf to root).
+/// `len` `azihsm_buffer`s, each a DER-encoded certificate (root to leaf).
 #[repr(C)]
 pub struct AzihsmSdCertChain {
     /// Pointer to an array of `len` DER certificate `azihsm_buffer`s.

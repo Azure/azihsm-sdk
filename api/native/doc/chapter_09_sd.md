@@ -143,7 +143,7 @@ Finalize a partition's security domain over a security-domain session.
 
 Completes provisioning started by
 [`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init): re-supplies the
-unified partition policy and the PTA certificate chain (leaf to root),
+unified partition policy and the PTA certificate chain (root to leaf),
 optionally restoring a prior `local_mk` backup, and returns the current
 `local_mk` backup envelope the firmware produced.
 
@@ -182,7 +182,7 @@ azihsm_status azihsm_sess_ex_part_final(
 Finalization input buffers for
 [`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final). `pta_cert_chain`
 points to an array of `pta_cert_chain_len` [azihsm_buffer](#azihsm_buffer)s,
-each holding one DER-encoded PTA certificate (leaf to root; at most
+each holding one DER-encoded PTA certificate (root to leaf; at most
 `MAX_CERTS`). `prev_local_mk_backup` is optional and may be NULL to omit it.
 
 ```cpp
@@ -197,7 +197,7 @@ struct azihsm_sess_ex_part_final_params {
  | Field                | Name                             | Description                                     |
  | -------------------- | -------------------------------- | ----------------------------------------------- |
  | part_policy          | [azihsm_buffer*](#azihsm_buffer) | unified partition policy (must match part_init) |
- | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (leaf to root)    |
+ | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (root to leaf)    |
  | pta_cert_chain_len   | uint32_t                         | number of certificates in the chain             |
  | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL)    |
 
