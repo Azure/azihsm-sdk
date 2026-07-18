@@ -316,11 +316,11 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         if chain_len == 0 || chain_len > api::MAX_CERTS {
             Err(AzihsmStatus::InvalidArgument)?;
         }
-        validate_array_ptr(params.pta_cert_chain)?;
+        validate_ptr(params.pta_cert_chain)?;
         // SAFETY: `pta_cert_chain` is non-null and aligned for
-        // `AzihsmBuffer` (checked by `validate_array_ptr`), the caller
-        // guarantees it points to `chain_len` valid `azihsm_buffer`s
-        // (documented above), and `chain_len` is bounded by `MAX_CERTS`.
+        // `AzihsmBuffer` (checked by `validate_ptr`), the caller guarantees
+        // it points to `chain_len` valid `azihsm_buffer`s (documented
+        // above), and `chain_len` is bounded by `MAX_CERTS`.
         let raw = unsafe { std::slice::from_raw_parts(params.pta_cert_chain, chain_len) };
         let mut certs: Vec<api::HsmCert<'_>> = Vec::with_capacity(chain_len);
         for buf in raw {
@@ -425,11 +425,10 @@ fn unpack_cert_chain(chain: &AzihsmSdCertChain) -> Result<Vec<api::HsmCert<'_>>,
     if len == 0 || len > api::EVIDENCE_CHAIN_MAX_CERTS {
         Err(AzihsmStatus::InvalidArgument)?;
     }
-    validate_array_ptr(chain.certs)?;
+    validate_ptr(chain.certs)?;
     // SAFETY: `certs` is non-null and aligned for `AzihsmBuffer` (checked
-    // by `validate_array_ptr`), the caller guarantees it points to `len`
-    // valid `azihsm_buffer`s, and `len` is bounded by
-    // `EVIDENCE_CHAIN_MAX_CERTS`.
+    // by `validate_ptr`), the caller guarantees it points to `len` valid
+    // `azihsm_buffer`s, and `len` is bounded by `EVIDENCE_CHAIN_MAX_CERTS`.
     let raw = unsafe { std::slice::from_raw_parts(chain.certs, len) };
     let mut certs = Vec::with_capacity(len);
     for buf in raw {

@@ -123,6 +123,10 @@ impl From<DdiError> for HsmError {
             DdiError::TborStatus(TborStatus::SdAlreadyInitialized) => {
                 HsmError::SdAlreadyInitialized
             }
+            // Map the firmware's contract-level `InvalidArg` to the same
+            // `InvalidArgument` the host guards return, so callers see a
+            // consistent argument-rejection error across transports.
+            DdiError::TborStatus(TborStatus::InvalidArg) => HsmError::InvalidArgument,
             _ => {
                 tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");
                 HsmError::DdiCmdFailure

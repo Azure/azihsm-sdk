@@ -5,25 +5,20 @@ use std::ffi::c_void;
 
 use super::*;
 
+/// Validates that `ptr` is non-null **and** correctly aligned for `T`.
+///
+/// Both properties are required before the pointer is dereferenced (via
+/// [`deref_ptr`] / [`deref_mut_ptr`]) or used to form a slice with
+/// [`std::slice::from_raw_parts`]: a null or misaligned pointer from a C
+/// caller is undefined behavior to dereference, so reject it up front with
+/// `InvalidArgument` rather than rely solely on the caller's `# Safety`
+/// contract.
 pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
-    if ptr.is_null() {
+    if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
         Err(AzihsmStatus::InvalidArgument)
     } else {
         Ok(())
     }
-}
-
-/// Validates that `ptr` is non-null **and** correctly aligned for `T`.
-///
-/// Required before forming a slice with [`std::slice::from_raw_parts`] over
-/// a C-supplied array: a misaligned pointer is undefined behavior for
-/// `from_raw_parts`, so reject it up front with `InvalidArgument` rather
-/// than rely solely on the caller's `# Safety` contract.
-pub(crate) fn validate_array_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
-    if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
-        Err(AzihsmStatus::InvalidArgument)?;
-    }
-    Ok(())
 }
 
 pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
@@ -66,25 +61,27 @@ pub(crate) fn validate_and_cast_algo_params_mut<T>(
 /// Safely dereference a mutable pointer
 ///
 /// # Safety
-/// The function validates that the pointer is non-null before dereferencing.
+/// The function validates that the pointer is non-null and aligned before
+/// dereferencing.
 #[allow(unsafe_code)]
 #[allow(unused)]
 pub(crate) fn deref_mut_ptr<'a, T>(ptr: *mut T) -> Result<&'a mut T, AzihsmStatus> {
     validate_ptr(ptr)?;
 
-    // SAFETY: Pointer has been validated as non-null above
+    // SAFETY: Pointer has been validated as non-null and aligned above
     Ok(unsafe { &mut *ptr })
 }
 
 /// Safely dereference a constant pointer
 ///
 /// # Safety
-/// The function validates that the pointer is non-null before dereferencing.
+/// The function validates that the pointer is non-null and aligned before
+/// dereferencing.
 #[allow(unsafe_code)]
 pub(crate) fn deref_ptr<'a, T>(ptr: *const T) -> Result<&'a T, AzihsmStatus> {
     validate_ptr(ptr)?;
 
-    // SAFETY: Pointer has been validated as non-null above
+    // SAFETY: Pointer has been validated as non-null and aligned above
     Ok(unsafe { &*ptr })
 }
 
