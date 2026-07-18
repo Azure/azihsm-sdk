@@ -493,9 +493,17 @@ pub trait HsmSessionManager {
     ///   than expected (corruption indicator).
     fn session_param_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf>;
 
-    /// Returns a borrowed view of the active session's 80-byte masking
-    /// key (the AES-CBC-256 ‖ HMAC-SHA-384 key installed at session
-    /// creation).
+    /// Returns a borrowed view of the active session's masking key.  Its
+    /// length depends on the session's schedule-blob format:
+    ///
+    /// * a TBOR **SessionEx (CU/CO)** blob yields
+    ///   [`SESSION_MASKING_KEY_LEN`] (32 B) of AES-256-GCM key material,
+    ///   consumed by the `key_masking::aead` masked-key system;
+    /// * a **legacy MBOR `Session`** blob yields a **separate** 80 B
+    ///   `aes32 ‖ hmac48` AES-CBC key, consumed by `key_masking::cbc`.
+    ///
+    /// Callers must therefore take the length from the returned slice
+    /// rather than assuming a single fixed size.
     ///
     /// Zero-copy: like [`session_param_key`](Self::session_param_key)
     /// the returned `&DmaBuf` borrows directly from the PAL's
@@ -513,8 +521,10 @@ pub trait HsmSessionManager {
     ///
     /// # Returns
     ///
-    /// - `Ok(&DmaBuf)` — a sub-view of the schedule blob, exactly
-    ///   [`SESSION_MASKING_KEY_LEN`] bytes long.
+    /// - `Ok(&DmaBuf)` — a sub-view of the schedule blob whose length
+    ///   depends on the blob format: 32 B ([`SESSION_MASKING_KEY_LEN`])
+    ///   for a TBOR `SessionEx` session, or 80 B for a legacy MBOR
+    ///   `Session` blob.
     /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to a
     ///   live Active session in the caller's partition (slot free,
     ///   destroyed, or still Pending).

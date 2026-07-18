@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Key-scope wire mirror for TBOR key-property schemas.
+//! Key-scope and hash-algorithm wire mirrors for TBOR key-property
+//! schemas.
 
 use open_enum::open_enum;
 
@@ -37,4 +38,28 @@ pub enum KeyScope {
 
     /// Firmware-internal key.
     Internal = 0b101,
+}
+
+/// Hash algorithm selector on the TBOR wire.
+///
+/// The 1-byte discriminants mirror the firmware
+/// [`HsmHashAlgo`](azihsm_fw_hsm_pal_traits::HsmHashAlgo) values
+/// (`Sha256 = 1`, `Sha384 = 2`, `Sha512 = 3`) so the two convert
+/// losslessly.  Shared across the key-property schemas: it selects both
+/// the HMAC SHA variant (`HmacGenerateKey`) and the OAEP hash
+/// (`UnwrapKey`).  Kept as an [`open_enum`] so an unrecognized
+/// discriminant round-trips as `HashAlgo(x)` and is rejected on-device
+/// rather than failing to decode.  SHA-1 is intentionally absent.
+#[repr(u8)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashAlgo {
+    /// SHA-256 (32-byte digest; 32-byte HMAC key / tag).
+    Sha256 = 1,
+
+    /// SHA-384 (48-byte digest; 48-byte HMAC key / tag).
+    Sha384 = 2,
+
+    /// SHA-512 (64-byte digest; 64-byte HMAC key / tag).
+    Sha512 = 3,
 }

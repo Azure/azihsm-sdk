@@ -39,6 +39,13 @@ pub struct SchemaField {
     /// any field in the schema is `mutable`, the codegen emits a
     /// parallel `decode_mut` entry point and a `ViewMut` accessor
     /// type whose mut-marked fields hand out `&mut DmaBuf`.
+    ///
+    /// A `mutable` field additionally gets a `<field>_reserve(len)`
+    /// encoder setter (alongside the value setter) that reserves the
+    /// slot without copying data, so a response can be built with
+    /// reserved slots and then filled in place via `decode_mut`
+    /// (zero-copy "reserve + fill"; see
+    /// [`codegen_enc::gen_field_reserve`](crate::codegen_enc)).
     pub mutable: bool,
     /// For a typed-slice `Buffer` field declared as `&[T]` (T != u8),
     /// the element type `T`.  `None` for a plain `&[u8]` buffer.  The
