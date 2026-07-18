@@ -80,6 +80,7 @@ impl From<SessionControlKind> for u8 {
 
 mod api_rev;
 mod evidence;
+mod get_unwrapping_key;
 mod key_report;
 mod part_final;
 mod part_info;
@@ -97,9 +98,11 @@ mod session_close;
 mod session_open_finish;
 mod session_open_init;
 mod status;
+mod unwrap_key;
 
 pub use api_rev::*;
 pub use evidence::*;
+pub use get_unwrapping_key::*;
 pub use key_report::*;
 pub use part_final::*;
 pub use part_info::*;
@@ -117,6 +120,7 @@ pub use session_close::*;
 pub use session_open_finish::*;
 pub use session_open_init::*;
 pub use status::*;
+pub use unwrap_key::*;
 
 /// Trait implemented by host-side TBOR request value types.
 ///

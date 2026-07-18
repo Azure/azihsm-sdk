@@ -154,12 +154,15 @@ pub async fn mask(
     let aad = alloc.dma_alloc(META_LEN)?;
     aad.copy_from_slice(metadata.as_bytes());
 
-    let pt = alloc.dma_alloc(target_key.len())?;
-    pt.copy_from_slice(target_key);
-
-    // Seal into `out`. `aead_envelope::seal` writes exactly `total`
-    // bytes and returns that count.
-    let result = aead_seal(crypto, io, alg, key, iv, aad, pt, Some(out)).await;
+    // Seal directly from `target_key` into `out`.  `aead_seal` / `seal_gcm`
+    // only *reads* `pt` (it copies the plaintext into `out`'s data region
+    // and encrypts in place there), so staging a separate `pt` copy of
+    // `target_key` would be a redundant second copy — wasteful of the
+    // scarce per-IO DMA budget for large keys (e.g. an RSA-4096 private
+    // key).  `target_key` and `out` are disjoint buffers, so passing it
+    // through directly is sound.  Mirrors `cbc::mask`, which likewise
+    // writes the plaintext straight into `out`.
+    let result = aead_seal(crypto, io, alg, key, iv, aad, target_key, Some(out)).await;
     match result {
         Ok(n) => {
             debug_assert_eq!(n, total);

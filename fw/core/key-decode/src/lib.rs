@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 mod aes;
 mod ecc;
+mod hmac;
 mod rsa;
 
 /// Class of a recovered key — selects the decode path.
@@ -42,6 +43,8 @@ pub enum KeyClass {
     RsaCrt,
     /// A PKCS#8 DER-encoded ECC private key.
     Ecc,
+    /// A raw 32 / 48 / 64-byte HMAC key (SHA-256 / 384 / 512).
+    Hmac,
 }
 
 /// A decoded key in vault-ready form, for the caller to persist.
@@ -88,5 +91,6 @@ pub async fn decode<'p, P: HsmPal>(
         KeyClass::Rsa => rsa::decode(pal, io, material, false).await,
         KeyClass::RsaCrt => rsa::decode(pal, io, material, true).await,
         KeyClass::Ecc => ecc::decode(pal, io, material).await,
+        KeyClass::Hmac => hmac::decode(material),
     }
 }
