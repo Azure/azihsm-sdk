@@ -32,6 +32,7 @@ use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::SESSION_MAC_DIR_KEY_LEN;
+use azihsm_fw_hsm_pal_traits::SESSION_MASKING_KEY_LEN;
 use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
 use azihsm_fw_hsm_pal_traits::SESSION_PENDING_BLOB_MAX;
 use azihsm_fw_hsm_pal_traits::SessionRole;
@@ -42,20 +43,22 @@ use crate::UnoHsmPal;
 /// API-revision portion of the session blob (bytes).
 const SESSION_API_REV_SIZE: usize = 8;
 
-/// Masking-key portion of the session blob: AES-CBC-256 (32) + HMAC-SHA-384
-/// (48) = 80 bytes.
+/// Masking-key portion of a **legacy MBOR `Session`** blob: AES-CBC-256
+/// (32) + HMAC-SHA-384 (48) = 80 bytes (the `key_masking::cbc` key).
 const SESSION_MASKING_KEY_SIZE: usize = 80;
 
 /// `Session`-kind blob: `[api_rev(8) || masking_key(80)]` = 88 bytes.
 const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE;
 
 /// `SessionEx` plaintext (CU) blob:
-/// `[api_rev(8) || param_key(32) || masking_key(80)]` = 120 bytes.
+/// `[api_rev(8) || param_key(32) || masking_key(32)]` = 72 bytes.  The
+/// SessionEx masking key is the 32 B AES-256-GCM `key_masking::aead` key
+/// ([`SESSION_MASKING_KEY_LEN`]), not the legacy 80 B cbc key.
 const SESSION_CU_BLOB_SIZE: usize =
-    SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_SIZE;
+    SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
 /// `SessionEx` authenticated (CO) blob: the plaintext blob followed by
-/// `mac_tx(48) || mac_rx(48)` = 216 bytes.
+/// `mac_tx(48) || mac_rx(48)` = 168 bytes.
 const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
 impl HsmSessionManager for UnoHsmPal {
@@ -237,7 +240,7 @@ impl HsmSessionManager for UnoHsmPal {
     ) -> HsmResult<()> {
         if api_rev.len() != SESSION_API_REV_SIZE
             || param_key.len() != SESSION_PARAM_KEY_LEN
-            || masking_key.len() != SESSION_MASKING_KEY_SIZE
+            || masking_key.len() != SESSION_MASKING_KEY_LEN
         {
             return Err(HsmError::InvalidArg);
         }
@@ -261,8 +264,8 @@ impl HsmSessionManager for UnoHsmPal {
         }
 
         // Build the length-discriminated SessionEx blob:
-        //   PlainText:     api_rev(8) ‖ param_key(32) ‖ masking_key(80)        = 120 B
-        //   Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                     = 216 B
+        //   PlainText:     api_rev(8) ‖ param_key(32) ‖ masking_key(32)        = 72 B
+        //   Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                     = 168 B
         let blob_len = match mac_pair {
             None => SESSION_CU_BLOB_SIZE,
             Some(_) => SESSION_CU_AUTH_BLOB_SIZE,

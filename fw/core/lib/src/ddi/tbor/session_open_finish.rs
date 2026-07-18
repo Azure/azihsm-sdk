@@ -85,8 +85,8 @@ struct ParsedRequest<'a> {
 /// * `param_key` — 32 B AES-256 key used to AEAD-open `seed_envelope`
 ///   (this handler) and to authenticate per-parameter envelopes in
 ///   in-session commands like `PskChange`.  Always populated.
-/// * `masking_key` — 80 B `aes32 ‖ hmac48` used by the `cbc::mask`
-///   masked-key system.  Always populated.
+/// * `masking_key` — 32 B AES-256-GCM key for the `key_masking::aead`
+///   TBOR masked-key system.  Always populated.
 /// * `mac_tx_key` — 48 B HMAC-SHA-384 key for outbound (HSM → host)
 ///   message MACs.  `Some` iff `session_type` is `Authenticated`.
 /// * `mac_rx_key` — 48 B HMAC-SHA-384 key for inbound (host → HSM)
