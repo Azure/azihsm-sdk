@@ -171,19 +171,22 @@ pub fn result_to_int<T>(result: EngineResult<T>) -> c_int {
 
 /// Convert an [`EngineResult`] holding a raw pointer into that pointer, for a
 /// C callback that returns `*mut T` (e.g. the `load_privkey` hook returning
-/// `*mut EVP_PKEY`). On `Err`, push the message onto the OpenSSL ERR queue,
-/// log via `tracing`, and return NULL — the pointer-returning analogue of
-/// [`result_to_int`].
+/// `*mut EVP_PKEY`). Only a non-null `Ok` is success. On `Err` — or on an `Ok`
+/// holding NULL, which a pointer-returning OpenSSL callback still reports as
+/// failure — push the message onto the OpenSSL ERR queue, log via `tracing`,
+/// and return NULL. The pointer-returning analogue of [`result_to_int`].
 pub fn result_to_ptr<T>(result: EngineResult<*mut T>) -> *mut T {
-    match result {
-        Ok(ptr) => ptr,
-        Err(e) => {
-            let reason = c_int::from(&e);
-            openssl_err(reason, &e.to_string());
-            tracing::error!("{e}");
-            std::ptr::null_mut()
-        }
-    }
+    let err = match result {
+        Ok(ptr) if !ptr.is_null() => return ptr,
+        // A NULL success is a contract violation: fall through so the caller
+        // still gets a reason on the ERR queue instead of a bare NULL.
+        Ok(_) => EngineError::Other("callback produced a null pointer".into()),
+        Err(e) => e,
+    };
+    let reason = c_int::from(&err);
+    openssl_err(reason, &err.to_string());
+    tracing::error!("{err}");
+    std::ptr::null_mut()
 }
 
 /// Run `f` under [`catch_unwind`].  A panic is logged and turned into the
