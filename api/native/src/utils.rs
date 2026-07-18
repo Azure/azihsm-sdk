@@ -25,7 +25,10 @@ pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmSta
     if algo.len != std::mem::size_of::<T>() as u32 {
         Err(AzihsmStatus::InvalidArgument)?;
     }
-    validate_ptr(algo.params)
+    // Validate against the concrete `T` (not the `*const c_void` field type)
+    // so the alignment check uses `align_of::<T>()`, matching the `&T` that
+    // `cast_ptr` / `deref_mut_ptr` will form from this pointer.
+    validate_ptr(algo.params as *const T)
 }
 
 /// Validates that an algorithm descriptor intentionally carries no parameter payload.
@@ -163,12 +166,15 @@ pub(crate) fn validate_output_buffer(
 /// * `Err(AzihsmError::NullPointer)` - If the pointer is null
 #[allow(unsafe_code)]
 pub(crate) fn cast_ptr<'a, T>(ptr: *const c_void) -> Result<&'a T, AzihsmStatus> {
+    // Cast to `*const T` before validating so the check uses `align_of::<T>()`;
+    // forming `&T` from a misaligned address is undefined behavior.
+    let ptr = ptr as *const T;
     validate_ptr(ptr)?;
 
-    // SAFETY: We have validated that the pointer is not null.
-    // The caller is responsible for ensuring the pointer points to valid memory
-    // containing a properly initialized value of type T.
-    Ok(unsafe { &*(ptr as *const T) })
+    // SAFETY: `ptr` has been validated as non-null and aligned for `T`. The
+    // caller is responsible for ensuring it points to valid memory containing
+    // a properly initialized value of type `T`.
+    Ok(unsafe { &*ptr })
 }
 
 /// Copy a byte slice into a key property buffer
