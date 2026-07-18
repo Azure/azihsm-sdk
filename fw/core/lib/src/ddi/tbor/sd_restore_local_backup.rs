@@ -24,8 +24,10 @@
 //!    [`SdPartitionOwnerSeed`](HsmVaultKeyKind::SdPartitionOwnerSeed)
 //!    envelope, and its bound SVN must not be newer than the current
 //!    firmware SVN ([`SdBackupSvnRollback`](HsmError::SdBackupSvnRollback)).
-//! 3. Derive `SDBMK` from BKS3 + the partition `policy_hash`, then unmask
-//!    `sd_mk_backup` under `SDBMK` → **SDMK** (must be an
+//! 3. Derive `SDBMK` from BKS3 + the partition `policy_hash` at the
+//!    `sd_mk_backup`'s *own* `{svn, owner}` (peeked from its metadata, so an
+//!    older-SVN backup unmasks on newer firmware), then unmask `sd_mk_backup`
+//!    under `SDBMK` → **SDMK** (must be an
 //!    [`SdMasking`](HsmVaultKeyKind::SdMasking) envelope; same anti-rollback).
 //! 4. Re-mask both at the current `{svn, owner}`: `CurrSDLocalBackup =
 //!    mask(BKS3, PartLocalMK)` and `CurrSDKMKBackup = mask(SDMK, SDBMK)`.
@@ -39,6 +41,7 @@
 //!
 //! This command is **Crypto-Officer-only**.
 
+use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupResp;
@@ -133,17 +136,32 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 view.target_key
             };
 
-            // ── Derive SDBMK, recover SDMK, re-mask, and commit ──
-            // SDBMK is its own scratch allocation (not a view into the
-            // scrubbed staging buffers), so it is zeroized on EVERY path
-            // below: scope rewind does not clear DMA memory.
-            let sdbmk = sd_backup::derive_sdbmk(pal, io, alloc, bks3, svn, owner).await?;
+            // ── Recover SDMK, re-mask, and commit ──
+            // Re-derive the SDBMK that masked `sd_mk_backup` at the backup's
+            // OWN {svn, owner} (peeked from its cleartext metadata) so an
+            // older-SVN backup unmasks on newer firmware — the versioned device
+            // seeds are forward-derivable, and deriving at the current SVN would
+            // fail the AEAD tag.  The peeked values are authenticated by the
+            // `unmask` tag below; the anti-rollback check is deferred until
+            // after it.  A second SDBMK at the current {svn, owner} re-masks the
+            // refreshed backup.  Both are their own scratch allocations (not
+            // views into the scrubbed staging buffers) and scope rewind does not
+            // clear DMA memory, so both are zeroized on EVERY path below.
+            // Mirrors `restore_part_local_mk` in `part_final`.
+            let (prev_svn, prev_owner) = {
+                let meta = peek_metadata(mk_scratch)?;
+                (meta.svn.get(), meta.owner_seed_id.get())
+            };
+            let sdbmk_prev =
+                sd_backup::derive_sdbmk(pal, io, alloc, bks3, prev_svn, prev_owner).await?;
+            let sdbmk_curr = sd_backup::derive_sdbmk(pal, io, alloc, bks3, svn, owner).await?;
             let inner = async {
                 let sdmk = {
-                    let view = unmask(pal, io, sdbmk, mk_scratch).await?;
+                    let view = unmask(pal, io, sdbmk_prev, mk_scratch).await?;
                     if !matches!(view.key_kind, HsmVaultKeyKind::SdMasking) {
                         return Err(HsmError::UnsupportedKeyType);
                     }
+                    // Anti-rollback on the now-authenticated `view.svn`.
                     if view.svn > svn {
                         return Err(HsmError::SdBackupSvnRollback);
                     }
@@ -153,14 +171,17 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 // ── Re-mask both at the current {svn, owner} ──
                 sd_backup::mask_pok_local_backup(pal, io, alloc, bks3, svn, owner, pok_local_out)
                     .await?;
-                sd_backup::mask_sd_mk_backup(pal, io, alloc, sdbmk, sdmk, svn, owner, sd_mk_out)
-                    .await?;
+                sd_backup::mask_sd_mk_backup(
+                    pal, io, alloc, sdbmk_curr, sdmk, svn, owner, sd_mk_out,
+                )
+                .await?;
 
                 // ── Commit: vault SDMK, mark SD-initialized (undo-guarded) ──
                 sd_backup::commit_sd_to_vault(pal, io, undo, sdmk).await
             }
             .await;
-            sdbmk.zeroize();
+            sdbmk_curr.zeroize();
+            sdbmk_prev.zeroize();
             inner
         }
         .await;
