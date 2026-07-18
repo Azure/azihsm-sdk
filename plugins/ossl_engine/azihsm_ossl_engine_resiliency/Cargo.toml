@@ -3,7 +3,7 @@
 
 [package]
 edition = "2024"
-name = "engine-resiliency"
+name = "azihsm_ossl_engine_resiliency"
 publish = false
 version = "0.1.0"
 

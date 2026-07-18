@@ -65,10 +65,10 @@ members = [
   "fw/pal/traits",
   "fw/plat/std/lib",
   "fw/plat/std/pal",
-  "plugins/ossl_engine/engine",
-  "plugins/ossl_engine/engine-resiliency",
-  "plugins/ossl_engine/openssl-engine",
-  "plugins/ossl_engine/openssl-sys-engine",
+  "plugins/ossl_engine/azihsm_ossl_engine",
+  "plugins/ossl_engine/azihsm_ossl_engine_core",
+  "plugins/ossl_engine/azihsm_ossl_engine_resiliency",
+  "plugins/ossl_engine/azihsm_ossl_engine_sys",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
@@ -106,13 +106,13 @@ azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
+azihsm_ossl_engine_core = { path = "plugins/ossl_engine/azihsm_ossl_engine_core" }
+azihsm_ossl_engine_resiliency = { path = "plugins/ossl_engine/azihsm_ossl_engine_resiliency" }
+azihsm_ossl_engine_sys = { path = "plugins/ossl_engine/azihsm_ossl_engine_sys" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
 azihsm_session_ex_crypto = { path = "crates/session_ex_crypto" }
 azihsm_tpm = { path = "crates/tpm" }
-engine-resiliency = { path = "plugins/ossl_engine/engine-resiliency" }
-openssl-engine = { path = "plugins/ossl_engine/openssl-engine" }
-openssl-sys-engine = { path = "plugins/ossl_engine/openssl-sys-engine" }
 resiliency_macro = { path = "crates/resiliency_macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }

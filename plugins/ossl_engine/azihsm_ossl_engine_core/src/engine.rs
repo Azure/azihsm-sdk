@@ -9,7 +9,7 @@ use std::ffi::c_int;
 use std::ptr::NonNull;
 use std::ptr::null_mut;
 
-use openssl_sys_engine as ffi;
+use azihsm_ossl_engine_sys as ffi;
 
 use crate::error::EngineError;
 use crate::error::EngineResult;

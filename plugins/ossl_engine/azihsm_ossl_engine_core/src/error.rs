@@ -22,7 +22,7 @@ use std::ffi::c_int;
 use std::panic::UnwindSafe;
 use std::panic::catch_unwind;
 
-use openssl_sys_engine as ffi;
+use azihsm_ossl_engine_sys as ffi;
 
 /// Result type used throughout the engine toolkit.
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -126,7 +126,7 @@ pub(crate) fn ossl_check(rc: c_int, err: EngineError) -> EngineResult<()> {
 
 /// Push a human-readable message onto the OpenSSL ERR queue.
 ///
-/// `reason` is an `ERR_R_*` constant from `openssl-sys-engine`.  The reason
+/// `reason` is an `ERR_R_*` constant from `azihsm_ossl_engine_sys`.  The reason
 /// code is always recorded; the message is best-effort and is truncated at
 /// the first interior NUL (rather than dropping the error entirely), since
 /// OpenSSL cannot represent the bytes past it.  OpenSSL copies the string

@@ -3,7 +3,7 @@
 
 [package]
 edition = "2024"
-name = "azihsm_engine"
+name = "azihsm_ossl_engine"
 publish = false
 version = "0.1.0"
 
@@ -12,13 +12,13 @@ crate-type = ["cdylib", "lib"]
 
 [features]
 default = []
-engine = ["openssl-engine/engine"]
+engine = ["azihsm_ossl_engine_core/engine"]
 mock = ["azihsm_api/mock"]
 
 [dependencies]
 azihsm_api.workspace = true
-engine-resiliency.workspace = true
-openssl-engine.workspace = true
+azihsm_ossl_engine_core.workspace = true
+azihsm_ossl_engine_resiliency.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
@@ -31,7 +31,7 @@ libc.workspace = true
 
 # Only the Linux-only `context` tests use these; gating keeps the workspace
 # `--all-targets` build on Windows from pulling OpenSSL (openssl-sys won't build
-# there). Mirrors engine-resiliency.
+# there). Mirrors azihsm_ossl_engine_resiliency.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 openssl.workspace = true
 serial_test.workspace = true

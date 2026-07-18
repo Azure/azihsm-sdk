@@ -1287,6 +1287,11 @@ impl PartitionEntry {
                 self.establish_cred_key_id = Some(HsmKeyId::from(value as u16));
                 Ok(())
             }
+            PartPropId::RSA_UNWRAPPING_KEY_ID => {
+                // Settable for EstablishCredential's post-migration re-import.
+                self.unwrapping_key_id = Some(HsmKeyId::from(value as u16));
+                Ok(())
+            }
             PartPropId::BK3_INITIALIZED => {
                 // One-shot gate: false→true is the only legal
                 // transition.  Re-asserting true returns
@@ -1316,7 +1321,7 @@ impl PartitionEntry {
                 self.sd_initialized = want;
                 Ok(())
             }
-            // GEN/SVN/RES_COUNT/ID_KEY_ID/RSA_UNWRAPPING_KEY_ID are Ro
+            // GEN/SVN/RES_COUNT/ID_KEY_ID are Ro
             // — rejected by validate_set.  Non-scalar ids — rejected
             // by the kind check.
             _ => Err(HsmError::InvalidArg),

@@ -3,16 +3,16 @@
 
 [package]
 edition = "2024"
-name = "openssl-engine"
+name = "azihsm_ossl_engine_core"
 publish = false
 version = "0.1.0"
 
 [features]
 default = []
-engine = ["dep:thiserror", "dep:tracing", "openssl-sys-engine/engine"]
+engine = ["azihsm_ossl_engine_sys/engine", "dep:thiserror", "dep:tracing"]
 
 [dependencies]
-openssl-sys-engine.workspace = true
+azihsm_ossl_engine_sys.workspace = true
 thiserror = { optional = true, workspace = true }
 tracing = { optional = true, workspace = true }
 
