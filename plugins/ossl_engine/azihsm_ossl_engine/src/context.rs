@@ -666,6 +666,17 @@ mod tests {
 /// ```
 #[cfg(all(test, not(feature = "mock")))]
 mod hw_tests {
+    use azihsm_api::HsmEccCurve;
+    use azihsm_api::HsmEccKeyGenAlgo;
+    use azihsm_api::HsmKeyClass;
+    use azihsm_api::HsmKeyCommonProps;
+    use azihsm_api::HsmKeyKind;
+    use azihsm_api::HsmKeyManager;
+    use azihsm_api::HsmKeyPropsBuilder;
+    use foreign_types::ForeignType;
+    use openssl::pkey::PKey;
+    use openssl::pkey::Public;
+
     use super::*;
 
     #[test]
@@ -677,6 +688,81 @@ mod hw_tests {
             data.is_hsm_open(),
             "HSM should be open after open_hsm_from_env"
         );
+        Ok(())
+    }
+
+    /// Hardware key-loading round trip. Generates a persistent EC P-384 key on
+    /// the device, exports its masked blob, loads it back through the engine's
+    /// `load_private_key` path, and verifies the returned EVP_PKEY's public key
+    /// matches. Dropping the EVP_PKEY exercises the ex_data free callback (HSM
+    /// key deletion). `tests::load_ec_key_round_trips_through_engine` covers this
+    /// against the mock; this runs the same cycle on a real device.
+    ///
+    /// Same env setup as `open_from_env_smoke` (configure `AZIHSM_*` first):
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine load_ec_key_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    #[allow(unsafe_code)]
+    fn load_ec_key_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+
+        // Generate a persistent EC P-384 key on the device and export the masked
+        // blob (the form the engine loads).
+        let (masked, expected_pub_der) = data.with_session(|session| {
+            let priv_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Private)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(HsmEccCurve::P384)
+                .is_session(false)
+                .can_sign(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build private key props", e))?;
+            let pub_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Public)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(HsmEccCurve::P384)
+                .is_session(false)
+                .can_verify(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build public key props", e))?;
+            let mut algo = HsmEccKeyGenAlgo::default();
+            let (priv_key, _pub) =
+                HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+                    .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
+            Ok((
+                priv_key
+                    .masked_key_vec()
+                    .map_err(|e| EngineError::wrap("export masked key", e))?,
+                priv_key
+                    .pub_key_der_vec()
+                    .map_err(|e| EngineError::wrap("read public key DER", e))?,
+            ))
+        })?;
+
+        let blob_path =
+            std::env::temp_dir().join(format!("engine-hw-ec-{}.bin", std::process::id()));
+        std::fs::write(&blob_path, &masked).map_err(|e| {
+            EngineError::wrap(format!("write masked blob {}", blob_path.display()), e)
+        })?;
+
+        let uri = format!("azihsm://{};type=ec", blob_path.display());
+        let raw = crate::keyload::load_key(&data, &uri)?;
+        assert!(!raw.is_null(), "load_key returned a NULL EVP_PKEY");
+
+        // Take ownership of the returned key, confirm its public half, then drop
+        // it — freeing the EVP_PKEY runs the ex_data free callback (HSM delete).
+        // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
+        let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        let loaded_der = loaded
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode loaded public key", e))?;
+        assert_eq!(loaded_der, expected_pub_der, "loaded public key mismatch");
+
+        let _ = std::fs::remove_file(&blob_path);
         Ok(())
     }
 }
