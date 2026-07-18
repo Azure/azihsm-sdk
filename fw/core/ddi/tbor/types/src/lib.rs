@@ -37,6 +37,8 @@ pub mod tbor_int {
 pub mod api_rev;
 pub mod evidence;
 pub mod get_unwrapping_key;
+pub mod hmac;
+pub mod hmac_generate_key;
 pub mod key_props;
 pub mod key_report;
 pub mod part_final;
@@ -59,6 +61,8 @@ pub mod unwrap_key;
 pub use api_rev::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
+pub use hmac::*;
+pub use hmac_generate_key::*;
 pub use key_props::*;
 pub use key_report::*;
 pub use part_final::*;
