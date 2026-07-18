@@ -133,6 +133,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 if view.svn > svn {
                     return Err(HsmError::SdBackupSvnRollback);
                 }
+                // Firmware invariant: the AEAD tag has authenticated the
+                // envelope, so a genuine backup always carries a `BKS3_LEN`
+                // seed; a mismatch signals corruption / a sizing bug, not a
+                // client error.  Mirrors `restore_part_local_mk` in `part_final`.
+                if view.target_key.len() != sd_backup::BKS3_LEN {
+                    return Err(HsmError::InternalError);
+                }
                 view.target_key
             };
 
@@ -164,6 +171,12 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                     // Anti-rollback on the now-authenticated `view.svn`.
                     if view.svn > svn {
                         return Err(HsmError::SdBackupSvnRollback);
+                    }
+                    // Firmware invariant (tag-authenticated): a genuine backup
+                    // always carries an `SDMK_LEN` key; a mismatch signals
+                    // corruption / a sizing bug, not a client error.
+                    if view.target_key.len() != sd_backup::SDMK_LEN {
+                        return Err(HsmError::InternalError);
                     }
                     view.target_key
                 };

@@ -45,6 +45,9 @@ use crate::part_state;
 /// AES-256-GCM.
 pub(super) const SDMK_LEN: usize = 32;
 
+/// Length of the partition owner seed (`BKS3`) — 48 B.
+pub(super) const BKS3_LEN: usize = 48;
+
 /// Length of the derived security-domain backup masking key (`SDBMK`) —
 /// 32 B AES-256-GCM (the key that masks `SDMK` into `sd_mk_backup`).
 const SDBMK_LEN: usize = 32;
