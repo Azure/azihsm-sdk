@@ -13,6 +13,19 @@ pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
     }
 }
 
+/// Validates that `ptr` is non-null **and** correctly aligned for `T`.
+///
+/// Required before forming a slice with [`std::slice::from_raw_parts`] over
+/// a C-supplied array: a misaligned pointer is undefined behavior for
+/// `from_raw_parts`, so reject it up front with `InvalidArgument` rather
+/// than rely solely on the caller's `# Safety` contract.
+pub(crate) fn validate_array_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
+    if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
     if algo.len != std::mem::size_of::<T>() as u32 {
         Err(AzihsmStatus::InvalidArgument)?;
