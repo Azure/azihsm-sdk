@@ -52,3 +52,22 @@ pub(crate) async fn recover_bk_boot<P: HsmPal>(
     }
     azihsm_fw_core_crypto_key_derive::unmask_bk_boot(pal, io, masked_buf, out).await
 }
+
+/// Map an HMAC vault kind to the hash algorithm whose digest length is
+/// the MAC tag size.
+///
+/// Accepts both the fixed-length (`_HmacSha*`) and variable-length
+/// (`VarLenHmacSha*`) HMAC kinds.  Any non-HMAC kind returns
+/// [`HsmError::InvalidKeyType`].
+///
+/// Shared across both wire codecs (`Hmac` in [`mbor`], and the HMAC
+/// crypto commands in [`tbor`]), so it lives at the command level rather
+/// than in either codec — keeping `tbor` independent of `mbor`.
+pub(crate) fn hmac_hash(kind: HsmVaultKeyKind) -> HsmResult<HsmHashAlgo> {
+    match kind {
+        HsmVaultKeyKind::_HmacSha256 | HsmVaultKeyKind::VarLenHmacSha256 => Ok(HsmHashAlgo::Sha256),
+        HsmVaultKeyKind::_HmacSha384 | HsmVaultKeyKind::VarLenHmacSha384 => Ok(HsmHashAlgo::Sha384),
+        HsmVaultKeyKind::_HmacSha512 | HsmVaultKeyKind::VarLenHmacSha512 => Ok(HsmHashAlgo::Sha512),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
