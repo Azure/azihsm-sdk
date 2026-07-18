@@ -19,13 +19,55 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 /// kind is not an attestable ECC private key.
 ///
 /// Includes [`HsmVaultKeyKind::SdSealing`] — the SD sealing key is a
-/// P-384 key that TBOR `KeyReport` attests.
+/// P-384 key that TBOR `KeyReport` attests.  For the general crypto
+/// commands (`EccSign` / `EcdhDerive`), which must reject non-ECC-private
+/// blobs, use the stricter [`ecc_private_curve`] instead.
 pub(crate) fn ecc_curve(kind: HsmVaultKeyKind) -> Option<HsmEccCurve> {
     match kind {
         HsmVaultKeyKind::Ecc256Private => Some(HsmEccCurve::P256),
         HsmVaultKeyKind::Ecc384Private | HsmVaultKeyKind::SdSealing => Some(HsmEccCurve::P384),
         HsmVaultKeyKind::Ecc521Private => Some(HsmEccCurve::P521),
         _ => None,
+    }
+}
+
+/// Recover the NIST curve of an unmasked ECC **private** key from its
+/// vault key kind, strictly.
+///
+/// Only the three ECC-private kinds are accepted; any other kind — a
+/// public key, an ECDH secret, an [`HsmVaultKeyKind::SdSealing`] key, or a
+/// non-ECC kind — maps to [`HsmError::InvalidKeyType`].  Unlike
+/// [`ecc_curve`] (which admits `SdSealing` for `KeyReport` attestation),
+/// this is the mapping the `EccSign` / `EcdhDerive` handlers use so a
+/// masked blob of the wrong class is rejected before use — mirroring the
+/// MBOR `from_pal::ecc_curve` precedent.
+pub(crate) fn ecc_private_curve(kind: HsmVaultKeyKind) -> HsmResult<HsmEccCurve> {
+    match kind {
+        HsmVaultKeyKind::Ecc256Private => Ok(HsmEccCurve::P256),
+        HsmVaultKeyKind::Ecc384Private => Ok(HsmEccCurve::P384),
+        HsmVaultKeyKind::Ecc521Private => Ok(HsmEccCurve::P521),
+        _ => Err(HsmError::InvalidKeyType),
+    }
+}
+
+/// Map a NIST curve onto its ECC-private vault key kind (recorded in the
+/// masked blob's metadata so `EccSign` / `EcdhDerive` can recover the
+/// curve on unmask).
+pub(crate) fn ecc_private(curve: HsmEccCurve) -> HsmVaultKeyKind {
+    match curve {
+        HsmEccCurve::P256 => HsmVaultKeyKind::Ecc256Private,
+        HsmEccCurve::P384 => HsmVaultKeyKind::Ecc384Private,
+        HsmEccCurve::P521 => HsmVaultKeyKind::Ecc521Private,
+    }
+}
+
+/// Map a NIST curve onto its ECDH shared-secret vault key kind (recorded
+/// in the derived-secret masked blob's metadata).
+pub(crate) fn ecdh_secret(curve: HsmEccCurve) -> HsmVaultKeyKind {
+    match curve {
+        HsmEccCurve::P256 => HsmVaultKeyKind::Secret256,
+        HsmEccCurve::P384 => HsmVaultKeyKind::Secret384,
+        HsmEccCurve::P521 => HsmVaultKeyKind::Secret521,
     }
 }
 

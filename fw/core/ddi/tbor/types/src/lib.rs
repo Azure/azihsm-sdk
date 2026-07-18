@@ -35,6 +35,9 @@ pub mod tbor_int {
 }
 
 pub mod api_rev;
+pub mod ecc_generate_key;
+pub mod ecc_sign;
+pub mod ecdh_derive;
 pub mod evidence;
 pub mod get_unwrapping_key;
 pub mod hmac;
@@ -60,6 +63,9 @@ pub mod session_open_init;
 pub mod unwrap_key;
 
 pub use api_rev::*;
+pub use ecc_generate_key::*;
+pub use ecc_sign::*;
+pub use ecdh_derive::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
 pub use hmac::*;
