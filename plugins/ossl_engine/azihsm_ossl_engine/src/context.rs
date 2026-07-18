@@ -22,11 +22,11 @@ use azihsm_api::HsmPotaEndorsementSource;
 use azihsm_api::HsmSession;
 use azihsm_api::MobkProviderCallback;
 use azihsm_api::PotaEndorsementCallback;
-use engine_resiliency::FileMobkCallback;
-use engine_resiliency::FilePotaCallback;
-use engine_resiliency::ResiliencySettings;
-use openssl_engine::error::EngineError;
-use openssl_engine::error::EngineResult;
+use azihsm_ossl_engine_core::error::EngineError;
+use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_resiliency::FileMobkCallback;
+use azihsm_ossl_engine_resiliency::FilePotaCallback;
+use azihsm_ossl_engine_resiliency::ResiliencySettings;
 use parking_lot::Mutex;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
@@ -567,7 +567,7 @@ mod tests {
 /// # AZIHSM_RESILIENCY_STORAGE_DIR to use e.g. a path under $HOME):
 /// sudo install -d -m 700 -o "$USER" /var/lib/azihsm/resiliency
 /// umask 0077
-/// cargo test -p azihsm_engine --features engine open_from_env_smoke -- --ignored --nocapture
+/// cargo test -p azihsm_ossl_engine --features engine open_from_env_smoke -- --ignored --nocapture
 /// ```
 #[cfg(all(test, not(feature = "mock")))]
 mod hw_tests {

@@ -40,7 +40,7 @@ jobs:
             image:  ubuntu:20.04
 
     steps:
-      # clang/libclang-dev are for bindgen (openssl-sys-engine build.rs).
+      # clang/libclang-dev are for bindgen (azihsm_ossl_engine_sys build.rs).
       # DEBIAN_FRONTEND: 20.04's tzdata otherwise blocks on an interactive
       # timezone prompt during install.
       # Node 20 via the NodeSource apt repo (signature-verified against its
@@ -90,7 +90,7 @@ jobs:
 
       - name: Build engine
         run: |
-          cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+          cargo build -p azihsm_ossl_engine -p azihsm_ossl_engine_core -p azihsm_ossl_engine_sys \
             --features engine
 
       # Without the `engine` feature the crates are empty stubs (that's what
@@ -99,7 +99,7 @@ jobs:
       - name: Clippy engine
         run: |
           cargo xtask rustup-component-add --component clippy
-          cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+          cargo clippy -p azihsm_ossl_engine -p azihsm_ossl_engine_core -p azihsm_ossl_engine_sys \
             --features engine --all-targets -- -D warnings
 
       # azihsm_crypto's *_ossl11.rs backends only compile under cfg(not(ossl300)),
@@ -113,15 +113,15 @@ jobs:
       - name: Install cargo-nextest
         run: curl -LsSf https://get.nexte.st/0.9.132/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
-      # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
+      # azihsm_ossl_engine_core's unit tests (error queue, ex_data, set_destroy) depend
       # only on the 1.1 FFI, so they run here.
-      - name: Test openssl-engine
-        run: cargo nextest run -p openssl-engine --features engine
+      - name: Test azihsm_ossl_engine_core
+        run: cargo nextest run -p azihsm_ossl_engine_core --features engine
 
-      # azihsm_engine's mock lifecycle tests drive the HSM open path against the
+      # azihsm_ossl_engine's mock lifecycle tests drive the HSM open path against the
       # mock DDI.
-      - name: Test azihsm_engine (mock lifecycle)
-        run: cargo nextest run -p azihsm_engine --features engine,mock
+      - name: Test azihsm_ossl_engine (mock lifecycle)
+        run: cargo nextest run -p azihsm_ossl_engine --features engine,mock
 
       - name: Test azihsm_crypto
         run: cargo nextest run -p azihsm_crypto
@@ -131,4 +131,4 @@ jobs:
         run: cargo test --doc -p azihsm_crypto
 
       - name: Load engine
-        run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"
+        run: openssl engine -t "$(pwd)/target/debug/libazihsm_ossl_engine.so"

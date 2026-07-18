@@ -21,7 +21,7 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::null_mut;
 
-use openssl_sys_engine as ffi;
+use azihsm_ossl_engine_sys as ffi;
 
 use crate::engine::Engine;
 use crate::error::EngineError;

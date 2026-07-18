@@ -18,4 +18,4 @@ pub mod error;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod exdata;
 
-pub use openssl_sys_engine as ffi;
+pub use azihsm_ossl_engine_sys as ffi;

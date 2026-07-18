@@ -106,6 +106,12 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
                 unmask(pal, io, part_mk, body.masked_key).await?
             };
 
+            // Guard the metadata length so an inconsistent `key_length`
+            // errors instead of panicking on the slice below.
+            if key_len > layout.plaintext_max_len {
+                return Err(HsmError::MaskedKeyDecodeFailed);
+            }
+
             // Copy the primary key material (plaintext prefix) into a fresh
             // vault-import scratch buffer.  For ECC the trailing public
             // point is ignored here; the private scalar re-derives it.

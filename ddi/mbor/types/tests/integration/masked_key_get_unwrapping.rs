@@ -128,3 +128,46 @@ fn test_masked_key_get_unwrapping_with_lm() {
         },
     )
 }
+
+#[test]
+fn test_masked_key_get_unwrapping_lm_tampered_key_rejected() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+            let (_, _, masked_key) = get_unwrapping_key(dev, setup_res.session_id);
+
+            let result = dev.erase();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            // Corrupt the masked unwrapping key so its HMAC no longer
+            // verifies; the step-12 re-import must reject it rather than
+            // importing forged key material.
+            let mut tampered = masked_key.as_slice().to_vec();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 0xFF;
+            let tampered_key =
+                MborByteArray::from_slice(&tampered).expect("failed to create tampered byte array");
+
+            let resp = helper_common_establish_credential_with_bmk_no_unwrap(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                tampered_key,
+            );
+
+            assert!(
+                resp.is_err(),
+                "EstablishCredential with a tampered masked unwrapping key must be rejected, got {:?}",
+                resp
+            );
+        },
+    )
+}
