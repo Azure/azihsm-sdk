@@ -35,11 +35,13 @@ pub mod tbor_int {
 }
 
 pub mod api_rev;
+pub mod concat_kdf_derive;
 pub mod ecc_generate_key;
 pub mod ecc_sign;
 pub mod ecdh_derive;
 pub mod evidence;
 pub mod get_unwrapping_key;
+pub mod hkdf_derive;
 pub mod hmac;
 pub mod hmac_generate_key;
 pub mod key_props;
@@ -63,11 +65,13 @@ pub mod session_open_init;
 pub mod unwrap_key;
 
 pub use api_rev::*;
+pub use concat_kdf_derive::*;
 pub use ecc_generate_key::*;
 pub use ecc_sign::*;
 pub use ecdh_derive::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
+pub use hkdf_derive::*;
 pub use hmac::*;
 pub use hmac_generate_key::*;
 pub use key_props::*;

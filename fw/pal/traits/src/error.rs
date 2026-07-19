@@ -430,6 +430,12 @@ pub enum HsmError {
     /// opted in via policy.
     SdPeerCloningNotAllowed = 0x0870010A,
 
+    /// A single-step concatenation KDF (X9.63 / SP 800-56A one-step)
+    /// failed: the shared secret was empty, the requested output length is
+    /// invalid, or the underlying hash operation failed.  Surfaced by
+    /// `x963_kdf` / `sp800_56a_kdf`.
+    ConcatKdfError = 0x0870010B,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

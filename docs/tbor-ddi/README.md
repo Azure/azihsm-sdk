@@ -73,6 +73,8 @@ single `none` TOC placeholder and no typed body fields.
 | `0x18` | `EccSign` | InSession | [`commands/ecc_sign.md`](./commands/ecc_sign.md) |
 | `0x19` | `EcdhDerive` | InSession | [`commands/ecdh_derive.md`](./commands/ecdh_derive.md) |
 | `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](./commands/rsa_mod_exp.md) |
+| `0x1C` | `HkdfDerive` | InSession | [`commands/hkdf_derive.md`](./commands/hkdf_derive.md) |
+| `0x1D` | `ConcatKdfDerive` | InSession | [`commands/concat_kdf_derive.md`](./commands/concat_kdf_derive.md) |
 
 ## Default-PSK gate
 
