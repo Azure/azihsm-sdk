@@ -23,6 +23,7 @@
 pub(crate) mod api_rev;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
+pub(crate) mod hash;
 pub(crate) mod key_report;
 pub(crate) mod part_final;
 pub mod part_info;
@@ -146,6 +147,15 @@ pub(crate) mod opcode {
     /// return it masked under the requested scope's masking key (plus the
     /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
     pub(crate) const UNWRAP_KEY: u8 = 0x14;
+
+    /// `Hash` — compute a SHA-256 / 384 / 512 digest of a
+    /// host-supplied message.  A pure hashing utility with no key or
+    /// partition state.  See [`super::hash`].
+    ///
+    /// `0x15..=0x1A` are reserved by the sibling AES / ECC / RSA crypto
+    /// commands (separate branches), so `Hash` takes the next free
+    /// opcode, `0x1B`.
+    pub(crate) const HASH: u8 = 0x1B;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -321,6 +331,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::HASH => hash::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -346,6 +357,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::KEY_REPORT
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::HASH
     )
 }
 
@@ -377,7 +389,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SD_RESEAL_REMOTE_BACKUP
         | opcode::KEY_REPORT
         | opcode::GET_UNWRAPPING_KEY
-        | opcode::UNWRAP_KEY => true,
+        | opcode::UNWRAP_KEY
+        | opcode::HASH => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -417,7 +430,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::SD_RESEAL_REMOTE_BACKUP
         | opcode::KEY_REPORT
         | opcode::GET_UNWRAPPING_KEY
-        | opcode::UNWRAP_KEY => true,
+        | opcode::UNWRAP_KEY
+        | opcode::HASH => true,
         _ => true,
     }
 }

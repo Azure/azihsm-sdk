@@ -266,7 +266,8 @@ impl SessionCtrl {
             | opcode::SD_RESEAL_REMOTE_BACKUP
             | opcode::KEY_REPORT
             | opcode::GET_UNWRAPPING_KEY
-            | opcode::UNWRAP_KEY => Self::InSession,
+            | opcode::UNWRAP_KEY
+            | opcode::HASH => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

@@ -67,6 +67,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x10` | `KeyReport` | InSession | [`commands/key_report.md`](./commands/key_report.md) |
 | `0x13` | `GetUnwrappingKey` | InSession | [`commands/get_unwrapping_key.md`](./commands/get_unwrapping_key.md) |
 | `0x14` | `UnwrapKey` | InSession | [`commands/unwrap_key.md`](./commands/unwrap_key.md) |
+| `0x1B` | `Hash` | InSession | [`commands/hash.md`](./commands/hash.md) |
 
 ## Default-PSK gate
 
