@@ -53,11 +53,13 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
         let (key, value) = attr
             .split_once('=')
             .ok_or_else(|| EngineError::Other(format!("malformed azihsm URI attribute: {attr}")))?;
-        match key {
+        // Attribute names are case-insensitive, mirroring the provider's STORE
+        // (which compares with `strcasecmp`).
+        match key.to_ascii_lowercase().as_str() {
             "type" => key_type = Some(parse_key_type(value)?),
-            other => {
+            _ => {
                 return Err(EngineError::Other(format!(
-                    "unknown azihsm URI attribute: {other}"
+                    "unknown azihsm URI attribute: {key}"
                 )));
             }
         }
@@ -73,15 +75,16 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
 }
 
 fn parse_key_type(value: &str) -> EngineResult<KeyType> {
-    match value {
+    // Values are case-insensitive, mirroring the provider's STORE (`strcasecmp`).
+    match value.to_ascii_lowercase().as_str() {
         "ec" => Ok(KeyType::Ec),
         "rsa" => Ok(KeyType::Rsa),
         "rsa-pss" => Ok(KeyType::RsaPss),
         "aes" => Err(EngineError::Other(
             "aes keys cannot be loaded via load_private_key".into(),
         )),
-        other => Err(EngineError::Other(format!(
-            "unknown azihsm key type: {other}"
+        _ => Err(EngineError::Other(format!(
+            "unknown azihsm key type: {value}"
         ))),
     }
 }
@@ -110,6 +113,22 @@ mod tests {
     fn parses_rsa_pss() {
         assert_eq!(
             parse("azihsm://k;type=rsa-pss").unwrap().key_type,
+            KeyType::RsaPss
+        );
+    }
+
+    // The provider's STORE compares the attribute name and value with
+    // strcasecmp, so mixed case must parse the same here.
+    #[test]
+    fn parses_uppercase_attr_name_and_value() {
+        let u = parse("azihsm://./key.bin;TYPE=EC").unwrap();
+        assert_eq!(u.key_type, KeyType::Ec);
+    }
+
+    #[test]
+    fn parses_mixed_case_rsa_pss() {
+        assert_eq!(
+            parse("azihsm://k;Type=Rsa-PSS").unwrap().key_type,
             KeyType::RsaPss
         );
     }

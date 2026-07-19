@@ -66,14 +66,20 @@ pub fn load_key(data: &EngineData, key_id: &str) -> EngineResult<*mut ffi::EVP_P
     load_ec(data, &masked)
 }
 
+/// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
+/// bounds allocation against a caller-supplied path pointing at a very large or
+/// unbounded file. Mirrors `MAX_STORAGE_FILE_SIZE` in
+/// azihsm_ossl_engine_resiliency.
+const MAX_MASKED_KEY_SIZE: u64 = 64 * 1024;
+
 /// Read a masked-key blob with the same hardening the rest of the engine
 /// applies to key-material files: `O_NOFOLLOW` refuses a symlink at `path`,
 /// `O_NONBLOCK` avoids blocking on a FIFO/device before the regular-file check,
-/// `O_CLOEXEC` keeps the fd from leaking across exec, and a non-regular file is
-/// rejected outright. Mirrors the hardened open in `logging` and
-/// `read_regular_hardened` in azihsm_ossl_engine_resiliency.
+/// `O_CLOEXEC` keeps the fd from leaking across exec, a non-regular file is
+/// rejected outright, and the read is capped at [`MAX_MASKED_KEY_SIZE`].
+/// Mirrors `read_regular_hardened` in azihsm_ossl_engine_resiliency.
 fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
@@ -88,10 +94,26 @@ fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
             path.display()
         )));
     }
+    if meta.len() > MAX_MASKED_KEY_SIZE {
+        return Err(EngineError::Other(format!(
+            "masked key {} is too large ({} bytes, max {MAX_MASKED_KEY_SIZE})",
+            path.display(),
+            meta.len()
+        )));
+    }
 
+    // Cap the read too: metadata can under-report (a growing or virtual file),
+    // so bound the bytes actually read and reject anything over the limit.
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf)
+    file.take(MAX_MASKED_KEY_SIZE + 1)
+        .read_to_end(&mut buf)
         .map_err(|e| EngineError::wrap(format!("read masked key {}", path.display()), e))?;
+    if buf.len() as u64 > MAX_MASKED_KEY_SIZE {
+        return Err(EngineError::Other(format!(
+            "masked key {} exceeds {MAX_MASKED_KEY_SIZE} bytes",
+            path.display()
+        )));
+    }
     Ok(buf)
 }
 
