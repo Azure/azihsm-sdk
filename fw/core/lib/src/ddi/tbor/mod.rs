@@ -31,6 +31,7 @@ pub mod part_info;
 pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
+pub(crate) mod rsa_mod_exp;
 pub(crate) mod sd_backup;
 pub(crate) mod sd_create_peer_backup;
 pub(crate) mod sd_create_remote_backup;
@@ -194,6 +195,12 @@ pub(crate) mod opcode {
     /// return it masked under the requested scope's masking key (plus the
     /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
     pub(crate) const UNWRAP_KEY: u8 = 0x14;
+
+    /// `RsaModExp` — perform the RSA private-key primitive `x = y^d mod n`
+    /// using a caller-held masked RSA private key (imported via
+    /// `UnwrapKey`; unmasked on-device).  The raw modular exponentiation
+    /// underlying RSA decrypt / sign.  See [`super::rsa_mod_exp`].
+    pub(crate) const RSA_MOD_EXP: u8 = 0x1A;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -411,6 +418,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -442,6 +450,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::RSA_MOD_EXP
     )
 }
 
@@ -479,7 +488,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::HMAC_GENERATE_KEY
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
-        | opcode::UNWRAP_KEY => true,
+        | opcode::UNWRAP_KEY
+        | opcode::RSA_MOD_EXP => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -525,7 +535,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::HMAC_GENERATE_KEY
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
-        | opcode::UNWRAP_KEY => true,
+        | opcode::UNWRAP_KEY
+        | opcode::RSA_MOD_EXP => true,
         _ => true,
     }
 }
