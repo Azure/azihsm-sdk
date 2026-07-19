@@ -16,6 +16,7 @@ pub mod ecdh_derive;
 pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_unwrapping_key;
+pub mod hash;
 pub mod hkdf_derive;
 pub mod hmac;
 pub mod hmac_generate_key;
