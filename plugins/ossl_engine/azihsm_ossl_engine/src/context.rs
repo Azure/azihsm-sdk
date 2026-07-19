@@ -122,7 +122,10 @@ impl EngineData {
     /// Run `f` with the open HSM session. The lock is held across `f`, so key
     /// operations serialize with each other and with the open. Errors if the
     /// HSM has not been opened.
-    pub fn with_session<F, R>(&self, f: F) -> EngineResult<R>
+    ///
+    /// Crate-internal: it hands out a raw `HsmSession`, so it is used only by
+    /// the key loader (and tests), not exposed as public engine API.
+    pub(crate) fn with_session<F, R>(&self, f: F) -> EngineResult<R>
     where
         F: FnOnce(&HsmSession) -> EngineResult<R>,
     {
@@ -137,12 +140,27 @@ impl EngineData {
     /// is destroyed (its `Drop` deletes it from the HSM), and return a stable
     /// non-owning pointer to it for stashing in `EC_KEY` ex_data. Boxing keeps
     /// the address stable across `Vec` growth; the returned pointer stays valid
-    /// until this `EngineData` is dropped by the destroy handler.
-    pub fn retain_loaded_key(&self, key: HsmEccPrivateKey) -> *const HsmEccPrivateKey {
+    /// until this `EngineData` is dropped by the destroy handler, or until
+    /// [`release_loaded_key`](Self::release_loaded_key) drops it early.
+    ///
+    /// Crate-internal: an implementation detail of the key loader.
+    pub(crate) fn retain_loaded_key(&self, key: HsmEccPrivateKey) -> *const HsmEccPrivateKey {
         let boxed = Box::new(key);
         let ptr: *const HsmEccPrivateKey = boxed.as_ref();
         self.loaded_keys.lock().push(boxed);
         ptr
+    }
+
+    /// Drop a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
+    /// identified by the pointer it returned. Used to roll back on a partial
+    /// load failure (e.g. if stashing the ex_data pointer fails) so the key
+    /// doesn't linger in the HSM until engine teardown. A no-op if the pointer
+    /// isn't currently retained. Dropping the box deletes the key from the HSM.
+    pub(crate) fn release_loaded_key(&self, ptr: *const HsmEccPrivateKey) {
+        let mut keys = self.loaded_keys.lock();
+        if let Some(pos) = keys.iter().position(|k| std::ptr::eq(k.as_ref(), ptr)) {
+            keys.remove(pos);
+        }
     }
 }
 

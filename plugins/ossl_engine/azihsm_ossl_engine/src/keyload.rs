@@ -175,12 +175,15 @@ fn attach_ec(
     // pointer it returns for later sign/derive retrieval. The ex_data slot has
     // no free callback (see ec_key_ex_index), so libcrypto never calls back into
     // this `.so` for cleanup — even if the EVP_PKEY outlives the engine.
-    let ptr = data.retain_loaded_key(key).cast_mut().cast::<c_void>();
-    // SAFETY: ec is valid, idx is a registered EC_KEY ex_data slot, and ptr is a
-    // non-owning pointer into a key EngineData keeps alive for the engine's
+    let key_ptr = data.retain_loaded_key(key);
+    // SAFETY: ec is valid, idx is a registered EC_KEY ex_data slot, and key_ptr
+    // is a non-owning pointer into a key EngineData keeps alive for the engine's
     // lifetime; the slot has no free callback, so no ownership is transferred.
-    let rc = unsafe { ffi::EC_KEY_set_ex_data(ec, idx, ptr) };
+    let rc = unsafe { ffi::EC_KEY_set_ex_data(ec, idx, key_ptr.cast_mut().cast::<c_void>()) };
     if rc != 1 {
+        // Roll back the retain so the failed load doesn't leave the key in the
+        // HSM until engine teardown.
+        data.release_loaded_key(key_ptr);
         return Err(EngineError::Other("EC_KEY_set_ex_data failed".into()));
     }
     Ok(())
