@@ -451,6 +451,24 @@ fn hex_decode_16(s: &str, var: &'static str) -> EngineResult<[u8; 16]> {
     Ok(out)
 }
 
+/// Test helper: write key-material bytes to `path` with owner-only permissions
+/// and the same open hardening the engine uses for secret files — create a new
+/// file (`O_EXCL`, no clobber) mode 0600 and refuse a symlink at the path
+/// (`O_NOFOLLOW`). Used by the round-trip tests to stage a masked-key blob.
+#[cfg(test)]
+fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(SECRET_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    file.write_all(data)
+}
+
 #[cfg(all(test, feature = "mock"))]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -603,7 +621,7 @@ mod tests {
             .unwrap();
 
         let blob_path = scratch.0.join("ec_key.bin");
-        fs::write(&blob_path, &masked).unwrap();
+        write_key_material(&blob_path, &masked).unwrap();
 
         let uri = format!("azihsm://{};type=ec", blob_path.display());
         let raw = crate::keyload::load_key(&data, &uri).unwrap();
@@ -774,7 +792,10 @@ mod hw_tests {
 
         let blob_path =
             std::env::temp_dir().join(format!("engine-hw-ec-{}.bin", std::process::id()));
-        std::fs::write(&blob_path, &masked).map_err(|e| {
+        // Clear any leftover from a prior crashed run so the O_EXCL create in
+        // write_key_material succeeds.
+        let _ = std::fs::remove_file(&blob_path);
+        write_key_material(&blob_path, &masked).map_err(|e| {
             EngineError::wrap(format!("write masked blob {}", blob_path.display()), e)
         })?;
 
