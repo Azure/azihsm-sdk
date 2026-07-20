@@ -262,6 +262,46 @@ impl UnoHsmPal {
         r: &mut DmaBuf,
         s: &mut DmaBuf,
     ) -> HsmResult<()> {
+        self.sign_with_k_inner(io, curve, k, digest, d, r, s, None)
+            .await
+    }
+
+    /// As [`Self::ecc_sign_with_k`], but pinned to a specific PKA `engine`
+    /// (0-based index) instead of any free engine.
+    ///
+    /// Used by the per-engine ECDSA self-test (CAST) to validate every UPKA
+    /// engine in turn; production callers use [`Self::ecc_sign_with_k`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn ecc_sign_with_k_on_engine(
+        &self,
+        io: &impl HsmIo,
+        curve: UpkaEccCurve,
+        engine: u8,
+        k: &DmaBuf,
+        digest: &DmaBuf,
+        d: &DmaBuf,
+        r: &mut DmaBuf,
+        s: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.sign_with_k_inner(io, curve, k, digest, d, r, s, Some(engine))
+            .await
+    }
+
+    /// Shared implementation of [`Self::ecc_sign_with_k`] /
+    /// [`Self::ecc_sign_with_k_on_engine`]: `engine` selects a specific PKA
+    /// engine (`Some`) or any free one (`None`).
+    #[allow(clippy::too_many_arguments)]
+    async fn sign_with_k_inner(
+        &self,
+        io: &impl HsmIo,
+        curve: UpkaEccCurve,
+        k: &DmaBuf,
+        digest: &DmaBuf,
+        d: &DmaBuf,
+        r: &mut DmaBuf,
+        s: &mut DmaBuf,
+        engine: Option<u8>,
+    ) -> HsmResult<()> {
         // Implemented for P-384 only (the cert-chain PID leaf is signed with the
         // P-384 alias key). Other curves are rejected until their constants /
         // sizes are wired in.
@@ -365,11 +405,17 @@ impl UnoHsmPal {
                 EccStep::new(EccStepOp::MontReprOut, a_s, a_s_plus_t, 0),
             ];
 
-            // Drive the whole sequence on one held engine so the Montgomery
-            // constant set by each phase stays resident for the ops that follow.
-            let res = self
-                .pka
-                .with_engine(async |eng| {
+            // Drive the whole sequence on one held engine (a specific one for
+            // the per-engine self-test, otherwise any free engine) so the
+            // Montgomery constant set by each phase stays resident for the ops
+            // that follow. `release` performs the engine wipe, mirroring
+            // `with_engine` / `with_specific_engine`.
+            let res = async {
+                let mut eng = match engine {
+                    Some(id) => self.pka.acquire_engine(id).await?,
+                    None => self.pka.acquire_any().await?,
+                };
+                let outcome = async {
                     eng.ecc_run(curve, &prime_phase).await?;
 
                     // Reduction is double-width: stage xR into the low half of the
@@ -378,8 +424,14 @@ impl UnoHsmPal {
                     xr_wide[..field].copy_from_slice(&xr[..field]);
 
                     eng.ecc_run(curve, &order_phase).await
-                })
+                }
                 .await;
+                let release = eng.release().await;
+                outcome?;
+                release?;
+                Ok(())
+            }
+            .await;
 
             // Reject a degenerate signature (`r == 0` or `s == 0`) after the full
             // sequence — RFC 6979 §3.2 requires advancing to the next candidate,
