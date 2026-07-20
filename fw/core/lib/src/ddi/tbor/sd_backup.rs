@@ -23,6 +23,8 @@
 
 use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::aead::mask;
+use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
+use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::MASKED_SD_LEN;
@@ -202,6 +204,93 @@ pub(super) async fn mask_pok_local_backup<P: HsmPal>(
         return Err(HsmError::InternalError);
     }
     Ok(())
+}
+
+/// Re-provision the security domain from a recovered `bks3` and the
+/// previous SD masking-key backup.
+///
+/// Shared by the restore commands (local unmasks `bks3` from
+/// `pok_local_backup`; remote HPKE-opens it from `src_remote_backup`).
+/// Given the recovered `bks3` and the caller-staged `prev_sd_mk_scratch`
+/// (SDMK masked under SDBMK, unmasked here in place), it: re-derives the
+/// `SDBMK` that masked `prev_sd_mk_scratch` at the *backup's own*
+/// `{svn, owner}` (peeked from its cleartext metadata) so an older-SVN
+/// backup unmasks on newer firmware, recovers `SDMK` (checking the
+/// `SdMasking` kind and anti-rollback SVN), re-masks both backups at the
+/// *current* `{svn, owner}` into `pok_local_out` / `sd_mk_out`, and commits
+/// the SD to the vault (undo-guarded).
+///
+/// The caller wipes `bks3` and `prev_sd_mk_scratch`; both derived `SDBMK`s
+/// are scrubbed here on every exit path.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn reprovision_sd_from_bks3<'p, P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    undo: &mut UndoLog<'p>,
+    svn: u64,
+    owner: u16,
+    bks3: &DmaBuf,
+    prev_sd_mk_scratch: &mut DmaBuf,
+    pok_local_out: &mut DmaBuf,
+    sd_mk_out: &mut DmaBuf,
+) -> HsmResult<()> {
+    // Peek the previous sd_mk_backup's own cleartext `{svn, owner}`.  SDBMK is
+    // bound to `{svn, owner}` (KBKDF over `mfgr_seed[svn] ‖ owner_seed[owner]`),
+    // so the backup must be unmasked with SDBMK re-derived at the SVN/owner it
+    // was *minted* under — not the current platform's.  The versioned device
+    // seeds are forward-derivable, so this is what lets an older-SVN backup be
+    // restored on newer firmware; deriving at the current SVN would fail the
+    // AEAD tag and break that (spec-mandated) forward-restore.  The peeked
+    // values are NOT yet authenticated (`peek_metadata` does not verify the
+    // tag); `unmask` below authenticates them and the anti-rollback check is
+    // deferred until after it succeeds.  Mirrors `restore_part_local_mk` in
+    // `part_final`.
+    let (prev_svn, prev_owner) = {
+        let meta = peek_metadata(prev_sd_mk_scratch)?;
+        (meta.svn.get(), meta.owner_seed_id.get())
+    };
+
+    // SDBMK for the UNMASK, derived at the backup's own `{svn, owner}`; and
+    // SDBMK for the RE-MASK, derived at the current `{svn, owner}` so the
+    // refreshed envelope is bound to this firmware's identity.  Both are their
+    // own scratch allocations (scope rewind does not clear DMA memory), so both
+    // are zeroized on EVERY exit path below.
+    let sdbmk_prev = derive_sdbmk(pal, io, alloc, bks3, prev_svn, prev_owner).await?;
+    let sdbmk_curr = derive_sdbmk(pal, io, alloc, bks3, svn, owner).await?;
+    let res = async {
+        let sdmk = {
+            let view = unmask(pal, io, sdbmk_prev, prev_sd_mk_scratch).await?;
+            if !matches!(view.key_kind, HsmVaultKeyKind::SdMasking) {
+                return Err(HsmError::UnsupportedKeyType);
+            }
+            // Anti-rollback: a backup minted under a newer SVN cannot be
+            // restored on this (older) firmware.  Enforced on the now-
+            // authenticated `view.svn` (== `prev_svn`) after the AEAD tag
+            // authenticates the envelope.
+            if view.svn > svn {
+                return Err(HsmError::SdBackupSvnRollback);
+            }
+            // Firmware invariant (tag-authenticated): a genuine backup always
+            // carries an `SDMK_LEN` key; a mismatch signals corruption / a
+            // sizing bug, not a client error.
+            if view.target_key.len() != SDMK_LEN {
+                return Err(HsmError::InternalError);
+            }
+            view.target_key
+        };
+
+        // Re-mask both backups at the current `{svn, owner}`.
+        mask_pok_local_backup(pal, io, alloc, bks3, svn, owner, pok_local_out).await?;
+        mask_sd_mk_backup(pal, io, alloc, sdbmk_curr, sdmk, svn, owner, sd_mk_out).await?;
+
+        // Commit: vault SDMK, mark SD-initialized (undo-guarded).
+        commit_sd_to_vault(pal, io, undo, sdmk).await
+    }
+    .await;
+    sdbmk_curr.zeroize();
+    sdbmk_prev.zeroize();
+    res
 }
 
 /// Commit the security domain: mark it initialized, vault the `SDMK`, and
