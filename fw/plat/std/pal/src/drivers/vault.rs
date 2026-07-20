@@ -334,6 +334,15 @@ impl KeyVault {
         Ok(self.get_entry(key_id)?.attrs)
     }
 
+    /// Return the physical session-key id this key is bound to, or
+    /// `None` for a partition-scoped (persistent) key.
+    ///
+    /// Used to enforce session-scoped key isolation: a key bound to a
+    /// session may only be accessed from that same session.
+    pub fn key_session_binding(&self, key_id: HsmKeyId) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.get_entry(key_id)?.session_key_id)
+    }
+
     /// Number of tables in this vault.
     #[cfg(test)]
     #[allow(dead_code)]
