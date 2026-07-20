@@ -42,13 +42,17 @@
 //! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
 //! are unavailable under `--features mock`.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
 
 pub mod api_rev;
 pub mod assertions;
+#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub mod ctx;
 pub mod fixture;
+#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+pub mod hw_ctx;
 pub mod session;
+#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub mod session_guard;
 #[cfg(feature = "emu")]
 pub mod x509_fixture;
@@ -64,7 +68,22 @@ pub use azihsm_ddi_tbor_types::build_psk_change_aad;
 pub use azihsm_ddi_tbor_types::TborPskChangeReq;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
+#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use ctx::TestCtx;
+
+// `Ctx` is the backend-agnostic per-test fixture used by files
+// migrated to run against both the emu/mock/sock harnesses and the
+// native hw-tests backend. Under emu/mock/sock it aliases the
+// full-featured [`TestCtx`]; under a pure `hw-tests` build (no other
+// backend feature) it aliases [`hw_ctx::HwCtx`], which mirrors
+// `TestCtx`'s method surface with NSSR-based setup/teardown. Emu
+// takes precedence in the combined-features case so a stray
+// `--features emu,hw-tests` still builds against emu.
+#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
+pub use ctx::TestCtx as Ctx;
+#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+pub use hw_ctx::HwCtx as Ctx;
+
 pub use fixture::open_dev;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
@@ -81,4 +100,5 @@ pub use session::session_open_init_with_options;
 pub use session::PendingHandshake;
 pub use session::SessionHandshake;
 pub use session::SessionOpenInitOptions;
+#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use session_guard::SessionGuard;

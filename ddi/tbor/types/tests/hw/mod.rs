@@ -47,7 +47,6 @@ use azihsm_ddi_interface::Ddi;
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 
-pub mod api_rev;
 pub mod assertions;
 pub mod default_psk_gate;
 pub mod harness;
