@@ -21,12 +21,12 @@
 //!    already initialized ([`SdAlreadyInitialized`](HsmError::SdAlreadyInitialized)).
 //! 2. Unmask `pok_local_backup` under the partition-local masking key
 //!    (`PartLocalMK`, from `PartFinal`) → **BKS3**.  The blob must be an
-//!    [`SdPartitionOwnerSeed`](HsmVaultKeyKind::SdPartitionOwnerSeed)
+//!    [`SdPartitionOwnerSeed`](azihsm_fw_hsm_pal_traits::HsmVaultKeyKind::SdPartitionOwnerSeed)
 //!    envelope, and its bound SVN must not be newer than the current
 //!    firmware SVN ([`SdBackupSvnRollback`](HsmError::SdBackupSvnRollback)).
 //! 3. Derive `SDBMK` from BKS3 + the partition `policy_hash`, then unmask
 //!    `sd_mk_backup` under `SDBMK` → **SDMK** (must be an
-//!    [`SdMasking`](HsmVaultKeyKind::SdMasking) envelope; same anti-rollback).
+//!    [`SdMasking`](azihsm_fw_hsm_pal_traits::HsmVaultKeyKind::SdMasking) envelope; same anti-rollback).
 //! 4. Re-mask both at the current `{svn, owner}`: `CurrSDLocalBackup =
 //!    mask(BKS3, PartLocalMK)` and `CurrSDKMKBackup = mask(SDMK, SDBMK)`.
 //! 5. **Commit** ([`commit_sd_to_vault`](super::sd_backup::commit_sd_to_vault)):
@@ -39,7 +39,6 @@
 //!
 //! This command is **Crypto-Officer-only**.
 
-use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_fw_ddi_tbor_types::TborSdRestoreLocalBackupResp;
 use azihsm_fw_ddi_tbor_types::MASKED_SD_LEN;
@@ -51,7 +50,6 @@ use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
-use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_undo::UndoLog;
 
@@ -116,29 +114,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // EVERY exit path below.
         let res = async {
             // ── Recover BKS3 from pok_local_backup under PartLocalMK ──
-            let bks3 = {
-                let local_mk_id = part_state::part_local_mk_key_id(pal, io)?;
-                let local_mk = pal.vault_key(io, local_mk_id)?;
-                let view = unmask(pal, io, local_mk, pok_scratch).await?;
-                if !matches!(view.key_kind, HsmVaultKeyKind::SdPartitionOwnerSeed) {
-                    return Err(HsmError::UnsupportedKeyType);
-                }
-                // Anti-rollback: a backup minted under a newer SVN cannot be
-                // restored on this (older) firmware.  Enforced after the
-                // AEAD tag authenticates the envelope, so a tampered
-                // cleartext SVN fails the tag rather than spoofing this.
-                if view.svn > svn {
-                    return Err(HsmError::SdBackupSvnRollback);
-                }
-                // Firmware invariant: the AEAD tag has authenticated the
-                // envelope, so a genuine backup always carries a `BKS3_LEN`
-                // seed; a mismatch signals corruption / a sizing bug, not a
-                // client error.  Mirrors `restore_part_local_mk` in `part_final`.
-                if view.target_key.len() != sd_backup::BKS3_LEN {
-                    return Err(HsmError::InternalError);
-                }
-                view.target_key
-            };
+            let bks3 = sd_backup::recover_bks3_from_pok_local(pal, io, svn, pok_scratch).await?;
 
             // Recover SDMK from `mk_scratch`, re-mask both backups, and
             // commit the SD to the vault (shared with the remote restore).

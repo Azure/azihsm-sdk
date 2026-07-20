@@ -422,6 +422,14 @@ pub enum HsmError {
     /// spoofing this error.
     SdBackupSvnRollback = 0x08700109,
 
+    /// A `SdCreatePeerBackup` / `SdRestorePeerBackup` handler was asked to
+    /// clone a security domain to (or from) a peer partition, but the
+    /// partition's unified [`PartPolicy`](crate::PartPolicy) does not permit
+    /// peer cloning (its `allow_peer_cloning` policy flag is clear).  Peer
+    /// backup/restore is only allowed when the security-domain owner has
+    /// opted in via policy.
+    SdPeerCloningNotAllowed = 0x0870010A,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
