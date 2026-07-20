@@ -12,7 +12,7 @@
 //! Invoke with:
 //!
 //! ```text
-//! cargo test --no-default-features \
+//! cargo test --no-default-features --features hw-tests \
 //!     -p azihsm_ddi_tbor_types \
 //!     --test azihsm_ddi_tbor_tests hw::psk_change
 //! ```
