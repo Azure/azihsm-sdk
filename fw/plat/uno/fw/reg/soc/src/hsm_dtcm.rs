@@ -10,8 +10,12 @@ pub const HSM_DTCM_BASE: u32 = 0x20000000;
 pub const CORE_RUN_STATUS_OFFSET: u32 = 0x3F800;
 pub const DTCM_IO_BUF_OFFSET: u32 = 0x2EC00;
 pub const DTCM_IO_BUF_COUNT: u32 = 33;
-pub const DTCM_IO_BUF_STRIDE: u32 = 0x800;
-pub const DTCM_IO_BUF_SIZE: u32 = 0x800;
+pub const DTCM_IO_BUF_STRIDE: u32 = 0x600;
+pub const DTCM_IO_BUF_SIZE: u32 = 0x600;
+pub const DEV_ID_CERT_BLOB_OFFSET: u32 = 0x3B400;
+pub const DEV_ID_CERT_BLOB_COUNT: u32 = 1;
+pub const DEV_ID_CERT_BLOB_STRIDE: u32 = 0x4000;
+pub const DEV_ID_CERT_BLOB_SIZE: u32 = 0x4000;
 pub const CRASHDUMP_BASE_OFFSET: u32 = 0x3F400;
 pub const CRASHDUMP_BASE_COUNT: u32 = 1;
 pub const CRASHDUMP_BASE_STRIDE: u32 = 0x400;
@@ -29,7 +33,9 @@ pub mod regs {
     tock_registers::register_structs! {
         pub HsmDtcmRegs {
             (0x0 => _reserved0),
-            (0x2ec00 => pub dtcm_io_buf: [u8; 67584]),
+            (0x2ec00 => pub dtcm_io_buf: [u8; 50688]),
+            (0x3b200 => _reserved1),
+            (0x3b400 => pub dev_id_cert_blob: [u8; 16384]),
             (0x3f400 => pub crashdump_base: [u8; 1024]),
             (0x3f800 => pub core_run_status: crate::RW<u32, super::CORE_RUN_STATUS::Register>),
             (0x3f804 => @END),

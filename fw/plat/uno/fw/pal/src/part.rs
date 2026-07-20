@@ -239,7 +239,15 @@ impl UnoHsmPal {
         // field (selected by `kind`). This borrow of the PartStore slot is
         // strictly synchronous — no `.await` is reached while it is held.
         match kind {
-            HsmVaultKeyKind::Ecc384Private => part.set_id_pub_key(pub_buf)?,
+            HsmVaultKeyKind::Ecc384Private => {
+                // The PKA emits the public key little-endian; store the identity
+                // key big-endian (natural SEC1/DER order) so every host-facing
+                // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
+                // reads `part_id_pub_key` directly without per-handler swaps.
+                pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
+                pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
+                part.set_id_pub_key(pub_buf)?
+            }
             HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
             HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
             _ => return Err(HsmError::InternalError),

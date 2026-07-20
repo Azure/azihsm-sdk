@@ -68,6 +68,13 @@ fn main() {
     );
 
     // Leaf
+    //
+    // NOTE: the firmware does NOT use this generic 2-RDN (CN + serialNumber)
+    // leaf template. The firmware's PID leaf uses a hand-ported, single-
+    // `commonName` template (issuer CN(64), subject CN(32)) in `leaf_cert.rs`
+    // that chains to the HSP-provisioned alias certificate. To avoid clobbering
+    // that hand-maintained file, this generator writes the generic template to
+    // `leaf_cert.generated.rs` (reference only; not compiled by the firmware).
     println!("  Generating Leaf certificate template...");
     let leaf = cert::build_leaf_cert();
     let leaf_src = code_gen::emit_template_module(
@@ -75,7 +82,8 @@ fn main() {
         &leaf.tbs,
         &leaf.fields,
     );
-    fs::write(out_dir.join("leaf_cert.rs"), leaf_src).expect("write leaf_cert.rs");
+    fs::write(out_dir.join("leaf_cert.generated.rs"), leaf_src)
+        .expect("write leaf_cert.generated.rs");
     println!(
         "    TBS size: {} bytes, {} variable fields",
         leaf.tbs.len(),
