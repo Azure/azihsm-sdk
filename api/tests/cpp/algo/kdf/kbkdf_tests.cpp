@@ -44,13 +44,20 @@ static azihsm_status kbkdf_derive_with_custom_params(
 
     auto_key derived_key;
 
-    return azihsm_key_derive(
+    const azihsm_status status = azihsm_key_derive(
         session,
         &kbkdf_algo,
         secret_a.get(),
         &derived_key_prop_list,
         derived_key.get_ptr()
     );
+
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        EXPECT_EQ(derived_key.get(), 0);
+    }
+
+    return status;
 }
 
 static azihsm_status kbkdf_derive_with_algo(
@@ -68,13 +75,20 @@ static azihsm_status kbkdf_derive_with_algo(
 
     auto_key derived_key;
 
-    return azihsm_key_derive(
+    const azihsm_status status = azihsm_key_derive(
         session,
         algo,
         secret_a.get(),
         &derived_key_prop_list,
         derived_key.get_ptr()
     );
+
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        EXPECT_EQ(derived_key.get(), 0);
+    }
+
+    return status;
 }
 
 static key_props valid_kbkdf_aes_props()
