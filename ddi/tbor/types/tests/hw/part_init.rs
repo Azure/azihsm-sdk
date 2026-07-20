@@ -21,16 +21,17 @@
 //! What is intentionally *not* verified here (compared to the emu
 //! suite):
 //!
-//! * **Cold-restart determinism** — HW resets go through the on-die
-//!   NSSR path, which re-materialises the UDS from device fuses, so
-//!   two runs with the same `(MachineSeed, Policy, POTA thumb)` do
-//!   **not** produce the same PTA pubkey. The determinism invariant
-//!   is emu-only.
 //! * **Full COSE_Sign1 PTAReport verify** — that needs the sim-only
 //!   `azihsm_ddi_mbor_sim` verifier and the MBOR cert-chain fetch
 //!   helpers, which the hw harness does not wire up. We assert the
-//!   report''s outer CBOR shape and cap here; the cryptographic
+//!   report's outer CBOR shape and cap here; the cryptographic
 //!   verify is covered by the emu smoke test.
+//!
+//! Cold-restart determinism *is* exercised here — see
+//! [`part_init_determinism_hw`] — because NSSR on real silicon
+//! re-materialises the same fuse-derived UDS, so
+//! `PTA = f(UDS, MachineSeed, Policy, POTA thumb)` must be
+//! byte-stable across resets when the four inputs are held fixed.
 //!
 //! Invoke with:
 //!
@@ -492,5 +493,82 @@ fn part_init_envelope_empty_rejected_hw() {
         assert_fw_rejects(&err, TborStatus::DdiDecodeFailed);
 
         session_close(dev, session_id).expect("close CO session");
+    });
+}
+
+// -- Cold-restart determinism ---------------------------------------------
+
+/// Run the canonical `bootstrap-rotated-CO -> PartInit` flow with the
+/// supplied inputs, close the session, and return the PTA
+/// SubjectPublicKeyInfo (DER) extracted from the returned CSR.
+///
+/// Mirrors the emu suite's `run_part_init_capture_pta_pub`. Comparing
+/// the CSR SPKI rather than the CSR bytes themselves side-steps the
+/// non-deterministic ECDSA nonce baked into the CSR signature and the
+/// COSE_Sign1 signature on the PTAReport: the PTA public key is the
+/// canonical determinism invariant under test.
+fn run_part_init_capture_pta_pub_hw(
+    dev: &HwDevInner,
+    seed: &[u8; MACH_SEED_LEN],
+    policy: &[u8; PART_POLICY_LEN],
+    pota: &[u8; POTA_THUMBPRINT_LEN],
+    sata: &[u8; SATA_THUMBPRINT_LEN],
+) -> Vec<u8> {
+    use x509::X509Csr;
+    use x509::X509CsrOp;
+
+    let session = bootstrap_rotated_co(dev, &ROTATED_CO_PSK);
+    let session_id = session.session_id;
+    let resp = part_init(dev, &session, seed, policy, pota, sata, None)
+        .expect("PartInit roundtrip on hardware");
+    session_close(dev, session_id).expect("close CO session after PartInit");
+
+    let csr = X509Csr::from_der(&resp.pta_csr).expect("PTACSR parses as PKCS#10");
+    csr.get_public_key_der().expect("CSR SPKI extracts")
+}
+
+/// Cold-restart determinism on real silicon: derive the PTA keypair
+/// twice with the same `(MachineSeed, Policy, POTA thumb, SATA thumb)`
+/// inputs, separated by a mid-test NSSR (`dev.erase()`), and assert
+/// the two PTA pubkeys are byte-identical.
+///
+/// NSSR re-materialises UDS from the on-die fuses (constant per
+/// device) and wipes all soft state — rotated PSKs, the prior PTA
+/// key material, the partition policy, the POTA/SATA thumbprints, and
+/// the one-shot PTA-already-set latch. With UDS held constant and all
+/// four externally-supplied inputs held constant, the derivation
+/// `PTA = f(UDS, MachineSeed, Policy, POTA thumb)` must collapse to
+/// the same public key across both runs.
+///
+/// We compare the X.509 SubjectPublicKeyInfo carried in the CSR
+/// rather than the CSR bytes: the ECDSA signature on the CSR and the
+/// COSE_Sign1 signature on the PTAReport both contain
+/// non-deterministic nonces. The PTA public key itself is the
+/// determinism invariant.
+#[test]
+fn part_init_determinism_hw() {
+    hw_test_reset(|dev| {
+        let seed = mach_seed();
+        let policy = known_good_part_policy();
+        let pota = pota_thumbprint();
+        let sata = sata_thumbprint();
+
+        // Run 1 — pristine after `hw_test_reset` setup NSSR.
+        let pta_pub_run1 = run_part_init_capture_pta_pub_hw(dev, &seed, &policy, &pota, &sata);
+
+        // Cold restart: NSSR wipes soft state (rotated PSKs, PTA
+        // key material, policy, thumbprints, one-shot latch) but
+        // fuse-backed UDS is preserved.
+        dev.erase().expect("mid-test NSSR between determinism runs");
+
+        // Run 2 — same inputs, fresh partition.
+        let pta_pub_run2 = run_part_init_capture_pta_pub_hw(dev, &seed, &policy, &pota, &sata);
+
+        assert_eq!(
+            pta_pub_run1, pta_pub_run2,
+            "PTA pubkey must be byte-identical across NSSR with the same              (UDS, MachineSeed, Policy, POTA thumb) inputs — got              run1 len={} run2 len={}",
+            pta_pub_run1.len(),
+            pta_pub_run2.len(),
+        );
     });
 }
