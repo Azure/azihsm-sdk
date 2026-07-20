@@ -70,7 +70,9 @@ fn decode_class(class: KeyClass) -> HsmResult<DecodeKeyClass> {
         KeyClass::Rsa => Ok(DecodeKeyClass::Rsa),
         KeyClass::RsaCrt => Ok(DecodeKeyClass::RsaCrt),
         KeyClass::Ecc => Ok(DecodeKeyClass::Ecc),
-        KeyClass::Hmac => Ok(DecodeKeyClass::Hmac),
+        KeyClass::HmacSha256 => Ok(DecodeKeyClass::HmacSha256),
+        KeyClass::HmacSha384 => Ok(DecodeKeyClass::HmacSha384),
+        KeyClass::HmacSha512 => Ok(DecodeKeyClass::HmacSha512),
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -87,7 +89,9 @@ fn attrs_for_class(class: KeyClass, scope: HsmKeyScope) -> HsmVaultKeyAttrs {
         // ECC private key: sign / derive.
         KeyClass::Ecc => base.with_sign(true).with_derive(true),
         // HMAC key: sign / verify.
-        KeyClass::Hmac => base.with_sign(true).with_verify(true),
+        KeyClass::HmacSha256 | KeyClass::HmacSha384 | KeyClass::HmacSha512 => {
+            base.with_sign(true).with_verify(true)
+        }
         _ => base,
     }
 }

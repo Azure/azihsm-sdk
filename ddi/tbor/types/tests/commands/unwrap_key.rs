@@ -11,10 +11,10 @@
 //!
 //! Coverage:
 //! * AES key — the masked blob is non-zero and there is no public key.
-//! * HMAC key — the recovered key's kind is `_HmacSha256` and it carries
-//!   no public key.  (Using the recovered key via `Hmac` to compute a MAC
-//!   is exercised by the HMAC command's own emu tests, which build on
-//!   this command.)
+//! * HMAC key — the recovered key's kind is `VarLenHmacSha256` and it
+//!   carries no public key.  (Using the recovered key via `Hmac` to
+//!   compute a MAC is exercised by the HMAC command's own emu tests,
+//!   which build on this command.)
 //! * RSA-4096 (CRT and non-CRT) — the largest supported key and the
 //!   tightest on the per-IO DMA budget; exercises the transient-vault
 //!   unwrap path that keeps it within 8 KB.
@@ -35,7 +35,7 @@ use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
 use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
 use azihsm_ddi_tbor_types::TborUnwrapKeyResp;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
-use azihsm_ddi_tbor_types::KEY_CLASS_HMAC;
+use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
 
@@ -47,8 +47,8 @@ const OAEP_SHA256: u8 = 1;
 /// `KeyScope::Local` discriminant — masks the recovered key under the
 /// partition-local masking key.
 const SCOPE_LOCAL: u8 = 0b011;
-/// `HsmVaultKeyKind::_HmacSha256` discriminant.
-const KIND_HMAC_SHA256: u8 = 28;
+/// `HsmVaultKeyKind::VarLenHmacSha256` discriminant.
+const KIND_HMAC_SHA256: u8 = 32;
 
 /// RSA-AES-wrap `data` against the HSM-format unwrapping public key
 /// (`n_le ‖ e_le`): RSA-OAEP(SHA-256) an ephemeral 32-byte KEK, then
@@ -165,15 +165,15 @@ fn unwrap_key_hmac_emu() {
     let session = finalized_co_session(&ctx);
 
     let hmac_key = [0x37u8; 32];
-    let resp = unwrap(&ctx, session.session_id, KEY_CLASS_HMAC, &hmac_key);
+    let resp = unwrap(&ctx, session.session_id, KEY_CLASS_HMAC_SHA256, &hmac_key);
 
-    // A 32-byte HMAC key decodes to HMAC-SHA-256; symmetric keys carry no
-    // public key.  Exercising the recovered key via `Hmac` to compute a
-    // MAC is covered by the HMAC command's own emu tests, which build on
-    // this command.
+    // A 32-byte HMAC key decodes to variable-length HMAC-SHA-256; symmetric
+    // keys carry no public key.  Exercising the recovered key via `Hmac` to
+    // compute a MAC is covered by the HMAC command's own emu tests, which
+    // build on this command.
     assert_eq!(
         resp.key_kind, KIND_HMAC_SHA256,
-        "recovered kind = HMAC-SHA256"
+        "recovered kind = VarLenHmacSha256"
     );
     assert!(resp.pub_key.is_empty());
     assert!(

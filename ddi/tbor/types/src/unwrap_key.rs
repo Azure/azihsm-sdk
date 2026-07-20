@@ -36,8 +36,12 @@ pub const KEY_CLASS_RSA: u8 = 1;
 pub const KEY_CLASS_RSA_CRT: u8 = 2;
 /// `KeyClass` discriminant for a PKCS#8 DER ECC private key.
 pub const KEY_CLASS_ECC: u8 = 3;
-/// `KeyClass` discriminant for a raw HMAC key.
-pub const KEY_CLASS_HMAC: u8 = 4;
+/// `KeyClass` discriminant for a variable-length HMAC-SHA-256 key.
+pub const KEY_CLASS_HMAC_SHA256: u8 = 4;
+/// `KeyClass` discriminant for a variable-length HMAC-SHA-384 key.
+pub const KEY_CLASS_HMAC_SHA384: u8 = 5;
+/// `KeyClass` discriminant for a variable-length HMAC-SHA-512 key.
+pub const KEY_CLASS_HMAC_SHA512: u8 = 6;
 
 /// Host-facing TBOR `UnwrapKey` request.
 #[tbor(opcode = TBOR_OP_UNWRAP_KEY, session_ctrl = in_session)]
@@ -89,14 +93,14 @@ mod tests {
         let req = TborUnwrapKeyReq {
             session_id: 7,
             scope: 0b011,
-            key_class: KEY_CLASS_HMAC,
+            key_class: KEY_CLASS_HMAC_SHA256,
             oaep_hash: 1,
             wrapped_blob: alloc::vec![0x5Au8; 300],
         };
         let mut buf = [0u8; 4096];
         let frame = req.encode_request(&mut buf).expect("encode");
         assert!(
-            frame.contains(&KEY_CLASS_HMAC),
+            frame.contains(&KEY_CLASS_HMAC_SHA256),
             "encoded frame must carry the key-class discriminant",
         );
     }

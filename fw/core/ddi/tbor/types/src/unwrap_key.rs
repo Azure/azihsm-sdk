@@ -80,8 +80,12 @@ pub enum KeyClass {
     RsaCrt = 2,
     /// A PKCS#8 DER-encoded ECC private key.
     Ecc = 3,
-    /// A raw 32 / 48 / 64-byte HMAC key (SHA-256 / 384 / 512).
-    Hmac = 4,
+    /// A raw variable-length HMAC-SHA-256 key (`VarLenHmacSha256`).
+    HmacSha256 = 4,
+    /// A raw variable-length HMAC-SHA-384 key (`VarLenHmacSha384`).
+    HmacSha384 = 5,
+    /// A raw variable-length HMAC-SHA-512 key (`VarLenHmacSha512`).
+    HmacSha512 = 6,
 }
 
 /// `UnwrapKey` request schema.
@@ -154,7 +158,7 @@ mod tests {
             .unwrap()
             .scope(KeyScope::Local)
             .unwrap()
-            .key_class(KeyClass::Hmac)
+            .key_class(KeyClass::HmacSha256)
             .unwrap()
             .oaep_hash(HashAlgo::Sha256)
             .unwrap()
@@ -162,7 +166,7 @@ mod tests {
             .unwrap()
             .finish();
 
-        assert_eq!(frame.key_class(), KeyClass::Hmac);
+        assert_eq!(frame.key_class(), KeyClass::HmacSha256);
         assert_eq!(frame.oaep_hash(), HashAlgo::Sha256);
         assert_eq!(frame.wrapped_blob(), &wrapped[..]);
     }
