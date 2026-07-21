@@ -3,41 +3,32 @@
 
 //! Integration tests for TBOR `ApiRev`.
 //!
-//! `round_trip` exercises the full path host → backend (`emu`,
-//! `sock`, or `hw-tests` for real silicon) → fw `handle_tbor_op` →
-//! response, so it is transport-agnostic.
+//! `round_trip` exercises the full path host → backend → fw
+//! `handle_tbor_op` → response, so it is transport-agnostic.
 //! `unsupported_on_mock` asserts the design contract that backends opt
 //! in to TBOR.
 //!
-//! Pilot module for the [`Ctx`](crate::harness::Ctx) alias — every
-//! test in this file constructs the ctx once and drives every device
-//! interaction through its methods. `Ctx` resolves to
-//! [`TestCtx`](crate::harness::ctx::TestCtx) under emu/mock/sock and
-//! to [`HwCtx`](crate::harness::hw_ctx::HwCtx) under a pure
-//! `hw-tests` build, so the same test bodies run on the in-process
-//! firmware and against a live board.
-
-#![cfg(any(
-    feature = "emu",
-    feature = "mock",
-    feature = "sock",
-    feature = "hw-tests"
-))]
+//! Pilot module for the [`TestCtx`](crate::harness::TestCtx) fixture:
+//! every test in this file constructs the ctx once and drives every
+//! device interaction through its methods. The backend is selected at
+//! compile time by [`azihsm_ddi::AzihsmDdi::default`], so the same
+//! test bodies run on the in-process firmware and against a live
+//! board.
 
 use azihsm_ddi_tbor_types::TborApiRevReq;
 
-use crate::harness::Ctx;
+use crate::harness::TestCtx;
 
-#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
+#[cfg(not(feature = "mock"))]
 const EXPECTED: azihsm_ddi_tbor_types::TborApiRevResp = azihsm_ddi_tbor_types::TborApiRevResp {
     min_ver: 1,
     max_ver: 1,
 };
 
-#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
+#[cfg(not(feature = "mock"))]
 #[test]
 fn round_trip() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let resp = ctx
         .tbor(&TborApiRevReq::new())
         .expect("TBOR ApiRev round-trip");
@@ -52,10 +43,10 @@ fn round_trip() {
 /// regression that would silently introduce per-call state (e.g. a
 /// version negotiation cache, a session-dependent code path) in the
 /// dispatcher's only out-of-session in-band handler.
-#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
+#[cfg(not(feature = "mock"))]
 #[test]
 fn api_rev_repeated_stable() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let baseline = ctx.tbor(&TborApiRevReq::new()).expect("baseline ApiRev");
     assert_eq!(baseline, EXPECTED, "baseline must match expected");
     for i in 1..16 {
@@ -70,12 +61,12 @@ fn api_rev_repeated_stable() {
 /// transitions to Active. Together with the gate test in
 /// `default_psk_gate.rs` this proves the dispatcher never lets
 /// session state leak into the out-of-session handler.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
+#[cfg(not(any(feature = "mock", feature = "sock")))]
 #[test]
 fn api_rev_independent_of_session_state() {
     use azihsm_ddi_tbor_types::SessionType;
 
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     // No sessions outstanding.
     let pre = ctx
@@ -113,7 +104,7 @@ fn api_rev_independent_of_session_state() {
 fn unsupported_on_mock() {
     use crate::harness::assertions::assert_unsupported_encoding;
 
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let err = ctx
         .tbor(&TborApiRevReq::new())
         .expect_err("mock backend must not implement exec_op_tbor");

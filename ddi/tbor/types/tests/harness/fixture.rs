@@ -28,7 +28,7 @@ use std::ops::Deref;
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
-#[cfg(feature = "emu")]
+#[cfg(not(feature = "mock"))]
 use azihsm_ddi_interface::DdiDev;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
@@ -73,13 +73,54 @@ impl Deref for TestDev {
 /// are backend bugs, not test bugs, and surfacing them immediately
 /// is preferable to running a test against a dirty device.
 pub fn open_dev() -> TestDev {
+    let (dev, guard) = open_dev_parts();
+    TestDev { dev, _guard: guard }
+}
+
+/// Same as [`open_dev`] but returns the raw `<AzihsmDdi as Ddi>::Dev`
+/// and the lock guard as separate values.
+///
+/// Used by [`TestCtx`](crate::harness::ctx::TestCtx), which stores
+/// the guard as its own field so the `Dev` can sit inside an `Arc`
+/// (needed for multi-fd routing) without dragging the `!Send`
+/// `parking_lot::MutexGuard` into the `Arc`'s payload. That in turn
+/// keeps `TestCtx: Sync` so `std::thread::scope`-based tests can
+/// share `&TestCtx` across threads.
+pub fn open_dev_parts() -> (<AzihsmDdi as Ddi>::Dev, MutexGuard<'static, ()>) {
     let guard = TEST_LOCK.lock();
     let ddi = AzihsmDdi::default();
     let infos = ddi.dev_info_list();
     let info = infos.first().expect("backend should advertise a device");
     let dev = ddi.open_dev(&info.path).expect("open test backend device");
-    #[cfg(feature = "emu")]
+    // Factory-reset every backend that owns partition state so each
+    // test starts from byte-identical defaults. `emu` resets the
+    // in-process HSM, `sock` propagates a reset through the socket
+    // server, and on the native OS backend the trait method resolves
+    // to NSSR. `mock` has no state to reset and no `erase` handler,
+    // so it is skipped.
+    #[cfg(not(feature = "mock"))]
     dev.erase()
-        .expect("open_dev: factory-reset emu backend before test");
-    TestDev { dev, _guard: guard }
+        .expect("open_dev: factory-reset backend before test");
+    (dev, guard)
+}
+
+/// Open an *additional* backend Dev without re-acquiring [`TEST_LOCK`].
+///
+/// Used when a single `#[test]` needs multiple concurrent sessions:
+/// on the native OS backend the kernel driver enforces
+/// `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so every concurrent session past
+/// the first sits on its own fd. On `emu` / `mock` / `sock` the extra
+/// handle is just another view onto the process-global instance —
+/// harmless.
+///
+/// The caller must already hold the process-global lock via the
+/// primary [`TestDev`]; that is what makes it safe for this function
+/// to bypass [`TEST_LOCK`]. Never call this without a live primary in
+/// scope.
+pub fn open_extra_dev() -> <AzihsmDdi as Ddi>::Dev {
+    let ddi = AzihsmDdi::default();
+    let infos = ddi.dev_info_list();
+    let info = infos.first().expect("backend should advertise a device");
+    ddi.open_dev(&info.path)
+        .expect("open extra test backend device")
 }

@@ -4,17 +4,17 @@
 //! Integration tests for the TBOR `SessionOpenInit` /
 //! `SessionOpenFinish` two-phase session handshake.
 //!
-//! Runs against both backends via the [`Ctx`] alias: `TestCtx` under
-//! `feature = "emu"` (soft-crypto backend, factory-reset per test),
-//! `HwCtx` under `feature = "hw-tests"` (native OS backend against a
-//! live board, NSSR per test).
+//! Runs on any backend that exposes the FW handler (`emu`, `sock`,
+//! or the native OS backend when no backend feature is enabled).
+//! Uses [`TestCtx`](crate::harness::TestCtx); the backend is selected
+//! at compile time by [`azihsm_ddi::AzihsmDdi::default`].
 //!
 //! Happy-path sessions are owned by a
 //! [`SessionGuard`](crate::harness::SessionGuard) that closes on
 //! `Drop`; negative-path tests intercept the handshake through the
-//! raw `session_open_init` / `session_open_finish` methods on `Ctx`.
+//! raw `session_open_init` / `session_open_finish` methods on `TestCtx`.
 
-#![cfg(any(feature = "emu", feature = "hw-tests"))]
+#![cfg(not(any(feature = "mock", feature = "sock")))]
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
@@ -25,7 +25,7 @@ use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::build_mac_fin;
-use crate::harness::Ctx;
+use crate::harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
@@ -36,7 +36,7 @@ const CU: u8 = 1;
 
 #[test]
 fn open_session_co_authenticated_happy() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CO, SessionType::Authenticated);
     let h = session.handshake();
     assert_eq!(h.psk_id, CO);
@@ -56,7 +56,7 @@ fn open_session_co_authenticated_happy() {
 
 #[test]
 fn open_session_cu_plaintext_happy() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     let h = session.handshake();
     assert_eq!(h.psk_id, CU);
@@ -69,7 +69,7 @@ fn open_session_cu_plaintext_happy() {
 
 #[test]
 fn open_session_co_plaintext_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let err = ctx
         .session_open_init(CO, SessionType::PlainText)
         .expect_err("CO + PlainText is not a permitted pairing");
@@ -78,7 +78,7 @@ fn open_session_co_plaintext_rejected() {
 
 #[test]
 fn open_session_cu_authenticated_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let err = ctx
         .session_open_init(CU, SessionType::Authenticated)
         .expect_err("CU + Authenticated is not a permitted pairing");
@@ -96,7 +96,7 @@ fn open_session_invalid_psk_id() {
     // value (`2`), a mid-range value (`0x7F`), and the all-ones byte
     // (`0xFF`). All must surface `InvalidPskId` from the FW
     // dispatcher's `psk_id`-validation arm before any HPKE work.
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     for bad in [2u8, 0x7F, 0xFF] {
         let err = ctx
             .session_open_init(bad, SessionType::PlainText)
@@ -109,7 +109,7 @@ fn open_session_invalid_psk_id() {
 fn open_session_invalid_session_type_byte() {
     // Bypass the typed `SessionType` enum to ship an out-of-range
     // byte directly. The FW `SessionType::from_u8` must reject.
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let req = TborSessionOpenInitReq {
         psk_id: CU,
         session_type: 42,
@@ -129,7 +129,7 @@ fn open_session_unsupported_suite_id() {
     // before any HPKE work happens. Spot-check three boundary values
     // covering "reserved-but-not-yet-implemented" (0x02), zero (0x00),
     // and the all-ones byte (0xFF).
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     for bad in [0x00u8, 0x02, 0xff] {
         let req = TborSessionOpenInitReq {
             psk_id: CU,
@@ -147,7 +147,7 @@ fn open_session_unsupported_suite_id() {
 
 #[test]
 fn session_open_finish_mac_tampered() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let pending = ctx
         .session_open_init(CU, SessionType::PlainText)
         .expect("phase 1 must succeed");
@@ -172,7 +172,7 @@ fn session_open_finish_unknown_session_id() {
     // per-fd session scoping and rejects the ioctl with
     // `FileHandleNoExistingSession` (`DdiError::DdiStatus`) before
     // the FW sees it — either surface is a valid rejection.
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let req = TborSessionOpenFinishReq {
         session_id: 0xFFFF,
         mac_fin: [0u8; 48],
@@ -193,7 +193,7 @@ fn session_open_finish_unknown_session_id() {
 
 #[test]
 fn open_session_double_finish() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     // Replay the finish: pending slot is gone, FW must refuse.
     let req = TborSessionOpenFinishReq {
@@ -218,7 +218,7 @@ fn open_session_double_finish() {
 fn session_open_finish_seed_envelope_tampered() {
     // Build a finish request by hand so we can corrupt the seed_envelope
     // ciphertext byte after Phase-1 succeeds but before shipping it.
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let pending = ctx
         .session_open_init(CU, SessionType::PlainText)
         .expect("phase 1 must succeed");
@@ -246,7 +246,7 @@ fn session_open_finish_seed_envelope_tampered() {
 
 #[test]
 fn open_session_multiple_concurrent() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let a = ctx.open_session(CU, SessionType::PlainText);
     let b = ctx.open_session(CU, SessionType::PlainText);
     assert_ne!(
@@ -271,7 +271,7 @@ fn open_session_multiple_concurrent() {
 
 #[test]
 fn open_session_fills_table_then_recovers() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let mut ids: Vec<u16> = Vec::new();
     let mut rejection_seen = false;
 
@@ -323,7 +323,7 @@ fn open_session_fills_table_then_recovers() {
 /// would otherwise wedge the second attempt.
 #[test]
 fn open_close_reopen_same_slot() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let first = ctx
         .open_session_raw(CU, SessionType::PlainText)
         .expect("first handshake must succeed");
@@ -349,7 +349,7 @@ fn open_close_reopen_same_slot() {
 /// handshake invariant this test guards is unchanged by that.
 #[test]
 fn co_authenticated_derives_unique_keys_per_session() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     let a = ctx
         .open_session_raw(CO, SessionType::Authenticated)
@@ -394,7 +394,7 @@ fn co_authenticated_derives_unique_keys_per_session() {
 /// would break long-term binding assumed by higher-layer protocols.
 #[test]
 fn partition_pk_hsm_stable_across_handshakes() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     let pending_a = ctx
         .session_open_init(CU, SessionType::PlainText)
@@ -429,9 +429,9 @@ fn partition_pk_hsm_stable_across_handshakes() {
 //
 // Threads drive `ctx.session_open_init` / `ctx.session_open_finish`
 // directly — the same map-based fd allocation used by every other
-// test, so nothing bypasses the tracking. HwCtx grabs a fresh fd per
-// concurrent handshake internally and stashes it in `pending_fds`
-// keyed by the FW-assigned session id.
+// test, so nothing bypasses the tracking. On the native OS backend
+// each concurrent handshake gets its own fresh fd, stashed in
+// `pending_fds` keyed by the FW-assigned session id.
 // ---------------------------------------------------------------------------
 
 const MULTI_THREADED_TOTAL: usize = 12;
@@ -440,7 +440,7 @@ const MULTI_THREADED_TOTAL: usize = 12;
 /// and any losers must surface as clean FW/driver rejections.
 #[test]
 fn open_session_multi_threaded_all_should_open() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     let (winners, rejections) = std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
@@ -516,7 +516,7 @@ fn open_session_multi_threaded_all_should_open() {
 /// at infinity in some conventions) — FW must reject.
 #[test]
 fn pk_init_all_zero_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let req = TborSessionOpenInitReq {
         psk_id: CU,
         session_type: SessionType::PlainText.to_u8(),
@@ -537,7 +537,7 @@ fn pk_init_all_zero_rejected() {
 /// on-curve validation must reject.
 #[test]
 fn pk_init_not_on_curve_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let mut pk_init = [0xFFu8; PK_INIT_LEN];
     pk_init[0] = 0x04; // SEC1 uncompressed prefix
     let req = TborSessionOpenInitReq {
@@ -598,7 +598,7 @@ fn pack_sec1_uncompressed(x_be: &[u8; 48], y_be: &[u8; 48]) -> [u8; PK_INIT_LEN]
 /// FW must reject.
 #[test]
 fn pk_init_x_as_prime_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let pk_init = pack_sec1_uncompressed(&P384_PRIME_BE, &P384_INVALID_Y_FOR_X_AS_PRIME_BE);
     let req = TborSessionOpenInitReq {
         psk_id: CU,
@@ -619,7 +619,7 @@ fn pk_init_x_as_prime_rejected() {
 /// X-only validation bugs.
 #[test]
 fn pk_init_y_as_prime_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let pk_init = pack_sec1_uncompressed(&P384_INVALID_X_FOR_Y_AS_PRIME_BE, &P384_PRIME_BE);
     let req = TborSessionOpenInitReq {
         psk_id: CU,
@@ -645,7 +645,7 @@ fn pk_init_y_as_prime_rejected() {
 
 #[test]
 fn pk_init_single_byte_tampered_rejected() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let ephemeral = azihsm_session_ex_crypto::generate_vm_ephemeral()
         .expect("generate_vm_ephemeral must succeed on the test host");
     let mut pk_init = ephemeral.pk_sec1;
@@ -670,7 +670,7 @@ fn pk_init_single_byte_tampered_rejected() {
 // Hardware-only tests
 // ===========================================================================
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 const SINGLE_WINNER_RACERS: usize = 8;
 
 /// Fill to one free slot then race N threads for it. Regression for
@@ -686,10 +686,10 @@ const SINGLE_WINNER_RACERS: usize = 8;
 /// `SessionAuthFailure` at finish rather than the "table full" that
 /// real FW returns to losers. Real hw has genuine per-fd state in
 /// the kernel driver.
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn open_session_multi_threaded_single_winner() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     // Phase 1: probe capacity sequentially; ceiling matches
     // fills_table_then_recovers so we don't loop forever on a

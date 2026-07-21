@@ -4,16 +4,14 @@
 //! RAII guard for a live TBOR session.
 //!
 //! A [`SessionGuard`] owns the handshake carrier produced by
-//! `open_session_raw` on either [`TestCtx`](crate::harness::ctx::TestCtx)
-//! (emu/mock/sock) or [`HwCtx`](crate::harness::hw_ctx::HwCtx)
-//! (hw-tests) and closes the session when dropped — including when
-//! the test is unwinding from a failed assertion. Backend session
-//! tables are shared state (the emulator's is process-global, and a
-//! real device has a single fixed session table); the per-test
-//! serialisation provided by the respective backend lock only orders
-//! execution, it does not clean up leaked slots. The guard therefore
-//! makes panic-safe cleanup the default for every happy-path session
-//! test.
+//! [`TestCtx::open_session_raw`](crate::harness::ctx::TestCtx::open_session_raw)
+//! and closes the session when dropped — including when the test is
+//! unwinding from a failed assertion. Backend session tables are
+//! shared state (the emulator's is process-global; a real device has
+//! a single fixed session table); the per-test serialisation
+//! provided by the test lock only orders execution, it does not
+//! clean up leaked slots. The guard therefore makes panic-safe
+//! cleanup the default for every happy-path session test.
 //!
 //! Negative-path tests that need to intercept the handshake mid-flight
 //! (e.g. ship a tampered `mac_fin`, double-close the same id, exercise
@@ -25,13 +23,7 @@
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_types::SessionType;
 
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 use crate::harness::ctx::TestCtx;
-#[cfg(all(
-    feature = "hw-tests",
-    not(any(feature = "emu", feature = "mock", feature = "sock"))
-))]
-use crate::harness::hw_ctx::HwCtx;
 use crate::harness::session::SessionHandshake;
 
 /// Backend-agnostic hook the guard needs at cleanup time. Implemented
@@ -97,19 +89,20 @@ impl Drop for SessionGuard<'_> {
         // Drop never panics — failure is logged so the original panic
         // (if any) keeps its place at the top of the stack trace.
         if let Err(e) = self.ctx.close_session_by_id(self.handshake.session_id) {
-            eprintln!("SessionGuard: session_close failed during drop: {e:?}");
+            eprintln!(
+                "SessionGuard: session_close({}) failed during drop: {e:?}",
+                self.handshake.session_id,
+            );
         }
     }
 }
 
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 impl SessionCloser for TestCtx {
     fn close_session_by_id(&self, session_id: u16) -> DdiResult<()> {
         self.session_close(session_id)
     }
 }
 
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 impl TestCtx {
     /// Open a session via the happy-path two-phase handshake and
     /// return a [`SessionGuard`] that will close it on `Drop`.
@@ -121,40 +114,6 @@ impl TestCtx {
         let handshake = self
             .open_session_raw(psk_id, session_type)
             .expect("TestCtx::open_session: handshake must succeed on the happy path");
-        SessionGuard::new(self, handshake)
-    }
-}
-
-#[cfg(all(
-    feature = "hw-tests",
-    not(any(feature = "emu", feature = "mock", feature = "sock"))
-))]
-impl SessionCloser for HwCtx {
-    fn close_session_by_id(&self, session_id: u16) -> DdiResult<()> {
-        self.session_close(session_id)
-    }
-}
-
-#[cfg(all(
-    feature = "hw-tests",
-    not(any(feature = "emu", feature = "mock", feature = "sock"))
-))]
-impl HwCtx {
-    /// Open a session via the happy-path two-phase handshake and
-    /// return a [`SessionGuard`] that will close it on `Drop`.
-    ///
-    /// On hw every session lives on its own fd (kernel driver
-    /// enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`); the ctx tracks
-    /// session_id → fd so subsequent session-scoped ops route to the
-    /// right fd.
-    ///
-    /// Panics on any FW or transport error; negative-path tests must
-    /// call [`HwCtx::session_open_init`] (etc.) directly so they can
-    /// inspect the failure mode.
-    pub fn open_session(&self, psk_id: u8, session_type: SessionType) -> SessionGuard<'_> {
-        let handshake = self
-            .open_session_raw(psk_id, session_type)
-            .expect("HwCtx::open_session: handshake must succeed on the happy path");
         SessionGuard::new(self, handshake)
     }
 }

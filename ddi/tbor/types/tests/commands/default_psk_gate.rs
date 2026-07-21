@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(not(any(feature = "mock", feature = "sock")))]
+
 //! Integration tests for the TBOR dispatcher's default-PSK gate.
 //!
 //! The gate (see `fw/core/lib/src/ddi/tbor/mod.rs::dispatch`) rejects
@@ -26,20 +28,13 @@
 //! Each test inherits a factory-reset device from the ctx constructor,
 //! so partition PSKs are at their canonical defaults on entry.
 
-#![cfg(any(
-    feature = "emu",
-    feature = "mock",
-    feature = "sock",
-    feature = "hw-tests"
-))]
-
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
-use crate::harness::Ctx;
 use crate::harness::SessionOpenInitOptions;
+use crate::harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
@@ -47,7 +42,6 @@ const CU: u8 = 1;
 /// Non-default PSK used as the rotation target for the `PskChange`
 /// bypass test. Distinct from the constant used in `psk_change.rs` so
 /// a leaked rotation from this file is trivially identifiable.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 const GATE_ROTATED_PSK: [u8; PSK_LEN] = [
     0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
     0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5,
@@ -56,10 +50,9 @@ const GATE_ROTATED_PSK: [u8; PSK_LEN] = [
 /// E5: `ApiRev` is an out-of-session opcode and therefore never
 /// gated. It must succeed even when both partition PSKs are at their
 /// compiled-in defaults.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
 fn default_psk_gate_api_rev_bypass() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     // Two probes back-to-back to confirm the call is genuinely
     // repeatable (gate is stateless) rather than passing on first
     // call by luck of ordering.
@@ -70,10 +63,9 @@ fn default_psk_gate_api_rev_bypass() {
 /// E3: `SessionOpenInit` is out-of-session and therefore never gated.
 /// Verified for both roles since each is bound to a distinct PSK
 /// slot.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
 fn default_psk_gate_session_open_init_bypass() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     // CO + Authenticated under default CO PSK.
     let opts_co =
@@ -102,10 +94,9 @@ fn default_psk_gate_session_open_init_bypass() {
 
 /// E2: `SessionClose` is on the allow-list — it must succeed while
 /// the role's PSK is still default. Exercised for both roles.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
 fn default_psk_gate_session_close_bypass() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     let session_co = ctx.open_session(CO, SessionType::Authenticated);
     session_co
@@ -125,10 +116,9 @@ fn default_psk_gate_session_close_bypass() {
 /// Exercised for the CO role; the CU role's bootstrap path is
 /// functionally identical and is already exercised by
 /// `psk_change_happy_cu_emu` in `psk_change.rs`.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
 fn default_psk_gate_psk_change_bypass() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CO, SessionType::Authenticated);
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK)
         .expect("PskChange must bypass gate while CO PSK is default");
@@ -138,7 +128,6 @@ fn default_psk_gate_psk_change_bypass() {
 /// rejected at dispatch with `DefaultPskMustRotate`. The FW returns
 /// the gate error before any partition-state mutation, so this test
 /// is safe to run on real silicon.
-#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
 fn default_psk_gate_part_init_rejected() {
     use azihsm_ddi_tbor_types::PolicyKeyKind;
@@ -180,7 +169,7 @@ fn default_psk_gate_part_init_rejected() {
         bytes
     }
 
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CO, SessionType::Authenticated);
 
     let mach_seed = {

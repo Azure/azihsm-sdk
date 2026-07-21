@@ -16,7 +16,7 @@
 //!
 //! # Backend feature regimes
 //!
-//! The test binary supports three build modes; each disables a
+//! The test binary supports four build modes; each disables a
 //! different subset of tests via `#![cfg(...)]` so failures show up
 //! as "no test compiled" instead of as silent passes:
 //!
@@ -26,39 +26,24 @@
 //!   actually present in the std/emu PAL build.
 //! * `--features mock` (transport-contract probes only).
 //!   `commands::api_rev::unsupported_on_mock` exercises that the
-//!   mock backend rejects TBOR opcodes at the transport layer; it
-//!   is gated `#[cfg(feature = "mock")]`.
-//! * No backend feature. The pure host-side codec tests (everything
-//!   in `commands::fw_error_decode` and `commands::unexpected_toc_type`)
-//!   compile and run because they do not touch the harness; this
-//!   module is gated `#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]`
-//!   so the harness itself disappears in this mode.
-//!
-//! The `sock` backend joins `emu` in the in-session command suite: it
-//! drives the same TBOR round-trips over the socket transport, so the
-//! harness is also built under `--features sock`.
+//!   mock backend rejects TBOR opcodes at the transport layer.
+//! * `--features sock` runs the same TBOR round-trips as `emu` but
+//!   over the socket transport.
+//! * **No backend feature** falls through to the native OS backend
+//!   (`DdiNix` on Linux / `DdiWin` on Windows) via
+//!   [`azihsm_ddi::AzihsmDdi::default()`]. This is the mode used
+//!   for on-silicon test runs; the harness routes concurrent
+//!   sessions onto separate fds because the kernel driver enforces
+//!   `AZIHSM_MAX_SESSIONS_PER_FD = 1`.
 //!
 //! Backend-specific [`TestCtx`] methods (`erase`, `cert_chain_info`,
-//! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
-//! are unavailable under `--features mock`.
-
-#![cfg(any(
-    feature = "emu",
-    feature = "mock",
-    feature = "sock",
-    feature = "hw-tests"
-))]
+//! `get_certificate`) carry per-method `#[cfg(...)]` and are
+//! unavailable under `--features mock`.
 
 pub mod api_rev;
 pub mod assertions;
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub mod ctx;
 pub mod fixture;
-#[cfg(all(
-    feature = "hw-tests",
-    not(any(feature = "emu", feature = "mock", feature = "sock"))
-))]
-pub mod hw_ctx;
 pub mod session;
 pub mod session_guard;
 #[cfg(feature = "emu")]
@@ -75,24 +60,8 @@ pub use azihsm_ddi_tbor_types::build_psk_change_aad;
 pub use azihsm_ddi_tbor_types::TborPskChangeReq;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use ctx::TestCtx;
-// `Ctx` is the backend-agnostic per-test fixture used by files
-// migrated to run against both the emu/mock/sock harnesses and the
-// native hw-tests backend. Under emu/mock/sock it aliases the
-// full-featured [`TestCtx`]; under a pure `hw-tests` build (no other
-// backend feature) it aliases [`hw_ctx::HwCtx`], which mirrors
-// `TestCtx`'s method surface with NSSR-based setup/teardown. Emu
-// takes precedence in the combined-features case so a stray
-// `--features emu,hw-tests` still builds against emu.
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
-pub use ctx::TestCtx as Ctx;
 pub use fixture::open_dev;
-#[cfg(all(
-    feature = "hw-tests",
-    not(any(feature = "emu", feature = "mock", feature = "sock"))
-))]
-pub use hw_ctx::HwCtx as Ctx;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;

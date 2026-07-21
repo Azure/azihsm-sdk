@@ -4,9 +4,9 @@
 //! Integration tests for the TBOR `PskChange` command.
 //!
 //! Cross-test isolation comes from the ctx's factory-reset on
-//! construction (`TestCtx::new` on emu/mock/sock, `HwCtx::new` NSSR
-//! on hw-tests). Live sessions are owned by a [`SessionGuard`] that
-//! closes on `Drop`, including during panic unwind.
+//! construction ([`TestCtx::new`]). Live sessions are owned by a
+//! [`SessionGuard`] that closes on `Drop`, including during panic
+//! unwind.
 //!
 //! Coverage:
 //! * Happy paths (CO + CU), with explicit reopen using the rotated
@@ -27,10 +27,10 @@
 //! * Plaintext not exactly `PSK_LEN` (→ wrong envelope length) →
 //!   [`LENGTH_REJECT_STATUS`].
 //!
-//! Uses the [`Ctx`](crate::harness::Ctx) alias — `TestCtx` under
-//! emu/mock/sock and `HwCtx` under a pure `hw-tests` build.
+//! Uses [`TestCtx`](crate::harness::TestCtx); the backend is selected
+//! at compile time by [`azihsm_ddi::AzihsmDdi::default`].
 
-#![cfg(any(feature = "emu", feature = "hw-tests"))]
+#![cfg(not(any(feature = "mock", feature = "sock")))]
 
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
@@ -38,18 +38,18 @@ use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_psk_change_aad;
 use crate::harness::encrypt_psk_envelope;
-use crate::harness::Ctx;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TborPskChangeReq;
+use crate::harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
@@ -63,7 +63,7 @@ const CU: u8 = 1;
 /// handler's defensive branch is reached.
 #[cfg(feature = "emu")]
 const LENGTH_REJECT_STATUS: TborStatus = TborStatus::TborInvalidFixedLength;
-#[cfg(all(feature = "hw-tests", not(feature = "emu")))]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 const LENGTH_REJECT_STATUS: TborStatus = TborStatus::DdiDecodeFailed;
 
 /// Distinct, non-default 32-byte PSK used by the happy-path tests.
@@ -103,7 +103,7 @@ fn build_envelope(param_key: &AesKey, aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
 /// then prove the rotation took effect by reopening under the new
 /// bytes.
 fn run_psk_change_happy(role: u8, sty: SessionType) {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(role, sty);
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("rotate to ROTATED_PSK");
@@ -136,7 +136,7 @@ fn psk_change_happy_co() {
 
 #[test]
 fn psk_change_reopen_with_old_psk_fails() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("rotate");
@@ -159,7 +159,7 @@ fn psk_change_reopen_with_old_psk_fails() {
 
 #[test]
 fn psk_change_second_attempt_same_session_fails() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("first rotate");
@@ -184,7 +184,7 @@ fn psk_change_second_attempt_same_session_fails() {
 
 #[test]
 fn psk_change_envelope_tampered() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
 
     for (label, mutate) in [
         (
@@ -222,7 +222,7 @@ fn psk_change_envelope_tampered() {
 
 #[test]
 fn psk_change_empty_envelope() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     let req = TborPskChangeReq {
         session_id: session.session_id(),
@@ -239,7 +239,7 @@ fn psk_change_empty_envelope() {
 
 #[test]
 fn psk_change_wrong_session_id_in_aad() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     // Build an envelope whose AAD encodes a different (bogus)
     // session id. AEAD-GCM tag verifies (the FW recomputes the tag
@@ -268,7 +268,7 @@ fn psk_change_wrong_session_id_in_aad() {
 
 #[test]
 fn psk_change_envelope_from_other_session() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session_a = ctx.open_session(CU, SessionType::PlainText);
     let session_b = ctx.open_session(CU, SessionType::PlainText);
     let aad_for_b = build_psk_change_aad(session_b.session_id());
@@ -290,7 +290,7 @@ fn psk_change_envelope_from_other_session() {
 
 #[test]
 fn psk_change_wrong_plaintext_length() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     // PSK_LEN ± 1: shortest excursions either side of the canonical
     // length. A wrong plaintext length yields a wrong *envelope* length
     // (ciphertext tracks plaintext for GCM), so the FW schema's fixed
@@ -319,7 +319,7 @@ fn psk_change_wrong_plaintext_length() {
 
 #[test]
 fn psk_change_wrong_aad_length() {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(CU, SessionType::PlainText);
     // 64 bytes of arbitrary AAD (valid AEAD granularity) inflates the
     // envelope past PSK_CHANGE_ENVELOPE_LEN (100 B) — status varies
@@ -354,9 +354,9 @@ fn psk_change_wrong_aad_length() {
 // verified against real FW.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {
-    let ctx = Ctx::new();
+    let ctx = TestCtx::new();
     let session = ctx.open_session(role, sty);
     let err = ctx
         .psk_change(session.handshake(), new_psk)
@@ -364,25 +364,25 @@ fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8;
     assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn psk_change_cu_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CU);
 }
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn psk_change_cu_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
 }
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn psk_change_co_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
 }
 
-#[cfg(feature = "hw-tests")]
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn psk_change_co_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CU);
