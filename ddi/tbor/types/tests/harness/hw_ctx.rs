@@ -81,7 +81,8 @@ fn open_hw_dev() -> (HwDev, MutexGuard<'static, ()>) {
     let infos = ddi.dev_info_list();
     let info = infos.first().expect("hw backend advertises no device");
     let dev = ddi.open_dev(&info.path).expect("open hw backend device");
-    dev.erase().expect("open_hw_dev: NSSR must succeed before test");
+    dev.erase()
+        .expect("open_hw_dev: NSSR must succeed before test");
     (dev, guard)
 }
 
@@ -196,11 +197,7 @@ impl HwCtx {
     /// driver on the correct fd. Falls back to `primary` for unknown
     /// ids — lets negative-path tests exercise "bogus session id"
     /// paths without special-casing.
-    pub fn tbor_on_session<R: TborOpReq>(
-        &self,
-        session_id: u16,
-        req: &R,
-    ) -> DdiResult<R::OpResp> {
+    pub fn tbor_on_session<R: TborOpReq>(&self, session_id: u16, req: &R) -> DdiResult<R::OpResp> {
         let mut cookie = None;
         match self.dev_for_session(session_id) {
             Some(dev) => dev.exec_op_tbor(req, None, &mut cookie),
@@ -337,11 +334,9 @@ impl HwCtx {
     }
 
     pub fn session_open_finish(&self, pending: PendingHandshake) -> DdiResult<SessionHandshake> {
-        let dev = self
-            .pending_fds
-            .lock()
-            .remove(&pending.session_id)
-            .expect("session_open_finish: no pending fd for this session_id — call session_open_init first");
+        let dev = self.pending_fds.lock().remove(&pending.session_id).expect(
+            "session_open_finish: no pending fd for this session_id — call session_open_init first",
+        );
         let is_primary = Arc::ptr_eq(&dev, &self.primary);
         match session_open_finish_helper(&dev, pending) {
             Ok(handshake) => {
@@ -491,8 +486,7 @@ impl Drop for HwCtx {
     fn drop(&mut self) {
         // Drain the map so each fd Arc's refcount hits 0 as we finish
         // closing its session, releasing the extra kernel fds.
-        let live: Vec<(u16, Arc<HwDev>)> =
-            self.sessions.lock().drain().collect();
+        let live: Vec<(u16, Arc<HwDev>)> = self.sessions.lock().drain().collect();
         for (id, dev) in live {
             if let Err(e) = session_close_helper(&dev, id) {
                 eprintln!(

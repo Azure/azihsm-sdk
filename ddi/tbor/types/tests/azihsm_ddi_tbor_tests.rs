@@ -14,7 +14,12 @@
 //! OS backend (`nix` on Linux / `win` on Windows) for build-only
 //! checks; no tests are compiled in that mode.
 
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
+#[cfg(any(
+    feature = "emu",
+    feature = "mock",
+    feature = "sock",
+    feature = "hw-tests"
+))]
 pub mod harness;
 
 pub mod commands;

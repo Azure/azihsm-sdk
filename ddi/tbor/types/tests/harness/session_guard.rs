@@ -25,11 +25,14 @@
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_types::SessionType;
 
-use crate::harness::session::SessionHandshake;
 #[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 use crate::harness::ctx::TestCtx;
-#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+#[cfg(all(
+    feature = "hw-tests",
+    not(any(feature = "emu", feature = "mock", feature = "sock"))
+))]
 use crate::harness::hw_ctx::HwCtx;
+use crate::harness::session::SessionHandshake;
 
 /// Backend-agnostic hook the guard needs at cleanup time. Implemented
 /// by every ctx type whose `open_session` returns a [`SessionGuard`]
@@ -125,14 +128,20 @@ impl TestCtx {
     }
 }
 
-#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+#[cfg(all(
+    feature = "hw-tests",
+    not(any(feature = "emu", feature = "mock", feature = "sock"))
+))]
 impl SessionCloser for HwCtx {
     fn close_session_by_id(&self, session_id: u16) -> DdiResult<()> {
         self.session_close(session_id)
     }
 }
 
-#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+#[cfg(all(
+    feature = "hw-tests",
+    not(any(feature = "emu", feature = "mock", feature = "sock"))
+))]
 impl HwCtx {
     /// Open a session via the happy-path two-phase handshake and
     /// return a [`SessionGuard`] that will close it on `Drop`.

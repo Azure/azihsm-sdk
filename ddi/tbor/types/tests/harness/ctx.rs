@@ -115,11 +115,7 @@ impl TestCtx {
     /// carries every session). Present here so tests can call the
     /// same name on both backends; on hw it routes the op to the fd
     /// that owns `session_id` (see `HwCtx::tbor_on_session`).
-    pub fn tbor_on_session<R: TborOpReq>(
-        &self,
-        _session_id: u16,
-        req: &R,
-    ) -> DdiResult<R::OpResp> {
+    pub fn tbor_on_session<R: TborOpReq>(&self, _session_id: u16, req: &R) -> DdiResult<R::OpResp> {
         self.tbor(req)
     }
 

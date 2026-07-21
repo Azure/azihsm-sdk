@@ -15,7 +15,12 @@
 //! Uses the [`Ctx`](crate::harness::Ctx) alias — `TestCtx` under
 //! emu/mock/sock and `HwCtx` under a pure `hw-tests` build.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
+#![cfg(any(
+    feature = "emu",
+    feature = "mock",
+    feature = "sock",
+    feature = "hw-tests"
+))]
 
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 

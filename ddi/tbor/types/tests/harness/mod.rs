@@ -42,14 +42,22 @@
 //! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
 //! are unavailable under `--features mock`.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
+#![cfg(any(
+    feature = "emu",
+    feature = "mock",
+    feature = "sock",
+    feature = "hw-tests"
+))]
 
 pub mod api_rev;
 pub mod assertions;
 #[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub mod ctx;
 pub mod fixture;
-#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
+#[cfg(all(
+    feature = "hw-tests",
+    not(any(feature = "emu", feature = "mock", feature = "sock"))
+))]
 pub mod hw_ctx;
 pub mod session;
 pub mod session_guard;
@@ -69,7 +77,6 @@ pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 #[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use ctx::TestCtx;
-
 // `Ctx` is the backend-agnostic per-test fixture used by files
 // migrated to run against both the emu/mock/sock harnesses and the
 // native hw-tests backend. Under emu/mock/sock it aliases the
@@ -80,10 +87,12 @@ pub use ctx::TestCtx;
 // `--features emu,hw-tests` still builds against emu.
 #[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use ctx::TestCtx as Ctx;
-#[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
-pub use hw_ctx::HwCtx as Ctx;
-
 pub use fixture::open_dev;
+#[cfg(all(
+    feature = "hw-tests",
+    not(any(feature = "emu", feature = "mock", feature = "sock"))
+))]
+pub use hw_ctx::HwCtx as Ctx;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;

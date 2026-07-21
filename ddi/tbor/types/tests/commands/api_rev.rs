@@ -17,7 +17,12 @@
 //! `hw-tests` build, so the same test bodies run on the in-process
 //! firmware and against a live board.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
+#![cfg(any(
+    feature = "emu",
+    feature = "mock",
+    feature = "sock",
+    feature = "hw-tests"
+))]
 
 use azihsm_ddi_tbor_types::TborApiRevReq;
 

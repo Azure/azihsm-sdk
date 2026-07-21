@@ -277,7 +277,11 @@ fn psk_change_envelope_from_other_session() {
         session_id: session_b.session_id(),
         psk_envelope: envelope,
     };
-    ctx.expect_fw_reject_on_session(session_b.session_id(), &req, TborStatus::AeadEnvelopeAuthFailed);
+    ctx.expect_fw_reject_on_session(
+        session_b.session_id(),
+        &req,
+        TborStatus::AeadEnvelopeAuthFailed,
+    );
 }
 
 // ===========================================================================
@@ -351,11 +355,7 @@ fn psk_change_wrong_aad_length() {
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "hw-tests")]
-fn run_psk_change_to_default_rejected(
-    role: u8,
-    sty: SessionType,
-    new_psk: &[u8; PSK_LEN],
-) {
+fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {
     let ctx = Ctx::new();
     let session = ctx.open_session(role, sty);
     let err = ctx
