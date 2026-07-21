@@ -1094,33 +1094,36 @@ TEST_F(azihsm_sha_digest, streaming_different_chunk_boundaries_match_one_shot)
 
     for (const auto &test_case : test_cases)
     {
-        for (size_t chunk_size : chunk_sizes)
-        {
-            SCOPED_TRACE(
-                std::string(test_case.test_name) + " chunk_size=" + std::to_string(chunk_size)
+        SCOPED_TRACE(std::string(test_case.test_name));
+
+        part_list_.for_each_session([&](azihsm_handle session) {
+            azihsm_algo algo{};
+            algo.id = test_case.algo_id;
+            algo.params = nullptr;
+            algo.len = 0;
+
+            const uint32_t digest_len = expected_digest_len(test_case.algo_id);
+
+            azihsm_buffer data_buf{};
+            data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
+            data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
+
+            // Compute the one-shot digest once for this session and algorithm.
+            std::vector<uint8_t> one_shot_digest(digest_len);
+            azihsm_buffer one_shot_buf{};
+            one_shot_buf.ptr = one_shot_digest.data();
+            one_shot_buf.len = digest_len;
+
+            ASSERT_EQ(
+                azihsm_crypt_digest(session, &algo, &data_buf, &one_shot_buf),
+                AZIHSM_STATUS_SUCCESS
             );
+            ASSERT_EQ(one_shot_buf.len, digest_len);
 
-            part_list_.for_each_session([&](azihsm_handle session) {
-                azihsm_algo algo{};
-                algo.id = test_case.algo_id;
-                algo.params = nullptr;
-                algo.len = 0;
-
-                const uint32_t digest_len = expected_digest_len(test_case.algo_id);
-
-                azihsm_buffer data_buf{};
-                data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
-                data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
-
-                std::vector<uint8_t> one_shot_digest(digest_len);
-                azihsm_buffer one_shot_buf{};
-                one_shot_buf.ptr = one_shot_digest.data();
-                one_shot_buf.len = digest_len;
-
-                ASSERT_EQ(
-                    azihsm_crypt_digest(session, &algo, &data_buf, &one_shot_buf),
-                    AZIHSM_STATUS_SUCCESS
-                );
+            // Verify streaming produces the same digest for every chunk boundary.
+            for (size_t chunk_size : chunk_sizes)
+            {
+                SCOPED_TRACE("chunk_size=" + std::to_string(chunk_size));
 
                 auto_ctx ctx_handle;
                 ASSERT_EQ(
@@ -1130,8 +1133,8 @@ TEST_F(azihsm_sha_digest, streaming_different_chunk_boundaries_match_one_shot)
 
                 for (size_t offset = 0; offset < TEST_DATA_1K.size(); offset += chunk_size)
                 {
-                    size_t remaining = TEST_DATA_1K.size() - offset;
-                    size_t current_chunk = remaining < chunk_size ? remaining : chunk_size;
+                    const size_t remaining = TEST_DATA_1K.size() - offset;
+                    const size_t current_chunk = remaining < chunk_size ? remaining : chunk_size;
 
                     azihsm_buffer chunk_buf{};
                     chunk_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data() + offset);
@@ -1152,10 +1155,11 @@ TEST_F(azihsm_sha_digest, streaming_different_chunk_boundaries_match_one_shot)
                     azihsm_crypt_digest_finish(ctx_handle, &streaming_buf),
                     AZIHSM_STATUS_SUCCESS
                 );
+                ASSERT_EQ(streaming_buf.len, digest_len);
 
                 ASSERT_EQ(streaming_digest, one_shot_digest);
-            });
-        }
+            }
+        });
     }
 }
 
