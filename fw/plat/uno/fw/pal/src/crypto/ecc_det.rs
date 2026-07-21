@@ -29,6 +29,7 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmHmac;
 use azihsm_fw_hsm_pal_traits::HsmIo;
+use azihsm_fw_hsm_pal_traits::HsmKdf;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
@@ -183,6 +184,41 @@ impl Rfc6979Drbg<'_> {
 const RFC6979_MAX_TRIES: usize = 8;
 
 // =============================================================================
+// Deterministic P-384 key-pair generation (FIPS 186-5 A.2.2 + SP 800-133r3)
+// =============================================================================
+//
+// The Partition Trust Anchor (PTA) / alias key pair is regenerated on demand
+// from a device-rooted key-derivation key (KDK) rather than drawn from the RNG,
+// so it need not be stored and reproduces byte-identically across boots and
+// firmware updates. The scalar is derived by FIPS 186-5 Appendix A.2.2 "key
+// pair generation by rejection sampling": take N = 384 bits of pseudorandom
+// output, interpret big-endian, and accept iff the value already lies in
+// `[1, n-1]`. A.2.2 (not A.2.1's `d = (OKM mod (n-1)) + 1`) is used so no
+// modular reduction is needed — the even modulus `n-1` cannot be reduced by the
+// Montgomery-only PKA — and so the accept test reuses the exact constant-time
+// `[1, n-1]` primitive ([`ct_in_range`]) already used for the RFC 6979 `k`.
+//
+// The pseudorandom bits come from HKDF-Expand-SHA384 keyed by the KDK, with a
+// per-key unique label as context (SP 800-133r3 §4.2.1); the label + counter
+// scheme is fixed so a partition's key derivation is reproducible. Compliance
+// with SP 800-133r3 §4.2 is contingent on the KDK itself being an approved,
+// sufficiently strong, secret symmetric key.
+
+/// HKDF-Expand label binding the PTA key-derivation context (SP 800-133r3
+/// §4.2.1 "unique label / context"). This value is fixed by the protocol; the
+/// same label + counter must be used everywhere the key is derived so the
+/// derivation is reproducible.
+const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
+
+/// FIPS 186-5 A.2.2 P-384 OKM length: `N/8` = 48 bytes (one field element).
+const PTA_OKM_LEN: usize = 48;
+
+/// Deterministic bounded-retry cap for the A.2.2 OKM derivation. The per-attempt
+/// reject probability is ~`2^-190` (the top 192 bits of `n` are 1s), so attempt
+/// 0 all but always wins; the bound only guarantees the loop terminates.
+const PTA_KEYGEN_MAX_TRIES: u8 = 4;
+
+// =============================================================================
 // Deterministic P-384 ECDSA sign (RFC 6979) — PAL orchestration
 // =============================================================================
 
@@ -261,7 +297,10 @@ impl UnoHsmPal {
             // essential, or the reduction sees `xR ‖ garbage` and yields a
             // wrong `r`.
             let mont_scratch = scope.dma_alloc(mont)?;
-            let xr = scope.dma_alloc(field)?;
+            // `ecc_point_mul` writes the full affine point X ‖ Y; the sign
+            // consumes only the x-coordinate (`xr[..field]`), but the buffer
+            // must hold both halves per the driver contract.
+            let xr = scope.dma_alloc(field * 2)?;
             let xr_wide = scope.dma_alloc_zeroed(field * 2)?;
             let k_mont = scope.dma_alloc(mont)?;
             let r_mont = scope.dma_alloc(mont)?;
@@ -609,5 +648,163 @@ impl UnoHsmPal {
         .await?;
         core::mem::swap(&mut drbg.v, &mut drbg.tag);
         Ok(())
+    }
+
+    /// Derive the deterministic PTA private scalar `d` (big-endian) from
+    /// `part_root`, the key-derivation key / PRK (FIPS 186-5 §A.2.2 rejection
+    /// sampling).
+    ///
+    /// For each attempt, `OKM = HKDF-Expand-SHA384(part_root, info)` with
+    /// `info = KEYPAIR_LABEL_PTA ‖ attempt(1 B) ‖ u16_be(48)`. The 48-byte OKM
+    /// is treated as a big-endian candidate and accepted iff it is a valid
+    /// scalar in `[1, n-1]` ([`ct_in_range`], the same primitive as the RFC 6979
+    /// `k` generator). A rejected candidate re-derives with a fresh counter, so
+    /// the loop is fully deterministic and reproduces the same scalar on replay
+    /// (SP 800-133r3 §4.2.3 "algorithm random values"). The accepted candidate
+    /// is written big-endian into `d_be`; the caller flips it to PKA
+    /// little-endian before the point multiply.
+    ///
+    /// # Parameters
+    /// * `part_root` — the key-derivation key / PRK, a caller-owned DMA buffer.
+    /// * `d_be` — caller-owned DMA output (≥ 48 B) for the big-endian scalar.
+    ///
+    /// # Errors
+    /// * [`HsmError::InvalidArg`] — `d_be` is shorter than the field size.
+    /// * [`HsmError::EccGenerateError`] — every attempt in
+    ///   [`PTA_KEYGEN_MAX_TRIES`] fell outside `[1, n-1]` (unreachable in
+    ///   practice at ~`2^-190` per attempt).
+    /// * Any [`HsmError`] surfaced by the HKDF / SHA driver.
+    #[allow(dead_code)] // consumed by ecc_gen_keypair_deterministic (keygen)
+    async fn derive_pta_scalar_be(
+        &self,
+        io: &impl HsmIo,
+        part_root: &DmaBuf,
+        d_be: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let field = PRIME384_LE.len(); // 48
+        if d_be.len() < field {
+            return Err(HsmError::InvalidArg);
+        }
+
+        self.alloc_scoped_async(io, async |scope| {
+            // info = label ‖ attempt(1 B) ‖ u16_be(OKM_LEN). The attempt byte is
+            // rewritten each iteration so the retry counter is folded into the
+            // KDF context — a fresh, unique derivation per SP 800-133r3 §4.2.1.
+            let info = scope.dma_alloc(KEYPAIR_LABEL_PTA.len() + 1 + 2)?;
+            info[..KEYPAIR_LABEL_PTA.len()].copy_from_slice(KEYPAIR_LABEL_PTA);
+            info[KEYPAIR_LABEL_PTA.len() + 1..]
+                .copy_from_slice(&(PTA_OKM_LEN as u16).to_be_bytes());
+
+            let okm = scope.dma_alloc(PTA_OKM_LEN)?;
+
+            // Run the loop in an inner block so the candidate OKM (private key
+            // material) is scrubbed on every exit path, including an early `?`.
+            let outcome = async {
+                for attempt in 0..PTA_KEYGEN_MAX_TRIES {
+                    info[KEYPAIR_LABEL_PTA.len()] = attempt;
+                    self.hkdf_expand(io, HsmHashAlgo::Sha384, part_root, Some(&*info), okm)
+                        .await?;
+                    // A.2.2: the big-endian OKM is the candidate; accept iff it
+                    // is a valid scalar in [1, n-1].
+                    if ct_in_range(&okm[..field], &ORDER384_BE[..field]) {
+                        // Accept the big-endian candidate as-is; the caller
+                        // flips it to PKA little-endian.
+                        d_be[..field].copy_from_slice(&okm[..field]);
+                        return Ok(());
+                    }
+                }
+                // Astronomically unreachable for P-384 (~2^-190 per attempt);
+                // signals ECC key generation failed.
+                Err(HsmError::EccGenerateError)
+            }
+            .await;
+
+            okm.zeroize();
+            outcome
+        })
+        .await
+    }
+
+    /// Deterministically generate a P-384 key pair from `part_root`, the
+    /// key-derivation key (KDK).
+    ///
+    /// Composes [`derive_pta_scalar_be`](Self::derive_pta_scalar_be)
+    /// (FIPS 186-5 §A.2.2 scalar) with the PKA point multiply `Q = d·G` (the
+    /// base point `G` supplied explicitly to the driver's `ecc_point_mul`,
+    /// after a field Montgomery-constant setup). The private scalar is written
+    /// little-endian into `d_le` and the public key `X ‖ Y` little-endian into
+    /// `pub_key` (both PKA wire format), so the pair regenerates byte-identically
+    /// on every call from the same `part_root`.
+    ///
+    /// A FIPS pairwise-consistency test is intentionally NOT run here yet — the
+    /// uno keygen PCT is a no-op across the PAL — so the boot KAT validates the
+    /// derived pair against known-answer vectors instead. Wiring a real PCT is
+    /// tracked with the FIPS self-test work.
+    ///
+    /// # Parameters
+    /// * `curve` — must be [`UpkaEccCurve::P384`]; other curves return
+    ///   [`HsmError::UnsupportedCmd`].
+    /// * `part_root` — the key-derivation key / PRK (caller-owned DMA).
+    /// * `d_le` — caller-owned DMA output (≥ 48 B) for the LE private scalar.
+    /// * `pub_key` — caller-owned DMA output (≥ 96 B) for the LE `X ‖ Y`.
+    ///
+    /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] — `curve` is not P-384.
+    /// * [`HsmError::InvalidArg`] — an output buffer is undersized.
+    /// * [`HsmError::EccGenerateError`] — the A.2.2 derivation exhausted its
+    ///   retries (see [`derive_pta_scalar_be`](Self::derive_pta_scalar_be)).
+    /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
+    #[allow(dead_code)] // consumed by PTA/alias keygen + boot KAT
+    pub(crate) async fn ecc_gen_keypair_deterministic(
+        &self,
+        io: &impl HsmIo,
+        curve: UpkaEccCurve,
+        part_root: &DmaBuf,
+        d_le: &mut DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        if curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
+        let field = PRIME384_LE.len(); // 48
+        let mont = mont_operand_size(curve);
+        if d_le.len() < field || pub_key.len() < field * 2 {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // 1. Derive the scalar big-endian (A.2.2), then flip to PKA
+        //    little-endian in place for the point multiply.
+        self.derive_pta_scalar_be(io, part_root, d_le).await?;
+        d_le[..field].reverse();
+
+        // 2. Q = d·G on ONE held engine, using the proven point-multiply
+        //    primitive with the base point G supplied explicitly (exactly as
+        //    the sign path computes k·G). `ecc_mont_const_calc` over the field
+        //    prime must run first on the same engine (the constant stays
+        //    resident; `execute_cmd` does not wipe between commands). Every
+        //    operand — G, the scalar, and the output — is a GSRAM DMA buffer,
+        //    which the PKA requires. `ecc_point_mul` writes the full affine
+        //    point X ‖ Y (little-endian) into the 96-byte `pub_key`.
+        //
+        //    NOTE: the driver's `ecc_gen_pub_key` is NOT used — it issues the
+        //    point-mul opcode with a null (0) scalar operand, so the PKA reads
+        //    the scalar from address 0 (not GSRAM) and faults with an AXI
+        //    BUS_ERROR (0x08f0c003).
+        self.alloc_scoped_async(io, async |scope| {
+            let prime = scope.dma_alloc(field)?;
+            prime.copy_from_slice(&PRIME384_LE);
+            let base_xy = scope.dma_alloc(field * 2)?;
+            base_xy[..field].copy_from_slice(&BASE384_X_LE);
+            base_xy[field..].copy_from_slice(&BASE384_Y_LE);
+            let mont_scratch = scope.dma_alloc(mont)?;
+            self.pka
+                .with_engine(async |eng| {
+                    eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
+                    eng.ecc_point_mul(curve, base_xy, &d_le[..field], &mut pub_key[..field * 2])
+                        .await
+                })
+                .await
+        })
+        .await
     }
 }

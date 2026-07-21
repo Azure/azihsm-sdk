@@ -459,9 +459,13 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
-    /// Point-multiply `result = (scalar * point).x`, where `point` is the
-    /// affine `x ‖ y` (contiguous, PKA little-endian). Requires a prior
-    /// `ecc_mont_const_calc` over the curve prime on this engine.
+    /// Point-multiply `result = scalar * point`, where `point` is the affine
+    /// `x ‖ y` (contiguous, PKA little-endian). The hardware writes the full
+    /// affine result `X ‖ Y` in wire format — one `hsm_point_size`-wide
+    /// coordinate each — so `result` must be at least `2 * hsm_point_size(curve)`
+    /// bytes; callers needing only the x-coordinate read its low `point_size`
+    /// bytes. Requires a prior `ecc_mont_const_calc` over the curve prime on
+    /// this engine.
     pub async fn ecc_point_mul(
         &mut self,
         curve: UpkaEccCurve,
@@ -472,7 +476,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         Self::ensure_cmd_input(
             point_xy.len() >= hsm_point_size(curve) * 2
                 && scalar.len() >= hsm_point_size(curve)
-                && result.len() >= point_size(curve),
+                && result.len() >= hsm_point_size(curve) * 2,
         )?;
 
         self.execute_cmd(
