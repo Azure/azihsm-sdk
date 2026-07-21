@@ -611,22 +611,26 @@ impl TestCtx {
     }
 }
 
-/// Panic-safe cleanup: close every session the ctx is still tracking.
-/// Sessions **must** be closed one-by-one so their kernel-side
-/// tracking (and, on hw, the extra fds) is torn down cleanly. Errors
-/// are swallowed — drop never panics; a wedged device that rejects
-/// `session_close` during unwind must not double-panic.
+/// Panic-safe cleanup: close every session the ctx is still tracking,
+/// including handshakes that finished phase 1 but never reached phase
+/// 2 (a test that panics between `session_open_init` and
+/// `session_open_finish` leaves its slot in `pending_fds`). Sessions
+/// **must** be closed one-by-one so their kernel-side tracking (and,
+/// on hw, the extra fds) is torn down cleanly. Errors are swallowed —
+/// drop never panics; a wedged device that rejects `session_close`
+/// during unwind must not double-panic.
 impl Drop for TestCtx {
     fn drop(&mut self) {
+        let pending: Vec<(u16, FdSlot)> = self.pending_fds.lock().drain().collect();
         let live: Vec<(u16, FdSlot)> = self.sessions.lock().drain().collect();
-        for (id, slot) in live {
+        for (id, slot) in pending.into_iter().chain(live) {
             let dev: &Dev = match &slot {
                 FdSlot::Primary => &self.primary,
                 FdSlot::Extra(arc) => arc,
             };
             if let Err(e) = session_close_helper(dev, id) {
                 eprintln!(
-                    "TestCtx::drop: session_close({id}) failed: {e:?} \
+                    "TestCtx::drop: session_close failed: {e:?} \
                      — session may leak on the device",
                 );
             }

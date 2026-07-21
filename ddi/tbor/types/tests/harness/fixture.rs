@@ -66,8 +66,11 @@ impl Deref for TestDev {
     }
 }
 
-/// Acquire the test lock, open the configured backend device, and
-/// (under `feature = "emu"`) factory-reset it. See module docs.
+/// Acquire the test lock, open the configured backend device, and —
+/// for every backend that owns partition state (`emu`, `sock`, and
+/// the native OS backend, where `erase()` resolves to NSSR) —
+/// factory-reset it. `mock` has no state and is skipped. See module
+/// docs.
 ///
 /// Panics if the backend lists no devices or if `erase` fails — both
 /// are backend bugs, not test bugs, and surfacing them immediately

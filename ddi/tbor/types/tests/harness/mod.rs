@@ -21,9 +21,7 @@
 //! as "no test compiled" instead of as silent passes:
 //!
 //! * `--features emu` (the canonical configuration; runs the full
-//!   suite). All in-session command tests are gated
-//!   `#![cfg(feature = "emu")]` because they require the FW handler
-//!   actually present in the std/emu PAL build.
+//!   suite in-process against the std/emu PAL FW build).
 //! * `--features mock` (transport-contract probes only).
 //!   `commands::api_rev::unsupported_on_mock` exercises that the
 //!   mock backend rejects TBOR opcodes at the transport layer.
@@ -31,10 +29,13 @@
 //!   over the socket transport.
 //! * **No backend feature** falls through to the native OS backend
 //!   (`DdiNix` on Linux / `DdiWin` on Windows) via
-//!   [`azihsm_ddi::AzihsmDdi::default()`]. This is the mode used
-//!   for on-silicon test runs; the harness routes concurrent
-//!   sessions onto separate fds because the kernel driver enforces
-//!   `AZIHSM_MAX_SESSIONS_PER_FD = 1`.
+//!   [`azihsm_ddi::AzihsmDdi::default()`]. This is the mode used for
+//!   on-silicon test runs; the in-session command tests run under
+//!   this backend too (they are gated
+//!   `#![cfg(not(any(feature = "mock", feature = "sock")))]`, which
+//!   admits both `emu` and the no-feature native OS build). The
+//!   harness routes concurrent sessions onto separate fds because
+//!   the kernel driver enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`.
 //!
 //! Backend-specific [`TestCtx`] methods (`erase`, `cert_chain_info`,
 //! `get_certificate`) carry per-method `#[cfg(...)]` and are
