@@ -38,9 +38,13 @@ use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
+#[cfg(feature = "hw-tests")]
+use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
+#[cfg(feature = "hw-tests")]
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_psk_change_aad;
 use crate::harness::encrypt_psk_envelope;
 use crate::harness::Ctx;
@@ -323,4 +327,63 @@ fn psk_change_wrong_aad_length() {
         psk_envelope: envelope,
     };
     ctx.expect_fw_reject(&req, LENGTH_REJECT_STATUS);
+}
+
+// ===========================================================================
+// Hardware-only tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Rotation to a default PSK is rejected as invalid
+//
+// Security-critical: allowing the host to rotate a partition's PSK
+// back to the well-known `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU` bytes
+// would let anyone with default-PSK knowledge re-establish a
+// session, defeating the whole point of rotation. FW must treat a
+// default value as an invalid `new_psk` and reject with
+// `TborStatus::InvalidArg`, regardless of which role's session
+// requests the change and which default value is targeted (so a CU
+// can't sneak the CO PSK back to default either).
+//
+// Hw-only: the emu backend does not implement the default-PSK
+// check and accepts these rotations, so the guarantee can only be
+// verified against real FW.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "hw-tests")]
+fn run_psk_change_to_default_rejected(
+    role: u8,
+    sty: SessionType,
+    new_psk: &[u8; PSK_LEN],
+) {
+    let ctx = Ctx::new();
+    let session = ctx.open_session(role, sty);
+    let err = ctx
+        .psk_change(session.handshake(), new_psk)
+        .expect_err("psk_change to a default PSK must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+#[cfg(feature = "hw-tests")]
+#[test]
+fn psk_change_cu_to_default_cu_rejected() {
+    run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CU);
+}
+
+#[cfg(feature = "hw-tests")]
+#[test]
+fn psk_change_cu_to_default_co_rejected() {
+    run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
+}
+
+#[cfg(feature = "hw-tests")]
+#[test]
+fn psk_change_co_to_default_co_rejected() {
+    run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
+}
+
+#[cfg(feature = "hw-tests")]
+#[test]
+fn psk_change_co_to_default_cu_rejected() {
+    run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CU);
 }

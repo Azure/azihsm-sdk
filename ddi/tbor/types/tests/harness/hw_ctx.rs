@@ -125,12 +125,13 @@ pub struct HwCtx {
     /// `true` while `primary` currently owns a live session. Cleared
     /// when that session's entry is removed from `sessions`.
     primary_busy: Mutex<bool>,
-    /// Fd used by the most recent [`Self::session_open_init`] /
-    /// [`Self::session_open_init_with_options`], waiting for a
-    /// matching finish to promote it into [`Self::sessions`]. Same
-    /// `Arc` as either `primary` (when we grabbed primary) or a fresh
-    /// fd (when primary was busy).
-    pending_fd: Mutex<Option<Arc<HwDev>>>,
+    /// Fds waiting for a matching finish to promote them into
+    /// [`Self::sessions`], keyed by the FW-assigned session id that
+    /// [`Self::session_open_init`] returned. Keying by id (rather
+    /// than a single slot) lets concurrent handshakes coexist. Each
+    /// value is the same `Arc` as either `primary` (when we grabbed
+    /// primary) or a fresh fd (when primary was busy).
+    pending_fds: Mutex<HashMap<u16, Arc<HwDev>>>,
     /// Every live session, keyed by FW-assigned session id. Value is
     /// the `Arc` for the fd that owns that session — same `Arc` as
     /// `primary` or a fresh fd.
@@ -146,7 +147,7 @@ impl HwCtx {
             primary: Arc::new(dev),
             _guard: guard,
             primary_busy: Mutex::new(false),
-            pending_fd: Mutex::new(None),
+            pending_fds: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         }
     }
@@ -304,7 +305,7 @@ impl HwCtx {
         let (dev, took_primary) = self.take_fd_for_new_session();
         match session_open_init_helper(&dev, psk_id, session_type) {
             Ok(pending) => {
-                *self.pending_fd.lock() = Some(dev);
+                self.pending_fds.lock().insert(pending.session_id, dev);
                 Ok(pending)
             }
             Err(e) => {
@@ -323,7 +324,7 @@ impl HwCtx {
         let (dev, took_primary) = self.take_fd_for_new_session();
         match session_open_init_with_options_helper(&dev, opts) {
             Ok(pending) => {
-                *self.pending_fd.lock() = Some(dev);
+                self.pending_fds.lock().insert(pending.session_id, dev);
                 Ok(pending)
             }
             Err(e) => {
@@ -337,10 +338,10 @@ impl HwCtx {
 
     pub fn session_open_finish(&self, pending: PendingHandshake) -> DdiResult<SessionHandshake> {
         let dev = self
-            .pending_fd
+            .pending_fds
             .lock()
-            .take()
-            .expect("session_open_finish: no pending fd — call session_open_init first");
+            .remove(&pending.session_id)
+            .expect("session_open_finish: no pending fd for this session_id — call session_open_init first");
         let is_primary = Arc::ptr_eq(&dev, &self.primary);
         match session_open_finish_helper(&dev, pending) {
             Ok(handshake) => {
@@ -362,10 +363,10 @@ impl HwCtx {
         mac_fin: [u8; 48],
     ) -> DdiResult<SessionHandshake> {
         let dev = self
-            .pending_fd
+            .pending_fds
             .lock()
-            .take()
-            .expect("session_open_finish_with_mac: no pending fd — call session_open_init first");
+            .remove(&pending.session_id)
+            .expect("session_open_finish_with_mac: no pending fd for this session_id — call session_open_init first");
         let is_primary = Arc::ptr_eq(&dev, &self.primary);
         match session_open_finish_with_mac_helper(&dev, pending, mac_fin) {
             Ok(handshake) => {
