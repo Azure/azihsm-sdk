@@ -1,0 +1,56 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# PKCS#11 module integration check.
+#
+# Runs on PRs into the feature/pkcs11 staging branch (where the module is
+# developed until it merges to main) and on pushes to that branch; manual
+# dispatch stays available. Every entry point but the demo path returns
+# CKR_FUNCTION_NOT_SUPPORTED. Add main to the triggers when the staging
+# branch merges.
+name: pkcs11
+
+on:
+  push:
+    branches: [ feature/pkcs11 ]
+  pull_request:
+    branches: [ feature/pkcs11 ]
+  workflow_dispatch:
+
+env:
+  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+
+jobs:
+  build-and-drive:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      # Shared setup: apt packages + Cargo cache. The Rust toolchain comes from
+      # rust-toolchain.toml (rustup installs it on the first cargo call) — the
+      # same way every other workflow gets it.
+      - uses: ./.github/actions/ubuntu-setup
+
+      - name: Install CMake, OpenSSL headers, and OpenSC pkcs11-tool
+        run: sudo apt-get install -y cmake libssl-dev opensc
+
+      - name: Build PKCS#11 module against the mock DDI
+        run: cargo build -p azihsm_pkcs11 --features mock
+
+      - name: Drive with pkcs11-tool (show-info, slots, login, SHA-256)
+        run: |
+          set -euo pipefail
+          MOD="$PWD/target/debug/azihsm_pkcs11.so"
+          pkcs11-tool --module "$MOD" --show-info
+          pkcs11-tool --module "$MOD" --list-slots
+          pkcs11-tool --module "$MOD" --login --pin 1234 --list-objects
+          printf abc > msg
+          pkcs11-tool --module "$MOD" --hash --mechanism SHA256 \
+            --input-file msg --output-file dig
+          got="$(xxd -p -c64 dig)"
+          exp="$(printf abc | sha256sum | cut -d' ' -f1)"
+          echo "module=$got openssl=$exp"
+          test "$got" = "$exp"
+
+      # TODO: add pkcs11test as the conformance gate once the key-backed
+      # mechanisms land and there is a meaningful conformance surface to check.

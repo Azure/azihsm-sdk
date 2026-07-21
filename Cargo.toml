@@ -76,6 +76,7 @@ members = [
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
+  "plugins/pkcs11",
   "tools/resiliency_stress",
   "xtask",
 
