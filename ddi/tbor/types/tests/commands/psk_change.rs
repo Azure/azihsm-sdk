@@ -3,32 +3,27 @@
 
 //! Integration tests for the TBOR `PskChange` command.
 //!
-//! Cross-test isolation comes from the ctx's factory-reset on
-//! construction ([`TestCtx::new`]). Live sessions are owned by a
-//! [`SessionGuard`] that closes on `Drop`, including during panic
-//! unwind.
+//! Backend is selected at compile time by
+//! [`azihsm_ddi::AzihsmDdi::default`]; cross-test isolation comes
+//! from the factory-reset performed by [`TestCtx::new`], and live
+//! sessions close on `Drop` via [`SessionGuard`].
 //!
 //! Coverage:
-//! * Happy paths (CO + CU), with explicit reopen using the rotated
-//!   PSK to prove the rotation took effect.
+//! * Happy paths (CO + CU), with an explicit reopen under the
+//!   rotated PSK to prove the rotation took effect.
 //! * Reopen with the old (default) PSK fails after rotation.
-//! * One-shot enforcement: second `PskChange` on the same session
+//! * One-shot enforcement: a second `PskChange` on the same session
 //!   surfaces `TborStatus::InvalidPermissions`.
-//! * Envelope-tampering negatives: ciphertext bit-flip and AAD
-//!   bit-flip both surface `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Empty / wrong-length envelope → a length-reject status. Emu's
-//!   decoder returns `TborInvalidFixedLength`; the hw decoder trips
-//!   the schema check earlier and returns `DdiDecodeFailed`. See
-//!   [`LENGTH_REJECT_STATUS`].
-//! * AAD that encodes a session id other than the request's
-//!   session id → `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Envelope encrypted under a *different* session's `param_key`
-//!   shipped through this session → `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Plaintext not exactly `PSK_LEN` (→ wrong envelope length) →
-//!   [`LENGTH_REJECT_STATUS`].
-//!
-//! Uses [`TestCtx`](crate::harness::TestCtx); the backend is selected
-//! at compile time by [`azihsm_ddi::AzihsmDdi::default`].
+//! * Envelope tampering (ciphertext bit-flip, AAD bit-flip) →
+//!   `TborStatus::AeadEnvelopeAuthFailed`.
+//! * AAD that encodes a different session id → same auth failure.
+//! * Envelope encrypted under a different session's `param_key` →
+//!   same auth failure.
+//! * Wrong envelope length (empty, wrong plaintext length, wrong
+//!   AAD length) → [`LENGTH_REJECT_STATUS`] (backend-specific; see
+//!   its docstring).
+//! * Hw-only: rotation to a well-known default PSK is rejected with
+//!   `TborStatus::InvalidArg`.
 
 #![cfg(not(any(feature = "mock", feature = "sock")))]
 
@@ -54,13 +49,12 @@ use crate::harness::TestCtx;
 const CO: u8 = 0;
 const CU: u8 = 1;
 
-/// Backend-specific status for wire-decode length rejects.
+/// Backend-specific status for wire-length rejects.
 ///
-/// Emu's decoder returns the handler's specific
-/// [`TborStatus::TborInvalidFixedLength`]. The hw decoder trips the
+/// Emu's decoder passes the frame through to the handler, which
+/// returns `TborInvalidFixedLength`. The hw decoder trips the
 /// schema's `#[tbor(buffer, len = 100)]` check earlier and surfaces
-/// the failure as [`TborStatus::DdiDecodeFailed`] before the
-/// handler's defensive branch is reached.
+/// `DdiDecodeFailed` before the handler runs.
 #[cfg(feature = "emu")]
 const LENGTH_REJECT_STATUS: TborStatus = TborStatus::TborInvalidFixedLength;
 #[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
@@ -255,15 +249,12 @@ fn psk_change_wrong_session_id_in_aad() {
 }
 
 // ===========================================================================
-// Envelope built under a *different* session's param_key
+// Envelope built under a different session's param_key
 //
-// Two live sessions. Encrypt under A's param_key but ship the request
-// through B (with B's session id in both the request header and the
-// AAD). FW uses B's param_key to verify the AEAD-GCM tag → mismatch.
-// On hw the request has to reach the fd that owns session B, so route
-// via `expect_fw_reject_on_session` — a raw `expect_fw_reject` would
-// land on the primary fd and the Linux driver would reject it before
-// FW sees the request.
+// Encrypt under session A's param_key but ship the request through
+// session B (with B's id in both header and AAD). FW verifies with
+// B's key and the tag fails. Routed via `expect_fw_reject_on_session`
+// so the request lands on B's fd on hw.
 // ===========================================================================
 
 #[test]
@@ -334,25 +325,18 @@ fn psk_change_wrong_aad_length() {
 }
 
 // ===========================================================================
-// Hardware-only tests
+// Hardware-only: rotation to a default PSK must be rejected
+//
+// Rotating a partition's PSK back to `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`
+// would let anyone with default-PSK knowledge re-establish a session,
+// defeating the point of rotation. FW must reject with
+// `TborStatus::InvalidArg` regardless of which role requests it and
+// which default value is targeted (a CU must not be able to push the
+// CO PSK back to default either).
+//
+// Hw-only: the reject lives in the silicon firmware, not in the
+// in-tree Rust FW that emu runs. Emu accepts the rotation.
 // ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Rotation to a default PSK is rejected as invalid
-//
-// Security-critical: allowing the host to rotate a partition's PSK
-// back to the well-known `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU` bytes
-// would let anyone with default-PSK knowledge re-establish a
-// session, defeating the whole point of rotation. FW must treat a
-// default value as an invalid `new_psk` and reject with
-// `TborStatus::InvalidArg`, regardless of which role's session
-// requests the change and which default value is targeted (so a CU
-// can't sneak the CO PSK back to default either).
-//
-// Hw-only: the emu backend does not implement the default-PSK
-// check and accepts these rotations, so the guarantee can only be
-// verified against real FW.
-// ---------------------------------------------------------------------------
 
 #[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {

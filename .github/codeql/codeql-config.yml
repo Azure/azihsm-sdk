@@ -31,19 +31,3 @@ query-filters:
         # deterministic IVs to make negative-path tests reproducible.
         - "ddi/**/tests/**"
         - "ddi/tbor/test_helpers/**"
-
-  # The "Cleartext logging of sensitive information" query
-  # (`rust/cleartext-logging`) flags drop-time `eprintln!` calls in
-  # the TBOR test harness that include the FW session-slot id in
-  # cleanup diagnostics (e.g. "SessionGuard: session_close({id}) …").
-  # The session id is a small u16 slot number — not a secret — but
-  # CodeQL's Rust heuristic keys on the `session_id` identifier
-  # regardless of type or context.
-  #
-  # Suppressed for test trees only. Production drivers under
-  # `ddi/*/src/**` and `fw/**/src/**` remain covered.
-  - exclude:
-      id: rust/cleartext-logging
-      paths:
-        - "ddi/**/tests/**"
-        - "crates/**/tests/**"

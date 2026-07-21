@@ -3,16 +3,18 @@
 
 //! Integration tests for the out-of-session TBOR `PartInfo` command.
 //!
-//! `round_trip` exercises the full host → backend → fw
-//! `handle_tbor_op` → response path and asserts the device/partition
-//! fields the firmware reports for the default provisioned partition.
-//! `part_info_independent_of_session_state` proves the dispatcher
-//! never lets session-machine state leak into the out-of-session
-//! handler.  `unsupported_on_mock` asserts the design contract that
-//! backends opt in to TBOR.
+//! `round_trip` asserts the device/partition fields the firmware
+//! reports for the default provisioned partition.
+//! `part_info_repeated_stable` and
+//! `part_info_independent_of_session_state` guard against per-call
+//! or session-scoped state leaking into the out-of-session handler.
+//! `part_info_reflects_part_init_transition_emu` covers the
+//! `Enabled → Initializing` lifecycle transition (emu only, since it
+//! is destructive to partition state). `unsupported_on_mock` asserts
+//! that mock does not implement TBOR.
 //!
-//! Uses [`TestCtx`](crate::harness::TestCtx); the backend is selected
-//! at compile time by [`azihsm_ddi::AzihsmDdi::default`].
+//! Backend is selected at compile time by
+//! [`azihsm_ddi::AzihsmDdi::default`].
 
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 

@@ -4,15 +4,11 @@
 //! Integration tests for the TBOR `SessionOpenInit` /
 //! `SessionOpenFinish` two-phase session handshake.
 //!
-//! Runs on any backend that exposes the FW handler (`emu`, `sock`,
-//! or the native OS backend when no backend feature is enabled).
-//! Uses [`TestCtx`](crate::harness::TestCtx); the backend is selected
-//! at compile time by [`azihsm_ddi::AzihsmDdi::default`].
-//!
-//! Happy-path sessions are owned by a
-//! [`SessionGuard`](crate::harness::SessionGuard) that closes on
-//! `Drop`; negative-path tests intercept the handshake through the
-//! raw `session_open_init` / `session_open_finish` methods on `TestCtx`.
+//! Backend is selected at compile time by
+//! [`azihsm_ddi::AzihsmDdi::default`]. Happy-path sessions are owned
+//! by a [`SessionGuard`](crate::harness::SessionGuard) that closes on
+//! `Drop`; negative paths drive `session_open_init` /
+//! `session_open_finish` on `TestCtx` directly.
 
 #![cfg(not(any(feature = "mock", feature = "sock")))]
 
@@ -425,83 +421,6 @@ fn partition_pk_hsm_stable_across_handshakes() {
 }
 
 // ---------------------------------------------------------------------------
-// Concurrency: multi-threaded races on the ctx
-//
-// Threads drive `ctx.session_open_init` / `ctx.session_open_finish`
-// directly — the same map-based fd allocation used by every other
-// test, so nothing bypasses the tracking. On the native OS backend
-// each concurrent handshake gets its own fresh fd, stashed in
-// `pending_fds` keyed by the FW-assigned session id.
-// ---------------------------------------------------------------------------
-
-const MULTI_THREADED_TOTAL: usize = 12;
-
-/// Race N concurrent opens; winners must have distinct session ids,
-/// and any losers must surface as clean FW/driver rejections.
-#[test]
-fn open_session_multi_threaded_all_should_open() {
-    let ctx = TestCtx::new();
-
-    let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
-        for _ in 0..MULTI_THREADED_TOTAL {
-            handles.push(s.spawn(|| -> Result<u16, azihsm_ddi_interface::DdiError> {
-                let pending = ctx.session_open_init(CU, SessionType::PlainText)?;
-                let handshake = ctx.session_open_finish(pending)?;
-                Ok(handshake.session_id)
-            }));
-        }
-        let mut winners: Vec<u16> = Vec::new();
-        let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
-        for h in handles {
-            match h.join().expect("worker thread must not panic") {
-                Ok(sid) => winners.push(sid),
-                Err(e) => rejections.push(e),
-            }
-        }
-        (winners, rejections)
-    });
-
-    let mut sorted_ids = winners.clone();
-    sorted_ids.sort_unstable();
-    sorted_ids.dedup();
-    let unique_wins = sorted_ids.len();
-
-    // Close winners through the ctx before asserting so a failing
-    // assert never leaves the session table dirty.
-    for sid in &winners {
-        let _ = ctx.session_close(*sid);
-    }
-
-    assert!(
-        !winners.is_empty(),
-        "at least one concurrent open_session must succeed; rejections = {rejections:?}",
-    );
-    assert_eq!(
-        unique_wins,
-        winners.len(),
-        "concurrent winners must have distinct session ids: {winners:?}",
-    );
-    for err in &rejections {
-        assert!(
-            matches!(
-                err,
-                azihsm_ddi_interface::DdiError::DdiError(_)
-                    | azihsm_ddi_interface::DdiError::DdiStatus(_)
-            ),
-            "concurrent open_session rejections must be FW/driver rejections, got {err:?}",
-        );
-    }
-    if rejections.is_empty() {
-        eprintln!(
-            "open_session_multi_threaded_all_should_open: FW accepted all {MULTI_THREADED_TOTAL} \
-             concurrent sessions without emitting any table-full rejection; race between success \
-             and rejection branches not exercised at this thread count",
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Point-validation negatives
 //
 // FW `EccPublicKeyValidation` checks that `pk_init` is a valid,
@@ -666,9 +585,85 @@ fn pk_init_single_byte_tampered_rejected() {
     );
 }
 
-// ===========================================================================
-// Hardware-only tests
-// ===========================================================================
+// ---------------------------------------------------------------------------
+// Concurrency: multi-threaded races on the ctx (hw-only)
+//
+// Emu's `Arc<StdHsm>` is a process-global singleton and its TBOR
+// handler chain is not reentrant across the two-phase handshake:
+// concurrent inits clobber shared state mid-flight and surface as
+// `SessionAuthFailure` / `SessionNotFound` at finish instead of the
+// clean table-full / winner-takes-slot behaviour real FW produces.
+// The property under test only holds on the native OS backend.
+// ---------------------------------------------------------------------------
+
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+const MULTI_THREADED_TOTAL: usize = 12;
+
+/// Race N concurrent opens; winners must have distinct session ids,
+/// and any losers must surface as clean FW/driver rejections.
+#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+#[test]
+fn open_session_multi_threaded_all_should_open() {
+    let ctx = TestCtx::new();
+
+    let (winners, rejections) = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
+        for _ in 0..MULTI_THREADED_TOTAL {
+            handles.push(s.spawn(|| -> Result<u16, azihsm_ddi_interface::DdiError> {
+                let pending = ctx.session_open_init(CU, SessionType::PlainText)?;
+                let handshake = ctx.session_open_finish(pending)?;
+                Ok(handshake.session_id)
+            }));
+        }
+        let mut winners: Vec<u16> = Vec::new();
+        let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
+        for h in handles {
+            match h.join().expect("worker thread must not panic") {
+                Ok(sid) => winners.push(sid),
+                Err(e) => rejections.push(e),
+            }
+        }
+        (winners, rejections)
+    });
+
+    let mut sorted_ids = winners.clone();
+    sorted_ids.sort_unstable();
+    sorted_ids.dedup();
+    let unique_wins = sorted_ids.len();
+
+    // Close winners through the ctx before asserting so a failing
+    // assert never leaves the session table dirty.
+    for sid in &winners {
+        let _ = ctx.session_close(*sid);
+    }
+
+    assert!(
+        !winners.is_empty(),
+        "at least one concurrent open_session must succeed; rejections = {rejections:?}",
+    );
+    assert_eq!(
+        unique_wins,
+        winners.len(),
+        "concurrent winners must have distinct session ids: {winners:?}",
+    );
+    for err in &rejections {
+        assert!(
+            matches!(
+                err,
+                azihsm_ddi_interface::DdiError::DdiError(_)
+                    | azihsm_ddi_interface::DdiError::DdiStatus(_)
+            ),
+            "concurrent open_session rejections must be FW/driver rejections, got {err:?}",
+        );
+    }
+    if rejections.is_empty() {
+        eprintln!(
+            "open_session_multi_threaded_all_should_open: FW accepted all {MULTI_THREADED_TOTAL} \
+             concurrent sessions without emitting any table-full rejection; race between success \
+             and rejection branches not exercised at this thread count",
+        );
+    }
+}
 
 #[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 const SINGLE_WINNER_RACERS: usize = 8;
@@ -676,16 +671,6 @@ const SINGLE_WINNER_RACERS: usize = 8;
 /// Fill to one free slot then race N threads for it. Regression for
 /// FW's undo-on-loser path: every losing racer must see a clean
 /// rejection and leave the session table intact for retry.
-///
-/// Hw-only because the emu backend cannot model this. Emu is a
-/// process-global `LazyLock<EmuCtx>` singleton (`ddi/emu/src/ddi.rs`)
-/// with a single shared `StdHsm` and no per-fd separation — every
-/// "device handle" aliases the same in-process FW state. Concurrent
-/// `session_open_init` calls on that singleton clobber its session
-/// table mid-handshake, surfacing as `SessionNotFound` /
-/// `SessionAuthFailure` at finish rather than the "table full" that
-/// real FW returns to losers. Real hw has genuine per-fd state in
-/// the kernel driver.
 #[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
 #[test]
 fn open_session_multi_threaded_single_winner() {

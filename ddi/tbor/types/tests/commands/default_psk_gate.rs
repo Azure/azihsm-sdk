@@ -7,26 +7,23 @@
 //!
 //! The gate (see `fw/core/lib/src/ddi/tbor/mod.rs::dispatch`) rejects
 //! in-session commands not on the bootstrap allow-list when the
-//! calling role's partition PSK still matches the compiled-in default
+//! calling role's partition PSK still matches its compiled-in default
 //! (`DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`). Out-of-session opcodes
 //! (`ApiRev`, `SessionOpenInit`, `SessionOpenFinish`) are never
-//! gated; in-session opcodes on the allow-list (`PskChange`,
-//! `SessionClose`) are always permitted.
+//! gated; the in-session opcodes `PskChange` and `SessionClose` are
+//! on the allow-list and are always permitted.
 //!
-//! Coverage in this file (positive bypass cases E1, E2, E3, E5 plus
-//! the negative case E4):
+//! Coverage:
+//! * Out-of-session opcodes bypass the gate: `ApiRev`,
+//!   `SessionOpenInit`.
+//! * Allow-listed in-session opcodes bypass the gate: `PskChange`,
+//!   `SessionClose`.
+//! * A non-allow-listed in-session opcode (`PartInit`) is rejected
+//!   at dispatch with `DefaultPskMustRotate` before any handler
+//!   mutation — safe to run on real silicon.
 //!
-//! * E5: `ApiRev` reaches its handler with PSKs at default.
-//! * E3: `SessionOpenInit` succeeds with PSKs at default.
-//! * E1: `PskChange` is allow-listed — succeeds while PSK is default.
-//! * E2: `SessionClose` is allow-listed — succeeds while PSK is default.
-//! * E4: a non-allow-listed in-session opcode (`PartInit`) is
-//!   rejected at dispatch with `DefaultPskMustRotate`, before any
-//!   handler mutation. Runs against emu and hw because the FW rejects
-//!   before any state change.
-//!
-//! Each test inherits a factory-reset device from the ctx constructor,
-//! so partition PSKs are at their canonical defaults on entry.
+//! Each test inherits a factory-reset device from `TestCtx::new`, so
+//! partition PSKs are at their canonical defaults on entry.
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
@@ -47,22 +44,18 @@ const GATE_ROTATED_PSK: [u8; PSK_LEN] = [
     0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5,
 ];
 
-/// E5: `ApiRev` is an out-of-session opcode and therefore never
-/// gated. It must succeed even when both partition PSKs are at their
-/// compiled-in defaults.
+/// `ApiRev` is out-of-session and therefore never gated. It must
+/// succeed even when both partition PSKs are at their compiled-in
+/// defaults. Two probes back-to-back confirm the gate is stateless.
 #[test]
 fn default_psk_gate_api_rev_bypass() {
     let ctx = TestCtx::new();
-    // Two probes back-to-back to confirm the call is genuinely
-    // repeatable (gate is stateless) rather than passing on first
-    // call by luck of ordering.
     let _ = ctx.api_rev().expect("first ApiRev under default PSK");
     let _ = ctx.api_rev().expect("second ApiRev under default PSK");
 }
 
-/// E3: `SessionOpenInit` is out-of-session and therefore never gated.
-/// Verified for both roles since each is bound to a distinct PSK
-/// slot.
+/// `SessionOpenInit` is out-of-session and therefore never gated.
+/// Verified for both roles since each is bound to a distinct PSK slot.
 #[test]
 fn default_psk_gate_session_open_init_bypass() {
     let ctx = TestCtx::new();
@@ -92,8 +85,8 @@ fn default_psk_gate_session_open_init_bypass() {
         .expect("close CU session");
 }
 
-/// E2: `SessionClose` is on the allow-list — it must succeed while
-/// the role's PSK is still default. Exercised for both roles.
+/// `SessionClose` is on the allow-list — it must succeed while the
+/// role's PSK is still default. Exercised for both roles.
 #[test]
 fn default_psk_gate_session_close_bypass() {
     let ctx = TestCtx::new();
@@ -109,13 +102,12 @@ fn default_psk_gate_session_close_bypass() {
         .expect("SessionClose must bypass gate while CU PSK is default");
 }
 
-/// E1: `PskChange` is on the allow-list — it must succeed while the
+/// `PskChange` is on the allow-list — it must succeed while the
 /// role's PSK is still default. This is exactly the bootstrap flow:
 /// open under default, rotate.
 ///
-/// Exercised for the CO role; the CU role's bootstrap path is
-/// functionally identical and is already exercised by
-/// `psk_change_happy_cu_emu` in `psk_change.rs`.
+/// Exercised for the CO role; the CU path is functionally identical
+/// and is already covered by `psk_change_happy_cu` in `psk_change.rs`.
 #[test]
 fn default_psk_gate_psk_change_bypass() {
     let ctx = TestCtx::new();
@@ -124,10 +116,10 @@ fn default_psk_gate_psk_change_bypass() {
         .expect("PskChange must bypass gate while CO PSK is default");
 }
 
-/// E4: an in-session, non-allow-listed opcode (`PartInit`) is
-/// rejected at dispatch with `DefaultPskMustRotate`. The FW returns
-/// the gate error before any partition-state mutation, so this test
-/// is safe to run on real silicon.
+/// A non-allow-listed in-session opcode (`PartInit`) is rejected at
+/// dispatch with `DefaultPskMustRotate`. The FW returns the gate
+/// error before any partition-state mutation, so this is safe to run
+/// on real silicon.
 #[test]
 fn default_psk_gate_part_init_rejected() {
     use azihsm_ddi_tbor_types::PolicyKeyKind;
