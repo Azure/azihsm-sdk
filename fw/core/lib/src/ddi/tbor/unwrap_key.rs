@@ -24,6 +24,7 @@ use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::HashAlgo;
 use azihsm_fw_ddi_tbor_types::KeyClass;
+use azihsm_fw_ddi_tbor_types::KeyUsage;
 use azihsm_fw_ddi_tbor_types::TborUnwrapKeyReq;
 use azihsm_fw_ddi_tbor_types::TborUnwrapKeyResp;
 use azihsm_fw_ddi_tbor_types::UNWRAP_MASKED_KEY_MAX_LEN;
@@ -77,23 +78,71 @@ fn decode_class(class: KeyClass) -> HsmResult<DecodeKeyClass> {
     }
 }
 
-/// Standard usage attributes for an imported key of `class`, plus the
-/// requested `scope`.  Imported keys are never `local`.
-fn attrs_for_class(class: KeyClass, scope: HsmKeyScope) -> HsmVaultKeyAttrs {
+/// Derive the vault usage attributes for an imported key of `class` from
+/// the host-requested [`KeyUsage`] permissions, plus the requested
+/// `scope`.  Imported keys are never `local`.
+///
+/// Mirrors the MBOR `key_attrs::for_*` policy: `sign`+`verify` and
+/// `encrypt`+`decrypt` are matched pairs, exactly one usage group may be
+/// set, and each key class restricts which group(s) are valid:
+/// - AES → `encrypt`+`decrypt` only;
+/// - RSA → `sign`+`verify` or `encrypt`+`decrypt`;
+/// - ECC → `sign`+`verify` or `derive`;
+/// - HMAC → `sign`+`verify`.
+///
+/// Any invalid pairing, multi-usage request, or usage not permitted for
+/// the class is rejected with [`HsmError::InvalidPermissions`].
+fn attrs_for_class(
+    class: KeyClass,
+    scope: HsmKeyScope,
+    usage: KeyUsage,
+) -> HsmResult<HsmVaultKeyAttrs> {
+    // Paired usages must be requested together.
+    if usage.sign() != usage.verify() || usage.encrypt() != usage.decrypt() {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    let sign_verify = usage.sign() && usage.verify();
+    let encrypt_decrypt = usage.encrypt() && usage.decrypt();
+    let derive = usage.derive();
+    let wrap = usage.wrap();
+    let unwrap = usage.unwrap();
+
+    // Exactly one usage group may be set.
+    let usage_count =
+        sign_verify as u8 + encrypt_decrypt as u8 + derive as u8 + wrap as u8 + unwrap as u8;
+    if usage_count != 1 {
+        return Err(HsmError::InvalidPermissions);
+    }
+
     let base = HsmVaultKeyAttrs::new().with_scope(scope);
-    match class {
-        // Symmetric cipher key: encrypt / decrypt.
-        KeyClass::Aes => base.with_encrypt(true).with_decrypt(true),
-        // RSA private key: sign / decrypt.
-        KeyClass::Rsa | KeyClass::RsaCrt => base.with_sign(true).with_decrypt(true),
-        // ECC private key: sign / derive.
-        KeyClass::Ecc => base.with_sign(true).with_derive(true),
-        // HMAC key: sign / verify.
-        KeyClass::HmacSha256 | KeyClass::HmacSha384 | KeyClass::HmacSha512 => {
+    let attrs = match class {
+        // Symmetric cipher key: encrypt / decrypt only.
+        KeyClass::Aes if encrypt_decrypt => base.with_encrypt(true).with_decrypt(true),
+        // RSA private key: sign / verify or encrypt / decrypt.
+        KeyClass::Rsa | KeyClass::RsaCrt if sign_verify => base.with_sign(true).with_verify(true),
+        KeyClass::Rsa | KeyClass::RsaCrt if encrypt_decrypt => {
+            base.with_encrypt(true).with_decrypt(true)
+        }
+        // ECC private key: sign / verify or derive (ECDH).
+        KeyClass::Ecc if sign_verify => base.with_sign(true).with_verify(true),
+        KeyClass::Ecc if derive => base.with_derive(true),
+        // HMAC key: sign / verify (MAC compute / verify).
+        KeyClass::HmacSha256 | KeyClass::HmacSha384 | KeyClass::HmacSha512 if sign_verify => {
             base.with_sign(true).with_verify(true)
         }
-        _ => base,
-    }
+        // Any recognized class with a usage it does not permit.
+        KeyClass::Aes
+        | KeyClass::Rsa
+        | KeyClass::RsaCrt
+        | KeyClass::Ecc
+        | KeyClass::HmacSha256
+        | KeyClass::HmacSha384
+        | KeyClass::HmacSha512 => return Err(HsmError::InvalidPermissions),
+        // Unrecognized class discriminant.
+        _ => return Err(HsmError::UnsupportedCmd),
+    };
+    Ok(attrs)
 }
 
 /// Which wire public key (if any) an imported private key kind carries,
@@ -183,7 +232,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // re-import).
     let svn = part_state::part_mfgr_svn(pal);
     let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
-    let attrs = attrs_for_class(class, scope);
+    let attrs = attrs_for_class(class, scope, req.key_usage())?;
 
     // Phase 1 — unwrap, decode, and vault the recovered key inside an
     // allocation scope.  The (multi-KB, for RSA) unwrap / decode scratch is

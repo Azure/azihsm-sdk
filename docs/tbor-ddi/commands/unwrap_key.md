@@ -29,16 +29,22 @@ AES-KWP-wrapped under that KEK. The device resolves the unwrapping
 property (no host key reference), OAEP-decrypts the KEK, AES-KWP-unwraps
 the payload, decodes it into vault form, and masks it.
 
-`key_class` selects the decode path and the recovered key's usage
-attributes:
+`key_class` selects the decode path (and the recovered key's vault kind);
+`key_usage` selects the recovered key's usage attributes, which the device
+validates against the class:
 
-- `Aes` → raw 16 / 24 / 32-byte AES key; `encrypt` + `decrypt`.
-- `Rsa` → DER RSA private key (non-CRT vault kind); `sign` + `decrypt`.
-- `RsaCrt` → DER RSA private key (CRT vault kind); `sign` + `decrypt`.
-- `Ecc` → PKCS#8 DER ECC private key; `sign` + `derive`.
+- `Aes` → raw 16 / 24 / 32-byte AES key; `encrypt`+`decrypt` only.
+- `Rsa` → DER RSA private key (non-CRT vault kind); `sign`+`verify` or
+  `encrypt`+`decrypt`.
+- `RsaCrt` → DER RSA private key (CRT vault kind); `sign`+`verify` or
+  `encrypt`+`decrypt`.
+- `Ecc` → PKCS#8 DER ECC private key; `sign`+`verify` or `derive`.
 - `HmacSha256` / `HmacSha384` / `HmacSha512` → raw variable-length HMAC
-  key stored as the matching `VarLenHmacSha*` vault kind; `sign` +
-  `verify`.
+  key stored as the matching `VarLenHmacSha*` vault kind; `sign`+`verify`.
+
+`sign`+`verify` and `encrypt`+`decrypt` are matched pairs and exactly one
+usage group may be set; any invalid pairing, multi-usage request, or usage
+not permitted for the class is rejected with `InvalidPermissions`.
 
 Imported keys are never `local`. For the asymmetric classes (`Rsa`,
 `RsaCrt`, `Ecc`) the recovered key's wire public key is re-derived and
@@ -73,8 +79,9 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
 | 8 | `scope` | `uint8` (inline) | Requested key scope (`KeyScope` discriminant): `1` = Session, `2` = Ephemeral, `3` = Local, `4` = SecurityDomain. |
 | 12 | `key_class` | `uint8` (inline) | Class of the wrapped key (`KeyClass` discriminant): `0` = Aes, `1` = Rsa, `2` = RsaCrt, `3` = Ecc, `4` = HmacSha256, `5` = HmacSha384, `6` = HmacSha512. |
-| 16 | `oaep_hash_algo` | `uint8` (inline) | OAEP hash used to wrap the KEK (`HashAlgo` discriminant): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
-| 20 | `wrapped_blob` | `buffer` (≤ 3072 B) | The RSA-AES-wrapped key: `RSA-OAEP(KEK) ‖ AES-KWP(key)`. The leading modulus-sized (256 B for RSA-2048) OAEP ciphertext is wire little-endian. |
+| 16 | `key_usage` | `uint8` (inline) | Requested usage permissions (`KeyUsage` bitfield): `0x01` = encrypt, `0x02` = decrypt, `0x04` = sign, `0x08` = verify, `0x10` = derive, `0x20` = wrap, `0x40` = unwrap. Validated against `key_class`. |
+| 20 | `oaep_hash_algo` | `uint8` (inline) | OAEP hash used to wrap the KEK (`HashAlgo` discriminant): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
+| 24 | `wrapped_blob` | `buffer` (≤ 3072 B) | The RSA-AES-wrapped key: `RSA-OAEP(KEK) ‖ AES-KWP(key)`. The leading modulus-sized (256 B for RSA-2048) OAEP ciphertext is wire little-endian. |
 
 ### Data section
 
@@ -103,6 +110,7 @@ keys).
 | `InvalidArg` | A non-`Session` scope was requested before the partition is `Initialized`, or an unknown `oaep_hash_algo` |
 | `UnsupportedKeyScope` | The requested scope has no masking key yet (e.g. `SecurityDomain` before `CreateSD`) |
 | `UnsupportedCmd` | An unknown `key_class` discriminant |
+| `InvalidPermissions` | The requested `key_usage` is an invalid pairing, sets more than one usage group, or is not permitted for `key_class` |
 | `PendingKeyGeneration` | The partition's unwrapping key is still being generated; call `GetUnwrappingKey` and retry |
 | `RsaUnwrapInvalidRequest` | The wrapped blob is shorter than the modulus-sized OAEP segment |
 | `RsaUnwrapInvalidKek` | The recovered KEK has an invalid length |

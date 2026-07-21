@@ -20,6 +20,7 @@
 //! * `session_id` — TOC-carried session id; cross-checked by the dispatcher.
 //! * `scope` — the [`KeyScope`] whose masking key wraps the recovered key.
 //! * `key_class` — the [`KeyClass`] of the wrapped key.
+//! * `key_usage` — the requested [`KeyUsage`] permissions.
 //! * `oaep_hash_algo` — the OAEP [`HashAlgo`] used to wrap the KEK.
 //! * `wrapped_blob` — the RSA-AES-wrapped key
 //!   (`RSA-OAEP(KEK) ‖ AES-KWP(key)`), up to [`UNWRAP_WRAPPED_BLOB_MAX_LEN`].
@@ -38,6 +39,7 @@ use open_enum::open_enum;
 
 use crate::key_props::HashAlgo;
 use crate::key_props::KeyScope;
+use crate::key_props::KeyUsage;
 
 /// TBOR opcode for `UnwrapKey`.
 pub const TBOR_OP_UNWRAP_KEY: u8 = 0x14;
@@ -103,6 +105,11 @@ pub struct TborUnwrapKeyReq<'a> {
     #[tbor(U8)]
     pub key_class: KeyClass,
 
+    /// Requested key-usage permissions, 1-byte [`KeyUsage`] bitfield.
+    /// The handler enforces which usage(s) are valid for `key_class`.
+    #[tbor(U8)]
+    pub key_usage: KeyUsage,
+
     /// OAEP hash used to wrap the KEK, 1-byte [`HashAlgo`].
     #[tbor(U8)]
     pub oaep_hash_algo: HashAlgo,
@@ -160,6 +167,8 @@ mod tests {
             .unwrap()
             .key_class(KeyClass::HmacSha256)
             .unwrap()
+            .key_usage(KeyUsage::from_bits(KeyUsage::SIGN | KeyUsage::VERIFY))
+            .unwrap()
             .oaep_hash_algo(HashAlgo::Sha256)
             .unwrap()
             .wrapped_blob(&wrapped)
@@ -167,6 +176,10 @@ mod tests {
             .finish();
 
         assert_eq!(frame.key_class(), KeyClass::HmacSha256);
+        assert_eq!(
+            frame.key_usage(),
+            KeyUsage::from_bits(KeyUsage::SIGN | KeyUsage::VERIFY)
+        );
         assert_eq!(frame.oaep_hash_algo(), HashAlgo::Sha256);
         assert_eq!(frame.wrapped_blob(), &wrapped[..]);
     }

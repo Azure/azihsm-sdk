@@ -10,7 +10,7 @@
 //! **masked** blob under the requested scope's masking key — plus the
 //! re-derived wire public key for RSA / ECC.
 //!
-//! The `scope`, `key_class`, and `oaep_hash_algo` are raw 1-byte discriminants
+//! The `scope`, `key_class`, `key_usage`, and `oaep_hash_algo` are raw 1-byte discriminants
 //! (the firmware types them as the `KeyScope` / `KeyClass` / `HashAlgo`
 //! open-enums; this host crate is firewalled from the firmware PAL types).
 
@@ -43,6 +43,21 @@ pub const KEY_CLASS_HMAC_SHA384: u8 = 5;
 /// `KeyClass` discriminant for a variable-length HMAC-SHA-512 key.
 pub const KEY_CLASS_HMAC_SHA512: u8 = 6;
 
+/// `KeyUsage` bit: key may encrypt.
+pub const KEY_USAGE_ENCRYPT: u8 = 1 << 0;
+/// `KeyUsage` bit: key may decrypt.
+pub const KEY_USAGE_DECRYPT: u8 = 1 << 1;
+/// `KeyUsage` bit: key may sign / compute a MAC.
+pub const KEY_USAGE_SIGN: u8 = 1 << 2;
+/// `KeyUsage` bit: key may verify a signature / MAC.
+pub const KEY_USAGE_VERIFY: u8 = 1 << 3;
+/// `KeyUsage` bit: key may derive other keys.
+pub const KEY_USAGE_DERIVE: u8 = 1 << 4;
+/// `KeyUsage` bit: key may wrap other keys.
+pub const KEY_USAGE_WRAP: u8 = 1 << 5;
+/// `KeyUsage` bit: key may unwrap other keys.
+pub const KEY_USAGE_UNWRAP: u8 = 1 << 6;
+
 /// Host-facing TBOR `UnwrapKey` request.
 #[tbor(opcode = TBOR_OP_UNWRAP_KEY, session_ctrl = in_session)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -56,6 +71,11 @@ pub struct TborUnwrapKeyReq {
 
     /// Class of the wrapped key, 1-byte `KeyClass` (see `KEY_CLASS_*`).
     pub key_class: u8,
+
+    /// Requested key-usage permissions, 1-byte `KeyUsage` bitfield (see
+    /// `KEY_USAGE_*`).  The device enforces which usage(s) are valid for
+    /// `key_class`.
+    pub key_usage: u8,
 
     /// OAEP hash used to wrap the KEK, 1-byte `HashAlgo`.
     pub oaep_hash_algo: u8,
@@ -94,6 +114,7 @@ mod tests {
             session_id: 7,
             scope: 0b011,
             key_class: KEY_CLASS_HMAC_SHA256,
+            key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
             oaep_hash_algo: 1,
             wrapped_blob: alloc::vec![0x5Au8; 300],
         };

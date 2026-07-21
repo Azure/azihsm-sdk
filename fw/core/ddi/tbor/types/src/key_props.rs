@@ -63,3 +63,96 @@ pub enum HashAlgo {
     /// SHA-512 (64-byte digest; 64-byte HMAC key / tag).
     Sha512 = 3,
 }
+
+/// Requested key-usage permissions on the TBOR wire — a compact 1-byte
+/// bitfield carried by key-creating / key-import commands (e.g.
+/// `UnwrapKey`) so the host, not the firmware, selects which operations
+/// the imported/created key may perform.
+///
+/// The bits mirror the usage semantics of the MBOR
+/// `DdiTargetKeyMetadata` flags (minus the `session`/`modifiable` bits,
+/// which TBOR carries out of band via the key scope): `sign`+`verify`
+/// and `encrypt`+`decrypt` are matched pairs, and each handler enforces
+/// which usage(s) are valid for the key's class.  Sent inline as a raw
+/// `u8` (`#[tbor(U8)]`); an out-of-range/invalid combination is rejected
+/// on-device rather than failing to decode.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeyUsage(pub u8);
+
+impl KeyUsage {
+    /// Key may encrypt.
+    pub const ENCRYPT: u8 = 1 << 0;
+    /// Key may decrypt.
+    pub const DECRYPT: u8 = 1 << 1;
+    /// Key may sign / compute a MAC.
+    pub const SIGN: u8 = 1 << 2;
+    /// Key may verify a signature / MAC.
+    pub const VERIFY: u8 = 1 << 3;
+    /// Key may derive other keys.
+    pub const DERIVE: u8 = 1 << 4;
+    /// Key may wrap other keys.
+    pub const WRAP: u8 = 1 << 5;
+    /// Key may unwrap other keys.
+    pub const UNWRAP: u8 = 1 << 6;
+
+    /// Build a `KeyUsage` from its raw wire bits.
+    #[inline]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// The raw wire bits.
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Whether `flag` (one of the `KeyUsage::*` bit constants) is set.
+    #[inline]
+    pub const fn has(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+
+    /// `encrypt` bit.
+    #[inline]
+    pub const fn encrypt(self) -> bool {
+        self.has(Self::ENCRYPT)
+    }
+
+    /// `decrypt` bit.
+    #[inline]
+    pub const fn decrypt(self) -> bool {
+        self.has(Self::DECRYPT)
+    }
+
+    /// `sign` bit.
+    #[inline]
+    pub const fn sign(self) -> bool {
+        self.has(Self::SIGN)
+    }
+
+    /// `verify` bit.
+    #[inline]
+    pub const fn verify(self) -> bool {
+        self.has(Self::VERIFY)
+    }
+
+    /// `derive` bit.
+    #[inline]
+    pub const fn derive(self) -> bool {
+        self.has(Self::DERIVE)
+    }
+
+    /// `wrap` bit.
+    #[inline]
+    pub const fn wrap(self) -> bool {
+        self.has(Self::WRAP)
+    }
+
+    /// `unwrap` bit.
+    #[inline]
+    pub const fn unwrap(self) -> bool {
+        self.has(Self::UNWRAP)
+    }
+}

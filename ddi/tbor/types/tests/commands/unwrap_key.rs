@@ -32,12 +32,19 @@ use azihsm_crypto::RsaEncryptAlgo;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
 use azihsm_ddi_tbor_types::TborUnwrapKeyResp;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
+use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
+use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
+use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
@@ -85,9 +92,34 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
     wrapped
 }
 
+/// Canonical valid `KeyUsage` for a wrapped-key `class`, used by the test
+/// `unwrap` helper so callers need not spell out permissions.
+fn usage_for_class(class: u8) -> u8 {
+    match class {
+        KEY_CLASS_AES => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        KEY_CLASS_RSA | KEY_CLASS_RSA_CRT => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+        KEY_CLASS_HMAC_SHA256 | KEY_CLASS_HMAC_SHA384 | KEY_CLASS_HMAC_SHA512 => {
+            KEY_USAGE_SIGN | KEY_USAGE_VERIFY
+        }
+        _ => 0,
+    }
+}
+
 /// Fetch the unwrapping public key, wrap `key` for `class`, and unwrap it
-/// on-device under the `Local` scope.
-fn unwrap(ctx: &TestCtx, session_id: u16, class: u8, key: &[u8]) -> TborUnwrapKeyResp {
+/// on-device under the `Local` scope with the class's canonical usage.
+pub(crate) fn unwrap(ctx: &TestCtx, session_id: u16, class: u8, key: &[u8]) -> TborUnwrapKeyResp {
+    unwrap_with_usage(ctx, session_id, class, usage_for_class(class), key)
+}
+
+/// Like [`unwrap`], but with an explicit `usage` — for exercising the
+/// per-class permission validation.
+pub(crate) fn unwrap_with_usage(
+    ctx: &TestCtx,
+    session_id: u16,
+    class: u8,
+    usage: u8,
+    key: &[u8],
+) -> TborUnwrapKeyResp {
     let hsm_pub = ctx
         .tbor(&TborGetUnwrappingKeyReq { session_id })
         .expect("GetUnwrappingKey")
@@ -97,6 +129,7 @@ fn unwrap(ctx: &TestCtx, session_id: u16, class: u8, key: &[u8]) -> TborUnwrapKe
         session_id,
         scope: SCOPE_LOCAL,
         key_class: class,
+        key_usage: usage,
         oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
     })
@@ -180,4 +213,30 @@ fn unwrap_key_hmac_emu() {
         resp.masked_key.iter().any(|&b| b != 0),
         "masked HMAC key must not be all-zero",
     );
+}
+
+#[test]
+fn unwrap_key_rejects_invalid_usage_for_class_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    // Request `sign`+`verify` for an AES key — AES only permits
+    // `encrypt`+`decrypt`, so the device must reject the import.
+    let aes_key = [0x42u8; 32];
+    let hsm_pub = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey")
+        .pub_key;
+    let wrapped = rsa_aes_wrap(&hsm_pub, &aes_key);
+    let req = TborUnwrapKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        key_class: KEY_CLASS_AES,
+        key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+        oaep_hash_algo: OAEP_SHA256,
+        wrapped_blob: wrapped,
+    };
+    ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
 }
