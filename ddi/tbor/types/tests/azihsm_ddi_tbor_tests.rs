@@ -6,21 +6,15 @@
 //! Backend selection is feature-gated; the same tests run across every
 //! transport. Run with `--features emu` (in-process firmware),
 //! `--features sock` (firmware behind a socket server), or
-//! `--features mock` (transport-contract probes).
+//! `--features mock` (transport-contract probes). `--features
+//! hw-tests` compiles the same `commands/*` tests against real
+//! silicon through the shared [`harness::Ctx`] alias.
 //!
 //! With **no** feature enabled the crate falls through to the native
-//! OS backend (`nix` on Linux / `win` on Windows), which drives real
-//! silicon. Hardware smoke tests that still use the standalone
-//! [`hw::hw_test`] closure fixture live under [`hw`]; individual
-//! `commands/*` files migrated to the `harness::Ctx` alias (see
-//! `commands::api_rev`) additionally compile under `--features
-//! hw-tests` and run against the same silicon backend through the
-//! shared per-test fixture.
+//! OS backend (`nix` on Linux / `win` on Windows) for build-only
+//! checks; no tests are compiled in that mode.
 
 #[cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
 pub mod harness;
 
 pub mod commands;
-
-#[cfg(feature = "hw-tests")]
-pub mod hw;

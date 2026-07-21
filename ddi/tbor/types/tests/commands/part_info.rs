@@ -3,27 +3,31 @@
 
 //! Integration tests for the out-of-session TBOR `PartInfo` command.
 //!
-//! `round_trip` exercises the full host → backend (`emu` or `sock`) →
-//! fw `handle_tbor_op` → response path and asserts the device/partition
-//! fields the firmware reports for the default provisioned partition.
-//! `part_info_independent_of_session_state_emu` proves the dispatcher
+//! `round_trip` exercises the full host → backend (`emu`, `sock`, or
+//! `hw-tests` for real silicon) → fw `handle_tbor_op` → response path
+//! and asserts the device/partition fields the firmware reports for
+//! the default provisioned partition.
+//! `part_info_independent_of_session_state` proves the dispatcher
 //! never lets session-machine state leak into the out-of-session
 //! handler.  `unsupported_on_mock` asserts the design contract that
 //! backends opt in to TBOR.
+//!
+//! Uses the [`Ctx`](crate::harness::Ctx) alias — `TestCtx` under
+//! emu/mock/sock and `HwCtx` under a pure `hw-tests` build.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
+#![cfg(any(feature = "emu", feature = "mock", feature = "sock", feature = "hw-tests"))]
 
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 
-use crate::harness::TestCtx;
+use crate::harness::Ctx;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
-#[cfg(any(feature = "emu", feature = "sock"))]
+#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
 const DEVICE_KIND_PHYSICAL: u8 = 2;
 
 /// `PartState::Enabled` discriminant — the default provisioned state of
 /// the emulator partition before any `PartInit`.
-#[cfg(any(feature = "emu", feature = "sock"))]
+#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
 const PART_STATE_ENABLED: u8 = 2;
 
 /// `PartState::Initializing` discriminant — the state a partition enters
@@ -34,7 +38,7 @@ const PART_STATE_INITIALIZING: u8 = 4;
 /// Assert the invariant device-level fields PartInfo reports for the
 /// default provisioned partition, plus that the identity public key is
 /// materialized (not all-zero).
-#[cfg(any(feature = "emu", feature = "sock"))]
+#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
 fn assert_default_part_info(resp: &azihsm_ddi_tbor_types::TborPartInfoResp) {
     assert_eq!(
         resp.device_kind, DEVICE_KIND_PHYSICAL,
@@ -50,10 +54,10 @@ fn assert_default_part_info(resp: &azihsm_ddi_tbor_types::TborPartInfoResp) {
     );
 }
 
-#[cfg(any(feature = "emu", feature = "sock"))]
+#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
 #[test]
 fn round_trip() {
-    let ctx = TestCtx::new();
+    let ctx = Ctx::new();
     let resp = ctx
         .tbor(&TborPartInfoReq::new())
         .expect("TBOR PartInfo round-trip");
@@ -65,10 +69,10 @@ fn round_trip() {
 /// returns a byte-identical response. Catches any regression that would
 /// silently introduce per-call state (e.g. a counter, a cached
 /// allocation) into the out-of-session handler.
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "sock", feature = "hw-tests"))]
 #[test]
-fn part_info_repeated_stable_emu() {
-    let ctx = TestCtx::new();
+fn part_info_repeated_stable() {
+    let ctx = Ctx::new();
     let baseline = ctx
         .tbor(&TborPartInfoReq::new())
         .expect("baseline PartInfo");
@@ -86,12 +90,12 @@ fn part_info_repeated_stable_emu() {
 /// occupies a session slot, after that slot transitions to Active, and
 /// again once it is closed.  Catches any regression that would let
 /// session state leak into the out-of-session handler.
-#[cfg(feature = "emu")]
+#[cfg(any(feature = "emu", feature = "hw-tests"))]
 #[test]
-fn part_info_independent_of_session_state_emu() {
+fn part_info_independent_of_session_state() {
     use azihsm_ddi_tbor_types::SessionType;
 
-    let ctx = TestCtx::new();
+    let ctx = Ctx::new();
 
     // No sessions outstanding.
     let pre = ctx
@@ -148,7 +152,7 @@ fn part_info_reflects_part_init_transition_emu() {
     use crate::commands::part_init::pota_thumbprint;
     use crate::commands::part_init::ROTATED_CO_PSK;
 
-    let ctx = TestCtx::new();
+    let ctx = Ctx::new();
 
     // Before PartInit: default Enabled posture with a materialized
     // identity.
@@ -200,7 +204,7 @@ fn part_info_reflects_part_init_transition_emu() {
 fn unsupported_on_mock() {
     use crate::harness::assertions::assert_unsupported_encoding;
 
-    let ctx = TestCtx::new();
+    let ctx = Ctx::new();
     let err = ctx
         .tbor(&TborPartInfoReq::new())
         .expect_err("mock backend must not implement exec_op_tbor");

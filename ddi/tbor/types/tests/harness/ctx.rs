@@ -111,6 +111,28 @@ impl TestCtx {
         self.dev.exec_op_tbor(req, Some(oob_items), &mut cookie)
     }
 
+    /// Session-scoped raw tbor exec — passthrough on emu (single dev
+    /// carries every session). Present here so tests can call the
+    /// same name on both backends; on hw it routes the op to the fd
+    /// that owns `session_id` (see `HwCtx::tbor_on_session`).
+    pub fn tbor_on_session<R: TborOpReq>(
+        &self,
+        _session_id: u16,
+        req: &R,
+    ) -> DdiResult<R::OpResp> {
+        self.tbor(req)
+    }
+
+    /// Session-scoped OOB variant — passthrough on emu.
+    pub fn tbor_oob_on_session<R: TborOpReq>(
+        &self,
+        _session_id: u16,
+        req: &R,
+        oob_items: &[&[u8]],
+    ) -> DdiResult<R::OpResp> {
+        self.tbor_oob(req, oob_items)
+    }
+
     /// Issue `req`, assert the FW dispatcher rejected it with exactly
     /// `expected`, and return the matched [`DdiError`] for any further
     /// caller-side inspection.
@@ -125,6 +147,31 @@ impl TestCtx {
         R::OpResp: core::fmt::Debug,
     {
         match self.tbor(req) {
+            Ok(resp) => panic!(
+                "expected FW reject {expected:?} (0x{:08X}), got Ok({resp:?})",
+                expected.0,
+            ),
+            Err(err) => {
+                assert_fw_rejects(&err, expected);
+                err
+            }
+        }
+    }
+
+    /// Session-scoped variant of [`Self::expect_fw_reject`] —
+    /// passthrough on emu; on hw routes via the fd owning
+    /// `session_id`.
+    #[track_caller]
+    pub fn expect_fw_reject_on_session<R: TborOpReq>(
+        &self,
+        session_id: u16,
+        req: &R,
+        expected: TborStatus,
+    ) -> DdiError
+    where
+        R::OpResp: core::fmt::Debug,
+    {
+        match self.tbor_on_session(session_id, req) {
             Ok(resp) => panic!(
                 "expected FW reject {expected:?} (0x{:08X}), got Ok({resp:?})",
                 expected.0,

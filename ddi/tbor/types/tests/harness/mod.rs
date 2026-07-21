@@ -52,7 +52,6 @@ pub mod fixture;
 #[cfg(all(feature = "hw-tests", not(any(feature = "emu", feature = "mock", feature = "sock"))))]
 pub mod hw_ctx;
 pub mod session;
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub mod session_guard;
 #[cfg(feature = "emu")]
 pub mod x509_fixture;
@@ -100,5 +99,4 @@ pub use session::session_open_init_with_options;
 pub use session::PendingHandshake;
 pub use session::SessionHandshake;
 pub use session::SessionOpenInitOptions;
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
 pub use session_guard::SessionGuard;
