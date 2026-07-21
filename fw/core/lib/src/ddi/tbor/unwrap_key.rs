@@ -165,7 +165,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let scope = HsmKeyScope(req.scope().0);
     validate_active_session(pal, io, sess_id)?;
 
-    let oaep_hash = oaep_hsm_hash(req.oaep_hash())?;
+    let oaep_hash_algo = oaep_hsm_hash(req.oaep_hash_algo())?;
     let class = req.key_class();
     let dclass = decode_class(class)?;
     let wrapped_blob = req.wrapped_blob();
@@ -196,7 +196,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 io,
                 UnwrapParams {
                     unwrap_key_id,
-                    oaep_hash,
+                    oaep_hash: oaep_hash_algo,
                     wrapped_blob,
                 },
             )

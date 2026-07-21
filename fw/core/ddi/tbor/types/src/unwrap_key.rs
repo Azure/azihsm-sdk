@@ -20,7 +20,7 @@
 //! * `session_id` — TOC-carried session id; cross-checked by the dispatcher.
 //! * `scope` — the [`KeyScope`] whose masking key wraps the recovered key.
 //! * `key_class` — the [`KeyClass`] of the wrapped key.
-//! * `oaep_hash` — the OAEP [`HashAlgo`] used to wrap the KEK.
+//! * `oaep_hash_algo` — the OAEP [`HashAlgo`] used to wrap the KEK.
 //! * `wrapped_blob` — the RSA-AES-wrapped key
 //!   (`RSA-OAEP(KEK) ‖ AES-KWP(key)`), up to [`UNWRAP_WRAPPED_BLOB_MAX_LEN`].
 //!
@@ -105,7 +105,7 @@ pub struct TborUnwrapKeyReq<'a> {
 
     /// OAEP hash used to wrap the KEK, 1-byte [`HashAlgo`].
     #[tbor(U8)]
-    pub oaep_hash: HashAlgo,
+    pub oaep_hash_algo: HashAlgo,
 
     /// The RSA-AES-wrapped key (`RSA-OAEP(KEK) ‖ AES-KWP(key)`), up to
     /// [`UNWRAP_WRAPPED_BLOB_MAX_LEN`] bytes.
@@ -160,14 +160,14 @@ mod tests {
             .unwrap()
             .key_class(KeyClass::HmacSha256)
             .unwrap()
-            .oaep_hash(HashAlgo::Sha256)
+            .oaep_hash_algo(HashAlgo::Sha256)
             .unwrap()
             .wrapped_blob(&wrapped)
             .unwrap()
             .finish();
 
         assert_eq!(frame.key_class(), KeyClass::HmacSha256);
-        assert_eq!(frame.oaep_hash(), HashAlgo::Sha256);
+        assert_eq!(frame.oaep_hash_algo(), HashAlgo::Sha256);
         assert_eq!(frame.wrapped_blob(), &wrapped[..]);
     }
 

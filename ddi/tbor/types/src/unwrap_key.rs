@@ -10,7 +10,7 @@
 //! **masked** blob under the requested scope's masking key — plus the
 //! re-derived wire public key for RSA / ECC.
 //!
-//! The `scope`, `key_class`, and `oaep_hash` are raw 1-byte discriminants
+//! The `scope`, `key_class`, and `oaep_hash_algo` are raw 1-byte discriminants
 //! (the firmware types them as the `KeyScope` / `KeyClass` / `HashAlgo`
 //! open-enums; this host crate is firewalled from the firmware PAL types).
 
@@ -58,7 +58,7 @@ pub struct TborUnwrapKeyReq {
     pub key_class: u8,
 
     /// OAEP hash used to wrap the KEK, 1-byte `HashAlgo`.
-    pub oaep_hash: u8,
+    pub oaep_hash_algo: u8,
 
     /// The RSA-AES-wrapped key (`RSA-OAEP(KEK) ‖ AES-KWP(key)`).
     #[tbor(max_len = 3072)]
@@ -94,7 +94,7 @@ mod tests {
             session_id: 7,
             scope: 0b011,
             key_class: KEY_CLASS_HMAC_SHA256,
-            oaep_hash: 1,
+            oaep_hash_algo: 1,
             wrapped_blob: alloc::vec![0x5Au8; 300],
         };
         let mut buf = [0u8; 4096];

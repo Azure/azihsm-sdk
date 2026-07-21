@@ -97,7 +97,7 @@ fn unwrap(ctx: &TestCtx, session_id: u16, class: u8, key: &[u8]) -> TborUnwrapKe
         session_id,
         scope: SCOPE_LOCAL,
         key_class: class,
-        oaep_hash: OAEP_SHA256,
+        oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
     })
     .expect("UnwrapKey")

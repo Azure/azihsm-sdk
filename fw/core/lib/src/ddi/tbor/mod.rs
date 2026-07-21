@@ -56,6 +56,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_pal_traits::SESSION_MASKING_KEY_LEN;
 use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
@@ -267,7 +268,19 @@ fn resolve_masking_key<'p, P: HsmPal>(
     sess_id: HsmSessId,
 ) -> HsmResult<&'p DmaBuf> {
     match scope {
-        HsmKeyScope::Session => pal.session_masking_key(io, sess_id),
+        HsmKeyScope::Session => {
+            // The std PAL's `session_masking_key` may return an 80-byte
+            // legacy MBOR `Session` blob key or the 32-byte TBOR `SessionEx`
+            // key.  The TBOR masked-key system is AES-256-GCM and requires
+            // exactly `SESSION_MASKING_KEY_LEN` (32) bytes, so reject a
+            // legacy-length key up front rather than letting AEAD masking
+            // fail deeper with a less specific error.
+            let key = pal.session_masking_key(io, sess_id)?;
+            if key.len() != SESSION_MASKING_KEY_LEN {
+                return Err(HsmError::UnsupportedKeyScope);
+            }
+            Ok(key)
+        }
         _ => {
             let mk_key_id = masking_key_id_for_scope(pal, io, scope)?;
             pal.vault_key(io, mk_key_id)
