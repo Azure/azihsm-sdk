@@ -14,6 +14,8 @@
 //! `Drop`; negative-path tests intercept the handshake through the
 //! raw `session_open_init` / `session_open_finish` methods on `Ctx`.
 
+#![cfg(any(feature = "emu", feature = "hw-tests"))]
+
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
