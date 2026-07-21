@@ -4,7 +4,6 @@
 #include <array>
 #include <azihsm_api.h>
 #include <cctype>
-#include <cstdio>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <string>
@@ -839,6 +838,17 @@ TEST_F(azihsm_sha_digest, one_shot_exact_len_with_larger_allocation)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, expected_len);
 
+        std::array<uint8_t, 32> expected_digest{};
+        azihsm_buffer expected_buf{};
+        expected_buf.ptr = expected_digest.data();
+        expected_buf.len = expected_len;
+        ASSERT_EQ(
+            azihsm_crypt_digest(session, &algo, &data_buf, &expected_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(expected_buf.len, expected_len);
+        ASSERT_EQ(0, std::memcmp(digest.data(), expected_digest.data(), expected_len));
+
         for (size_t i = expected_len; i < digest.size(); ++i)
         {
             ASSERT_EQ(digest[i], 0xA5)
@@ -1223,6 +1233,17 @@ TEST_F(azihsm_sha_digest, streaming_finish_exact_len_with_larger_allocation)
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, expected_len);
+
+        std::array<uint8_t, 32> expected_digest{};
+        azihsm_buffer expected_buf{};
+        expected_buf.ptr = expected_digest.data();
+        expected_buf.len = expected_len;
+        ASSERT_EQ(
+            azihsm_crypt_digest(session, &algo, &data_buf, &expected_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(expected_buf.len, expected_len);
+        ASSERT_EQ(0, std::memcmp(digest.data(), expected_digest.data(), expected_len));
 
         for (size_t i = expected_len; i < digest.size(); ++i)
         {
