@@ -128,6 +128,16 @@ static std::vector<uint8_t> hex_to_bytes(const char *hex)
     std::vector<uint8_t> bytes;
     bytes.reserve(hex_len / 2);
 
+    auto hex_nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
+    };
+
     for (size_t i = 0; i < hex_len; i += 2)
     {
         if (!is_hex_digit(hex[i]) || !is_hex_digit(hex[i + 1]))
@@ -136,16 +146,16 @@ static std::vector<uint8_t> hex_to_bytes(const char *hex)
             return {};
         }
 
-        unsigned int value = 0;
-        int parsed_count = std::sscanf(hex + i, "%2x", &value);
+        const int hi = hex_nibble(hex[i]);
+        const int lo = hex_nibble(hex[i + 1]);
 
-        if (parsed_count != 1)
+        if (hi < 0 || lo < 0)
         {
             ADD_FAILURE() << "Failed to parse hex string at offset " << i;
             return {};
         }
 
-        bytes.push_back(static_cast<uint8_t>(value));
+        bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
     }
 
     return bytes;
