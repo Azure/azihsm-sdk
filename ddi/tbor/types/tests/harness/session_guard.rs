@@ -97,10 +97,7 @@ impl Drop for SessionGuard<'_> {
         // Drop never panics — failure is logged so the original panic
         // (if any) keeps its place at the top of the stack trace.
         if let Err(e) = self.ctx.close_session_by_id(self.handshake.session_id) {
-            eprintln!(
-                "SessionGuard: session_close({}) failed during drop: {e:?}",
-                self.handshake.session_id,
-            );
+            eprintln!("SessionGuard: session_close failed during drop: {e:?}");
         }
     }
 }

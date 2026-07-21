@@ -490,7 +490,7 @@ impl Drop for HwCtx {
         for (id, dev) in live {
             if let Err(e) = session_close_helper(&dev, id) {
                 eprintln!(
-                    "HwCtx::drop: session_close({id}) failed: {e:?} \
+                    "HwCtx::drop: session_close failed: {e:?} \
                      — session may leak on the device",
                 );
             }
