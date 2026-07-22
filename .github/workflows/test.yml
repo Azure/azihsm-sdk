@@ -12,11 +12,7 @@ on:
 jobs:
   simple_ubuntu:
 
-    runs-on:
-        - self-hosted
-        - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-        - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
-        - JobId=build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: [azihsm-arm64-gh-westus2-pool]
 
     defaults:
       run:
