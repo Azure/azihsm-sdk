@@ -60,18 +60,29 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
     })?;
     let frame = DdiEccSignResp::from_layout(resp, &layout);
 
-    // The PKA engine DMA-reads a word-aligned, field-width operand for the
-    // digest (`wire_coord_len`, e.g. 68 bytes for P-521), while the driver only
-    // validates `hash.len() >= hash_size` (64 for P-521). Two invariants must
-    // hold for the widened slice below to be well-defined:
-    //   1. the digest buffer must cover the full operand width, or the engine
-    //      would read past the request buffer into adjacent memory; and
-    //   2. every byte between the declared digest and the operand width is
-    //      folded into the signed value by that read, so it must be zero.
-    // The host zero-pads `digest` to the operand width (`digest_pre_encode`);
-    // reject a malformed frame that is too short or carries non-zero padding
-    // (including the P-521 trailing wire pad) so the signature is always
-    // well-defined over exactly the declared digest.
+    // Two curve-specific widths matter here, each with a single source of truth:
+    //   * the digest VALUE width, `curve.ecdsa_digest_len()` (32 / 48 / 64) —
+    //     the meaningful digest bytes that are signed (also what the std PAL's
+    //     OpenSSL and the UPKA driver's `hash.len() >= hash_size` check bound);
+    //     and
+    //   * the PKA DMA OPERAND width, `curve.wire_coord_len()` (32 / 48 / 68) —
+    //     the word-aligned field the engine actually DMA-reads for the digest.
+    // They coincide for P-256/P-384 but differ for P-521 (64 vs 68): the 66-byte
+    // P-521 field is zero-padded to a 32-bit word boundary. The engine reads the
+    // full operand width regardless of the slice length handed to the driver, so
+    // the driver's `hash_size` check alone is NOT sufficient to keep the read in
+    // bounds (verified on HW: a 64-byte-backed P-521 digest over-reads and
+    // yields a wrong signature). Enforce the operand-width invariants here, where
+    // the whole `digest` buffer is visible, rather than at the driver, which only
+    // sees the sliced view's length.
+    //
+    // The host zero-pads `digest` to the operand width (`digest_pre_encode`
+    // always emits 68 wire bytes, so a conforming frame never trips these). We
+    // require that (1) the buffer covers the operand width, so the DMA read stays
+    // in bounds, and (2) every byte between the declared digest and the operand
+    // width is zero, since the read folds them into the signed value — so the
+    // signature is well-defined over exactly the declared digest even for a
+    // malformed frame.
     //
     // Cost: the scan below touches only the padding region
     // (`operand_len - real_digest_len`), once per sign — not the whole buffer.
