@@ -64,7 +64,15 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     ///
     /// - `curve`: ECC curve selector.
     /// - `priv_key`: DMA-capable private key buffer.
-    /// - `hash`: DMA-capable digest buffer.
+    /// - `hash`: DMA-capable digest buffer. The engine DMA-reads a
+    ///   **word-aligned, field-width operand** — one `hsm_point_size(curve)`
+    ///   (32 / 48 / 68) — regardless of `hash.len()`. The length check below
+    ///   only enforces the digest **value** width (`hash_size`, 32 / 48 / 64),
+    ///   which is a lower bound; for P-521 the read extends past it (66-byte
+    ///   field padded to 68), so **the caller must ensure `hash` is backed to
+    ///   the operand width and zero-padded there** (the DDI `EccSign` handler
+    ///   enforces this against the full request buffer). A shorter backing
+    ///   over-reads adjacent memory and produces a wrong signature.
     /// - `signature`: DMA-capable output buffer for `r || s`.
     ///
     /// # Returns
