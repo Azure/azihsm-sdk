@@ -63,10 +63,10 @@ Scope → masking key (resolved on-device):
 - `Local` → the partition `PartitionLocalMaskingKey`.
 - `SecurityDomain` → the security-domain masking key (`SDMK`).
 
-The `Ephemeral` / `Local` / `SecurityDomain` masking keys are provisioned
-by `PartFinal` / `CreateSD`, so a non-`Session` scope before the partition
-is `Initialized` is rejected with `InvalidArg`, and `SecurityDomain`
-before `CreateSD` with `UnsupportedKeyScope`.
+The `Ephemeral` / `Local` masking keys are provisioned by `PartFinal`, and
+the `SecurityDomain` masking key by `CreateSD`.  Requesting any of these
+scopes before its masking key is provisioned is rejected with
+`UnsupportedKeyScope` ("the requested scope has no masking key yet").
 
 Available to **both Crypto-Officer and Crypto-User** sessions.
 
@@ -107,8 +107,8 @@ keys).
 | Error | Cause |
 |---|---|
 | `SessionNotFound` | `session_id` does not refer to an allocated slot, or the slot is not `Active` |
-| `InvalidArg` | A non-`Session` scope was requested before the partition is `Initialized`, or an unknown `oaep_hash_algo` |
-| `UnsupportedKeyScope` | The requested scope has no masking key yet (e.g. `SecurityDomain` before `CreateSD`) |
+| `InvalidArg` | An unknown `oaep_hash_algo` |
+| `UnsupportedKeyScope` | The requested scope has no masking key yet (`Ephemeral` / `Local` before `PartFinal`, or `SecurityDomain` before `CreateSD`) |
 | `UnsupportedCmd` | An unknown `key_class` discriminant |
 | `InvalidPermissions` | The requested `key_usage` is an invalid pairing, sets more than one usage group, or is not permitted for `key_class` |
 | `PendingKeyGeneration` | The partition's unwrapping key is still being generated; call `GetUnwrappingKey` and retry |

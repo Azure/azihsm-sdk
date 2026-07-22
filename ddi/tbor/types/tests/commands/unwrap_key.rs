@@ -23,6 +23,7 @@
 
 use azihsm_crypto::AesKey;
 use azihsm_crypto::AesKeyWrapPadAlgo;
+use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::Encrypter;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::HashAlgo;
@@ -36,6 +37,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
 use azihsm_ddi_tbor_types::TborUnwrapKeyResp;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
+use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
@@ -98,6 +100,7 @@ fn usage_for_class(class: u8) -> u8 {
     match class {
         KEY_CLASS_AES => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
         KEY_CLASS_RSA | KEY_CLASS_RSA_CRT => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+        KEY_CLASS_ECC => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
         KEY_CLASS_HMAC_SHA256 | KEY_CLASS_HMAC_SHA384 | KEY_CLASS_HMAC_SHA512 => {
             KEY_USAGE_SIGN | KEY_USAGE_VERIFY
         }
@@ -190,6 +193,29 @@ fn unwrap_key_aes_emu() {
         "masked AES key must not be all-zero",
     );
     assert!(resp.pub_key.is_empty(), "a symmetric key has no public key");
+}
+
+#[test]
+fn unwrap_key_ecc_p256_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    // Import a host-generated P-256 key (PKCS#8 DER) and check the decode +
+    // public-key re-derivation path.
+    let key = EccPrivateKey::generate(32).expect("generate P-256 key");
+    let der = key.to_vec().expect("ECC PKCS#8 DER export");
+    let resp = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
+
+    assert!(
+        resp.masked_key.iter().any(|&b| b != 0),
+        "masked ECC key must not be all-zero",
+    );
+    // P-256 wire public key is `x(32) ‖ y(32)` = 64 bytes.
+    assert_eq!(
+        resp.pub_key.len(),
+        64,
+        "P-256 recovered public key is x(32) ‖ y(32)",
+    );
 }
 
 #[test]

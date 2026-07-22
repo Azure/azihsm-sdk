@@ -224,20 +224,27 @@ fn masking_key_id_for_scope<P: HsmPal>(
     io: &impl HsmIo,
     scope: HsmKeyScope,
 ) -> HsmResult<HsmKeyId> {
+    // Every provisioned scope's masking-key id is stored in an
+    // `AbsentUntilSet` partition property that is only written once the
+    // partition (`PartFinal`) or security domain (`CreateSD`) is
+    // finalized.  Before then the read returns `PartPropNotFound`; remap
+    // it to the documented `UnsupportedKeyScope` ("the requested scope
+    // has no masking key yet") so clients never observe a leaked
+    // `PartPropNotFound`.  Genuine read faults still propagate.
+    let remap_absent = |r: HsmResult<HsmKeyId>| match r {
+        Err(HsmError::PartPropNotFound) => Err(HsmError::UnsupportedKeyScope),
+        other => other,
+    };
     match scope {
-        HsmKeyScope::Ephemeral => part_state::part_ephemeral_mk_key_id(pal, io),
-        HsmKeyScope::Local => part_state::part_local_mk_key_id(pal, io),
+        HsmKeyScope::Ephemeral => remap_absent(part_state::part_ephemeral_mk_key_id(pal, io)),
+        HsmKeyScope::Local => remap_absent(part_state::part_local_mk_key_id(pal, io)),
         // Resolve the SecurityDomain masking key (`SDMK`) by `SD_MK_KEY_ID`
         // presence — the single source of truth.  A request that observes a
         // partially-written commit (the `SD_INITIALIZED` claim is set but
         // `SD_MK_KEY_ID` is not yet written, or a rollback is in flight)
         // gets the documented `UnsupportedKeyScope` rather than a leaked
         // `PartPropNotFound`; genuine read faults still propagate.
-        HsmKeyScope::SecurityDomain => match part_state::part_sd_mk_key_id(pal, io) {
-            Ok(id) => Ok(id),
-            Err(HsmError::PartPropNotFound) => Err(HsmError::UnsupportedKeyScope),
-            Err(e) => Err(e),
-        },
+        HsmKeyScope::SecurityDomain => remap_absent(part_state::part_sd_mk_key_id(pal, io)),
         _ => Err(HsmError::UnsupportedKeyScope),
     }
 }
