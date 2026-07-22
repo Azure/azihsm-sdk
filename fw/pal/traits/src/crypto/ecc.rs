@@ -70,6 +70,25 @@ impl HsmEccCurve {
         }
     }
 
+    /// Return the ECDSA digest field width in bytes that the sign path
+    /// zero-extends the host digest to before handing it to the signing
+    /// primitive: the raw curve field size ([`HsmEccCurve::priv_key_len`])
+    /// capped at the largest FIPS digest (SHA-512, 64 bytes).
+    ///
+    /// | Curve  | Width |
+    /// |--------|-------|
+    /// | P-256  | 32    |
+    /// | P-384  | 48    |
+    /// | P-521  | 64    |
+    ///
+    /// A host digest shorter than this (e.g. a SHA-256 digest signed with a
+    /// P-384 key) is zero-extended up to this width so the on-chip PKA engine
+    /// receives a full field-width little-endian operand; the width stays
+    /// `<= 64` so the OpenSSL-backed std PAL signs it without truncation.
+    pub fn ecdsa_digest_len(&self) -> usize {
+        self.priv_key_len().min(64)
+    }
+
     /// Return the **raw cryptographic** public-key length in bytes
     /// (`X || Y`, each [`HsmEccCurve::priv_key_len`] bytes).
     ///
