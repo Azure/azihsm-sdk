@@ -7,7 +7,8 @@
 // (256 KB total). The lower portion is for linker-placed stack/.bss;
 // the upper portion holds fixed firmware data structures:
 //
-//   0x2002_EC00  DTCM_IO_BUF[33]    (66 KB, per-IO NonDma scratch)
+//   0x2002_EC00  DTCM_IO_BUF[33]    (49.5 KB, per-IO NonDma scratch, 1.5 KB each)
+//   0x2003_B400  DEV_ID_CERT_BLOB   (16 KB, HSP-pushed device-id cert CBLOB)
 //   0x2003_F400  CRASHDUMP_BASE     (1024 B)
 //   0x2003_F800  CORE_RUN_STATUS    (4 B)
 //
@@ -20,9 +21,27 @@
 // ══════════════════════════════════════════════════════════════
 
 mem dtcm_io_buf_t {
-    desc = "2KB per-slot CPU-only scratch buffer. Indexed 1:1 with IO_SQ.";
-    mementries = 512;   // 512 × 32 bits = 2048 B = 2 KB
+    desc = "1.5KB per-slot CPU-only scratch buffer. Indexed 1:1 with IO_SQ.
+            Shrunk from 2 KB to free the DTCM tail for DEV_ID_CERT_BLOB;
+            NonDma scratch has no callers today so 1.5 KB is ample.";
+    mementries = 384;   // 384 × 32 bits = 1536 B = 1.5 KB
     memwidth = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Device-ID cert-chain CBLOB (HSP boot-push)
+// ══════════════════════════════════════════════════════════════
+
+mem dev_id_cert_blob_t {
+    desc = "Device-id certificate-chain CBLOB (16 KB). The HSP packs the
+            root/intermediate/device-id DER chain here at boot (fixed global
+            0x6063_B400) before releasing the CP cores; the HSM serves
+            GetCertChainInfo/GetCertificate for the dev-id chain from local
+            DTCM with no IPC. Read-only from the HSM. See the cert_blob crate
+            for the container layout.";
+    mementries = 4096;  // 4096 × 32 bits = 16384 B = 16 KB
+    memwidth   = 32;
 };
 
 
@@ -58,8 +77,12 @@ addrmap hsm_dtcm {
     default hw = na;
     default sw = rw;
 
-    // Per-IO NonDma scratch (33 × 2 KB = 66 KB; slots 0..31 host, 32 admin)
-    dtcm_io_buf_t    DTCM_IO_BUF[33]   @ 0x2EC00 += 0x800;
+    // Per-IO NonDma scratch (33 × 1.5 KB = 49.5 KB; slots 0..31 host, 32 admin).
+    // Ends at 0x3B200, below the DEV_ID_CERT_BLOB region.
+    dtcm_io_buf_t    DTCM_IO_BUF[33]   @ 0x2EC00 += 0x600;
+
+    // Device-id cert-chain CBLOB — HSP boot-push target (fixed global 0x6063_B400).
+    dev_id_cert_blob_t DEV_ID_CERT_BLOB @ 0x3B400;
 
     // Crashdump + heartbeat
     crashdump_base_t  CRASHDUMP_BASE    @ 0x3F400;

@@ -14,9 +14,11 @@ mod integration {
     pub mod attest_key;
     pub mod attest_key_smoke;
     pub mod change_pin;
+    pub mod change_pin_smoke;
     pub mod close_session;
     pub mod close_session_smoke;
     pub mod common;
+    pub mod cross_session_key_access_smoke;
     pub mod ddi_dev_info;
     pub mod delete_key;
     pub mod delete_key_smoke;
@@ -38,6 +40,7 @@ mod integration {
     pub mod get_api_rev;
     pub mod get_api_rev_smoke;
     pub mod get_cert_chain;
+    pub mod get_cert_chain_smoke;
     pub mod get_device_info;
     pub mod get_establish_cred_encryption_key;
     pub mod get_session_encryption_key;
@@ -52,6 +55,7 @@ mod integration {
     pub mod kbkdf_smoke;
     pub mod live_migration_expected_errors;
     pub mod live_migration_sim;
+    pub mod live_migration_smoke;
     pub mod lm_context;
     pub mod masked_key;
     pub mod masked_key_aes_gen;
@@ -67,6 +71,7 @@ mod integration {
     pub mod open_session_smoke;
     pub mod prov_part;
     pub mod reopen_session;
+    pub mod reopen_session_smoke;
     pub mod rsa_2k_decrypt_no_crt;
     pub mod rsa_2k_decrypt_with_crt;
     pub mod rsa_2k_sign;

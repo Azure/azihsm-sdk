@@ -223,6 +223,20 @@ TEST_F(azihsm_sess_ex, open_wrong_length_psk)
     });
 }
 
+// `azihsm_sess_ex_psk_change` resolves the session handle before touching
+// the PSK buffer, so an invalid handle is rejected on every backend.
+TEST_F(azihsm_sess_ex, psk_change_invalid_session_handle)
+{
+    azihsm_handle bad_handle = 0xDEADBEEF;
+    // A well-formed 32-byte (`PSK_LEN`) PSK, so the handle is what's rejected.
+    std::vector<uint8_t> new_psk(32, 0x5A);
+    azihsm_buffer new_psk_buf{ new_psk.data(), static_cast<uint32_t>(new_psk.size()) };
+
+    auto err = azihsm_sess_ex_psk_change(bad_handle, &new_psk_buf);
+
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+}
+
 // The `azihsm_sess_ex_part_init` tests below need a live security-domain
 // session, which requires the two-phase TBOR HPKE handshake implemented only by
 // the emu (in-process firmware) backend. They exercise the ABI-boundary
@@ -389,6 +403,129 @@ TEST_F(azihsm_sess_ex, part_init_null_output_probe)
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         EXPECT_GT(pta_csr.len, 0u);
         EXPECT_GT(pta_report.len, 0u);
+    });
+}
+
+// A NULL `new_psk` buffer is rejected once the session is resolved.
+TEST_F(azihsm_sess_ex, psk_change_null_new_psk)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        auto err = azihsm_sess_ex_psk_change(sess_handle, nullptr);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// A `new_psk` buffer of the wrong length (not `PSK_LEN` = 32 bytes) is rejected.
+TEST_F(azihsm_sess_ex, psk_change_wrong_length_new_psk)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        // 16 bytes: a valid buffer but the wrong length (PSK is 32 bytes).
+        std::vector<uint8_t> short_psk(16, 0x5A);
+        azihsm_buffer short_psk_buf{ short_psk.data(), static_cast<uint32_t>(short_psk.size()) };
+
+        auto err = azihsm_sess_ex_psk_change(sess_handle, &short_psk_buf);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// PSK-rotation round trip: after rotating the CO PSK from the default, the
+// partition accepts the new secret on `azihsm_sess_ex_open` and rejects the
+// default — the C-ABI mirror of the Rust `change_psk_rotates_co_psk` test.
+TEST_F(azihsm_sess_ex, psk_change_rotates_co_psk)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        // A non-default replacement CO PSK, exactly `PSK_LEN` (32 bytes).
+        std::vector<uint8_t> new_psk(32, 0x5A);
+        azihsm_buffer new_psk_buf{ new_psk.data(), static_cast<uint32_t>(new_psk.size()) };
+
+        // Open with the default CO PSK, rotate it, then close the session.
+        {
+            azihsm_handle sess_handle = open_sd_session(part_handle);
+            if (sess_handle == 0)
+            {
+                return;
+            }
+            auto sess_guard =
+                scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+            ASSERT_EQ(azihsm_sess_ex_psk_change(sess_handle, &new_psk_buf), AZIHSM_STATUS_SUCCESS);
+        }
+
+        // Reopening with the rotated secret must now succeed.
+        {
+            azihsm_handle sess_handle = 0;
+            azihsm_session_psk psk{ 0, &new_psk_buf };
+            auto err = azihsm_sess_ex_open(
+                part_handle,
+                &psk,
+                AZIHSM_SESSION_EX_TYPE_AUTHENTICATED,
+                &sess_handle
+            );
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_NE(sess_handle, 0);
+            azihsm_sess_close(sess_handle);
+        }
+
+        // Reopening with the (now stale) default CO PSK must be rejected.
+        {
+            azihsm_handle sess_handle = 0;
+            azihsm_session_psk psk{ 0, nullptr };
+            auto err = azihsm_sess_ex_open(
+                part_handle,
+                &psk,
+                AZIHSM_SESSION_EX_TYPE_AUTHENTICATED,
+                &sess_handle
+            );
+            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            // Defensive: if the stale default PSK unexpectedly opened a
+            // session, don't leak the handle.
+            if (sess_handle != 0)
+            {
+                azihsm_sess_close(sess_handle);
+            }
+        }
     });
 }
 #endif // AZIHSM_FEATURE_EMU

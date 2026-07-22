@@ -72,12 +72,21 @@ impl HsmSessionManager for StdHsmPal {
         let pid = io.pid();
         let entry = self.active_part_mut(pid)?;
 
-        // On re-key: clean up old session-scoped keys and old session key
-        // before creating the replacement.
+        // On re-key: clean up the old session-scoped keys and the old
+        // session key before creating the replacement.  A slot awaiting
+        // renegotiation after a live-migration disable has already had
+        // its vault key material cleared, so there is nothing to tear
+        // down — `recreate` below simply installs the fresh mapping
+        // (mirroring the reference firmware's `recreate_session`).
         if let Some(reopen_id) = id {
-            let old_phys = entry.session_table.physical_id(reopen_id)?;
-            entry.vault.delete_by_session_key(old_phys)?;
-            entry.vault.delete(old_phys)?;
+            if !matches!(
+                entry.session_table.state(reopen_id),
+                HsmSessionState::NeedsRenegotiation
+            ) {
+                let old_phys = entry.session_table.physical_id(reopen_id)?;
+                entry.vault.delete_by_session_key(old_phys)?;
+                entry.vault.delete(old_phys)?;
+            }
         }
 
         // Build 88-byte session blob: [api_rev(8) || masking_key(80)].

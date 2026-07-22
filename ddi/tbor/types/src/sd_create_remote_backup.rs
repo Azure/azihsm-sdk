@@ -6,7 +6,9 @@
 //! `SdCreateRemoteBackup` is an **in-session Crypto Officer** command
 //! that creates a new security domain under the active session's
 //! partition from the caller-supplied unified `PartPolicy`, returning
-//! the remote partition-owner-key backup (`pok_remote_backup`).
+//! the remote partition-owner-key backup (`pok_remote_backup`) together
+//! with the local partition-owner-key backup (`pok_local_backup`) and the
+//! security-domain masking-key backup (`sd_mk_backup`).
 //!
 //! Both wire schemas are shared with the firmware handler via
 //! `azihsm_fw_ddi_tbor_types::sd_create_remote_backup`; this module adds
@@ -38,6 +40,11 @@ pub const MASKED_SD_LEN: usize = 180;
 /// `azihsm_fw_ddi_tbor_types::sd_create_remote_backup::
 /// POK_REMOTE_BACKUP_LEN`; the firmware schema is the length authority.
 pub const POK_REMOTE_BACKUP_LEN: usize = 161;
+
+/// Exact on-the-wire length of the security-domain masking-key backup
+/// envelope (`SDMK` masked under `SDBMK`).  Mirrors the firmware
+/// `LOCAL_MK_BACKUP_LEN`; the firmware schema is the length authority.
+pub const SD_MK_BACKUP_LEN: usize = 164;
 
 /// Host-facing TBOR `SdCreateRemoteBackup` request.
 #[tbor(opcode = TBOR_OP_SD_CREATE_REMOTE_BACKUP, session_ctrl = in_session)]
@@ -87,6 +94,17 @@ pub struct TborSdCreateRemoteBackupResp {
     /// field so host decode enforces the exact length — rejecting any
     /// malformed frame — instead of allocating from the encoded length.
     pub pok_remote_backup: [u8; POK_REMOTE_BACKUP_LEN],
+
+    /// Local partition-owner-key backup: the fresh BKS3 masked under the
+    /// partition-local masking key (exactly [`MASKED_SD_LEN`] = 180 B on
+    /// the wire).  Persisted by the host and replayed to recover the
+    /// security domain locally.
+    pub pok_local_backup: [u8; MASKED_SD_LEN],
+
+    /// Security-domain masking-key backup: the freshly minted `SDMK`
+    /// masked under the derived `SDBMK` (exactly [`SD_MK_BACKUP_LEN`] =
+    /// 164 B on the wire).  Persisted by the host and replayed on restore.
+    pub sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
 
 #[cfg(test)]

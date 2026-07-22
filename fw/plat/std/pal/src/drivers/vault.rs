@@ -103,6 +103,8 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::PartitionLocalMaskingKey
         | HsmVaultKeyKind::PartitionEphemeralMaskingKey => 32,
         HsmVaultKeyKind::SdSealing => 48,
+        HsmVaultKeyKind::SdMasking => 32,
+        HsmVaultKeyKind::SdPartitionOwnerSeed => 48,
         // SessionEx is length-discriminated by session type
         // (PlainText=120, Authenticated=216); reported as variable
         // length, same handling as VarLenHmac*.
@@ -330,6 +332,15 @@ impl KeyVault {
     /// Query the key attributes.
     pub fn key_attrs(&self, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         Ok(self.get_entry(key_id)?.attrs)
+    }
+
+    /// Return the physical session-key id this key is bound to, or
+    /// `None` for a partition-scoped (persistent) key.
+    ///
+    /// Used to enforce session-scoped key isolation: a key bound to a
+    /// session may only be accessed from that same session.
+    pub fn key_session_binding(&self, key_id: HsmKeyId) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.get_entry(key_id)?.session_key_id)
     }
 
     /// Number of tables in this vault.
@@ -692,6 +703,8 @@ mod tests {
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
             (HsmVaultKeyKind::SdSealing, 48),
+            (HsmVaultKeyKind::SdMasking, 32),
+            (HsmVaultKeyKind::SdPartitionOwnerSeed, 48),
         ];
         for &(kind, expected) in cases {
             assert_eq!(

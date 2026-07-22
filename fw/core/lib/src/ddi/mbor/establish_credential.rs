@@ -12,7 +12,10 @@ use core::ops::Deref;
 
 use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
+use azihsm_fw_core_crypto_key_masking::cbc::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::cbc::unmask;
+use azihsm_fw_ddi_mbor::MborDecode;
+use azihsm_fw_ddi_mbor::MborDecoder;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialReq;
 use azihsm_fw_ddi_mbor_types::establish_credential::DdiEstablishCredentialResp;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -26,6 +29,9 @@ use super::*;
 /// BK3 plaintext length in bytes — matches `BK3_LEN` in
 /// [`init_bk3`](super::init_bk3).
 const BK3_LEN: usize = 48;
+
+/// Length of a raw P-384 identity public key (`x || y`, 48-byte coordinates).
+const P384_PUB_RAW_LEN: usize = 2 * 48;
 
 // ── Labels and metadata ──────────────────────────────────────────────
 
@@ -57,9 +63,7 @@ const MK_VAULT_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
 
 /// Handle `DdiEstablishCredentialCmd`.
 ///
-/// Implements protocol steps 1-13 (step 12 — optional unwrapping key
-/// import — is rejected up-front with `UnsupportedCmd` until the
-/// underlying vault primitives land).
+/// Implements protocol steps 1-13.
 ///
 /// All partition state mutations are batched into the final
 /// atomic-commit block; any failure in steps 8-13 leaves partition
@@ -169,6 +173,16 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     // single lineage so this is a no-op today.
     let mk_key_id = provision_mk(pal, io, body.bmk, bk).await?;
 
+    // ── Step 12: Optional unwrapping-key re-import ───────────────────
+    //
+    // After a live migration the host replays the masked unwrapping key
+    // it persisted from GetUnwrappingKey; re-import it under the MK just
+    // provisioned above so GetUnwrappingKey returns the same key rather
+    // than lazily generating a fresh one.  `None` on the fresh-
+    // provisioning path (no unwrapping key supplied).
+    let unwrapping_key_id =
+        reimport_unwrapping_key(pal, io, mk_key_id, body.masked_unwrapping_key).await?;
+
     // ── Step 13: Envelope MK into BMK and emit the response ──────────
     let resp = encode_bmk_response(pal, io, hdr, bk, mk_key_id, svn, bks2_id).await?;
 
@@ -205,8 +219,95 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
     crate::part_state::part_set_bk3_session(pal, io, bk3_session)?;
     crate::part_state::part_clear_establish_cred_key(pal, io)?;
     crate::part_state::part_set_mk_key_id(pal, io, mk_key_id)?;
+    if let Some(uk_id) = unwrapping_key_id {
+        crate::part_state::part_set_unwrapping_key_id(pal, io, uk_id)?;
+    }
 
     Ok(resp)
+}
+
+/// Re-import the partition unwrapping key from a host-persisted masked
+/// blob (protocol step 12 of `EstablishCredential`).
+///
+/// After a live migration the host replays the `masked_unwrapping_key`
+/// it received from [`get_unwrapping_key`](super::get_unwrapping_key):
+/// an AES-CBC-256 + HMAC-SHA-384 envelope of the RSA-2048 private key,
+/// tagged [`DdiKeyType::RsaUnwrap`] and enveloped under the partition
+/// masking key (`MK`).  It is unmasked with the freshly re-provisioned
+/// `MK` (`mk_key_id`) and re-imported into the vault so a subsequent
+/// `GetUnwrappingKey` returns the same key — and thus the same public
+/// key — as before the migration, instead of lazily generating a fresh
+/// one.  The returned id is committed to `RSA_UNWRAPPING_KEY_ID` by the
+/// caller's atomic-commit block.
+///
+/// Returns `Ok(None)` when no unwrapping key is supplied (the fresh-
+/// provisioning path, where the PAL generates one on first read).
+///
+/// # Errors
+/// - [`HsmError::MaskedKeyDecodeFailed`] — the blob's metadata could not
+///   be decoded.
+/// - [`HsmError::InvalidKeyType`] — the blob is not tagged `RsaUnwrap`
+///   (only the partition unwrapping key may be imported here).
+/// - the HMAC failure surfaced by [`unmask`] on a tampered blob or an
+///   `MK` mismatch.
+async fn reimport_unwrapping_key<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    mk_key_id: HsmKeyId,
+    masked: &mut DmaBuf,
+) -> HsmResult<Option<HsmKeyId>> {
+    if masked.is_empty() {
+        return Ok(None);
+    }
+
+    // Peek the cleartext (MAC-covered) metadata to validate the key tag
+    // and recover the length + attributes for re-import.  These are only
+    // *acted on* after `unmask` (below) verifies the HMAC.
+    let (attrs, key_len) = {
+        let meta = peek_metadata(masked)?;
+        let meta_buf = pal.dma_alloc(io, meta.len())?;
+        meta_buf.copy_from_slice(meta);
+        let mut dec = MborDecoder::new(meta_buf);
+        let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut dec)
+            .map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
+
+        // Only the partition unwrapping key (tagged RsaUnwrap) may be
+        // re-imported here — never a general key masquerading as one.
+        if metadata.key_type != DdiKeyType::RsaUnwrap {
+            return Err(HsmError::InvalidKeyType);
+        }
+
+        let attrs: HsmVaultKeyAttrs = metadata.key_attributes.into();
+        (attrs, metadata.key_length as usize)
+    };
+
+    // Authenticate-then-decrypt in place under MK, copy out the RSA
+    // private key material, and import it into the vault — inside an
+    // allocation scope so the multi-KB import scratch is freed before we
+    // return.  A tampered blob or wrong MK fails the HMAC in `unmask`
+    // without leaking plaintext; only the owned vault key id escapes.
+    let key_id = pal
+        .alloc_scoped_async(io, async |_scope| -> HsmResult<HsmKeyId> {
+            let mk = pal.vault_key(io, mk_key_id)?;
+            let layout = unmask(pal, io, mk, masked).await?;
+
+            // Guard the metadata length so an inconsistent `key_length`
+            // errors instead of panicking on the slice below.
+            if key_len > layout.plaintext_max_len {
+                return Err(HsmError::MaskedKeyDecodeFailed);
+            }
+
+            let key_buf = pal.dma_alloc(io, key_len)?;
+            key_buf.copy_from_slice(
+                &masked[layout.plaintext_offset..layout.plaintext_offset + key_len],
+            );
+
+            pal.vault_key_create(io, key_buf, HsmVaultKeyKind::Rsa2kPrivate, None, attrs)
+                .await
+        })
+        .await?;
+
+    Ok(Some(key_id))
 }
 
 /// Performs all fail-fast checks before any cryptographic work.
@@ -227,8 +328,6 @@ pub(crate) async fn establish_credential<'p, P: HsmPal>(
 ///   decoder already bounds `masked_bk3` / `bmk` to `max_len = 1024`
 ///   per the type definition, so no separate upper-bound check is
 ///   needed for those.
-/// - `UnsupportedCmd` — optional unwrapping-key import was requested
-///   (not yet implemented; TODO: step 12).
 fn check_fail_fast<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -257,10 +356,6 @@ fn check_fail_fast<P: HsmPal>(
         return Err(HsmError::InvalidArg);
     }
 
-    if !body.masked_unwrapping_key.is_empty() {
-        return Err(HsmError::UnsupportedCmd);
-    }
-
     Ok(())
 }
 
@@ -278,9 +373,16 @@ async fn verify_pota_signature<P: HsmPal>(
     signer_pub_key_raw: &DmaBuf,
     signature_raw: &DmaBuf,
 ) -> HsmResult<()> {
-    // `part_id_pub_key` returns the raw `x ‖ y` form (96 B); prepend
-    // the SEC1 `0x04` uncompressed-point tag in a fresh DMA buffer.
-    let id_pub_key_len = crate::part_state::part_id_pub_key(pal, io)?.len();
+    // `part_id_pub_key` returns the raw `x ‖ y` form (96 B) in natural
+    // big-endian; prepend the SEC1 `0x04` uncompressed-point tag to build the
+    // `0x04 ‖ x_be ‖ y_be` form the host (and X.509 leaf) signs over.
+    let id_pub_key_len = {
+        let pk = crate::part_state::part_id_pub_key(pal, io)?;
+        if pk.len() != P384_PUB_RAW_LEN {
+            return Err(HsmError::EccInvalidKeyLength);
+        }
+        pk.len()
+    };
     let id_uncompressed = pal.dma_alloc(io, id_pub_key_len + 1)?;
     id_uncompressed[0] = 0x04;
     {

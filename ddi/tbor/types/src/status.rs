@@ -306,6 +306,23 @@ pub enum TborStatus {
     /// POTA-anchored, but its leaf public key does not match the
     /// partition's PTA key (mirror of `HsmError::PartFinalPtaMismatch`).
     PartFinalPtaMismatch = 0x08700107,
+
+    /// `SdCreateRemoteBackup` was asked to create a security domain on a
+    /// partition whose security-domain masking key (`SDMK`) is already
+    /// provisioned in this incarnation (mirror of
+    /// `HsmError::SdAlreadyInitialized`).
+    SdAlreadyInitialized = 0x08700108,
+
+    /// A `SdRestore*` handler was asked to restore a security-domain
+    /// backup whose bound SVN is newer than the current firmware SVN
+    /// (mirror of `HsmError::SdBackupSvnRollback`).
+    SdBackupSvnRollback = 0x08700109,
+
+    /// A `SdCreatePeerBackup` / `SdRestorePeerBackup` handler was asked to
+    /// clone a security domain to (or from) a peer, but the partition's
+    /// policy does not permit peer cloning (mirror of
+    /// `HsmError::SdPeerCloningNotAllowed`).
+    SdPeerCloningNotAllowed = 0x0870010A,
 }
 
 impl core::fmt::Debug for TborStatus {

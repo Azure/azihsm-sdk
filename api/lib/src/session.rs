@@ -135,6 +135,19 @@ impl HsmSession {
         self.inner.write().set_bmk_session(bmk_session);
     }
 
+    /// Returns the active TBOR (V2, security-domain) session id.
+    ///
+    /// Yields the session id for a V2 session, or
+    /// [`HsmError::InvalidSession`] for a V1 session. Used by the DDI
+    /// layer to bind security-domain commands to the session.
+    pub(crate) fn ex_session_id(&self) -> HsmResult<u16> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => Ok(inner.id),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
     /// Issues TBOR `PskChange` (opcode `0x06`) on this session.
     ///
     /// Rotates this session's own partition PSK to `new_psk`, sealed

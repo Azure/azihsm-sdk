@@ -19,10 +19,13 @@ use super::*;
 /// validates it before calling the handler.  We re-check defensively so
 /// the partition state never sees `session_destroy` with a `None` id.
 ///
-/// No `partition_lock` is needed.  Although `session_destroy` is now
-/// awaited (it can yield on Uno during vault GDMA cleanup), DDI commands
-/// run on a single-threaded cooperative executor with one command in
-/// flight per partition, so no concurrent handler can interleave.
+/// No `partition_lock` is needed.  DDI commands execute on a
+/// single-threaded cooperative executor; multiple IOs are in flight and
+/// interleave at await points — including inside the awaited
+/// `session_destroy` (which can yield on Uno during vault GDMA cleanup) —
+/// but this handler's only partition-state effect is that single,
+/// self-contained `session_destroy`, with no multi-step invariant across
+/// an await for an interleaved handler to corrupt.
 pub(crate) async fn close_session<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,

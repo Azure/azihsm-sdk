@@ -6,6 +6,7 @@ pub(crate) mod ecc;
 pub(crate) mod hmac;
 pub(crate) mod kdf;
 pub(crate) mod rsa;
+pub(crate) mod sealing;
 pub(crate) mod secret;
 pub(crate) mod sha;
 
@@ -214,6 +215,13 @@ pub enum AzihsmAlgoId {
     /// SP 800-108 KDF Counter Derive.
     // Corresponds to AZIHSM_ALGO_ID_KBKDF_COUNTER_DERIVE
     KbkdfCounterDerive = 0x00060002,
+
+    // ======================================================
+    // Security Domain Algorithms (0x0007xxxx)
+    // ======================================================
+    /// Security-domain sealing key generation.
+    // Corresponds to AZIHSM_ALGO_ID_SD_SEALING_KEY_GEN
+    SdSealingKeyGen = 0x00070001,
 }
 
 /// Cryptographic algorithm structure for specifying algorithm parameters.

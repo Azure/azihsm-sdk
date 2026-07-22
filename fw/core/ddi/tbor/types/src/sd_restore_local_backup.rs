@@ -18,19 +18,19 @@
 //!   (a masked BKS3 wrapped under the device-local key), exactly
 //!   [`MASKED_SD_LEN`] (180 B).
 //! * `sd_mk_backup` — the security-domain masking-key backup envelope,
-//!   exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
+//!   exactly [`SD_MK_BACKUP_LEN`] (164 B).
 //!
 //! Output:
 //!
 //! * `pok_local_backup` — the refreshed local partition-owner-key backup,
 //!   exactly [`MASKED_SD_LEN`] (180 B).
 //! * `sd_mk_backup` — the refreshed security-domain masking-key backup
-//!   envelope, exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
+//!   envelope, exactly [`SD_MK_BACKUP_LEN`] (164 B).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
-pub use crate::part_final::LOCAL_MK_BACKUP_LEN;
 pub use crate::sd_create_remote_backup::MASKED_SD_LEN;
+pub use crate::sd_create_remote_backup::SD_MK_BACKUP_LEN;
 
 /// TBOR opcode for `SdRestoreLocalBackup`.
 pub const TBOR_OP_SD_RESTORE_LOCAL_BACKUP: u8 = 0x0D;
@@ -43,7 +43,7 @@ const _: () = assert!(MASKED_SD_LEN == 180);
 // `sd_mk_backup` is a `local_mk`-style backup envelope; the derive needs
 // an integer literal on the field, so the length is spelled out as `164`
 // and pinned against the canonical value here.
-const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+const _: () = assert!(SD_MK_BACKUP_LEN == 164);
 
 /// `SdRestoreLocalBackup` request schema.
 #[tbor(opcode = 0x0D)]
@@ -61,7 +61,7 @@ pub struct TborSdRestoreLocalBackupReq<'a> {
     pub pok_local_backup: &'a [u8],
 
     /// Security-domain masking-key backup envelope.  Always exactly
-    /// [`LOCAL_MK_BACKUP_LEN`] (164 B).
+    /// [`SD_MK_BACKUP_LEN`] (164 B).
     #[tbor(buffer, len = 164)]
     pub sd_mk_backup: &'a [u8],
 }
@@ -75,7 +75,7 @@ pub struct TborSdRestoreLocalBackupResp<'a> {
     pub pok_local_backup: &'a [u8],
 
     /// Refreshed security-domain masking-key backup envelope.  Always
-    /// exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
+    /// exactly [`SD_MK_BACKUP_LEN`] (164 B).
     #[tbor(buffer, len = 164)]
     pub sd_mk_backup: &'a [u8],
 }
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn request_round_trips_backups() {
         let pok_local = [0xABu8; MASKED_SD_LEN];
-        let sd_mk = [0xCDu8; LOCAL_MK_BACKUP_LEN];
+        let sd_mk = [0xCDu8; SD_MK_BACKUP_LEN];
         let mut buf = [0u8; 1024];
         let frame = TborSdRestoreLocalBackupReq::encode(&mut buf)
             .unwrap()
@@ -103,13 +103,13 @@ mod tests {
             .unwrap()
             .finish();
         assert_eq!(frame.pok_local_backup().len(), MASKED_SD_LEN);
-        assert_eq!(frame.sd_mk_backup().len(), LOCAL_MK_BACKUP_LEN);
+        assert_eq!(frame.sd_mk_backup().len(), SD_MK_BACKUP_LEN);
     }
 
     #[test]
     fn response_round_trips_backups() {
         let pok_local = [0xABu8; MASKED_SD_LEN];
-        let sd_mk = [0xCDu8; LOCAL_MK_BACKUP_LEN];
+        let sd_mk = [0xCDu8; SD_MK_BACKUP_LEN];
         let mut buf = [0u8; 512];
         let frame = TborSdRestoreLocalBackupResp::encode(&mut buf, 0, true)
             .unwrap()
@@ -119,6 +119,6 @@ mod tests {
             .unwrap()
             .finish();
         assert_eq!(frame.pok_local_backup().len(), MASKED_SD_LEN);
-        assert_eq!(frame.sd_mk_backup().len(), LOCAL_MK_BACKUP_LEN);
+        assert_eq!(frame.sd_mk_backup().len(), SD_MK_BACKUP_LEN);
     }
 }

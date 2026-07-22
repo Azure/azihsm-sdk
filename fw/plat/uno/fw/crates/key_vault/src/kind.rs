@@ -82,7 +82,7 @@ impl KeyLen {
 /// and var-HMAC min/max. `SessionEx` is length-discriminated by session
 /// type (PlainText=120, Authenticated=216) and modelled as variable;
 /// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
-static KIND_LEN: [KeyLen; 42] = [
+static KIND_LEN: [KeyLen; 44] = [
     /* 0  Free                         */ KeyLen::Invalid,
     /* 1  Rsa2kPublic                  */ KeyLen::Fixed(260),
     /* 2  Rsa3kPublic                  */ KeyLen::Fixed(388),
@@ -125,6 +125,8 @@ static KIND_LEN: [KeyLen; 42] = [
     /* 39 PartitionLocalMaskingKey     */ KeyLen::Fixed(32),
     /* 40 PartitionEphemeralMaskingKey */ KeyLen::Fixed(32),
     /* 41 SdSealing                    */ KeyLen::Fixed(48),
+    /* 42 SdMasking                    */ KeyLen::Fixed(32),
+    /* 43 SdPartitionOwnerSeed         */ KeyLen::Fixed(48),
 ];
 
 /// Resolves the length contract for `kind` in O(1).
@@ -190,6 +192,8 @@ mod tests {
             (HsmVaultKeyKind::PartitionLocalMaskingKey, 32),
             (HsmVaultKeyKind::PartitionEphemeralMaskingKey, 32),
             (HsmVaultKeyKind::SdSealing, 48),
+            (HsmVaultKeyKind::SdMasking, 32),
+            (HsmVaultKeyKind::SdPartitionOwnerSeed, 48),
         ];
         for (kind, len) in table {
             assert_eq!(key_len(kind), Ok(KeyLen::Fixed(len)), "{kind:?}");

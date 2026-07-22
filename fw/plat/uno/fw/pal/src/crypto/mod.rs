@@ -22,6 +22,11 @@
 //! the empty `impl` below ties everything together so the HSM core can
 //! treat [`UnoHsmPal`] as a complete crypto provider.
 //!
+//! The [`ecc_det`] submodule is a companion to [`ecc`]: it holds the
+//! deterministic ECDSA-P384 sign path (RFC 6979) as inherent methods on
+//! [`UnoHsmPal`] rather than a distinct trait impl, kept separate so the
+//! base [`HsmEcc`] adapter stays focused on the standard curve ops.
+//!
 //! [`HsmAes`]: azihsm_fw_hsm_pal_traits::HsmAes
 //! [`HsmHash`]: azihsm_fw_hsm_pal_traits::HsmHash
 //! [`HsmHmac`]: azihsm_fw_hsm_pal_traits::HsmHmac
@@ -32,6 +37,7 @@
 
 mod aes;
 mod ecc;
+mod ecc_det;
 mod gcm;
 mod hash;
 mod hmac;
