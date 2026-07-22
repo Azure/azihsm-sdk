@@ -22,11 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+        image: [azihsm-arm64-ubuntu2404-image]
 
     runs-on:
     - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     - 1ES.ImageOverride=${{ matrix.image }}
     - JobId=build_ubuntu-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
@@ -60,11 +60,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+        image: [azihsm-arm64-ubuntu2404-image]
 
     runs-on:
     - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     - 1ES.ImageOverride=${{ matrix.image }}
     - JobId=test_ubuntu_mock-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
@@ -95,11 +95,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+        image: [azihsm-arm64-ubuntu2404-image]
 
     runs-on:
     - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     - 1ES.ImageOverride=${{ matrix.image }}
     - JobId=test_ubuntu_api-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
@@ -130,11 +130,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+        image: [azihsm-arm64-ubuntu2404-image]
 
     runs-on:
     - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     - 1ES.ImageOverride=${{ matrix.image }}
     - JobId=test_ubuntu_misc-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
@@ -177,11 +177,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [dummy-arm64-image, dummy-x64-image] # TODO: Update these to real images once they're available
+        image: [azihsm-arm64-ubuntu2404-image]
 
     runs-on:
     - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     - 1ES.ImageOverride=${{ matrix.image }}
     - JobId=test_ubuntu_smoke-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
@@ -207,11 +207,7 @@ jobs:
 
   build_windows:
 
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
-    - JobId=build_windows-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:
@@ -238,11 +234,7 @@ jobs:
 
   test_windows_mock:
 
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
-    - JobId=test_windows_mock-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:
@@ -266,11 +258,7 @@ jobs:
 
   test_windows_api:
 
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
-    - JobId=test_windows_api-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:
@@ -294,11 +282,7 @@ jobs:
 
   test_windows_misc:
 
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
-    - JobId=test_windows_misc-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:
@@ -322,11 +306,7 @@ jobs:
 
   test_windows_smoke:
 
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
-    - JobId=test_windows_smoke-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: windows-2025-vs2026
 
     defaults:
       run:
