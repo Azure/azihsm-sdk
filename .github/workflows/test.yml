@@ -1,24 +1,25 @@
 name: Test
-
+ 
 on:
   push:
-    branches: [ main, dev, fw-main ]
+    branches: [main, dev, fw-main]
   pull_request:
-    branches: [ main, dev, fw-main ]
+    branches: [main, dev, fw-main]
   merge_group:
-    branches: [ main, dev, fw-main ]
+    branches: [main, dev, fw-main]
   workflow_dispatch:
-
+ 
 jobs:
   simple_ubuntu:
-
-    runs-on: [ self-hosted, 1ES.Pool=azihsm-arm64-gh-westus2-pool, "JobId=simple_ubuntu-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}" ]
-
-
-    defaults:
-      run:
-        working-directory: .
-
+    env:
+      JOB_ID: build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on:
+      - self-hosted
+      - linux
+      - ARM64
+      # Keep the following only if your 1ES runner registration actually exposes them as labels:
+      - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+      - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
     steps:
-        - name: echo
-          run: echo "Hello world"
+      - name: echo
+        run: echo "Hello world"
