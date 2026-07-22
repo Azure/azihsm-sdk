@@ -13,14 +13,15 @@ jobs:
   simple_ubuntu:
     env:
       JOB_ID: build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-    runs-on:
-       - self-hosted
+    # runs-on:
+    #   - self-hosted
     #   - linux
     #   - ARM64
     #   # Keep the following only if your 1ES runner registration actually exposes them as labels:
-       - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    #   - 1ES.Pool=azihsm-arm64-gh-westus2-pool
     #   - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
     # runs-on: [azihsm-arm64-gh-westus2-pool]
+    runs-on: [self-hosted, 1ES.Pool=azihsm-arm64-gh-westus2-pool]
     steps:
        - name: echo
          run: echo "JOB_ID=$JOB_ID"
