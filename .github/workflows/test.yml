@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, dev, fw-main ]
+  pull_request:
+    branches: [ main, dev, fw-main ]
+  merge_group:
+    branches: [ main, dev, fw-main ]
+  workflow_dispatch:
+
+jobs:
+  simple_ubuntu:
+
+    runs-on:
+        - self-hosted
+        - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+        - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+        - JobId=build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+        - name: echo
+          run: echo "Hello world"
