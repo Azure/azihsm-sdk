@@ -61,14 +61,32 @@ pub(crate) async fn ecc_sign<'p, P: HsmPal>(
     let frame = DdiEccSignResp::from_layout(resp, &layout);
 
     // The PKA engine DMA-reads a word-aligned, field-width operand for the
-    // digest (e.g. 68 bytes for P-521), while the driver only validates
-    // `hash.len() >= hash_size` (64 for P-521). The slice handed below is
-    // widened to the field width but its backing must cover the full wire
-    // coordinate width, or the engine would read past the request buffer into
-    // adjacent memory. The host always zero-pads `digest` to this width; reject
-    // anything shorter defensively so a malformed frame cannot trigger an
-    // out-of-bounds operand read.
-    if body.digest.len() < curve.wire_coord_len() {
+    // digest (`wire_coord_len`, e.g. 68 bytes for P-521), while the driver only
+    // validates `hash.len() >= hash_size` (64 for P-521). Two invariants must
+    // hold for the widened slice below to be well-defined:
+    //   1. the digest buffer must cover the full operand width, or the engine
+    //      would read past the request buffer into adjacent memory; and
+    //   2. every byte between the declared digest and the operand width is
+    //      folded into the signed value by that read, so it must be zero.
+    // The host zero-pads `digest` to the operand width (`digest_pre_encode`);
+    // reject a malformed frame that is too short or carries non-zero padding
+    // (including the P-521 trailing wire pad) so the signature is always
+    // well-defined over exactly the declared digest.
+    //
+    // Cost: the scan below touches only the padding region
+    // (`operand_len - real_digest_len`), once per sign — not the whole buffer.
+    // For a digest matched to its curve (P-256+SHA-256, P-384+SHA-384,
+    // P-521+SHA-512) that region is 0-4 bytes (only the P-521 `[64..68]` wire
+    // pad), so the common path is effectively free; the worst case is a short
+    // digest on P-521 (~36 bytes), trivial next to the PKA sign.
+    let operand_len = curve.wire_coord_len();
+    if body.digest.len() < operand_len {
+        return Err(HsmError::InvalidArg);
+    }
+    if body.digest[real_digest_len.min(operand_len)..operand_len]
+        .iter()
+        .any(|&b| b != 0)
+    {
         return Err(HsmError::InvalidArg);
     }
 
