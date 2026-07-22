@@ -412,10 +412,10 @@ pub trait HsmSessionManager {
     /// by the session-key vault blob:
     ///
     /// Length-discriminated by session type:
-    /// * **PlainText (CU):** 120 B blob =
-    ///   `[api_rev(8) ‖ param_key(32) ‖ masking_key(80)]`.
+    /// * **PlainText (CU):** 72 B blob =
+    ///   `[api_rev(8) ‖ param_key(32) ‖ masking_key(32)]`.
     ///   `mac_tx_key` and `mac_rx_key` MUST both be `None`.
-    /// * **Authenticated (CO):** 216 B blob = the above ‖
+    /// * **Authenticated (CO):** 168 B blob = the above ‖
     ///   `mac_tx(48) ‖ mac_rx(48)`.  Both `mac_tx_key` and
     ///   `mac_rx_key` MUST be `Some` (and 48 B each).
     ///
