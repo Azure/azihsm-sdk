@@ -215,7 +215,7 @@ const PTA_OKM_LEN: usize = 48;
 
 /// Deterministic bounded-retry cap for the A.2.2 OKM derivation. The per-attempt
 /// reject probability is ~`2^-190` (the top 192 bits of `n` are 1s), so attempt
-/// 0 all but always wins; the bound only guarantees the loop terminates.
+/// 0 almost always wins; the bound only guarantees the loop terminates.
 const PTA_KEYGEN_MAX_TRIES: u8 = 4;
 
 // =============================================================================
