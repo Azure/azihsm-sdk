@@ -12,7 +12,8 @@ on:
 jobs:
   simple_ubuntu:
 
-    runs-on: [azihsm-arm64-gh-westus2-pool]
+    runs-on: [ self-hosted, 1ES.Pool=azihsm-arm64-gh-westus2-pool, "JobId=simple_ubuntu-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}" ]
+
 
     defaults:
       run:
