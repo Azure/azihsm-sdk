@@ -19,16 +19,22 @@ jobs:
 
     name: build_ubuntu (${{ matrix.image }})
 
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [azihsm-arm64-ubuntu2404-image]
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=build_ubuntu-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     runs-on:
     - self-hosted
     - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-    - 1ES.ImageOverride=${{ matrix.image }}
-    - JobId=build_ubuntu-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -57,16 +63,22 @@ jobs:
 
     name: test_ubuntu_mock (${{ matrix.image }})
 
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [azihsm-arm64-ubuntu2404-image]
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_mock-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     runs-on:
     - self-hosted
     - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-    - 1ES.ImageOverride=${{ matrix.image }}
-    - JobId=test_ubuntu_mock-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_mock-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -92,16 +104,22 @@ jobs:
 
     name: test_ubuntu_api (${{ matrix.image }})
 
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [azihsm-arm64-ubuntu2404-image]
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_api-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     runs-on:
     - self-hosted
     - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-    - 1ES.ImageOverride=${{ matrix.image }}
-    - JobId=test_ubuntu_api-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_api-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -127,16 +145,22 @@ jobs:
 
     name: test_ubuntu_misc (${{ matrix.image }})
 
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [azihsm-arm64-ubuntu2404-image]
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_misc-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     runs-on:
     - self-hosted
     - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-    - 1ES.ImageOverride=${{ matrix.image }}
-    - JobId=test_ubuntu_misc-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_misc-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -174,16 +198,22 @@ jobs:
 
     name: test_ubuntu_smoke (${{ matrix.image }})
 
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [azihsm-arm64-ubuntu2404-image]
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_smoke-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     runs-on:
     - self-hosted
     - 1ES.Pool=azihsm-arm64-gh-westus2-pool
-    - 1ES.ImageOverride=${{ matrix.image }}
-    - JobId=test_ubuntu_smoke-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_smoke-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -207,7 +237,22 @@ jobs:
 
   test_ubuntu_emu_ddi:
 
-    runs-on: ubuntu-24.04
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_emu_ddi-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_emu_ddi-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     defaults:
       run:
