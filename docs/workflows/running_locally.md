@@ -3,12 +3,12 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# Running Github Action Workflows locally in Linux
+# Running GitHub Actions workflows locally on Linux
 
 Some of the jobs in the workflows located in [.github/workflows](../../.github/workflows/) can be executed locally by utilizing the [act](https://nektosact.com/) tool. Below are steps for installing and configuring the tool in Linux for our repository:
 
 1. Install `act` via the bash script at <https://nektosact.com/installation/index.html#bash-script>.
-   - **Note**: This script will install the tool to `./bin` relative to the the current working directory, so in order to install to a system binaries directory, either run it from the `/usr` directory or pass `/usr/bin` as an argument to the bash script via the `-b` parameter.
+   - **Note**: This script will install the tool to `./bin` relative to the current working directory, so in order to install to a system binaries directory, either run it from the `/usr` directory or pass `/usr/bin` as an argument to the bash script via the `-b` parameter.
 1. Install the docker engine via <https://docs.docker.com/engine/install/ubuntu/>.
 1. **Optional**: Run the `create_new_cache_ubuntu` job from the root of the repository to save a new local cache:
 
@@ -16,7 +16,7 @@ Some of the jobs in the workflows located in [.github/workflows](../../.github/w
    act -j create_new_cache_ubuntu -P ubuntu-24.04=catthehacker/ubuntu:rust-24.04
    ```
 
-1. **Optional**: Make note of the full Git commit SHA in the key the cache is saved under. This value will be used as the CACHE_KEY_ID environment variable in any jobs you want to run with access to the cache:
+1. **Optional**: Make note of the full Git commit SHA in the key the cache is saved under. This value will be used as the `CACHE_KEY_ID` environment variable in any jobs you want to run with access to the cache:
 
    ```text
    [Create New Cache/create_new_cache_ubuntu] ⭐ Run Main Save Cargo cache
@@ -29,7 +29,7 @@ Some of the jobs in the workflows located in [.github/workflows](../../.github/w
    [Create New Cache/create_new_cache_ubuntu]   ✅  Success - Main Save Cargo cache [3.430124244s]
    ```
 
-   in this output, f51f9f9970662de0207d19a02c4315f689be500b is the full Git commit SHA
+In this output, `f51f9f9970662de0207d19a02c4315f689be500b` is the full Git commit SHA.
 
 1. Use `--env`, `-j/--job` and `-P/--platform` flags to run a known good job with the catthehacker/ubuntu:rust-24.04 image:
 
