@@ -695,21 +695,29 @@ impl UnoHsmPal {
             info[KEYPAIR_LABEL_PTA.len() + 1..]
                 .copy_from_slice(&(PTA_OKM_LEN as u16).to_be_bytes());
 
-            let okm = scope.dma_alloc(PTA_OKM_LEN)?;
-
-            // Run the loop in an inner block so the candidate OKM (private key
-            // material) is scrubbed on every exit path, including an early `?`.
+            // Expand each candidate directly into the caller's output buffer:
+            // the OKM length equals the field size (`PTA_OKM_LEN == field`), so
+            // an accepted candidate is already the scalar in place — no separate
+            // DMA buffer and no copy on the keygen hot path.
+            //
+            // Run the loop in an inner block so a rejected candidate (still
+            // sensitive HKDF output) is scrubbed on every error exit, including
+            // an early `?`.
             let outcome = async {
                 for attempt in 0..PTA_KEYGEN_MAX_TRIES {
                     info[KEYPAIR_LABEL_PTA.len()] = attempt;
-                    self.hkdf_expand(io, HsmHashAlgo::Sha384, part_root, Some(&*info), okm)
-                        .await?;
+                    self.hkdf_expand(
+                        io,
+                        HsmHashAlgo::Sha384,
+                        part_root,
+                        Some(&*info),
+                        &mut d_be[..PTA_OKM_LEN],
+                    )
+                    .await?;
                     // A.2.2: the big-endian OKM is the candidate; accept iff it
-                    // is a valid scalar in [1, n-1].
-                    if ct_in_range(&okm[..field], &ORDER384_BE[..field]) {
-                        // Accept the big-endian candidate as-is; the caller
-                        // flips it to PKA little-endian.
-                        d_be[..field].copy_from_slice(&okm[..field]);
+                    // is a valid scalar in [1, n-1]. On accept it already sits in
+                    // `d_be`; the caller flips it to PKA little-endian.
+                    if ct_in_range(&d_be[..field], &ORDER384_BE[..field]) {
                         return Ok(());
                     }
                 }
@@ -719,7 +727,11 @@ impl UnoHsmPal {
             }
             .await;
 
-            okm.zeroize();
+            if outcome.is_err() {
+                // Scrub the rejected candidate left in the output buffer; on
+                // success the accepted scalar is retained as the function output.
+                d_be.zeroize();
+            }
             outcome
         })
         .await
