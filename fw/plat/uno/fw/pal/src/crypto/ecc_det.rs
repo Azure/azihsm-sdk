@@ -659,17 +659,19 @@ impl UnoHsmPal {
     /// is treated as a big-endian candidate and accepted iff it is a valid
     /// scalar in `[1, n-1]` ([`ct_in_range`], the same primitive as the RFC 6979
     /// `k` generator). A rejected candidate re-derives with a fresh counter, so
-    /// the loop is fully deterministic and reproduces the same scalar on replay
-    /// (SP 800-133r3 §4.2.3 "algorithm random values"). The accepted candidate
+    /// the loop is fully deterministic and reproduces the same scalar on replay.
+    /// The accepted candidate
     /// is written big-endian into `d_be`; the caller flips it to PKA
     /// little-endian before the point multiply.
     ///
     /// # Parameters
-    /// * `part_root` — the key-derivation key / PRK, a caller-owned DMA buffer.
+    /// * `part_root` — the 48-byte P-384 key-derivation key / PRK, a
+    ///   caller-owned DMA buffer.
     /// * `d_be` — caller-owned DMA output (≥ 48 B) for the big-endian scalar.
     ///
     /// # Errors
-    /// * [`HsmError::InvalidArg`] — `d_be` is shorter than the field size.
+    /// * [`HsmError::InvalidArg`] — `part_root` is not 48 bytes, or `d_be` is
+    ///   shorter than the field size.
     /// * [`HsmError::EccGenerateError`] — every attempt in
     ///   [`PTA_KEYGEN_MAX_TRIES`] fell outside `[1, n-1]` (unreachable in
     ///   practice at ~`2^-190` per attempt).
@@ -682,7 +684,11 @@ impl UnoHsmPal {
         d_be: &mut DmaBuf,
     ) -> HsmResult<()> {
         let field = PRIME384_LE.len(); // 48
-        if d_be.len() < field {
+        // `d_be` must hold the field-width scalar (may be oversized), and
+        // `part_root` is the 48-byte P-384 KDK used as the HKDF-Expand PRK —
+        // reject any other `part_root` length so the derivation contract is
+        // exact.
+        if d_be.len() < field || part_root.len() != field {
             return Err(HsmError::InvalidArg);
         }
 
@@ -760,9 +766,10 @@ impl UnoHsmPal {
     /// on every call from the same `part_root`.
     ///
     /// A FIPS pairwise-consistency test is intentionally NOT run here yet — the
-    /// uno keygen PCT is a no-op across the PAL — so the boot KAT validates the
-    /// derived pair against known-answer vectors instead. Wiring a real PCT is
-    /// tracked with the FIPS self-test work.
+    /// uno keygen PCT is a no-op across the PAL. The derivation was validated
+    /// during bring-up against known-answer vectors via a boot KAT (not part of
+    /// this change); wiring a persistent KAT / PCT self-test is tracked with the
+    /// FIPS self-test work.
     ///
     /// # Parameters
     /// * `curve` — must be [`UpkaEccCurve::P384`]; other curves return
@@ -813,30 +820,42 @@ impl UnoHsmPal {
         //    point-mul opcode with a null (0) scalar operand, so the PKA reads
         //    the scalar from address 0 (not GSRAM) and faults with an AXI
         //    BUS_ERROR (0x08f0c003).
-        self.alloc_scoped_async(io, async |scope| {
-            let prime = scope.dma_alloc(field)?;
-            prime.copy_from_slice(&PRIME384_LE);
-            let base_xy = scope.dma_alloc(field * 2)?;
-            base_xy[..field].copy_from_slice(&BASE384_X_LE);
-            base_xy[field..].copy_from_slice(&BASE384_Y_LE);
-            let mont_scratch = scope.dma_alloc(mont)?;
-            self.pka
-                .with_engine(async |eng| {
-                    eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
-                    eng.ecc_point_mul(curve, base_xy, &d_le[..field], &mut pub_key[..field * 2])
-                        .await
-                })
-                .await
-        })
-        .await?;
+        let mul_result = self
+            .alloc_scoped_async(io, async |scope| {
+                let prime = scope.dma_alloc(field)?;
+                prime.copy_from_slice(&PRIME384_LE);
+                let base_xy = scope.dma_alloc(field * 2)?;
+                base_xy[..field].copy_from_slice(&BASE384_X_LE);
+                base_xy[field..].copy_from_slice(&BASE384_Y_LE);
+                let mont_scratch = scope.dma_alloc(mont)?;
+                self.pka
+                    .with_engine(async |eng| {
+                        eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
+                        eng.ecc_point_mul(curve, base_xy, &d_le[..field], &mut pub_key[..field * 2])
+                            .await
+                    })
+                    .await
+            })
+            .await;
 
-        // Zero any bytes past the 96-byte `X ‖ Y` point so an oversized output
-        // buffer is fully deterministic and leaves no stale material. No-op when
-        // `pub_key` is exact-sized. (`d_le`'s tail is already zeroed by
-        // `derive_pta_scalar_be`.)
-        if pub_key.len() > field * 2 {
-            pub_key[field * 2..].zeroize();
+        match mul_result {
+            Ok(()) => {
+                // Zero any bytes past the 96-byte `X ‖ Y` point so an oversized
+                // output buffer is fully deterministic and leaves no stale
+                // material. No-op when `pub_key` is exact-sized. (`d_le`'s tail
+                // is already zeroed by `derive_pta_scalar_be`.)
+                if pub_key.len() > field * 2 {
+                    pub_key[field * 2..].zeroize();
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // The private scalar is already derived and flipped to LE in
+                // `d_le` before the point multiply; scrub it so it does not
+                // linger in the caller's output buffer after a PKA failure.
+                d_le.zeroize();
+                Err(e)
+            }
         }
-        Ok(())
     }
 }
