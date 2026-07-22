@@ -9,7 +9,7 @@ Some of the jobs in the workflows located in [.github/workflows](../../.github/w
 
 1. Install `act` via the bash script at <https://nektosact.com/installation/index.html#bash-script>.
    - **Note**: This script will install the tool to `./bin` relative to the current working directory. To install to a system binaries directory you will generally need `sudo` (for example `sudo ./install.sh -b /usr/local/bin`), or install to `~/.local/bin` and ensure it is in your `PATH`.
-1. Install the docker engine via <https://docs.docker.com/engine/install/ubuntu/>.
+1. Install Docker Engine (see the official install docs for your distro; Ubuntu guide: <https://docs.docker.com/engine/install/ubuntu/>).
 1. **Optional**: Run the `create_new_cache_ubuntu` job from the root of the repository to save a new local cache:
 
    ```bash
