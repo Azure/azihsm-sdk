@@ -727,12 +727,23 @@ impl UnoHsmPal {
             }
             .await;
 
-            if outcome.is_err() {
-                // Scrub the rejected candidate left in the output buffer; on
-                // success the accepted scalar is retained as the function output.
-                d_be.zeroize();
+            match outcome {
+                Ok(()) => {
+                    // Zero any bytes past the 48-byte scalar so an oversized
+                    // output buffer is fully deterministic and leaves no stale
+                    // material next to the key. No-op when `d_be` is exact-sized.
+                    if d_be.len() > PTA_OKM_LEN {
+                        d_be[PTA_OKM_LEN..].zeroize();
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    // Scrub the rejected candidate left in the output buffer; on
+                    // success the accepted scalar is retained as the output.
+                    d_be.zeroize();
+                    Err(e)
+                }
             }
-            outcome
         })
         .await
     }
@@ -817,6 +828,15 @@ impl UnoHsmPal {
                 })
                 .await
         })
-        .await
+        .await?;
+
+        // Zero any bytes past the 96-byte `X ‖ Y` point so an oversized output
+        // buffer is fully deterministic and leaves no stale material. No-op when
+        // `pub_key` is exact-sized. (`d_le`'s tail is already zeroed by
+        // `derive_pta_scalar_be`.)
+        if pub_key.len() > field * 2 {
+            pub_key[field * 2..].zeroize();
+        }
+        Ok(())
     }
 }
