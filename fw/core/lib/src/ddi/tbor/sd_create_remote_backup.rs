@@ -54,12 +54,8 @@ use azihsm_fw_core_crypto_hpke::seal;
 use azihsm_fw_core_crypto_hpke::AuthParams;
 use azihsm_fw_core_crypto_hpke::HpkeSealConfig;
 use azihsm_fw_core_crypto_hpke::HpkeSuite;
-use azihsm_fw_core_crypto_key_derive::derive_masking_key;
-use azihsm_fw_core_crypto_key_masking::aead::mask;
 use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
-use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
-use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_core_evidence::verify_evidence;
 use azihsm_fw_core_evidence::EvidenceRefs;
 use azihsm_fw_core_evidence::TrustAnchors;
@@ -77,19 +73,17 @@ use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
-use azihsm_fw_hsm_pal_traits::HsmKeyScope;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
-use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
-use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_undo::UndoLog;
 
 use super::masking_key_id_for_scope;
 use super::part_final::verify_policy_hash;
+use super::sd_backup;
 use super::validate_crypto_officer_active_session;
 use crate::part_state;
 
@@ -104,41 +98,6 @@ const BKS3_LEN: usize = 48;
 
 /// SEC1 uncompressed point tag (`0x04 ‖ X ‖ Y`).
 const SEC1_UNCOMPRESSED: u8 = 0x04;
-
-/// Length of the random security-domain masking key (`SDMK`) — 32 B
-/// AES-256-GCM.
-const SDMK_LEN: usize = 32;
-
-/// Length of the derived security-domain backup masking key (`SDBMK`) —
-/// 32 B AES-256-GCM (the key that masks `SDMK` into `sd_mk_backup`).
-const SDBMK_LEN: usize = 32;
-
-/// KBKDF label selecting the `SDBMK` derivation purpose (keyed on BKS3,
-/// with the partition `policy_hash` as extra context).
-const SDBMK_LABEL: &[u8] = b"AZIHSM-SdCreate-SDBMK-v1";
-
-/// Opaque envelope label stamped into the `sd_mk_backup`
-/// `MaskedKeyMetadata` (informational; bound by the AEAD tag).
-const SDMK_ENVELOPE_LABEL: &[u8] = b"SDMK";
-
-/// Opaque envelope label stamped into the `pok_local_backup`
-/// `MaskedKeyMetadata` (informational; bound by the AEAD tag).
-const POK_LOCAL_ENVELOPE_LABEL: &[u8] = b"BKS3";
-
-/// Vault attributes for the provisioned `SDMK`: SecurityDomain scope,
-/// on-device, internal, never extractable.
-const SDMK_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
-    .with_local(true)
-    .with_internal(true)
-    .with_never_extractable(true)
-    .with_scope(HsmKeyScope::SecurityDomain);
-
-/// Vault attributes stamped into the `sd_mk_backup` / `pok_local_backup`
-/// metadata: on-device, internal, never extractable.
-const SD_BACKUP_ATTRS: HsmVaultKeyAttrs = HsmVaultKeyAttrs::new()
-    .with_local(true)
-    .with_internal(true)
-    .with_never_extractable(true);
 
 /// Verify the policy names **this** partition as the backing partition.
 ///
@@ -379,58 +338,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     encode_response(pal, io, pok, pok_local, sd_mk_backup)
 }
 
-/// Commit the security domain: mark it initialized, vault the `SDMK`, and
-/// record its key id.  Every mutation is pushed to `undo` so a failure
-/// rolls back all changes.
-async fn commit_sd_to_vault<'p, P: HsmPal>(
-    pal: &P,
-    io: &impl HsmIo,
-    undo: &mut UndoLog<'p>,
-    sdmk: &DmaBuf,
-) -> HsmResult<()> {
-    // Atomic one-shot claim first (the race-winner gate); the recorded
-    // inverse clears the flag on rollback.
-    part_state::part_mark_sd_initialized(pal, io)?;
-    if let Err(e) = undo.push_prop_restore_scalar(PartPropId::SD_INITIALIZED, 0) {
-        // The claim succeeded but its rollback inverse could not be
-        // recorded (e.g. `UndoLogFull`); clear the flag now (best-effort)
-        // so a full undo log cannot permanently wedge the partition's
-        // one-shot SD gate.  Safe against a concurrent create: this task
-        // owns the just-made claim and there is no await between the mark
-        // and here.
-        let _ = part_state::part_clear_sd_initialized(pal, io);
-        return Err(e);
-    }
-
-    // Vault SDMK as the partition's SecurityDomain-scope masking key,
-    // then record its id so `masking_key_id_for_scope` resolves it.
-    let sdmk_id = pal
-        .vault_key_create(io, sdmk, HsmVaultKeyKind::SdMasking, None, SDMK_ATTRS)
-        .await?;
-    if let Err(e) = undo.push_vault_create(sdmk_id) {
-        // The key exists but could not be tracked for rollback (e.g.
-        // `UndoLogFull`); best-effort delete it so a full undo log does not
-        // leak the vault slot for an untracked key.
-        let _ = pal.vault_key_delete(io, sdmk_id).await;
-        return Err(e);
-    }
-    undo.push_prop_restore_absent(part_state::part_sd_mk_key_id_prop_id())?;
-    part_state::part_set_sd_mk_key_id(pal, io, sdmk_id)?;
-    Ok(())
-}
-
 /// Provision the security domain from a freshly minted `bks3`.
 ///
-/// Derives `SDBMK` (KBKDF keyed on `bks3`, folding in the platform seeds
-/// and the partition `policy_hash`), mints a random `SDMK`, and writes the
-/// two backups: `sd_mk_out` (`SDMK` masked under `SDBMK`, 164 B) and
-/// `pok_local_out` (`bks3` masked under `PartLocalMK`, 180 B).  Then it
-/// claims the one-shot `SD_INITIALIZED` gate, vaults `SDMK`
-/// ([`SecurityDomain`](HsmKeyScope::SecurityDomain) scope), and records its
-/// id in `SD_MK_KEY_ID`.  Every persistent mutation is pushed to `undo`;
-/// the minted `SDMK` / derived `SDBMK` scratch is zeroized on all paths
-/// (the caller wipes `bks3`).
-#[allow(clippy::too_many_arguments)]
+/// Mints a random `SDMK`, derives `SDBMK`, and writes the two backups —
+/// `sd_mk_out` (`SDMK` masked under `SDBMK`, 164 B) and `pok_local_out`
+/// (`bks3` masked under `PartLocalMK`, 180 B) — then commits the SD to the
+/// vault (see [`sd_backup::commit_sd_to_vault`]).  The minted `SDMK` /
+/// derived `SDBMK` scratch is zeroized on all paths (the caller wipes
+/// `bks3`).
 async fn provision_security_domain<'p, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -440,95 +355,17 @@ async fn provision_security_domain<'p, P: HsmPal>(
     sd_mk_out: &mut DmaBuf,
     pok_local_out: &mut DmaBuf,
 ) -> HsmResult<()> {
-    // Platform identity that binds both backup envelopes and the SDBMK
-    // derivation: SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
-    let svn = part_state::part_mfgr_svn(pal);
-    let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
-
-    // SDBMK = KBKDF(BKS3, mfgr_seed[svn] ‖ owner_seed[owner] ‖ policy_hash).
-    // Stage the stored policy hash in scratch so the extra context does not
-    // hold a borrow of partition state across the derivation await.
-    let sdbmk = alloc.dma_alloc(SDBMK_LEN)?;
-    {
-        let policy_hash = {
-            let stored = part_state::part_policy_hash(pal, io)?;
-            let ph = alloc.dma_alloc(stored.len())?;
-            ph.copy_from_slice(stored);
-            ph
-        };
-        derive_masking_key(
-            pal,
-            io,
-            bks3,
-            SDBMK_LABEL,
-            &policy_hash[..],
-            svn,
-            owner,
-            sdbmk,
-        )
-        .await?;
-    }
+    let (svn, owner) = sd_backup::platform_svn_owner(pal)?;
+    let sdbmk = sd_backup::derive_sdbmk(pal, io, alloc, bks3, svn, owner).await?;
 
     // Mint the random SDMK.
-    let sdmk = alloc.dma_alloc(SDMK_LEN)?;
+    let sdmk = alloc.dma_alloc(sd_backup::SDMK_LEN)?;
     pal.rng_fill_bytes(io, sdmk)?;
 
     let res = async {
-        // sd_mk_backup = mask(SDMK under SDBMK) — the caller-persisted,
-        // SVN-monotonic backup of the masking key.
-        let mk_label = alloc.dma_alloc(SDMK_ENVELOPE_LABEL.len())?;
-        mk_label.copy_from_slice(SDMK_ENVELOPE_LABEL);
-        let mk_params = MaskParams {
-            key_kind: HsmVaultKeyKind::SdMasking,
-            key_attrs: SDMK_ATTRS,
-            svn,
-            owner_seed_id: owner,
-            key_label: mk_label,
-        };
-        let n = mask(
-            pal,
-            io,
-            alloc,
-            AeadAlg::AesGcm256,
-            sdbmk,
-            &mk_params,
-            sdmk,
-            Some(sd_mk_out),
-        )
-        .await?;
-        if n != LOCAL_MK_BACKUP_LEN {
-            return Err(HsmError::InternalError);
-        }
-
-        // pok_local_backup = mask(BKS3 under PartLocalMK) — the on-device
-        // local backup of the SD seed, replayed to recover it later.
-        let local_mk_id = part_state::part_local_mk_key_id(pal, io)?;
-        let local_mk = pal.vault_key(io, local_mk_id)?;
-        let pok_label = alloc.dma_alloc(POK_LOCAL_ENVELOPE_LABEL.len())?;
-        pok_label.copy_from_slice(POK_LOCAL_ENVELOPE_LABEL);
-        let pok_params = MaskParams {
-            key_kind: HsmVaultKeyKind::SdPartitionOwnerSeed,
-            key_attrs: SD_BACKUP_ATTRS,
-            svn,
-            owner_seed_id: owner,
-            key_label: pok_label,
-        };
-        let m = mask(
-            pal,
-            io,
-            alloc,
-            AeadAlg::AesGcm256,
-            local_mk,
-            &pok_params,
-            bks3,
-            Some(pok_local_out),
-        )
-        .await?;
-        if m != MASKED_SD_LEN {
-            return Err(HsmError::InternalError);
-        }
-
-        commit_sd_to_vault(pal, io, undo, sdmk).await
+        sd_backup::mask_sd_mk_backup(pal, io, alloc, sdbmk, sdmk, svn, owner, sd_mk_out).await?;
+        sd_backup::mask_pok_local_backup(pal, io, alloc, bks3, svn, owner, pok_local_out).await?;
+        sd_backup::commit_sd_to_vault(pal, io, undo, sdmk).await
     }
     .await;
 

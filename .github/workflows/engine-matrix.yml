@@ -5,9 +5,12 @@
 # system OpenSSL and verifies it loads via `openssl engine -t`.  Each cell is
 # its own job and shows up as its own PR check.
 #
-# The engine targets the legacy 1.1 ABI the provider can't serve; only
-# Ubuntu 20.04 (OpenSSL 1.1.1f) for now, further 1.1.x distros can be added
-# as cells.
+# The engine targets the legacy 1.1 ABI the provider can't serve, so every
+# cell runs a system OpenSSL in the 1.1.x series: Ubuntu 20.04 (1.1.1f) and
+# Debian 11 (1.1.1w) from the debian family, AlmaLinux 8 (1.1.1k) from the
+# rhel family.  `matrix.family` selects the bootstrap.  OpenSSL 1.0.2 distros
+# are intentionally excluded: build.rs rejects anything below 1.1.0 and there
+# is no 1.0.2 backend.
 
 name: Engine matrix
 
@@ -38,15 +41,28 @@ jobs:
           - distro: u2004
             label:  Ubuntu 20.04 (OpenSSL 1.1.1f)
             image:  ubuntu:20.04
+            family: debian
+
+          - distro: debian11
+            label:  Debian 11 (OpenSSL 1.1.1w)
+            image:  debian:11
+            family: debian
+
+          - distro: alma8
+            label:  AlmaLinux 8 (OpenSSL 1.1.1k)
+            image:  almalinux:8
+            family: rhel
 
     steps:
       # clang/libclang-dev are for bindgen (azihsm_ossl_engine_sys build.rs).
       # DEBIAN_FRONTEND: 20.04's tzdata otherwise blocks on an interactive
       # timezone prompt during install.
       # Node 20 via the NodeSource apt repo (signature-verified against its
-      # keyring): 20.04's apt nodejs is Node 10, too old for the JS actions
-      # when run under `act` (GHA injects its own node).
-      - name: Bootstrap
+      # keyring): 20.04's and Debian 11's apt nodejs are too old for the JS
+      # actions when run under `act` (GHA injects its own node).  The nodistro
+      # NodeSource suite serves both Ubuntu and Debian.
+      - name: Bootstrap (debian)
+        if: matrix.family == 'debian'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -61,6 +77,20 @@ jobs:
             > /etc/apt/sources.list.d/nodesource.list
           apt-get update
           apt-get install -y --no-install-recommends nodejs
+
+      # clang + clang-devel provide libclang for bindgen (build.rs).  el8's
+      # default nodejs module is Node 10, too old for the JS actions under
+      # `act`; enable the 20 stream first.  el8 keeps OpenSSL at 1.1.1k for
+      # its lifetime, so no repo pinning (unlike the provider's el9 cells).
+      - name: Bootstrap (rhel)
+        if: matrix.family == 'rhel'
+        run: |
+          dnf module reset -y nodejs
+          dnf module enable -y nodejs:20
+          dnf install -y --setopt=install_weak_deps=False \
+            ca-certificates curl git \
+            gcc gcc-c++ make pkgconf-pkg-config clang clang-devel \
+            openssl openssl-devel nodejs
 
       - uses: actions/checkout@v6
 

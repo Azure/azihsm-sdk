@@ -9,6 +9,7 @@
 //
 // Region layout:
 //   0x01110 - 0x012FC  BKS table (device-global, 12 × 41-byte entries)
+//   0x012FC - 0x0135C  HSM seed table (UDS + FMC-CDI, 2 × 48-byte seeds)
 //   0x07000            BOOT_STATUS (4 B)
 //   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
 //   0x0E440 - 0x0F580  IIC / OIC queues
@@ -39,6 +40,28 @@
 mem bks_table_entry_t {
     desc = "Packed 41-byte BKS entry: valid(1) + svn(8) + bks(32).";
     mementries = 41;
+    memwidth   = 8;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// HSM Seed Table (device-rooted, SP-populated, read-only)
+// ══════════════════════════════════════════════════════════════
+//
+// Mirrors the reference firmware's GsRamMemMap::hsm_seed_table at the
+// identical GSRAM offset 0x12FC (abs 0x6100_12FC), immediately after
+// the BKS table. 2 packed 48-byte entries = 96 B (0x60):
+//   entry[0] = UDS seed      (firmware-state-independent device root)
+//   entry[1] = FMC-CDI seed  (DICE-CDI / firmware-measurement-bound)
+// Each entry is a bare 48-byte HMAC-SHA384 output written by the HSP
+// during boot; there is no per-entry header. Modeled as a byte-granular
+// (memwidth = 8) mem — the seed bytes are opaque key-derivation-key
+// material consumed by the deterministic-keygen path, so no typed field
+// split is imposed here.
+
+mem hsm_seed_entry_t {
+    desc = "48-byte device-rooted HSM seed (HMAC-SHA384 output).";
+    mementries = 48;
     memwidth   = 8;
 };
 
@@ -505,6 +528,11 @@ addrmap io_gsram {
 
     // ─── BKS table (device-global, SP-populated): 12 × 41-byte entries ───
     bks_table_entry_t BKS_TABLE[12]    @ 0x01110 += 0x29;  // 0x1110 - 0x12FC
+
+    // ─── HSM seed table (device-rooted, SP-populated): 2 × 48-byte seeds ───
+    //   [0] = UDS seed (firmware-state-independent)
+    //   [1] = FMC-CDI seed (firmware-measurement-bound)
+    hsm_seed_entry_t HSM_SEED_TABLE[2] @ 0x012FC += 0x30;  // 0x12FC - 0x135C
 
     // ─── Boot ───
     boot_status_t    BOOT_STATUS        @ 0x07000;

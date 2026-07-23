@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_uno_cert_blob"
+version = "0.1.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+static_assertions = { workspace = true }
+zerocopy = { features = ["derive"], workspace = true }
+
+[lints]
+workspace = true

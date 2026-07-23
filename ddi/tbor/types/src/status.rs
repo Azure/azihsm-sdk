@@ -312,6 +312,17 @@ pub enum TborStatus {
     /// provisioned in this incarnation (mirror of
     /// `HsmError::SdAlreadyInitialized`).
     SdAlreadyInitialized = 0x08700108,
+
+    /// A `SdRestore*` handler was asked to restore a security-domain
+    /// backup whose bound SVN is newer than the current firmware SVN
+    /// (mirror of `HsmError::SdBackupSvnRollback`).
+    SdBackupSvnRollback = 0x08700109,
+
+    /// A `SdCreatePeerBackup` / `SdRestorePeerBackup` handler was asked to
+    /// clone a security domain to (or from) a peer, but the partition's
+    /// policy does not permit peer cloning (mirror of
+    /// `HsmError::SdPeerCloningNotAllowed`).
+    SdPeerCloningNotAllowed = 0x0870010A,
 }
 
 impl core::fmt::Debug for TborStatus {

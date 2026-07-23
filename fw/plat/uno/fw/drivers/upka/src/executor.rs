@@ -1,9 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use core::sync::atomic::compiler_fence;
-use core::sync::atomic::Ordering;
-
 use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
@@ -13,6 +10,7 @@ use azihsm_fw_uno_reg_soc::upka::UpkaEngine;
 use azihsm_fw_uno_reg_soc::upka::ENGINE_STRIDE;
 use azihsm_fw_uno_reg_soc::upka::UPKA_BASE;
 use azihsm_fw_uno_reg_soc::upka::UPKA_ENGINE_STATUS;
+use cortex_m::asm::dmb;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
 
@@ -53,7 +51,12 @@ impl EngineExecutor {
         arg3: u32,
     ) {
         Self::write_descriptor(engine_id, opcode, result, arg1, arg2, arg3);
-        compiler_fence(Ordering::SeqCst);
+        // Hardware barrier (not just a compiler fence): ensure the descriptor
+        // stores are globally visible before the command-register write triggers
+        // the engine's AXI read of the operand addresses. A `compiler_fence`
+        // leaves the stores in the Cortex-M7 store buffer, so under concurrent
+        // load the engine can read stale operand addresses and raise BUS_ERROR.
+        dmb();
         Self::submit_cmd(engine_id);
     }
 
