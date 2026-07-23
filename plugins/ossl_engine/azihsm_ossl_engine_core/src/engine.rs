@@ -6,6 +6,7 @@
 use std::ffi::CStr;
 use std::ffi::c_char;
 use std::ffi::c_int;
+use std::ffi::c_uchar;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::ptr::null_mut;
@@ -261,6 +262,95 @@ unsafe fn load_privkey_inner<H: LoadPrivKeyHandler>(
     // SAFETY: `key_id` is non-null (checked) and a valid C string per contract.
     let key_id = unsafe { CStr::from_ptr(key_id) };
     H::load(&engine, key_id)
+}
+
+/// Caller-supplied ECDSA signing for an engine-backed EC key, invoked through
+/// the `EC_KEY_METHOD` `sign_sig` hook. Implement on a marker type and pass it
+/// to [`new_ecdsa_method`].
+pub trait EcdsaSignHandler {
+    /// Sign the pre-computed `digest` for `ec_key` (e.g. recover an attached HSM
+    /// key handle from the `EC_KEY`'s ex_data) and return an owning
+    /// `*mut ECDSA_SIG` — ownership transfers to OpenSSL, which DER-wraps it.
+    /// Return an error to surface a NULL result plus an ERR-queue entry.
+    ///
+    /// `ec_key` is the signing `EC_KEY` OpenSSL passed to the callback; it is a
+    /// raw pointer (only meaningful to dereference in `unsafe`), valid for the
+    /// duration of the call.
+    fn sign(ec_key: *mut ffi::EC_KEY, digest: &[u8]) -> EngineResult<*mut ffi::ECDSA_SIG>;
+}
+
+/// C trampoline for `EC_KEY_METHOD_set_sign`'s `sign_sig` slot. Catches panics
+/// and dispatches to `H::sign`, returning NULL on panic/error. `in_kinv`/`in_r`
+/// (precomputed nonce) are unused: the HSM generates its own nonce.
+///
+/// # Safety
+/// Called only by OpenSSL's ECDSA sign path. `dgst`/`dgst_len` describe the
+/// digest and `eckey` is the signing key, per the `sign_sig` contract.
+#[allow(unsafe_code)]
+unsafe extern "C" fn c_ecdsa_sign_sig<H: EcdsaSignHandler>(
+    dgst: *const c_uchar,
+    dgst_len: c_int,
+    _in_kinv: *const ffi::BIGNUM,
+    _in_r: *const ffi::BIGNUM,
+    eckey: *mut ffi::EC_KEY,
+) -> *mut ffi::ECDSA_SIG {
+    catch_panic(
+        // SAFETY: dgst/dgst_len describe the digest OpenSSL computed and eckey is
+        // the signing EC_KEY, per the sign_sig callback contract.
+        || result_to_ptr(unsafe { ecdsa_sign_inner::<H>(dgst, dgst_len, eckey) }),
+        null_mut(),
+    )
+}
+
+/// Inner body of [`c_ecdsa_sign_sig`]: build a digest slice from the raw pointer
+/// and dispatch to `H::sign`.
+///
+/// # Safety
+/// `dgst` must be valid for `dgst_len` bytes (or NULL) and `eckey` the signing
+/// `EC_KEY`, per the `sign_sig` contract.
+#[allow(unsafe_code)]
+unsafe fn ecdsa_sign_inner<H: EcdsaSignHandler>(
+    dgst: *const c_uchar,
+    dgst_len: c_int,
+    eckey: *mut ffi::EC_KEY,
+) -> EngineResult<*mut ffi::ECDSA_SIG> {
+    if dgst.is_null() {
+        return Err(EngineError::NullParam("dgst"));
+    }
+    let len = usize::try_from(dgst_len)
+        .map_err(|_| EngineError::Other("negative digest length".into()))?;
+    // SAFETY: dgst is non-null (checked) and valid for `len` bytes per contract.
+    let digest = unsafe { std::slice::from_raw_parts(dgst, len) };
+    H::sign(eckey, digest)
+}
+
+/// Build an `EC_KEY_METHOD` that signs via `H` (ECDSA), keeping OpenSSL's
+/// default `sign`/`sign_setup` (they DER-wrap our `sign_sig`) and everything
+/// else (verify, keygen, compute_key) from `EC_KEY_OpenSSL`. Attach the result
+/// to a loaded key with `EC_KEY_set_method`.
+///
+/// The returned method is heap-allocated and intentionally not freed here: the
+/// caller keeps it for the process lifetime (one method shared by all loaded
+/// keys), so no libcrypto-held pointer dangles at teardown.
+#[allow(unsafe_code)]
+pub fn new_ecdsa_method<H: EcdsaSignHandler>() -> EngineResult<*mut ffi::EC_KEY_METHOD> {
+    // SAFETY: EC_KEY_OpenSSL returns the built-in const method; EC_KEY_METHOD_new
+    // copies it into a fresh owned method.
+    let method = unsafe { ffi::EC_KEY_METHOD_new(ffi::EC_KEY_OpenSSL()) };
+    if method.is_null() {
+        return Err(EngineError::Other("EC_KEY_METHOD_new failed".into()));
+    }
+
+    // Keep the copied default sign/sign_setup (the default `sign` produces the
+    // DER wrapper by calling `sign_sig`) and override only `sign_sig`.
+    let mut sign = None;
+    let mut sign_setup = None;
+    // SAFETY: method is a fresh EC_KEY_METHOD; get_sign writes the out-params it
+    // is given (NULL for the sign_sig slot, which we don't need).
+    unsafe { ffi::EC_KEY_METHOD_get_sign(method, &mut sign, &mut sign_setup, null_mut()) };
+    // SAFETY: method is ours; reinstall the defaults plus our sign_sig trampoline.
+    unsafe { ffi::EC_KEY_METHOD_set_sign(method, sign, sign_setup, Some(c_ecdsa_sign_sig::<H>)) };
+    Ok(method)
 }
 
 #[cfg(test)]
