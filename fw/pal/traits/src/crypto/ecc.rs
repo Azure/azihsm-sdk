@@ -70,6 +70,25 @@ impl HsmEccCurve {
         }
     }
 
+    /// Return the ECDSA digest field width in bytes that the sign path
+    /// zero-extends the host digest to before handing it to the signing
+    /// primitive: the raw curve field size ([`HsmEccCurve::priv_key_len`])
+    /// capped at the largest FIPS digest (SHA-512, 64 bytes).
+    ///
+    /// | Curve  | Width |
+    /// |--------|-------|
+    /// | P-256  | 32    |
+    /// | P-384  | 48    |
+    /// | P-521  | 64    |
+    ///
+    /// A host digest shorter than this (e.g. a SHA-256 digest signed with a
+    /// P-384 key) is zero-extended up to this width so the on-chip PKA engine
+    /// receives a full field-width little-endian operand; the width stays
+    /// `<= 64` so the OpenSSL-backed std PAL signs it without truncation.
+    pub fn ecdsa_digest_len(&self) -> usize {
+        self.priv_key_len().min(64)
+    }
+
     /// Return the **raw cryptographic** public-key length in bytes
     /// (`X || Y`, each [`HsmEccCurve::priv_key_len`] bytes).
     ///
@@ -260,11 +279,17 @@ pub trait HsmEcc {
     ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
     /// - `hash` — message digest to sign, in **little-endian** byte
     ///   order to match the wire-native format produced by real PKA
-    ///   hardware.  Must contain exactly the digest's native length
-    ///   (e.g. 32 bytes for SHA-256, 64 bytes for SHA-512); ECDSA
-    ///   truncates internally if longer than the curve's order.
-    ///   Implementations that delegate to a big-endian-native
-    ///   primitive (e.g. OpenSSL) must reverse the bytes internally.
+    ///   hardware.  This is the field-width sign *operand*, not
+    ///   necessarily the raw digest: the caller (the DDI `EccSign`
+    ///   handler) widens a short digest to at least
+    ///   `HsmEccCurve::ecdsa_digest_len(curve)` (32 / 48 / 64 for
+    ///   P-256 / P-384 / P-521) by zero-extending the trailing bytes,
+    ///   so e.g. a SHA-256 digest signed with a P-384 key arrives as
+    ///   48 bytes with the high 16 zero.  Any bytes past the digest
+    ///   must be zero.  A digest longer than the curve's order is
+    ///   ECDSA-truncated internally.  Implementations that delegate to
+    ///   a big-endian-native primitive (e.g. OpenSSL) must reverse the
+    ///   bytes internally.
     /// - `signature` — output buffer.  On return, holds `r || s`
     ///   with **each component in little-endian** byte order — the
     ///   wire-native format produced by real PKA hardware.  P-521
