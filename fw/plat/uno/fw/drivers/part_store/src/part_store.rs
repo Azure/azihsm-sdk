@@ -1117,6 +1117,43 @@ impl Partition {
         self.slot_mut().unwrapping_key_id = write_handle(key);
     }
 
+    // ── RSA unwrapping-key backup (HSP-published, HSM-consumed) ──────────
+    //
+    // The HSP ephemeral-key monitor publishes a ready-to-use 516-byte PKA-LE
+    // RSA-2048 private key into `unwrapping_key_bk` and sets
+    // `unwrapping_key_bk_valid`; the HSM imports it (once) into its vault, then
+    // clears the slot so the HSP refills it on its next poll. The 516-byte
+    // payload is `d(256) ‖ n(256) ‖ e(4)` little-endian (the layout the
+    // reference `RsaPubKey::from_priv_pka_slice` decodes).
+
+    /// Whether the HSP has published a valid RSA-2048 unwrapping key into this
+    /// partition's GSRAM slot (`unwrapping_key_bk_valid`).
+    #[inline(never)]
+    pub fn unwrapping_key_bk_valid(self) -> bool {
+        self.slot().unwrapping_key_bk_valid
+    }
+
+    /// Borrows the 516-byte PKA-LE RSA-2048 unwrapping-key backup published by
+    /// the HSP. Only meaningful when
+    /// [`unwrapping_key_bk_valid`](Self::unwrapping_key_bk_valid) is true.
+    #[inline(never)]
+    pub fn unwrapping_key_bk(self) -> &'static DmaBuf {
+        // SAFETY: `unwrapping_key_bk` is an align-1 packed field; GSRAM bytes
+        // branded as DMA-accessible; valid for 'static.
+        unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
+    }
+
+    /// Consumes the published unwrapping key: zeroizes the 516-byte payload
+    /// *before* clearing the valid flag, so the HSP (which polls the flag and
+    /// refills the slot on `false`) can never observe `valid == true` over
+    /// stale or partially-cleared key bytes.
+    #[inline(never)]
+    pub fn clear_unwrapping_key_bk(mut self) {
+        let slot = self.slot_mut();
+        slot.unwrapping_key_bk = [0u8; UNWRAPPING_KEY_BK_LEN];
+        slot.unwrapping_key_bk_valid = false;
+    }
+
     /// Reads the partition-local masking key (`PartLocalMK`) handle.
     #[inline(never)]
     pub fn local_mk_key_id(self) -> Option<HsmKeyId> {
