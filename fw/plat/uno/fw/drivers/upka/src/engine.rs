@@ -34,6 +34,65 @@ impl<const DEPTH: usize, const ENGINES: usize> core::fmt::Debug for UpkaEngine<'
     }
 }
 
+/// PKA operation selector for an [`EccStep`], mapped to a per-curve opcode by
+/// [`UpkaEngine::ecc_run`]. These are the modular / elliptic-curve primitives
+/// the PAL composes into the deterministic ECDSA sign.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EccStepOp {
+    /// Compute the Montgomery constant for `arg1` (a modulus) and leave it
+    /// resident in the engine for the steps that follow.
+    MontConstCalc,
+    /// Elliptic-curve point multiply `result = arg2 * arg1` (`arg1` is the
+    /// affine `x ‖ y` point, `arg2` the scalar).
+    PointMul,
+    /// Modular reduction `result = arg1 mod n` (double-width `arg1`).
+    ModReduction,
+    /// Convert `arg1` into Montgomery representation.
+    MontReprIn,
+    /// Convert `arg1` out of Montgomery representation.
+    MontReprOut,
+    /// Modular inverse `result = arg1^-1 mod n`.
+    ModInverse,
+    /// Modular multiply `result = arg1 * arg2 mod n` (Montgomery form).
+    ModMul,
+    /// Modular add `result = arg1 + arg2 mod n` (Montgomery form).
+    ModAdd,
+}
+
+/// One step of a PKA sequence executed by [`UpkaEngine::ecc_run`].
+///
+/// Carries pre-resolved operand DMA addresses: `result` is the output address
+/// (`buf.as_mut_ptr() as u32`) and `arg1`/`arg2` are input addresses
+/// (`buf.as_ptr() as u32`, `arg2 == 0` when the op takes a single input). The
+/// caller owns the buffers and is responsible for their DMA-accessibility and
+/// per-op sizing (mirroring the checks in the typed step wrappers).
+#[derive(Clone, Copy, Debug)]
+pub struct EccStep {
+    /// The modular / EC operation to issue.
+    pub op: EccStepOp,
+    /// Output operand DMA address.
+    pub result: u32,
+    /// First input operand DMA address.
+    pub arg1: u32,
+    /// Second input operand DMA address, or 0 if the op takes one input.
+    pub arg2: u32,
+}
+
+impl EccStep {
+    /// Construct a step from an op and its pre-resolved operand DMA addresses
+    /// (`arg2 == 0` for single-input ops). A terse constructor so the sign's
+    /// step tables stay one line per step.
+    #[inline(always)]
+    pub const fn new(op: EccStepOp, result: u32, arg1: u32, arg2: u32) -> Self {
+        Self {
+            op,
+            result,
+            arg1,
+            arg2,
+        }
+    }
+}
+
 impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     const RESULT_WORD_LEN: usize = 4;
 
@@ -631,6 +690,52 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
             0,
         )
         .await
+    }
+
+    /// Execute a pre-built PKA `steps` sequence on this held engine as a single
+    /// awaited command loop.
+    ///
+    /// Every step is issued through the same [`execute_cmd`](Self::execute_cmd)
+    /// await, so the caller's async state machine holds ONE suspend point
+    /// regardless of the sequence length. Written as straight-line `.await`
+    /// calls, the ~14-step deterministic ECDSA sign expands to ~14 distinct
+    /// suspend states and a correspondingly large `.text` state machine; routing
+    /// them through this loop collapses that to one. Signing is a cold,
+    /// PKA-latency-bound path, so the per-step opcode dispatch costs nothing at
+    /// runtime.
+    ///
+    /// The Montgomery constant established by an [`EccStepOp::MontConstCalc`]
+    /// step stays resident for the steps that follow (`execute_cmd` does not
+    /// wipe between commands), so callers order the sequence accordingly. Operand
+    /// sizing/DMA-accessibility is the caller's responsibility (see [`EccStep`]);
+    /// a step with a null (`0`) `result`/`arg1`, or an `arg2` that does not match
+    /// the op's arity, is rejected with [`UpkaError::CMD_ERROR`].
+    pub async fn ecc_run(&mut self, curve: UpkaEccCurve, steps: &[EccStep]) -> HsmResult<()> {
+        for step in steps {
+            let (opcode, takes_arg2) = match step.op {
+                EccStepOp::MontConstCalc => (mont_const_calc_opcode(curve), false),
+                EccStepOp::PointMul => (ecc_point_mul_opcode(curve), true),
+                EccStepOp::ModReduction => (mod_reduction_opcode(curve), false),
+                EccStepOp::MontReprIn => (mont_repr_in_opcode(curve), false),
+                EccStepOp::MontReprOut => (mont_repr_out_opcode(curve), false),
+                EccStepOp::ModInverse => (mod_inverse_opcode(curve), false),
+                EccStepOp::ModMul => (mod_multiplication_opcode(curve), true),
+                EccStepOp::ModAdd => (mod_addition_opcode(curve), true),
+            };
+            // Every op writes `result` and reads `arg1`; a two-input op also reads
+            // `arg2`, while a single-input op must leave it 0. Because `EccStep`
+            // carries raw DMA addresses in public fields and `execute_cmd` does no
+            // validation, a null (`0`) operand or a mismatched `arg2` would
+            // silently submit a malformed hardware command (a null operand address
+            // faults the PKA/AXI bus). Release firmware can't rely on
+            // `debug_assert`, so reject the misuse with an error instead.
+            Self::ensure_cmd_input(
+                step.result != 0 && step.arg1 != 0 && (step.arg2 != 0) == takes_arg2,
+            )?;
+            self.execute_cmd(opcode, step.result, step.arg1, step.arg2, 0)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Wipe the engine's internal state.
