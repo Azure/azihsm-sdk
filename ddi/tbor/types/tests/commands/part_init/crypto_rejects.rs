@@ -207,8 +207,8 @@ fn part_init_envelope_iv_tampered_emu() {
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
     // Envelope:
-    // HEADER(4) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
-    const HEADER_LEN: usize = 4;
+    // HEADER(8) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
+    const HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
     let iv_index = HEADER_LEN;
     envelope[iv_index] ^= 0x01;
 
@@ -465,7 +465,7 @@ fn part_init_envelope_invalid_length_matrix_emu() {
         valid_len - 1,
         valid_len + 1,
         valid_len + 16,
-        valid_len * 2,
+        azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN,
     ];
 
     for invalid_len in invalid_lengths {
@@ -753,8 +753,6 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
     ctx.session_close(session.session_id)
         .expect("close session before PartInit");
 
-    // Replace with the exact status used by your FW for a closed or
-    // nonexistent session.
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
@@ -876,9 +874,8 @@ fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
 /// independently from envelope length and AEAD authentication. The envelope
 /// itself is structurally valid and correctly authenticated.
 ///
-/// Only expect rejection if firmware explicitly forbids an all-zero
-/// `mach_seed`; otherwise the seed is treated as opaque input and may be
-/// accepted.
+/// Firmware currently treats `mach_seed` as opaque input; an all-zero seed
+/// should be accepted as long as the envelope authenticates correctly.
 #[test]
 fn part_init_all_zero_mach_seed_emu() {
     let ctx = TestCtx::new();
