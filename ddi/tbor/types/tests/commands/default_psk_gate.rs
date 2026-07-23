@@ -23,11 +23,17 @@
 //! Each test inherits a factory-reset device from `TestCtx::new`, so
 //! partition PSKs are at their canonical defaults on entry.
 
+use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -125,14 +131,6 @@ fn default_psk_gate_psk_change_bypass() {
 /// on real silicon.
 #[test]
 fn default_psk_gate_part_init_rejected() {
-    use azihsm_ddi_tbor_types::PolicyKeyKind;
-    use azihsm_ddi_tbor_types::TborStatus;
-    use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-    use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-    use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-
-    use crate::harness::assertions::assert_fw_rejects;
-
     // Build a 484-byte `PartPolicy` blob that passes wire decode so
     // the request reaches the dispatcher's gate. Mirrored from
     // `commands::part_init::known_good_part_policy` (kept inline so

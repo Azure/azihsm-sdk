@@ -80,7 +80,7 @@ impl TestCtx {
     }
 
     /// The backend path this ctx's [`TestDev`] was opened on. Multi-fd
-    /// tests thread it into [`crate::harness::open_extra_dev`] so every
+    /// tests thread it into [`crate::harness::open_dev_with_path`] so every
     /// extra `Dev` binds to the same underlying device as the primary.
     pub fn path(&self) -> &str {
         self.dev.path()

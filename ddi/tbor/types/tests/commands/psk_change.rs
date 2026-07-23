@@ -44,7 +44,7 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_psk_change_aad;
 use crate::harness::encrypt_psk_envelope;
-use crate::harness::open_extra_dev;
+use crate::harness::open_dev_with_path;
 use crate::harness::session::open_session as open_session_on_dev;
 use crate::harness::session::session_close as session_close_on_dev;
 use crate::harness::SessionOpenInitOptions;
@@ -249,7 +249,7 @@ fn psk_change_wrong_session_id_in_aad() {
 // Encrypt under session A's param_key but ship the request through
 // session B (with B's id in both header and AAD). FW verifies with
 // B's key and the tag fails. Session B is opened on a **second Dev**
-// (via `open_extra_dev(ctx.path())`) so on hw the crafted request
+// (via `open_dev_with_path(ctx.path())`) so on hw the crafted request
 // lands on B's fd — `AZIHSM_MAX_SESSIONS_PER_FD = 1` requires the
 // second concurrent session to live on its own fd.
 // ===========================================================================
@@ -259,7 +259,7 @@ fn psk_change_envelope_from_other_session() {
     let ctx = TestCtx::new();
     let session_a = ctx.open_session(CU, SessionType::PlainText);
 
-    let dev_b = open_extra_dev(ctx.path());
+    let dev_b = open_dev_with_path(ctx.path());
     let session_b = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
         .expect("open session B on extra dev");
 

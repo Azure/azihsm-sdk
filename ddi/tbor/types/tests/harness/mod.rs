@@ -67,7 +67,7 @@ pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 pub use ctx::TestCtx;
 pub use fixture::open_dev;
-pub use fixture::open_extra_dev;
+pub use fixture::open_dev_with_path;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;

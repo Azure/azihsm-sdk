@@ -60,7 +60,7 @@ pub struct TestDev {
     _guard: MutexGuard<'static, ()>,
     /// Backend `DevInfo::path` this handle was opened on. Cached so
     /// multi-fd tests can bind extra `Dev`s to the *same* underlying
-    /// device via [`open_extra_dev`].
+    /// device via [`open_dev_with_path`].
     path: String,
 }
 
@@ -114,7 +114,7 @@ pub fn open_dev() -> TestDev {
 ///
 /// Caller must ensure the primary `TestDev` outlives every extra
 /// `Dev`, otherwise the lock guard drops mid-test.
-pub fn open_extra_dev(path: &str) -> <AzihsmDdi as Ddi>::Dev {
+pub fn open_dev_with_path(path: &str) -> <AzihsmDdi as Ddi>::Dev {
     AzihsmDdi::default()
         .open_dev(path)
         .expect("open extra backend device on the same path as the primary TestDev")

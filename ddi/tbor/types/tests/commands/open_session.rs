@@ -19,7 +19,7 @@ use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::build_mac_fin;
-use crate::harness::open_extra_dev;
+use crate::harness::open_dev_with_path;
 use crate::harness::session::open_session as open_session_on_dev;
 use crate::harness::session::session_close as session_close_on_dev;
 #[cfg(not(feature = "emu"))]
@@ -254,7 +254,7 @@ fn open_session_multiple_concurrent() {
     // enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so overlapping
     // sessions must sit on separate fds bound to the same underlying
     // device (`ctx.path()`).
-    let dev_b = open_extra_dev(ctx.path());
+    let dev_b = open_dev_with_path(ctx.path());
     let b = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
         .expect("open second session on extra dev");
 
@@ -271,29 +271,33 @@ fn open_session_multiple_concurrent() {
 // Session-table exhaustion + recovery
 //
 // Iteratively opens sessions until the FW reports the table is full,
-// then closes them all and confirms one more open succeeds — the
+// then drops every extra fd and confirms one more open succeeds — the
 // pending/active slot cleanup path must fully reclaim capacity.
 //
 // The table size differs by backend (emu FW has a small hardcoded
 // table; hw silicon a larger one), so the loop is bounded generously
-// at 16 and the "at least one rejection observed" invariant is a soft
-// diagnostic — the value of the test is the close-all + reopen path.
+// at `MULTI_THREADED_TOTAL` and we assert a rejection was observed
+// within that ceiling.
 // ---------------------------------------------------------------------------
+
+const MULTI_THREADED_TOTAL: usize = 12;
 
 #[test]
 fn open_session_fills_table_then_recovers() {
     let ctx = TestCtx::new();
     // Each concurrent session lives on its own extra `Dev` bound to
     // the same underlying device — required on hw where
-    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`. Devs are kept alive alongside
-    // their session ids so we can issue the matching close on the
-    // same fd.
-    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
-    let mut open_slots: Vec<(Dev, u16)> = Vec::new();
+    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`. The Dev handles are kept
+    // alive in the vec so their fds stay open while we probe capacity;
+    // dropping the vec later closes every fd in one shot, which the
+    // kernel driver must translate into per-session slot reclaim on
+    // the FW side (that reclaim path is exactly what the recovery
+    // assertion below exercises).
+    let mut open_slots = Vec::new();
     let mut rejection_seen = false;
 
-    for _ in 0..16 {
-        let dev = open_extra_dev(ctx.path());
+    for _ in 0..MULTI_THREADED_TOTAL {
+        let dev = open_dev_with_path(ctx.path());
         match open_session_on_dev(&dev, CU, SessionType::PlainText) {
             Ok(h) => open_slots.push((dev, h.session_id)),
             Err(e) => {
@@ -311,30 +315,27 @@ fn open_session_fills_table_then_recovers() {
         }
     }
 
-    // Close everything we opened before running the recovery check,
-    // so a recovery-side failure does not leak slots on the board.
-    for (dev, id) in &open_slots {
-        let _ = session_close_on_dev(dev, *id);
-    }
     let slot_count = open_slots.len();
+    assert!(
+        rejection_seen,
+        "capacity limit not observed within {slot_count} probes — either the backend supports \
+         more concurrent CU sessions than the probe ceiling (bump the loop bound), or the \
+         session table exhaustion path regressed",
+    );
+
+    // Recovery: drop every extra fd in one shot so the driver reclaims
+    // their FW-side session slots, then one fresh open on the primary
+    // ctx dev must succeed. Relying on fd-drop (rather than an
+    // explicit close loop) is deliberate — the invariant we care
+    // about is that fd-drop == slot-reclaim; if that isn't true, it's
+    // a product bug worth surfacing.
     drop(open_slots);
 
-    // Recovery: one fresh open must succeed after the batch close.
-    // The recovery session runs on the primary ctx dev — every extra
-    // fd has been dropped, so the driver's per-fd session slot on the
-    // primary is definitely free.
     let recovered = ctx
         .open_session_raw(CU, SessionType::PlainText)
-        .expect("session table must recover after close-all");
+        .expect("session table must recover after all extra fds are dropped");
     ctx.session_close(recovered.session_id)
         .expect("SessionClose after recovery must succeed");
-
-    if !rejection_seen {
-        eprintln!(
-            "open_session_fills_table_then_recovers: backend accepted {slot_count} concurrent sessions \
-             without emitting a table-full rejection; capacity limit not observed",
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -623,14 +624,11 @@ fn pk_init_single_byte_tampered_rejected() {
 // The property under test only holds on the native OS backend.
 // ---------------------------------------------------------------------------
 
-#[cfg(not(feature = "emu"))]
-const MULTI_THREADED_TOTAL: usize = 12;
-
 /// Race N concurrent opens; winners must have distinct session ids,
 /// and any losers must surface as clean FW/driver rejections. Each
-/// racing thread owns its own [`open_extra_dev`] fd — hw requires one
-/// fd per concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`), so
-/// `TestCtx` itself is not touched by the racers.
+/// racing thread owns its own [`open_dev_with_path`] fd — hw requires
+/// one fd per concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`),
+/// so `TestCtx` itself is not touched by the racers.
 #[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_all_should_open() {
@@ -641,30 +639,28 @@ fn open_session_multi_threaded_all_should_open() {
 
     // Each entry holds the owning Dev + the session id so we can
     // close on the correct fd once the race resolves.
-    let winners_devs: (Vec<(Dev, u16)>, Vec<azihsm_ddi_interface::DdiError>) =
-        std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
-            for _ in 0..MULTI_THREADED_TOTAL {
-                handles.push(
-                    s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
-                        let dev = open_extra_dev(path);
-                        let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
-                        let handshake = session_open_finish_on_dev(&dev, pending)?;
-                        Ok((dev, handshake.session_id))
-                    }),
-                );
+    let (winners, rejections) = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
+        for _ in 0..MULTI_THREADED_TOTAL {
+            handles.push(
+                s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
+                    let dev = open_dev_with_path(path);
+                    let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
+                    let handshake = session_open_finish_on_dev(&dev, pending)?;
+                    Ok((dev, handshake.session_id))
+                }),
+            );
+        }
+        let mut winners = Vec::new();
+        let mut rejections = Vec::new();
+        for h in handles {
+            match h.join().expect("worker thread must not panic") {
+                Ok(w) => winners.push(w),
+                Err(e) => rejections.push(e),
             }
-            let mut winners: Vec<(Dev, u16)> = Vec::new();
-            let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
-            for h in handles {
-                match h.join().expect("worker thread must not panic") {
-                    Ok(w) => winners.push(w),
-                    Err(e) => rejections.push(e),
-                }
-            }
-            (winners, rejections)
-        });
-    let (winners, rejections) = winners_devs;
+        }
+        (winners, rejections)
+    });
 
     let mut sorted_ids: Vec<u16> = winners.iter().map(|(_, sid)| *sid).collect();
     let winner_ids = sorted_ids.clone();
@@ -706,13 +702,10 @@ fn open_session_multi_threaded_all_should_open() {
     }
 }
 
-#[cfg(not(feature = "emu"))]
-const SINGLE_WINNER_RACERS: usize = 8;
-
 /// Fill to one free slot then race N threads for it. Regression for
 /// FW's undo-on-loser path: every losing racer must see a clean
 /// rejection and leave the session table intact for retry. Each
-/// filler + racer holds its own `open_extra_dev` fd — hw requires
+/// filler + racer holds its own `open_dev_with_path` fd — hw requires
 /// one fd per concurrent session.
 #[cfg(not(feature = "emu"))]
 #[test]
@@ -725,10 +718,9 @@ fn open_session_multi_threaded_single_winner() {
     // Phase 1: probe capacity sequentially; ceiling matches
     // fills_table_then_recovers so we don't loop forever on a
     // pathological build. Each filler session lives on its own Dev.
-    let mut fillers: Vec<(Dev, u16)> = Vec::new();
-    let probe_ceiling: usize = 16;
-    for _ in 0..probe_ceiling {
-        let dev = open_extra_dev(path);
+    let mut fillers = Vec::new();
+    for _ in 0..MULTI_THREADED_TOTAL {
+        let dev = open_dev_with_path(path);
         match session_open_init_on_dev(&dev, CU, SessionType::PlainText)
             .and_then(|pending| session_open_finish_on_dev(&dev, pending))
         {
@@ -738,13 +730,13 @@ fn open_session_multi_threaded_single_winner() {
     }
 
     // Capacity exceeds ceiling: cannot set up a single-slot race — clean up + skip.
-    if fillers.len() >= probe_ceiling {
+    if fillers.len() >= MULTI_THREADED_TOTAL {
         for (dev, sid) in &fillers {
             let _ = session_close_on_dev(dev, *sid);
         }
         eprintln!(
             "open_session_multi_threaded_single_winner: FW capacity exceeds probe ceiling of \
-             {probe_ceiling}; skipping single-slot race",
+             {MULTI_THREADED_TOTAL}; skipping single-slot race",
         );
         return;
     }
@@ -754,30 +746,29 @@ fn open_session_multi_threaded_single_winner() {
     session_close_on_dev(&freed_dev, freed_id).expect("close of freed filler slot must succeed");
     drop(freed_dev);
 
-    // Phase 3: race SINGLE_WINNER_RACERS threads for the one slot.
-    let (winners, rejections): (Vec<(Dev, u16)>, Vec<azihsm_ddi_interface::DdiError>) =
-        std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(SINGLE_WINNER_RACERS);
-            for _ in 0..SINGLE_WINNER_RACERS {
-                handles.push(
-                    s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
-                        let dev = open_extra_dev(path);
-                        let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
-                        let handshake = session_open_finish_on_dev(&dev, pending)?;
-                        Ok((dev, handshake.session_id))
-                    }),
-                );
+    // Phase 3: race MULTI_THREADED_TOTAL threads for the one slot.
+    let (winners, rejections) = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
+        for _ in 0..MULTI_THREADED_TOTAL {
+            handles.push(
+                s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
+                    let dev = open_dev_with_path(path);
+                    let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
+                    let handshake = session_open_finish_on_dev(&dev, pending)?;
+                    Ok((dev, handshake.session_id))
+                }),
+            );
+        }
+        let mut winners = Vec::new();
+        let mut rejections = Vec::new();
+        for h in handles {
+            match h.join().expect("racer thread must not panic") {
+                Ok(w) => winners.push(w),
+                Err(e) => rejections.push(e),
             }
-            let mut winners: Vec<(Dev, u16)> = Vec::new();
-            let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
-            for h in handles {
-                match h.join().expect("racer thread must not panic") {
-                    Ok(w) => winners.push(w),
-                    Err(e) => rejections.push(e),
-                }
-            }
-            (winners, rejections)
-        });
+        }
+        (winners, rejections)
+    });
 
     let winner_count = winners.len();
     let rejection_count = rejections.len();
@@ -795,7 +786,7 @@ fn open_session_multi_threaded_single_winner() {
     );
     assert_eq!(
         rejection_count,
-        SINGLE_WINNER_RACERS - 1,
+        MULTI_THREADED_TOTAL - 1,
         "all non-winning racers must fail cleanly",
     );
     for err in &rejections {
