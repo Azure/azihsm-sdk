@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![cfg(not(any(feature = "mock", feature = "sock")))]
-
 //! Integration tests for the TBOR dispatcher's default-PSK gate.
 //!
 //! The gate (see `fw/core/lib/src/ddi/tbor/mod.rs::dispatch`) rejects
@@ -60,6 +58,12 @@ fn default_psk_gate_api_rev_bypass() {
 fn default_psk_gate_session_open_init_bypass() {
     let ctx = TestCtx::new();
 
+    // Each role is probed sequentially on the same fd: hw enforces
+    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so the CO session must be
+    // closed before CU's `SessionOpenInit` is issued. The gate is a
+    // per-role property, so sequential probes prove it for both roles
+    // without needing overlapping sessions.
+
     // CO + Authenticated under default CO PSK.
     let opts_co =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&DEFAULT_PSK_CO);
@@ -69,6 +73,8 @@ fn default_psk_gate_session_open_init_bypass() {
     let session_co = ctx
         .session_open_finish(pending_co)
         .expect("CO finish under default PSK");
+    ctx.session_close(session_co.session_id)
+        .expect("close CO session");
 
     // CU + PlainText under default CU PSK.
     let opts_cu = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&DEFAULT_PSK_CU);
@@ -78,9 +84,6 @@ fn default_psk_gate_session_open_init_bypass() {
     let session_cu = ctx
         .session_open_finish(pending_cu)
         .expect("CU finish under default PSK");
-
-    ctx.session_close(session_co.session_id)
-        .expect("close CO session");
     ctx.session_close(session_cu.session_id)
         .expect("close CU session");
 }

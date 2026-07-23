@@ -10,8 +10,7 @@
 //! or session-scoped state leaking into the out-of-session handler.
 //! `part_info_reflects_part_init_transition_emu` covers the
 //! `Enabled → Initializing` lifecycle transition (emu only, since it
-//! is destructive to partition state). `unsupported_on_mock` asserts
-//! that mock does not implement TBOR.
+//! is destructive to partition state).
 //!
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
@@ -21,12 +20,10 @@ use azihsm_ddi_tbor_types::TborPartInfoReq;
 use crate::harness::TestCtx;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
-#[cfg(not(feature = "mock"))]
 const DEVICE_KIND_PHYSICAL: u8 = 2;
 
 /// `PartState::Enabled` discriminant — the default provisioned state of
 /// the emulator partition before any `PartInit`.
-#[cfg(not(feature = "mock"))]
 const PART_STATE_ENABLED: u8 = 2;
 
 /// `PartState::Initializing` discriminant — the state a partition enters
@@ -37,7 +34,6 @@ const PART_STATE_INITIALIZING: u8 = 4;
 /// Assert the invariant device-level fields PartInfo reports for the
 /// default provisioned partition, plus that the identity public key is
 /// materialized (not all-zero).
-#[cfg(not(feature = "mock"))]
 fn assert_default_part_info(resp: &azihsm_ddi_tbor_types::TborPartInfoResp) {
     assert_eq!(
         resp.device_kind, DEVICE_KIND_PHYSICAL,
@@ -53,7 +49,6 @@ fn assert_default_part_info(resp: &azihsm_ddi_tbor_types::TborPartInfoResp) {
     );
 }
 
-#[cfg(not(feature = "mock"))]
 #[test]
 fn round_trip() {
     let ctx = TestCtx::new();
@@ -68,7 +63,6 @@ fn round_trip() {
 /// returns a byte-identical response. Catches any regression that would
 /// silently introduce per-call state (e.g. a counter, a cached
 /// allocation) into the out-of-session handler.
-#[cfg(not(feature = "mock"))]
 #[test]
 fn part_info_repeated_stable() {
     let ctx = TestCtx::new();
@@ -87,9 +81,8 @@ fn part_info_repeated_stable() {
 /// `PartInfo` is independent of session-machine state — it returns a
 /// byte-identical response while a Pending (init-only) handshake
 /// occupies a session slot, after that slot transitions to Active, and
-/// again once it is closed.  Catches any regression that would let
+/// again once it is closed. Catches any regression that would let
 /// session state leak into the out-of-session handler.
-#[cfg(not(any(feature = "mock", feature = "sock")))]
 #[test]
 fn part_info_independent_of_session_state() {
     use azihsm_ddi_tbor_types::SessionType;
@@ -196,16 +189,4 @@ fn part_info_reflects_part_init_transition_emu() {
 
     ctx.session_close(session.session_id)
         .expect("close CO session");
-}
-
-#[cfg(all(feature = "mock", not(feature = "emu")))]
-#[test]
-fn unsupported_on_mock() {
-    use crate::harness::assertions::assert_unsupported_encoding;
-
-    let ctx = TestCtx::new();
-    let err = ctx
-        .tbor(&TborPartInfoReq::new())
-        .expect_err("mock backend must not implement exec_op_tbor");
-    assert_unsupported_encoding(&err);
 }

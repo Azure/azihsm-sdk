@@ -9,7 +9,13 @@
 //! `--features mock` (transport-contract probes). With **no** feature
 //! enabled the crate falls through to the native OS backend (`nix`
 //! on Linux / `win` on Windows) for on-silicon test runs.
+//!
+//! `mock` disables the whole `commands` tree — mock rejects TBOR at
+//! the transport layer, so command-level integration tests are
+//! meaningless there. Under `mock` this binary compiles the harness
+//! only and runs zero tests.
 
 pub mod harness;
 
+#[cfg(not(feature = "mock"))]
 pub mod commands;

@@ -10,8 +10,6 @@
 //! `Drop`; negative paths drive `session_open_init` /
 //! `session_open_finish` on `TestCtx` directly.
 
-#![cfg(not(any(feature = "mock", feature = "sock")))]
-
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
@@ -21,6 +19,13 @@ use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::build_mac_fin;
+use crate::harness::open_extra_dev;
+use crate::harness::session::open_session as open_session_on_dev;
+use crate::harness::session::session_close as session_close_on_dev;
+#[cfg(not(feature = "emu"))]
+use crate::harness::session::session_open_finish as session_open_finish_on_dev;
+#[cfg(not(feature = "emu"))]
+use crate::harness::session::session_open_init as session_open_init_on_dev;
 use crate::harness::TestCtx;
 
 const CO: u8 = 0;
@@ -244,12 +249,22 @@ fn session_open_finish_seed_envelope_tampered() {
 fn open_session_multiple_concurrent() {
     let ctx = TestCtx::new();
     let a = ctx.open_session(CU, SessionType::PlainText);
-    let b = ctx.open_session(CU, SessionType::PlainText);
+
+    // Second session lives on its own Dev — on hw the kernel driver
+    // enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so overlapping
+    // sessions must sit on separate fds bound to the same underlying
+    // device (`ctx.path()`).
+    let dev_b = open_extra_dev(ctx.path());
+    let b = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
+        .expect("open second session on extra dev");
+
     assert_ne!(
         a.session_id(),
-        b.session_id(),
+        b.session_id,
         "concurrent sessions must have distinct ids",
     );
+
+    session_close_on_dev(&dev_b, b.session_id).expect("close session B on extra dev");
 }
 
 // ---------------------------------------------------------------------------
@@ -268,16 +283,24 @@ fn open_session_multiple_concurrent() {
 #[test]
 fn open_session_fills_table_then_recovers() {
     let ctx = TestCtx::new();
-    let mut ids: Vec<u16> = Vec::new();
+    // Each concurrent session lives on its own extra `Dev` bound to
+    // the same underlying device — required on hw where
+    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`. Devs are kept alive alongside
+    // their session ids so we can issue the matching close on the
+    // same fd.
+    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
+    let mut open_slots: Vec<(Dev, u16)> = Vec::new();
     let mut rejection_seen = false;
 
     for _ in 0..16 {
-        match ctx.open_session_raw(CU, SessionType::PlainText) {
-            Ok(h) => ids.push(h.session_id),
+        let dev = open_extra_dev(ctx.path());
+        match open_session_on_dev(&dev, CU, SessionType::PlainText) {
+            Ok(h) => open_slots.push((dev, h.session_id)),
             Err(e) => {
                 // FW rejected — treat as "table full". Verify it is
                 // an FW-side rejection (not a driver / decode fault)
-                // before ending the ramp-up.
+                // before ending the ramp-up. `dev` drops here,
+                // releasing the fd cleanly (no session was allocated).
                 assert!(
                     matches!(e, azihsm_ddi_interface::DdiError::DdiError(_)),
                     "table-full rejection must be FW-side, got {e:?}",
@@ -290,11 +313,16 @@ fn open_session_fills_table_then_recovers() {
 
     // Close everything we opened before running the recovery check,
     // so a recovery-side failure does not leak slots on the board.
-    for id in &ids {
-        let _ = ctx.session_close(*id);
+    for (dev, id) in &open_slots {
+        let _ = session_close_on_dev(dev, *id);
     }
+    let slot_count = open_slots.len();
+    drop(open_slots);
 
     // Recovery: one fresh open must succeed after the batch close.
+    // The recovery session runs on the primary ctx dev — every extra
+    // fd has been dropped, so the driver's per-fd session slot on the
+    // primary is definitely free.
     let recovered = ctx
         .open_session_raw(CU, SessionType::PlainText)
         .expect("session table must recover after close-all");
@@ -303,9 +331,8 @@ fn open_session_fills_table_then_recovers() {
 
     if !rejection_seen {
         eprintln!(
-            "open_session_fills_table_then_recovers: backend accepted {} concurrent sessions \
+            "open_session_fills_table_then_recovers: backend accepted {slot_count} concurrent sessions \
              without emitting a table-full rejection; capacity limit not observed",
-            ids.len(),
         );
     }
 }
@@ -596,55 +623,69 @@ fn pk_init_single_byte_tampered_rejected() {
 // The property under test only holds on the native OS backend.
 // ---------------------------------------------------------------------------
 
-#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+#[cfg(not(feature = "emu"))]
 const MULTI_THREADED_TOTAL: usize = 12;
 
 /// Race N concurrent opens; winners must have distinct session ids,
-/// and any losers must surface as clean FW/driver rejections.
-#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+/// and any losers must surface as clean FW/driver rejections. Each
+/// racing thread owns its own [`open_extra_dev`] fd — hw requires one
+/// fd per concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`), so
+/// `TestCtx` itself is not touched by the racers.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_all_should_open() {
     let ctx = TestCtx::new();
+    let path: &str = ctx.path();
 
-    let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
-        for _ in 0..MULTI_THREADED_TOTAL {
-            handles.push(s.spawn(|| -> Result<u16, azihsm_ddi_interface::DdiError> {
-                let pending = ctx.session_open_init(CU, SessionType::PlainText)?;
-                let handshake = ctx.session_open_finish(pending)?;
-                Ok(handshake.session_id)
-            }));
-        }
-        let mut winners: Vec<u16> = Vec::new();
-        let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
-        for h in handles {
-            match h.join().expect("worker thread must not panic") {
-                Ok(sid) => winners.push(sid),
-                Err(e) => rejections.push(e),
+    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
+
+    // Each entry holds the owning Dev + the session id so we can
+    // close on the correct fd once the race resolves.
+    let winners_devs: (Vec<(Dev, u16)>, Vec<azihsm_ddi_interface::DdiError>) =
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(MULTI_THREADED_TOTAL);
+            for _ in 0..MULTI_THREADED_TOTAL {
+                handles.push(
+                    s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
+                        let dev = open_extra_dev(path);
+                        let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
+                        let handshake = session_open_finish_on_dev(&dev, pending)?;
+                        Ok((dev, handshake.session_id))
+                    }),
+                );
             }
-        }
-        (winners, rejections)
-    });
+            let mut winners: Vec<(Dev, u16)> = Vec::new();
+            let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
+            for h in handles {
+                match h.join().expect("worker thread must not panic") {
+                    Ok(w) => winners.push(w),
+                    Err(e) => rejections.push(e),
+                }
+            }
+            (winners, rejections)
+        });
+    let (winners, rejections) = winners_devs;
 
-    let mut sorted_ids = winners.clone();
+    let mut sorted_ids: Vec<u16> = winners.iter().map(|(_, sid)| *sid).collect();
+    let winner_ids = sorted_ids.clone();
     sorted_ids.sort_unstable();
     sorted_ids.dedup();
     let unique_wins = sorted_ids.len();
 
-    // Close winners through the ctx before asserting so a failing
+    // Close winners on their owning fds before asserting so a failing
     // assert never leaves the session table dirty.
-    for sid in &winners {
-        let _ = ctx.session_close(*sid);
+    for (dev, sid) in &winners {
+        let _ = session_close_on_dev(dev, *sid);
     }
 
     assert!(
-        !winners.is_empty(),
+        !winner_ids.is_empty(),
         "at least one concurrent open_session must succeed; rejections = {rejections:?}",
     );
     assert_eq!(
         unique_wins,
-        winners.len(),
-        "concurrent winners must have distinct session ids: {winners:?}",
+        winner_ids.len(),
+        "concurrent winners must have distinct session ids: {winner_ids:?}",
     );
     for err in &rejections {
         assert!(
@@ -665,36 +706,41 @@ fn open_session_multi_threaded_all_should_open() {
     }
 }
 
-#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+#[cfg(not(feature = "emu"))]
 const SINGLE_WINNER_RACERS: usize = 8;
 
 /// Fill to one free slot then race N threads for it. Regression for
 /// FW's undo-on-loser path: every losing racer must see a clean
-/// rejection and leave the session table intact for retry.
-#[cfg(not(any(feature = "emu", feature = "mock", feature = "sock")))]
+/// rejection and leave the session table intact for retry. Each
+/// filler + racer holds its own `open_extra_dev` fd — hw requires
+/// one fd per concurrent session.
+#[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_single_winner() {
     let ctx = TestCtx::new();
+    let path: &str = ctx.path();
+
+    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
 
     // Phase 1: probe capacity sequentially; ceiling matches
     // fills_table_then_recovers so we don't loop forever on a
-    // pathological build.
-    let mut filler_ids: Vec<u16> = Vec::new();
+    // pathological build. Each filler session lives on its own Dev.
+    let mut fillers: Vec<(Dev, u16)> = Vec::new();
     let probe_ceiling: usize = 16;
     for _ in 0..probe_ceiling {
-        match ctx
-            .session_open_init(CU, SessionType::PlainText)
-            .and_then(|pending| ctx.session_open_finish(pending))
+        let dev = open_extra_dev(path);
+        match session_open_init_on_dev(&dev, CU, SessionType::PlainText)
+            .and_then(|pending| session_open_finish_on_dev(&dev, pending))
         {
-            Ok(handshake) => filler_ids.push(handshake.session_id),
-            Err(_) => break,
+            Ok(handshake) => fillers.push((dev, handshake.session_id)),
+            Err(_) => break, // `dev` drops here — fd released cleanly.
         }
     }
 
     // Capacity exceeds ceiling: cannot set up a single-slot race — clean up + skip.
-    if filler_ids.len() >= probe_ceiling {
-        for sid in &filler_ids {
-            let _ = ctx.session_close(*sid);
+    if fillers.len() >= probe_ceiling {
+        for (dev, sid) in &fillers {
+            let _ = session_close_on_dev(dev, *sid);
         }
         eprintln!(
             "open_session_multi_threaded_single_winner: FW capacity exceeds probe ceiling of \
@@ -703,39 +749,43 @@ fn open_session_multi_threaded_single_winner() {
         return;
     }
 
-    // Phase 2: free exactly one slot.
-    let freed_id = filler_ids.pop().expect("at least one filler must exist");
-    ctx.session_close(freed_id)
-        .expect("close of freed filler slot must succeed");
+    // Phase 2: free exactly one slot (close and drop the tail filler's Dev).
+    let (freed_dev, freed_id) = fillers.pop().expect("at least one filler must exist");
+    session_close_on_dev(&freed_dev, freed_id).expect("close of freed filler slot must succeed");
+    drop(freed_dev);
 
     // Phase 3: race SINGLE_WINNER_RACERS threads for the one slot.
-    let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(SINGLE_WINNER_RACERS);
-        for _ in 0..SINGLE_WINNER_RACERS {
-            handles.push(s.spawn(|| -> Result<u16, azihsm_ddi_interface::DdiError> {
-                let pending = ctx.session_open_init(CU, SessionType::PlainText)?;
-                let handshake = ctx.session_open_finish(pending)?;
-                Ok(handshake.session_id)
-            }));
-        }
-        let mut winners: Vec<u16> = Vec::new();
-        let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
-        for h in handles {
-            match h.join().expect("racer thread must not panic") {
-                Ok(sid) => winners.push(sid),
-                Err(e) => rejections.push(e),
+    let (winners, rejections): (Vec<(Dev, u16)>, Vec<azihsm_ddi_interface::DdiError>) =
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(SINGLE_WINNER_RACERS);
+            for _ in 0..SINGLE_WINNER_RACERS {
+                handles.push(
+                    s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
+                        let dev = open_extra_dev(path);
+                        let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
+                        let handshake = session_open_finish_on_dev(&dev, pending)?;
+                        Ok((dev, handshake.session_id))
+                    }),
+                );
             }
-        }
-        (winners, rejections)
-    });
+            let mut winners: Vec<(Dev, u16)> = Vec::new();
+            let mut rejections: Vec<azihsm_ddi_interface::DdiError> = Vec::new();
+            for h in handles {
+                match h.join().expect("racer thread must not panic") {
+                    Ok(w) => winners.push(w),
+                    Err(e) => rejections.push(e),
+                }
+            }
+            (winners, rejections)
+        });
 
     let winner_count = winners.len();
     let rejection_count = rejections.len();
-    for sid in &winners {
-        let _ = ctx.session_close(*sid);
+    for (dev, sid) in &winners {
+        let _ = session_close_on_dev(dev, *sid);
     }
-    for sid in &filler_ids {
-        let _ = ctx.session_close(*sid);
+    for (dev, sid) in &fillers {
+        let _ = session_close_on_dev(dev, *sid);
     }
 
     assert_eq!(

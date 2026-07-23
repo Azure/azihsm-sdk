@@ -22,9 +22,9 @@
 //!
 //! * `--features emu` (the canonical configuration; runs the full
 //!   suite in-process against the std/emu PAL FW build).
-//! * `--features mock` (transport-contract probes only).
-//!   `commands::api_rev::unsupported_on_mock` exercises that the
-//!   mock backend rejects TBOR opcodes at the transport layer.
+//! * `--features mock` compiles the harness only and runs zero
+//!   tests — mock rejects TBOR at the transport layer, so
+//!   command-level integration tests are meaningless there.
 //! * `--features sock` runs the same TBOR round-trips as `emu` but
 //!   over the socket transport.
 //! * **No backend feature** falls through to the native OS backend
@@ -34,8 +34,10 @@
 //!   this backend too (they are gated
 //!   `#![cfg(not(any(feature = "mock", feature = "sock")))]`, which
 //!   admits both `emu` and the no-feature native OS build). The
-//!   harness routes concurrent sessions onto separate fds because
-//!   the kernel driver enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`.
+//!   kernel driver enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so
+//!   tests that need concurrent sessions open extra fds themselves
+//!   via [`fixture::open_extra_dev`] — the harness [`ctx::TestCtx`]
+//!   itself always owns exactly one `Dev`.
 //!
 //! Backend-specific [`TestCtx`] methods (`erase`, `cert_chain_info`,
 //! `get_certificate`) carry per-method `#[cfg(...)]` and are
@@ -62,7 +64,7 @@ pub use azihsm_ddi_tbor_types::TborPskChangeReq;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 pub use ctx::TestCtx;
-pub use fixture::open_dev;
+pub use fixture::open_extra_dev;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;
