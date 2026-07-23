@@ -60,7 +60,7 @@ fn check_digest(
     assert_eq!(resp.hdr.op, DdiOp::ShaDigest);
     assert_eq!(resp.hdr.status, DdiStatus::Success);
     assert_eq!(
-        &resp.data.digest.data()[..expected.len()],
+        resp.data.digest.as_slice(),
         expected,
         "digest mismatch for {sha_mode:?}",
     );
