@@ -8,10 +8,10 @@
 //! to end against the backend, mirroring the host-side `sha_digest` test
 //! hook.
 //!
-//! - Happy path (emu): NIST FIPS 180-4 known-answer vectors for SHA-1,
-//!   SHA-256, SHA-384, SHA-512, and the empty message. The functional sim
-//!   does not implement `ShaDigest`, so those runs return `UnsupportedCmd`
-//!   and the vector check is skipped.
+//! - Happy path (hooks enabled): NIST FIPS 180-4 known-answer vectors for SHA-1, SHA-256,
+//!   SHA-384, SHA-512, and the empty message.
+//!   If the backend returns `UnsupportedCmd` (e.g. firmware not built with `fips_validation_hooks`),
+//!   the vector check is skipped.
 //! - Wrong / missing session (both backends): the host-side dev validator
 //!   rejects the request with `FileHandleSessionIdDoesNotMatch` before it
 //!   reaches firmware.
