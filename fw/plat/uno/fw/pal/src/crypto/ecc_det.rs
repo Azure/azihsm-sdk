@@ -32,6 +32,8 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKdf;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_uno_drivers_upka::EccStep;
+use azihsm_fw_uno_drivers_upka::EccStepOp;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
@@ -312,49 +314,86 @@ impl UnoHsmPal {
             let t_dot_r = scope.dma_alloc(mont)?;
             let s_plus_t = scope.dma_alloc(mont)?;
 
+            // Pre-resolve every operand's DMA address once. The sign issues its
+            // ~14 PKA steps through a single `ecc_run` command loop (run twice,
+            // split only by the CPU-side `xR ‖ 0` staging below) rather than as
+            // ~14 straight-line `.await`s. Each `.await` is a distinct suspend
+            // point in the generated async state machine, so collapsing them into
+            // one loop keeps this future's `.text` small; the sign is a cold,
+            // PKA-latency-bound path, so the loop costs nothing at runtime.
+            let a_prime = prime.as_ptr() as u32;
+            let a_order = order.as_ptr() as u32;
+            let a_base = base_xy.as_ptr() as u32;
+            let a_k = k.as_ptr() as u32;
+            let a_digest = digest.as_ptr() as u32;
+            let a_d = d.as_ptr() as u32;
+            let a_r = r.as_mut_ptr() as u32;
+            let a_s = s.as_mut_ptr() as u32;
+            let a_mont = mont_scratch.as_mut_ptr() as u32;
+            let a_xr = xr.as_mut_ptr() as u32;
+            let a_xr_wide = xr_wide.as_mut_ptr() as u32;
+            let a_k_mont = k_mont.as_mut_ptr() as u32;
+            let a_r_mont = r_mont.as_mut_ptr() as u32;
+            let a_e_mont = e_mont.as_mut_ptr() as u32;
+            let a_d_mont = d_mont.as_mut_ptr() as u32;
+            let a_k_inv = k_inv.as_mut_ptr() as u32;
+            let a_s_mont = s_mont.as_mut_ptr() as u32;
+            let a_t_mont = t_mont.as_mut_ptr() as u32;
+            let a_t_dot_r = t_dot_r.as_mut_ptr() as u32;
+            let a_s_plus_t = s_plus_t.as_mut_ptr() as u32;
+
+            // Phase 1 (Montgomery constant = curve prime p): xR = (k·G).x.
+            let prime_phase = [
+                EccStep::new(EccStepOp::MontConstCalc, a_mont, a_prime, 0),
+                EccStep::new(EccStepOp::PointMul, a_xr, a_base, a_k),
+            ];
+            // Phase 2 (Montgomery constant = order n): r = xR mod n, then
+            // s = k⁻¹·(e + r·d) mod n  (s = k⁻¹·e ; t = k⁻¹·d ; t = t·r ; s = s + t),
+            // finally s back to normal representation.
+            let order_phase = [
+                EccStep::new(EccStepOp::MontConstCalc, a_mont, a_order, 0),
+                EccStep::new(EccStepOp::ModReduction, a_r, a_xr_wide, 0),
+                EccStep::new(EccStepOp::MontReprIn, a_k_mont, a_k, 0),
+                EccStep::new(EccStepOp::MontReprIn, a_r_mont, a_r, 0),
+                EccStep::new(EccStepOp::MontReprIn, a_e_mont, a_digest, 0),
+                EccStep::new(EccStepOp::MontReprIn, a_d_mont, a_d, 0),
+                EccStep::new(EccStepOp::ModInverse, a_k_inv, a_k_mont, 0),
+                EccStep::new(EccStepOp::ModMul, a_s_mont, a_k_inv, a_e_mont),
+                EccStep::new(EccStepOp::ModMul, a_t_mont, a_k_inv, a_d_mont),
+                EccStep::new(EccStepOp::ModMul, a_t_dot_r, a_t_mont, a_r_mont),
+                EccStep::new(EccStepOp::ModAdd, a_s_plus_t, a_s_mont, a_t_dot_r),
+                EccStep::new(EccStepOp::MontReprOut, a_s, a_s_plus_t, 0),
+            ];
+
             // Drive the whole sequence on one held engine so the Montgomery
-            // constant set below stays resident for the ops that follow.
+            // constant set by each phase stays resident for the ops that follow.
             let res = self
                 .pka
                 .with_engine(async |eng| {
-                    // Montgomery constant = curve prime p, then xR = (k·G).x.
-                    eng.ecc_mont_const_calc(curve, prime, mont_scratch).await?;
-                    eng.ecc_point_mul(curve, base_xy, k, xr).await?;
+                    eng.ecc_run(curve, &prime_phase).await?;
 
-                    // Switch the Montgomery constant to the order n for the
-                    // scalar arithmetic, then r = xR mod n (must be non-zero).
-                    // Reduction is double-width: stage xR into the low half of
-                    // the zeroed xr_wide so the hardware reduces `xR ‖ 0`.
-                    eng.ecc_mont_const_calc(curve, order, mont_scratch).await?;
+                    // Reduction is double-width: stage xR into the low half of the
+                    // zeroed xr_wide so the hardware reduces `xR ‖ 0` (its zeroed
+                    // high half is essential, or the reduction yields a wrong `r`).
                     xr_wide[..field].copy_from_slice(&xr[..field]);
-                    eng.ecc_mod_reduction(curve, r, xr_wide).await?;
-                    if r[..field].iter().all(|&b| b == 0) {
-                        return Err(HsmError::InvalidArg);
-                    }
 
-                    // Montgomery form of k, r, e, d.
-                    eng.ecc_mont_repr_in(curve, k_mont, k).await?;
-                    eng.ecc_mont_repr_in(curve, r_mont, r).await?;
-                    eng.ecc_mont_repr_in(curve, e_mont, digest).await?;
-                    eng.ecc_mont_repr_in(curve, d_mont, d).await?;
-
-                    // k⁻¹ mod n, then s = k⁻¹·(e + r·d) mod n:
-                    //   s = k⁻¹·e ; t = k⁻¹·d ; t = t·r ; s = s + t.
-                    eng.ecc_mod_inverse(curve, k_inv, k_mont).await?;
-                    eng.ecc_mod_mul(curve, s_mont, k_inv, e_mont).await?;
-                    eng.ecc_mod_mul(curve, t_mont, k_inv, d_mont).await?;
-                    eng.ecc_mod_mul(curve, t_dot_r, t_mont, r_mont).await?;
-                    eng.ecc_mod_add(curve, s_plus_t, s_mont, t_dot_r).await?;
-
-                    // Back to normal representation (must be non-zero).
-                    eng.ecc_mont_repr_out(curve, s, s_plus_t).await?;
-                    if s[..field].iter().all(|&b| b == 0) {
-                        return Err(HsmError::InvalidArg);
-                    }
-
-                    Ok(())
+                    eng.ecc_run(curve, &order_phase).await
                 })
                 .await;
+
+            // Reject a degenerate signature (`r == 0` or `s == 0`) after the full
+            // sequence — RFC 6979 §3.2 requires advancing to the next candidate,
+            // which the caller does on `InvalidArg`. Deferring the `r == 0` gate
+            // (previously mid-sequence) lets phase 2 run as one uninterrupted
+            // command loop; a zero `r` only wastes the remaining, astronomically
+            // rare PKA ops before this rejects.
+            let res = res.and_then(|()| {
+                if r[..field].iter().all(|&b| b == 0) || s[..field].iter().all(|&b| b == 0) {
+                    Err(HsmError::InvalidArg)
+                } else {
+                    Ok(())
+                }
+            });
 
             // Scrub secret-bearing internal scratch on EVERY exit path (success,
             // degenerate r/s, or a mid-sequence PKA error): the scoped allocator
