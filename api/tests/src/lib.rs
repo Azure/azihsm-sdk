@@ -13,9 +13,9 @@ mod session_tests;
 mod utils;
 
 #[cfg(feature = "emu")]
-mod emu_helpers;
-#[cfg(feature = "emu")]
 mod partition_ex_tests;
+#[cfg(feature = "emu")]
+mod sd;
 #[cfg(feature = "emu")]
 mod session_ex_tests;
 

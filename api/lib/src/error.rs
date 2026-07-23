@@ -65,6 +65,7 @@ pub enum HsmError {
     InvalidContextState = -40,
     Bk3AlreadyInitialized = -41,
     InvalidSession = -42,
+    SdAlreadyInitialized = -43,
     Panic = i32::MIN,
 }
 

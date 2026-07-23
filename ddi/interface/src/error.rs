@@ -7,6 +7,7 @@ use std::convert::Infallible;
 
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
+use azihsm_ddi_tbor_types::TborStatus;
 use thiserror::Error;
 
 use crate::*;
@@ -57,6 +58,11 @@ pub enum DdiError {
     /// Manticore device error
     #[error("Manticore device error")]
     DdiStatus(DdiStatus),
+
+    /// Firmware-signalled TBOR command rejection, carrying the typed
+    /// [`TborStatus`].
+    #[error("TBOR device error")]
+    TborStatus(TborStatus),
 
     /// Linux error
     #[cfg(target_os = "linux")]
@@ -147,11 +153,11 @@ impl From<azihsm_ddi_tbor_codec::DecodeError> for DdiError {
     #[inline]
     fn from(e: azihsm_ddi_tbor_codec::DecodeError) -> Self {
         match e {
-            // FW-signalled error: surface the typed HsmError discriminant
-            // so callers can match on specific codes (InvalidSessionType,
-            // AeadEnvelopeAuthFailed, etc.) instead of losing the detail to a
-            // generic `TborDecodeError`.
-            azihsm_ddi_tbor_codec::DecodeError::FwError(status) => Self::DdiError(status),
+            // FW-signalled error: surface the typed TBOR status so callers
+            // can match on specific codes.
+            azihsm_ddi_tbor_codec::DecodeError::FwError(status) => {
+                Self::TborStatus(TborStatus(status))
+            }
             _ => Self::TborDecodeError,
         }
     }
