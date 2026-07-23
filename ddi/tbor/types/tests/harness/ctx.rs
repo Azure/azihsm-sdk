@@ -3,24 +3,36 @@
 
 //! [`TestCtx`] — the single entry point per integration test.
 //!
-//! Wraps **one** opened backend device (`Dev`) and offers thin
-//! primitives for issuing TBOR ops on it. Tests that need concurrent
-//! or overlapping sessions across multiple fds open additional
-//! [`Dev`]s **outside** of `TestCtx` via
-//! [`crate::harness::fixture::open_extra_dev`], passing
-//! [`TestCtx::path`] to bind to the same underlying device. `TestCtx`
-//! itself does not track those extra fds.
+//! Wraps an opened backend device and offers three small primitives
+//! that capture the only three outcomes a TBOR command test ever
+//! cares about:
+//!
+//! * [`TestCtx::tbor`] — issue an `OP_TBOR` request and return the
+//!   decoded response or a [`DdiError`] for the caller to inspect.
+//! * [`TestCtx::expect_fw_reject`] — issue a request that *must* be
+//!   rejected by the FW dispatcher with a specific [`TborStatus`],
+//!   panicking with diagnostic context otherwise.
+//! * [`TestCtx::expect_decode_error`] — issue a request whose response
+//!   *must* fail host-side TBOR decoding, panicking otherwise.
+//!
+//! Test files therefore never reach for the bare `Dev` handle or the
+//! `assert_*` helpers in [`crate::harness::assertions`] directly; the
+//! ctx is the single funnel that future cross-cutting changes (tracing,
+//! retry policy, fault injection) can hook into without touching every
+//! test.
 //!
 //! Cross-test isolation (process-global lock + factory reset) lives
-//! in [`crate::harness::fixture::open_dev_parts`], which this type
-//! calls through.
+//! in [`crate::harness::fixture::open_dev`], which this type calls
+//! through. Tests that mix-and-match raw [`open_dev`] calls and
+//! [`TestCtx`] both get the same guarantee.
 //!
-//! `TestCtx` owns exactly one `Dev`. Tests that need overlapping
-//! sessions across multiple fds open extra `Dev`s themselves at the
-//! call site so this type stays free of fd-routing state.
+//! The raw device handle deliberately has **no public accessor** on
+//! this type. All device interactions must flow through one of the
+//! TBOR methods (`tbor`, `session_open_init`, `psk_change`, ...) or
+//! the narrow non-TBOR pass-throughs (`erase`, `cert_chain_info`,
+//! `get_certificate`). This forces every test path through the
+//! shared assertion funnel.
 
-use azihsm_ddi::AzihsmDdi;
-use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DdiResult;
@@ -30,12 +42,12 @@ use azihsm_ddi_tbor_types::TborOpReq;
 use azihsm_ddi_tbor_types::TborPartFinalResp;
 use azihsm_ddi_tbor_types::TborPartInitResp;
 use azihsm_ddi_tbor_types::TborStatus;
-use parking_lot::MutexGuard;
 
 use crate::harness::api_rev::helper_api_rev_tbor;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::assertions::assert_tbor_decode_error;
-use crate::harness::fixture::open_dev_parts;
+use crate::harness::fixture::open_dev;
+use crate::harness::fixture::TestDev;
 use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
 use crate::harness::session::psk_change as psk_change_helper;
@@ -53,59 +65,31 @@ use crate::harness::session::SessionOpenInitOptions;
 /// security-domain inputs.
 const DEFAULT_SATA_THUMBPRINT: [u8; 48] = [0x5A; 48];
 
-/// Backend device handle, compile-time-selected by
-/// [`AzihsmDdi::default()`] — `DdiEmu` under `--features emu`,
-/// `DdiSock` under `--features sock`, `DdiMock` under `--features
-/// mock`, and the native `DdiNix` / `DdiWin` when no backend feature
-/// is enabled.
-type Dev = <AzihsmDdi as Ddi>::Dev;
-
 /// One-test fixture: an opened backend device handle (with the
 /// process-global test lock held for its lifetime) plus a thin layer
 /// of error-shape assertions. Constructed once per `#[test]`.
-///
-/// Tests that need extra concurrent fds open them themselves via
-/// [`crate::harness::fixture::open_extra_dev`] using
-/// [`Self::path`] — those extra `Dev`s are not tracked by `TestCtx`.
 pub struct TestCtx {
-    dev: Dev,
-    /// Path the primary `Dev` was opened on — captured at open time.
-    /// Tests that need additional fds pass this to
-    /// [`crate::harness::fixture::open_extra_dev`] so every extra fd
-    /// binds to the **same** underlying device as the primary.
-    /// Reusing the path (instead of re-enumerating via
-    /// `dev_info_list().first()`) avoids relying on backend-order
-    /// stability on a multi-device rig.
-    path: String,
-    _guard: MutexGuard<'static, ()>,
+    dev: TestDev,
 }
 
 impl TestCtx {
-    /// Open the backend device via [`open_dev_parts`] — see its docs
-    /// for the locking + factory-reset semantics.
+    /// Open the backend device via [`open_dev`] — see its docs for
+    /// the locking + factory-reset semantics.
     pub fn new() -> Self {
-        let (dev, guard, path) = open_dev_parts();
-        Self {
-            dev,
-            path,
-            _guard: guard,
-        }
+        Self { dev: open_dev() }
     }
 
-    /// Path (backend-specific string, e.g. `/dev/azihsm0` on nix,
-    /// `\\.\AZIHSM0` on win, an emu handle on emu) the primary
-    /// `Dev` was opened on. Tests that need an additional fd on the
-    /// same underlying device pass this to
-    /// [`crate::harness::fixture::open_extra_dev`].
+    /// The backend path this ctx's [`TestDev`] was opened on. Multi-fd
+    /// tests thread it into [`crate::harness::open_extra_dev`] so every
+    /// extra `Dev` binds to the same underlying device as the primary.
     pub fn path(&self) -> &str {
-        &self.path
+        self.dev.path()
     }
 
-    /// Factory-reset the partition. On emu this issues the emulator's
-    /// reset; on the native backend it issues NSSR. Under `--features
-    /// mock` this call is unavailable (the mock backend has no state
-    /// to reset).
-    #[cfg(not(feature = "mock"))]
+    /// Factory-reset the partition. Available only on `emu`; the
+    /// determinism tests in `commands::part_init` call this between
+    /// cold-restart iterations.
+    #[cfg(feature = "emu")]
     pub fn erase(&self) -> DdiResult<()> {
         self.dev.erase()
     }
@@ -113,8 +97,10 @@ impl TestCtx {
     /// Issue an `OP_TBOR` request and return the raw `DdiResult`.
     ///
     /// Use this when the test needs to inspect both `Ok` and `Err`
-    /// arms itself. For the common "must reject with status X" shape,
-    /// prefer [`Self::expect_fw_reject`].
+    /// arms itself (e.g. asserting a specific response field on
+    /// success, or matching on a structural decode error variant).
+    /// For the common "must reject with status X" shape, prefer
+    /// [`Self::expect_fw_reject`].
     pub fn tbor<R: TborOpReq>(&self, req: &R) -> DdiResult<R::OpResp> {
         let mut cookie = None;
         self.dev.exec_op_tbor(req, None, &mut cookie)
@@ -184,6 +170,10 @@ impl TestCtx {
     /// Issue `req`, assert the response failed host-side TBOR decoding
     /// (i.e. surfaced as [`DdiError::TborDecodeError`]), and return
     /// the matched error.
+    ///
+    /// This is distinct from [`Self::expect_fw_reject`]: a decode
+    /// error means the response was structurally invalid relative to
+    /// the schema, not that the FW logically rejected the request.
     #[track_caller]
     pub fn expect_decode_error<R: TborOpReq>(&self, req: &R) -> DdiError
     where
@@ -203,8 +193,10 @@ impl TestCtx {
     //
     // Thin wrappers around the free helpers in `harness::session` so
     // tests can write `ctx.psk_change(&session, &psk)` instead of
-    // reaching through a raw device handle. All operate on the single
-    // primary `Dev`.
+    // reaching through a raw device handle. The free helpers remain
+    // in place for documentation purposes (their signatures describe
+    // what bytes reach the wire); the methods are the ergonomic
+    // test-facing API.
     // -------------------------------------------------------------------
 
     /// Run Phase 1 of the TBOR session handshake with happy-path
@@ -246,7 +238,10 @@ impl TestCtx {
 
     /// One-shot happy-path handshake that returns the raw
     /// [`SessionHandshake`] *without* a `SessionGuard`. Callers are
-    /// responsible for the matching [`Self::session_close`].
+    /// responsible for the matching [`Self::session_close`]. Used
+    /// when the test needs to compare two open sessions opened under
+    /// a non-default PSK, or to inspect the handshake before closing
+    /// it explicitly.
     pub fn open_session_raw(
         &self,
         psk_id: u8,
@@ -256,7 +251,9 @@ impl TestCtx {
         self.session_open_finish(pending)
     }
 
-    /// Issue `SessionClose(session_id)` on the primary `Dev`.
+    /// Issue `SessionClose(session_id)`. Used by negative-path
+    /// tests (double-close, unknown id) and by callers that hold a
+    /// raw [`SessionHandshake`] outside of a [`SessionGuard`].
     pub fn session_close(&self, session_id: u16) -> DdiResult<()> {
         session_close_helper(&self.dev, session_id)
     }
@@ -324,7 +321,8 @@ impl TestCtx {
         part_final_helper(&self.dev, session, part_policy, prev_local_mk_backup, certs)
     }
 
-    /// Issue `ApiRev` and return the decoded response.
+    /// Issue `ApiRev` and return the decoded response. Thin
+    /// pass-through over the free helper.
     pub fn api_rev(&self) -> DdiResult<TborApiRevResp> {
         helper_api_rev_tbor(&self.dev)
     }
