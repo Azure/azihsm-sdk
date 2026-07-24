@@ -55,6 +55,11 @@ semihosting = [
 # Passed through to the fault crate; off by default.
 fault-stackdump = ["azihsm_fw_uno_fault/fault-stackdump"]
 
+# THROWAWAY hardware bring-up: seed a hardcoded RSA-2048 unwrapping key into a
+# partition's GSRAM slot on first use (see the uno PAL feature of the same
+# name). OFF by default so the private key never ships in a production image.
+unwrapping-key-fixture = ["azihsm_fw_uno_pal/unwrapping-key-fixture"]
+
 # Trace output backend (mutually exclusive). Selecting one compiles the
 # trace emitter at INFO level and routes output to that backend. With
 # neither enabled, trace output is disabled.

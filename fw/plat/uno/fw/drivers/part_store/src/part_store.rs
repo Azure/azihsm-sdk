@@ -1150,7 +1150,11 @@ impl Partition {
     #[inline(never)]
     pub fn clear_unwrapping_key_bk(mut self) {
         let slot = self.slot_mut();
-        slot.unwrapping_key_bk = [0u8; UNWRAPPING_KEY_BK_LEN];
+        // Volatile per-byte wipe (+ fence) of the key payload so the compiler
+        // cannot elide it, matching the repo's secure-wipe pattern for key
+        // material. SAFETY: `unwrapping_key_bk` is an align-1 packed byte array
+        // branded DMA-accessible; a `&mut DmaBuf` view is valid for the wipe.
+        unsafe { DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk) }.zeroize();
         slot.unwrapping_key_bk_valid = false;
     }
 

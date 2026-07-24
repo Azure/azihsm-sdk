@@ -56,3 +56,9 @@ default = []
 # that cannot snoop semihosting (e.g. production) should disable this
 # feature — boot_handshake alone is sufficient.
 semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
+# THROWAWAY hardware bring-up: compile in a hardcoded RSA-2048 unwrapping-key
+# fixture and seed it into a partition's GSRAM slot on first use when the HSP
+# ephemeral-key monitor has not published a real key yet. OFF by default so the
+# private key never ships in a production image; remove this feature (and the
+# `unwrapping_key_fixture` module) once the HSP side lands.
+unwrapping-key-fixture = []

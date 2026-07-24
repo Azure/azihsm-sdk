@@ -48,6 +48,7 @@ mod pal;
 mod part;
 mod seed;
 mod session;
+#[cfg(feature = "unwrapping-key-fixture")]
 mod unwrapping_key_fixture;
 mod vault;
 

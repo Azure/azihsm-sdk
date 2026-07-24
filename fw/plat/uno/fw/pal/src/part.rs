@@ -528,8 +528,7 @@ impl HsmPartitionManager for UnoHsmPal {
         let pid = io.pid();
 
         // Fast path: return early if the key is already imported. Otherwise
-        // read the 516-byte GSRAM backup slot (seeding it with the throwaway
-        // test key first if the HSP has not published one yet). Both checks
+        // read the 516-byte GSRAM backup slot the HSP published. Both checks
         // read the slot without holding its borrow across the `.await` below;
         // `unwrapping_key_bk` returns `&'static` GSRAM memory that stays put
         // while the slot is marked valid, so it is safe to read after the slot
@@ -540,13 +539,23 @@ impl HsmPartitionManager for UnoHsmPal {
                 return Ok(());
             }
             if !part.unwrapping_key_bk_valid() {
-                // THROWAWAY bring-up: the HSP ephemeral-key monitor is not yet
-                // live, so no key has been published into GSRAM. Seed the slot
-                // with a hardcoded test key so the import path below can run
-                // end-to-end. Self-healing: once the HSP publishes a real key
-                // the slot is already valid and this branch is skipped. Delete
-                // this block (and `unwrapping_key_fixture`) when the HSP side
+                // No key has been published into this partition's GSRAM slot
+                // yet. Leave the slot invalid and return so `GetUnwrappingKey`
+                // surfaces `PendingKeyGeneration` and the host retries once the
+                // HSP ephemeral-key monitor has run.
+                #[cfg(not(feature = "unwrapping-key-fixture"))]
+                return Ok(());
+
+                // THROWAWAY hardware bring-up (opt-in via the
+                // `unwrapping-key-fixture` Cargo feature): the HSP monitor is
+                // not live on the EVB, so seed the slot with a hardcoded test
+                // key to exercise the import path end-to-end. The fixture (key
+                // bytes + this seeding) is compiled out of production builds.
+                // Self-healing: once the HSP publishes a real key the slot is
+                // already valid and this branch is skipped. Delete the feature,
+                // this block, and `unwrapping_key_fixture` when the HSP side
                 // lands.
+                #[cfg(feature = "unwrapping-key-fixture")]
                 part.set_unwrapping_key_bk(
                     &crate::unwrapping_key_fixture::UNWRAPPING_KEY_TEST_PKA_LE,
                 )?;
@@ -570,7 +579,7 @@ impl HsmPartitionManager for UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
-        let kid = crate::vault::vault(&admin_io)
+        let create_res = crate::vault::vault(&admin_io)
             .create(
                 self,
                 &admin_io,
@@ -580,7 +589,15 @@ impl HsmPartitionManager for UnoHsmPal {
                 None,
                 attrs,
             )
-            .await?;
+            .await;
+
+        // Wipe the raw RSA private key from the transient DMA scratch as soon
+        // as the import finishes — on success or failure. `UnoScopedAlloc`
+        // drop only rewinds the bump watermark, so without this volatile wipe
+        // the private key would linger in the DMA region until a later
+        // allocation happens to overwrite it.
+        key_buf.zeroize();
+        let kid = create_res?;
 
         // Commit: record the vault id and release the GSRAM slot so the
         // HSP can reuse it.  The caller holds the partition lock, so no
