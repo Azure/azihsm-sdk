@@ -48,6 +48,7 @@ mod pal;
 mod part;
 mod seed;
 mod session;
+mod unwrapping_key_fixture;
 mod vault;
 
 /// Re-export of the PAL trait types consumed by uno-PAL users.

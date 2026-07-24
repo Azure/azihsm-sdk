@@ -1154,6 +1154,26 @@ impl Partition {
         slot.unwrapping_key_bk_valid = false;
     }
 
+    /// Publishes a 516-byte PKA-LE RSA-2048 key into this partition's slot and
+    /// marks it valid — the producer side of [`unwrapping_key_bk`], normally
+    /// owned by the HSP ephemeral-key monitor. Writes the payload *before*
+    /// setting the valid flag so a consumer polling the flag never observes
+    /// `valid == true` over a partially-written key.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::InvalidArg`] — `key.len() != 516`.
+    #[inline(never)]
+    pub fn set_unwrapping_key_bk(mut self, key: &[u8]) -> HsmResult<()> {
+        if key.len() != UNWRAPPING_KEY_BK_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let slot = self.slot_mut();
+        slot.unwrapping_key_bk.copy_from_slice(key);
+        slot.unwrapping_key_bk_valid = true;
+        Ok(())
+    }
+
     /// Reads the partition-local masking key (`PartLocalMK`) handle.
     #[inline(never)]
     pub fn local_mk_key_id(self) -> Option<HsmKeyId> {

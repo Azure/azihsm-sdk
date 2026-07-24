@@ -10,16 +10,18 @@
 //!
 //! The unwrapping key id lives in the partition's
 //! [`RSA_UNWRAPPING_KEY_ID`](crate::part_state::part_unwrapping_key_id)
-//! property; this handler simply reads it.  RSA key generation is
-//! expensive, so it is never done at partition enable — each PAL
-//! materialises the key behind the property read instead: the std
-//! (emulator) PAL generates it lazily and synchronously on first read,
-//! while hardware PALs generate it in the background from partition
-//! init and leave the property unset until ready.  An absent id
-//! therefore means generation is still pending, which this handler
-//! surfaces as `PendingKeyGeneration` so the host retries.  No public
-//! key is cached: it is derived from the vault
-//! private key on demand (matching the reference firmware).
+//! property.  The key is not generated on-device: the HSP publishes it
+//! into a per-partition GSRAM slot, and the PAL imports it into the
+//! vault (once) behind [`provision_unwrapping_key`] on first use, which
+//! this handler calls under the partition lock before reading the id.
+//! An absent id means the key is not yet available — the HSP has not
+//! published it, or a hardware PAL is still materialising it — which this
+//! handler surfaces as `PendingKeyGeneration` so the host retries.  The
+//! emulator PAL instead generates the key lazily behind the property
+//! read.  No public key is cached: it is derived from the vault private
+//! key on demand (matching the reference firmware).
+//!
+//! [`provision_unwrapping_key`]: azihsm_fw_hsm_pal_traits::HsmPartitionManager::provision_unwrapping_key
 
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::get_unwrapping_key::DdiGetUnwrappingKeyReq;
@@ -38,13 +40,20 @@ pub(crate) async fn get_unwrapping_key<'p, P: HsmPal>(
     let _body: DdiGetUnwrappingKeyReq = decoder.decode_data()?;
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
+    // Import the unwrapping key on first use.  It is not generated
+    // in HSM core: the HSP publishes it into a per-partition GSRAM slot and
+    // the PAL imports it (once) into the vault behind this hook, recording
+    // its id in the property read below.  Take the partition lock first so
+    // the multi-step import is serialised against a concurrent first use;
+    // the hook is a no-op where the key is materialised by another route
+    // (e.g. the emulator generates it lazily behind the property read).
+    let _lock = pal.partition_lock(io).await?;
+    pal.provision_unwrapping_key(io).await?;
+
     // Read the partition's RSA-2048 unwrapping key id from its property.
-    // The PAL materialises the key behind this read: the std PAL
-    // generates it synchronously on first read (so it never reports the
-    // id as absent), while hardware PALs generate it in the background
-    // and leave the property unset until ready.  An absent id therefore
-    // means generation is still pending — surface it as such so the host
-    // retries.
+    // An absent id means the key is not yet available (the HSP has not
+    // published it, or a hardware PAL is still generating it) — surface it
+    // as such so the host retries.
     let key_id = match crate::part_state::part_unwrapping_key_id(pal, io) {
         Ok(id) => id,
         Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),

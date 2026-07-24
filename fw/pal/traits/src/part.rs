@@ -430,6 +430,28 @@ pub trait HsmPartitionManager {
     /// [`HsmResult<()>`] — `Ok(())` on success.  Idempotent on an
     /// already-absent slot (also returns `Ok(())`).
     fn part_prop_clear(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<()>;
+
+    /// Materialise the partition's RSA-2048 unwrapping key into the
+    /// vault on first use, if it is available but not yet imported.
+    ///
+    /// The unwrapping key is not generated on-device: the HSP publishes
+    /// it into a per-partition GSRAM backup slot and this hook imports
+    /// it (once) into the partition vault, recording the vault id in the
+    /// [`RSA_UNWRAPPING_KEY_ID`](PartPropId::RSA_UNWRAPPING_KEY_ID)
+    /// property.  The `GetUnwrappingKey` handler calls it under the
+    /// partition lock before reading that id, so the multi-step
+    /// import (read slot → `vault_key_create` → set id → release slot)
+    /// is serialised against a concurrent first use.
+    ///
+    /// The default is a no-op, for PALs that materialise the key by
+    /// another route — e.g. the emulator generates it lazily and
+    /// synchronously behind the property read.  When the key is not yet
+    /// available this call leaves the id absent, which the handler
+    /// surfaces as [`HsmError::PendingKeyGeneration`] so the host
+    /// retries.
+    async fn provision_unwrapping_key(&self, _io: &impl HsmIo) -> HsmResult<()> {
+        Ok(())
+    }
 }
 
 /// Length of the per-partition `BK_BOOT` boot-key material in bytes.
