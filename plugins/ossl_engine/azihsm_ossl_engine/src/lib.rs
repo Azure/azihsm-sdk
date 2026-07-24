@@ -130,6 +130,9 @@ mod engine_impl {
             let data = slot
                 .get(engine)
                 .ok_or(EngineError::NullParam("engine_data"))?;
+            // Key ids (azihsm:// URIs) must be UTF-8. A non-UTF-8 path — legal on
+            // Unix but exotic for a masked-key file — is rejected rather than
+            // handled as raw bytes; revisit with OsStr/byte parsing if needed.
             let key_id = key_id
                 .to_str()
                 .map_err(|_| EngineError::Other("key id is not valid UTF-8".into()))?;

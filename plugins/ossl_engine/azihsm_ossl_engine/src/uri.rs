@@ -12,6 +12,10 @@
 //! The identifier is a filesystem path to a masked-key blob; `type=` is
 //! mandatory. `aes` is a valid provider key type but is not loadable as a
 //! private key here, so it is rejected.
+//!
+//! Note: unlike the provider's STORE — which ignores unrecognized attributes —
+//! this parser is stricter and rejects unknown or malformed attributes, so a
+//! typo fails fast rather than being silently dropped.
 
 use std::path::PathBuf;
 

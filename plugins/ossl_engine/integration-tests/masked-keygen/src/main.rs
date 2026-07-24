@@ -12,11 +12,21 @@
 
 #[cfg(feature = "integration")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
     let out = std::env::args()
         .nth(1)
         .ok_or("usage: masked-keygen <output-blob-path>")?;
     let blob = azihsm_ossl_engine::generate_masked_ec_p384_from_env()?;
-    std::fs::write(&out, &blob)?;
+    // Owner-only: the blob is key material.
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&out)?;
+    f.write_all(&blob)?;
     Ok(())
 }
 

@@ -56,6 +56,11 @@ pub struct EngineData {
     /// the HSM; that runs when this `EngineData` is dropped by the destroy
     /// handler, while the `.so` is loaded. Declared before `hsm` so it drops
     /// first, while the session is still open.
+    ///
+    /// Keys therefore accumulate for the engine's lifetime: repeated loads (even
+    /// of the same URI) each retain a handle. That is fine for the usual load-key-
+    /// once pattern; a URI-keyed dedupe cache could bound it if a workload ever
+    /// loads keys repeatedly.
     //
     // `Box` gives each key a stable heap address: keyload stashes a raw pointer
     // to it in EC_KEY ex_data, which must stay valid across `Vec` growth — so

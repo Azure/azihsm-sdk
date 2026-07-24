@@ -26,6 +26,20 @@ use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use serial_test::serial;
 
+/// Write owner-only (0600) key material.
+fn write_secret(path: &std::path::Path, data: &[u8]) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    f.write_all(data).unwrap();
+}
+
 /// Provision the shared keymat and export the `AZIHSM_*` environment both the
 /// generator and the engine read, returning the keymat dir.
 #[allow(unsafe_code)]
@@ -38,20 +52,19 @@ fn setup_keymat() -> PathBuf {
     std::fs::create_dir(&res).unwrap();
     std::fs::set_permissions(&res, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
 
-    // OBK: 48 random bytes (= BK3).
+    // OBK: 48 random bytes (= BK3). Owner-only — it seeds HSM key derivation.
     let mut obk = [0u8; 48];
     openssl::rand::rand_bytes(&mut obk).unwrap();
-    std::fs::write(dir.join("obk.bin"), obk).unwrap();
+    write_secret(&dir.join("obk.bin"), &obk);
 
     // Caller POTA P-384 keypair, PKCS#8 priv + SPKI pub (what azihsm_crypto wants).
     let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
     let ec = EcKey::generate(&group).unwrap();
     let pkey = PKey::from_ec_key(ec).unwrap();
-    std::fs::write(
-        dir.join("pota_priv.der"),
-        pkey.private_key_to_pkcs8().unwrap(),
-    )
-    .unwrap();
+    write_secret(
+        &dir.join("pota_priv.der"),
+        &pkey.private_key_to_pkcs8().unwrap(),
+    );
     std::fs::write(dir.join("pota_pub.der"), pkey.public_key_to_der().unwrap()).unwrap();
 
     let set = |k: &str, v: String| {

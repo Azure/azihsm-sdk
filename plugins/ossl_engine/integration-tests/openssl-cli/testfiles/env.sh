@@ -11,6 +11,9 @@ set -eu
 : "${ENGINE_SO:?ENGINE_SO must point to libazihsm_ossl_engine.so}"
 : "${MASKED_KEYGEN:?MASKED_KEYGEN must point to the masked-keygen helper}"
 
+# Owner-only, set before any key material or config is created below.
+umask 0077
+
 # Isolated keymat dir (xtask wipes target/test-keymat before a run).
 KEYDIR="${AZIHSM_ENGINE_TEST_KEYDIR:-$PWD/target/test-keymat/engine-cli}"
 mkdir -p "$KEYDIR"
@@ -40,7 +43,6 @@ export AZIHSM_MOBK_PATH="$KEYDIR/mobk.bin"
 export AZIHSM_POTA_SOURCE=caller
 export AZIHSM_POTA_PRIVATE_KEY_PATH="$KEYDIR/pota_priv.der"
 export AZIHSM_POTA_PUBLIC_KEY_PATH="$KEYDIR/pota_pub.der"
-umask 0077
 
 # openssl.cnf that dynamically loads the engine so `-engine azihsm` resolves.
 cat > "$KEYDIR/openssl.cnf" <<EOF
