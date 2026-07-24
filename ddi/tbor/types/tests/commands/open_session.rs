@@ -302,12 +302,13 @@ fn open_session_fills_table_then_recovers() {
             Ok(h) => open_slots.push((dev, h.session_id)),
             Err(e) => {
                 // FW rejected — treat as "table full". Verify it is
-                // an FW-side rejection (not a driver / decode fault)
-                // before ending the ramp-up. `dev` drops here,
-                // releasing the fd cleanly (no session was allocated).
-                assert!(
-                    matches!(e, azihsm_ddi_interface::DdiError::DdiError(_)),
-                    "table-full rejection must be FW-side, got {e:?}",
+                // a FW-side `VaultSessionLimitReached` (not a driver
+                // / decode fault) before ending the ramp-up. `dev`
+                // drops here, releasing the fd cleanly (no session
+                // was allocated).
+                crate::harness::assertions::assert_fw_rejects(
+                    &e,
+                    TborStatus::VaultSessionLimitReached,
                 );
                 rejection_seen = true;
                 break;
@@ -473,10 +474,7 @@ fn pk_init_all_zero_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("all-zero pk_init must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW-side rejection for all-zero pk_init, got {err:?}",
-    );
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
 /// `pk_init` with the SEC1 uncompressed prefix (`0x04`) but garbage
@@ -496,10 +494,7 @@ fn pk_init_not_on_curve_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("off-curve pk_init must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW-side rejection for off-curve pk_init, got {err:?}",
-    );
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,10 +551,7 @@ fn pk_init_x_as_prime_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("pk_init with X = P-384 prime must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW-side rejection for X-as-prime pk_init, got {err:?}",
-    );
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 /// Symmetric to `pk_init_x_as_prime_rejected` — guards against
@@ -577,10 +569,7 @@ fn pk_init_y_as_prime_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("pk_init with Y = P-384 prime must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW-side rejection for Y-as-prime pk_init, got {err:?}",
-    );
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
@@ -607,10 +596,7 @@ fn pk_init_single_byte_tampered_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("single-bit-tampered pk_init must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW-side rejection for tampered pk_init, got {err:?}",
-    );
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPointValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
