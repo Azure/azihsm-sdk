@@ -234,9 +234,6 @@ pub(crate) fn part_final_ex(
     if part_policy.len() != PART_POLICY_LEN {
         return Err(HsmError::InvalidArgument);
     }
-    if pta_cert_chain.is_empty() || pta_cert_chain.len() > MAX_CERTS {
-        return Err(HsmError::InvalidArgument);
-    }
     // The firmware treats a non-empty `prev_local_mk_backup` as a
     // fixed-size envelope of exactly `LOCAL_MK_BACKUP_LEN` bytes, so
     // reject any other present length up front (deterministic guard).
@@ -244,27 +241,9 @@ pub(crate) fn part_final_ex(
         return Err(HsmError::InvalidArgument);
     }
 
-    // Each DER cert ships as its own out-of-band SGL Data Block; the
-    // firmware locates each one by the descriptor's `index` (its position
-    // in the OOB item list) and reads `length` bytes from it.
+    // Each DER cert ships as its own out-of-band SGL Data Block.
     let mut oob: Vec<&[u8]> = Vec::with_capacity(pta_cert_chain.len());
-    let mut cert_descriptors = Vec::with_capacity(pta_cert_chain.len());
-    for (i, desc) in pta_cert_chain.iter().enumerate() {
-        let cert = desc.cert;
-        let length = cert.len();
-        // An empty cert is not valid DER and would yield a zero-length
-        // descriptor; reject it up front alongside the other
-        // deterministic host-side guards.
-        if length == 0 || length > u16::MAX as usize {
-            return Err(HsmError::InvalidArgument);
-        }
-        // `i` is bounded by the `MAX_CERTS` check above, so it fits `u8`.
-        cert_descriptors.push(CertDescriptor {
-            index: i as u8,
-            length: tbor_int::U16::new(length as u16),
-        });
-        oob.push(cert);
-    }
+    let cert_descriptors = push_cert_chain(pta_cert_chain, &mut oob, MAX_CERTS)?;
 
     let mut req = TborPartFinalReq {
         session_id,
@@ -291,6 +270,48 @@ pub(crate) fn part_final_ex(
         return Err(HsmError::InternalError);
     }
     Ok(HsmPartFinalExResult::from(resp))
+}
+
+/// Partition identity returned by a `PartInfo` query: the stable PID plus
+/// the raw ECC-P384 identity public key.
+///
+/// DDI-internal carrier only. Public callers reach these fields through
+/// the [`HsmPartition::pid`] / [`HsmPartition::ex_pub_key`] getters, so the
+/// compound type never surfaces in the public API.
+pub(crate) struct HsmPartInfo {
+    /// 16-byte partition identity (PID).
+    pub pid: Vec<u8>,
+    /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B).
+    pub pid_pub_key: Vec<u8>,
+}
+
+/// Converts the DDI/wire `PartInfo` response into the DDI-internal
+/// [`HsmPartInfo`] with owned bytes, keeping the wire response type
+/// confined to the DDI layer.
+impl From<TborPartInfoResp> for HsmPartInfo {
+    fn from(resp: TborPartInfoResp) -> Self {
+        Self {
+            pid: resp.pid.to_vec(),
+            pid_pub_key: resp.pid_pub_key.to_vec(),
+        }
+    }
+}
+
+/// Issue `PartInfo` on the partition, returning its identity (PID) and
+/// raw identity public key.
+///
+/// This is a partition-level query and carries no session id.
+///
+/// # Errors
+///
+/// Surfaces DDI/device failures from the round-trip.
+pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let mut cookie = None;
+    dev.exec_op_tbor(&TborPartInfoReq::new(), None, &mut cookie)
+        .map(HsmPartInfo::from)
+        .map_err(HsmError::from)
 }
 
 #[cfg(test)]

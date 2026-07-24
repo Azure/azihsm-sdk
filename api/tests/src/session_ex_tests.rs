@@ -11,7 +11,7 @@
 
 use azihsm_api::*;
 
-use crate::emu_helpers::*;
+use crate::utils::emu_helpers::*;
 
 /// Happy path: CO pairs with an Authenticated session and returns a
 /// live `HsmSession` over the public API.
