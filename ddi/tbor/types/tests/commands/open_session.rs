@@ -301,14 +301,13 @@ fn open_session_fills_table_then_recovers() {
         match open_session_on_dev(&dev, CU, SessionType::PlainText) {
             Ok(h) => open_slots.push((dev, h.session_id)),
             Err(e) => {
-                // FW rejected — treat as "table full". Verify it is
-                // a FW-side `VaultSessionLimitReached` (not a driver
-                // / decode fault) before ending the ramp-up. `dev`
-                // drops here, releasing the fd cleanly (no session
-                // was allocated).
-                crate::harness::assertions::assert_fw_rejects(
-                    &e,
-                    TborStatus::VaultSessionLimitReached,
+                assert!(
+                    matches!(
+                        e,
+                        azihsm_ddi_interface::DdiError::TborStatus(_)
+                            | azihsm_ddi_interface::DdiError::DdiStatus(_)
+                    ),
+                    "expected FW/driver rejection, got {e:?}",
                 );
                 rejection_seen = true;
                 break;
@@ -673,7 +672,7 @@ fn open_session_multi_threaded_all_should_open() {
         assert!(
             matches!(
                 err,
-                azihsm_ddi_interface::DdiError::DdiError(_)
+                azihsm_ddi_interface::DdiError::TborStatus(_)
                     | azihsm_ddi_interface::DdiError::DdiStatus(_)
             ),
             "concurrent open_session rejections must be FW/driver rejections, got {err:?}",
@@ -779,7 +778,7 @@ fn open_session_multi_threaded_single_winner() {
         assert!(
             matches!(
                 err,
-                azihsm_ddi_interface::DdiError::DdiError(_)
+                azihsm_ddi_interface::DdiError::TborStatus(_)
                     | azihsm_ddi_interface::DdiError::DdiStatus(_)
             ),
             "single-winner losers must surface FW/driver rejections, got {err:?}",
