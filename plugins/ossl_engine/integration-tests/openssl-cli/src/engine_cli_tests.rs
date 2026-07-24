@@ -4,10 +4,8 @@
 //! CLI integration tests for the OpenSSL 1.1.x engine, driven by `lit`.
 //!
 //! Each `.sh` script loads a key through the real `ENGINE_load_private_key`
-//! path — `openssl … -engine azihsm -inform engine -in azihsm://…` — against a
-//! dynamically loaded engine `.so`, exercising callback registration, the C
-//! trampoline, engine ex_data lookup, and ownership transfer that the in-crate
-//! unit tests (which call `keyload::load_key` directly) bypass.
+//! path — `openssl … -engine azihsm -inform engine -in azihsm://…` — the load
+//! path the in-crate unit tests (which call `keyload::load_key` directly) bypass.
 //!
 //! Requires (set by `xtask integration-tests` / the engine matrix):
 //! - `OPENSSL_BIN`     — the OpenSSL 1.1.x `openssl` binary

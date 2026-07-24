@@ -145,15 +145,9 @@ fn load_ec(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*m
     build_ec_pkey(engine, data, &der, priv_key)
 }
 
-/// Build the returned `EVP_PKEY`: an engine-bound `EC_KEY` carrying the public
-/// key (from `der`) plus the live HSM key.
-///
-/// The `EC_KEY` is created with [`Engine::new_ec_key`], which takes a functional
-/// reference on the engine that `EC_KEY_free` releases. OpenSSL therefore keeps
-/// the engine — and `EngineData`, and this `.so` — alive as long as the returned
-/// key is alive, so the non-owning HSM-key pointer stashed in the `EC_KEY`
-/// ex_data (and the sign/derive callbacks that read it) can never dangle even if
-/// the `EVP_PKEY` outlives the caller's `ENGINE` handle.
+/// Build the returned `EVP_PKEY`: an engine-bound `EC_KEY` (via
+/// [`Engine::new_ec_key`] — see the module docs for why the binding matters)
+/// carrying the public key from `der` plus the live HSM key.
 #[allow(unsafe_code)]
 fn build_ec_pkey(
     engine: &Engine,

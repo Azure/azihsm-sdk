@@ -163,10 +163,8 @@ jobs:
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_ossl_engine.so"
 
-      # Integration tests drive the real ENGINE_load_private_key path end to end:
-      # the masked-keygen helper (mock HSM) stages a masked blob out-of-process,
-      # then the CLI (openssl -engine) and ABI (ENGINE C API) suites load it back.
-      # They need a mock-backed engine .so, so (re)build with `engine,mock`.
+      # The integration suites load a key through the engine end to end; they
+      # need a mock-backed .so, so (re)build it and the masked-key generator.
       - name: Build engine (mock) + generator for integration tests
         run: |
           cargo build -p azihsm_ossl_engine --features engine,mock
@@ -181,8 +179,7 @@ jobs:
           rm -rf "$AZIHSM_ENGINE_TEST_KEYDIR"
           cargo nextest run -p engine-integration-tests-cli --features integration --no-fail-fast
 
-      # `!cancelled()` so the ABI check runs even if the CLI one fails, giving
-      # two independent PR checks.
+      # !cancelled(): run even if the CLI step failed, so the two are independent checks.
       - name: Integration tests — ABI (ENGINE C API)
         if: ${{ !cancelled() }}
         run: |

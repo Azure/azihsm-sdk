@@ -3,20 +3,14 @@
 
 //! ABI integration test for the OpenSSL 1.1.x engine.
 //!
-//! Drives the real C API the way an application would: dynamically load the
-//! engine `.so` (`ENGINE_load_dynamic` + `SO_PATH`/`ID`/`LOAD`), `ENGINE_init`,
-//! then `ENGINE_load_private_key` on an `azihsm://` URI, and confirms a usable
-//! EC public key comes back. This exercises callback registration, the C
-//! trampoline, engine ex_data lookup, `CStr` conversion, and ownership transfer
-//! that the in-crate unit tests (calling `keyload::load_key` directly) bypass.
+//! Drives the real C API: `ENGINE_by_id("dynamic")` + `SO_PATH`/`ID`/`LOAD`,
+//! `ENGINE_init`, then `ENGINE_load_private_key` on an `azihsm://` URI, and
+//! confirms a usable EC public key comes back — the load path the in-crate unit
+//! tests (which call `keyload::load_key` directly) bypass.
 //!
-//! Requires (set by `xtask integration-tests` / the engine matrix):
-//! - `ENGINE_SO`     — path to `libazihsm_ossl_engine.so`
-//! - `MASKED_KEYGEN` — path to the `masked-keygen` helper that stages a blob
-//!
-//! The blob is staged out-of-process by `masked-keygen`, sharing the resiliency
-//! storage dir (persisted BMK), the OBK, and the POTA keypair set up here so the
-//! engine can unmask it.
+//! Requires `ENGINE_SO` (the engine `.so`) and `MASKED_KEYGEN` (the helper that
+//! stages the blob), set by `xtask integration-tests` / the engine matrix. The
+//! blob is staged out-of-process, sharing the keymat set up here so it unmasks.
 
 #![cfg(feature = "integration")]
 #![allow(clippy::unwrap_used)]
