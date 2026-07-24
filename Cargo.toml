@@ -69,6 +69,8 @@ members = [
   "plugins/ossl_engine/azihsm_ossl_engine_core",
   "plugins/ossl_engine/azihsm_ossl_engine_resiliency",
   "plugins/ossl_engine/azihsm_ossl_engine_sys",
+  "plugins/ossl_engine/integration-tests/masked-keygen",
+  "plugins/ossl_engine/integration-tests/openssl-cli",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
