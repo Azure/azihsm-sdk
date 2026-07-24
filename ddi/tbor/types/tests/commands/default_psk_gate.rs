@@ -23,17 +23,19 @@
 //! Each test inherits a factory-reset device from `TestCtx::new`, so
 //! partition PSKs are at their canonical defaults on entry.
 
-use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
-use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
 use crate::harness::assertions::assert_fw_rejects;
+use crate::harness::known_good_part_policy;
+use crate::harness::mach_seed;
+use crate::harness::open_dev_with_path;
+use crate::harness::pota_thumbprint;
+use crate::harness::session::open_session as open_session_on_dev;
+use crate::harness::session::session_close as session_close_on_dev;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -131,56 +133,49 @@ fn default_psk_gate_psk_change_bypass() {
 /// on real silicon.
 #[test]
 fn default_psk_gate_part_init_rejected() {
-    // Build a 484-byte `PartPolicy` blob that passes wire decode so
-    // the request reaches the dispatcher's gate. Mirrored from
-    // `commands::part_init::known_good_part_policy` (kept inline so
-    // this file stays runnable on hw without ungating the destructive
-    // part_init/ submodules).
-    fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
-        const OFF_POTA: usize = 2;
-        const OFF_SATA: usize = 102;
-        const OFF_FLAGS: usize = 418;
-        const OFF_INFO: usize = 419;
-
-        fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-            bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-            bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-            for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
-                *b = (fill.wrapping_add(i as u8)) | 0x80;
-            }
-        }
-
-        let mut bytes = [0u8; PART_POLICY_LEN];
-        bytes[0] = 1;
-        bytes[1] = 0;
-        write_pubkey(&mut bytes, OFF_POTA, 0x10);
-        write_pubkey(&mut bytes, OFF_SATA, 0x20);
-        bytes[OFF_FLAGS] = 0;
-        for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-            *b = 0xAB;
-        }
-        bytes
-    }
-
     let ctx = TestCtx::new();
     let session = ctx.open_session(CO, SessionType::Authenticated);
-
-    let mach_seed = {
-        let mut v = [0u8; MACH_SEED_LEN];
-        for (i, b) in v.iter_mut().enumerate() {
-            *b = 0x40 + i as u8;
-        }
-        v
-    };
-    let pota_thumbprint = [0x5Au8; POTA_THUMBPRINT_LEN];
 
     let err = ctx
         .part_init(
             session.handshake(),
-            &mach_seed,
+            &mach_seed(),
             &known_good_part_policy(),
-            &pota_thumbprint,
+            &pota_thumbprint(),
         )
         .expect_err("PartInit under default PSK must be gated");
     assert_fw_rejects(&err, TborStatus::DefaultPskMustRotate);
+}
+
+/// `SessionOpenInit` is out-of-session and per-role, so parallel opens
+/// against distinct roles on distinct fds must both succeed while both
+/// partition PSKs are still at their compiled-in defaults. Regression
+/// for the gate bleeding across roles: a CO handshake in flight must
+/// not fault a concurrent CU handshake (or vice versa).
+///
+/// hw enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so the CO and CU
+/// sessions sit on separate fds bound to the same underlying device
+/// (`ctx.path()`). Both sessions stay live simultaneously until
+/// asserted, then are closed on their owning fds.
+#[test]
+fn default_psk_gate_co_and_cu_parallel_on_separate_devs_bypass() {
+    let ctx = TestCtx::new();
+
+    // Session A: CO + Authenticated on the ctx's fd, under default CO PSK.
+    let session_co = ctx.open_session(CO, SessionType::Authenticated);
+
+    // Session B: CU + PlainText on a second fd bound to the same
+    // device, under default CU PSK. Held concurrently with A.
+    let dev_b = open_dev_with_path(ctx.path());
+    let session_cu = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
+        .expect("CU open on second fd under default CU PSK must succeed while CO session is live");
+
+    assert_ne!(
+        session_co.session_id(),
+        session_cu.session_id,
+        "parallel CO and CU sessions must have distinct ids",
+    );
+
+    // Close B on its owning fd; A closes on drop via SessionGuard.
+    session_close_on_dev(&dev_b, session_cu.session_id).expect("close CU session on second fd");
 }

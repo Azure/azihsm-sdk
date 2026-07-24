@@ -16,39 +16,28 @@
 //!
 //! # Backend feature regimes
 //!
-//! The test binary supports three build modes; each disables a
-//! different subset of tests via `#![cfg(...)]` so failures show up
-//! as "no test compiled" instead of as silent passes:
+//! The test binary supports two active build modes:
 //!
-//! * `--features emu` (the canonical configuration; runs the full
-//!   suite). All in-session command tests are gated
-//!   `#![cfg(feature = "emu")]` because they require the FW handler
-//!   actually present in the std/emu PAL build.
-//! * `--features mock` (transport-contract probes only).
-//!   `commands::api_rev::unsupported_on_mock` exercises that the
-//!   mock backend rejects TBOR opcodes at the transport layer; it
-//!   is gated `#[cfg(feature = "mock")]`.
-//! * No backend feature. The pure host-side codec tests (everything
-//!   in `commands::fw_error_decode` and `commands::unexpected_toc_type`)
-//!   compile and run because they do not touch the harness; this
-//!   module is gated `#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]`
-//!   so the harness itself disappears in this mode.
+//! * `--features emu` — the canonical configuration; runs the full
+//!   suite against the in-process std-PAL firmware.
+//! * **No backend feature** — targets the native OS backend (`nix` on
+//!   Linux / `win` on Windows) so the hw-eligible tests in
+//!   [`crate::commands`] run against real silicon. Destructive
+//!   emu-only tests remain gated `#[cfg(feature = "emu")]` at the
+//!   test-item level.
 //!
-//! The `sock` backend joins `emu` in the in-session command suite: it
-//! drives the same TBOR round-trips over the socket transport, so the
-//! harness is also built under `--features sock`. Under no backend
-//! feature the harness still compiles and targets the native OS
-//! backend (`nix` / `win`) so the merged hw-eligible tests in
-//! [`crate::commands`] run against real silicon.
-//!
-//! Backend-specific [`TestCtx`] methods (`erase`, `cert_chain_info`,
-//! `get_certificate`) carry per-method `#[cfg(feature = "emu")]` and
-//! are unavailable under `--features mock`.
+//! `--features mock` and `--features sock` are compilable but disable
+//! both this harness and the `commands` tree at the crate root
+//! (`tests/azihsm_ddi_tbor_tests.rs`). Under either feature the test
+//! binary compiles the crate only and runs zero tests: mock rejects
+//! TBOR at the transport layer, and sock's `erase` is a stub — neither
+//! can drive command-level integration tests.
 
 pub mod api_rev;
 pub mod assertions;
 pub mod ctx;
 pub mod fixture;
+pub mod part_policy;
 pub mod session;
 pub mod session_guard;
 #[cfg(feature = "emu")]
@@ -68,6 +57,10 @@ pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 pub use ctx::TestCtx;
 pub use fixture::open_dev;
 pub use fixture::open_dev_with_path;
+pub use part_policy::known_good_part_policy;
+pub use part_policy::mach_seed;
+pub use part_policy::part_policy_with_pota;
+pub use part_policy::pota_thumbprint;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;

@@ -29,7 +29,6 @@ use std::ops::Deref;
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
-#[cfg(not(feature = "mock"))]
 use azihsm_ddi_interface::DdiDev;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
@@ -79,8 +78,9 @@ impl Deref for TestDev {
 }
 
 /// Acquire the test lock, open the configured backend device, and
-/// factory-reset it on every backend that owns partition state
-/// (all but `mock`). See module docs.
+/// factory-reset it before use. Only reachable under `--features emu`
+/// or the no-feature (hw) build — mock/sock builds gate the whole
+/// harness out at the crate root.
 ///
 /// Panics if the backend lists no devices or if `erase` fails — both
 /// are backend bugs, not test bugs, and surfacing them immediately
@@ -92,7 +92,6 @@ pub fn open_dev() -> TestDev {
     let info = infos.first().expect("backend should advertise a device");
     let path = info.path.clone();
     let dev = ddi.open_dev(&path).expect("open test backend device");
-    #[cfg(not(feature = "mock"))]
     dev.erase()
         .expect("open_dev: factory-reset backend before test");
     TestDev {
