@@ -44,13 +44,21 @@ fn write_secret(path: &std::path::Path, data: &[u8]) {
 /// generator and the engine read, returning the keymat dir.
 #[allow(unsafe_code)]
 fn setup_keymat() -> PathBuf {
+    use std::os::unix::fs::DirBuilderExt;
+
+    // Owner-only (0700): the dir holds secret key material.
     let dir = std::env::temp_dir().join(format!("engine-capi-keymat-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
+    let mkdir = |p: &std::path::Path| {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(p)
+            .unwrap();
+    };
+    mkdir(&dir);
     let res = dir.join("res");
-    std::fs::create_dir(&res).unwrap();
-    std::fs::set_permissions(&res, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    mkdir(&res);
 
     // OBK: 48 random bytes (= BK3). Owner-only — it seeds HSM key derivation.
     let mut obk = [0u8; 48];
