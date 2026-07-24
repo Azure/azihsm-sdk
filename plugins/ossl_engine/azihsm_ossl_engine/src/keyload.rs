@@ -11,8 +11,15 @@
 //! later sign/derive callbacks. Deletion runs from the engine's destroy handler
 //! (while this `.so` is loaded), never from a libcrypto ex_data free callback —
 //! such a callback holds a function pointer into this `.so` and can be invoked
-//! after the `.so` is unloaded (see [`azihsm_ossl_engine_core::exdata`]). The
-//! sign/derive methods themselves are not wired yet (a later change), so a
+//! after the `.so` is unloaded (see [`azihsm_ossl_engine_core::exdata`]).
+//!
+//! The returned `EC_KEY` is bound to the engine (`EC_KEY_new_method`), which
+//! takes a functional reference OpenSSL releases on `EC_KEY_free`. So the engine
+//! — hence `EngineData` and this `.so` — cannot be torn down while any loaded
+//! key is alive, and the stashed HSM-key pointer can never dangle even if an
+//! `EVP_PKEY` outlives the caller's `ENGINE` handle.
+//!
+//! The sign/derive methods themselves are not wired yet (a later change), so a
 //! loaded key is currently usable for public-key operations (e.g. `-pubout`).
 //!
 //! Only EC keys are supported here; RSA loading (an HSM import + unmask path)
@@ -31,6 +38,7 @@ use azihsm_api::HsmEccKeyUnmaskAlgo;
 use azihsm_api::HsmEccPrivateKey;
 use azihsm_api::HsmKeyCommonProps;
 use azihsm_api::HsmKeyManager;
+use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
 use azihsm_ossl_engine_core::ffi;
@@ -43,8 +51,13 @@ use crate::uri;
 use crate::uri::KeyType;
 
 /// Load the private key named by `key_id` (an `azihsm://…` URI) and return an
-/// owning `*mut EVP_PKEY`.
-pub fn load_key(data: &EngineData, key_id: &str) -> EngineResult<*mut ffi::EVP_PKEY> {
+/// owning `*mut EVP_PKEY`. `engine` binds the returned key to the engine so it
+/// stays loaded while the key is alive (see [`build_ec_pkey`]).
+pub fn load_key(
+    engine: &Engine,
+    data: &EngineData,
+    key_id: &str,
+) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
 
     // Reject unsupported key types before any HSM open or file I/O, so they
@@ -63,7 +76,7 @@ pub fn load_key(data: &EngineData, key_id: &str) -> EngineResult<*mut ffi::EVP_P
     // First real caller of the lazy HSM open (idempotent).
     data.open_hsm_from_env()?;
     let masked = read_masked_key(&parsed.masked_key_path)?;
-    load_ec(data, &masked)
+    load_ec(engine, data, &masked)
 }
 
 /// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
@@ -117,7 +130,7 @@ fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
     Ok(buf)
 }
 
-fn load_ec(data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY> {
+fn load_ec(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY> {
     let priv_key = data.with_session(|session| {
         let mut algo = HsmEccKeyUnmaskAlgo {};
         HsmKeyManager::unmask_key_pair(session, &mut algo, masked)
@@ -129,56 +142,114 @@ fn load_ec(data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY>
         .pub_key_der_vec()
         .map_err(|e| EngineError::wrap("read EC public key DER", e))?;
 
-    build_ec_pkey(data, &der, priv_key)
+    build_ec_pkey(engine, data, &der, priv_key)
 }
 
-/// Rebuild the public `EVP_PKEY` from `der` (safe `openssl` crate) and attach
-/// the live HSM key to it before transferring ownership to OpenSSL.
+/// Build the returned `EVP_PKEY`: an engine-bound `EC_KEY` carrying the public
+/// key (from `der`) plus the live HSM key.
+///
+/// The `EC_KEY` is created with [`Engine::new_ec_key`], which takes a functional
+/// reference on the engine that `EC_KEY_free` releases. OpenSSL therefore keeps
+/// the engine — and `EngineData`, and this `.so` — alive as long as the returned
+/// key is alive, so the non-owning HSM-key pointer stashed in the `EC_KEY`
+/// ex_data (and the sign/derive callbacks that read it) can never dangle even if
+/// the `EVP_PKEY` outlives the caller's `ENGINE` handle.
+#[allow(unsafe_code)]
 fn build_ec_pkey(
+    engine: &Engine,
     data: &EngineData,
     der: &[u8],
     key: HsmEccPrivateKey,
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
-    let pkey =
+    // Parse the SPKI DER into a temporary key just to recover the curve group
+    // and public point.
+    let parsed =
         PKey::public_key_from_der(der).map_err(|e| EngineError::wrap("parse public key DER", e))?;
+    // SAFETY: parsed is a valid EC public-key EVP_PKEY; the get0 accessors
+    // return borrowed pointers valid while `parsed` lives.
+    let (group, point) = unsafe {
+        let parsed_ec = ffi::EVP_PKEY_get0_EC_KEY(parsed.as_ptr().cast::<ffi::EVP_PKEY>());
+        if parsed_ec.is_null() {
+            return Err(EngineError::Other("parsed EVP_PKEY has no EC_KEY".into()));
+        }
+        (
+            ffi::EC_KEY_get0_group(parsed_ec),
+            ffi::EC_KEY_get0_public_key(parsed_ec),
+        )
+    };
+    if group.is_null() || point.is_null() {
+        return Err(EngineError::Other(
+            "parsed EC_KEY missing group or public key".into(),
+        ));
+    }
 
-    // The `openssl` crate's `EVP_PKEY` and the engine-ABI `EVP_PKEY` are the
-    // same C struct (both link the one system libcrypto), so casting the raw
-    // pointer at this single boundary is sound.
-    let raw = pkey.as_ptr().cast::<ffi::EVP_PKEY>();
+    // Engine-bound EC_KEY (up-refs the engine; see the fn doc).
+    let ec = engine.new_ec_key()?;
+    // SAFETY: ec is a fresh EC_KEY; set_group/set_public_key dup the borrowed
+    // group/point out of `parsed`.
+    let set_ok = unsafe {
+        ffi::EC_KEY_set_group(ec, group) == 1 && ffi::EC_KEY_set_public_key(ec, point) == 1
+    };
+    // `group`/`point` borrow into `parsed`; keep it alive until here (they are
+    // raw pointers, so the borrow checker won't do it for us) — they were dup'd
+    // into `ec` above and are no longer needed.
+    drop(parsed);
+    if !set_ok {
+        // SAFETY: ec is ours and not yet handed to an EVP_PKEY.
+        unsafe { ffi::EC_KEY_free(ec) };
+        return Err(EngineError::Other(
+            "failed to set EC group/public key".into(),
+        ));
+    }
 
-    // Attach while `pkey` still owns `raw`: if `attach_ec` fails, `pkey` drops
-    // at end of scope and frees the EVP_PKEY.
-    attach_ec(data, raw, key)?;
+    // Wrap the EC_KEY in an EVP_PKEY. EVP_PKEY_set1_EC_KEY up-refs `ec`, so drop
+    // our own reference afterwards; the EVP_PKEY (and its engine ref) then owns
+    // the key.
+    // SAFETY: standard EVP_PKEY construction; every return code is checked and
+    // `ec` is freed on each failure path.
+    let pkey = unsafe {
+        let pkey = ffi::EVP_PKEY_new();
+        if pkey.is_null() {
+            ffi::EC_KEY_free(ec);
+            return Err(EngineError::Other("EVP_PKEY_new failed".into()));
+        }
+        if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
+            ffi::EVP_PKEY_free(pkey);
+            ffi::EC_KEY_free(ec);
+            return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
+        }
+        ffi::EC_KEY_free(ec);
+        pkey
+    };
 
-    // Success: hand ownership to OpenSSL.
-    std::mem::forget(pkey);
-    Ok(raw)
+    // Stash the HSM key in the (engine-bound) EC_KEY as the last fallible step.
+    // SAFETY: pkey holds a valid EC_KEY built above.
+    let ec_ref = unsafe { ffi::EVP_PKEY_get0_EC_KEY(pkey) };
+    if let Err(e) = attach_ec(data, ec_ref, key) {
+        // SAFETY: pkey is ours and not yet handed to OpenSSL.
+        unsafe { ffi::EVP_PKEY_free(pkey) };
+        return Err(e);
+    }
+    Ok(pkey)
 }
 
 #[allow(unsafe_code)]
-fn attach_ec(
-    data: &EngineData,
-    pkey: *mut ffi::EVP_PKEY,
-    key: HsmEccPrivateKey,
-) -> EngineResult<()> {
-    let idx = ec_key_ex_index()?;
-
-    // SAFETY: pkey is a valid EVP_PKEY holding an EC key (built above).
-    let ec = unsafe { ffi::EVP_PKEY_get0_EC_KEY(pkey) };
+fn attach_ec(data: &EngineData, ec: *mut ffi::EC_KEY, key: HsmEccPrivateKey) -> EngineResult<()> {
     if ec.is_null() {
         return Err(EngineError::Other("EVP_PKEY has no EC_KEY".into()));
     }
+    let idx = ec_key_ex_index()?;
 
     // Hand the key to EngineData, which owns it and deletes it from the HSM when
     // the engine is destroyed (while this `.so` is loaded). Stash the non-owning
     // pointer it returns for later sign/derive retrieval. The ex_data slot has
     // no free callback (see ec_key_ex_index), so libcrypto never calls back into
-    // this `.so` for cleanup — even if the EVP_PKEY outlives the engine.
+    // this `.so` for cleanup.
     let key_ptr = data.retain_loaded_key(key);
-    // SAFETY: ec is valid, idx is a registered EC_KEY ex_data slot, and key_ptr
-    // is a non-owning pointer into a key EngineData keeps alive for the engine's
-    // lifetime; the slot has no free callback, so no ownership is transferred.
+    // SAFETY: ec is valid (checked), idx is a registered EC_KEY ex_data slot,
+    // and key_ptr is a non-owning pointer into a key EngineData keeps alive for
+    // the engine's lifetime; the slot has no free callback, so no ownership is
+    // transferred.
     let rc = unsafe { ffi::EC_KEY_set_ex_data(ec, idx, key_ptr.cast_mut().cast::<c_void>()) };
     if rc != 1 {
         // Roll back the retain so the failed load doesn't leave the key in the

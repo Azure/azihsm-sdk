@@ -136,6 +136,39 @@ impl Engine {
             EngineError::SetLoadPrivKeyFailed,
         )
     }
+
+    /// Point the engine's `EC_KEY_METHOD` at OpenSSL's built-in default. This
+    /// is required before [`new_ec_key`](Self::new_ec_key): `EC_KEY_new_method`
+    /// fails unless the engine advertises an EC method. The default method keeps
+    /// EC operations in software; a later change overrides `sign` to route
+    /// signing through the HSM.
+    #[allow(unsafe_code)]
+    pub fn set_default_ec_method(&self) -> EngineResult<()> {
+        // SAFETY: EC_KEY_OpenSSL returns the built-in const EC_KEY_METHOD;
+        // ENGINE_set_EC just records that pointer on the engine.
+        ossl_check(
+            unsafe { ffi::ENGINE_set_EC(self.ptr, ffi::EC_KEY_OpenSSL()) },
+            EngineError::Other("ENGINE_set_EC failed".into()),
+        )
+    }
+
+    /// Create an `EC_KEY` bound to this engine via `EC_KEY_new_method`, which
+    /// takes a functional reference on the engine (released on `EC_KEY_free`).
+    /// OpenSSL therefore keeps the engine — and any state its destroy handler
+    /// owns — alive for as long as the returned key (and any `EVP_PKEY` built
+    /// from it) lives. Requires an EC method on the engine (see
+    /// [`set_default_ec_method`](Self::set_default_ec_method)). The returned key
+    /// has no group or public key set yet.
+    #[allow(unsafe_code)]
+    pub fn new_ec_key(&self) -> EngineResult<*mut ffi::EC_KEY> {
+        // SAFETY: self.ptr is a valid ENGINE; EC_KEY_new_method up-refs it and
+        // returns a fresh owned EC_KEY (NULL on allocation failure).
+        let ec = unsafe { ffi::EC_KEY_new_method(self.ptr) };
+        if ec.is_null() {
+            return Err(EngineError::Other("EC_KEY_new_method failed".into()));
+        }
+        Ok(ec)
+    }
 }
 
 /// Caller-supplied destroy logic, invoked by OpenSSL when an `ENGINE` is

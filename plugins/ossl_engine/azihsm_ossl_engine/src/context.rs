@@ -487,6 +487,35 @@ fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
     file.write_all(data)
 }
 
+/// Test helper: a throwaway ENGINE for driving `keyload::load_key` in-process.
+/// The loader binds returned keys to it (`EC_KEY_new_method`), so it must
+/// outlive the loaded `EVP_PKEY`; the raw structural ref is returned so the
+/// caller frees it with `ENGINE_free` after dropping the key.
+#[cfg(test)]
+#[allow(unsafe_code)]
+#[allow(clippy::unwrap_used)]
+fn new_test_engine() -> (
+    azihsm_ossl_engine_core::engine::Engine,
+    *mut azihsm_ossl_engine_core::ffi::ENGINE,
+) {
+    use std::ptr::NonNull;
+
+    use azihsm_ossl_engine_core::engine::Engine;
+    use azihsm_ossl_engine_core::ffi;
+
+    // SAFETY: ENGINE_new returns a fresh structural ref; wrapping it in Engine
+    // is sound for the test, and the caller ENGINE_free's the returned raw ref.
+    unsafe {
+        let raw = ffi::ENGINE_new();
+        assert!(!raw.is_null(), "ENGINE_new");
+        let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
+        // The loader binds keys via EC_KEY_new_method, which needs an EC method
+        // on the engine (bind_helper does this in production).
+        engine.set_default_ec_method().unwrap();
+        (engine, raw)
+    }
+}
+
 #[cfg(all(test, feature = "mock"))]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -641,8 +670,9 @@ mod tests {
         let blob_path = scratch.0.join("ec_key.bin");
         write_key_material(&blob_path, &masked).unwrap();
 
+        let (engine, engine_raw) = new_test_engine();
         let uri = format!("azihsm://{};type=ec", blob_path.display());
-        let raw = crate::keyload::load_key(&data, &uri).unwrap();
+        let raw = crate::keyload::load_key(&engine, &data, &uri).unwrap();
         assert!(!raw.is_null());
 
         // Take ownership of the returned EVP_PKEY, confirm its public key, then
@@ -651,6 +681,12 @@ mod tests {
         // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
         let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
         assert_eq!(loaded.public_key_to_der().unwrap(), expected_pub_der);
+        drop(loaded);
+
+        // Release the test engine's structural ref; the loaded key already
+        // released its functional ref when dropped above.
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { azihsm_ossl_engine_core::ffi::ENGINE_free(engine_raw) };
     }
 
     #[test]
@@ -817,8 +853,9 @@ mod hw_tests {
             EngineError::wrap(format!("write masked blob {}", blob_path.display()), e)
         })?;
 
+        let (engine, engine_raw) = new_test_engine();
         let uri = format!("azihsm://{};type=ec", blob_path.display());
-        let raw = crate::keyload::load_key(&data, &uri)?;
+        let raw = crate::keyload::load_key(&engine, &data, &uri)?;
         assert!(!raw.is_null(), "load_key returned a NULL EVP_PKEY");
 
         // Take ownership of the returned key, confirm its public half, then drop
@@ -830,6 +867,12 @@ mod hw_tests {
             .public_key_to_der()
             .map_err(|e| EngineError::wrap("encode loaded public key", e))?;
         assert_eq!(loaded_der, expected_pub_der, "loaded public key mismatch");
+        drop(loaded);
+
+        // Release the test engine's structural ref (the loaded key released its
+        // functional ref when dropped above).
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { azihsm_ossl_engine_core::ffi::ENGINE_free(engine_raw) };
 
         let _ = std::fs::remove_file(&blob_path);
         Ok(())

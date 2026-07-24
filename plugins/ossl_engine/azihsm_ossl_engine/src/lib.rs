@@ -88,7 +88,7 @@ mod engine_impl {
             let key_id = key_id
                 .to_str()
                 .map_err(|_| EngineError::Other("key id is not valid UTF-8".into()))?;
-            crate::keyload::load_key(data, key_id)
+            crate::keyload::load_key(engine, data, key_id)
         }
     }
 
@@ -180,6 +180,10 @@ mod engine_impl {
         engine.set_name(ENGINE_NAME)?;
         engine.set_destroy::<AzihsmDestroy>()?;
         engine.set_load_privkey::<AzihsmLoadPrivKey>()?;
+        // Advertise an EC method so the loader can bind returned keys to the
+        // engine (EC_KEY_new_method), which keeps the engine alive while any
+        // loaded key lives. Software EC ops for now; signing is wired later.
+        engine.set_default_ec_method()?;
 
         // Park an empty EngineData. Its HSM session is opened on demand via
         // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and
