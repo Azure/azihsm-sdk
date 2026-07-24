@@ -17,9 +17,10 @@
 //! An absent id means the key is not yet available — the HSP has not
 //! published it, or a hardware PAL is still materialising it — which this
 //! handler surfaces as `PendingKeyGeneration` so the host retries.  The
-//! emulator PAL instead generates the key lazily behind the property
-//! read.  No public key is cached: it is derived from the vault private
-//! key on demand (matching the reference firmware).
+//! std reference PAL likewise materialises the key inside
+//! `provision_unwrapping_key` (it generates and stores it there), rather
+//! than behind the property read.  No public key is cached: it is derived
+//! from the vault private key on demand (matching the reference firmware).
 //!
 //! [`provision_unwrapping_key`]: azihsm_fw_hsm_pal_traits::HsmPartitionManager::provision_unwrapping_key
 
@@ -44,9 +45,11 @@ pub(crate) async fn get_unwrapping_key<'p, P: HsmPal>(
     // in HSM core: the HSP publishes it into a per-partition GSRAM slot and
     // the PAL imports it (once) into the vault behind this hook, recording
     // its id in the property read below.  Take the partition lock first so
-    // the multi-step import is serialised against a concurrent first use;
-    // the hook is a no-op where the key is materialised by another route
-    // (e.g. the emulator generates it lazily behind the property read).
+    // the multi-step import is serialised against a concurrent first use.
+    // PALs that own the key override this hook (the uno PAL imports the
+    // HSP-published key from GSRAM; the std reference PAL generates and
+    // stores it); the default is a no-op for PALs that materialise the key
+    // by another route.
     let _lock = pal.partition_lock(io).await?;
     pal.provision_unwrapping_key(io).await?;
 
