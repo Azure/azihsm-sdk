@@ -443,12 +443,13 @@ pub trait HsmPartitionManager {
     /// import (read slot → `vault_key_create` → set id → release slot)
     /// is serialised against a concurrent first use.
     ///
-    /// The default is a no-op, for PALs that materialise the key by
-    /// another route — e.g. the emulator generates it lazily and
-    /// synchronously behind the property read.  When the key is not yet
-    /// available this call leaves the id absent, which the handler
-    /// surfaces as [`HsmError::PendingKeyGeneration`] so the host
-    /// retries.
+    /// The default is a no-op, for PALs where the key is materialised by
+    /// another route or is never used.  PALs that own the key override
+    /// this hook — the uno PAL imports the HSP-published key from its GSRAM
+    /// backup slot, and the std reference PAL generates the key and stores
+    /// it in the vault here.  When the key is not yet available this call
+    /// leaves the id absent, which the handler surfaces as
+    /// [`HsmError::PendingKeyGeneration`] so the host retries.
     async fn provision_unwrapping_key(&self, _io: &impl HsmIo) -> HsmResult<()> {
         Ok(())
     }

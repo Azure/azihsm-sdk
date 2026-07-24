@@ -529,9 +529,27 @@ impl HsmPartitionManager for StdHsmPal {
             entry.unwrapping_key_id = Some(kid);
             Ok(())
         })();
-        priv_buf.fill(0);
+        // Volatile scrub of the generated RSA private key bytes: a plain
+        // `fill(0)` can be elided as a dead write since `priv_buf` is dropped
+        // right after. `scrub` uses per-byte `write_volatile` + a compiler
+        // fence so the clear actually happens (mirrors `DmaBuf::zeroize`).
+        scrub(&mut priv_buf);
         result
     }
+}
+
+/// Volatile scrub of a byte buffer holding sensitive key material.
+///
+/// A plain `slice::fill(0)` may be optimised away as a dead store when the
+/// buffer is dropped immediately afterwards. This writes each byte with
+/// `write_volatile` and issues a `compiler_fence`, so the clear is preserved
+/// (mirrors the `DmaBuf::zeroize` pattern used by the device PALs).
+fn scrub(buf: &mut [u8]) {
+    for b in buf.iter_mut() {
+        // SAFETY: `b` is a valid, aligned, writable byte of this buffer.
+        unsafe { core::ptr::write_volatile(b, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 // ---------------------------------------------------------------------------

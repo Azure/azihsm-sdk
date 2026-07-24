@@ -1174,6 +1174,10 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.unwrapping_key_bk.copy_from_slice(key);
+        // Publish ordering: ensure the payload copy is not reordered after the
+        // valid-flag store, so a consumer that polls `unwrapping_key_bk_valid`
+        // never observes `valid == true` over a partially-written key.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         slot.unwrapping_key_bk_valid = true;
         Ok(())
     }
