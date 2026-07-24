@@ -34,9 +34,9 @@ use crate::part_state;
 
 /// Handle a TBOR `GetUnwrappingKey` request.
 ///
-/// No partition lock or undo log is required: the command only reads the
-/// unwrapping key property and derives its public key — it makes no
-/// observable state change.
+/// Takes the partition lock to serialise the first-use key materialisation
+/// against a concurrent request; the response itself only reads the
+/// unwrapping key property and derives its public key.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -47,9 +47,15 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     validate_active_session(pal, io, sess_id)?;
 
-    // Resolve the partition's RSA-2048 unwrapping key id.  The PAL
-    // materialises the key behind this read; an absent id means generation
-    // is still pending, surfaced so the host retries.
+    // Materialise the unwrapping key on first use — hardware imports the
+    // key the HSP published into GSRAM, the emulator generates one. Take the
+    // partition lock so the provision's read-modify-write is serialised
+    // against a concurrent first use, then resolve the id it records.
+    let _lock = pal.partition_lock(io).await?;
+    pal.provision_unwrapping_key(io).await?;
+
+    // Resolve the partition's RSA-2048 unwrapping key id.  An absent id means
+    // materialisation is still pending, surfaced so the host retries.
     let key_id = match part_state::part_unwrapping_key_id(pal, io) {
         Ok(id) => id,
         Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),
