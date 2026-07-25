@@ -1138,8 +1138,9 @@ impl Partition {
     // `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero. The HSM
     // then imports it into its vault (recording `unwrapping_key_id`). The key
     // persists in the slot (it is not consumed on import); it is wiped only on
-    // partition deallocation. The 516-byte payload is `d(256) ‖ n(256) ‖ e(4)`
-    // little-endian (the layout `RsaPubKey::from_priv_pka_slice` decodes).
+    // partition deallocation. The 516-byte payload is the RSA-2048 private key
+    // in PKA little-endian order, `d(256) ‖ n(256) ‖ e(4)`; the wire public key
+    // is the trailing `n ‖ e` (derived on demand by `rsa_priv_pub_key`).
 
     /// Arms/disarms Gate 1 (`unwrapping_key_required`): the CP-only flag the SP
     /// reads to decide whether to stage an unwrapping key for this partition.
