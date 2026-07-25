@@ -1177,7 +1177,14 @@ impl Partition {
         // Volatile read: the SP writes this mailbox byte from another processor,
         // so a cached/hoisted load could miss the publish.
         // SAFETY: valid, aligned, readable byte in this partition's GSRAM slot.
-        unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_bk_valid) != 0 }
+        let valid = unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_bk_valid) } != 0;
+        // Acquire fence pairing the SP's release before it sets this byte: the
+        // producer writes the 516-byte `unwrapping_key_bk` payload *before*
+        // marking this valid, so a consumer that observes it set must not have
+        // its subsequent payload loads (in `unwrapping_key_bk`) hoisted ahead of
+        // this observation.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
+        valid
     }
 
     /// Borrows the 516-byte PKA-LE RSA-2048 unwrapping-key backup published by
