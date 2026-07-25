@@ -11,11 +11,11 @@
 //! resolves it internally by the partition's `RSA_UNWRAPPING_KEY_ID`
 //! property.
 //!
-//! RSA key generation is expensive, so each PAL materialises the key
-//! behind the property read: the std (emulator) PAL generates it lazily on
-//! first read, while hardware PALs generate it in the background from
-//! partition init and leave the property unset until ready.  An absent id
-//! therefore means generation is still pending, surfaced as
+//! The key is materialised on first use through
+//! `HsmPartitionManager::provision_unwrapping_key`, called under the partition
+//! lock before the id property is read: hardware PALs import the key the HSP
+//! staged into GSRAM, while the std (emulator) PAL generates it.  An absent id
+//! therefore means materialisation is still pending, surfaced as
 //! `PendingKeyGeneration` so the host retries.  Available to both
 //! Crypto-Officer and Crypto-User sessions.
 
@@ -34,9 +34,10 @@ use crate::part_state;
 
 /// Handle a TBOR `GetUnwrappingKey` request.
 ///
-/// Takes the partition lock to serialise the first-use key materialisation
-/// against a concurrent request; the response itself only reads the
-/// unwrapping key property and derives its public key.
+/// Takes the partition lock only around the first-use key materialisation
+/// (provision + resolving the recorded id), then drops it before deriving the
+/// public key and building the response so other per-partition commands aren't
+/// blocked.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -47,19 +48,22 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     validate_active_session(pal, io, sess_id)?;
 
-    // Materialise the unwrapping key on first use — hardware imports the
-    // key the HSP published into GSRAM, the emulator generates one. Take the
-    // partition lock so the provision's read-modify-write is serialised
-    // against a concurrent first use, then resolve the id it records.
-    let _lock = pal.partition_lock(io).await?;
-    pal.provision_unwrapping_key(io).await?;
+    // Scope the partition lock to just provision + id resolution, so the
+    // read-modify-read is serialised against a concurrent first use but the
+    // public-key derivation and response build below don't block other
+    // per-partition commands. Hardware imports the key the HSP staged into
+    // GSRAM; the emulator generates one.
+    let key_id = {
+        let _lock = pal.partition_lock(io).await?;
+        pal.provision_unwrapping_key(io).await?;
 
-    // Resolve the partition's RSA-2048 unwrapping key id.  An absent id means
-    // materialisation is still pending, surfaced so the host retries.
-    let key_id = match part_state::part_unwrapping_key_id(pal, io) {
-        Ok(id) => id,
-        Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),
-        Err(e) => return Err(e),
+        // An absent id means materialisation is still pending, surfaced so the
+        // host retries.
+        match part_state::part_unwrapping_key_id(pal, io) {
+            Ok(id) => id,
+            Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),
+            Err(e) => return Err(e),
+        }
     };
 
     // Derive the wire public key from the vault-stored private key.  Its

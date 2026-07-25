@@ -41,26 +41,29 @@ pub(crate) async fn get_unwrapping_key<'p, P: HsmPal>(
     let _body: DdiGetUnwrappingKeyReq = decoder.decode_data()?;
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
-    // Import the unwrapping key on first use.  It is not generated
-    // in HSM core: the HSP publishes it into a per-partition GSRAM slot and
-    // the PAL imports it (once) into the vault behind this hook, recording
-    // its id in the property read below.  Take the partition lock first so
-    // the multi-step import is serialised against a concurrent first use.
-    // PALs that own the key override this hook (the uno PAL imports the
-    // HSP-published key from GSRAM; the std reference PAL generates and
-    // stores it); the default is a no-op for PALs that materialise the key
-    // by another route.
-    let _lock = pal.partition_lock(io).await?;
-    pal.provision_unwrapping_key(io).await?;
+    // Materialise the unwrapping key on first use, then resolve its id — under
+    // the partition lock, scoped to just this read-modify-read so it is
+    // serialised against a concurrent first use. It is not generated in HSM
+    // core: the HSP publishes it into a per-partition GSRAM slot and the PAL
+    // imports it (once) into the vault behind this hook, recording its id in
+    // the property read. PALs that own the key override this hook (the uno PAL
+    // imports the HSP-published key from GSRAM; the std reference PAL generates
+    // and stores it); the default is a no-op for PALs that materialise the key
+    // by another route. The lock is dropped before the public-key derivation
+    // and envelope build below, which only read the now-stable vault key and
+    // need not block other per-partition commands.
+    let key_id = {
+        let _lock = pal.partition_lock(io).await?;
+        pal.provision_unwrapping_key(io).await?;
 
-    // Read the partition's RSA-2048 unwrapping key id from its property.
-    // An absent id means the key is not yet available (the HSP has not
-    // published it, or a hardware PAL is still generating it) — surface it
-    // as such so the host retries.
-    let key_id = match crate::part_state::part_unwrapping_key_id(pal, io) {
-        Ok(id) => id,
-        Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),
-        Err(e) => return Err(e),
+        // An absent id means the key is not yet available (the HSP has not
+        // published it, or a hardware PAL is still generating it) — surface it
+        // as `PendingKeyGeneration` so the host retries.
+        match crate::part_state::part_unwrapping_key_id(pal, io) {
+            Ok(id) => id,
+            Err(HsmError::PartPropNotFound) => return Err(HsmError::PendingKeyGeneration),
+            Err(e) => return Err(e),
+        }
     };
 
     // Query the wire length of the unwrapping public key derived from
