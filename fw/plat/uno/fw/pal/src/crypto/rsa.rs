@@ -441,6 +441,13 @@ impl HsmRsa for UnoHsmPal {
         self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
             .await?;
 
+        // `mod_exp_priv` is little-endian (PKA-native): both the ciphertext
+        // operand and the `em` result are LE wire form. The RSA-OAEP decode
+        // below (RFC 8017 EME-OAEP) operates on the big-endian encoded message
+        // `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, so flip the result LE→BE first
+        // (the std PAL does the same flip around OpenSSL, in its driver).
+        em[..k].reverse();
+
         if em[0] != 0x00 {
             return Err(HsmError::RsaDecryptFailed);
         }
