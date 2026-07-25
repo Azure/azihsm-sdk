@@ -20,12 +20,12 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::build_mac_fin;
 use crate::harness::open_dev_with_path;
-use crate::harness::session::open_session as open_session_on_dev;
-use crate::harness::session::session_close as session_close_on_dev;
+use crate::harness::open_session_on_dev;
+use crate::harness::session_close_on_dev;
 #[cfg(not(feature = "emu"))]
-use crate::harness::session::session_open_finish as session_open_finish_on_dev;
+use crate::harness::session_open_finish_on_dev;
 #[cfg(not(feature = "emu"))]
-use crate::harness::session::session_open_init as session_open_init_on_dev;
+use crate::harness::session_open_init_on_dev;
 use crate::harness::TestCtx;
 
 const CO: u8 = 0;

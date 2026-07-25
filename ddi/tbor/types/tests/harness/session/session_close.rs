@@ -15,8 +15,15 @@ use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_types::TborSessionCloseReq;
 use azihsm_ddi_tbor_types::TborSessionCloseResp;
 
-/// Issue `SessionClose(session_id)` and return on success.
-pub fn session_close(dev: &<AzihsmDdi as Ddi>::Dev, session_id: u16) -> Result<(), DdiError> {
+/// Issue `SessionClose(session_id)` against a specific `dev`.
+///
+/// Named with an `_on_dev` suffix to disambiguate from the
+/// [`TestCtx::session_close`](crate::harness::TestCtx::session_close)
+/// method which acts on the ctx's implicit fd.
+pub fn session_close_on_dev(
+    dev: &<AzihsmDdi as Ddi>::Dev,
+    session_id: u16,
+) -> Result<(), DdiError> {
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
     let _resp: TborSessionCloseResp = dev.exec_op_tbor(&req, None, &mut cookie)?;

@@ -33,9 +33,9 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::known_good_part_policy;
 use crate::harness::mach_seed;
 use crate::harness::open_dev_with_path;
+use crate::harness::open_session_on_dev;
 use crate::harness::pota_thumbprint;
-use crate::harness::session::open_session as open_session_on_dev;
-use crate::harness::session::session_close as session_close_on_dev;
+use crate::harness::session_close_on_dev;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 

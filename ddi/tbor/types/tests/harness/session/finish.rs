@@ -114,10 +114,15 @@ fn fresh_seed() -> Result<[u8; SESSION_SEED_LEN], DdiError> {
     Ok(seed)
 }
 
-/// Run Phase 2 of the handshake. Consumes the [`PendingHandshake`]
-/// so callers cannot accidentally reuse stale state for a second
-/// `SessionOpenFinish` against the same Pending slot.
-pub fn session_open_finish(
+/// Run Phase 2 of the handshake on a specific `dev`. Consumes the
+/// [`PendingHandshake`] so callers cannot accidentally reuse stale
+/// state for a second `SessionOpenFinish` against the same Pending
+/// slot.
+///
+/// Named with an `_on_dev` suffix to disambiguate from the
+/// [`TestCtx::session_open_finish`](crate::harness::TestCtx::session_open_finish)
+/// method which acts on the ctx's implicit fd.
+pub fn session_open_finish_on_dev(
     dev: &<AzihsmDdi as Ddi>::Dev,
     pending: PendingHandshake,
 ) -> Result<SessionHandshake, DdiError> {

@@ -120,12 +120,16 @@ impl<'a> SessionOpenInitOptions<'a> {
     }
 }
 
-/// Convenience wrapper: happy-path `SessionOpenInit` with fresh
-/// ephemeral and partition default PSK.
+/// Convenience wrapper: happy-path `SessionOpenInit` on a specific
+/// `dev` with fresh ephemeral and partition default PSK.
 ///
 /// Equivalent to
 /// `session_open_init_with_options(dev, SessionOpenInitOptions::new(psk_id, session_type))`.
-pub fn session_open_init(
+///
+/// Named with an `_on_dev` suffix to disambiguate from the
+/// [`TestCtx::session_open_init`](crate::harness::TestCtx::session_open_init)
+/// method which acts on the ctx's implicit fd.
+pub fn session_open_init_on_dev(
     dev: &<AzihsmDdi as Ddi>::Dev,
     psk_id: u8,
     session_type: SessionType,
