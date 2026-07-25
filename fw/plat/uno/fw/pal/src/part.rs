@@ -152,6 +152,11 @@ impl UnoHsmPal {
         }
         part.clear_identity();
         part.clear_masked_bk_boot();
+        // Disarm Gate 1 and wipe any SP-staged unwrapping key: `set_resource`
+        // armed Gate 1 before provisioning, so on this failure path the SP must
+        // not be left thinking a key is still required for a partition rolled
+        // back to `Unallocated`.
+        part.clear_unwrapping_key();
         part.set_res_mask(0);
         part.set_state(PartState::Unallocated);
     }

@@ -501,16 +501,11 @@ impl Partition {
             // belongs to a partition that is being deallocated. A later
             // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
             // key.
+            self.clear_unwrapping_key();
             let slot = self.slot_mut();
-            // The gate + validity are CP↔SP shared-memory mailbox bytes, so
-            // disarm/clear them with volatile writes; volatile-wipe the 516-byte
-            // payload so the private key can't be recovered from GSRAM after
-            // free. SAFETY: valid, aligned bytes in this partition's GSRAM slot.
-            unsafe {
-                core::ptr::write_volatile(&mut slot.unwrapping_key_required, false);
-                DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk).zeroize();
-                core::ptr::write_volatile(&mut slot.unwrapping_key_bk_valid, 0);
-            }
+            slot.psk_co = [0u8; PSK_LEN];
+            slot.psk_cu = [0u8; PSK_LEN];
+            slot.vm_launch_guid = [0u8; GUID_LEN];
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];
             slot.vm_launch_guid = [0u8; GUID_LEN];
@@ -1195,6 +1190,22 @@ impl Partition {
         // SAFETY: `unwrapping_key_bk` is an align-1 packed field; GSRAM bytes
         // branded as DMA-accessible; valid for 'static.
         unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
+    }
+
+    /// Resets the SP↔CP unwrapping-key slot on partition teardown: disarms
+    /// Gate 1, volatile-wipes the 516-byte payload (so the private key can't be
+    /// recovered from GSRAM), and clears the validity byte. A later
+    /// `SetResource` re-arms Gate 1 and the SP re-stages a fresh key.
+    #[inline(never)]
+    pub fn clear_unwrapping_key(mut self) {
+        let slot = self.slot_mut();
+        // The gate + validity are CP↔SP mailbox bytes → volatile writes; the
+        // payload is volatile-wiped. SAFETY: valid, aligned bytes in this slot.
+        unsafe {
+            core::ptr::write_volatile(&mut slot.unwrapping_key_required, false);
+            DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk).zeroize();
+            core::ptr::write_volatile(&mut slot.unwrapping_key_bk_valid, 0);
+        }
     }
 
     /// Reads the partition-local masking key (`PartLocalMK`) handle.
