@@ -20,3 +20,10 @@ const _: () = assert!(STRIDE == STORE_SIZE);
 // via DMA, which requires 4-byte alignment (see `Storage` field ordering).
 const _: () = assert!(core::mem::offset_of!(Storage, ec_pub_key) % 4 == 0);
 const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
+
+// Pin the SP<->CP gate-byte offsets so the SP's ephemeral-key monitor and this
+// slot agree (must match the reference `HsmPartPersistentStore`): Gate 1 at 22,
+// the validity byte at 23, and the 516-byte key payload at 24.
+const _: () = assert!(core::mem::offset_of!(Storage, unwrapping_key_required) == 22);
+const _: () = assert!(core::mem::offset_of!(Storage, unwrapping_key_bk_valid) == 23);
+const _: () = assert!(core::mem::offset_of!(Storage, unwrapping_key_bk) == 24);

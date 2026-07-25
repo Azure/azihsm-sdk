@@ -93,6 +93,15 @@ impl UnoHsmPal {
         }
         part.set_res_mask(mask);
 
+        // Arm Gate 1 so the SP may stage an unwrapping key for this partition;
+        // gate on `mask != 0` to never arm an idle PFN. The SP polls
+        // `unwrapping_key_required` and, once armed, publishes the RSA-2048 key
+        // into the partition's `unwrapping_key_bk` slot (read on first
+        // `GetUnwrappingKey`). Mirrors the reference firmware's `part_init`.
+        if mask != 0 {
+            part.set_unwrapping_key_required(true);
+        }
+
         // Provision the identity then the masked boot key; on any failure
         // roll the whole allocation back so the slot is left fully
         // `Unallocated` — no leaked vault key, no stale resource mask. A
@@ -542,26 +551,11 @@ impl HsmPartitionManager for UnoHsmPal {
                 return Ok(());
             }
             if !part.unwrapping_key_bk_valid() {
-                // No key has been published into this partition's GSRAM slot
-                // yet. Leave the slot invalid and return so `GetUnwrappingKey`
-                // surfaces `PendingKeyGeneration` and the host retries once the
-                // HSP ephemeral-key monitor has run.
-                #[cfg(not(feature = "unwrapping-key-fixture"))]
+                // The HSP ephemeral-key monitor has not published a key into
+                // this partition's GSRAM slot yet. Leave the id absent and
+                // return so `GetUnwrappingKey` surfaces `PendingKeyGeneration`
+                // and the host retries once the key is available.
                 return Ok(());
-
-                // THROWAWAY hardware bring-up (opt-in via the
-                // `unwrapping-key-fixture` Cargo feature): the HSP monitor is
-                // not live on the EVB, so seed the slot with a hardcoded test
-                // key to exercise the import path end-to-end. The fixture (key
-                // bytes + this seeding) is compiled out of production builds.
-                // Self-healing: once the HSP publishes a real key the slot is
-                // already valid and this branch is skipped. Delete the feature,
-                // this block, and `unwrapping_key_fixture` when the HSP side
-                // lands.
-                #[cfg(feature = "unwrapping-key-fixture")]
-                part.set_unwrapping_key_bk(
-                    &crate::unwrapping_key_fixture::UNWRAPPING_KEY_TEST_PKA_LE,
-                )?;
             }
             part.unwrapping_key_bk()
         };
@@ -602,13 +596,14 @@ impl HsmPartitionManager for UnoHsmPal {
         key_buf.zeroize();
         let kid = create_res?;
 
-        // Commit: record the vault id and release the GSRAM slot so the
-        // HSP can reuse it. The caller holds the partition lock, so no
-        // interleaved handler can have imported a second copy between the
-        // check above and this write.
+        // Commit: record the vault id. The HSP-published key stays in its
+        // GSRAM slot (it persists there as the partition's stable unwrapping
+        // key), so after a partition erase — which wipes the vault and this id
+        // but not the HSP's slot — the next first-use call re-imports it. The
+        // caller holds the partition lock, so no interleaved handler can have
+        // imported a second copy between the check above and this write.
         let part = PartStore::partition(pid)?;
         part.set_unwrapping_key_id(Some(kid));
-        part.clear_unwrapping_key_bk();
         Ok(())
     }
 

@@ -223,8 +223,16 @@ struct Storage {
     version: u8,
     flags: [u8; 3],
     session_table: [u8; SESSION_TABLE_LEN],
-    reserved1: u8,
-    unwrapping_key_bk_valid: bool,
+    /// Gate-1 staging flag (offset 22, was `reserved1`): CP writes, SP reads.
+    /// `false` = not armed, `true` = armed. When armed (set on `SetResource`
+    /// with a non-zero mask), the SP stages the RSA-2048 unwrapping key into
+    /// `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero.
+    unwrapping_key_required: bool,
+    /// Unwrapping-key slot state, written by the SP. `0` = empty; non-zero =
+    /// occupied (the SP uses a 3-state `UnwrappingKeyValidity` enum —
+    /// Empty / PendingPct / PctPassed — so this is a `u8`, not a `bool`;
+    /// reading a value > 1 as a Rust `bool` would be UB).
+    unwrapping_key_bk_valid: u8,
     unwrapping_key_bk: [u8; UNWRAPPING_KEY_BK_LEN],
     pin_policy: PinPolicy,
     vm_launch_guid: [u8; GUID_LEN],
@@ -489,7 +497,17 @@ impl Partition {
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
             self.set_sd_initialized(false);
+            // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
+            // belongs to a partition that is being deallocated. A later
+            // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
+            // key. Volatile per-byte wipe (+ fence) so the private key can't be
+            // recovered from GSRAM after free.
+            self.slot_mut().unwrapping_key_required = false;
             let slot = self.slot_mut();
+            // SAFETY: `unwrapping_key_bk` is an align-1 byte array branded
+            // DMA-accessible; a `&mut DmaBuf` view is valid for the wipe.
+            unsafe { DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk) }.zeroize();
+            slot.unwrapping_key_bk_valid = 0;
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];
             slot.vm_launch_guid = [0u8; GUID_LEN];
@@ -1117,20 +1135,36 @@ impl Partition {
         self.slot_mut().unwrapping_key_id = write_handle(key);
     }
 
-    // ── RSA unwrapping-key backup (HSP-published, HSM-consumed) ──────────
+    // ── RSA unwrapping-key backup (SP-published) — two-gate CP↔SP handshake ──
     //
-    // The HSP ephemeral-key monitor publishes a ready-to-use 516-byte PKA-LE
-    // RSA-2048 private key into `unwrapping_key_bk` and sets
-    // `unwrapping_key_bk_valid`; the HSM imports it (once) into its vault, then
-    // clears the slot so the HSP refills it on its next poll. The 516-byte
-    // payload is `d(256) ‖ n(256) ‖ e(4)` little-endian (the layout the
-    // reference `RsaPubKey::from_priv_pka_slice` decodes).
+    // Gate 1: the CP arms `unwrapping_key_required` (via `set_unwrapping_key_required`,
+    // on `SetResource` with a non-zero mask). Gate 2: the SP, seeing Gate 1
+    // armed, stages a ready-to-use 516-byte PKA-LE RSA-2048 private key into
+    // `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero. The HSM
+    // then imports it into its vault (recording `unwrapping_key_id`). The key
+    // persists in the slot (it is not consumed on import); it is wiped only on
+    // partition deallocation. The 516-byte payload is `d(256) ‖ n(256) ‖ e(4)`
+    // little-endian (the layout `RsaPubKey::from_priv_pka_slice` decodes).
 
-    /// Whether the HSP has published a valid RSA-2048 unwrapping key into this
-    /// partition's GSRAM slot (`unwrapping_key_bk_valid`).
+    /// Arms/disarms Gate 1 (`unwrapping_key_required`): the CP-only flag the SP
+    /// reads to decide whether to stage an unwrapping key for this partition.
+    #[inline(never)]
+    pub fn set_unwrapping_key_required(mut self, required: bool) {
+        self.slot_mut().unwrapping_key_required = required;
+    }
+
+    /// Whether Gate 1 (`unwrapping_key_required`) is currently armed.
+    #[inline(never)]
+    pub fn unwrapping_key_required(self) -> bool {
+        self.slot().unwrapping_key_required
+    }
+
+    /// Whether the SP has published a valid RSA-2048 unwrapping key into this
+    /// partition's GSRAM slot. The SP writes a `UnwrappingKeyValidity` `u8`
+    /// (`0` = empty; non-zero = occupied), so occupancy is `!= 0`.
     #[inline(never)]
     pub fn unwrapping_key_bk_valid(self) -> bool {
-        self.slot().unwrapping_key_bk_valid
+        self.slot().unwrapping_key_bk_valid != 0
     }
 
     /// Borrows the 516-byte PKA-LE RSA-2048 unwrapping-key backup published by
@@ -1141,48 +1175,6 @@ impl Partition {
         // SAFETY: `unwrapping_key_bk` is an align-1 packed field; GSRAM bytes
         // branded as DMA-accessible; valid for 'static.
         unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
-    }
-
-    /// Consumes the published unwrapping key: volatile-wipes the 516-byte
-    /// payload *before* clearing the valid flag. `zeroize` ends in a
-    /// `compiler_fence`, so the `valid = false` store cannot be reordered
-    /// ahead of the wipe. This ordering guarantees the producer (the HSP,
-    /// which polls the flag and refills the slot when it reads `false`) can
-    /// never observe `valid == false` while stale key bytes are still present,
-    /// so its refill write cannot race — and be clobbered by — the wipe.
-    #[inline(never)]
-    pub fn clear_unwrapping_key_bk(mut self) {
-        let slot = self.slot_mut();
-        // Volatile per-byte wipe (+ fence) of the key payload so the compiler
-        // cannot elide it, matching the repo's secure-wipe pattern for key
-        // material. SAFETY: `unwrapping_key_bk` is an align-1 packed byte array
-        // branded DMA-accessible; a `&mut DmaBuf` view is valid for the wipe.
-        unsafe { DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk) }.zeroize();
-        slot.unwrapping_key_bk_valid = false;
-    }
-
-    /// Publishes a 516-byte PKA-LE RSA-2048 key into this partition's slot and
-    /// marks it valid — the producer side of [`unwrapping_key_bk`], normally
-    /// owned by the HSP ephemeral-key monitor. Writes the payload *before*
-    /// setting the valid flag so a consumer polling the flag never observes
-    /// `valid == true` over a partially-written key.
-    ///
-    /// # Errors
-    ///
-    /// - [`HsmError::InvalidArg`] — `key.len() != 516`.
-    #[inline(never)]
-    pub fn set_unwrapping_key_bk(mut self, key: &[u8]) -> HsmResult<()> {
-        if key.len() != UNWRAPPING_KEY_BK_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        let slot = self.slot_mut();
-        slot.unwrapping_key_bk.copy_from_slice(key);
-        // Publish ordering: ensure the payload copy is not reordered after the
-        // valid-flag store, so a consumer that polls `unwrapping_key_bk_valid`
-        // never observes `valid == true` over a partially-written key.
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-        slot.unwrapping_key_bk_valid = true;
-        Ok(())
     }
 
     /// Reads the partition-local masking key (`PartLocalMK`) handle.
