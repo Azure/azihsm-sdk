@@ -506,9 +506,6 @@ impl Partition {
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];
             slot.vm_launch_guid = [0u8; GUID_LEN];
-            slot.psk_co = [0u8; PSK_LEN];
-            slot.psk_cu = [0u8; PSK_LEN];
-            slot.vm_launch_guid = [0u8; GUID_LEN];
         }
     }
 
