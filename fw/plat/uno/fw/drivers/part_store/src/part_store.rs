@@ -1143,10 +1143,13 @@ impl Partition {
         unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
     }
 
-    /// Consumes the published unwrapping key: zeroizes the 516-byte payload
-    /// *before* clearing the valid flag, so the HSP (which polls the flag and
-    /// refills the slot on `false`) can never observe `valid == true` over
-    /// stale or partially-cleared key bytes.
+    /// Consumes the published unwrapping key: volatile-wipes the 516-byte
+    /// payload *before* clearing the valid flag. `zeroize` ends in a
+    /// `compiler_fence`, so the `valid = false` store cannot be reordered
+    /// ahead of the wipe. This ordering guarantees the producer (the HSP,
+    /// which polls the flag and refills the slot when it reads `false`) can
+    /// never observe `valid == false` while stale key bytes are still present,
+    /// so its refill write cannot race — and be clobbered by — the wipe.
     #[inline(never)]
     pub fn clear_unwrapping_key_bk(mut self) {
         let slot = self.slot_mut();
