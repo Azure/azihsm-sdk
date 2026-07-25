@@ -15,9 +15,6 @@
 //! [`PartState::Unallocated`]; a non-zero `SetResource` allocates the
 //! partition and a `PfnEnable` IPC enables it.
 
-use core::sync::atomic::AtomicBool;
-use core::sync::atomic::Ordering;
-
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
@@ -526,47 +523,20 @@ impl UnoHsmPal {
     }
 }
 
-/// Per-partition once-guard serialising first-use unwrapping-key import.
-///
-/// The Uno [`partition_lock`](crate::lock) is a no-op: the PAL is otherwise
-/// lock-free because host handlers commit their partition writes
-/// *synchronously* (no `.await` between the guard check and the commit).
-/// [`provision_unwrapping_key`](UnoHsmPal::provision_unwrapping_key) is the
-/// exception — it must `.await` the GDMA vault import between reading
-/// `unwrapping_key_id` and committing it, so two concurrent first-use
-/// `GetUnwrappingKey` requests for the same partition could otherwise both
-/// observe `None` and import the key twice (leaking a vault entry, with a
-/// last-writer-wins id). This flag makes the import run at most once at a time
-/// per partition; the losing caller returns `Ok(())` leaving the id absent, so
-/// `GetUnwrappingKey` surfaces `PendingKeyGeneration` and the host retries once
-/// the winner has committed. Runtime-only — not part of the persistent slot.
-static UNWRAPPING_KEY_IMPORT_IN_PROGRESS: [AtomicBool; NUM_PARTITIONS] =
-    [const { AtomicBool::new(false) }; NUM_PARTITIONS];
-
-/// RAII release of the per-partition unwrapping-key import guard, so the claim
-/// is cleared on every exit path (success, error, or `?` early return).
-struct ImportGuard(usize);
-
-impl Drop for ImportGuard {
-    fn drop(&mut self) {
-        UNWRAPPING_KEY_IMPORT_IN_PROGRESS[self.0].store(false, Ordering::Release);
-    }
-}
-
 impl HsmPartitionManager for UnoHsmPal {
     async fn provision_unwrapping_key(&self, io: &impl HsmIo) -> HsmResult<()> {
         let pid = io.pid();
 
         // Fast path: return early if the key is already imported. Otherwise
-        // read the 516-byte GSRAM backup slot the HSP published and claim the
-        // per-partition import guard, so the await-crossing import below runs
-        // at most once at a time. This whole block is synchronous (no `.await`),
-        // so the id check and the guard claim are atomic against a concurrent
-        // first use. `unwrapping_key_bk` returns `&'static` GSRAM memory that
-        // stays put while the slot is marked valid, so it is safe to read after
-        // the slot borrow is dropped.
-        let pidx = usize::from(u8::from(pid));
-        let (bk, _import_guard) = {
+        // read the 516-byte GSRAM backup slot the HSP published. The caller
+        // holds the partition lock (both the MBOR and TBOR GetUnwrappingKey
+        // handlers take it before invoking this hook), so the
+        // check → import → commit sequence below is serialised per partition
+        // despite the `.await` on the GDMA import — no interleaved first use
+        // can import a second copy. `unwrapping_key_bk` returns `&'static`
+        // GSRAM memory that stays put while the slot is marked valid, so it is
+        // safe to read after the slot borrow is dropped.
+        let bk = {
             let part = PartStore::partition(pid)?;
             if part.unwrapping_key_id().is_some() {
                 return Ok(());
@@ -593,16 +563,7 @@ impl HsmPartitionManager for UnoHsmPal {
                     &crate::unwrapping_key_fixture::UNWRAPPING_KEY_TEST_PKA_LE,
                 )?;
             }
-            // Claim the import guard. If another concurrent first-use import
-            // already owns this partition, bail and leave the id absent so the
-            // host retries (`PendingKeyGeneration`) rather than importing twice.
-            if UNWRAPPING_KEY_IMPORT_IN_PROGRESS[pidx]
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {
-                return Ok(());
-            }
-            (part.unwrapping_key_bk(), ImportGuard(pidx))
+            part.unwrapping_key_bk()
         };
 
         // Copy the 516-byte PKA-LE key out of GSRAM into transient
@@ -642,9 +603,9 @@ impl HsmPartitionManager for UnoHsmPal {
         let kid = create_res?;
 
         // Commit: record the vault id and release the GSRAM slot so the
-        // HSP can reuse it. The import guard (claimed above, released when this
-        // function returns) has serialised us against any concurrent first-use
-        // import, so no interleaved handler can have committed a second copy.
+        // HSP can reuse it. The caller holds the partition lock, so no
+        // interleaved handler can have imported a second copy between the
+        // check above and this write.
         let part = PartStore::partition(pid)?;
         part.set_unwrapping_key_id(Some(kid));
         part.clear_unwrapping_key_bk();
