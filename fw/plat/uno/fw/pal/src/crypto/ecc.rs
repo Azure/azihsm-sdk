@@ -612,11 +612,12 @@ impl HsmEcc for UnoHsmPal {
         // its `namedCurve` OID and locate the raw scalar `d` (big-endian).
         let (curve, ds, dl) = parse_ec_priv_der(der).ok_or(HsmError::InvalidArg)?;
         let vault_len = curve.wire_coord_len();
-        // The DER scalar is a raw big-endian integer at most the curve's *raw*
-        // private-key length (P-521 is 66 bytes, not the 68-byte DMA-padded
-        // wire length); reject overlong / non-canonical scalars. `vault_len`
-        // is only the (padded) output-buffer / vault size.
-        if dl > curve.priv_key_len() {
+        // SEC1 / RFC 5915 encodes the scalar as a fixed-width octet string for
+        // the curve (P-256 32, P-384 48, P-521 66 bytes). Require exactly that
+        // raw length — reject shorter (non-canonical) or overlong scalars,
+        // matching the std PAL. `vault_len` is only the (padded) vault / output
+        // size, used for wire zero-padding below.
+        if dl != curve.priv_key_len() {
             return Err(HsmError::InvalidArg);
         }
         // Reject an all-zero private scalar: `d = 0` is invalid — it derives the
