@@ -216,9 +216,9 @@ fn parse_ec_priv_der(der: &[u8]) -> Option<(HsmEccCurve, usize, usize)> {
     if itag != 0x30 {
         return None;
     }
-    // Inner ECPrivateKey version INTEGER (value 1) (skip).
-    let (ivtag, _ivs, _ivl, after_iver) = der_tlv(der, inner_start)?;
-    if ivtag != 0x02 {
+    // Inner ECPrivateKey version INTEGER: must be the value 1 (ecPrivkeyVer1).
+    let (ivtag, ivs, ivl, after_iver) = der_tlv(der, inner_start)?;
+    if ivtag != 0x02 || ivl != 1 || der[ivs] != 1 {
         return None;
     }
     // privateKey OCTET STRING = the raw scalar `d` (big-endian, field-length).
@@ -615,6 +615,11 @@ impl HsmEcc for UnoHsmPal {
         if dl > curve.priv_key_len() {
             return Err(HsmError::InvalidArg);
         }
+        // Reject an all-zero private scalar: `d = 0` is invalid — it derives the
+        // point at infinity and can fault the PKA point-multiply.
+        if der[ds..ds + dl].iter().all(|&b| b == 0) {
+            return Err(HsmError::InvalidArg);
+        }
         if let Some(out) = out {
             if out.len() < vault_len {
                 return Err(HsmError::InvalidArg);
@@ -640,6 +645,11 @@ impl HsmEcc for UnoHsmPal {
             68 => HsmEccCurve::P521,
             _ => return Err(HsmError::InvalidArg),
         };
+        // Reject an all-zero scalar: `d = 0` derives the point at infinity and
+        // can fault the PKA point-multiply.
+        if priv_key.iter().all(|&b| b == 0) {
+            return Err(HsmError::InvalidArg);
+        }
         let wire_pub_len = curve.wire_pub_key_len();
         let Some(pub_out) = pub_out else {
             return Ok(wire_pub_len);
