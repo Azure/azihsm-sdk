@@ -112,6 +112,7 @@ static_assertions = "1.1.0"
 syn = { features = ["full"], version = "2" }
 tock-registers = { git = "https://github.com/tock/tock.git", rev = "release-2.2" }
 zerocopy = "0.8.48"
+zeroize = { default-features = false, version = "1.8.1" }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }
