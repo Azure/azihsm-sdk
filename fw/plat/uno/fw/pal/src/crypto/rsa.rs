@@ -172,9 +172,11 @@ fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
         if oid_tag != 0x06 || der[oid_start..oid_start + oid_len] != RSA_ENCRYPTION_OID {
             return None;
         }
-        // The rsaEncryption parameters must be NULL (tag 0x05, length 0).
-        let (null_tag, _null_start, null_len, _null_next) = der_tlv(der, after_oid)?;
-        if null_tag != 0x05 || null_len != 0 {
+        // The rsaEncryption parameters must be NULL (tag 0x05, length 0), and
+        // must be the last field of the AlgorithmIdentifier SEQUENCE (no extra
+        // trailing fields).
+        let (null_tag, _null_start, null_len, null_next) = der_tlv(der, after_oid)?;
+        if null_tag != 0x05 || null_len != 0 || null_next != after_alg {
             return None;
         }
         let (ot, oct_start, _ol, oct_next) = der_tlv(der, after_alg)?;
@@ -327,6 +329,14 @@ impl HsmRsa for UnoHsmPal {
         // scratch buffer, then write it back in place — the vault form is
         // smaller than the source DER, so the overwrite is safe.
         let vault_len = 2 * modulus_len + 4;
+        // The in-place rewrite requires the vault operand to fit within `buf`.
+        // A malformed / truncated DER (e.g. a very short `d`) can make
+        // `vault_len` exceed `buf.len()`; reject rather than panic on the
+        // slices below. `buf` still holds recovered plaintext, so scrub first.
+        if vault_len > buf.len() {
+            buf.zeroize();
+            return Err(HsmError::InvalidArg);
+        }
         let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
         write_le(&mut out[0..modulus_len], &buf[ds..ds + dl]);
         write_le(&mut out[modulus_len..2 * modulus_len], &buf[ns..ns + nl]);
