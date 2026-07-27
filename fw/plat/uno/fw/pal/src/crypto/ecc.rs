@@ -654,6 +654,12 @@ impl HsmEcc for UnoHsmPal {
         if priv_key.iter().all(|&b| b == 0) {
             return Err(HsmError::InvalidArg);
         }
+        // P-521's 66-byte raw scalar is zero-padded to the 68-byte wire length;
+        // the two high (little-endian) bytes must be zero, otherwise the scalar
+        // is out of range and would feed a malformed operand to the PKA.
+        if priv_key.len() == 68 && (priv_key[66] != 0 || priv_key[67] != 0) {
+            return Err(HsmError::InvalidArg);
+        }
         let wire_pub_len = curve.wire_pub_key_len();
         let Some(pub_out) = pub_out else {
             return Ok(wire_pub_len);
