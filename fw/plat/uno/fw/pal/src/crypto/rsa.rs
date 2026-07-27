@@ -619,8 +619,12 @@ impl HsmRsa for UnoHsmPal {
 
         let m_start = h_len + sep + 1;
         let m_len = db_len - m_start;
+        // Contract (matches the std PAL): a recovered message longer than the
+        // caller's output buffer is a key/output-length error, reported as
+        // `RsaInvalidKeyLength`. The RsaUnwrap KEK path relies on this to map an
+        // oversized recovered KEK to `RsaUnwrapInvalidKek`.
         if output.len() < m_len {
-            return Err(HsmError::InvalidArg);
+            return Err(HsmError::RsaInvalidKeyLength);
         }
 
         output[..m_len].copy_from_slice(&db[m_start..]);
