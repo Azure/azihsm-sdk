@@ -144,9 +144,9 @@ type RsaDerRanges = ((usize, usize), (usize, usize), (usize, usize));
 /// `RSAPrivateKey` — and returns the big-endian value ranges `(start, len)` of
 /// the modulus `n`, public exponent `e`, and private exponent `d`.
 fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
-    // Outer SEQUENCE.
-    let (tag, seq_start, _seq_len, _next) = der_tlv(der, 0)?;
-    if tag != 0x30 {
+    // Outer SEQUENCE — must span the entire input (reject trailing garbage).
+    let (tag, seq_start, _seq_len, outer_next) = der_tlv(der, 0)?;
+    if tag != 0x30 || outer_next != der.len() {
         return None;
     }
     // version INTEGER (skip).
@@ -168,12 +168,14 @@ fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
         if null_tag != 0x05 || null_len != 0 {
             return None;
         }
-        let (ot, oct_start, _ol, _on) = der_tlv(der, after_alg)?;
+        let (ot, oct_start, _ol, oct_next) = der_tlv(der, after_alg)?;
         if ot != 0x04 {
             return None;
         }
-        let (st, inner_start, _sl, _sn) = der_tlv(der, oct_start)?;
-        if st != 0x30 {
+        // The privateKey OCTET STRING must wrap exactly the inner
+        // RSAPrivateKey SEQUENCE with no trailing bytes.
+        let (st, inner_start, _sl, inner_next) = der_tlv(der, oct_start)?;
+        if st != 0x30 || inner_next != oct_next {
             return None;
         }
         let (_v2s, _v2l, after_v2) = der_int(der, inner_start)?;
@@ -314,6 +316,11 @@ impl HsmRsa for UnoHsmPal {
         write_le(&mut out[modulus_len..2 * modulus_len], &buf[ns..ns + nl]);
         write_le(&mut out[2 * modulus_len..vault_len], &buf[es..es + el]);
         buf[..vault_len].copy_from_slice(&out[..vault_len]);
+        // Scrub the leftover source DER in the tail of `buf` — for a full
+        // RSAPrivateKey it still holds secret CRT components (`p`, `q`, `dp`,
+        // `dq`, `qinv`). The scoped DMA buffer is reused without automatic
+        // wiping, so scrub it here before returning.
+        buf[vault_len..].zeroize();
         // Scrub the assembled operand (holds the private exponent `d`) from the
         // stack scratch. `Zeroize` uses volatile writes so the wipe is not
         // elided as a dead store.
