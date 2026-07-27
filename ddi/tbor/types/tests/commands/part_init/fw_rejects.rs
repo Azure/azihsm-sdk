@@ -286,12 +286,10 @@ fn part_init_valid_rotated_co_request_succeeds_emu() {
         .expect("valid PartInit from rotated authenticated CO must succeed");
 }
 
-/// A rejection caused by the default-PSK dispatcher gate must not mutate
-/// partition state.
+/// A rejection caused by the CU permission gate must not mutate partition state.
 ///
-/// After the default-PSK request is rejected, rotate the CO PSK and submit
-/// a valid request. The valid request must still succeed.
-
+/// After the CU request is rejected with `InvalidPermissions`, a valid rotated-CO
+/// `PartInit` request must still succeed.
 #[test]
 fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
     let ctx = TestCtx::new();
