@@ -319,12 +319,13 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
         .expect("valid CO PartInit must succeed after CU rejection");
 }
 
-/// After a successful PartInit, the same partition must not accept another
-/// initialization request.
+/// After successful partition initialization, a second `PartInit` request
+/// must be rejected because the partition's PTA key has already been set.
 ///
-/// This version intentionally checks only that the second request is
-/// rejected. Add `assert_fw_rejects` after confirming the canonical status
-/// returned by the current firmware implementation.
+/// The second request reuses the authenticated CO session that performed
+/// the first initialization. Opening a new session with the pre-init
+/// rotated CO PSK is not valid after `PartInit` changes partition
+/// authentication state.
 #[test]
 fn part_init_rejects_second_initialization_emu() {
     let ctx = TestCtx::new();
@@ -337,9 +338,11 @@ fn part_init_rejects_second_initialization_emu() {
     ctx.part_init(&session, &seed, &policy, &thumb)
         .expect("first valid PartInit must succeed");
 
-    let _err = ctx
+    let err = ctx
         .part_init(&session, &seed, &policy, &thumb)
         .expect_err("second PartInit on an initialized partition must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::PtaKeyAlreadySet);
 }
 
 /// Verify that several malformed policy representations are independently
