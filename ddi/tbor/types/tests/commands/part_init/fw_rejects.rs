@@ -20,7 +20,7 @@ use super::pota_thumbprint;
 use super::CO;
 use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::SessionHandshake;
+use crate::harness::SessionGuard;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -34,20 +34,26 @@ const ROTATED_CU_PSK: [u8; PSK_LEN] = [
     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
 ];
 
-/// Open a session of `role` + `sty` under the supplied PSK
-/// (bypassing the partition default).
-fn open_role_with(
-    ctx: &TestCtx,
+/// Opens a session for the supplied role and session type using a custom
+/// PSK.
+///
+/// The completed handshake is wrapped in [`SessionGuard`] so the emulator
+/// session is automatically closed when the guard is dropped, including
+/// when a test panics.
+fn open_role_with<'a>(
+    ctx: &'a TestCtx,
     role: u8,
     sty: SessionType,
     psk: &[u8; PSK_LEN],
-) -> SessionHandshake {
+) -> SessionGuard<'a> {
     let opts = SessionOpenInitOptions::new(role, sty).with_psk(psk);
     let pending = ctx
         .session_open_init_with_options(opts)
         .expect("session_open_init under custom PSK");
-    ctx.session_open_finish(pending)
-        .expect("session_open_finish under custom PSK")
+    let handshake = ctx
+        .session_open_finish(pending)
+        .expect("session_open_finish under custom PSK");
+    SessionGuard::new(ctx, handshake)
 }
 
 /// Default-PSK CO session: the TBOR dispatcher must reject `PartInit`
@@ -95,7 +101,7 @@ fn part_init_reject_cu_session() {
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(&session, &seed, &policy, &thumb)
+        .part_init(session.handshake(), &seed, &policy, &thumb)
         .expect_err("PartInit on CU session must be rejected");
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 }
@@ -144,7 +150,7 @@ fn part_init_default_psk_gate_precedes_policy_decode_emu() {
 ///
 /// The CU PSK is rotated first so the dispatcher allows the command to
 /// reach the handler. Although the policy is malformed, the CU role must
-/// be rejected with `InvalidPermissions` before the policy is decoded.
+/// be rejected with `InvalidPermissions` before policy decoding occurs.
 #[test]
 fn part_init_cu_role_gate_precedes_policy_decode_emu() {
     let ctx = TestCtx::new();
@@ -160,7 +166,7 @@ fn part_init_cu_role_gate_precedes_policy_decode_emu() {
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(&session, &seed, &bad_policy, &thumb)
+        .part_init(session.handshake(), &seed, &bad_policy, &thumb)
         .expect_err("CU role gate must reject before policy decoding");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
@@ -307,12 +313,12 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(&cu_session, &seed, &policy, &thumb)
+        .part_init(cu_session.handshake(), &seed, &policy, &thumb)
         .expect_err("PartInit from a CU session must be rejected");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    // `cu_session` is only a SessionHandshake, so it has no close method.
+    // `cu_session` is guarded and closes automatically when dropped.
     let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     ctx.part_init(&co_session, &seed, &policy, &thumb)
@@ -348,7 +354,7 @@ fn part_init_rejects_second_initialization_emu() {
 /// Verify that several malformed policy representations are independently
 /// rejected and that no rejection changes partition state.
 ///
-/// A separate TestCtx is used for each case because the final valid request
+/// A separate `TestCtx` is used for each case because the final valid request
 /// initializes that case's partition.
 #[test]
 fn part_init_policy_rejection_matrix_does_not_mutate_state_emu() {
@@ -366,15 +372,15 @@ fn part_init_policy_rejection_matrix_does_not_mutate_state_emu() {
         let ctx = TestCtx::new();
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-        let mut bad_policy = match case {
+        let bad_policy = match case {
             BadPolicyCase::AllZero => [0u8; PART_POLICY_LEN],
             BadPolicyCase::AllOnes => [0xFFu8; PART_POLICY_LEN],
-            BadPolicyCase::ZeroMajorVersion => known_good_part_policy(),
+            BadPolicyCase::ZeroMajorVersion => {
+                let mut policy = known_good_part_policy();
+                policy[0] = 0;
+                policy
+            }
         };
-
-        if matches!(case, BadPolicyCase::ZeroMajorVersion) {
-            bad_policy[0] = 0;
-        }
 
         let good_policy = known_good_part_policy();
         let seed = mach_seed();
@@ -506,7 +512,7 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
     let cu_session = open_role_with(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
 
     let err = ctx
-        .part_init(&cu_session, &seed, &policy, &thumb)
+        .part_init(cu_session.handshake(), &seed, &policy, &thumb)
         .expect_err("PartInit from CU must be rejected");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
