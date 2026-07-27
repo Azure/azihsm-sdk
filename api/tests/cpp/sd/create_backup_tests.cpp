@@ -313,4 +313,57 @@ TEST_F(azihsm_sd_create_backup, create_backup_null_params)
     });
 }
 
+// Aliasing: passing the same `azihsm_buffer` for two of the three output
+// pointers is rejected with `INVALID_ARGUMENT` (it would otherwise form two
+// aliasing `&mut` references at the FFI boundary), before the domain is
+// created.
+TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        SdBackingContext ctx = provision_sd_backing_co_session(part_handle);
+        if (ctx.session == 0)
+        {
+            return;
+        }
+        auto sess_guard = scope_guard::make_scope_exit([&ctx] { azihsm_sess_close(ctx.session); });
+
+        SealingKeyMaterial sealing = sealing_key_and_report(ctx.session);
+        ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
+        ASSERT_FALSE(sealing.report.empty());
+
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+
+        azihsm_buffer masked_buf{ sealing.masked.data(),
+                                  static_cast<uint32_t>(sealing.masked.size()) };
+        azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
+        azihsm_sess_ex_sd_create_remote_backup_params params{
+            &masked_buf,
+            &evidence.get(),
+            &policy_buf,
+        };
+
+        // Pass the same output buffer for the remote and local backups.
+        std::vector<uint8_t> shared(kPokLocalBackupLen);
+        azihsm_buffer shared_buf{ shared.data(), static_cast<uint32_t>(shared.size()) };
+        std::vector<uint8_t> mk(kSdMkBackupLen);
+        azihsm_buffer mk_buf{ mk.data(), static_cast<uint32_t>(mk.size()) };
+        auto err = azihsm_sess_ex_sd_create_remote_backup(
+            ctx.session,
+            &params,
+            &shared_buf,
+            &shared_buf,
+            &mk_buf
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
 #endif // defined(AZIHSM_FEATURE_EMU)

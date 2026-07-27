@@ -1000,15 +1000,23 @@ SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
     };
     std::vector<uint8_t> pid;
     std::vector<uint8_t> pid_pub;
-    if (read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PID, pid) != AZIHSM_STATUS_SUCCESS ||
-        pid.size() != 16)
+    if (auto err = read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PID, pid);
+        err != AZIHSM_STATUS_SUCCESS)
     {
-        return fail("PartInfo PID query failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        return fail("PartInfo PID query failed", err);
     }
-    if (read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY, pid_pub) != AZIHSM_STATUS_SUCCESS ||
-        pid_pub.size() != kRawPubLen)
+    if (pid.size() != 16)
     {
-        return fail("PartInfo PID public key query failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        return fail("PartInfo PID has unexpected length", AZIHSM_STATUS_INTERNAL_ERROR);
+    }
+    if (auto err = read_part_prop(AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY, pid_pub);
+        err != AZIHSM_STATUS_SUCCESS)
+    {
+        return fail("PartInfo PID public key query failed", err);
+    }
+    if (pid_pub.size() != kRawPubLen)
+    {
+        return fail("PartInfo PID public key has unexpected length", AZIHSM_STATUS_INTERNAL_ERROR);
     }
 
     // 4. Mint the POTA anchor (for the PTA chain) and the SATA anchor (which

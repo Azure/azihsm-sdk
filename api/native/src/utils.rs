@@ -123,6 +123,25 @@ pub(crate) fn validate_output_handle_ptrs(
     Ok(())
 }
 
+/// Validates that every output-buffer pointer is non-null, aligned, and
+/// pairwise distinct.
+///
+/// Used at the FFI boundary for APIs with multiple `azihsm_buffer` outputs:
+/// two identical pointers would let the callee form two `&mut AzihsmBuffer`
+/// references to the same location, which is undefined behavior. Rejects
+/// null/misaligned or aliasing pointers with `InvalidArgument`.
+pub(crate) fn validate_distinct_output_buffers(
+    buffers: &[*mut crate::AzihsmBuffer],
+) -> Result<(), AzihsmStatus> {
+    for (i, &ptr) in buffers.iter().enumerate() {
+        validate_ptr(ptr)?;
+        if buffers[..i].iter().any(|&other| std::ptr::eq(other, ptr)) {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+    }
+    Ok(())
+}
+
 /// Validate and prepare the caller-provided output buffer.
 ///
 /// - If the buffer is large enough, returns a mutable slice to write into.
@@ -163,7 +182,8 @@ pub(crate) fn validate_output_buffer(
 ///
 /// # Returns
 /// * `Ok(&T)` - Reference to the typed value
-/// * `Err(AzihsmError::NullPointer)` - If the pointer is null
+/// * `Err(AzihsmStatus::InvalidArgument)` - If the pointer is null or
+///   misaligned for `T`
 #[allow(unsafe_code)]
 pub(crate) fn cast_ptr<'a, T>(ptr: *const c_void) -> Result<&'a T, AzihsmStatus> {
     // Cast to `*const T` before validating so the check uses `align_of::<T>()`;

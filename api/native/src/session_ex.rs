@@ -495,15 +495,17 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_create_remote_backup(
             report,
         };
 
-        // Validate all three output buffers before creating the domain so
-        // the one-shot command is not consumed on a too-small buffer.
-        validate_ptr(pok_remote_backup)?;
+        // Reject null/misaligned or aliasing output pointers before taking a
+        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
+        // would be undefined behavior.
+        validate_distinct_output_buffers(&[pok_remote_backup, pok_local_backup, sd_mk_backup])?;
+
         let pok_remote_backup = deref_mut_ptr(pok_remote_backup)?;
         validate_output_buffer(pok_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
-        validate_ptr(pok_local_backup)?;
+
         let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
         validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
-        validate_ptr(sd_mk_backup)?;
+
         let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
         validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
 
