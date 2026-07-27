@@ -183,9 +183,10 @@ fn curve_from_oid(oid: &[u8]) -> Option<HsmEccCurve> {
 /// `ECPrivateKey`) into `(curve, scalar_start, scalar_len)`, where the scalar
 /// `d` is the big-endian value `der[scalar_start..][..scalar_len]`.
 fn parse_ec_priv_der(der: &[u8]) -> Option<(HsmEccCurve, usize, usize)> {
-    // Outer SEQUENCE (PrivateKeyInfo).
-    let (tag, seq_start, _seq_len, _next) = der_tlv(der, 0)?;
-    if tag != 0x30 {
+    // Outer SEQUENCE (PrivateKeyInfo) — must span the entire input (reject
+    // trailing garbage).
+    let (tag, seq_start, _seq_len, outer_next) = der_tlv(der, 0)?;
+    if tag != 0x30 || outer_next != der.len() {
         return None;
     }
     // version INTEGER (skip).
@@ -202,18 +203,21 @@ fn parse_ec_priv_der(der: &[u8]) -> Option<(HsmEccCurve, usize, usize)> {
     if otag != 0x06 || der[oid_s..oid_s + oid_l] != OID_EC_PUBLIC_KEY {
         return None;
     }
-    let (ctag, cs, cl, _after_curve) = der_tlv(der, after_oid)?;
-    if ctag != 0x06 {
+    // The namedCurve OID must be the last field of the AlgorithmIdentifier
+    // SEQUENCE (no extra trailing fields).
+    let (ctag, cs, cl, after_curve) = der_tlv(der, after_oid)?;
+    if ctag != 0x06 || after_curve != after_alg {
         return None;
     }
     let curve = curve_from_oid(&der[cs..cs + cl])?;
-    // privateKey OCTET STRING wrapping the inner ECPrivateKey SEQUENCE.
-    let (ptag, pk_start, _pl, _pn) = der_tlv(der, after_alg)?;
+    // privateKey OCTET STRING must wrap exactly the inner ECPrivateKey
+    // SEQUENCE with no trailing bytes.
+    let (ptag, pk_start, _pl, pk_next) = der_tlv(der, after_alg)?;
     if ptag != 0x04 {
         return None;
     }
-    let (itag, inner_start, _il, _in) = der_tlv(der, pk_start)?;
-    if itag != 0x30 {
+    let (itag, inner_start, _il, inner_next) = der_tlv(der, pk_start)?;
+    if itag != 0x30 || inner_next != pk_next {
         return None;
     }
     // Inner ECPrivateKey version INTEGER: must be the value 1 (ecPrivkeyVer1).
