@@ -67,7 +67,10 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
 
     // Derive into a DMA scratch slot; `vault_key_create` copies it
     // into vault-owned storage so the scratch can drop after.
-    let secret = pal.dma_alloc(io, curve.secret_len())?;
+    //
+    // Allocate the secret zeroed to wire (word-padded) coordinate length
+    // to match vault storage format and ensure P-521 pad bytes are zero.
+    let secret = pal.dma_alloc_zeroed(io, curve.wire_coord_len())?;
     let priv_key = pal.vault_key(io, priv_key_id)?;
     pal.ecdh_derive(
         io,

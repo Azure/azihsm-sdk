@@ -20,6 +20,8 @@
 //! `_pct` parameter is accepted for API parity with the trait but no
 //! self-test is run.
 
+use core::cmp::Ordering;
+
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
@@ -29,9 +31,10 @@ use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
-use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
+use azihsm_fw_uno_drivers_upka::point_size;
+use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 
 use crate::UnoHsmPal;
 
@@ -94,6 +97,77 @@ fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
         UpkaEccCurve::P384 => &PRIME384_LE,
         UpkaEccCurve::P521 => &PRIME521_LE,
     }
+}
+
+// =============================================================================
+// Peer public-key range validation
+// =============================================================================
+
+/// Validate that a single coordinate satisfies `1 <= coordinate <= p - 1`.
+///
+/// `coordinate` and `p` are equal-length big numbers in little-endian byte
+/// order. This is a byte-wise port of the reference firmware's
+/// `EccPublicKeyRangeValidation::is_in_valid_range`: it walks from the most
+/// significant byte (highest index in little-endian) down to the least,
+/// short-circuiting as soon as the comparison is decided.
+///
+/// # Returns
+/// * `true` — the coordinate is in the closed interval `[1, p - 1]`.
+/// * `false` — the coordinate is `0`, is `>= p`, or the lengths differ.
+fn coord_in_valid_range(coordinate: &[u8], p: &[u8]) -> bool {
+    // A length mismatch means a malformed coordinate; reject it.
+    if coordinate.len() != p.len() {
+        return false;
+    }
+
+    // Tracks whether any non-least-significant byte of the coordinate is > 0,
+    // i.e. whether the coordinate is already known to be >= 1.
+    let mut coord_gt_zero = false;
+
+    // Compare bytes from most to least significant (right to left in
+    // little-endian). At a non-LSB position i:
+    // - p[i] > coordinate[i]: the gap is at least 2^8, so coordinate < p.
+    // - p[i] < coordinate[i]: coordinate exceeds p, so coordinate >= p.
+    // - equal: continue to the next lower byte.
+    for i in (1..p.len()).rev() {
+        coord_gt_zero |= coordinate[i] > 0;
+
+        match p[i].cmp(&coordinate[i]) {
+            Ordering::Greater => {
+                if coord_gt_zero {
+                    return true;
+                }
+                // coordinate < p is established; it is valid iff coordinate >= 1.
+                return coordinate[1..i].iter().rev().any(|&byte| byte > 0) || coordinate[0] >= 1;
+            }
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+
+    // All non-LSB bytes were equal: valid iff coordinate >= 1 and
+    // coordinate[0] <= p[0] - 1 (i.e. coordinate[0] < p[0], as p[0] > 0 for
+    // every supported curve prime).
+    (coord_gt_zero || coordinate[0] >= 1) && coordinate[0] < p[0]
+}
+
+/// Validate that a peer public key `(X ‖ Y)` has both coordinates in
+/// `[1, p - 1]` for the given curve.
+///
+/// `pub_key` is the little-endian wire buffer laid out as two
+/// [`hsm_point_size`] slots (`X` then `Y`); each coordinate's significant
+/// bytes occupy the first [`point_size`] bytes of its slot with any remaining
+/// bytes being DWORD-alignment padding (P-521 only). The caller must have
+/// ensured `pub_key.len() >= hsm_point_size(curve) * 2`.
+fn pub_key_in_valid_range(pub_key: &[u8], curve: UpkaEccCurve) -> bool {
+    let field = point_size(curve);
+    let wire = hsm_point_size(curve);
+    let p = &curve_prime_le(curve)[..field];
+
+    let x = &pub_key[..field];
+    let y = &pub_key[wire..wire + field];
+
+    coord_in_valid_range(x, p) && coord_in_valid_range(y, p)
 }
 
 // =============================================================================
@@ -320,8 +394,14 @@ impl HsmEcc for UnoHsmPal {
     /// # Errors
     /// * [`HsmError::InvalidArg`] if `curve` is not one of the supported
     ///   NIST curves.
-    /// * Any [`HsmError`] surfaced by the PKA driver (e.g. invalid
-    ///   public-key point, undersized buffer, hardware fault).
+    /// * [`HsmError::EccDerKeyShorterThanCurve`] if `pub_key` is too short to
+    ///   hold both wire-format coordinates.
+    /// * [`HsmError::EccPublicKeyValidationFailed`] if either coordinate is
+    ///   outside `[1, p - 1]`.
+    /// * [`HsmError::EccPointValidationFailed`] if the point is not on the
+    ///   curve.
+    /// * Any [`HsmError`] surfaced by the PKA driver (e.g. undersized buffer,
+    ///   hardware fault).
     async fn ecdh_derive(
         &self,
         io: &impl HsmIo,
@@ -331,6 +411,20 @@ impl HsmEcc for UnoHsmPal {
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
+
+        // Reject a peer public key that cannot even hold both wire-format
+        // coordinates, then reject one whose coordinates are out of range,
+        // before touching the PKA. This mirrors the reference firmware, which
+        // range-checks the software-visible coordinates prior to the hardware
+        // on-curve validation, and also prevents a coordinate equal to the
+        // curve prime from ever reaching the engine.
+        let wire = hsm_point_size(pka_curve);
+        if pub_key.len() < wire * 2 {
+            return Err(HsmError::EccDerKeyShorterThanCurve);
+        }
+        if !pub_key_in_valid_range(pub_key, pka_curve) {
+            return Err(HsmError::EccPublicKeyValidationFailed);
+        }
 
         let prime_le = curve_prime_le(pka_curve);
 
@@ -345,8 +439,20 @@ impl HsmEcc for UnoHsmPal {
             prime.copy_from_slice(prime_le);
             let mont_result = scope.dma_alloc(prime_le.len())?;
 
+            // Status word for the hardware on-curve validation that runs
+            // between the Montgomery-constant setup and the ECDH compute.
+            let point_valid = scope.dma_alloc(4)?;
+
             self.pka
-                .ecdh_derive(pka_curve, priv_key, pub_key, secret, prime, mont_result)
+                .ecdh_derive(
+                    pka_curve,
+                    priv_key,
+                    pub_key,
+                    secret,
+                    prime,
+                    mont_result,
+                    point_valid,
+                )
                 .await?;
 
             // The shared secret is returned PKA-native little-endian, like

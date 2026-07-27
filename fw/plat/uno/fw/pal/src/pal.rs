@@ -77,8 +77,8 @@ use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
-use embassy_futures::select::Either3;
-use embassy_futures::select::select3;
+use embassy_futures::select::select;
+use embassy_futures::select::Either;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -387,8 +387,11 @@ impl UnoHsmPal {
 
     /// Process one IPC receive cycle.
     ///
-    /// Awaits the next message, event, or 60s keepalive tick, then
-    /// dispatches to the appropriate handler. Returns after one iteration.
+    /// Awaits the next AdminMessage or AdminEvent, then dispatches to the
+    /// appropriate handler. Returns after one iteration. The wait is fully
+    /// waker-driven (the recv futures register a waker woken from the INTC
+    /// IRQ via the NVIC poll loop), so the task parks with zero cost until
+    /// IPC arrives — no polling timer is needed.
     ///
     /// # Parameters
     /// - `self`: PAL instance used to receive IPC traffic and dispatch handlers.
@@ -401,35 +404,33 @@ impl UnoHsmPal {
     /// # Side Effects
     /// - Consumes one message from [`IpcChannel::Message`] when available.
     /// - Acknowledges one event on [`IpcChannel::Event`] when available.
-    /// - Emits a periodic trace tick on timeout.
     pub async fn poll_ipc(&self) {
         let mut recv_msg = [0u32; 16];
 
-        let result = select3(
+        let result = select(
             self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
             self.ipc.recv_event(IpcChannel::AdminEvent as u8),
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
         )
         .await;
         match result {
-            Either3::First(_) => {
+            Either::First(_) => {
                 self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg)
                     .await;
             }
-            Either3::Second(value) => {
+            Either::Second(value) => {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
-            }
-            Either3::Third(()) => {
-                self.heartbeat();
             }
         }
     }
 
-    /// Write the core liveliness heartbeat to DTCM.
+    /// Refresh the core liveliness indicator polled by the SP.
     ///
-    /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
-    /// poll cycle, SP declares the core hung.
-    fn heartbeat(&self) {
+    /// SP polls CORE_RUN_STATUS and zeroes it each cycle; if it reads zero
+    /// on the next poll, it declares the core hung and resets it. Driven by
+    /// the dedicated heartbeat task on an independent timer so the refresh is
+    /// decoupled from IPC traffic, mirroring the reference firmware's
+    /// timer-driven `update_core_liveliness` (`on_timer_elapsed`).
+    pub fn update_liveliness(&self) {
         core_status::set(CoreStatus::Alive);
     }
 

@@ -262,14 +262,20 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     /// - `prime`: DMA-capable curve prime buffer (LE).
     /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
     ///   constant setup write. Content is not surfaced to the caller.
+    /// - `point_valid`: DMA-capable scratch (at least 4 bytes) receiving the
+    ///   hardware on-curve validation status word. Content is not surfaced to
+    ///   the caller.
     ///
     /// # Returns
     ///
     /// - `Ok(())`: Shared secret was written to `secret`.
+    /// - `Err(HsmError::EccPointValidationFailed)`: Peer public key is not on
+    ///   the curve.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
     ///   or hardware rejected the command.
     /// - `Err(UpkaError::QUEUE_FULL)`: No engine can be acquired.
     /// - `Err(UpkaError::WIPE_FAILED)`: Post-operation wipe failed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ecdh_derive(
         &self,
         curve: UpkaEccCurve,
@@ -278,10 +284,19 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         secret: &mut DmaBuf,
         prime: &DmaBuf,
         mont_result: &mut DmaBuf,
+        point_valid: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.with_engine(async |eng| {
-            eng.ecdh_derive(curve, priv_key, pub_key, secret, prime, mont_result)
-                .await
+            eng.ecdh_derive(
+                curve,
+                priv_key,
+                pub_key,
+                secret,
+                prime,
+                mont_result,
+                point_valid,
+            )
+            .await
         })
         .await
     }
@@ -343,34 +358,6 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.with_engine(async |eng| eng.rsa_mod_exp_pub(key_type, key, input, output).await)
-            .await
-    }
-
-    /// Validate that a public key is on the specified ECC curve.
-    ///
-    /// `result` is a caller-allocated DMA-capable buffer (at least 4 bytes)
-    /// that receives the hardware validation status word.
-    ///
-    /// # Parameters
-    ///
-    /// - `curve`: ECC curve selector.
-    /// - `pub_key`: DMA-capable public key buffer.
-    /// - `result`: DMA-capable output status word buffer.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())`: Validation completed and status was written to `result`.
-    /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
-    ///   or hardware rejected the command.
-    /// - `Err(UpkaError::QUEUE_FULL)`: No engine can be acquired.
-    /// - `Err(UpkaError::WIPE_FAILED)`: Post-operation wipe failed.
-    pub async fn ecc_point_validate(
-        &self,
-        curve: UpkaEccCurve,
-        pub_key: &DmaBuf,
-        result: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        self.with_engine(async |eng| eng.ecc_point_validate(curve, pub_key, result).await)
             .await
     }
 
