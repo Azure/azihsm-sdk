@@ -305,15 +305,22 @@ impl HsmRsa for UnoHsmPal {
         // CRT import needs the derived PKA operands (n1q, n2p) computed from
         // p/q/n via PKA modular arithmetic — not yet brought up on Uno.
         if crt {
+            // `buf` still holds the recovered plaintext DER; scrub it before
+            // any early return so no secret key material lingers in the reused
+            // DMA SRAM after a failed import.
+            buf.zeroize();
             return Err(HsmError::UnsupportedCmd);
         }
         // Parse the recovered DER (PKCS#8 or bare PKCS#1) into the big-endian
         // value ranges of the modulus `n`, public exponent `e`, and private
         // exponent `d`. The ranges alias `buf`.
-        let ((ns, nl), (es, el), (ds, dl)) =
-            parse_rsa_priv_der(&buf[..]).ok_or(HsmError::InvalidArg)?;
+        let Some(((ns, nl), (es, el), (ds, dl))) = parse_rsa_priv_der(&buf[..]) else {
+            buf.zeroize();
+            return Err(HsmError::InvalidArg);
+        };
         let modulus_len = nl;
         if !matches!(modulus_len, 256 | 384 | 512) || el > 4 || dl > modulus_len {
+            buf.zeroize();
             return Err(HsmError::InvalidArg);
         }
         // Assemble the vault operand `[d(k) ‖ n(k) ‖ e(4)]` little-endian in a
