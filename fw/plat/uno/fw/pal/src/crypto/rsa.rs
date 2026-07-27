@@ -93,9 +93,18 @@ fn der_tlv(der: &[u8], pos: usize) -> Option<(u8, usize, usize, usize)> {
         if n == 0 || n > 4 {
             return None;
         }
+        // DER requires minimal length encoding: the most-significant length
+        // byte must be non-zero (no leading-zero padding).
+        if *der.get(pos + 2)? == 0 {
+            return None;
+        }
         let mut len = 0usize;
         for i in 0..n {
             len = (len << 8) | (*der.get(pos + 2 + i)? as usize);
+        }
+        // Long form must not be used for lengths that fit in short form.
+        if len < 0x80 {
+            return None;
         }
         (len, 2 + n)
     };
