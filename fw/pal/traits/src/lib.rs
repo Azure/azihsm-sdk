@@ -429,13 +429,16 @@ pub const SESSION_BMK_KEY_LABEL: &[u8] = b"SMK";
 /// [`azihsm_fw_core_crypto_aead_envelope`].
 pub const SESSION_PARAM_KEY_LEN: usize = 32;
 
-/// Length in bytes of the per-session `masking_key`.
+/// Length in bytes of the per-session `masking_key` for TBOR
+/// **SessionEx (CU/CO)** sessions.
 ///
-/// 80 B = AES-CBC-256 key (32 B) ‖ HMAC-SHA-384 key (48 B). Consumed
-/// by the `key_masking::cbc`-based MBOR masked-key system; unrelated to
-/// [`SESSION_PARAM_KEY_LEN`] which now refers to the AEAD-GCM
-/// per-session wrap key.  Present for both CO and CU sessions.
-pub const SESSION_MASKING_KEY_LEN: usize = 80;
+/// 32 B AES-256-GCM key used by the `key_masking::aead`-based TBOR
+/// masked-key system (masked keys are scoped and wrapped under AES-GCM).
+/// Present for both CO and CU SessionEx blobs.  Distinct from the legacy
+/// MBOR `Session`-blob masking key (an 80 B `aes32 ‖ hmac48` cbc key,
+/// sized by the std-PAL-local `SESSION_MASKING_KEY_SIZE`), which the
+/// `key_masking::cbc`-based MBOR masked-key system continues to use.
+pub const SESSION_MASKING_KEY_LEN: usize = 32;
 
 /// Length in bytes of each directional message-MAC key (HMAC-SHA-384).
 ///

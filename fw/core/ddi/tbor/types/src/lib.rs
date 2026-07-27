@@ -36,6 +36,7 @@ pub mod tbor_int {
 
 pub mod api_rev;
 pub mod evidence;
+pub mod get_unwrapping_key;
 pub mod key_props;
 pub mod key_report;
 pub mod part_final;
@@ -53,9 +54,11 @@ pub mod sd_sealing_key_gen;
 pub mod session_close;
 pub mod session_open_finish;
 pub mod session_open_init;
+pub mod unwrap_key;
 
 pub use api_rev::*;
 pub use evidence::*;
+pub use get_unwrapping_key::*;
 pub use key_props::*;
 pub use key_report::*;
 pub use part_final::*;
@@ -73,3 +76,4 @@ pub use sd_sealing_key_gen::*;
 pub use session_close::*;
 pub use session_open_finish::*;
 pub use session_open_init::*;
+pub use unwrap_key::*;
