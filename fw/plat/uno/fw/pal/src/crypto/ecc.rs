@@ -189,9 +189,9 @@ fn parse_ec_priv_der(der: &[u8]) -> Option<(HsmEccCurve, usize, usize)> {
     if tag != 0x30 || outer_next != der.len() {
         return None;
     }
-    // version INTEGER (skip).
-    let (vtag, _vs, _vl, after_ver) = der_tlv(der, seq_start)?;
-    if vtag != 0x02 {
+    // PKCS#8 PrivateKeyInfo version INTEGER: must be the value 0 (v1).
+    let (vtag, vs, vl, after_ver) = der_tlv(der, seq_start)?;
+    if vtag != 0x02 || vl != 1 || der[vs] != 0 {
         return None;
     }
     // AlgorithmIdentifier ::= SEQUENCE { id-ecPublicKey OID, namedCurve OID }.
