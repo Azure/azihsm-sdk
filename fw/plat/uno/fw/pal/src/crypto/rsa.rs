@@ -107,16 +107,31 @@ fn der_tlv(der: &[u8], pos: usize) -> Option<(u8, usize, usize, usize)> {
     Some((tag, content_start, len, next))
 }
 
-/// Reads a DER INTEGER at `pos`, returning its value `(start, len)` with any
-/// leading `0x00` sign/pad byte stripped, plus the offset just past it.
+/// Reads a DER INTEGER at `pos`, returning its positive value `(start, len)`
+/// with the leading `0x00` sign pad (if present) stripped, plus the offset just
+/// past it. Because the input is untrusted recovered key material, this rejects
+/// negative integers (MSB set on the first content byte, i.e. no sign pad) and
+/// non-minimal encodings; the integer zero (a lone `0x00`) is still accepted so
+/// the PKCS#8/PKCS#1 `version` fields parse.
 fn der_int(der: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
-    let (tag, mut start, mut len, next) = der_tlv(der, pos)?;
+    let (tag, start, len, next) = der_tlv(der, pos)?;
     if tag != 0x02 || len == 0 {
         return None;
     }
-    while len > 1 && der[start] == 0x00 {
-        start += 1;
-        len -= 1;
+    let first = der[start];
+    // A negative INTEGER (two's-complement: MSB of the first byte set, with no
+    // `0x00` sign pad) is never a valid RSA field.
+    if first & 0x80 != 0 {
+        return None;
+    }
+    // A leading `0x00` is a sign pad; per DER it is minimal only when the next
+    // byte has its MSB set. The sole exception is the integer zero, encoded as
+    // a single `0x00` byte.
+    if first == 0x00 && len > 1 {
+        if der[start + 1] & 0x80 == 0 {
+            return None;
+        }
+        return Some((start + 1, len - 1, next));
     }
     Some((start, len, next))
 }
@@ -574,61 +589,73 @@ impl HsmRsa for UnoHsmPal {
         let em = alloc.dma_alloc(k)?;
         let label_hash = alloc.dma_alloc(h_len)?;
 
-        self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
-            .await?;
+        // `em` holds the decrypted encoded message and then the recovered DB —
+        // both secret. The scoped allocator only rewinds its watermark on drop
+        // and never clears freed DMA, so scrub `em` on *every* exit path
+        // (including `?`-propagated errors) before it can be handed to a later
+        // per-IO allocation. The fallible decode runs in an inner block so the
+        // single `em.zeroize()` below covers all of them.
+        let result = async {
+            self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
+                .await?;
 
-        // `mod_exp_priv` is little-endian (PKA-native): both the ciphertext
-        // operand and the `em` result are LE wire form. The RSA-OAEP decode
-        // below (RFC 8017 EME-OAEP) operates on the big-endian encoded message
-        // `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, so flip the result LE→BE first
-        // (the std PAL does the same flip around OpenSSL, in its driver).
-        em[..k].reverse();
+            // `mod_exp_priv` is little-endian (PKA-native): both the ciphertext
+            // operand and the `em` result are LE wire form. The RSA-OAEP decode
+            // below (RFC 8017 EME-OAEP) operates on the big-endian encoded
+            // message `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, so flip the result
+            // LE→BE first (the std PAL does the same flip around OpenSSL).
+            em[..k].reverse();
 
-        if em[0] != 0x00 {
-            return Err(HsmError::RsaDecryptFailed);
+            if em[0] != 0x00 {
+                return Err(HsmError::RsaDecryptFailed);
+            }
+
+            // Recover seed: seed = maskedSeed XOR MGF(maskedDB, hLen)
+            {
+                let (seed, db) = em[1..k].split_at_mut(h_len);
+                self.mgf1_xor(io, algo, db, seed).await?;
+            }
+
+            // Recover DB: DB = maskedDB XOR MGF(seed, dbLen)
+            {
+                let (seed, db) = em[1..k].split_at_mut(h_len);
+                self.mgf1_xor(io, algo, seed, db).await?;
+            }
+
+            // Verify lHash using reusable scratch allocated from the alloc.
+            let db = &em[1 + h_len..k];
+            self.hash(io, algo, label, label_hash, true).await?;
+            let db_hash: &[u8] = &db[..h_len];
+            let label_hash_slice: &[u8] = &label_hash[..h_len];
+            if db_hash != label_hash_slice {
+                return Err(HsmError::RsaDecryptFailed);
+            }
+
+            // Find 0x01 separator in DB after lHash
+            let ps_and_m = &db[h_len..];
+            let sep = ps_and_m.iter().position(|&b| b == 0x01);
+            let sep = match sep {
+                Some(s) if ps_and_m[..s].iter().all(|&b| b == 0x00) => s,
+                _ => return Err(HsmError::RsaDecryptFailed),
+            };
+
+            let m_start = h_len + sep + 1;
+            let m_len = db_len - m_start;
+            // Contract (matches the std PAL): a recovered message longer than
+            // the caller's output buffer is a key/output-length error, reported
+            // as `RsaInvalidKeyLength`. The RsaUnwrap KEK path relies on this to
+            // map an oversized recovered KEK to `RsaUnwrapInvalidKek`.
+            if output.len() < m_len {
+                return Err(HsmError::RsaInvalidKeyLength);
+            }
+
+            output[..m_len].copy_from_slice(&db[m_start..]);
+            Ok(m_len)
         }
+        .await;
 
-        // Recover seed: seed = maskedSeed XOR MGF(maskedDB, hLen)
-        {
-            let (seed, db) = em[1..k].split_at_mut(h_len);
-            self.mgf1_xor(io, algo, db, seed).await?;
-        }
-
-        // Recover DB: DB = maskedDB XOR MGF(seed, dbLen)
-        {
-            let (seed, db) = em[1..k].split_at_mut(h_len);
-            self.mgf1_xor(io, algo, seed, db).await?;
-        }
-
-        // Verify lHash using reusable scratch allocated from the alloc.
-        let db = &em[1 + h_len..k];
-        self.hash(io, algo, label, label_hash, true).await?;
-        let db_hash: &[u8] = &db[..h_len];
-        let label_hash_slice: &[u8] = &label_hash[..h_len];
-        if db_hash != label_hash_slice {
-            return Err(HsmError::RsaDecryptFailed);
-        }
-
-        // Find 0x01 separator in DB after lHash
-        let ps_and_m = &db[h_len..];
-        let sep = ps_and_m.iter().position(|&b| b == 0x01);
-        let sep = match sep {
-            Some(s) if ps_and_m[..s].iter().all(|&b| b == 0x00) => s,
-            _ => return Err(HsmError::RsaDecryptFailed),
-        };
-
-        let m_start = h_len + sep + 1;
-        let m_len = db_len - m_start;
-        // Contract (matches the std PAL): a recovered message longer than the
-        // caller's output buffer is a key/output-length error, reported as
-        // `RsaInvalidKeyLength`. The RsaUnwrap KEK path relies on this to map an
-        // oversized recovered KEK to `RsaUnwrapInvalidKek`.
-        if output.len() < m_len {
-            return Err(HsmError::RsaInvalidKeyLength);
-        }
-
-        output[..m_len].copy_from_slice(&db[m_start..]);
-        Ok(m_len)
+        em.zeroize();
+        result
     }
 
     // ── PSS signatures ─────────────────────────────────────────────
