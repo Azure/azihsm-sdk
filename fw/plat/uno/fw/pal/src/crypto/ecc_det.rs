@@ -82,7 +82,7 @@ const fn reverse48(mut a: [u8; 48]) -> [u8; 48] {
 /// candidate-range check ([`ct_in_range`]) compares big-endian. Derived from
 /// [`ORDER384_LE`] at compile time so the sign hot path does not reverse the
 /// order on every call.
-const ORDER384_BE: [u8; 48] = reverse48(ORDER384_LE);
+pub(super) const ORDER384_BE: [u8; 48] = reverse48(ORDER384_LE);
 
 /// Big-endian `a -= b` for equal-length operands, assuming `a >= b`.
 ///
@@ -111,7 +111,7 @@ fn be_sub_assign(a: &mut [u8], b: &[u8]) {
 /// the private key from a few biased/leaked nonce bits). Both operands are
 /// equal-length big-endian; every byte is read with no data-dependent early
 /// exit.
-fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
+pub(super) fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
     // v != 0: OR all bytes, then test the accumulator once.
     let mut acc = 0u8;
     for &b in v {

@@ -36,6 +36,8 @@ use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
 use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
+use super::ecc_det::ORDER384_BE;
+use super::ecc_det::ct_in_range;
 use super::rsa::der_tlv;
 use super::rsa::write_le;
 use crate::UnoHsmPal;
@@ -154,6 +156,31 @@ fn curve_base_point_le(curve: UpkaEccCurve) -> (&'static [u8], &'static [u8]) {
         UpkaEccCurve::P256 => (&BASE256_X_LE, &BASE256_Y_LE),
         UpkaEccCurve::P384 => (&BASE384_X_LE, &BASE384_Y_LE),
         UpkaEccCurve::P521 => (&BASE521_X_LE, &BASE521_Y_LE),
+    }
+}
+
+/// NIST P-256 curve order `n` in big-endian (for the `1 <= d < n` scalar check).
+const ORDER256_BE: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+];
+
+/// NIST P-521 curve order `n` in big-endian (for the `1 <= d < n` scalar check).
+const ORDER521_BE: [u8; 66] = [
+    0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xfa, 0x51, 0x86, 0x87, 0x83, 0xbf, 0x2f, 0x96, 0x6b, 0x7f, 0xcc, 0x01, 0x48, 0xf7, 0x09,
+    0xa5, 0xd0, 0x3b, 0xb5, 0xc9, 0xb8, 0x89, 0x9c, 0x47, 0xae, 0xbb, 0x6f, 0xb7, 0x1e, 0x91, 0x38,
+    0x64, 0x09,
+];
+
+/// Curve order `n` (big-endian, raw `priv_key_len` bytes) used to validate an
+/// imported scalar is in range `[1, n-1]`. P-384's lives in [`super::ecc_det`].
+fn curve_order_be(curve: HsmEccCurve) -> &'static [u8] {
+    match curve {
+        HsmEccCurve::P256 => &ORDER256_BE,
+        HsmEccCurve::P384 => &ORDER384_BE,
+        HsmEccCurve::P521 => &ORDER521_BE,
     }
 }
 
@@ -620,9 +647,10 @@ impl HsmEcc for UnoHsmPal {
         if dl != curve.priv_key_len() {
             return Err(HsmError::InvalidArg);
         }
-        // Reject an all-zero private scalar: `d = 0` is invalid — it derives the
-        // point at infinity and can fault the PKA point-multiply.
-        if der[ds..ds + dl].iter().all(|&b| b == 0) {
+        // SEC1 requires the scalar in `[1, n-1]`; reject `d == 0` or `d >= n`
+        // (the curve order). `ct_in_range` compares the same-length big-endian
+        // `d` and `n` in constant time, matching the std PAL's `check_key`.
+        if !ct_in_range(&der[ds..ds + dl], curve_order_be(curve)) {
             return Err(HsmError::InvalidArg);
         }
         if let Some(out) = out {
