@@ -38,6 +38,7 @@ use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
 use super::ecc_det::ORDER384_BE;
 use super::ecc_det::ct_in_range;
+use super::ecc_det::ct_in_range_le;
 use super::rsa::der_tlv;
 use super::rsa::write_le;
 use crate::UnoHsmPal;
@@ -678,15 +679,19 @@ impl HsmEcc for UnoHsmPal {
             68 => HsmEccCurve::P521,
             _ => return Err(HsmError::InvalidArg),
         };
-        // Reject an all-zero scalar: `d = 0` derives the point at infinity and
-        // can fault the PKA point-multiply.
-        if priv_key.iter().all(|&b| b == 0) {
-            return Err(HsmError::InvalidArg);
-        }
         // P-521's 66-byte raw scalar is zero-padded to the 68-byte wire length;
         // the two high (little-endian) bytes must be zero, otherwise the scalar
         // is out of range and would feed a malformed operand to the PKA.
         if priv_key.len() == 68 && (priv_key[66] != 0 || priv_key[67] != 0) {
+            return Err(HsmError::InvalidArg);
+        }
+        // Validate the scalar is in `[1, n-1]` against the curve order — the
+        // same trust-boundary contract as the import path / std PAL, since this
+        // is called on untrusted vault keys (import / unmask / unwrap). Read
+        // the LE scalar directly against the BE order (no reversed-copy scratch
+        // of the secret scalar).
+        let raw_len = curve.priv_key_len();
+        if !ct_in_range_le(&priv_key[..raw_len], curve_order_be(curve)) {
             return Err(HsmError::InvalidArg);
         }
         let wire_pub_len = curve.wire_pub_key_len();

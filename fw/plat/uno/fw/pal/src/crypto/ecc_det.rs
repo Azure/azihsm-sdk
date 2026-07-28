@@ -132,6 +132,36 @@ pub(super) fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
     nonzero & lt
 }
 
+/// Constant-time check that the little-endian candidate `v_le` is in
+/// `[1, n_be - 1]`.
+///
+/// Same guarantees and byte-level arithmetic as [`ct_in_range`], but reads
+/// `v_le` in native PKA (little-endian) order and `n_be` in big-endian —
+/// so the caller need not materialize (and then scrub) a byte-reversed copy
+/// of the secret scalar just to reuse the BE-vs-BE variant. Both slices must
+/// be the same length.
+pub(super) fn ct_in_range_le(v_le: &[u8], n_be: &[u8]) -> bool {
+    // v != 0: OR all bytes, then test the accumulator once.
+    let mut acc = 0u8;
+    for &b in v_le {
+        acc |= b;
+    }
+    let nonzero = acc != 0;
+
+    // v < n: full-width subtraction from LSB to MSB. LSB is `v_le[0]` for the
+    // LE scalar and `n_be[len - 1]` for the BE order; step both indices in
+    // opposite directions so the same borrow-propagation runs branch-free.
+    let len = v_le.len();
+    let mut borrow = 0i32;
+    for j in 0..len {
+        let diff = v_le[j] as i32 - n_be[len - 1 - j] as i32 - borrow;
+        borrow = (diff >> 8) & 1;
+    }
+    let lt = borrow == 1;
+
+    nonzero & lt
+}
+
 /// `V ‖ 0x00/0x01 ‖ int2octets(x) ‖ bits2octets(h1)` = 48 + 1 + 48 + 48.
 const RFC6979_SEED_MSG_LEN: usize = 48 + 1 + 48 + 48;
 
