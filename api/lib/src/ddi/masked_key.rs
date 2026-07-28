@@ -349,9 +349,9 @@ impl TryFrom<DdiMaskedKeyMetadata> for HsmMaskedKeyMetadata {
         let attrs = HsmMaskedKeyAttributes::try_from(value.key_attributes)?;
         let (kind, bits, curve) = match value.key_type {
             DdiKeyType::RsaUnwrap => (HsmKeyKind::Rsa, 2048, None), // Special internal key type for RSA unwrapping
-            DdiKeyType::Rsa2kPrivate => (HsmKeyKind::Rsa, 2048, None),
-            DdiKeyType::Rsa3kPrivate => (HsmKeyKind::Rsa, 3072, None),
-            DdiKeyType::Rsa4kPrivate => (HsmKeyKind::Rsa, 4096, None),
+            DdiKeyType::Rsa2kPrivate | DdiKeyType::Rsa2kPrivateCrt => (HsmKeyKind::Rsa, 2048, None),
+            DdiKeyType::Rsa3kPrivate | DdiKeyType::Rsa3kPrivateCrt => (HsmKeyKind::Rsa, 3072, None),
+            DdiKeyType::Rsa4kPrivate | DdiKeyType::Rsa4kPrivateCrt => (HsmKeyKind::Rsa, 4096, None),
             DdiKeyType::Ecc256Private => (HsmKeyKind::Ecc, 256, Some(HsmEccCurve::P256)),
             DdiKeyType::Ecc384Private => (HsmKeyKind::Ecc, 384, Some(HsmEccCurve::P384)),
             DdiKeyType::Ecc521Private => (HsmKeyKind::Ecc, 521, Some(HsmEccCurve::P521)),
