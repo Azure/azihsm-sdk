@@ -20,6 +20,7 @@ use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmRng;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_aes::AesMode;
 use azihsm_fw_uno_drivers_aes::AesOp as DriverAesOp;
@@ -51,23 +52,6 @@ fn aes_op(op: PalAesOp) -> DriverAesOp {
         PalAesOp::Encrypt => DriverAesOp::Encrypt,
         PalAesOp::Decrypt => DriverAesOp::Decrypt,
     }
-}
-
-/// Build the canonical “unsupported operation” error result.
-///
-/// Used by trait methods that this PAL does not implement (currently only
-/// [`HsmAes::aes_gen_key`]).
-///
-/// # Type parameters
-/// * `T` — the success payload of the returned [`HsmResult`]. Inferred at
-///   the call site so this helper can be used to short-circuit any
-///   `HsmResult<_>`-returning function.
-///
-/// # Returns
-/// * Always [`Err`] containing [`HsmError::UnsupportedCmd`].
-#[inline]
-fn unsupported<T>() -> HsmResult<T> {
-    Err(HsmError::UnsupportedCmd)
 }
 
 /// Validate that a buffer pair is acceptable for an AES-ECB / AES-CBC
@@ -244,11 +228,22 @@ impl UnoHsmPal {
 // validation and the building blocks each method delegates to.
 
 impl HsmAes for UnoHsmPal {
-    /// Not implemented: returns [`HsmError::UnsupportedCmd`].
+    /// Generate a random AES key by filling `key` from the on-chip
+    /// hardware RNG.
     ///
-    /// AES key generation is performed in higher layers via the RNG trait.
-    async fn aes_gen_key(&self, _io: &impl HsmIo, _key: &mut [u8]) -> HsmResult<()> {
-        unsupported()
+    /// The key size is taken from `key.len()`: 16 / 24 / 32 bytes for
+    /// AES-128 / 192 / 256 respectively. Any other length is rejected
+    /// before touching the RNG.
+    ///
+    /// # Errors
+    /// * [`HsmError::InvalidArg`] — `key.len()` is not 16, 24, or 32.
+    /// * Any [`HsmError`] surfaced by the RNG driver.
+    async fn aes_gen_key(&self, io: &impl HsmIo, key: &mut [u8]) -> HsmResult<()> {
+        match key.len() {
+            16 | 24 | 32 => {}
+            _ => return Err(HsmError::InvalidArg),
+        }
+        self.rng_fill_bytes(io, key)
     }
 
     /// Validates `iv_in` / `iv_out` lengths and that `input` / `output`
