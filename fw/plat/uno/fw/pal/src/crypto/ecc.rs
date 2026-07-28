@@ -33,7 +33,6 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
-use azihsm_fw_uno_drivers_upka::point_size;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 
 use crate::UnoHsmPal;
@@ -155,17 +154,21 @@ fn coord_in_valid_range(coordinate: &[u8], p: &[u8]) -> bool {
 /// `[1, p - 1]` for the given curve.
 ///
 /// `pub_key` is the little-endian wire buffer laid out as two
-/// [`hsm_point_size`] slots (`X` then `Y`); each coordinate's significant
-/// bytes occupy the first [`point_size`] bytes of its slot with any remaining
-/// bytes being DWORD-alignment padding (P-521 only). The caller must have
-/// ensured `pub_key.len() >= hsm_point_size(curve) * 2`.
+/// [`hsm_point_size`] slots (`X` then `Y`). Each coordinate is validated at
+/// its **full wire width** against the wire-width curve prime
+/// ([`curve_prime_le`], whose P-521 DWORD-alignment pad bytes are zero).
+/// Comparing the padded coordinate against the padded prime means a
+/// non-zero MSB pad byte (P-521's 2 trailing bytes) makes the coordinate
+/// compare `>= p` and is rejected here, rather than being silently ignored
+/// and slipping an out-of-range coordinate through to the PKA. This matches
+/// the exact bytes the hardware will consume. The caller must have ensured
+/// `pub_key.len() >= hsm_point_size(curve) * 2`.
 fn pub_key_in_valid_range(pub_key: &[u8], curve: UpkaEccCurve) -> bool {
-    let field = point_size(curve);
     let wire = hsm_point_size(curve);
-    let p = &curve_prime_le(curve)[..field];
+    let p = &curve_prime_le(curve)[..wire];
 
-    let x = &pub_key[..field];
-    let y = &pub_key[wire..wire + field];
+    let x = &pub_key[..wire];
+    let y = &pub_key[wire..wire * 2];
 
     coord_in_valid_range(x, p) && coord_in_valid_range(y, p)
 }

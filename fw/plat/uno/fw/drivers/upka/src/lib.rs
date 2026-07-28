@@ -29,5 +29,4 @@ pub use error::*;
 pub use opcode::hash_size;
 pub use opcode::hsm_point_size;
 pub use opcode::mont_operand_size;
-pub use opcode::point_size;
 pub use types::*;

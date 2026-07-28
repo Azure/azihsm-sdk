@@ -275,7 +275,7 @@ pub fn hash_size(curve: UpkaEccCurve) -> usize {
 /// # Returns
 ///
 /// - Affine coordinate size in bytes.
-pub fn point_size(curve: UpkaEccCurve) -> usize {
+pub(crate) fn point_size(curve: UpkaEccCurve) -> usize {
     match curve {
         UpkaEccCurve::P256 => 32,
         UpkaEccCurve::P384 => 48,
