@@ -72,6 +72,19 @@ impl TestDev {
     }
 }
 
+// SAFETY: The only `!Send` field on `TestDev` is
+// `_guard: Option<MutexGuard<'static, ()>>`. The lock protects a
+// unit `()` and is never dereferenced — the guard exists purely to
+// serialise tests. Secondary `TestDev` handles (returned by
+// `open_dev_secondary`) always have `_guard: None`. Sending the
+// primary is safe as long as `TestDev` is not moved off the thread
+// that acquired the lock until the guard drops; in practice only
+// secondaries (with `_guard: None`) are sent into `thread::scope`
+// worker threads, and rustc cannot prove that at compile time
+// because both variants share the same type.
+#[allow(unsafe_code)]
+unsafe impl Send for TestDev {}
+
 impl Deref for TestDev {
     type Target = <AzihsmDdi as Ddi>::Dev;
     fn deref(&self) -> &Self::Target {
