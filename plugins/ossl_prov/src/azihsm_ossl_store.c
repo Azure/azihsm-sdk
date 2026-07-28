@@ -380,7 +380,7 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
         }
     }
     /* For RSA keys, query bit length and session flag */
-    else if (actual_kind == AZIHSM_KEY_KIND_RSA)
+    else if (actual_kind == AZIHSM_KEY_KIND_RSA || actual_kind == AZIHSM_KEY_KIND_RSA_CRT)
     {
         /* Query RSA bit length */
         uint32_t bit_len = 0;
