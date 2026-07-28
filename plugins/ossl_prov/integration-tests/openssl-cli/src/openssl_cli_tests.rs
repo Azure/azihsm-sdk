@@ -440,6 +440,22 @@ fn test_ec_round_trip() {
 
 #[test]
 #[serial]
+fn test_rsa_key_type() {
+    lit::run::tests(lit::event_handler::Default::default(), |config| {
+        config.add_search_path(search_path("testfiles/rsa/key_type"));
+        config.add_extension("sh");
+        config
+            .constants
+            .insert("bash".to_owned(), "/bin/bash".to_string());
+        config
+            .constants
+            .insert("cleanup".to_owned(), CLEANUP.to_string());
+    })
+    .expect("Lit test failed");
+}
+
+#[test]
+#[serial]
 fn test_rsa_import_key() {
     let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
     let algorithms = vec!["RSA".to_string(), "RSA-PSS".to_string()];
