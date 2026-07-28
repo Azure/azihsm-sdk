@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::args()
         .nth(1)
         .ok_or("usage: masked-keygen <output-blob-path>")?;
-    let blob = azihsm_ossl_engine::generate_masked_ec_p384_from_env()?;
+    let blob = azihsm_ossl_engine::integration::generate_masked_ec_p384_from_env()?;
     // Owner-only: the blob is key material.
     let mut f = std::fs::OpenOptions::new()
         .write(true)

@@ -474,59 +474,15 @@ fn hex_decode_16(s: &str, var: &'static str) -> EngineResult<[u8; 16]> {
     Ok(out)
 }
 
-/// Test helper: write key-material bytes to `path` with owner-only permissions
-/// and the same open hardening the engine uses for secret files — create a new
-/// file (`O_EXCL`, no clobber) mode 0600 and refuse a symlink at the path
-/// (`O_NOFOLLOW`). Used by the round-trip tests to stage a masked-key blob.
-#[cfg(test)]
-fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(SECRET_FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)?;
-    file.write_all(data)
-}
-
-/// Test helper: a throwaway ENGINE for driving `keyload::load_key` in-process.
-/// The loader binds returned keys to it (`EC_KEY_new_method`), so it must
-/// outlive the loaded `EVP_PKEY`; the raw structural ref is returned so the
-/// caller frees it with `ENGINE_free` after dropping the key.
-#[cfg(test)]
-#[allow(unsafe_code)]
-#[allow(clippy::unwrap_used)]
-fn new_test_engine() -> (
-    azihsm_ossl_engine_core::engine::Engine,
-    *mut azihsm_ossl_engine_core::ffi::ENGINE,
-) {
-    use std::ptr::NonNull;
-
-    use azihsm_ossl_engine_core::engine::Engine;
-    use azihsm_ossl_engine_core::ffi;
-
-    // SAFETY: ENGINE_new returns a fresh structural ref; wrapping it in Engine
-    // is sound for the test, and the caller ENGINE_free's the returned raw ref.
-    unsafe {
-        let raw = ffi::ENGINE_new();
-        assert!(!raw.is_null(), "ENGINE_new");
-        let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
-        // The loader binds keys via EC_KEY_new_method, which needs an EC method
-        // on the engine (bind_helper does this in production).
-        engine.set_default_ec_method().unwrap();
-        (engine, raw)
-    }
-}
-
 #[cfg(all(test, feature = "mock"))]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::fs;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     use std::path::PathBuf;
+    use std::ptr::NonNull;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
@@ -537,6 +493,8 @@ mod tests {
     use azihsm_api::HsmKeyKind;
     use azihsm_api::HsmKeyManager;
     use azihsm_api::HsmKeyPropsBuilder;
+    use azihsm_ossl_engine_core::engine::Engine;
+    use azihsm_ossl_engine_core::ffi;
     use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
@@ -546,6 +504,39 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
+
+    /// Test helper: write key-material bytes to `path` with owner-only permissions
+    /// and the same open hardening the engine uses for secret files — create a new
+    /// file (`O_EXCL`, no clobber) mode 0600 and refuse a symlink at the path
+    /// (`O_NOFOLLOW`). Used by the round-trip tests to stage a masked-key blob.
+    fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(SECRET_FILE_MODE)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?;
+        file.write_all(data)
+    }
+
+    /// Test helper: a throwaway ENGINE for driving `keyload::load_key` in-process.
+    /// The loader binds returned keys to it (`EC_KEY_new_method`), so it must
+    /// outlive the loaded `EVP_PKEY`; the raw structural ref is returned so the
+    /// caller frees it with `ENGINE_free` after dropping the key.
+    #[allow(unsafe_code)]
+    fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
+        // SAFETY: ENGINE_new returns a fresh structural ref; wrapping it in Engine
+        // is sound for the test, and the caller ENGINE_free's the returned raw ref.
+        unsafe {
+            let raw = ffi::ENGINE_new();
+            assert!(!raw.is_null(), "ENGINE_new");
+            let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
+            // The loader binds keys via EC_KEY_new_method, which needs an EC method
+            // on the engine (bind_helper does this in production).
+            engine.set_default_ec_method().unwrap();
+            (engine, raw)
+        }
+    }
 
     /// Shared per-process MOBK path. The mock device's BK3 is global to the
     /// process: the first test establishes it (plaintext OBK) and the engine

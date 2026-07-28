@@ -18,6 +18,7 @@
 //! typo fails fast rather than being silently dropped.
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
@@ -30,6 +31,28 @@ pub enum KeyType {
     Ec,
     Rsa,
     RsaPss,
+}
+
+impl FromStr for KeyType {
+    type Err = EngineError;
+
+    /// Parse a URI `type=` value into a [`KeyType`]. Case-insensitive, mirroring
+    /// the provider's STORE (which compares with `strcasecmp`). `aes` is a valid
+    /// provider key type but cannot be loaded as a private key here, so it is
+    /// rejected with a distinct error rather than an "unknown type".
+    fn from_str(value: &str) -> EngineResult<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "ec" => Ok(KeyType::Ec),
+            "rsa" => Ok(KeyType::Rsa),
+            "rsa-pss" => Ok(KeyType::RsaPss),
+            "aes" => Err(EngineError::Other(
+                "aes keys cannot be loaded via load_private_key".into(),
+            )),
+            _ => Err(EngineError::Other(format!(
+                "unknown azihsm key type: {value}"
+            ))),
+        }
+    }
 }
 
 /// A parsed `azihsm://<path>;type=<t>` key URI.
@@ -60,7 +83,7 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
         // Attribute names are case-insensitive, mirroring the provider's STORE
         // (which compares with `strcasecmp`).
         match key.to_ascii_lowercase().as_str() {
-            "type" => key_type = Some(parse_key_type(value)?),
+            "type" => key_type = Some(value.parse::<KeyType>()?),
             _ => {
                 return Err(EngineError::Other(format!(
                     "unknown azihsm URI attribute: {key}"
@@ -76,21 +99,6 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
         masked_key_path: PathBuf::from(path),
         key_type,
     })
-}
-
-fn parse_key_type(value: &str) -> EngineResult<KeyType> {
-    // Values are case-insensitive, mirroring the provider's STORE (`strcasecmp`).
-    match value.to_ascii_lowercase().as_str() {
-        "ec" => Ok(KeyType::Ec),
-        "rsa" => Ok(KeyType::Rsa),
-        "rsa-pss" => Ok(KeyType::RsaPss),
-        "aes" => Err(EngineError::Other(
-            "aes keys cannot be loaded via load_private_key".into(),
-        )),
-        _ => Err(EngineError::Other(format!(
-            "unknown azihsm key type: {value}"
-        ))),
-    }
 }
 
 #[cfg(test)]
