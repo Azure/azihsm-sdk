@@ -337,7 +337,7 @@ fn open_session_fills_cu_table_then_recovers() {
     let guards: Vec<_> = ctxs
         .iter()
         .enumerate()
-        .map(|(i, c)| {
+        .map(|(_, c)| {
             c.open_session(CU, SessionType::PlainText)
                 .unwrap_or_else(|e| {
                     panic!("CU session {i} of {CU_SESSION_LIMIT} must succeed, got {e:?}")
