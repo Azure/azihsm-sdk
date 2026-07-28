@@ -286,8 +286,7 @@ fn open_session_second_on_same_fd_rejected() {
         .expect("first open on a fresh fd must succeed");
     let err = ctx
         .open_session(CU, SessionType::PlainText)
-        .err()
-        .expect("second open on the same fd must be rejected");
+        .expect_err("second open on the same fd must be rejected");
     assert!(
         matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected TborStatus (kernel per-fd limit remapped in exec_op_tbor), got {err:?}",
