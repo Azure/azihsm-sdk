@@ -289,3 +289,93 @@ fn ec_key_ex_index() -> EngineResult<c_int> {
     let _ = IDX.set(idx);
     Ok(idx)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+    use std::ptr::NonNull;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    /// Unique scratch directory, removed on drop.
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static N: AtomicU64 = AtomicU64::new(0);
+            let n = N.fetch_add(1, Ordering::SeqCst);
+            let dir =
+                std::env::temp_dir().join(format!("engine-keyload-{}-{n}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn read_masked_key_reads_regular_file() {
+        let s = Scratch::new();
+        let p = s.0.join("blob.bin");
+        fs::write(&p, b"masked-bytes").unwrap();
+        assert_eq!(read_masked_key(&p).unwrap(), b"masked-bytes");
+    }
+
+    #[test]
+    fn read_masked_key_rejects_symlink() {
+        let s = Scratch::new();
+        let target = s.0.join("real.bin");
+        fs::write(&target, b"x").unwrap();
+        let link = s.0.join("link.bin");
+        symlink(&target, &link).unwrap();
+        // O_NOFOLLOW must refuse to open the symlink itself.
+        assert!(read_masked_key(&link).is_err());
+    }
+
+    #[test]
+    fn read_masked_key_rejects_non_regular_file() {
+        let s = Scratch::new();
+        // A directory opens but is not a regular file, so is_file() rejects it.
+        assert!(read_masked_key(&s.0).is_err());
+    }
+
+    #[test]
+    fn read_masked_key_rejects_oversized_file() {
+        let s = Scratch::new();
+        let p = s.0.join("big.bin");
+        let oversize = usize::try_from(MAX_MASKED_KEY_SIZE + 1).unwrap();
+        fs::write(&p, vec![0u8; oversize]).unwrap();
+        assert!(read_masked_key(&p).is_err());
+    }
+
+    /// `load_key` rejects RSA/RSA-PSS before opening the HSM, so this needs no
+    /// device — only a throwaway ENGINE to satisfy the signature.
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_key_rejects_rsa_before_hsm_open() {
+        // SAFETY: ENGINE_new returns a fresh structural ref, freed below; the
+        // Engine wrapper is only used to satisfy the signature (the RSA arm
+        // returns before touching it).
+        unsafe {
+            let raw = ffi::ENGINE_new();
+            assert!(!raw.is_null(), "ENGINE_new");
+            let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
+            let data = EngineData::new();
+            let err =
+                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa").unwrap_err();
+            assert!(
+                format!("{err}").contains("RSA key loading is not yet supported"),
+                "unexpected error: {err}"
+            );
+            ffi::ENGINE_free(raw);
+        }
+    }
+}
