@@ -17,9 +17,9 @@
 //!   ([`UnoHsmPal::ecc_sign_deterministic`]) that composes the two.
 //!
 //! P-384 only — the alias key curve used to sign the partition-id (PID)
-//! certificate leaf. The shared prime modulus [`PRIME384_LE`] lives in
-//! [`super::ecc`]; the order and base-point constants are P-384 specific
-//! to this path and defined here.
+//! certificate leaf. The prime modulus [`PRIME384_LE`] and the base-point
+//! constants live in [`super::ecc`] (shared with the ECC-import path); only
+//! the curve order is P-384 specific to this path and defined here.
 //!
 //! [`HsmEcc`]: azihsm_fw_hsm_pal_traits::HsmEcc
 
@@ -48,11 +48,11 @@ use crate::UnoHsmPal;
 //
 // The on-the-fly partition-id (PID) certificate leaf is signed with the P-384
 // alias key using a PKA-primitive ECDSA sign (see the A1 modular opcodes in the
-// upka driver). That path needs the curve order `n` and base point `G` in
-// addition to the prime `p` ([`PRIME384_LE`] in [`super::ecc`]). P-384 only —
-// the alias key curve. Values are the significant 48 little-endian operand bytes
-// (no PKA slot padding), matching [`PRIME384_LE`]. Consumed by `ecc_sign_with_k`
-// (A4).
+// upka driver). That path needs the curve order `n`, defined here, in addition
+// to the prime `p` ([`PRIME384_LE`]) and base point `G` (`BASE384_*_LE`) that
+// live in [`super::ecc`]. P-384 only — the alias key curve. Values are the
+// significant 48 little-endian operand bytes (no PKA slot padding), matching
+// [`PRIME384_LE`]. Consumed by `ecc_sign_with_k` (A4).
 
 /// NIST P-384 curve order `n` in PKA little-endian operand order.
 ///
