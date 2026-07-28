@@ -134,7 +134,7 @@ fn psk_change_reopen_with_old_psk_fails() {
     // `exported` diverges from FW's, so Phase-1 MAC verification
     // (or HPKE auth) fails. Either a host-side or FW-side
     // rejection is acceptable; we only need "must err".
-    let result = ctx.open_session_raw(CU, SessionType::PlainText);
+    let result = ctx.open_session(CU, SessionType::PlainText);
     assert!(
         result.is_err(),
         "reopen with old default PSK must fail after rotation",
@@ -256,10 +256,10 @@ fn psk_change_wrong_session_id_in_aad() {
 //
 // Encrypt under session A's param_key but ship the request through
 // session B (with B's id in both header and AAD). FW verifies with
-// B's key and the tag fails. Session B is opened on a **second Dev**
-// (via `open_dev_with_path(ctx.path())`) so on hw the crafted request
-// lands on B's fd — `AZIHSM_MAX_SESSIONS_PER_FD = 1` requires the
-// second concurrent session to live on its own fd.
+// B's key and the tag fails. Session B is opened on a **second ctx**
+// (via `TestCtx::new_with_path(ctx.path())`) so on hw the crafted
+// request lands on B's fd — `AZIHSM_MAX_SESSIONS_PER_FD = 1` requires
+// the second concurrent session to live on its own fd.
 // ===========================================================================
 
 #[test]

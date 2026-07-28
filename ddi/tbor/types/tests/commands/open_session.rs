@@ -19,13 +19,6 @@ use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::build_mac_fin;
-use crate::harness::open_dev_with_path;
-#[cfg(not(feature = "emu"))]
-use crate::harness::session_close_on_dev;
-#[cfg(not(feature = "emu"))]
-use crate::harness::session_open_finish_on_dev;
-#[cfg(not(feature = "emu"))]
-use crate::harness::session_open_init_on_dev;
 use crate::harness::TestCtx;
 
 const CO: u8 = 0;
@@ -302,94 +295,135 @@ fn open_session_second_on_same_fd_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Session-table exhaustion + recovery
+// FW session-table capacity
 //
-// Iteratively opens sessions until the FW reports the table is full,
-// then drops every extra fd and confirms one more open succeeds — the
-// pending/active slot cleanup path must fully reclaim capacity.
-//
-// The table size differs by backend (emu FW has a small hardcoded
-// table; hw silicon a larger one), so the loop is bounded generously
-// at `SESSION_STRESS_TOTAL` and we assert a rejection was observed
-// within that ceiling.
+// FW allocates a single 8-slot session table: slot 0 is reserved for
+// CryptoOfficer (only 1 concurrent CO session), slots 1..=7 for
+// CryptoUser (`CU_SESSION_LIMIT = 7` concurrent CU sessions). Limits
+// are identical on emu (fw/plat/std) and hw (fw/plat/uno) — see
+// `MAX_SESSIONS = 8` in
+// `fw/plat/uno/fw/drivers/session_store/src/session_store.rs` and
+// `fw/plat/std/pal/src/drivers/session.rs`.
 // ---------------------------------------------------------------------------
 
-const SESSION_STRESS_TOTAL: usize = 12;
+const CU_SESSION_LIMIT: usize = 7;
+
+// ---------------------------------------------------------------------------
+// CU session-table exhaustion + recovery
+//
+// Opens exactly `CU_SESSION_LIMIT` CU sessions (all must succeed), then
+// probes one more (must be rejected with `TborStatus`), then drops every
+// extra fd and confirms one fresh open on the primary ctx succeeds —
+// the pending/active slot cleanup path must fully reclaim capacity.
+// Relying on fd-drop (rather than an explicit close loop) for the
+// recovery is deliberate: the invariant we care about is
+// `fd-drop == slot-reclaim`; if that isn't true, it's a product bug
+// worth surfacing here.
+// ---------------------------------------------------------------------------
 
 #[test]
-fn open_session_fills_table_then_recovers() {
+fn open_session_fills_cu_table_then_recovers() {
     let ctx = TestCtx::new();
-    // Each concurrent session lives on its own extra `TestCtx` bound
-    // to the same underlying device via `TestCtx::new_with_path` —
-    // required on hw where `AZIHSM_MAX_SESSIONS_PER_FD = 1`. The
-    // secondary `TestCtx`s are kept alive in the vec so their fds
-    // stay open while we probe capacity; dropping the vec later
-    // closes every fd in one shot, which the kernel driver must
-    // translate into per-session slot reclaim on the FW side (that
-    // reclaim path is exactly what the recovery assertion below
-    // exercises).
-    let mut open_slots = Vec::new();
-    let mut rejection_seen = false;
+    // Two-phase construction: allocate all secondary `TestCtx`s
+    // first (each opens its own fd — required on hw where
+    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`), then borrow them to open
+    // sessions and stash the `SessionGuard`s. The guards borrow
+    // their ctx by reference, so ctxs must live at least as long as
+    // guards; declaring ctxs first ensures rustc drops `guards`
+    // before `ctxs`.
+    let ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+    let guards: Vec<_> = ctxs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            c.open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!("CU session {i} of {CU_SESSION_LIMIT} must succeed, got {e:?}")
+                })
+        })
+        .collect();
 
-    for _ in 0..SESSION_STRESS_TOTAL {
-        let ctx_extra = TestCtx::new_with_path(ctx.path());
-        match ctx_extra.open_session_raw(CU, SessionType::PlainText) {
-            Ok(h) => open_slots.push((ctx_extra, h.session_id)),
-            Err(e) => {
-                assert!(
-                    matches!(e, azihsm_ddi_interface::DdiError::TborStatus(_)),
-                    "expected FW-side rejection, got {e:?}",
-                );
-                rejection_seen = true;
-                break;
-            }
-        }
-    }
-
-    let slot_count = open_slots.len();
+    // One more CU open must be rejected — table is full.
+    let overflow_ctx = TestCtx::new_with_path(ctx.path());
+    let err = overflow_ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("open_session past CU limit must be rejected");
     assert!(
-        rejection_seen,
-        "capacity limit not observed within {slot_count} probes — either the backend supports \
-         more concurrent CU sessions than the probe ceiling (bump the loop bound), or the \
-         session table exhaustion path regressed",
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
+        "expected FW-side TborStatus rejection, got {err:?}",
     );
+    drop(overflow_ctx);
 
-    // Recovery: drop every extra fd in one shot so the driver reclaims
-    // their FW-side session slots, then one fresh open on the primary
-    // ctx dev must succeed. Relying on fd-drop (rather than an
-    // explicit close loop) is deliberate — the invariant we care
-    // about is that fd-drop == slot-reclaim; if that isn't true, it's
-    // a product bug worth surfacing.
-    drop(open_slots);
+    // Recovery: drop every guard (each guard's `Drop` sends an
+    // explicit SessionClose), then drop the extra fds. A fresh open
+    // on the primary ctx must succeed.
+    drop(guards);
+    drop(ctxs);
 
-    let recovered = ctx
-        .open_session_raw(CU, SessionType::PlainText)
-        .expect("session table must recover after all extra fds are dropped");
-    ctx.session_close(recovered.session_id)
-        .expect("SessionClose after recovery must succeed");
+    let _recovered = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("session table must recover after all extra sessions are closed");
+    // `_recovered` closes on drop at end of scope.
 }
 
 // ---------------------------------------------------------------------------
-// Open / close / reopen
+// CO session-slot exhaustion + recovery
+//
+// CO has a single slot. Opening the first CO session must succeed,
+// a second concurrent CO open must be rejected, and dropping the
+// first fd must restore capacity.
 // ---------------------------------------------------------------------------
 
-/// Open a session, close it, then open again. The second open must
-/// succeed — guards against a stale slot or leaked FSM state that
-/// would otherwise wedge the second attempt.
 #[test]
-fn open_close_reopen_same_slot() {
+fn open_session_fills_co_slot_then_recovers() {
+    let ctx = TestCtx::new();
+
+    let ctx_first = TestCtx::new_with_path(ctx.path());
+    let first = ctx_first
+        .open_session(CO, SessionType::Authenticated)
+        .expect("first CO session must succeed");
+
+    let ctx_second = TestCtx::new_with_path(ctx.path());
+    let err = ctx_second
+        .open_session(CO, SessionType::Authenticated)
+        .expect_err("second concurrent CO open must be rejected");
+    assert!(
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
+        "expected FW-side TborStatus rejection, got {err:?}",
+    );
+    drop(ctx_second);
+
+    // Recovery: drop the first guard + fd; a fresh CO open must succeed.
+    drop(first);
+    drop(ctx_first);
+
+    let _recovered = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("CO slot must recover after the first fd is dropped");
+    // `_recovered` closes on drop at end of scope.
+}
+
+// ---------------------------------------------------------------------------
+// Open, close, open new session
+// ---------------------------------------------------------------------------
+
+/// Open a session, close it, then open a new one. The second open
+/// must succeed — guards against a stale slot or leaked FSM state
+/// that would otherwise wedge the second attempt.
+#[test]
+fn open_close_then_open_new_session() {
     let ctx = TestCtx::new();
     let first = ctx
-        .open_session_raw(CU, SessionType::PlainText)
+        .open_session(CU, SessionType::PlainText)
         .expect("first handshake must succeed");
-    ctx.session_close(first.session_id)
-        .expect("first SessionClose must succeed");
+    first.close().expect("first SessionClose must succeed");
 
     let second = ctx
-        .open_session_raw(CU, SessionType::PlainText)
-        .expect("reopen after close must succeed");
-    ctx.session_close(second.session_id)
-        .expect("second SessionClose must succeed");
+        .open_session(CU, SessionType::PlainText)
+        .expect("open new session after close must succeed");
+    second.close().expect("second SessionClose must succeed");
 }
 
 // ---------------------------------------------------------------------------
@@ -407,25 +441,21 @@ fn co_authenticated_derives_unique_keys_per_session() {
     let ctx = TestCtx::new();
 
     let a = ctx
-        .open_session_raw(CO, SessionType::Authenticated)
+        .open_session(CO, SessionType::Authenticated)
         .expect("first CO+Authenticated handshake must succeed");
-    let a_id = a.session_id;
-    let a_tx = a.derive_mac_tx_key().expect("derive a tx");
-    let a_rx = a.derive_mac_rx_key().expect("derive a rx");
-    let a_exported = a.exported.clone();
-    ctx.session_close(a_id)
-        .expect("close first session must succeed");
+    let a_tx = a.handshake().derive_mac_tx_key().expect("derive a tx");
+    let a_rx = a.handshake().derive_mac_rx_key().expect("derive a rx");
+    let a_exported = a.handshake().exported.clone();
+    a.close().expect("close first session must succeed");
 
     let b = ctx
-        .open_session_raw(CO, SessionType::Authenticated)
+        .open_session(CO, SessionType::Authenticated)
         .expect("second CO+Authenticated handshake must succeed");
-    let b_id = b.session_id;
-    let b_tx = b.derive_mac_tx_key().expect("derive b tx");
-    let b_rx = b.derive_mac_rx_key().expect("derive b rx");
-    let b_exported = b.exported.clone();
+    let b_tx = b.handshake().derive_mac_tx_key().expect("derive b tx");
+    let b_rx = b.handshake().derive_mac_rx_key().expect("derive b rx");
+    let b_exported = b.handshake().exported.clone();
     // Close before asserting so a failing assertion never leaks.
-    ctx.session_close(b_id)
-        .expect("close second session must succeed");
+    b.close().expect("close second session must succeed");
 
     assert_ne!(
         a_exported, b_exported,
@@ -640,32 +670,29 @@ fn pk_init_single_byte_tampered_rejected() {
 // The property under test only holds on the native OS backend.
 // ---------------------------------------------------------------------------
 
-/// Race N concurrent opens; winners must have distinct session ids,
-/// and any losers must surface as clean FW/driver rejections. Each
-/// racing thread owns its own [`open_dev_with_path`] fd — hw requires
-/// one fd per concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`),
-/// so `TestCtx` itself is not touched by the racers.
+/// Race exactly `CU_SESSION_LIMIT` concurrent CU opens; all must
+/// succeed with distinct session ids and no rejections. Each racing
+/// thread owns its own [`TestCtx`] fd — hw requires one fd per
+/// concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`), so the
+/// primary `ctx` itself is not touched by the racers.
 #[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_all_should_open() {
     let ctx = TestCtx::new();
-    let path: &str = ctx.path();
+    let path = ctx.path();
 
-    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
-
-    // Each entry holds the owning Dev + the session id so we can
+    // Each entry holds the owning ctx + the session id so we can
     // close on the correct fd once the race resolves.
     let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(SESSION_STRESS_TOTAL);
-        for _ in 0..SESSION_STRESS_TOTAL {
-            handles.push(
-                s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
-                    let dev = open_dev_with_path(path);
-                    let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
-                    let handshake = session_open_finish_on_dev(&dev, pending)?;
-                    Ok((dev, handshake.session_id))
-                }),
-            );
+        let mut handles = Vec::with_capacity(CU_SESSION_LIMIT);
+        for _ in 0..CU_SESSION_LIMIT {
+            handles.push(s.spawn(
+                || -> Result<(TestCtx, u16), azihsm_ddi_interface::DdiError> {
+                    let ctx_extra = TestCtx::new_with_path(path);
+                    let handshake = ctx_extra.open_session_raw(CU, SessionType::PlainText)?;
+                    Ok((ctx_extra, handshake.session_id))
+                },
+            ));
         }
         let mut winners = Vec::new();
         let mut rejections = Vec::new();
@@ -678,98 +705,76 @@ fn open_session_multi_threaded_all_should_open() {
         (winners, rejections)
     });
 
-    let mut sorted_ids: Vec<u16> = winners.iter().map(|(_, sid)| *sid).collect();
+    let mut sorted_ids: Vec<_> = winners.iter().map(|(_, sid)| *sid).collect();
     let winner_ids = sorted_ids.clone();
     sorted_ids.sort_unstable();
     sorted_ids.dedup();
     let unique_wins = sorted_ids.len();
 
-    // Close winners on their owning fds before asserting so a failing
-    // assert never leaves the session table dirty.
-    for (dev, sid) in &winners {
-        let _ = session_close_on_dev(dev, *sid);
-    }
+    // Drop winners' ctxs before asserting so a failing assert never
+    // leaves the session table dirty — each ctx's fd close reclaims
+    // its slot in FW.
+    drop(winners);
 
     assert!(
-        !winner_ids.is_empty(),
-        "at least one concurrent open_session must succeed; rejections = {rejections:?}",
+        rejections.is_empty(),
+        "all {CU_SESSION_LIMIT} concurrent CU opens must succeed; observed rejections: \
+         {rejections:?}",
     );
     assert_eq!(
-        unique_wins,
         winner_ids.len(),
+        CU_SESSION_LIMIT,
+        "expected {CU_SESSION_LIMIT} winning session ids, got {winner_ids:?}",
+    );
+    assert_eq!(
+        unique_wins, CU_SESSION_LIMIT,
         "concurrent winners must have distinct session ids: {winner_ids:?}",
     );
-    for err in &rejections {
-        assert!(
-            matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-            "concurrent open_session rejections must be FW/driver rejections, got {err:?}",
-        );
-    }
-    if rejections.is_empty() {
-        eprintln!(
-            "open_session_multi_threaded_all_should_open: FW accepted all {SESSION_STRESS_TOTAL} \
-             concurrent sessions without emitting any table-full rejection; race between success \
-             and rejection branches not exercised at this thread count",
-        );
-    }
 }
 
-/// Fill to one free slot then race N threads for it. Regression for
-/// FW's undo-on-loser path: every losing racer must see a clean
-/// rejection and leave the session table intact for retry. Each
-/// filler + racer holds its own `open_dev_with_path` fd — hw requires
-/// one fd per concurrent session.
+/// Fill CU capacity to one free slot then race `CU_SESSION_LIMIT`
+/// threads for it. Regression for FW's undo-on-loser path: every
+/// losing racer must see a clean rejection and leave the session
+/// table intact for retry. Each filler + racer holds its own
+/// [`TestCtx`] fd — hw requires one fd per concurrent session.
 #[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_single_winner() {
     let ctx = TestCtx::new();
-    let path: &str = ctx.path();
+    let path = ctx.path();
 
-    type Dev = <azihsm_ddi::AzihsmDdi as azihsm_ddi_interface::Ddi>::Dev;
-
-    // Phase 1: probe capacity sequentially; ceiling matches
-    // fills_table_then_recovers so we don't loop forever on a
-    // pathological build. Each filler session lives on its own Dev.
-    let mut fillers = Vec::new();
-    for _ in 0..SESSION_STRESS_TOTAL {
-        let dev = open_dev_with_path(path);
-        match session_open_init_on_dev(&dev, CU, SessionType::PlainText)
-            .and_then(|pending| session_open_finish_on_dev(&dev, pending))
-        {
-            Ok(handshake) => fillers.push((dev, handshake.session_id)),
-            Err(_) => break, // `dev` drops here — fd released cleanly.
-        }
+    // Phase 1: fill CU capacity sequentially. Each filler owns its
+    // own ctx because hw enforces one session per fd.
+    let mut fillers: Vec<(TestCtx, u16)> = Vec::new();
+    for i in 0..CU_SESSION_LIMIT {
+        let ctx_extra = TestCtx::new_with_path(path);
+        let handshake = ctx_extra
+            .open_session_raw(CU, SessionType::PlainText)
+            .unwrap_or_else(|e| {
+                panic!("filler CU session {i} of {CU_SESSION_LIMIT} must succeed, got {e:?}")
+            });
+        fillers.push((ctx_extra, handshake.session_id));
     }
 
-    // Capacity exceeds ceiling: cannot set up a single-slot race — clean up + skip.
-    if fillers.len() >= SESSION_STRESS_TOTAL {
-        for (dev, sid) in &fillers {
-            let _ = session_close_on_dev(dev, *sid);
-        }
-        eprintln!(
-            "open_session_multi_threaded_single_winner: FW capacity exceeds probe ceiling of \
-             {SESSION_STRESS_TOTAL}; skipping single-slot race",
-        );
-        return;
-    }
+    // Phase 2: free exactly one slot (close and drop the tail filler's ctx).
+    let (freed_ctx, freed_id) = fillers.pop().expect("at least one filler must exist");
+    freed_ctx
+        .session_close(freed_id)
+        .expect("close of freed filler slot must succeed");
+    drop(freed_ctx);
 
-    // Phase 2: free exactly one slot (close and drop the tail filler's Dev).
-    let (freed_dev, freed_id) = fillers.pop().expect("at least one filler must exist");
-    session_close_on_dev(&freed_dev, freed_id).expect("close of freed filler slot must succeed");
-    drop(freed_dev);
-
-    // Phase 3: race SESSION_STRESS_TOTAL threads for the one slot.
+    // Phase 3: race `CU_SESSION_LIMIT` threads for the one free slot.
+    let racer_count = CU_SESSION_LIMIT;
     let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(SESSION_STRESS_TOTAL);
-        for _ in 0..SESSION_STRESS_TOTAL {
-            handles.push(
-                s.spawn(|| -> Result<(Dev, u16), azihsm_ddi_interface::DdiError> {
-                    let dev = open_dev_with_path(path);
-                    let pending = session_open_init_on_dev(&dev, CU, SessionType::PlainText)?;
-                    let handshake = session_open_finish_on_dev(&dev, pending)?;
-                    Ok((dev, handshake.session_id))
-                }),
-            );
+        let mut handles = Vec::with_capacity(racer_count);
+        for _ in 0..racer_count {
+            handles.push(s.spawn(
+                || -> Result<(TestCtx, u16), azihsm_ddi_interface::DdiError> {
+                    let ctx_extra = TestCtx::new_with_path(path);
+                    let handshake = ctx_extra.open_session_raw(CU, SessionType::PlainText)?;
+                    Ok((ctx_extra, handshake.session_id))
+                },
+            ));
         }
         let mut winners = Vec::new();
         let mut rejections = Vec::new();
@@ -784,12 +789,10 @@ fn open_session_multi_threaded_single_winner() {
 
     let winner_count = winners.len();
     let rejection_count = rejections.len();
-    for (dev, sid) in &winners {
-        let _ = session_close_on_dev(dev, *sid);
-    }
-    for (dev, sid) in &fillers {
-        let _ = session_close_on_dev(dev, *sid);
-    }
+    // Drop everything before asserting — each ctx's fd close reclaims
+    // its slot in FW.
+    drop(winners);
+    drop(fillers);
 
     assert_eq!(
         winner_count, 1,
@@ -798,7 +801,7 @@ fn open_session_multi_threaded_single_winner() {
     );
     assert_eq!(
         rejection_count,
-        SESSION_STRESS_TOTAL - 1,
+        racer_count - 1,
         "all non-winning racers must fail cleanly",
     );
     for err in &rejections {

@@ -60,8 +60,8 @@ pub struct TestDev {
     // taking it a second time would deadlock the test.
     _guard: Option<MutexGuard<'static, ()>>,
     /// Backend `DevInfo::path` this handle was opened on. Cached so
-    /// multi-fd tests can bind extra `Dev`s to the *same* underlying
-    /// device via [`open_dev_with_path`].
+    /// multi-fd tests can bind extra `TestDev`s to the *same*
+    /// underlying device via [`TestCtx::new_with_path`](crate::harness::TestCtx::new_with_path).
     path: String,
 }
 
@@ -118,7 +118,7 @@ pub fn open_dev() -> TestDev {
 ///
 /// Caller must ensure the primary [`TestDev`] outlives every
 /// secondary, otherwise the lock guard drops mid-test.
-pub fn open_dev_secondary(path: &str) -> TestDev {
+pub(crate) fn open_dev_secondary(path: &str) -> TestDev {
     let dev = AzihsmDdi::default()
         .open_dev(path)
         .expect("open secondary backend device on the same path as the primary TestDev");
@@ -127,22 +127,4 @@ pub fn open_dev_secondary(path: &str) -> TestDev {
         _guard: None,
         path: path.to_string(),
     }
-}
-
-/// Open an additional `Dev` bound to the same backend path as an
-/// already-open [`TestDev`].
-///
-/// Used by multi-fd tests (e.g. `open_session_multiple_concurrent`)
-/// whose semantics require overlapping sessions on distinct fds — on
-/// hw the driver enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so the
-/// second concurrent session must live on its own handle. No lock is
-/// acquired: the primary `TestDev` already holds `TEST_LOCK`, and
-/// extras are conceptually part of the same test's device set.
-///
-/// Caller must ensure the primary `TestDev` outlives every extra
-/// `Dev`, otherwise the lock guard drops mid-test.
-pub fn open_dev_with_path(path: &str) -> <AzihsmDdi as Ddi>::Dev {
-    AzihsmDdi::default()
-        .open_dev(path)
-        .expect("open extra backend device on the same path as the primary TestDev")
 }

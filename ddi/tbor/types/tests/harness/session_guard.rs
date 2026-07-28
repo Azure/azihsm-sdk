@@ -4,7 +4,7 @@
 //! RAII guard for a live TBOR session.
 //!
 //! A [`SessionGuard`] owns the handshake carrier produced by
-//! [`TestCtx::open_session_raw`](crate::harness::TestCtx::open_session_raw)
+//! [`TestCtx::open_session`](crate::harness::TestCtx::open_session)
 //! and closes the session when dropped — including when the test is
 //! unwinding from a failed assertion. The emulator's session table
 //! is process-global and the per-test serialisation provided by
@@ -21,6 +21,8 @@
 //! [`TestCtx::session_close`](crate::harness::TestCtx::session_close)
 //! directly. The guard exists for the well-behaved 90% case, not for
 //! those intentional misuses.
+
+use core::fmt;
 
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_types::SessionType;
@@ -70,6 +72,15 @@ impl<'ctx> SessionGuard<'ctx> {
     pub fn close(mut self) -> DdiResult<()> {
         self.closed = true;
         self.ctx.session_close(self.handshake.session_id)
+    }
+}
+
+impl fmt::Debug for SessionGuard<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionGuard")
+            .field("session_id", &self.handshake.session_id)
+            .field("closed", &self.closed)
+            .finish()
     }
 }
 

@@ -108,7 +108,6 @@ fn part_init_smoke_roundtrip() {
     // Alias CA in the std PAL emu cert store).  Cross-binds the
     // report by also asserting its embedded COSE_Key `pk_x`/`pk_y`
     // matches the PTA pubkey we just extracted from the CSR.
-    #[cfg(feature = "emu")]
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
 
     // 2. Second PartInit on a freshly-opened session must be rejected
@@ -126,9 +125,6 @@ fn part_init_smoke_roundtrip() {
 /// Verify the PTAReport COSE_Sign1 envelope and cross-bind its
 /// embedded COSE_Key payload to the PTA pubkey carried in
 /// `pta_spki_der`.
-///
-/// Emu-only: pulls in `azihsm_ddi_mbor_sim`'s attestation/COSE
-/// verifier stack which is not linked into the hw build.
 ///
 /// Steps:
 ///
@@ -150,7 +146,6 @@ fn part_init_smoke_roundtrip() {
 ///    the CSR's SubjectPublicKeyInfo — proving the report
 ///    actually attests the same key the CSR is requesting a cert
 ///    for.
-#[cfg(feature = "emu")]
 fn verify_pta_report(ctx: &TestCtx, pta_report: &[u8], pta_spki_der: &[u8]) {
     use azihsm_crypto::DerEccPublicKey;
     use azihsm_ddi_mbor_sim::attestation::KeyAttester;
@@ -252,11 +247,11 @@ fn run_part_init_capture_pta_pub(
     use x509::X509CsrOp;
 
     let bootstrap = ctx
-        .open_session_raw(CO, SessionType::Authenticated)
+        .open_session(CO, SessionType::Authenticated)
         .expect("open CO default");
-    ctx.psk_change(&bootstrap, &ROTATED_CO_PSK)
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
         .expect("rotate CO PSK");
-    let _ = ctx.session_close(bootstrap.session_id);
+    let _ = bootstrap.close();
 
     let session = open_co_with(ctx, &ROTATED_CO_PSK);
     let resp = ctx

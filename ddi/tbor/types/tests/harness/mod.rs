@@ -16,22 +16,23 @@
 //!
 //! # Backend feature regimes
 //!
-//! The test binary supports two active build modes:
+//! The test binary supports three active build modes:
 //!
 //! * `--features emu` — the canonical configuration; runs the full
 //!   suite against the in-process std-PAL firmware.
+//! * `--features sock` — drives the same TBOR round-trips against
+//!   firmware behind a socket server.
 //! * **No backend feature** — targets the native OS backend (`nix` on
 //!   Linux / `win` on Windows) so the hw-eligible tests in
 //!   [`crate::commands`] run against real silicon. Destructive
 //!   emu-only tests remain gated `#[cfg(feature = "emu")]` at the
 //!   test-item level.
 //!
-//! `--features mock` and `--features sock` are compilable but disable
-//! both this harness and the `commands` tree at the crate root
-//! (`tests/azihsm_ddi_tbor_tests.rs`). Under either feature the test
-//! binary compiles the crate only and runs zero tests: mock rejects
-//! TBOR at the transport layer, and sock's `erase` is a stub — neither
-//! can drive command-level integration tests.
+//! `--features mock` is compilable but disables both this harness
+//! and the `commands` tree at the crate root
+//! (`tests/azihsm_ddi_tbor_tests.rs`) — mock rejects TBOR at the
+//! transport layer, so command-level integration tests are
+//! meaningless there.
 
 pub mod api_rev;
 pub mod assertions;
@@ -55,8 +56,6 @@ pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
 pub use ctx::TestCtx;
 pub use fixture::open_dev;
-pub use fixture::open_dev_secondary;
-pub use fixture::open_dev_with_path;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
 pub use session::encrypt_mach_seed_envelope;

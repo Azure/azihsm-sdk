@@ -93,8 +93,10 @@ pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 /// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can validate
 /// a PTA certificate chain anchored to it.
 ///
-/// Emu-only: the only consumers (`part_final`, `sd_sealing_key_gen`,
-/// `sd_create_remote_backup`) are gated behind `feature = "emu"`.
+/// TODO(hw): gated to `feature = "emu"` because the only consumers
+/// (`part_final`, `sd_sealing_key_gen`, `sd_create_remote_backup`)
+/// are not yet supported on hw. Remove this gate once those commands
+/// land on hw.
 #[cfg(feature = "emu")]
 pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
