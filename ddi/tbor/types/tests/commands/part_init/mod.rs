@@ -4,12 +4,9 @@
 //! Integration tests for the TBOR `PartInit` command.
 //!
 //! `PartInit` is mainline-supported on both `emu` and hardware. Tests
-//! run on both backends by default; only per-test cases that depend on
-//! FW-schema variants not yet landed on silicon (`InvalidArg` bad
-//! policy, `TborInvalidFixedLength` short AAD/mach_seed) stay
-//! individually `#[cfg(feature = "emu")]`. The sim-only
-//! `verify_pta_report` helper (which pokes the emu backend for
-//! deterministic PTA outputs) is likewise emu-gated.
+//! run on both backends by default; only the sim-only
+//! `verify_pta_report` helper in [`happy_path`] (which uses the
+//! `azihsm_ddi_mbor_sim` COSE verifier) stays `#[cfg(feature = "emu")]`.
 //!
 //! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
 //! process-global lock held for the ctx's lifetime, see
@@ -26,12 +23,10 @@
 //!   AAD-binding rejects.
 //!
 //! Shared bootstrap helpers (`open_co_with`, `bootstrap_rotated_co`,
-//! the wire-correct `known_good_part_policy` / `mach_seed` /
-//! `pota_thumbprint` / `part_policy_with_pota` fixtures, and the
-//! rotated CO PSK constant) live in this module and are `pub(crate)`
-//! so both same-module submodules and sibling command modules
-//! (`default_psk_gate`, `part_final`, `sd_sealing_key_gen`,
-//! `sd_create_remote_backup`) can reach them.
+//! the wire-correct `known_good_part_policy`/`mach_seed`/
+//! `pota_thumbprint` fixtures, and the rotated CO PSK constant)
+//! live in this module and are `pub(super)` so each submodule can
+//! reach them via `super::*`.
 
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
@@ -52,16 +47,20 @@ mod sd_config;
 
 pub(crate) const CO: u8 = 0;
 
-// ---------------------------------------------------------------------------
-// Wire-format PartInit fixtures — pure byte-array builders (no backend, no
-// session state). Layout mirrors the canonical wire format defined in
-// `fw/core/ddi/tbor/types/src/policy.rs`.
-// ---------------------------------------------------------------------------
+/// Non-default 32-byte CO PSK used so PartInit clears the
+/// default-PSK-gate.  Pinned to a fixed value so the smoke test is
+/// fully deterministic.
+pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
 
 /// Build a 484-byte unified `PartPolicy` blob that passes
-/// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`. POTA + SATA
-/// trust anchors are populated Ecc384 keys; SAPOTA + backing-partition
-/// keys are left absent (zero `len`); flags are clear; `info` is filled.
+/// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`.  Layout mirrors
+/// the canonical wire format defined in
+/// `fw/core/ddi/tbor/types/src/policy.rs`: POTA + SATA trust anchors are
+/// populated Ecc384 keys; SAPOTA + backing-partition keys are left
+/// absent (zero `len`); flags are clear; `info` is filled.
 pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
     const OFF_SATA: usize = 102;
@@ -91,13 +90,11 @@ pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 }
 
 /// Like [`known_good_part_policy`] but with a caller-supplied **real**
-/// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can
-/// validate a PTA certificate chain anchored to it.
+/// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can validate
+/// a PTA certificate chain anchored to it.
 ///
-/// Emu-gated because every current consumer (`part_final`,
-/// `sd_sealing_key_gen`, `sd_create_remote_backup`) is an emu-only
-/// module. If a hw-eligible test ever needs the POTA-anchored variant,
-/// drop the gate.
+/// Emu-only: the only consumers (`part_final`, `sd_sealing_key_gen`,
+/// `sd_create_remote_backup`) are gated behind `feature = "emu"`.
 #[cfg(feature = "emu")]
 pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
@@ -107,8 +104,6 @@ pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN
     bytes
 }
 
-/// Canonical `mach_seed` for `PartInit`: deterministic ramp so failing
-/// fixtures are trivially identifiable in a hex dump.
 pub(crate) fn mach_seed() -> [u8; MACH_SEED_LEN] {
     let mut v = [0u8; MACH_SEED_LEN];
     for (i, b) in v.iter_mut().enumerate() {
@@ -117,8 +112,6 @@ pub(crate) fn mach_seed() -> [u8; MACH_SEED_LEN] {
     v
 }
 
-/// Canonical `pota_thumbprint` for `PartInit`: deterministic pattern
-/// distinct from [`mach_seed`] so a mis-plumbed field is obvious.
 pub(crate) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     let mut v = [0u8; POTA_THUMBPRINT_LEN];
     for (i, b) in v.iter_mut().enumerate() {
@@ -126,14 +119,6 @@ pub(crate) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
     }
     v
 }
-
-/// Non-default 32-byte CO PSK used so PartInit clears the
-/// default-PSK-gate.  Pinned to a fixed value so the smoke test is
-/// fully deterministic.
-pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
-    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
-];
 
 pub(super) fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
     let mut v = [0u8; SATA_THUMBPRINT_LEN];

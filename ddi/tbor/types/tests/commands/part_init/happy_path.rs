@@ -101,8 +101,11 @@ fn part_init_smoke_roundtrip() {
     );
 
     // Full COSE_Sign1 verification of the PTAReport under the PID
-    // pubkey.  Emu-only: `KeyAttester::verify` lives in the sim
-    // (`azihsm_ddi_mbor_sim`) which is not linked into the hw build.
+    // pubkey.  The PID pubkey is the SubjectPublicKeyInfo of the
+    // slot-0 cert-chain leaf (idx = num_certs - 1; signed by the
+    // Alias CA in the std PAL emu cert store).  Cross-binds the
+    // report by also asserting its embedded COSE_Key `pk_x`/`pk_y`
+    // matches the PTA pubkey we just extracted from the CSR.
     #[cfg(feature = "emu")]
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
 
