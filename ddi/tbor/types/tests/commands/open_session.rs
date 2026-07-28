@@ -21,6 +21,7 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 use crate::harness::build_mac_fin;
 use crate::harness::open_dev_with_path;
 use crate::harness::open_session_on_dev;
+#[cfg(not(feature = "emu"))]
 use crate::harness::session_close_on_dev;
 #[cfg(not(feature = "emu"))]
 use crate::harness::session_open_finish_on_dev;
@@ -38,7 +39,9 @@ const CU: u8 = 1;
 #[test]
 fn open_session_co_authenticated_happy() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     let h = session.handshake();
     assert_eq!(h.psk_id, CO);
     assert!(h.session_type.is_authenticated());
@@ -58,7 +61,9 @@ fn open_session_co_authenticated_happy() {
 #[test]
 fn open_session_cu_plaintext_happy() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     let h = session.handshake();
     assert_eq!(h.psk_id, CU);
     assert!(!h.session_type.is_authenticated());
@@ -168,11 +173,7 @@ fn session_open_finish_mac_tampered() {
 #[test]
 fn session_open_finish_unknown_session_id() {
     // Pick a session id that cannot possibly correspond to a live
-    // pending slot. On emu the FW pre-check fails to load the blob
-    // (`DdiError::DdiError`). On hw the Linux kernel driver enforces
-    // per-fd session scoping and rejects the ioctl with
-    // `FileHandleNoExistingSession` (`DdiError::DdiStatus`) before
-    // the FW sees it — either surface is a valid rejection.
+    // pending slot. The FW pre-check fails to load the blob.
     let ctx = TestCtx::new();
     let req = TborSessionOpenFinishReq {
         session_id: 0xFFFF,
@@ -183,19 +184,17 @@ fn session_open_finish_unknown_session_id() {
         .tbor(&req)
         .expect_err("finish against unknown session_id must fail");
     assert!(
-        matches!(
-            err,
-            azihsm_ddi_interface::DdiError::TborStatus(_)
-                | azihsm_ddi_interface::DdiError::DdiStatus(_)
-        ),
-        "expected FW or driver rejection, got {err:?}",
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
+        "expected FW-side rejection, got {err:?}",
     );
 }
 
 #[test]
 fn open_session_double_finish() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     // Replay the finish: pending slot is gone, FW must refuse.
     let req = TborSessionOpenFinishReq {
         session_id: session.session_id(),
@@ -247,24 +246,60 @@ fn session_open_finish_seed_envelope_tampered() {
 
 #[test]
 fn open_session_multiple_concurrent() {
-    let ctx = TestCtx::new();
-    let a = ctx.open_session(CU, SessionType::PlainText);
+    let ctx_a = TestCtx::new();
+    let a = ctx_a
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
 
     // Second session lives on its own Dev — on hw the kernel driver
     // enforces `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so overlapping
     // sessions must sit on separate fds bound to the same underlying
-    // device (`ctx.path()`).
-    let dev_b = open_dev_with_path(ctx.path());
-    let b = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
+    // device (`ctx_a.path()`).
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+    let b = ctx_b
+        .open_session(CU, SessionType::PlainText)
         .expect("open second session on extra dev");
 
     assert_ne!(
         a.session_id(),
-        b.session_id,
+        b.session_id(),
         "concurrent sessions must have distinct ids",
     );
 
-    session_close_on_dev(&dev_b, b.session_id).expect("close session B on extra dev");
+    // Both sessions close on drop via their SessionGuards.
+}
+
+// ---------------------------------------------------------------------------
+// Per-fd session limit (hw-only)
+// ---------------------------------------------------------------------------
+
+/// Guards against a regression to the old "two `open_session` on the
+/// same ctx succeed" behavior. On hw the kernel driver enforces
+/// `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so a second open on the fd that
+/// already owns a live session must be rejected before FW is
+/// dispatched. `exec_op_tbor`'s `map_ioctl_status_tbor` remaps that
+/// driver-layer rejection to a `TborStatus`, so the caller sees a
+/// TBOR-typed error for a TBOR command.
+///
+/// Not applicable on emu: emu's `exec_op_tbor` does not run the
+/// per-fd `validate_session_request` shim, so overlapping opens on a
+/// single Dev succeed there — this is precisely the discrepancy that
+/// motivated the multi-fd rewrite of the other overlap tests.
+#[cfg(not(feature = "emu"))]
+#[test]
+fn open_session_second_on_same_fd_rejected() {
+    let ctx = TestCtx::new();
+    let _a = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("first open on a fresh fd must succeed");
+    let err = ctx
+        .open_session(CU, SessionType::PlainText)
+        .err()
+        .expect("second open on the same fd must be rejected");
+    assert!(
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
+        "expected TborStatus (kernel per-fd limit remapped in exec_op_tbor), got {err:?}",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -302,12 +337,8 @@ fn open_session_fills_table_then_recovers() {
             Ok(h) => open_slots.push((dev, h.session_id)),
             Err(e) => {
                 assert!(
-                    matches!(
-                        e,
-                        azihsm_ddi_interface::DdiError::TborStatus(_)
-                            | azihsm_ddi_interface::DdiError::DdiStatus(_)
-                    ),
-                    "expected FW/driver rejection, got {e:?}",
+                    matches!(e, azihsm_ddi_interface::DdiError::TborStatus(_)),
+                    "expected FW-side rejection, got {e:?}",
                 );
                 rejection_seen = true;
                 break;
@@ -670,11 +701,7 @@ fn open_session_multi_threaded_all_should_open() {
     );
     for err in &rejections {
         assert!(
-            matches!(
-                err,
-                azihsm_ddi_interface::DdiError::TborStatus(_)
-                    | azihsm_ddi_interface::DdiError::DdiStatus(_)
-            ),
+            matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
             "concurrent open_session rejections must be FW/driver rejections, got {err:?}",
         );
     }
@@ -776,11 +803,7 @@ fn open_session_multi_threaded_single_winner() {
     );
     for err in &rejections {
         assert!(
-            matches!(
-                err,
-                azihsm_ddi_interface::DdiError::TborStatus(_)
-                    | azihsm_ddi_interface::DdiError::DdiStatus(_)
-            ),
+            matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
             "single-winner losers must surface FW/driver rejections, got {err:?}",
         );
     }

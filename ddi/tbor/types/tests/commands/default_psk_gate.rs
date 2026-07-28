@@ -29,13 +29,10 @@ use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
+use crate::commands::part_init::known_good_part_policy;
+use crate::commands::part_init::mach_seed;
+use crate::commands::part_init::pota_thumbprint;
 use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::known_good_part_policy;
-use crate::harness::mach_seed;
-use crate::harness::open_dev_with_path;
-use crate::harness::open_session_on_dev;
-use crate::harness::pota_thumbprint;
-use crate::harness::session_close_on_dev;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -102,12 +99,16 @@ fn default_psk_gate_session_open_init_bypass() {
 fn default_psk_gate_session_close_bypass() {
     let ctx = TestCtx::new();
 
-    let session_co = ctx.open_session(CO, SessionType::Authenticated);
+    let session_co = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     session_co
         .close()
         .expect("SessionClose must bypass gate while CO PSK is default");
 
-    let session_cu = ctx.open_session(CU, SessionType::PlainText);
+    let session_cu = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     session_cu
         .close()
         .expect("SessionClose must bypass gate while CU PSK is default");
@@ -122,7 +123,9 @@ fn default_psk_gate_session_close_bypass() {
 #[test]
 fn default_psk_gate_psk_change_bypass() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK)
         .expect("PskChange must bypass gate while CO PSK is default");
 }
@@ -134,7 +137,9 @@ fn default_psk_gate_psk_change_bypass() {
 #[test]
 fn default_psk_gate_part_init_rejected() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
 
     let err = ctx
         .part_init(
@@ -159,23 +164,25 @@ fn default_psk_gate_part_init_rejected() {
 /// asserted, then are closed on their owning fds.
 #[test]
 fn default_psk_gate_co_and_cu_parallel_on_separate_devs_bypass() {
-    let ctx = TestCtx::new();
+    let ctx_a = TestCtx::new();
 
-    // Session A: CO + Authenticated on the ctx's fd, under default CO PSK.
-    let session_co = ctx.open_session(CO, SessionType::Authenticated);
+    // Session A: CO + Authenticated on ctx_a's fd, under default CO PSK.
+    let session_co = ctx_a
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
 
     // Session B: CU + PlainText on a second fd bound to the same
     // device, under default CU PSK. Held concurrently with A.
-    let dev_b = open_dev_with_path(ctx.path());
-    let session_cu = open_session_on_dev(&dev_b, CU, SessionType::PlainText)
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+    let session_cu = ctx_b
+        .open_session(CU, SessionType::PlainText)
         .expect("CU open on second fd under default CU PSK must succeed while CO session is live");
 
     assert_ne!(
         session_co.session_id(),
-        session_cu.session_id,
+        session_cu.session_id(),
         "parallel CO and CU sessions must have distinct ids",
     );
 
-    // Close B on its owning fd; A closes on drop via SessionGuard.
-    session_close_on_dev(&dev_b, session_cu.session_id).expect("close CU session on second fd");
+    // Both sessions close on drop via their SessionGuards.
 }

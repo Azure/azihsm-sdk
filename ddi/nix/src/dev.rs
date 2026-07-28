@@ -26,6 +26,7 @@ use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
 use azihsm_ddi_tbor_types::TborOpReq;
 use azihsm_ddi_tbor_types::TborResp;
+use azihsm_ddi_tbor_types::TborStatus;
 use bitfield_struct::bitfield;
 use nix::ioctl_readwrite;
 use parking_lot::RwLock;
@@ -698,6 +699,40 @@ impl DdiNixDev {
 
         Ok(ioctl_status)
     }
+
+    /// Same as [`Self::map_ioctl_status`] but for callers executing a
+    /// **TBOR** command. Driver-layer session-scoping rejections
+    /// (per-fd `AZIHSM_MAX_SESSIONS_PER_FD` bookkeeping — no live
+    /// session, id mismatch, limit reached) are surfaced as
+    /// `DdiError::TborStatus(TborStatus::FileHandle*)` instead of
+    /// `DdiError::DdiStatus(DdiStatus::FileHandle*)`, so callers see a
+    /// TBOR status for a TBOR command regardless of which layer of
+    /// the stack (driver vs FW) produced the rejection. The
+    /// `FileHandle*` variants exist in both `DdiStatus` and
+    /// `TborStatus` with identical numeric encodings, so this is a
+    /// pure type-level remap. All non-session errors fall through to
+    /// the generic mapping.
+    fn map_ioctl_status_tbor(&self, ioctl_status: u32) -> Result<u32, DdiError> {
+        match McrCpGenericIoctlErrorKind::try_from(ioctl_status) {
+            Ok(McrCpGenericIoctlErrorKind::SessionLimitReached) => {
+                return Err(DdiError::TborStatus(
+                    TborStatus::FileHandleSessionLimitReached,
+                ));
+            }
+            Ok(McrCpGenericIoctlErrorKind::NoExistingSession) => {
+                return Err(DdiError::TborStatus(
+                    TborStatus::FileHandleNoExistingSession,
+                ));
+            }
+            Ok(McrCpGenericIoctlErrorKind::SessionIdMismatch) => {
+                return Err(DdiError::TborStatus(
+                    TborStatus::FileHandleSessionIdDoesNotMatch,
+                ));
+            }
+            _ => {}
+        }
+        self.map_ioctl_status(ioctl_status)
+    }
 }
 
 /// Align AAD in place according to the following rules:
@@ -932,7 +967,7 @@ impl DdiDev for DdiNixDev {
         // of the ioctl call; the buffers outlive `cmd`.
         let res = unsafe { mcr_ctrl_cmd_generic_ioctl(self.file.read().as_raw_fd(), &mut cmd) };
         if res.is_err() {
-            self.map_ioctl_status(cmd.out_data.ioctl_status)?;
+            self.map_ioctl_status_tbor(cmd.out_data.ioctl_status)?;
             res.map_err(DdiError::NixError)?;
         }
         if cmd.out_data.status != 0 {

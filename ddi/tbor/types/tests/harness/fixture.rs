@@ -55,8 +55,10 @@ pub struct TestDev {
     dev: <AzihsmDdi as Ddi>::Dev,
     // Lifetime parameter is `'static` because `TEST_LOCK` is
     // `static`. Underscore-prefixed to mark it as "held purely for
-    // the side-effect of locking".
-    _guard: MutexGuard<'static, ()>,
+    // the side-effect of locking". `None` on secondary handles opened
+    // on the same path as a primary that already holds the lock —
+    // taking it a second time would deadlock the test.
+    _guard: Option<MutexGuard<'static, ()>>,
     /// Backend `DevInfo::path` this handle was opened on. Cached so
     /// multi-fd tests can bind extra `Dev`s to the *same* underlying
     /// device via [`open_dev_with_path`].
@@ -96,8 +98,34 @@ pub fn open_dev() -> TestDev {
         .expect("open_dev: factory-reset backend before test");
     TestDev {
         dev,
-        _guard: guard,
+        _guard: Some(guard),
         path,
+    }
+}
+
+/// Open a secondary [`TestDev`] on the same backend path as the
+/// primary [`TestDev`] already alive in this test.
+///
+/// Does not acquire `TEST_LOCK` — the primary already holds it, and
+/// `parking_lot::Mutex` is not reentrant, so a second acquisition on
+/// this thread would deadlock. Also skips `erase`: the primary owns
+/// the device state, and wiping it mid-test would break both handles.
+///
+/// Used by multi-fd tests whose semantics require overlapping
+/// sessions on distinct fds — on hw the driver enforces
+/// `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so the second concurrent session
+/// must live on its own handle.
+///
+/// Caller must ensure the primary [`TestDev`] outlives every
+/// secondary, otherwise the lock guard drops mid-test.
+pub fn open_dev_secondary(path: &str) -> TestDev {
+    let dev = AzihsmDdi::default()
+        .open_dev(path)
+        .expect("open secondary backend device on the same path as the primary TestDev");
+    TestDev {
+        dev,
+        _guard: None,
+        path: path.to_string(),
     }
 }
 

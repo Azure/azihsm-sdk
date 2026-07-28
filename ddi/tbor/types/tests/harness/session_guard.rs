@@ -95,13 +95,16 @@ impl TestCtx {
     /// Open a session via the happy-path two-phase handshake and
     /// return a [`SessionGuard`] that will close it on `Drop`.
     ///
-    /// Panics on any FW or transport error; negative-path tests must
-    /// call [`TestCtx::session_open_init`] (etc.) directly so they
-    /// can inspect the failure mode.
-    pub fn open_session(&self, psk_id: u8, session_type: SessionType) -> SessionGuard<'_> {
-        let handshake = self
-            .open_session_raw(psk_id, session_type)
-            .expect("TestCtx::open_session: handshake must succeed on the happy path");
-        SessionGuard::new(self, handshake)
+    /// Fallible: propagates any FW or transport error from the
+    /// underlying [`Self::open_session_raw`]. Happy-path callers
+    /// typically `.expect(...)` the returned `Result`; negative-path
+    /// tests inspect the `Err` directly.
+    pub fn open_session(
+        &self,
+        psk_id: u8,
+        session_type: SessionType,
+    ) -> DdiResult<SessionGuard<'_>> {
+        let handshake = self.open_session_raw(psk_id, session_type)?;
+        Ok(SessionGuard::new(self, handshake))
     }
 }

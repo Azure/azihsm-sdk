@@ -3,11 +3,18 @@
 
 //! Integration tests for the TBOR `PartInit` command.
 //!
-//! Every test runs against the `emu` backend.  Cross-test isolation
-//! comes from [`TestCtx::new`] (factory-reset + process-global lock
-//! held for the ctx's lifetime, see [`crate::harness::fixture`]) so
-//! each test starts from a pristine `Enabled` partition with the
-//! canonical default PSKs.
+//! `PartInit` is mainline-supported on both `emu` and hardware. Tests
+//! run on both backends by default; only per-test cases that depend on
+//! FW-schema variants not yet landed on silicon (`InvalidArg` bad
+//! policy, `TborInvalidFixedLength` short AAD/mach_seed) stay
+//! individually `#[cfg(feature = "emu")]`. The sim-only
+//! `verify_pta_report` helper (which pokes the emu backend for
+//! deterministic PTA outputs) is likewise emu-gated.
+//!
+//! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
+//! process-global lock held for the ctx's lifetime, see
+//! [`crate::harness::fixture`]) so each test starts from a pristine
+//! `Enabled` partition with the canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
 //! * [`happy_path`] — the full `OpenSession → PskChange → PartInit`
@@ -19,14 +26,18 @@
 //!   AAD-binding rejects.
 //!
 //! Shared bootstrap helpers (`open_co_with`, `bootstrap_rotated_co`,
-//! the wire-correct `known_good_part_policy`/`mach_seed`/
-//! `pota_thumbprint` fixtures, and the rotated CO PSK constant)
-//! live in this module and are `pub(super)` so each submodule can
-//! reach them via `super::*`.
+//! the wire-correct `known_good_part_policy` / `mach_seed` /
+//! `pota_thumbprint` / `part_policy_with_pota` fixtures, and the
+//! rotated CO PSK constant) live in this module and are `pub(crate)`
+//! so both same-module submodules and sibling command modules
+//! (`default_psk_gate`, `part_final`, `sd_sealing_key_gen`,
+//! `sd_create_remote_backup`) can reach them.
 
-#![cfg(feature = "emu")]
-
+use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
@@ -41,15 +52,80 @@ mod sd_config;
 
 pub(crate) const CO: u8 = 0;
 
-// Wire-format `PartInit` fixtures live in `crate::harness::part_policy`
-// so the hw-eligible `default_psk_gate` tests can reuse them without
-// ungating this emu-only module. Re-exported at the same paths the
-// submodules already import through (`super::known_good_part_policy`,
-// `super::mach_seed`, etc.).
-pub(crate) use crate::harness::known_good_part_policy;
-pub(crate) use crate::harness::mach_seed;
-pub(crate) use crate::harness::part_policy_with_pota;
-pub(crate) use crate::harness::pota_thumbprint;
+// ---------------------------------------------------------------------------
+// Wire-format PartInit fixtures — pure byte-array builders (no backend, no
+// session state). Layout mirrors the canonical wire format defined in
+// `fw/core/ddi/tbor/types/src/policy.rs`.
+// ---------------------------------------------------------------------------
+
+/// Build a 484-byte unified `PartPolicy` blob that passes
+/// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`. POTA + SATA
+/// trust anchors are populated Ecc384 keys; SAPOTA + backing-partition
+/// keys are left absent (zero `len`); flags are clear; `info` is filled.
+pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
+    const OFF_POTA: usize = 2;
+    const OFF_SATA: usize = 102;
+    const OFF_FLAGS: usize = 418;
+    const OFF_INFO: usize = 419;
+
+    // Write an Ecc384 (kind 0) raw X‖Y pubkey at `off` (no SEC1 prefix).
+    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
+        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
+        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
+        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
+            *b = (fill.wrapping_add(i as u8)) | 0x80;
+        }
+    }
+
+    let mut bytes = [0u8; PART_POLICY_LEN];
+    bytes[0] = 1; // version major
+    bytes[1] = 0; // version minor
+    write_pubkey(&mut bytes, OFF_POTA, 0x10);
+    write_pubkey(&mut bytes, OFF_SATA, 0x20);
+    // SAPOTA + backup-part pubkeys left absent (len 0).
+    bytes[OFF_FLAGS] = 0;
+    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
+        *b = 0xAB;
+    }
+    bytes
+}
+
+/// Like [`known_good_part_policy`] but with a caller-supplied **real**
+/// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can
+/// validate a PTA certificate chain anchored to it.
+///
+/// Emu-gated because every current consumer (`part_final`,
+/// `sd_sealing_key_gen`, `sd_create_remote_backup`) is an emu-only
+/// module. If a hw-eligible test ever needs the POTA-anchored variant,
+/// drop the gate.
+#[cfg(feature = "emu")]
+pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
+    const OFF_POTA: usize = 2;
+    let mut bytes = known_good_part_policy();
+    // POTA slot layout: kind(2) ‖ len(2) ‖ data(96); overwrite the data.
+    bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
+    bytes
+}
+
+/// Canonical `mach_seed` for `PartInit`: deterministic ramp so failing
+/// fixtures are trivially identifiable in a hex dump.
+pub(crate) fn mach_seed() -> [u8; MACH_SEED_LEN] {
+    let mut v = [0u8; MACH_SEED_LEN];
+    for (i, b) in v.iter_mut().enumerate() {
+        *b = 0x40 + i as u8;
+    }
+    v
+}
+
+/// Canonical `pota_thumbprint` for `PartInit`: deterministic pattern
+/// distinct from [`mach_seed`] so a mis-plumbed field is obvious.
+pub(crate) fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
+    let mut v = [0u8; POTA_THUMBPRINT_LEN];
+    for (i, b) in v.iter_mut().enumerate() {
+        *b = 0x80 ^ i as u8;
+    }
+    v
+}
 
 /// Non-default 32-byte CO PSK used so PartInit clears the
 /// default-PSK-gate.  Pinned to a fixed value so the smoke test is
@@ -114,7 +190,9 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
 /// under the rotated PSK — ready for the in-session command under
 /// test.
 pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), target_psk)
         .expect("rotate CO PSK");
     bootstrap.close().expect("close bootstrap CO session");

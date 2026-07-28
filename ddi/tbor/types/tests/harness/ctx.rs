@@ -47,6 +47,7 @@ use crate::harness::api_rev::helper_api_rev_tbor;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::fixture::open_dev;
+use crate::harness::fixture::open_dev_secondary;
 use crate::harness::fixture::TestDev;
 use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
@@ -79,6 +80,22 @@ impl TestCtx {
         Self { dev: open_dev() }
     }
 
+    /// Open a secondary `TestCtx` on the same backend `path` as the
+    /// primary `TestCtx` already alive in this test — see
+    /// [`open_dev_secondary`] for the no-lock / no-erase semantics
+    /// and lifetime constraints.
+    ///
+    /// Multi-fd tests need distinct `Dev` handles (hw enforces
+    /// `AZIHSM_MAX_SESSIONS_PER_FD = 1`); each secondary `TestCtx`
+    /// owns one such handle and otherwise behaves identically to a
+    /// primary — `open_session`, `tbor`, `mbor`, etc. all work the
+    /// same.
+    pub fn new_with_path(path: &str) -> Self {
+        Self {
+            dev: open_dev_secondary(path),
+        }
+    }
+
     /// The backend path this ctx's [`TestDev`] was opened on. Multi-fd
     /// tests thread it into [`crate::harness::open_dev_with_path`] so every
     /// extra `Dev` binds to the same underlying device as the primary.
@@ -86,10 +103,11 @@ impl TestCtx {
         self.dev.path()
     }
 
-    /// Factory-reset the partition. Available only on `emu`; the
-    /// determinism tests in `commands::part_init` call this between
-    /// cold-restart iterations.
-    #[cfg(feature = "emu")]
+    /// Factory-reset the partition. Used by the
+    /// `commands::part_init` determinism test for cold-restart
+    /// iterations. Available on every backend the harness compiles
+    /// under (emu + hw); `mock`/`sock` gate the whole harness out at
+    /// the crate root.
     pub fn erase(&self) -> DdiResult<()> {
         self.dev.erase()
     }

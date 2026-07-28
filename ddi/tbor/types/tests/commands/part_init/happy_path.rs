@@ -31,7 +31,7 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
 
 #[test]
-fn part_init_smoke_roundtrip_emu() {
+fn part_init_smoke_roundtrip() {
     let ctx = TestCtx::new();
 
     // 1. Bootstrap: rotate CO PSK so PartInit clears the
@@ -101,11 +101,9 @@ fn part_init_smoke_roundtrip_emu() {
     );
 
     // Full COSE_Sign1 verification of the PTAReport under the PID
-    // pubkey.  The PID pubkey is the SubjectPublicKeyInfo of the
-    // slot-0 cert-chain leaf (idx = num_certs - 1; signed by the
-    // Alias CA in the std PAL emu cert store).  Cross-binds the
-    // report by also asserting its embedded COSE_Key `pk_x`/`pk_y`
-    // matches the PTA pubkey we just extracted from the CSR.
+    // pubkey.  Emu-only: `KeyAttester::verify` lives in the sim
+    // (`azihsm_ddi_mbor_sim`) which is not linked into the hw build.
+    #[cfg(feature = "emu")]
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
 
     // 2. Second PartInit on a freshly-opened session must be rejected
@@ -123,6 +121,9 @@ fn part_init_smoke_roundtrip_emu() {
 /// Verify the PTAReport COSE_Sign1 envelope and cross-bind its
 /// embedded COSE_Key payload to the PTA pubkey carried in
 /// `pta_spki_der`.
+///
+/// Emu-only: pulls in `azihsm_ddi_mbor_sim`'s attestation/COSE
+/// verifier stack which is not linked into the hw build.
 ///
 /// Steps:
 ///
@@ -144,6 +145,7 @@ fn part_init_smoke_roundtrip_emu() {
 ///    the CSR's SubjectPublicKeyInfo — proving the report
 ///    actually attests the same key the CSR is requesting a cert
 ///    for.
+#[cfg(feature = "emu")]
 fn verify_pta_report(ctx: &TestCtx, pta_report: &[u8], pta_spki_der: &[u8]) {
     use azihsm_crypto::DerEccPublicKey;
     use azihsm_ddi_mbor_sim::attestation::KeyAttester;
@@ -281,7 +283,7 @@ fn run_part_init_capture_pta_pub(
 /// non-deterministic ECDSA nonces, but the PTA public key is the
 /// canonical determinism invariant under test.
 #[test]
-fn part_init_determinism_emu() {
+fn part_init_determinism() {
     let ctx = TestCtx::new();
 
     // `TestCtx::new` already left the partition factory-reset; this
