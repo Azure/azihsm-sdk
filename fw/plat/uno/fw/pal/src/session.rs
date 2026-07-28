@@ -344,11 +344,7 @@ impl HsmSessionManager for UnoHsmPal {
             }
             _ => return Err(HsmError::InternalError),
         };
-        Ok(blob
-            .split_at(offset)
-            .1
-            .split_at(SESSION_MASKING_KEY_SIZE)
-            .0)
+        Ok(blob.split_at(offset).1.split_at(SESSION_MASKING_KEY_SIZE).0)
     }
 
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
