@@ -104,6 +104,17 @@ pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN
     bytes
 }
 
+/// Like [`known_good_part_policy`] but with a caller-supplied `flags`
+/// byte, so tests can toggle individual `PolicyFlags` bits (e.g.
+/// `PolicyFlags::INCLUDE_FMC_CDI`) while keeping every other field
+/// byte-identical to the canonical fixture.
+pub(crate) fn part_policy_with_flags(flags: u8) -> [u8; PART_POLICY_LEN] {
+    const OFF_FLAGS: usize = 418;
+    let mut bytes = known_good_part_policy();
+    bytes[OFF_FLAGS] = flags;
+    bytes
+}
+
 pub(crate) fn mach_seed() -> [u8; MACH_SEED_LEN] {
     let mut v = [0u8; MACH_SEED_LEN];
     for (i, b) in v.iter_mut().enumerate() {
