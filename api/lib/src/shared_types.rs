@@ -127,6 +127,9 @@ pub enum HsmKeyKind {
 
     /// HSM Sealing key kind (used for sealing/unsealing operations).
     Sealing = 11,
+
+    /// RSA CRT
+    RsaCrt = 12,
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.
