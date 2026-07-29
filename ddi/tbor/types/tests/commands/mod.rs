@@ -10,6 +10,8 @@ pub mod default_psk_gate;
 pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_unwrapping_key;
+pub mod hmac;
+pub mod hmac_generate_key;
 pub mod key_report;
 pub mod open_session;
 pub mod part_final;

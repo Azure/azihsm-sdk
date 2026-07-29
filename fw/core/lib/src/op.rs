@@ -269,6 +269,8 @@ impl SessionCtrl {
             | opcode::SD_CREATE_PEER_BACKUP
             | opcode::SD_RESTORE_PEER_BACKUP
             | opcode::KEY_REPORT
+            | opcode::HMAC_GENERATE_KEY
+            | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,

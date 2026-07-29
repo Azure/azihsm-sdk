@@ -81,6 +81,8 @@ impl From<SessionControlKind> for u8 {
 mod api_rev;
 mod evidence;
 mod get_unwrapping_key;
+mod hmac;
+mod hmac_generate_key;
 mod key_report;
 mod part_final;
 mod part_info;
@@ -103,6 +105,8 @@ mod unwrap_key;
 pub use api_rev::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
+pub use hmac::*;
+pub use hmac_generate_key::*;
 pub use key_report::*;
 pub use part_final::*;
 pub use part_info::*;

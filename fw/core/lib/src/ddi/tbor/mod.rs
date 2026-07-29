@@ -23,6 +23,8 @@
 pub(crate) mod api_rev;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
+pub(crate) mod hmac;
+pub(crate) mod hmac_generate_key;
 pub(crate) mod key_report;
 pub(crate) mod part_final;
 pub mod part_info;
@@ -170,6 +172,17 @@ pub(crate) mod opcode {
     /// `0x0A..=0x0F` are reserved by the Security-Domain backup schema
     /// family, so `KeyReport` takes the next free opcode, `0x10`.
     pub(crate) const KEY_REPORT: u8 = 0x10;
+
+    /// `HmacGenerateKey` — generate a fresh random HMAC key of the
+    /// requested SHA variant under the active session's partition; return
+    /// it **masked** under the requested scope's masking key (nothing is
+    /// persisted on-device).  See [`super::hmac_generate_key`].
+    pub(crate) const HMAC_GENERATE_KEY: u8 = 0x11;
+
+    /// `Hmac` — compute an HMAC tag over a host-supplied message using a
+    /// caller-held masked HMAC key (unmasked on-device for the operation,
+    /// then discarded).  See [`super::hmac`].
+    pub(crate) const HMAC: u8 = 0x12;
 
     /// `GetUnwrappingKey` — return the partition's RSA-2048 unwrapping
     /// public key, which the host uses to RSA-AES key-wrap a payload for a
@@ -394,6 +407,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
             sd_restore_peer_backup::handle(pal, io, req_buf, oob, undo).await
         }
         opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
+        opcode::HMAC_GENERATE_KEY => hmac_generate_key::handle(pal, io, req_buf).await,
+        opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
         _ => Err(HsmError::UnsupportedCmd),
@@ -423,6 +438,8 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::SD_CREATE_PEER_BACKUP
             | opcode::SD_RESTORE_PEER_BACKUP
             | opcode::KEY_REPORT
+            | opcode::HMAC_GENERATE_KEY
+            | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
     )
@@ -459,6 +476,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SD_CREATE_PEER_BACKUP
         | opcode::SD_RESTORE_PEER_BACKUP
         | opcode::KEY_REPORT
+        | opcode::HMAC_GENERATE_KEY
+        | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY => true,
         // Default-deny: any future opcode is treated as in-session
@@ -503,6 +522,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::SD_CREATE_PEER_BACKUP
         | opcode::SD_RESTORE_PEER_BACKUP
         | opcode::KEY_REPORT
+        | opcode::HMAC_GENERATE_KEY
+        | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY => true,
         _ => true,
