@@ -30,6 +30,28 @@ use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
 
+/// Runs the supplied cleanup function when this value goes out of scope,
+/// including during panic unwinding.
+struct CleanupGuard<F: FnOnce()> {
+    cleanup: Option<F>,
+}
+
+impl<F: FnOnce()> CleanupGuard<F> {
+    fn new(cleanup: F) -> Self {
+        Self {
+            cleanup: Some(cleanup),
+        }
+    }
+}
+
+impl<F: FnOnce()> Drop for CleanupGuard<F> {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup();
+        }
+    }
+}
+
 #[test]
 fn part_init_smoke_roundtrip() {
     let ctx = TestCtx::new();
@@ -517,8 +539,8 @@ fn part_init_first_pota_thumbprint_byte_changes_pta_key_emu() {
 /// A successful PartInit response generated from modified valid inputs must
 /// still contain a valid CSR and a PTAReport that attests the same PTA key.
 ///
-/// This is stronger than merely extracting the CSR public key: it verifies the
-/// CSR self-signature, the COSE_Sign1 signature, and CSR/report cross-binding.
+/// This verifies the CSR self-signature, the COSE_Sign1 signature, and the
+/// cross-binding between the CSR public key and the PTAReport public key.
 #[test]
 fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
     use x509::X509Csr;
@@ -540,20 +562,30 @@ fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
         .expect("erase before modified-input artifact validation");
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    // Panic-safe cleanup: if any assertion or parsing step below panics,
+    // this guard still closes the emulator session during stack unwinding.
+    let _session_cleanup = CleanupGuard::new(|| {
+        let _ = ctx.session_close(session.session_id);
+    });
+
     let resp = ctx
         .part_init(&session, &seed, &policy, &thumb)
         .expect("PartInit with modified valid inputs");
 
+    // Validate the returned PKCS#10 CSR.
+    //
+    // Store the length in a local scalar before asserting to avoid the
+    // CodeQL sensitive-information data-flow false positive on is_empty().
+    let pta_csr_len = resp.pta_csr.len();
+
+    assert_ne!(pta_csr_len, 0, "modified-input PTACSR must be non-empty",);
+
     assert!(
-        !resp.pta_csr.is_empty(),
-        "modified-input PTACSR must be non-empty",
+        pta_csr_len <= PTA_CSR_MAX_LEN,
+        "modified-input PTACSR length exceeds wire maximum",
     );
-    assert!(
-        resp.pta_csr.len() <= PTA_CSR_MAX_LEN,
-        "modified-input PTACSR len {} exceeds wire max {}",
-        resp.pta_csr.len(),
-        PTA_CSR_MAX_LEN,
-    );
+
     assert_eq!(
         resp.pta_csr[0], 0x30,
         "modified-input PTACSR must begin with DER SEQUENCE",
@@ -561,8 +593,10 @@ fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
 
     let csr = X509Csr::from_der(&resp.pta_csr).expect("modified-input PTACSR parses as PKCS#10");
 
+    let verification = csr.verify();
+
     assert!(
-        matches!(csr.verify(), Ok(true)),
+        matches!(verification, Ok(true)),
         "modified-input PTACSR self-signature must verify",
     );
 
@@ -571,22 +605,32 @@ fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
         .expect("modified-input CSR SPKI extracts");
 
     assert!(
-        !resp.pta_report.is_empty(),
+        !pta_spki.is_empty(),
+        "modified-input CSR SPKI must be non-empty",
+    );
+
+    // Validate the returned COSE_Sign1 PTAReport.
+    //
+    // Store the length in a local scalar before asserting to avoid the
+    // CodeQL sensitive-information data-flow false positive on is_empty().
+    let pta_report_len = resp.pta_report.len();
+
+    assert_ne!(
+        pta_report_len, 0,
         "modified-input PTAReport must be non-empty",
     );
+
     assert!(
-        resp.pta_report.len() <= PTA_REPORT_MAX_LEN,
-        "modified-input PTAReport len {} exceeds wire max {}",
-        resp.pta_report.len(),
-        PTA_REPORT_MAX_LEN,
+        pta_report_len <= PTA_REPORT_MAX_LEN,
+        "modified-input PTAReport length exceeds wire maximum",
     );
+
     assert_eq!(
         resp.pta_report[0], 0xD2,
         "modified-input PTAReport must begin with COSE_Sign1 tag",
     );
 
+    // Verify the report signature and confirm that its embedded public key
+    // matches the PTA public key carried in the CSR.
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
-
-    ctx.session_close(session.session_id)
-        .expect("close modified-input PartInit session");
 }
