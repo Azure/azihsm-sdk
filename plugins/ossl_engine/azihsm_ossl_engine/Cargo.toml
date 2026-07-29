@@ -12,7 +12,10 @@ crate-type = ["cdylib", "lib"]
 
 [features]
 default = []
-engine = ["azihsm_ossl_engine_core/engine"]
+engine = ["azihsm_ossl_engine_core/engine", "dep:foreign-types", "dep:openssl"]
+# Exposes the test-only masked-key generator (generate_masked_ec_p384_from_env)
+# for the integration harness; not built into the production engine cdylib.
+integration = ["engine"]
 mock = ["azihsm_api/mock"]
 
 [dependencies]
@@ -29,11 +32,17 @@ zeroize.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-# Only the Linux-only `context` tests use these; gating keeps the workspace
-# `--all-targets` build on Windows from pulling OpenSSL (openssl-sys won't build
-# there). Mirrors azihsm_ossl_engine_resiliency.
+# openssl (→ openssl-sys) can't build on Windows and is only used by the
+# key loader (to reconstruct a public EVP_PKEY from the SDK's DER), which is
+# entirely behind the `engine` feature. Keep it optional and enabled by that
+# feature so a non-engine build stays a stub and pulls no OpenSSL toolchain.
+[target.'cfg(target_os = "linux")'.dependencies]
+foreign-types = { optional = true, workspace = true }
+openssl = { optional = true, workspace = true }
+
+# serial_test is only used by the Linux-only mock tests; keep it gated so the
+# Windows `--all-targets` build stays clean.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-openssl.workspace = true
 serial_test.workspace = true
 
 [lints]
