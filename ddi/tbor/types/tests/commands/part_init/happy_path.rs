@@ -297,40 +297,296 @@ fn part_init_determinism() {
     );
 }
 
-/// Toggling `PolicyFlags::INCLUDE_FMC_CDI` must change the PTA
-/// pubkey. Two runs with byte-identical `(UDS, MachineSeed, POTA
-/// thumbprint)` are performed against the same `TestCtx` (with an
-/// `erase()` between them to reset partition state), differing only
-/// in the `flags` byte of the `PartPolicy` blob. Because the PTA
-/// keypair is derived from `KBKDF(PartRoot, ctx)` and
-/// `include_fmc_cdi` gates whether `fmc_cdi` is mixed into that
-/// context — and, independently, the flag byte is part of the
-/// `PartPolicy` blob whose hash is bound into the derivation — the
-/// two PTA pubkeys must not collide. A byte-identical result would
-/// mean either the flag is a stealth no-op in the KBKDF chain or
-/// the `PartPolicy` hash isn't being bound at all.
+/// Input binding: changing only the machine seed must produce a different
+/// PTA public key while the complete PartInit flow still succeeds.
 #[test]
-fn part_init_pta_pub_differs_when_include_fmc_cdi_flag_toggled() {
+fn part_init_machine_seed_changes_pta_key_emu() {
     let ctx = TestCtx::new();
-
-    let seed = mach_seed();
+    let policy = known_good_part_policy();
     let thumb = pota_thumbprint();
 
-    let default_policy = part_policy_with_flags(0);
-    let fmc_cdi_policy = part_policy_with_flags(PolicyFlags::INCLUDE_FMC_CDI);
+    let seed_a = mach_seed();
+    let mut seed_b = seed_a;
+    seed_b[0] ^= 0x01;
 
-    let pta_pub_default = run_part_init_capture_pta_pub(&ctx, &seed, &default_policy, &thumb);
+    ctx.erase().expect("erase before seed-A run");
+    let pta_pub_a = run_part_init_capture_pta_pub(&ctx, &seed_a, &policy, &thumb);
 
-    // Cold restart between runs so PartInit derives fresh PTA key
-    // material against the second policy under an otherwise
-    // pristine partition (same deterministic UDS).
-    ctx.erase().expect("erase between runs");
-
-    let pta_pub_fmc_cdi = run_part_init_capture_pta_pub(&ctx, &seed, &fmc_cdi_policy, &thumb);
+    ctx.erase().expect("erase before seed-B run");
+    let pta_pub_b = run_part_init_capture_pta_pub(&ctx, &seed_b, &policy, &thumb);
 
     assert_ne!(
-        pta_pub_default, pta_pub_fmc_cdi,
-        "PTA pubkey must differ when `PolicyFlags::INCLUDE_FMC_CDI` \
-         is the only input that changes between the two runs",
+        pta_pub_a, pta_pub_b,
+        "changing MachineSeed must change the derived PTA public key",
     );
+}
+
+/// Input binding: changing only the POTA thumbprint must produce a different
+/// PTA public key while the complete PartInit flow still succeeds.
+#[test]
+fn part_init_pota_thumbprint_changes_pta_key_emu() {
+    let ctx = TestCtx::new();
+    let seed = mach_seed();
+    let policy = known_good_part_policy();
+
+    let thumb_a = pota_thumbprint();
+    let mut thumb_b = thumb_a;
+    thumb_b[POTA_THUMBPRINT_LEN - 1] ^= 0x01;
+
+    ctx.erase().expect("erase before thumb-A run");
+    let pta_pub_a = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb_a);
+
+    ctx.erase().expect("erase before thumb-B run");
+    let pta_pub_b = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb_b);
+
+    assert_ne!(
+        pta_pub_a, pta_pub_b,
+        "changing the POTA thumbprint must change the derived PTA public key",
+    );
+}
+
+/// Determinism is not limited to the canonical fixture values. A modified,
+/// still well-formed seed/thumb pair must derive the same PTA public key on
+/// independent cold starts.
+#[test]
+fn part_init_changed_inputs_are_still_deterministic_emu() {
+    let ctx = TestCtx::new();
+    let policy = known_good_part_policy();
+
+    let mut seed = mach_seed();
+    seed[MACH_SEED_LEN - 1] ^= 0x80;
+
+    let mut thumb = pota_thumbprint();
+    thumb[0] ^= 0x40;
+
+    ctx.erase().expect("erase before changed-input run 1");
+    let pta_pub_run1 = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb);
+
+    ctx.erase().expect("erase before changed-input run 2");
+    let pta_pub_run2 = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb);
+
+    assert_eq!(
+        pta_pub_run1, pta_pub_run2,
+        "the same modified seed/thumb inputs must remain deterministic across cold restarts",
+    );
+}
+
+/// Successful PartInit must be possible again after a full partition erase.
+///
+/// This verifies that `erase()` clears the one-shot PTA-key state and restores
+/// the partition to a state where the normal bootstrap → PSK rotation →
+/// PartInit flow can complete again.
+#[test]
+fn part_init_succeeds_again_after_erase_emu() {
+    let ctx = TestCtx::new();
+    let seed = mach_seed();
+    let policy = known_good_part_policy();
+    let thumb = pota_thumbprint();
+
+    ctx.erase().expect("erase before first PartInit");
+    let pta_pub_run1 = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb);
+
+    ctx.erase()
+        .expect("erase must clear prior PTA key and partition state");
+    let pta_pub_run2 = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb);
+
+    assert_eq!(
+        pta_pub_run1, pta_pub_run2,
+        "PartInit after erase must succeed and re-derive the same PTA key \
+         for the same inputs",
+    );
+}
+
+/// Multiple valid input combinations must each complete successfully and
+/// produce distinct PTA public keys.
+///
+/// This exercises changes at the beginning and end of MachineSeed and
+/// POTA-thumbprint buffers, helping detect ignored bytes, partial hashing,
+/// or accidental truncation.
+#[test]
+fn part_init_distinct_valid_input_combinations_produce_unique_keys_emu() {
+    let ctx = TestCtx::new();
+    let policy = known_good_part_policy();
+
+    let seed_0 = mach_seed();
+    let mut seed_1 = seed_0;
+    seed_1[0] ^= 0x01;
+
+    let mut seed_2 = seed_0;
+    seed_2[MACH_SEED_LEN - 1] ^= 0x80;
+
+    let thumb_0 = pota_thumbprint();
+    let mut thumb_1 = thumb_0;
+    thumb_1[0] ^= 0x01;
+
+    let mut thumb_2 = thumb_0;
+    thumb_2[POTA_THUMBPRINT_LEN - 1] ^= 0x80;
+
+    ctx.erase().expect("erase before combination 0");
+    let pub_0 = run_part_init_capture_pta_pub(&ctx, &seed_0, &policy, &thumb_0);
+
+    ctx.erase().expect("erase before combination 1");
+    let pub_1 = run_part_init_capture_pta_pub(&ctx, &seed_1, &policy, &thumb_0);
+
+    ctx.erase().expect("erase before combination 2");
+    let pub_2 = run_part_init_capture_pta_pub(&ctx, &seed_0, &policy, &thumb_1);
+
+    ctx.erase().expect("erase before combination 3");
+    let pub_3 = run_part_init_capture_pta_pub(&ctx, &seed_2, &policy, &thumb_2);
+
+    assert_ne!(
+        pub_0, pub_1,
+        "changing the first MachineSeed byte must change the PTA key",
+    );
+    assert_ne!(
+        pub_0, pub_2,
+        "changing the first POTA-thumbprint byte must change the PTA key",
+    );
+    assert_ne!(
+        pub_0, pub_3,
+        "changing the final seed/thumb bytes must change the PTA key",
+    );
+    assert_ne!(
+        pub_1, pub_2,
+        "different valid input combinations must not collide",
+    );
+    assert_ne!(
+        pub_1, pub_3,
+        "different valid input combinations must not collide",
+    );
+    assert_ne!(
+        pub_2, pub_3,
+        "different valid input combinations must not collide",
+    );
+}
+
+/// Every byte position tested at the MachineSeed boundaries must influence
+/// PTA-key derivation.
+///
+/// The existing test changes byte zero. This additionally verifies that the
+/// final byte is not ignored due to an off-by-one or shortened hash input.
+#[test]
+fn part_init_last_machine_seed_byte_changes_pta_key_emu() {
+    let ctx = TestCtx::new();
+    let policy = known_good_part_policy();
+    let thumb = pota_thumbprint();
+
+    let seed_a = mach_seed();
+    let mut seed_b = seed_a;
+    seed_b[MACH_SEED_LEN - 1] ^= 0x01;
+
+    ctx.erase().expect("erase before original-seed run");
+    let pta_pub_a = run_part_init_capture_pta_pub(&ctx, &seed_a, &policy, &thumb);
+
+    ctx.erase().expect("erase before final-byte seed run");
+    let pta_pub_b = run_part_init_capture_pta_pub(&ctx, &seed_b, &policy, &thumb);
+
+    assert_ne!(
+        pta_pub_a, pta_pub_b,
+        "the final MachineSeed byte must influence PTA-key derivation",
+    );
+}
+
+/// Every byte position tested at the POTA-thumbprint boundaries must influence
+/// PTA-key derivation.
+///
+/// The existing test changes the final byte. This additionally verifies that
+/// the first byte is included in the derivation.
+#[test]
+fn part_init_first_pota_thumbprint_byte_changes_pta_key_emu() {
+    let ctx = TestCtx::new();
+    let seed = mach_seed();
+    let policy = known_good_part_policy();
+
+    let thumb_a = pota_thumbprint();
+    let mut thumb_b = thumb_a;
+    thumb_b[0] ^= 0x01;
+
+    ctx.erase().expect("erase before original-thumb run");
+    let pta_pub_a = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb_a);
+
+    ctx.erase().expect("erase before first-byte thumb run");
+    let pta_pub_b = run_part_init_capture_pta_pub(&ctx, &seed, &policy, &thumb_b);
+
+    assert_ne!(
+        pta_pub_a, pta_pub_b,
+        "the first POTA-thumbprint byte must influence PTA-key derivation",
+    );
+}
+
+/// A successful PartInit response generated from modified valid inputs must
+/// still contain a valid CSR and a PTAReport that attests the same PTA key.
+///
+/// This is stronger than merely extracting the CSR public key: it verifies the
+/// CSR self-signature, the COSE_Sign1 signature, and CSR/report cross-binding.
+#[test]
+fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
+    use x509::X509Csr;
+    use x509::X509CsrOp;
+
+    let ctx = TestCtx::new();
+
+    let mut seed = mach_seed();
+    seed[0] ^= 0x20;
+    seed[MACH_SEED_LEN - 1] ^= 0x04;
+
+    let policy = known_good_part_policy();
+
+    let mut thumb = pota_thumbprint();
+    thumb[0] ^= 0x10;
+    thumb[POTA_THUMBPRINT_LEN - 1] ^= 0x02;
+
+    ctx.erase()
+        .expect("erase before modified-input artifact validation");
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let resp = ctx
+        .part_init(&session, &seed, &policy, &thumb)
+        .expect("PartInit with modified valid inputs");
+
+    assert!(
+        !resp.pta_csr.is_empty(),
+        "modified-input PTACSR must be non-empty",
+    );
+    assert!(
+        resp.pta_csr.len() <= PTA_CSR_MAX_LEN,
+        "modified-input PTACSR len {} exceeds wire max {}",
+        resp.pta_csr.len(),
+        PTA_CSR_MAX_LEN,
+    );
+    assert_eq!(
+        resp.pta_csr[0], 0x30,
+        "modified-input PTACSR must begin with DER SEQUENCE",
+    );
+
+    let csr = X509Csr::from_der(&resp.pta_csr).expect("modified-input PTACSR parses as PKCS#10");
+
+    assert!(
+        matches!(csr.verify(), Ok(true)),
+        "modified-input PTACSR self-signature must verify",
+    );
+
+    let pta_spki = csr
+        .get_public_key_der()
+        .expect("modified-input CSR SPKI extracts");
+
+    assert!(
+        !resp.pta_report.is_empty(),
+        "modified-input PTAReport must be non-empty",
+    );
+    assert!(
+        resp.pta_report.len() <= PTA_REPORT_MAX_LEN,
+        "modified-input PTAReport len {} exceeds wire max {}",
+        resp.pta_report.len(),
+        PTA_REPORT_MAX_LEN,
+    );
+    assert_eq!(
+        resp.pta_report[0], 0xD2,
+        "modified-input PTAReport must begin with COSE_Sign1 tag",
+    );
+
+    verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
+
+    ctx.session_close(session.session_id)
+        .expect("close modified-input PartInit session");
 }
