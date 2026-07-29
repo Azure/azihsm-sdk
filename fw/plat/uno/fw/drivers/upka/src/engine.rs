@@ -6,6 +6,7 @@ use core::task::Context;
 use core::task::Poll;
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_error::HsmResult;
 
 use crate::api::UpkaDriver;
@@ -106,6 +107,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     fn ensure_result_word(result: &DmaBuf) -> HsmResult<()> {
         Self::ensure_cmd_input(result.len() >= Self::RESULT_WORD_LEN)
+    }
+
+    /// Read the little-endian 32-bit status word from a result buffer.
+    ///
+    /// The caller must have validated the buffer with [`Self::ensure_result_word`]
+    /// (length ≥ [`Self::RESULT_WORD_LEN`]) before calling this.
+    fn read_result_word(result: &DmaBuf) -> u32 {
+        u32::from_le_bytes([result[0], result[1], result[2], result[3]])
     }
 
     /// Return the engine identifier.
@@ -305,6 +314,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// - `Ok(())`: Shared secret was written to `secret`.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
     ///   or hardware rejected the command.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ecdh_derive(
         &mut self,
         curve: UpkaEccCurve,
@@ -313,6 +323,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         secret: &mut DmaBuf,
         prime: &DmaBuf,
         mont_result: &mut DmaBuf,
+        point_valid: &mut DmaBuf,
     ) -> HsmResult<()> {
         Self::ensure_cmd_input(
             priv_key.len() >= hsm_point_size(curve)
@@ -321,11 +332,13 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
                 && prime.len() >= hsm_point_size(curve)
                 && mont_result.len() >= hsm_point_size(curve),
         )?;
+        Self::ensure_result_word(point_valid)?;
 
         // Required PKA setup: compute the Montgomery constant for the curve
-        // prime on this engine before the point multiplication. This leaves
-        // engine state the point-mul consumes; both run on the same engine
-        // acquisition (execute_cmd does not wipe between commands).
+        // prime on this engine before the point validation and multiplication.
+        // This leaves engine state both subsequent commands consume; all three
+        // run on the same engine acquisition (execute_cmd does not wipe between
+        // commands).
         self.execute_cmd(
             mont_const_calc_opcode(curve),
             mont_result.as_mut_ptr() as u32,
@@ -334,6 +347,25 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
             0,
         )
         .await?;
+
+        // Validate the peer public key is on the curve before the point
+        // multiply. Feeding an off-curve point to the multiply can fault the
+        // engine, so reject it here. This mirrors the reference firmware, which
+        // runs point validation between the Montgomery-constant setup and the
+        // ECDH compute on the same engine (the validation consumes the
+        // Montgomery context). A status word of 0 means the point is on the
+        // curve; any non-zero value means it is not.
+        self.execute_cmd(
+            ecc_point_validate_opcode(curve),
+            point_valid.as_mut_ptr() as u32,
+            pub_key.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await?;
+        if Self::read_result_word(point_valid) != 0 {
+            return Err(HsmError::EccPointValidationFailed);
+        }
 
         // ECDH point multiply: result = shared secret X (LE);
         // arg1 = peer public point (X || Y, LE); arg2 = private scalar (LE).
@@ -420,39 +452,6 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
             output.as_mut_ptr() as u32,
             input.as_ptr() as u32,
             key.as_ptr() as u32,
-            0,
-        )
-        .await
-    }
-
-    /// Validate that a public key is on the specified ECC curve.
-    ///
-    /// `result` is a caller-allocated DMA-capable buffer (at least 4 bytes)
-    /// that receives the hardware validation status word.
-    ///
-    /// # Parameters
-    ///
-    /// - `curve`: ECC curve selector.
-    /// - `pub_key`: DMA-capable public key buffer.
-    /// - `result`: DMA-capable output status word buffer.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())`: Validation completed and status was written to `result`.
-    /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
-    ///   or hardware rejected the command.
-    pub async fn ecc_point_validate(
-        &mut self,
-        curve: UpkaEccCurve,
-        pub_key: &DmaBuf,
-        result: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        Self::ensure_result_word(result)?;
-        self.execute_cmd(
-            ecc_point_validate_opcode(curve),
-            result.as_mut_ptr() as u32,
-            0,
-            pub_key.as_ptr() as u32,
             0,
         )
         .await
