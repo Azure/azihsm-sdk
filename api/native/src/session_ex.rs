@@ -243,7 +243,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
 /// Groups the security-domain finalization inputs into a single struct so
 /// the call site does not pass them as separate arguments. `pta_cert_chain`
 /// points to an array of `pta_cert_chain_len` `azihsm_buffer`s, each holding
-/// one DER-encoded PTA certificate (leaf to root). `prev_local_mk_backup` is
+/// one DER-encoded PTA certificate (root to leaf). `prev_local_mk_backup` is
 /// optional and may be NULL to omit it.
 #[repr(C)]
 pub struct AzihsmSessExPartFinalParams {
@@ -251,7 +251,7 @@ pub struct AzihsmSessExPartFinalParams {
     /// recovery; must match the policy given to `part_init`.
     pub part_policy: *const AzihsmBuffer,
     /// Pointer to an array of `pta_cert_chain_len` `azihsm_buffer`s, each a
-    /// DER-encoded PTA certificate (leaf to root).
+    /// DER-encoded PTA certificate (root to leaf).
     pub pta_cert_chain: *const AzihsmBuffer,
     /// Number of certificates in `pta_cert_chain`.
     pub pta_cert_chain_len: u32,
@@ -262,7 +262,7 @@ pub struct AzihsmSessExPartFinalParams {
 /// @brief Finalize a partition's security domain
 ///
 /// Completes provisioning started by `azihsm_sess_ex_part_init`: re-supplies
-/// the unified partition policy and the PTA certificate chain (leaf to root),
+/// the unified partition policy and the PTA certificate chain (root to leaf),
 /// optionally restoring a prior `local_mk` backup, and returns the current
 /// `local_mk` backup envelope the firmware produced.
 ///
@@ -317,9 +317,10 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
             Err(AzihsmStatus::InvalidArgument)?;
         }
         validate_ptr(params.pta_cert_chain)?;
-        // SAFETY: the caller guarantees `pta_cert_chain` points to
-        // `chain_len` valid `azihsm_buffer`s (documented above), and
-        // `chain_len` is bounded by `MAX_CERTS` above.
+        // SAFETY: `pta_cert_chain` is non-null and aligned for
+        // `AzihsmBuffer` (checked by `validate_ptr`), the caller guarantees
+        // it points to `chain_len` valid `azihsm_buffer`s (documented
+        // above), and `chain_len` is bounded by `MAX_CERTS`.
         let raw = unsafe { std::slice::from_raw_parts(params.pta_cert_chain, chain_len) };
         let mut certs: Vec<api::HsmCert<'_>> = Vec::with_capacity(chain_len);
         for buf in raw {
@@ -373,6 +374,245 @@ pub unsafe extern "C" fn azihsm_sess_ex_psk_change(
             .map_err(|_| AzihsmStatus::InvalidArgument)?;
 
         session.change_psk(new_psk)?;
+
+        Ok(())
+    })
+}
+
+/// One certificate chain in an SD attestation-evidence party: an array of
+/// `len` `azihsm_buffer`s, each a DER-encoded certificate (root to leaf).
+#[repr(C)]
+pub struct AzihsmSdCertChain {
+    /// Pointer to an array of `len` DER certificate `azihsm_buffer`s.
+    pub certs: *const AzihsmBuffer,
+    /// Number of certificates in `certs`.
+    pub len: u32,
+}
+
+/// Attestation evidence for one SD-backup party: three certificate chains
+/// (manufacturer, owner, partition-owner) and a COSE_Sign1 report. The DER
+/// bytes are borrowed, not copied.
+#[repr(C)]
+pub struct AzihsmSdEvidence {
+    /// Manufacturer certificate chain.
+    pub mfgr_cert_chain: AzihsmSdCertChain,
+    /// Owner certificate chain.
+    pub owner_cert_chain: AzihsmSdCertChain,
+    /// Partition-owner certificate chain.
+    pub part_owner_cert_chain: AzihsmSdCertChain,
+    /// COSE_Sign1 attestation-report buffer.
+    pub report: *const AzihsmBuffer,
+}
+
+/// Input buffers for [`azihsm_sess_ex_sd_create_remote_backup`].
+#[repr(C)]
+pub struct AzihsmSessExSdCreateRemoteBackupParams {
+    /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
+    /// `MASKED_SEALING_KEY_LEN` (180 B).
+    pub masked_sealing_key: *const AzihsmBuffer,
+    /// Receiver attestation evidence.
+    pub receiver_evidence: *const AzihsmSdEvidence,
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub policy: *const AzihsmBuffer,
+}
+
+/// Borrows one C [`AzihsmSdCertChain`] into a `Vec<HsmCert>`, rejecting an
+/// empty or oversized chain up front so a bogus `len` cannot trigger an
+/// unbounded allocation ahead of the host validation.
+#[allow(unsafe_code)]
+fn unpack_cert_chain(chain: &AzihsmSdCertChain) -> Result<Vec<api::HsmCert<'_>>, AzihsmStatus> {
+    let len = chain.len as usize;
+    if len == 0 || len > api::EVIDENCE_CHAIN_MAX_CERTS {
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+    validate_ptr(chain.certs)?;
+    // SAFETY: `certs` is non-null and aligned for `AzihsmBuffer` (checked
+    // by `validate_ptr`), the caller guarantees it points to `len` valid
+    // `azihsm_buffer`s, and `len` is bounded by `EVIDENCE_CHAIN_MAX_CERTS`.
+    let raw = unsafe { std::slice::from_raw_parts(chain.certs, len) };
+    let mut certs = Vec::with_capacity(len);
+    for buf in raw {
+        let der: &[u8] = buf.try_into()?;
+        certs.push(api::HsmCert { cert: der });
+    }
+    Ok(certs)
+}
+
+/// @brief Create a new security domain and its remote backup
+///
+/// Creates a security domain under the calling session's partition from
+/// `params.policy`, using the sender's masked sealing key and the
+/// receiver's attestation evidence, and returns the three backups the
+/// firmware produces.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Create-backup input buffers
+/// @param[in,out] pok_remote_backup Output buffer for the remote
+///                partition-owner-key backup (161 B).
+/// @param[in,out] pok_local_backup Output buffer for the local
+///                partition-owner-key backup (180 B).
+/// @param[in,out] sd_mk_backup Output buffer for the security-domain
+///                masking-key backup (164 B).
+///
+/// All three output buffers follow the probe/fill convention and are
+/// validated **before** the domain is created, so the one-shot command is
+/// not consumed when a buffer is too small.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` and each of its buffer/evidence pointers must be valid; each
+///   `AzihsmSdCertChain.certs` must point to `len` valid `azihsm_buffer`s.
+/// - Each output buffer must be a valid `azihsm_buffer` with writable
+///   backing storage of the advertised length.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_sd_create_remote_backup(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExSdCreateRemoteBackupParams,
+    pok_remote_backup: *mut AzihsmBuffer,
+    pok_local_backup: *mut AzihsmBuffer,
+    sd_mk_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
+        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+
+        let ev = deref_ptr(params.receiver_evidence)?;
+        let mfgr = unpack_cert_chain(&ev.mfgr_cert_chain)?;
+        let owner = unpack_cert_chain(&ev.owner_cert_chain)?;
+        let part_owner = unpack_cert_chain(&ev.part_owner_cert_chain)?;
+        let report: &[u8] = deref_ptr(ev.report)?.try_into()?;
+        let receiver = api::HsmSdEvidence {
+            mfgr_cert_chain: &mfgr,
+            owner_cert_chain: &owner,
+            part_owner_cert_chain: &part_owner,
+            report,
+        };
+
+        // Reject null/misaligned or aliasing output pointers before taking a
+        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
+        // would be undefined behavior.
+        validate_distinct_output_buffers(&[pok_remote_backup, pok_local_backup, sd_mk_backup])?;
+
+        let pok_remote_backup = deref_mut_ptr(pok_remote_backup)?;
+        validate_output_buffer(pok_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
+
+        let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
+        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
+
+        let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
+        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+
+        let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
+
+        copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
+        copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;
+        copy_to_buffer(sd_mk_backup, &result.sd_mk_backup)?;
+
+        Ok(())
+    })
+}
+
+/// Input buffers for [`azihsm_sess_ex_sd_reseal_remote_backup`].
+#[repr(C)]
+pub struct AzihsmSessExSdResealRemoteBackupParams {
+    /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
+    /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    pub masked_sealing_key: *const AzihsmBuffer,
+    /// Source (sender) attestation evidence.
+    pub src_evidence: *const AzihsmSdEvidence,
+    /// Destination (receiver) attestation evidence.
+    pub dest_evidence: *const AzihsmSdEvidence,
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub policy: *const AzihsmBuffer,
+    /// Source remote backup to reseal, exactly `POK_REMOTE_BACKUP_LEN`
+    /// (161 B).
+    pub src_remote_backup: *const AzihsmBuffer,
+}
+
+/// @brief Reseal an existing remote backup to a new recipient
+///
+/// HPKE-opens `params.src_remote_backup` with the receiver's masked
+/// sealing key (authenticated by the source sender in `params.src_evidence`)
+/// and reseals the recovered backup to the destination receiver
+/// (`params.dest_evidence`), returning the resealed remote backup.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Reseal-backup input buffers
+/// @param[in,out] dst_remote_backup Output buffer for the resealed remote
+///                partition-owner-key backup (161 B).
+///
+/// The output buffer follows the probe/fill convention and is validated
+/// **before** the reseal is performed.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` and each of its buffer/evidence pointers must be valid; each
+///   `AzihsmSdCertChain.certs` must point to `len` valid `azihsm_buffer`s.
+/// - `dst_remote_backup` must be a valid `azihsm_buffer` with writable
+///   backing storage of the advertised length.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_sd_reseal_remote_backup(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExSdResealRemoteBackupParams,
+    dst_remote_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
+        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let src_remote_backup: &[u8] = deref_ptr(params.src_remote_backup)?.try_into()?;
+
+        let src_ev = deref_ptr(params.src_evidence)?;
+        let src_mfgr = unpack_cert_chain(&src_ev.mfgr_cert_chain)?;
+        let src_owner = unpack_cert_chain(&src_ev.owner_cert_chain)?;
+        let src_part_owner = unpack_cert_chain(&src_ev.part_owner_cert_chain)?;
+        let src_report: &[u8] = deref_ptr(src_ev.report)?.try_into()?;
+        let src_evidence = api::HsmSdEvidence {
+            mfgr_cert_chain: &src_mfgr,
+            owner_cert_chain: &src_owner,
+            part_owner_cert_chain: &src_part_owner,
+            report: src_report,
+        };
+
+        let dest_ev = deref_ptr(params.dest_evidence)?;
+        let dest_mfgr = unpack_cert_chain(&dest_ev.mfgr_cert_chain)?;
+        let dest_owner = unpack_cert_chain(&dest_ev.owner_cert_chain)?;
+        let dest_part_owner = unpack_cert_chain(&dest_ev.part_owner_cert_chain)?;
+        let dest_report: &[u8] = deref_ptr(dest_ev.report)?.try_into()?;
+        let dest_evidence = api::HsmSdEvidence {
+            mfgr_cert_chain: &dest_mfgr,
+            owner_cert_chain: &dest_owner,
+            part_owner_cert_chain: &dest_part_owner,
+            report: dest_report,
+        };
+
+        // Validate the output buffer before resealing.
+        validate_ptr(dst_remote_backup)?;
+        let dst_remote_backup = deref_mut_ptr(dst_remote_backup)?;
+        validate_output_buffer(dst_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
+
+        let result = session.sd_reseal_remote_backup(
+            masked_sealing_key,
+            &src_evidence,
+            &dest_evidence,
+            policy,
+            src_remote_backup,
+        )?;
+
+        copy_to_buffer(dst_remote_backup, &result)?;
 
         Ok(())
     })

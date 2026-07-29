@@ -61,7 +61,7 @@ pub enum DdiError {
 
     /// Firmware-signalled TBOR command rejection, carrying the typed
     /// [`TborStatus`].
-    #[error("TBOR device error")]
+    #[error("TBOR device error: {0:?} (0x{:08X})", .0.0)]
     TborStatus(TborStatus),
 
     /// Linux error

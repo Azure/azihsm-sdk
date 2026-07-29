@@ -4,11 +4,13 @@
 use azihsm_api::*;
 
 use super::*;
+use crate::AzihsmBuffer;
 use crate::AzihsmHandle;
 use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_algo_params_absent;
+use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmSealingKeyGenAlgo {
     type Error = AzihsmStatus;
@@ -41,4 +43,22 @@ pub(crate) fn sealing_generate_key(
     let mut sealing_algo = HsmSealingKeyGenAlgo::try_from(algo)?;
     let key = HsmKeyManager::generate_key(session, &mut sealing_algo, key_props)?;
     Ok(HANDLE_TABLE.alloc_handle(HandleType::SealingKey, Box::new(key)))
+}
+
+/// Generates a key-attestation report for a non-resident sealing key.
+///
+/// The report is produced over the key's masked-key envelope via TBOR
+/// `KeyReport`. Follows the probe/fill convention: sizes `output` on the
+/// first pass, then fills it.
+pub(crate) fn sealing_generate_key_report(
+    key_handle: AzihsmHandle,
+    report_data: &[u8],
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmStatus> {
+    let key = HsmSealingKey::try_from(key_handle)?;
+    let required_size = HsmKeyManager::generate_key_report(&key, report_data, None)?;
+    let output_data = validate_output_buffer(output, required_size)?;
+    let report_len = HsmKeyManager::generate_key_report(&key, report_data, Some(output_data))?;
+    output.len = report_len as u32;
+    Ok(())
 }
