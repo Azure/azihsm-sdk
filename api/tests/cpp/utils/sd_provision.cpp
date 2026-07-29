@@ -953,7 +953,15 @@ azihsm_handle provision_sd_co_session(azihsm_handle part_handle)
     return session;
 }
 
-SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
+// Core backing-partition provisioning. When `reuse` is null a fresh policy
+// and SATA/POTA anchors are minted (the create / device-1 side). When
+// non-null the policy and anchors are reused and `reuse->local_mk_backup`
+// is supplied to `PartFinal`, re-provisioning the same partition as a
+// restore target (the device-2 side).
+static SdBackingContext provision_backing_impl(
+    azihsm_handle part_handle,
+    const SdBackingContext *reuse
+)
 {
     // 1. Bootstrap a CO session under the default PSK and rotate it.
     azihsm_handle bootstrap = open_co_session(part_handle, nullptr);
@@ -1019,25 +1027,44 @@ SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
         return fail("PartInfo PID public key has unexpected length", AZIHSM_STATUS_INTERNAL_ERROR);
     }
 
-    // 4. Mint the POTA anchor (for the PTA chain) and the SATA anchor (which
-    // roots the partition-owner evidence chain), then build the backing
-    // policy. The SATA key is handed back to the caller as an opaque handle.
-    std::unique_ptr<CaKey> pota_ca = CaKey::generate();
-    if (!pota_ca)
+    // 4. Mint (or reuse) the POTA anchor (for the PTA chain) and the SATA
+    // anchor (which roots the partition-owner evidence chain), then build
+    // (or reuse) the backing policy. A restore target must re-provision
+    // under the exact same policy and anchors as the original.
+    std::shared_ptr<CaKey> pota_ca;
+    std::shared_ptr<CaKey> sata_key;
+    std::vector<uint8_t> policy;
+    if (reuse != nullptr)
     {
-        return fail("POTA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        pota_ca = reuse->pota_key;
+        sata_key = reuse->sata_key;
+        policy = reuse->policy;
+        if (!pota_ca || !sata_key || policy.empty())
+        {
+            return fail(
+                "restore target reuse context is incomplete",
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+        }
     }
-    std::shared_ptr<CaKey> sata_key = CaKey::generate();
-    if (!sata_key)
+    else
     {
-        return fail("SATA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        pota_ca = CaKey::generate();
+        if (!pota_ca)
+        {
+            return fail("POTA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        }
+        sata_key = CaKey::generate();
+        if (!sata_key)
+        {
+            return fail("SATA CA key generation failed", AZIHSM_STATUS_INTERNAL_ERROR);
+        }
+        uint8_t pota_raw[kRawPubLen];
+        std::memcpy(pota_raw, pota_ca->sec1().data() + 1, kRawPubLen);
+        uint8_t sata_raw[kRawPubLen];
+        std::memcpy(sata_raw, sata_key->sec1().data() + 1, kRawPubLen);
+        policy = build_backing_part_policy(pid.data(), pid_pub.data(), sata_raw, pota_raw);
     }
-    uint8_t pota_raw[kRawPubLen];
-    std::memcpy(pota_raw, pota_ca->sec1().data() + 1, kRawPubLen);
-    uint8_t sata_raw[kRawPubLen];
-    std::memcpy(sata_raw, sata_key->sec1().data() + 1, kRawPubLen);
-    std::vector<uint8_t> policy =
-        build_backing_part_policy(pid.data(), pid_pub.data(), sata_raw, pota_raw);
 
     // Deterministic provisioning fixtures (thumbprints are stored, not
     // chain-validated in this flow).
@@ -1101,11 +1128,21 @@ SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
         { chain.root_der.data(), static_cast<uint32_t>(chain.root_der.size()) },
         { chain.pta_der.data(), static_cast<uint32_t>(chain.pta_der.size()) },
     };
+    azihsm_buffer prev_mk_buf{};
     azihsm_sess_ex_part_final_params final_params{};
     final_params.part_policy = &policy_buf;
     final_params.pta_cert_chain = chain_bufs;
     final_params.pta_cert_chain_len = 2;
-    final_params.prev_local_mk_backup = nullptr;
+    if (reuse != nullptr)
+    {
+        prev_mk_buf = { const_cast<uint8_t *>(reuse->local_mk_backup.data()),
+                        static_cast<uint32_t>(reuse->local_mk_backup.size()) };
+        final_params.prev_local_mk_backup = &prev_mk_buf;
+    }
+    else
+    {
+        final_params.prev_local_mk_backup = nullptr;
+    }
 
     azihsm_buffer mk_backup{ nullptr, 0 };
     auto fin_probe = azihsm_sess_ex_part_final(session, &final_params, &mk_backup);
@@ -1121,7 +1158,27 @@ SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
         return fail("PartFinal failed", final_err);
     }
 
-    return SdBackingContext{ session, std::move(policy), std::move(pid_pub), std::move(sata_key) };
+    SdBackingContext ctx;
+    ctx.session = session;
+    ctx.policy = std::move(policy);
+    ctx.pid_pub = std::move(pid_pub);
+    ctx.sata_key = std::move(sata_key);
+    ctx.pota_key = std::move(pota_ca);
+    ctx.local_mk_backup = std::move(mk_bytes);
+    return ctx;
+}
+
+SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
+{
+    return provision_backing_impl(part_handle, nullptr);
+}
+
+SdBackingContext provision_sd_restore_target(
+    azihsm_handle part_handle,
+    const SdBackingContext &prev
+)
+{
+    return provision_backing_impl(part_handle, &prev);
 }
 
 SealingKeyMaterial sealing_key_and_report(azihsm_handle session)

@@ -55,6 +55,7 @@ include = [
   "AzihsmSessExPartInitParams",
   "AzihsmSessExSdCreateRemoteBackupParams",
   "AzihsmSessExSdResealRemoteBackupParams",
+  "AzihsmSessExSdRestoreRemoteBackupParams",
   "AzihsmSessionPsk",
   "HsmEccCurve",
   "HsmError",
@@ -112,6 +113,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmSessExPartInitParams" = "azihsm_sess_ex_part_init_params"
 "AzihsmSessExSdCreateRemoteBackupParams" = "azihsm_sess_ex_sd_create_remote_backup_params"
 "AzihsmSessExSdResealRemoteBackupParams" = "azihsm_sess_ex_sd_reseal_remote_backup_params"
+"AzihsmSessExSdRestoreRemoteBackupParams" = "azihsm_sess_ex_sd_restore_remote_backup_params"
 "AzihsmSessionExType" = "azihsm_session_ex_type"
 "AzihsmSessionProp" = "azihsm_session_prop"
 "AzihsmSessionPropId" = "azihsm_session_prop_id"
