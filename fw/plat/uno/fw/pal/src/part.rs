@@ -535,83 +535,65 @@ impl UnoHsmPal {
             _ => Err(HsmError::InvalidArg),
         }
     }
-}
 
-impl HsmPartitionManager for UnoHsmPal {
-    async fn provision_unwrapping_key(&self, io: &impl HsmIo) -> HsmResult<()> {
+    /// Materialise the partition's RSA-2048 unwrapping key into the vault on
+    /// first use, if the HSP has published it into the GSRAM backup slot but it
+    /// is not yet imported. No-op if it is already imported or not yet
+    /// published.
+    ///
+    /// Runs synchronously — a CPU-copy vault insert via
+    /// [`create_sync`](azihsm_fw_uno_key_vault::KeyVault::create_sync), with no
+    /// `.await` — so the check → import → commit sequence is atomic with respect
+    /// to the cooperative scheduler: two concurrent first-use reads cannot both
+    /// import. The `&'static` GSRAM blob is fed straight into the vault, so there
+    /// is no transient DMA-scratch copy of the private key to scrub.
+    fn ensure_unwrapping_key_imported(&self, io: &impl HsmIo) -> HsmResult<()> {
         let pid = io.pid();
-
-        // Fast path: return early if the key is already imported. Otherwise
-        // read the 516-byte GSRAM backup slot the HSP published. The caller
-        // holds the partition lock (both the MBOR and TBOR GetUnwrappingKey
-        // handlers take it before invoking this hook), so the
-        // check → import → commit sequence below is serialised per partition
-        // despite the `.await` on the GDMA import — no interleaved first use
-        // can import a second copy. `unwrapping_key_bk` returns `&'static`
-        // GSRAM memory that stays put while the slot is marked valid, so it is
-        // safe to read after the slot borrow is dropped.
         let bk = {
             let part = PartStore::partition(pid)?;
             if part.unwrapping_key_id().is_some() {
                 return Ok(());
             }
             if !part.unwrapping_key_bk_valid() {
-                // The HSP ephemeral-key monitor has not published a key into
-                // this partition's GSRAM slot yet. Leave the id absent and
-                // return so `GetUnwrappingKey` surfaces `PendingKeyGeneration`
-                // and the host retries once the key is available.
+                // The HSP has not published a key into this partition's GSRAM
+                // slot yet. Leave the id absent so the read surfaces
+                // `PartPropNotFound` → `PendingKeyGeneration` and the host
+                // retries once the key is available. `unwrapping_key_bk` returns
+                // `&'static` GSRAM memory that stays valid while the slot is
+                // marked valid.
                 return Ok(());
             }
             part.unwrapping_key_bk()
         };
 
-        // Copy the 516-byte PKA-LE key out of GSRAM into transient
-        // admin-slot DMA scratch: `vault_key_create` yields on the GDMA
-        // key copy, and the PartStore driver forbids holding a slot borrow
-        // across a yield.
-        let admin_io = UnoHsmIo::admin(pid);
-        let alloc = UnoScopedAlloc::for_admin(self);
-        let key_buf = alloc.dma_alloc(bk.len())?;
-        key_buf.copy_from_slice(bk);
-
-        // Import as the partition's RSA-2048 unwrapping key.  It is an
-        // internal, local, unwrap-only key (matches the reference
-        // firmware's attributes and the emulator PAL).
+        // Import as the partition's RSA-2048 unwrapping key: internal, local,
+        // unwrap-only (matches the reference firmware and the emulator PAL). The
+        // synchronous CPU-copy insert lets us pass the `&'static` GSRAM blob
+        // directly — no transient scratch copy of the private key.
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
-        let create_res = crate::vault::vault(&admin_io)
-            .create(
-                self,
-                &admin_io,
-                u8::from(pid),
-                key_buf,
-                HsmVaultKeyKind::Rsa2kPrivate,
-                None,
-                attrs,
-            )
-            .await;
+        let admin_io = UnoHsmIo::admin(pid);
+        let kid = crate::vault::vault(&admin_io).create_sync(
+            u8::from(pid),
+            bk,
+            HsmVaultKeyKind::Rsa2kPrivate,
+            None,
+            attrs,
+        )?;
 
-        // Wipe the raw RSA private key from the transient DMA scratch as soon
-        // as the import finishes — on success or failure. `UnoScopedAlloc`
-        // drop only rewinds the bump watermark, so without this volatile wipe
-        // the private key would linger in the DMA region until a later
-        // allocation happens to overwrite it.
-        key_buf.zeroize();
-        let kid = create_res?;
-
-        // Commit: record the vault id. The HSP-published key stays in its
-        // GSRAM slot (it persists there as the partition's stable unwrapping
-        // key), so after a partition erase — which wipes the vault and this id
-        // but not the HSP's slot — the next first-use call re-imports it. The
-        // caller holds the partition lock, so no interleaved handler can have
-        // imported a second copy between the check above and this write.
+        // Commit: record the vault id. The HSP-published key stays in its GSRAM
+        // slot (it persists as the partition's stable unwrapping key), so after
+        // a partition erase — which wipes the vault and this id but not the
+        // HSP's slot — the next first-use read re-imports it.
         let part = PartStore::partition(pid)?;
         part.set_unwrapping_key_id(Some(kid));
         Ok(())
     }
+}
 
+impl HsmPartitionManager for UnoHsmPal {
     fn part_prop_get_u8(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<u8> {
         let part = PartStore::partition(io.pid())?;
         match id {
@@ -639,6 +621,14 @@ impl HsmPartitionManager for UnoHsmPal {
     }
 
     fn part_prop_get_u16(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<u16> {
+        // The unwrapping key is materialised lazily on first read: if the HSP
+        // has published it into the GSRAM backup slot but it is not yet in the
+        // vault, import it now (synchronously) and record its id. An absent id
+        // afterwards means the HSP has not published yet, which the handler
+        // surfaces as `PendingKeyGeneration`.
+        if id == PartPropId::RSA_UNWRAPPING_KEY_ID {
+            self.ensure_unwrapping_key_imported(io)?;
+        }
         let part = PartStore::partition(io.pid())?;
         let key = match id {
             PartPropId::ID_KEY_ID => part.id_key_id(),

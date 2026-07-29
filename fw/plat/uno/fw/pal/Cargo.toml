@@ -42,7 +42,6 @@ azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
 
 embassy-futures = { workspace = true }
-embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 tock-registers = { workspace = true }
 
