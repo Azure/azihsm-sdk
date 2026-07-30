@@ -390,6 +390,89 @@ fn open_session_fills_co_slot_then_recovers() {
 }
 
 // ---------------------------------------------------------------------------
+// Full session-table exhaustion (CO + CU together) + recovery
+//
+// The FW session table is a single 8-slot table shared across roles
+// (1 CO slot + 7 CU slots). CO and CU exhaustion are exercised
+// separately above, but this test drives both roles together to
+// confirm the whole table can be filled in one go and that neither
+// role's rejection path interferes with the other's.
+//
+// Sequence:
+//  1. Open 1 CO + `CU_SESSION_LIMIT` CU sessions — every slot must
+//     succeed.
+//  2. One more CO open is rejected (CO slot occupied).
+//  3. One more CU open is rejected (all CU slots occupied).
+//  4. Drop a single CU guard; a fresh CU open must succeed while
+//     the CO slot stays full — proves per-role slot accounting.
+//  5. Drop the CO guard + fd; a fresh CO open must succeed —
+//     proves the CO slot reclaims independently.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_session_fills_full_table_then_recovers() {
+    let ctx = TestCtx::new();
+
+    // CO slot: one guard + its own fd (hw needs one fd per session).
+    let ctx_co = TestCtx::new_with_path(ctx.path());
+    let co_guard = ctx_co
+        .open_session(CO, SessionType::Authenticated)
+        .expect("CO session must succeed");
+
+    // CU slots: `CU_SESSION_LIMIT` guards, each on its own fd.
+    let cu_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+    let mut cu_guards: Vec<_> = cu_ctxs
+        .iter()
+        .enumerate()
+        .map(|(_i, c)| {
+            c.open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!("CU session {_i} of {CU_SESSION_LIMIT} must succeed, got {e:?}")
+                })
+        })
+        .collect();
+
+    // Table is full — one more CO open must be rejected.
+    let overflow_co_ctx = TestCtx::new_with_path(ctx.path());
+    let err_co = overflow_co_ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect_err("second concurrent CO open must be rejected");
+    assert_fw_rejects(&err_co, TborStatus::VaultSessionLimitReached);
+    drop(overflow_co_ctx);
+
+    // One more CU open must be rejected too.
+    let overflow_cu_ctx = TestCtx::new_with_path(ctx.path());
+    let err_cu = overflow_cu_ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("open_session past CU limit must be rejected");
+    assert_fw_rejects(&err_cu, TborStatus::VaultSessionLimitReached);
+    drop(overflow_cu_ctx);
+
+    // Recovery-1: drop one CU guard. That frees exactly one CU slot;
+    // a fresh CU open on a new fd must succeed. CO stays full.
+    cu_guards.pop().expect("cu_guards must not be empty");
+    let ctx_recover_cu = TestCtx::new_with_path(ctx.path());
+    let _recovered_cu = ctx_recover_cu
+        .open_session(CU, SessionType::PlainText)
+        .expect("CU slot must recover after freeing one CU guard");
+
+    // Recovery-2: drop the CO guard + its fd. A fresh CO open on a
+    // new fd must succeed. (A new fd is required because on hw
+    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so we cannot reuse
+    // `ctx_recover_cu` — its fd already holds the CU session opened
+    // in Recovery-1.)
+    drop(co_guard);
+    drop(ctx_co);
+    let ctx_recover_co = TestCtx::new_with_path(ctx.path());
+    let _recovered_co = ctx_recover_co
+        .open_session(CO, SessionType::Authenticated)
+        .expect("CO slot must recover after CO fd is dropped");
+    // Remaining guards close on drop at end of scope.
+}
+
+// ---------------------------------------------------------------------------
 // Open, close, open new session
 // ---------------------------------------------------------------------------
 

@@ -277,10 +277,6 @@ fn run_part_init_capture_pta_pub(
 fn part_init_determinism() {
     let ctx = TestCtx::new();
 
-    // `TestCtx::new` already left the partition factory-reset; this
-    // first `erase` is redundant but documents the run-1 precondition.
-    ctx.erase().expect("erase to pristine Enabled before run 1");
-
     let seed = mach_seed();
     let policy = known_good_part_policy();
     let thumb = pota_thumbprint();
@@ -316,7 +312,6 @@ fn part_init_determinism() {
 #[test]
 fn part_init_pta_pub_differs_when_include_fmc_cdi_flag_toggled() {
     let ctx = TestCtx::new();
-    ctx.erase().expect("erase before run 1");
 
     let seed = mach_seed();
     let thumb = pota_thumbprint();

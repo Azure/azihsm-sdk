@@ -52,12 +52,12 @@ use crate::harness::fixture::TestDev;
 use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
 use crate::harness::session::psk_change as psk_change_helper;
-use crate::harness::session::session_close;
+use crate::harness::session::session_close as session_close_helper;
 use crate::harness::session::session_open as session_open_helper;
-use crate::harness::session::session_open_finish;
-use crate::harness::session::session_open_finish_with_mac;
-use crate::harness::session::session_open_init;
-use crate::harness::session::session_open_init_with_options;
+use crate::harness::session::session_open_finish as session_open_finish_helper;
+use crate::harness::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
+use crate::harness::session::session_open_init as session_open_init_helper;
+use crate::harness::session::session_open_init_with_options as session_open_init_with_options_helper;
 use crate::harness::session::PendingHandshake;
 use crate::harness::session::SessionHandshake;
 use crate::harness::session::SessionOpenInitOptions;
@@ -230,7 +230,7 @@ impl TestCtx {
         psk_id: u8,
         session_type: SessionType,
     ) -> DdiResult<PendingHandshake> {
-        session_open_init(&self.dev, psk_id, session_type)
+        session_open_init_helper(&self.dev, psk_id, session_type)
     }
 
     /// Full-control Phase 1 entry point: honours every override in
@@ -239,14 +239,14 @@ impl TestCtx {
         &self,
         opts: SessionOpenInitOptions<'_>,
     ) -> DdiResult<PendingHandshake> {
-        session_open_init_with_options(&self.dev, opts)
+        session_open_init_with_options_helper(&self.dev, opts)
     }
 
     /// Run Phase 2 of the TBOR session handshake with the canonical
     /// confirm MAC. Consumes `pending` so callers cannot reuse stale
     /// state.
     pub fn session_open_finish(&self, pending: PendingHandshake) -> DdiResult<SessionHandshake> {
-        session_open_finish(&self.dev, pending)
+        session_open_finish_helper(&self.dev, pending)
     }
 
     /// Phase 2 entry point that ships a caller-supplied `mac_fin`,
@@ -256,7 +256,7 @@ impl TestCtx {
         pending: PendingHandshake,
         mac_fin: [u8; 48],
     ) -> DdiResult<SessionHandshake> {
-        session_open_finish_with_mac(&self.dev, pending, mac_fin)
+        session_open_finish_with_mac_helper(&self.dev, pending, mac_fin)
     }
 
     /// One-shot happy-path handshake that returns the raw
@@ -276,7 +276,7 @@ impl TestCtx {
     /// tests (double-close, unknown id) and by callers that hold a
     /// raw [`SessionHandshake`] outside of a [`SessionGuard`].
     pub fn session_close(&self, session_id: u16) -> DdiResult<()> {
-        session_close(&self.dev, session_id)
+        session_close_helper(&self.dev, session_id)
     }
 
     /// Issue `PskChange` on `session` with `new_psk` as the
