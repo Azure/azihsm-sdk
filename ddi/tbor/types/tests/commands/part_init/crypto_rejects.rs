@@ -9,6 +9,18 @@
 //! partition in `Enabled`.  Cross-test isolation is provided by
 //! [`TestCtx::new`].
 
+const ENVELOPE_HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
+const ENVELOPE_IV_LEN: usize = 12;
+const PART_INIT_AAD_LEN: usize = 32;
+const ENVELOPE_CIPHERTEXT_LEN: usize = MACH_SEED_LEN;
+const ENVELOPE_TAG_LEN: usize = 16;
+
+const MACH_SEED_ENVELOPE_LEN: usize = ENVELOPE_HEADER_LEN
+    + ENVELOPE_IV_LEN
+    + PART_INIT_AAD_LEN
+    + ENVELOPE_CIPHERTEXT_LEN
+    + ENVELOPE_TAG_LEN;
+
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -22,6 +34,23 @@ use super::pota_thumbprint;
 use super::ROTATED_CO_PSK;
 use crate::harness::build_part_init_mach_seed_aad;
 use crate::harness::TestCtx;
+
+fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
+    let mut req = TborPartInitReq {
+        session_id,
+        mach_seed_envelope,
+        ..Default::default()
+    };
+
+    req.part_policy =
+        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
+            .ok()
+            .expect("known-good policy parses");
+
+    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+
+    req
+}
 
 /// Bit-flip the ciphertext of a valid `mach_seed_envelope`.  AEAD-GCM
 /// tag verification must fail before any plaintext is exposed, and
@@ -37,20 +66,17 @@ fn part_init_envelope_tampered() {
     let mut envelope =
         encrypt_mach_seed_envelope(&session, &seed).expect("seal mach_seed envelope");
     // Envelope layout matches `psk_change`'s ciphertext-tamper test:
-    // HEADER(4) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16).  Flip a byte in
-    // the middle so AEAD tag verification fails.
-    let target = envelope.len() / 2;
+    // HEADER(8) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16).
+    assert_eq!(
+        envelope.len(),
+        MACH_SEED_ENVELOPE_LEN,
+        "unexpected mach_seed envelope length"
+    );
+    let ciphertext_start = ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + PART_INIT_AAD_LEN;
+    let target = ciphertext_start + ENVELOPE_CIPHERTEXT_LEN / 2;
     envelope[target] ^= 0x01;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -88,15 +114,7 @@ fn part_init_envelope_from_other_session() {
     let aad_for_b = build_part_init_mach_seed_aad(session_b.session_id);
     let envelope = build_envelope(&param_key_a, &aad_for_b, &mach_seed());
 
-    let mut req = TborPartInitReq {
-        session_id: session_b.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session_b.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -114,15 +132,7 @@ fn part_init_wrong_aad_length() {
     let long_aad = vec![0u8; 64];
     let envelope = build_envelope(&session.param_key, &long_aad, &mach_seed());
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::TborInvalidFixedLength);
 }
@@ -147,15 +157,7 @@ fn part_init_wrong_mach_seed_length() {
         let bogus_seed = vec![0xCDu8; len];
         let envelope = build_envelope(&session.param_key, &aad, &bogus_seed);
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, envelope);
 
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed length {len} (\u{2260} MACH_SEED_LEN={MACH_SEED_LEN}) must be rejected",
@@ -178,15 +180,7 @@ fn part_init_wrong_session_id_in_aad() {
     let bogus_aad = build_part_init_mach_seed_aad(session.session_id ^ 0x1234);
     let envelope = build_envelope(&session.param_key, &bogus_aad, &mach_seed());
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -208,20 +202,15 @@ fn part_init_envelope_iv_tampered_emu() {
 
     // Envelope:
     // HEADER(8) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
-    const HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
-    let iv_index = HEADER_LEN;
+    assert_eq!(
+        envelope.len(),
+        MACH_SEED_ENVELOPE_LEN,
+        "unexpected mach_seed envelope length"
+    );
+    let iv_index = ENVELOPE_HEADER_LEN;
     envelope[iv_index] ^= 0x01;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -243,22 +232,16 @@ fn part_init_envelope_aad_tampered_emu() {
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
     // Envelope:
-    // HEADER(4) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
-    const HEADER_LEN: usize = 4;
-    const IV_LEN: usize = 12;
-    let aad_index = HEADER_LEN + IV_LEN;
+    // HEADER(8) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
+    assert_eq!(
+        envelope.len(),
+        MACH_SEED_ENVELOPE_LEN,
+        "unexpected mach_seed envelope length"
+    );
+    let aad_index = ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN;
     envelope[aad_index] ^= 0x01;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -283,16 +266,7 @@ fn part_init_envelope_tag_tampered_emu() {
         .expect("valid envelope contains an authentication tag");
     envelope[tag_index] ^= 0x80;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -326,16 +300,7 @@ fn part_init_envelope_wrong_fixed_length_emu() {
 
         let actual_len = envelope.len();
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, envelope);
 
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed envelope with invalid length {actual_len} must be rejected"
@@ -368,16 +333,7 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
         .expect("valid envelope is nonempty");
     envelope[last] ^= 0x01;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     for attempt in 1..=2 {
         let err = ctx.tbor(&req).expect_err(&format!(
@@ -388,10 +344,10 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
     }
 }
 
-/// Verify that every byte after the envelope header is authenticated.
+/// Verify that every byte after the eight-byte envelope header is authenticated.
 ///
 /// Envelope layout:
-/// HEADER(4) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
+/// HEADER(8) ‖ IV(12) ‖ AAD(32) ‖ CT(32) ‖ TAG(16)
 ///
 /// The header is intentionally excluded because malformed header fields may
 /// follow a separate structural-decoding path and return a status other than
@@ -400,8 +356,6 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
 fn part_init_every_authenticated_envelope_byte_tampered_emu() {
     use crate::harness::encrypt_mach_seed_envelope;
 
-    const HEADER_LEN: usize = 4;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -409,24 +363,21 @@ fn part_init_every_authenticated_envelope_byte_tampered_emu() {
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
     assert!(
-        valid_envelope.len() > HEADER_LEN,
+        valid_envelope.len() > ENVELOPE_HEADER_LEN,
         "valid envelope must contain authenticated bytes"
     );
 
-    for index in HEADER_LEN..valid_envelope.len() {
+    assert_eq!(
+        valid_envelope.len(),
+        MACH_SEED_ENVELOPE_LEN,
+        "unexpected mach_seed envelope length"
+    );
+
+    for index in ENVELOPE_HEADER_LEN..valid_envelope.len() {
         let mut tampered_envelope = valid_envelope.clone();
         tampered_envelope[index] ^= 0x01;
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: tampered_envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, tampered_envelope);
 
         let err = ctx
             .tbor(&req)
@@ -452,15 +403,15 @@ fn part_init_envelope_invalid_length_matrix_emu() {
 
     let valid_len = valid_envelope.len();
     assert!(
-        valid_len > 4,
+        valid_len > ENVELOPE_HEADER_LEN,
         "valid envelope length must exceed header length"
     );
 
     let invalid_lengths = [
         0,
         1,
-        3,
-        4,
+        ENVELOPE_HEADER_LEN - 1,
+        ENVELOPE_HEADER_LEN,
         valid_len / 2,
         valid_len - 1,
         valid_len + 1,
@@ -477,16 +428,7 @@ fn part_init_envelope_invalid_length_matrix_emu() {
         let mut envelope = valid_envelope.clone();
         envelope.resize(invalid_len, 0xA5);
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, envelope);
 
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed envelope length {invalid_len} must be rejected"
@@ -520,16 +462,7 @@ fn part_init_envelope_each_tag_bit_tampered_emu() {
         let mut envelope = valid_envelope.clone();
         envelope[tag_byte_index] ^= 1u8 << bit;
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, envelope);
 
         let err = ctx
             .tbor(&req)
@@ -549,25 +482,27 @@ fn part_init_envelope_each_tag_bit_tampered_emu() {
 fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
     use crate::harness::encrypt_mach_seed_envelope;
 
-    const HEADER_LEN: usize = 4;
-    const IV_LEN: usize = 12;
-    const AAD_LEN: usize = 32;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     let valid_envelope =
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
-    let ciphertext_index = HEADER_LEN + IV_LEN + AAD_LEN;
+    assert_eq!(
+        valid_envelope.len(),
+        MACH_SEED_ENVELOPE_LEN,
+        "unexpected mach_seed envelope length"
+    );
+
+    let ciphertext_index = ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + PART_INIT_AAD_LEN;
     let tag_index = valid_envelope
         .len()
         .checked_sub(1)
         .expect("valid envelope contains a tag");
 
     let mutations = [
-        ("iv", HEADER_LEN),
-        ("aad", HEADER_LEN + IV_LEN),
+        ("iv", ENVELOPE_HEADER_LEN),
+        ("aad", ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN),
         ("ciphertext", ciphertext_index),
         ("tag", tag_index),
     ];
@@ -576,16 +511,7 @@ fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
         let mut envelope = valid_envelope.clone();
         envelope[index] ^= 0x01;
 
-        let mut req = TborPartInitReq {
-            session_id: session.session_id,
-            mach_seed_envelope: envelope,
-            ..Default::default()
-        };
-        req.part_policy =
-            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-                .ok()
-                .expect("known-good policy parses");
-        req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+        let req = make_part_init_req(session.session_id, envelope);
 
         let err = ctx
             .tbor(&req)
@@ -619,35 +545,13 @@ fn part_init_valid_request_succeeds_after_envelope_rejection_emu() {
         .expect("valid envelope contains a tag");
     tampered_envelope[tag_index] ^= 0x01;
 
-    let mut invalid_req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: tampered_envelope,
-        ..Default::default()
-    };
-    invalid_req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    invalid_req
-        .pota_thumbprint
-        .copy_from_slice(&pota_thumbprint());
+    let invalid_req = make_part_init_req(session.session_id, tampered_envelope);
 
     ctx.expect_fw_reject(&invalid_req, TborStatus::AeadEnvelopeAuthFailed);
 
     // The same session and partition must still accept the corresponding
     // valid request.
-    let mut valid_req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: valid_envelope,
-        ..Default::default()
-    };
-    valid_req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    valid_req
-        .pota_thumbprint
-        .copy_from_slice(&pota_thumbprint());
+    let valid_req = make_part_init_req(session.session_id, valid_envelope);
 
     ctx.tbor(&valid_req)
         .expect("valid PartInit must succeed after rejected envelope");
@@ -699,25 +603,10 @@ fn part_init_recovers_after_each_envelope_rejection_stage_emu() {
             }
         };
 
-        let make_req = |envelope| {
-            let mut req = TborPartInitReq {
-                session_id: session.session_id,
-                mach_seed_envelope: envelope,
-                ..Default::default()
-            };
-            req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(
-                &known_good_part_policy(),
-            )
-            .ok()
-            .expect("known-good policy parses");
-            req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
-            req
-        };
-
-        let invalid_req = make_req(invalid_envelope);
+        let invalid_req = make_part_init_req(session.session_id, invalid_envelope);
         ctx.expect_fw_reject(&invalid_req, expected_status);
 
-        let valid_req = make_req(valid_envelope);
+        let valid_req = make_part_init_req(session.session_id, valid_envelope);
         ctx.tbor(&valid_req)
             .expect("valid PartInit must succeed after rejected request");
     }
@@ -739,16 +628,7 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
     let envelope =
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.session_close(session.session_id)
         .expect("close session before PartInit");
@@ -756,13 +636,16 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
-/// Submit a valid envelope using a request session id that does not identify
-/// the active session.
+/// Submit PartInit using a session id adjacent to the rotated CO session.
 ///
-/// Firmware must reject the request. The exact rejection status is determined
-/// by the PartInit session-resolution path.
+/// The alternate session resolves through the PartInit session path but is
+/// still associated with the default PSK. Firmware must reject the request
+/// at the default-PSK gate with [`TborStatus::DefaultPskMustRotate`].
+///
+/// This test asserts the exact firmware status so an unrelated rejection
+/// cannot make the test pass.
 #[test]
-fn part_init_unknown_request_session_id_emu() {
+fn part_init_alternate_session_requires_psk_rotation_emu() {
     use crate::harness::encrypt_mach_seed_envelope;
 
     let ctx = TestCtx::new();
@@ -771,38 +654,27 @@ fn part_init_unknown_request_session_id_emu() {
     let envelope =
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
-    let unknown_session_id = session.session_id.wrapping_add(1);
+    // `session_id` is a u16. Select a different in-range session id.
+    let alternate_session_id = session.session_id.wrapping_add(1);
     assert_ne!(
-        unknown_session_id, session.session_id,
-        "unknown session id must differ from the active session"
+        alternate_session_id, session.session_id,
+        "alternate session id must differ from the rotated CO session"
     );
 
-    let mut req = TborPartInitReq {
-        session_id: unknown_session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(alternate_session_id, envelope);
 
-    let err = ctx
-        .tbor(&req)
-        .expect_err("unknown request session id must be rejected");
-
-    eprintln!("unknown session rejection: {err:#?}");
+    ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
 }
 
 /// Submit the same valid PartInit request twice.
 ///
 /// The first request initializes the partition successfully. The second
 /// request replays the identical authenticated envelope and must be rejected
-/// because an initialized partition cannot be initialized again.
+/// with [`TborStatus::PtaKeyAlreadySet`] because the PTA key was established
+/// by the first successful PartInit.
 ///
-/// This verifies that a valid `mach_seed_envelope` is not replayable after
-/// successful PartInit.
+/// This verifies that a valid `mach_seed_envelope` cannot be replayed after
+/// successful partition initialization.
 #[test]
 fn part_init_valid_envelope_cannot_be_replayed_emu() {
     use crate::harness::encrypt_mach_seed_envelope;
@@ -813,24 +685,11 @@ fn part_init_valid_envelope_cannot_be_replayed_emu() {
     let envelope =
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.tbor(&req).expect("first PartInit must succeed");
 
-    let err = ctx
-        .tbor(&req)
-        .expect_err("replaying successful PartInit must be rejected");
-
-    eprintln!("PartInit replay error: {err:#?}");
+    ctx.expect_fw_reject(&req, TborStatus::PtaKeyAlreadySet);
 }
 
 /// Build a valid `mach_seed_envelope` for session A, close session A, open
@@ -854,16 +713,7 @@ fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
 
     let session_b = super::open_co_with(&ctx, &ROTATED_CO_PSK);
 
-    let mut req = TborPartInitReq {
-        session_id: session_b.session_id,
-        mach_seed_envelope: stale_envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session_b.session_id, stale_envelope);
 
     ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
 }
@@ -886,16 +736,7 @@ fn part_init_all_zero_mach_seed_emu() {
 
     let envelope = build_envelope(&session.param_key, &aad, &zero_seed);
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
-    req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
+    let req = make_part_init_req(session.session_id, envelope);
 
     ctx.tbor(&req)
         .expect("correctly authenticated all-zero mach_seed is accepted");
@@ -920,15 +761,7 @@ fn part_init_accepts_nondefault_pota_thumbprint_emu() {
     let mut modified_thumbprint = pota_thumbprint();
     modified_thumbprint[0] ^= 0x01;
 
-    let mut req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: valid_envelope,
-        ..Default::default()
-    };
-    req.part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
-            .expect("known-good policy parses");
+    let mut req = make_part_init_req(session.session_id, valid_envelope);
     req.pota_thumbprint.copy_from_slice(&modified_thumbprint);
 
     ctx.tbor(&req)
