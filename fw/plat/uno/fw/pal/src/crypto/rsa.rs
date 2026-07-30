@@ -164,10 +164,9 @@ fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
     // A SEQUENCE here is the PKCS#8 algorithm id — validate it is
     // `rsaEncryption` and descend through the OCTET STRING into the inner
     // PKCS#1 key; an INTEGER is the PKCS#1 `n` directly.
-    let (peek_tag, ..) = der_tlv(der, p)?;
+    let (peek_tag, alg_start, _acl, after_alg) = der_tlv(der, p)?;
     if peek_tag == 0x30 {
         // AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters NULL }.
-        let (_at, alg_start, _acl, after_alg) = der_tlv(der, p)?;
         let (oid_tag, oid_start, oid_len, after_oid) = der_tlv(der, alg_start)?;
         if oid_tag != 0x06 || der[oid_start..oid_start + oid_len] != RSA_ENCRYPTION_OID {
             return None;
@@ -202,10 +201,10 @@ fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
 /// Writes the big-endian bytes `be` as little-endian into `dst`, zero-padding
 /// the remaining high bytes. Requires `be.len() <= dst.len()`.
 fn write_le(dst: &mut [u8], be: &[u8]) {
-    dst.fill(0);
     for (i, &b) in be.iter().rev().enumerate() {
         dst[i] = b;
     }
+    dst[be.len()..].fill(0);
 }
 
 // =============================================================================
