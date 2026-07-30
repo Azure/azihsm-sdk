@@ -47,28 +47,16 @@ pub mod x509_fixture;
 // import them from `azihsm_ddi_tbor_types` directly when driving
 // negative-path tests through raw `TborSessionOpen*Req` /
 // `TborPskChangeReq` requests.
-// Flat re-exports so test files write `use crate::harness::open_session`
-// instead of `crate::harness::session::open_session`.
-pub use api_rev::helper_api_rev_tbor;
-pub use azihsm_ddi_tbor_types::build_psk_change_aad;
-pub use azihsm_ddi_tbor_types::TborPskChangeReq;
-pub use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
-pub use azihsm_ddi_tbor_types::PSK_CHANGE_ENVELOPE_MAX_LEN;
-pub use ctx::TestCtx;
-pub use fixture::open_dev;
-pub use session::build_mac_fin;
-pub use session::build_part_init_mach_seed_aad;
-pub use session::encrypt_mach_seed_envelope;
-pub use session::encrypt_psk_envelope;
-pub use session::open_session_on_dev;
-pub use session::part_init;
-pub use session::psk_change;
-pub use session::session_close_on_dev;
-pub use session::session_open_finish_on_dev;
-pub use session::session_open_finish_with_mac;
-pub use session::session_open_init_on_dev;
-pub use session::session_open_init_with_options;
-pub use session::PendingHandshake;
-pub use session::SessionHandshake;
-pub use session::SessionOpenInitOptions;
-pub use session_guard::SessionGuard;
+// Flat re-exports so test files write `use crate::harness::TestCtx`
+// instead of `crate::harness::ctx::TestCtx`. Only items actually used
+// from test files are re-exported here; helpers only reached through
+// `TestCtx` methods stay behind their submodule.
+pub(crate) use azihsm_ddi_tbor_types::build_psk_change_aad;
+pub(crate) use azihsm_ddi_tbor_types::TborPskChangeReq;
+pub(crate) use ctx::TestCtx;
+pub(crate) use session::build_mac_fin;
+pub(crate) use session::build_part_init_mach_seed_aad;
+pub(crate) use session::encrypt_mach_seed_envelope;
+pub(crate) use session::encrypt_psk_envelope;
+pub(crate) use session::SessionHandshake;
+pub(crate) use session::SessionOpenInitOptions;

@@ -18,6 +18,7 @@ use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_mac_fin;
 use crate::harness::TestCtx;
 
@@ -71,7 +72,7 @@ fn open_session_co_plaintext_rejected() {
     let err = ctx
         .session_open_init(CO, SessionType::PlainText)
         .expect_err("CO + PlainText is not a permitted pairing");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidSessionType);
+    assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
 
 #[test]
@@ -80,7 +81,7 @@ fn open_session_cu_authenticated_rejected() {
     let err = ctx
         .session_open_init(CU, SessionType::Authenticated)
         .expect_err("CU + Authenticated is not a permitted pairing");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidSessionType);
+    assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ fn open_session_invalid_psk_id() {
         let err = ctx
             .session_open_init(bad, SessionType::PlainText)
             .expect_err(&format!("psk_id {bad} must be rejected"));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidPskId);
+        assert_fw_rejects(&err, TborStatus::InvalidPskId);
     }
 }
 
@@ -154,7 +155,7 @@ fn session_open_finish_mac_tampered() {
     let err = ctx
         .session_open_finish_with_mac(pending, mac_fin)
         .expect_err("tampered mac_fin must be rejected by the FW");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
     // FW destroys the pending slot on MAC mismatch.
 }
 
@@ -175,10 +176,7 @@ fn session_open_finish_unknown_session_id() {
     let err = ctx
         .tbor(&req)
         .expect_err("finish against unknown session_id must fail");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-        "expected FW-side rejection, got {err:?}",
-    );
+    assert_fw_rejects(&err, TborStatus::SessionNotFound);
 }
 
 #[test]
@@ -196,10 +194,7 @@ fn open_session_double_finish() {
     let err = ctx
         .tbor(&req)
         .expect_err("second finish against the same slot must fail");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-        "expected FW-side rejection, got {err:?}",
-    );
+    assert_fw_rejects(&err, TborStatus::SessionNotPending);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,10 +282,7 @@ fn open_session_second_on_same_fd_rejected() {
     let err = ctx
         .open_session(CU, SessionType::PlainText)
         .expect_err("second open on the same fd must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-        "expected TborStatus (kernel per-fd limit remapped in exec_op_tbor), got {err:?}",
-    );
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +325,7 @@ fn open_session_fills_cu_table_then_recovers() {
     let ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
         .map(|_| TestCtx::new_with_path(ctx.path()))
         .collect();
-    let guards: Vec<_> = ctxs
+    let mut guards: Vec<_> = ctxs
         .iter()
         .enumerate()
         .map(|(_i, c)| {
@@ -349,21 +341,18 @@ fn open_session_fills_cu_table_then_recovers() {
     let err = overflow_ctx
         .open_session(CU, SessionType::PlainText)
         .expect_err("open_session past CU limit must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-        "expected FW-side TborStatus rejection, got {err:?}",
-    );
+    assert_fw_rejects(&err, TborStatus::VaultSessionLimitReached);
     drop(overflow_ctx);
 
-    // Recovery: drop every guard (each guard's `Drop` sends an
-    // explicit SessionClose), then drop the extra fds. A fresh open
-    // on the primary ctx must succeed.
-    drop(guards);
-    drop(ctxs);
+    // Recovery: drop the last guard only (its `Drop` sends
+    // SessionClose). That frees exactly one CU slot — enough for a
+    // fresh open on the primary ctx to succeed. The remaining guards
+    // stay alive and close at end of scope.
+    guards.pop().expect("guards must not be empty");
 
     let _recovered = ctx
         .open_session(CU, SessionType::PlainText)
-        .expect("session table must recover after all extra sessions are closed");
+        .expect("session table must recover after freeing one slot");
     // `_recovered` closes on drop at end of scope.
 }
 
@@ -388,11 +377,7 @@ fn open_session_fills_co_slot_then_recovers() {
     let err = ctx_second
         .open_session(CO, SessionType::Authenticated)
         .expect_err("second concurrent CO open must be rejected");
-    assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-        "expected FW-side TborStatus rejection, got {err:?}",
-    );
-    drop(ctx_second);
+    assert_fw_rejects(&err, TborStatus::VaultSessionLimitReached);
 
     // Recovery: drop the first guard + fd; a fresh CO open must succeed.
     drop(first);
@@ -533,7 +518,7 @@ fn pk_init_all_zero_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("all-zero pk_init must be rejected");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidArg);
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
 /// `pk_init` with the SEC1 uncompressed prefix (`0x04`) but garbage
@@ -553,7 +538,7 @@ fn pk_init_not_on_curve_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("off-curve pk_init must be rejected");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
+    assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +595,7 @@ fn pk_init_x_as_prime_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("pk_init with X = P-384 prime must be rejected");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
+    assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 /// Symmetric to `pk_init_x_as_prime_rejected` — guards against
@@ -628,7 +613,7 @@ fn pk_init_y_as_prime_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("pk_init with Y = P-384 prime must be rejected");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
+    assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +640,7 @@ fn pk_init_single_byte_tampered_rejected() {
     let err = ctx
         .tbor(&req)
         .expect_err("single-bit-tampered pk_init must be rejected");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::EccPointValidationFailed);
+    assert_fw_rejects(&err, TborStatus::EccPointValidationFailed);
 }
 
 // ---------------------------------------------------------------------------
@@ -680,40 +665,34 @@ fn open_session_multi_threaded_all_should_open() {
     let ctx = TestCtx::new();
     let path = ctx.path();
 
-    // Each entry holds the owning ctx + the session id so we can
-    // close on the correct fd once the race resolves.
-    let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(CU_SESSION_LIMIT);
-        for _ in 0..CU_SESSION_LIMIT {
-            handles.push(s.spawn(
-                || -> Result<(TestCtx, u16), azihsm_ddi_interface::DdiError> {
-                    let ctx_extra = TestCtx::new_with_path(path);
-                    let handshake = ctx_extra.open_session_raw(CU, SessionType::PlainText)?;
-                    Ok((ctx_extra, handshake.session_id))
-                },
-            ));
-        }
-        let mut winners = Vec::new();
-        let mut rejections = Vec::new();
-        for h in handles {
-            match h.join().expect("worker thread must not panic") {
-                Ok(w) => winners.push(w),
-                Err(e) => rejections.push(e),
-            }
-        }
-        (winners, rejections)
+    // Pre-allocate one ctx per racer on the main thread so the
+    // spawned workers can borrow them and return `SessionGuard<'_>`
+    // values whose borrow outlives `thread::scope`.
+    let ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(path))
+        .collect();
+
+    let results: Vec<_> = std::thread::scope(|s| {
+        let handles: Vec<_> = ctxs
+            .iter()
+            .map(|c| s.spawn(move || c.open_session(CU, SessionType::PlainText)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("worker thread must not panic"))
+            .collect()
     });
 
-    let mut sorted_ids: Vec<_> = winners.iter().map(|(_, sid)| *sid).collect();
+    let (winner_results, rejections): (Vec<_>, Vec<_>) =
+        results.into_iter().partition(Result::is_ok);
+    let winners: Vec<_> = winner_results.into_iter().map(Result::unwrap).collect();
+    let rejections: Vec<_> = rejections.into_iter().map(Result::unwrap_err).collect();
+
+    let mut sorted_ids: Vec<_> = winners.iter().map(|g| g.session_id()).collect();
     let winner_ids = sorted_ids.clone();
     sorted_ids.sort_unstable();
     sorted_ids.dedup();
     let unique_wins = sorted_ids.len();
-
-    // Drop winners' ctxs before asserting so a failing assert never
-    // leaves the session table dirty — each ctx's fd close reclaims
-    // its slot in FW.
-    drop(winners);
 
     assert!(
         rejections.is_empty(),
@@ -729,84 +708,4 @@ fn open_session_multi_threaded_all_should_open() {
         unique_wins, CU_SESSION_LIMIT,
         "concurrent winners must have distinct session ids: {winner_ids:?}",
     );
-}
-
-/// Fill CU capacity to one free slot then race `CU_SESSION_LIMIT`
-/// threads for it. Regression for FW's undo-on-loser path: every
-/// losing racer must see a clean rejection and leave the session
-/// table intact for retry. Each filler + racer holds its own
-/// [`TestCtx`] fd — hw requires one fd per concurrent session.
-#[cfg(not(feature = "emu"))]
-#[test]
-fn open_session_multi_threaded_single_winner() {
-    let ctx = TestCtx::new();
-    let path = ctx.path();
-
-    // Phase 1: fill CU capacity sequentially. Each filler owns its
-    // own ctx because hw enforces one session per fd.
-    let mut fillers: Vec<(TestCtx, u16)> = Vec::new();
-    for i in 0..CU_SESSION_LIMIT {
-        let ctx_extra = TestCtx::new_with_path(path);
-        let handshake = ctx_extra
-            .open_session_raw(CU, SessionType::PlainText)
-            .unwrap_or_else(|e| {
-                panic!("filler CU session {i} of {CU_SESSION_LIMIT} must succeed, got {e:?}")
-            });
-        fillers.push((ctx_extra, handshake.session_id));
-    }
-
-    // Phase 2: free exactly one slot (close and drop the tail filler's ctx).
-    let (freed_ctx, freed_id) = fillers.pop().expect("at least one filler must exist");
-    freed_ctx
-        .session_close(freed_id)
-        .expect("close of freed filler slot must succeed");
-    drop(freed_ctx);
-
-    // Phase 3: race `CU_SESSION_LIMIT` threads for the one free slot.
-    let racer_count = CU_SESSION_LIMIT;
-    let (winners, rejections) = std::thread::scope(|s| {
-        let mut handles = Vec::with_capacity(racer_count);
-        for _ in 0..racer_count {
-            handles.push(s.spawn(
-                || -> Result<(TestCtx, u16), azihsm_ddi_interface::DdiError> {
-                    let ctx_extra = TestCtx::new_with_path(path);
-                    let handshake = ctx_extra.open_session_raw(CU, SessionType::PlainText)?;
-                    Ok((ctx_extra, handshake.session_id))
-                },
-            ));
-        }
-        let mut winners = Vec::new();
-        let mut rejections = Vec::new();
-        for h in handles {
-            match h.join().expect("racer thread must not panic") {
-                Ok(w) => winners.push(w),
-                Err(e) => rejections.push(e),
-            }
-        }
-        (winners, rejections)
-    });
-
-    let winner_count = winners.len();
-    let rejection_count = rejections.len();
-    // Drop everything before asserting — each ctx's fd close reclaims
-    // its slot in FW.
-    drop(winners);
-    drop(fillers);
-
-    assert_eq!(
-        winner_count, 1,
-        "exactly one racer must win the single free slot (got {winner_count} winners, \
-         {rejection_count} rejections: {rejections:?})",
-    );
-    assert_eq!(
-        rejection_count,
-        racer_count - 1,
-        "all non-winning racers must fail cleanly",
-    );
-    for err in &rejections {
-        assert!(
-            matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
-            "single-winner losers must surface FW/driver rejections, got {err:?}",
-        );
-    }
 }

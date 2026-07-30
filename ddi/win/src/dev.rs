@@ -645,16 +645,15 @@ impl DdiWinDev {
 
     /// Same as [`Self::map_ioctl_status`] but for callers executing a
     /// **TBOR** command. Driver-layer session-scoping rejections
-    /// (per-fd `AZIHSM_MAX_SESSIONS_PER_FD` bookkeeping — no live
-    /// session, id mismatch, limit reached) are surfaced as
+    /// (per-fd `AZIHSM_MAX_SESSIONS_PER_FD` bookkeeping — id mismatch,
+    /// limit reached) are surfaced as
     /// `DdiError::TborStatus(TborStatus::FileHandle*)` instead of
     /// `DdiError::DdiStatus(DdiStatus::FileHandle*)`, so callers see a
     /// TBOR status for a TBOR command regardless of which layer of
     /// the stack (driver vs FW) produced the rejection. The
     /// `FileHandle*` variants exist in both `DdiStatus` and
     /// `TborStatus` with identical numeric encodings, so this is a
-    /// pure type-level remap. All non-session errors fall through to
-    /// the generic mapping.
+    /// pure type-level remap.
     fn map_ioctl_status_tbor(&self, ioctl_status: u32) -> Result<u32, DdiError> {
         match McrCpGenericIoctlErrorKind::try_from(ioctl_status) {
             Ok(McrCpGenericIoctlErrorKind::SessionLimitReached) => {
@@ -663,9 +662,7 @@ impl DdiWinDev {
                 ));
             }
             Ok(McrCpGenericIoctlErrorKind::NoExistingSession) => {
-                return Err(DdiError::TborStatus(
-                    TborStatus::FileHandleNoExistingSession,
-                ));
+                return Err(DdiError::TborStatus(TborStatus::SessionNotFound));
             }
             Ok(McrCpGenericIoctlErrorKind::SessionIdDoesNotMatch) => {
                 return Err(DdiError::TborStatus(
@@ -681,9 +678,7 @@ impl DdiWinDev {
                 ));
             }
             Ok(McrFpIoctlErrorKind::NoValidSessionId) => {
-                return Err(DdiError::TborStatus(
-                    TborStatus::FileHandleNoExistingSession,
-                ));
+                return Err(DdiError::TborStatus(TborStatus::SessionNotFound));
             }
             _ => {}
         }

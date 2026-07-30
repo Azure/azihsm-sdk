@@ -96,7 +96,7 @@ impl core::fmt::Debug for SessionHandshake {
 /// `mac_fin`. Exposed so negative-path tests can compute the canonical
 /// MAC, tamper with it, and ship the result via
 /// [`session_open_finish_with_mac`].
-pub fn build_mac_fin(pending: &PendingHandshake) -> Result<[u8; 48], DdiError> {
+pub(crate) fn build_mac_fin(pending: &PendingHandshake) -> Result<[u8; 48], DdiError> {
     build_phase2_mac(
         &pending.exported,
         pending.session_id,
@@ -114,15 +114,10 @@ fn fresh_seed() -> Result<[u8; SESSION_SEED_LEN], DdiError> {
     Ok(seed)
 }
 
-/// Run Phase 2 of the handshake on a specific `dev`. Consumes the
-/// [`PendingHandshake`] so callers cannot accidentally reuse stale
-/// state for a second `SessionOpenFinish` against the same Pending
-/// slot.
-///
-/// Named with an `_on_dev` suffix to disambiguate from the
-/// [`TestCtx::session_open_finish`](crate::harness::TestCtx::session_open_finish)
-/// method which acts on the ctx's implicit fd.
-pub fn session_open_finish_on_dev(
+/// Run Phase 2 of the handshake. Consumes the [`PendingHandshake`]
+/// so callers cannot accidentally reuse stale state for a second
+/// `SessionOpenFinish` against the same Pending slot.
+pub(crate) fn session_open_finish(
     dev: &<AzihsmDdi as Ddi>::Dev,
     pending: PendingHandshake,
 ) -> Result<SessionHandshake, DdiError> {
@@ -135,7 +130,7 @@ pub fn session_open_finish_on_dev(
 ///
 /// On Phase-2 MAC mismatch the FW returns an error that surfaces here
 /// as a [`DdiError`] from `exec_op_tbor`.
-pub fn session_open_finish_with_mac(
+pub(crate) fn session_open_finish_with_mac(
     dev: &<AzihsmDdi as Ddi>::Dev,
     pending: PendingHandshake,
     mac_fin: [u8; 48],

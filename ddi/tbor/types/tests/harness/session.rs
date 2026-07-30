@@ -1,61 +1,35 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! TBOR session-establishment helpers.
+//! TBOR session helpers.
 //!
-//! [`open_session`] runs the full happy-path two-phase handshake
-//! (`SessionOpenInit` + `SessionOpenFinish`) against a [`DdiDev`] and
-//! returns a [`SessionHandshake`] carrier whose fields are everything
-//! a per-command test needs to drive subsequent in-session commands
-//! (param_key for the AEAD-GCM envelope, session_id, session_type,
-//! bmk_session for later resume tests).
-//!
-//! The lower-level [`session_open_init`] and [`session_open_finish`]
-//! helpers are also exposed so negative-path tests can intercept the
-//! handshake — e.g., tamper with `mac_fin` to drive the Phase-2 MAC
-//! mismatch arm in the FW.
+//! The [`open_close`] submodule holds the paired [`session_open`] and
+//! [`session_close`] lifecycle helpers. Lower-level [`session_open_init`]
+//! and [`session_open_finish`] primitives live in [`init`] and [`finish`]
+//! so negative-path tests can intercept the handshake — e.g., tamper with
+//! `mac_fin` to drive the Phase-2 MAC mismatch arm in the FW.
 
 mod crypto;
 pub mod finish;
 pub mod init;
+pub mod open_close;
 pub mod part_final;
 pub mod part_init;
 pub mod psk_change;
-pub mod session_close;
 
-use azihsm_ddi::AzihsmDdi;
-use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_interface::DdiError;
-use azihsm_ddi_tbor_types::SessionType;
-pub use finish::build_mac_fin;
-pub use finish::session_open_finish_on_dev;
-pub use finish::session_open_finish_with_mac;
-pub use finish::SessionHandshake;
-pub use init::session_open_init_on_dev;
-pub use init::session_open_init_with_options;
-pub use init::PendingHandshake;
-pub use init::SessionOpenInitOptions;
-pub use part_final::part_final;
-pub use part_init::build_part_init_mach_seed_aad;
-pub use part_init::encrypt_mach_seed_envelope;
-pub use part_init::part_init;
-pub use psk_change::encrypt_psk_envelope;
-pub use psk_change::psk_change;
-pub use session_close::session_close_on_dev;
-
-/// One-shot helper: run both phases of the session handshake against
-/// a specific `dev`. Equivalent to
-/// `session_open_init_on_dev(...)? → session_open_finish_on_dev(...)`.
-///
-/// Named with an `_on_dev` suffix to disambiguate from the
-/// [`TestCtx::open_session`](crate::harness::TestCtx::open_session)
-/// method which acts on the ctx's implicit fd and returns a
-/// [`SessionGuard`](crate::harness::SessionGuard).
-pub fn open_session_on_dev(
-    dev: &<AzihsmDdi as Ddi>::Dev,
-    psk_id: u8,
-    session_type: SessionType,
-) -> Result<SessionHandshake, DdiError> {
-    let pending = session_open_init_on_dev(dev, psk_id, session_type)?;
-    session_open_finish_on_dev(dev, pending)
-}
+pub(crate) use finish::build_mac_fin;
+pub(crate) use finish::session_open_finish;
+pub(crate) use finish::session_open_finish_with_mac;
+pub(crate) use finish::SessionHandshake;
+pub(crate) use init::session_open_init;
+pub(crate) use init::session_open_init_with_options;
+pub(crate) use init::PendingHandshake;
+pub(crate) use init::SessionOpenInitOptions;
+pub(crate) use open_close::session_close;
+pub(crate) use open_close::session_open;
+pub(crate) use part_final::part_final;
+pub(crate) use part_init::build_part_init_mach_seed_aad;
+pub(crate) use part_init::encrypt_mach_seed_envelope;
+pub(crate) use part_init::part_init;
+pub(crate) use psk_change::encrypt_psk_envelope;
+pub(crate) use psk_change::psk_change;

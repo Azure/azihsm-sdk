@@ -13,7 +13,6 @@
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
 
 use azihsm_ddi_tbor_types::PolicyFlags;
-use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -27,7 +26,6 @@ use super::mach_seed;
 use super::open_co_with;
 use super::part_policy_with_flags;
 use super::pota_thumbprint;
-use super::CO;
 use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
@@ -246,14 +244,7 @@ fn run_part_init_capture_pta_pub(
     use x509::X509Csr;
     use x509::X509CsrOp;
 
-    let bootstrap = ctx
-        .open_session(CO, SessionType::Authenticated)
-        .expect("open CO default");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
-        .expect("rotate CO PSK");
-    let _ = bootstrap.close();
-
-    let session = open_co_with(ctx, &ROTATED_CO_PSK);
+    let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let resp = ctx
         .part_init(&session, seed, policy, thumb)
         .expect("PartInit roundtrip");

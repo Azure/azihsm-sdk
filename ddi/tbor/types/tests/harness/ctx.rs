@@ -52,10 +52,11 @@ use crate::harness::fixture::TestDev;
 use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
 use crate::harness::session::psk_change as psk_change_helper;
-use crate::harness::session::session_close_on_dev;
-use crate::harness::session::session_open_finish_on_dev;
+use crate::harness::session::session_close;
+use crate::harness::session::session_open as session_open_helper;
+use crate::harness::session::session_open_finish;
 use crate::harness::session::session_open_finish_with_mac;
-use crate::harness::session::session_open_init_on_dev;
+use crate::harness::session::session_open_init;
 use crate::harness::session::session_open_init_with_options;
 use crate::harness::session::PendingHandshake;
 use crate::harness::session::SessionHandshake;
@@ -229,7 +230,7 @@ impl TestCtx {
         psk_id: u8,
         session_type: SessionType,
     ) -> DdiResult<PendingHandshake> {
-        session_open_init_on_dev(&self.dev, psk_id, session_type)
+        session_open_init(&self.dev, psk_id, session_type)
     }
 
     /// Full-control Phase 1 entry point: honours every override in
@@ -245,7 +246,7 @@ impl TestCtx {
     /// confirm MAC. Consumes `pending` so callers cannot reuse stale
     /// state.
     pub fn session_open_finish(&self, pending: PendingHandshake) -> DdiResult<SessionHandshake> {
-        session_open_finish_on_dev(&self.dev, pending)
+        session_open_finish(&self.dev, pending)
     }
 
     /// Phase 2 entry point that ships a caller-supplied `mac_fin`,
@@ -263,20 +264,19 @@ impl TestCtx {
     /// responsible for the matching [`Self::session_close`]. Used
     /// when the test needs to inspect the handshake before closing
     /// it explicitly or move the handshake into a container.
-    pub fn open_session_raw(
+    pub(crate) fn open_session_raw(
         &self,
         psk_id: u8,
         session_type: SessionType,
     ) -> DdiResult<SessionHandshake> {
-        let pending = self.session_open_init(psk_id, session_type)?;
-        self.session_open_finish(pending)
+        session_open_helper(&self.dev, psk_id, session_type)
     }
 
     /// Issue `SessionClose(session_id)`. Used by negative-path
     /// tests (double-close, unknown id) and by callers that hold a
     /// raw [`SessionHandshake`] outside of a [`SessionGuard`].
     pub fn session_close(&self, session_id: u16) -> DdiResult<()> {
-        session_close_on_dev(&self.dev, session_id)
+        session_close(&self.dev, session_id)
     }
 
     /// Issue `PskChange` on `session` with `new_psk` as the

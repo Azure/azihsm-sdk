@@ -120,16 +120,12 @@ impl<'a> SessionOpenInitOptions<'a> {
     }
 }
 
-/// Convenience wrapper: happy-path `SessionOpenInit` on a specific
-/// `dev` with fresh ephemeral and partition default PSK.
+/// Convenience wrapper: happy-path `SessionOpenInit` with fresh
+/// ephemeral and partition default PSK.
 ///
 /// Equivalent to
 /// `session_open_init_with_options(dev, SessionOpenInitOptions::new(psk_id, session_type))`.
-///
-/// Named with an `_on_dev` suffix to disambiguate from the
-/// [`TestCtx::session_open_init`](crate::harness::TestCtx::session_open_init)
-/// method which acts on the ctx's implicit fd.
-pub fn session_open_init_on_dev(
+pub(crate) fn session_open_init(
     dev: &<AzihsmDdi as Ddi>::Dev,
     psk_id: u8,
     session_type: SessionType,
@@ -139,7 +135,7 @@ pub fn session_open_init_on_dev(
 
 /// Full-control entry point. Honours every override in `opts`;
 /// fills in happy-path defaults for the rest.
-pub fn session_open_init_with_options(
+pub(crate) fn session_open_init_with_options(
     dev: &<AzihsmDdi as Ddi>::Dev,
     opts: SessionOpenInitOptions<'_>,
 ) -> Result<PendingHandshake, DdiError> {
