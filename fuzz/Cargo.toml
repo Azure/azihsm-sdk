@@ -1,0 +1,21 @@
+[package]
+name = "azihsm_api-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+azihsm_ddi_tbor_codec.workspace = true
+
+# dependencies for fuzzing
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+
+[[bin]]
+name = "fuzz_tbor_encoder"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_encoder.rs"
+test = false
+doc = false
+bench = false
