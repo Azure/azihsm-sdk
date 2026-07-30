@@ -69,6 +69,7 @@ single `none` TOC placeholder and no typed body fields.
 | `0x12` | `Hmac` | InSession | [`commands/hmac.md`](./commands/hmac.md) |
 | `0x13` | `GetUnwrappingKey` | InSession | [`commands/get_unwrapping_key.md`](./commands/get_unwrapping_key.md) |
 | `0x14` | `UnwrapKey` | InSession | [`commands/unwrap_key.md`](./commands/unwrap_key.md) |
+| `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](./commands/rsa_mod_exp.md) |
 
 ## Default-PSK gate
 
