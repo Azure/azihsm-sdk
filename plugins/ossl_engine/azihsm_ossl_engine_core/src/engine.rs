@@ -169,6 +169,38 @@ impl Engine {
         }
         Ok(ec)
     }
+
+    /// Point the engine's `RSA_METHOD` at OpenSSL's built-in default. This is
+    /// required before [`new_rsa_key`](Self::new_rsa_key): `RSA_new_method`
+    /// fails unless the engine advertises an RSA method. The default method
+    /// keeps RSA operations in software; a later change overrides `rsa_sign`
+    /// to route signing through the HSM.
+    #[allow(unsafe_code)]
+    pub fn set_default_rsa_method(&self) -> EngineResult<()> {
+        // SAFETY: RSA_PKCS1_OpenSSL returns the built-in const RSA_METHOD;
+        // ENGINE_set_RSA just records that pointer on the engine.
+        ossl_check(
+            unsafe { ffi::ENGINE_set_RSA(self.ptr, ffi::RSA_PKCS1_OpenSSL()) },
+            EngineError::Other("ENGINE_set_RSA failed".into()),
+        )
+    }
+
+    /// Create an `RSA` key bound to this engine via `RSA_new_method`, which
+    /// takes a functional reference on the engine (released on `RSA_free`) —
+    /// the same lifetime guarantee [`new_ec_key`](Self::new_ec_key) provides
+    /// for EC keys. Requires an RSA method on the engine (see
+    /// [`set_default_rsa_method`](Self::set_default_rsa_method)). The returned
+    /// key has no components set yet.
+    #[allow(unsafe_code)]
+    pub fn new_rsa_key(&self) -> EngineResult<*mut ffi::RSA> {
+        // SAFETY: self.ptr is a valid ENGINE; RSA_new_method up-refs it and
+        // returns a fresh owned RSA (NULL on allocation failure).
+        let rsa = unsafe { ffi::RSA_new_method(self.ptr) };
+        if rsa.is_null() {
+            return Err(EngineError::Other("RSA_new_method failed".into()));
+        }
+        Ok(rsa)
+    }
 }
 
 /// Caller-supplied destroy logic, invoked by OpenSSL when an `ENGINE` is

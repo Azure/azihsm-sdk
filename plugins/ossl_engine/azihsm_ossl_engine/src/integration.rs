@@ -337,4 +337,46 @@ mod tests {
         assert_eq!(import.public_key_der, pkey.public_key_to_der().unwrap());
         assert_unmasks(&data, &import, 2048, RsaKeyUsage::Decrypt);
     }
+
+    /// Full RSA load round trip: import an external key, write its masked
+    /// blob, load it back through the engine's `load_private_key` path, and
+    /// verify the returned EVP_PKEY carries the matching public key.
+    #[test]
+    #[serial]
+    #[allow(unsafe_code)]
+    fn load_rsa_key_round_trips_through_engine() {
+        use azihsm_ossl_engine_core::ffi;
+        use foreign_types::ForeignType;
+
+        let scratch = Scratch::new("rsa-load");
+        let data = open_data(&scratch);
+
+        let pkey = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let der = pkey.private_key_to_pkcs8().unwrap();
+        let import = data
+            .with_session(|session| import_rsa_der(session, &der, RsaKeyUsage::Sign))
+            .unwrap();
+
+        let blob_path = scratch.0.join("rsa_key.bin");
+        crate::context::write_key_material(&blob_path, &import.masked_key).unwrap();
+
+        let (engine, engine_raw) = crate::context::new_test_engine();
+        let uri = format!("azihsm://{};type=rsa", blob_path.display());
+        let raw = crate::keyload::load_key(&engine, &data, &uri).unwrap();
+        assert!(!raw.is_null());
+
+        // Take ownership of the returned EVP_PKEY and confirm its public key.
+        // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
+        let loaded: PKey<openssl::pkey::Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        assert_eq!(
+            loaded.public_key_to_der().unwrap(),
+            pkey.public_key_to_der().unwrap()
+        );
+        drop(loaded);
+
+        // Release the test engine's structural ref; the loaded key already
+        // released its functional ref when dropped above.
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+    }
 }

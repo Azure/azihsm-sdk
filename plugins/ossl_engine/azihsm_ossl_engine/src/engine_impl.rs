@@ -157,6 +157,7 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     // engine (EC_KEY_new_method), which keeps the engine alive while any
     // loaded key lives. Software EC ops for now; signing is wired later.
     engine.set_default_ec_method()?;
+    engine.set_default_rsa_method()?;
 
     // Park an empty EngineData. Its HSM session is opened on demand via
     // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and

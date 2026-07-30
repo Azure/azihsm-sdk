@@ -22,8 +22,10 @@
 //! The sign/derive methods themselves are not wired yet (a later change), so a
 //! loaded key is currently usable for public-key operations (e.g. `-pubout`).
 //!
-//! Only EC keys are supported here; RSA loading (an HSM import + unmask path)
-//! lands in a follow-up together with its test coverage.
+//! RSA keys follow the same shape as EC: the engine-bound `RSA` carries the
+//! public components (n, e) and stashes the live HSM key in `RSA` ex_data.
+//! `type=rsa` and `type=rsa-pss` load identically — the PSS distinction
+//! applies at signing time, not at load.
 
 use std::ffi::c_int;
 use std::ffi::c_void;
@@ -31,6 +33,7 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::ptr::null;
 use std::ptr::null_mut;
 use std::sync::OnceLock;
 
@@ -38,6 +41,8 @@ use azihsm_api::HsmEccKeyUnmaskAlgo;
 use azihsm_api::HsmEccPrivateKey;
 use azihsm_api::HsmKeyCommonProps;
 use azihsm_api::HsmKeyManager;
+use azihsm_api::HsmRsaKeyUnmaskAlgo;
+use azihsm_api::HsmRsaPrivateKey;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
@@ -60,23 +65,13 @@ pub fn load_key(
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
 
-    // Reject unsupported key types before any HSM open or file I/O, so they
-    // fail with a clear error instead of a misleading environment/filesystem
-    // one. RSA loading lands in a follow-up (it needs an HSM import path plus
-    // test coverage).
-    match parsed.key_type {
-        KeyType::Ec => {}
-        KeyType::Rsa | KeyType::RsaPss => {
-            return Err(EngineError::Other(
-                "RSA key loading is not yet supported".into(),
-            ));
-        }
-    }
-
     // First real caller of the lazy HSM open (idempotent).
     data.open_hsm_from_env()?;
     let masked = read_masked_key(&parsed.masked_key_path)?;
-    load_ec(engine, data, &masked)
+    match parsed.key_type {
+        KeyType::Ec => load_ec(engine, data, &masked),
+        KeyType::Rsa | KeyType::RsaPss => load_rsa(engine, data, &masked),
+    }
 }
 
 /// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
@@ -290,6 +285,174 @@ fn ec_key_ex_index() -> EngineResult<c_int> {
     Ok(idx)
 }
 
+fn load_rsa(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY> {
+    let priv_key = data.with_session(|session| {
+        let mut algo = HsmRsaKeyUnmaskAlgo::default();
+        HsmKeyManager::unmask_key_pair(session, &mut algo, masked)
+            .map(|(private, _public)| private)
+            .map_err(|e| EngineError::wrap("RSA key unmask", e))
+    })?;
+
+    let der = priv_key
+        .pub_key_der_vec()
+        .map_err(|e| EngineError::wrap("read RSA public key DER", e))?;
+
+    build_rsa_pkey(engine, data, &der, priv_key)
+}
+
+/// Build the returned `EVP_PKEY`: an engine-bound `RSA` (via
+/// [`Engine::new_rsa_key`] — the same engine-lifetime guarantee
+/// [`build_ec_pkey`] relies on) carrying the public components from `der`
+/// plus the live HSM key.
+#[allow(unsafe_code)]
+fn build_rsa_pkey(
+    engine: &Engine,
+    data: &EngineData,
+    der: &[u8],
+    key: HsmRsaPrivateKey,
+) -> EngineResult<*mut ffi::EVP_PKEY> {
+    // Parse the SPKI DER into a temporary key just to recover n and e.
+    let parsed =
+        PKey::public_key_from_der(der).map_err(|e| EngineError::wrap("parse public key DER", e))?;
+    // SAFETY: parsed is a valid RSA public-key EVP_PKEY; the get0 accessors
+    // return borrowed pointers valid while `parsed` lives, and BN_dup copies
+    // them into BIGNUMs we own.
+    let (n, e) = unsafe {
+        let parsed_rsa = ffi::EVP_PKEY_get0_RSA(parsed.as_ptr().cast::<ffi::EVP_PKEY>());
+        if parsed_rsa.is_null() {
+            return Err(EngineError::Other("parsed EVP_PKEY has no RSA".into()));
+        }
+        let mut n0 = null();
+        let mut e0 = null();
+        ffi::RSA_get0_key(parsed_rsa, &mut n0, &mut e0, null_mut());
+        if n0.is_null() || e0.is_null() {
+            return Err(EngineError::Other("parsed RSA missing n or e".into()));
+        }
+        (ffi::BN_dup(n0), ffi::BN_dup(e0))
+    };
+    // `n0`/`e0` borrow into `parsed`; the dups above are owned copies.
+    drop(parsed);
+    if n.is_null() || e.is_null() {
+        // SAFETY: BN_free tolerates NULL; n/e are owned (or NULL) dups.
+        unsafe {
+            ffi::BN_free(n);
+            ffi::BN_free(e);
+        }
+        return Err(EngineError::Other("BN_dup failed".into()));
+    }
+
+    // Engine-bound RSA (up-refs the engine; see Engine::new_rsa_key).
+    let rsa = match engine.new_rsa_key() {
+        Ok(rsa) => rsa,
+        Err(err) => {
+            // SAFETY: n/e are owned BIGNUMs not yet handed to an RSA.
+            unsafe {
+                ffi::BN_free(n);
+                ffi::BN_free(e);
+            }
+            return Err(err);
+        }
+    };
+    // SAFETY: rsa is fresh; RSA_set0_key takes ownership of n and e on
+    // success. d stays NULL — the private operation runs in the HSM.
+    if unsafe { ffi::RSA_set0_key(rsa, n, e, null_mut()) } != 1 {
+        // SAFETY: on failure ownership was not taken; free everything.
+        unsafe {
+            ffi::BN_free(n);
+            ffi::BN_free(e);
+            ffi::RSA_free(rsa);
+        }
+        return Err(EngineError::Other("RSA_set0_key failed".into()));
+    }
+
+    // Wrap the RSA in an EVP_PKEY. EVP_PKEY_set1_RSA up-refs `rsa`, so drop our
+    // own reference afterwards; the EVP_PKEY (and its engine ref) then owns it.
+    // SAFETY: standard EVP_PKEY construction; every return code is checked and
+    // `rsa` is freed on each failure path.
+    let pkey = unsafe {
+        let pkey = ffi::EVP_PKEY_new();
+        if pkey.is_null() {
+            ffi::RSA_free(rsa);
+            return Err(EngineError::Other("EVP_PKEY_new failed".into()));
+        }
+        if ffi::EVP_PKEY_set1_RSA(pkey, rsa) != 1 {
+            ffi::EVP_PKEY_free(pkey);
+            ffi::RSA_free(rsa);
+            return Err(EngineError::Other("EVP_PKEY_set1_RSA failed".into()));
+        }
+        ffi::RSA_free(rsa);
+        pkey
+    };
+
+    // Stash the HSM key in the (engine-bound) RSA as the last fallible step.
+    // SAFETY: pkey holds a valid RSA built above.
+    let rsa_ref = unsafe { ffi::EVP_PKEY_get0_RSA(pkey) };
+    if let Err(err) = attach_rsa(data, rsa_ref, key) {
+        // SAFETY: pkey is ours and not yet handed to OpenSSL.
+        unsafe { ffi::EVP_PKEY_free(pkey) };
+        return Err(err);
+    }
+    Ok(pkey)
+}
+
+#[allow(unsafe_code)]
+fn attach_rsa(data: &EngineData, rsa: *mut ffi::RSA, key: HsmRsaPrivateKey) -> EngineResult<()> {
+    if rsa.is_null() {
+        return Err(EngineError::Other("EVP_PKEY has no RSA".into()));
+    }
+    let idx = rsa_key_ex_index()?;
+
+    // Same ownership contract as attach_ec: EngineData owns the key, the
+    // ex_data slot holds a non-owning pointer and has no free callback.
+    let key_ptr = data.retain_loaded_rsa_key(key);
+    // SAFETY: rsa is valid (checked), idx is a registered RSA ex_data slot,
+    // and key_ptr is a non-owning pointer into a key EngineData keeps alive
+    // for the engine's lifetime; the slot has no free callback, so no
+    // ownership is transferred.
+    let rc = unsafe { ffi::RSA_set_ex_data(rsa, idx, key_ptr.cast_mut().cast::<c_void>()) };
+    if rc != 1 {
+        // Roll back the retain so the failed load doesn't leave the key in the
+        // HSM until engine teardown.
+        data.release_loaded_rsa_key(key_ptr);
+        return Err(EngineError::Other("RSA_set_ex_data failed".into()));
+    }
+    Ok(())
+}
+
+/// Process-global RSA ex_data slot index; same registration contract as
+/// [`ec_key_ex_index`] (no free callback — the stored pointer is non-owning).
+#[allow(unsafe_code)]
+fn rsa_key_ex_index() -> EngineResult<c_int> {
+    static IDX: OnceLock<c_int> = OnceLock::new();
+    static INIT: Mutex<()> = Mutex::new(());
+
+    if let Some(i) = IDX.get() {
+        return Ok(*i);
+    }
+    let _guard = INIT.lock();
+    if let Some(i) = IDX.get() {
+        return Ok(*i);
+    }
+    // RSA_get_ex_new_index is a macro in 1.1.x, so call the underlying
+    // CRYPTO_get_ex_new_index with the RSA class directly.
+    // SAFETY: standard ex_data index registration with no new/dup/free callbacks.
+    let idx = unsafe {
+        ffi::CRYPTO_get_ex_new_index(
+            ffi::CRYPTO_EX_INDEX_RSA as c_int,
+            0,
+            null_mut(),
+            None,
+            None,
+            None,
+        )
+    };
+    if idx < 0 {
+        return Err(EngineError::ExDataRegisterFailed);
+    }
+    let _ = IDX.set(idx);
+    Ok(idx)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -297,7 +460,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
-    use std::ptr::NonNull;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
@@ -354,28 +516,5 @@ mod tests {
         let oversize = usize::try_from(MAX_MASKED_KEY_SIZE + 1).unwrap();
         fs::write(&p, vec![0u8; oversize]).unwrap();
         assert!(read_masked_key(&p).is_err());
-    }
-
-    /// `load_key` rejects RSA/RSA-PSS before opening the HSM, so this needs no
-    /// device — only a throwaway ENGINE to satisfy the signature.
-    #[test]
-    #[allow(unsafe_code)]
-    fn load_key_rejects_rsa_before_hsm_open() {
-        // SAFETY: ENGINE_new returns a fresh structural ref, freed below; the
-        // Engine wrapper is only used to satisfy the signature (the RSA arm
-        // returns before touching it).
-        unsafe {
-            let raw = ffi::ENGINE_new();
-            assert!(!raw.is_null(), "ENGINE_new");
-            let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
-            let data = EngineData::new();
-            let err =
-                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa").unwrap_err();
-            assert!(
-                format!("{err}").contains("RSA key loading is not yet supported"),
-                "unexpected error: {err}"
-            );
-            ffi::ENGINE_free(raw);
-        }
     }
 }

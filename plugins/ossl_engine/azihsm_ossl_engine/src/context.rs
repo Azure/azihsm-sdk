@@ -20,6 +20,7 @@ use azihsm_api::HsmPartitionManager;
 use azihsm_api::HsmPotaEndorsement;
 use azihsm_api::HsmPotaEndorsementData;
 use azihsm_api::HsmPotaEndorsementSource;
+use azihsm_api::HsmRsaPrivateKey;
 use azihsm_api::HsmSession;
 use azihsm_api::MobkProviderCallback;
 use azihsm_api::PotaEndorsementCallback;
@@ -67,6 +68,10 @@ pub struct EngineData {
     // the `vec_box` suggestion to drop the `Box` does not apply.
     #[allow(clippy::vec_box)]
     loaded_keys: Mutex<Vec<Box<HsmEccPrivateKey>>>,
+    /// RSA twin of `loaded_keys`; kept as a separate typed list so each
+    /// ex_data stash carries a concretely-typed pointer.
+    #[allow(clippy::vec_box)]
+    loaded_rsa_keys: Mutex<Vec<Box<HsmRsaPrivateKey>>>,
     hsm: Mutex<Option<HsmEngineContext>>,
 }
 
@@ -80,6 +85,7 @@ impl EngineData {
     pub fn new() -> Self {
         Self {
             loaded_keys: Mutex::new(Vec::new()),
+            loaded_rsa_keys: Mutex::new(Vec::new()),
             hsm: Mutex::new(None),
         }
     }
@@ -168,6 +174,24 @@ impl EngineData {
         }
     }
 
+    /// RSA twin of [`retain_loaded_key`](Self::retain_loaded_key): own the key
+    /// until engine destroy and return a stable non-owning pointer for the
+    /// `RSA` ex_data stash.
+    pub(crate) fn retain_loaded_rsa_key(&self, key: HsmRsaPrivateKey) -> *const HsmRsaPrivateKey {
+        let boxed = Box::new(key);
+        let ptr: *const HsmRsaPrivateKey = boxed.as_ref();
+        self.loaded_rsa_keys.lock().push(boxed);
+        ptr
+    }
+
+    /// RSA twin of [`release_loaded_key`](Self::release_loaded_key): roll back
+    /// a retain on a partial load failure.
+    pub(crate) fn release_loaded_rsa_key(&self, ptr: *const HsmRsaPrivateKey) {
+        let mut keys = self.loaded_rsa_keys.lock();
+        if let Some(pos) = keys.iter().position(|k| std::ptr::eq(k.as_ref(), ptr)) {
+            keys.remove(pos);
+        }
+    }
 }
 
 /// Live HSM partition + session.
@@ -519,9 +543,10 @@ pub(crate) fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
         let raw = ffi::ENGINE_new();
         assert!(!raw.is_null(), "ENGINE_new");
         let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
-        // The loader binds keys via EC_KEY_new_method, which needs an EC method
-        // on the engine (bind_helper does this in production).
+        // The loader binds keys via {EC_KEY,RSA}_new_method, which needs the
+        // methods on the engine (bind_helper does this in production).
         engine.set_default_ec_method().unwrap();
+        engine.set_default_rsa_method().unwrap();
         (engine, raw)
     }
 }
