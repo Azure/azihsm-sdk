@@ -312,6 +312,34 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdCreatePeerBackup` (opcode `0x0E`) on this CO session.
+    ///
+    /// Recovers BKS3 from `pok_local_backup` and HPKE-Auth-seals it to the
+    /// destination peer in `dst_evidence` (authenticated by the sender's
+    /// `masked_sealing_key`), returning the peer backup. Gated by the
+    /// security domain's `allow_peer_cloning` policy flag. Only valid on a
+    /// V2 session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn sd_create_peer_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        dst_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_local_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_create_peer_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                dst_evidence,
+                policy,
+                pok_local_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.

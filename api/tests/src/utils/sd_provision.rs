@@ -33,6 +33,7 @@ use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
+use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
@@ -379,6 +380,11 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
         sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
         info: [0xAB; POLICY_INFO_LEN],
+        // Enable peer cloning so this one backing policy also drives the
+        // `SdCreatePeerBackup` / `SdRestorePeerBackup` tests; the flag is
+        // inert for the remote/reseal/restore commands, which don't gate on
+        // it.
+        flags: PolicyFlags::new().with_allow_peer_cloning(true),
         ..PartPolicy::zeroed()
     }
 }
