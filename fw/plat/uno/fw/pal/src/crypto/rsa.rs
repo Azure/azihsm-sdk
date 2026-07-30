@@ -23,6 +23,12 @@ use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
+use der::Decode;
+use der::Sequence;
+use der::asn1::Null;
+use der::asn1::ObjectIdentifier;
+use der::asn1::OctetStringRef;
+use der::asn1::UintRef;
 use zeroize::Zeroize;
 
 use crate::UnoHsmPal;
@@ -75,127 +81,87 @@ fn digest_info_prefix(algo: HsmHashAlgo) -> &'static [u8] {
 /// Maximum RSA modulus length in bytes (RSA-4096).
 const MAX_RSA_MODULUS_LEN: usize = 512;
 
-/// DER value bytes of the rsaEncryption OID (1.2.840.113549.1.1.1), i.e. the
-/// content of the `OBJECT IDENTIFIER` inside a PKCS#8 `AlgorithmIdentifier`.
-const RSA_ENCRYPTION_OID: [u8; 9] = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+/// rsaEncryption OID (1.2.840.113549.1.1.1) — the algorithm identifier of an
+/// RSA key inside a PKCS#8 `PrivateKeyInfo`.
+const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 
-/// Reads one DER TLV at `der[pos..]`. Returns `(tag, content_start,
-/// content_len, next)` where the value is `der[content_start..][..content_len]`
-/// and `next` is the offset just past this TLV. Handles short- and long-form
-/// definite lengths (DER never uses indefinite length).
-fn der_tlv(der: &[u8], pos: usize) -> Option<(u8, usize, usize, usize)> {
-    let tag = *der.get(pos)?;
-    let len_byte = *der.get(pos + 1)?;
-    let (len, hdr_len) = if len_byte < 0x80 {
-        (len_byte as usize, 2)
+/// PKCS#8 `AlgorithmIdentifier` for RSA: the `rsaEncryption` OID with the
+/// explicit `NULL` parameters required by RFC 3279 §2.3.1.
+#[derive(Sequence)]
+struct RsaAlgorithmIdentifier {
+    algorithm: ObjectIdentifier,
+    parameters: Null,
+}
+
+/// PKCS#8 `PrivateKeyInfo` (RFC 5208) whose `privateKey` OCTET STRING wraps a
+/// PKCS#1 `RSAPrivateKey`.
+#[derive(Sequence)]
+struct RsaPrivateKeyInfo<'a> {
+    version: u8,
+    algorithm: RsaAlgorithmIdentifier,
+    private_key: &'a OctetStringRef,
+}
+
+/// PKCS#1 `RSAPrivateKey` (RFC 8017 A.1.2), two-prime form (version 0). The full
+/// SEQUENCE is decoded so the `der` reader validates every field; only
+/// `modulus`, `public_exponent`, and `private_exponent` feed the non-CRT vault
+/// operand.
+#[derive(Sequence)]
+struct RsaPrivateKeyDer<'a> {
+    version: u8,
+    modulus: UintRef<'a>,
+    public_exponent: UintRef<'a>,
+    private_exponent: UintRef<'a>,
+    prime1: UintRef<'a>,
+    prime2: UintRef<'a>,
+    exponent1: UintRef<'a>,
+    exponent2: UintRef<'a>,
+    coefficient: UintRef<'a>,
+}
+
+/// Decodes a recovered RSA private key — a PKCS#8 `PrivateKeyInfo` or a bare
+/// PKCS#1 `RSAPrivateKey` — and assembles the little-endian PKA vault operand
+/// `[d(k) ‖ n(k) ‖ e(4)]` into `out`, returning `(vault_len, modulus_len)`.
+///
+/// The `der` crate enforces canonical DER (definite minimal-length encodings, no
+/// trailing bytes via `from_der`) and rejects negative / non-minimal INTEGERs,
+/// so this carries no hand-rolled TLV / INTEGER validation. Reads `der_bytes`
+/// only; the caller scrubs the recovered plaintext on any error.
+fn rsa_der_to_vault_operand(der_bytes: &[u8], out: &mut [u8]) -> Option<(usize, usize)> {
+    // Assemble inside each arm while the decoded `RSAPrivateKey` — and the
+    // `UintRef`s borrowing `der_bytes` — is still alive.
+    if let Ok(pki) = RsaPrivateKeyInfo::from_der(der_bytes) {
+        if pki.algorithm.algorithm != RSA_ENCRYPTION {
+            return None;
+        }
+        let inner = RsaPrivateKeyDer::from_der(pki.private_key.as_bytes()).ok()?;
+        assemble_rsa_operand(&inner, out)
     } else {
-        let n = (len_byte & 0x7f) as usize;
-        if n == 0 || n > 4 {
-            return None;
-        }
-        // DER requires minimal length encoding: the most-significant length
-        // byte must be non-zero (no leading-zero padding).
-        if *der.get(pos + 2)? == 0 {
-            return None;
-        }
-        let mut len = 0usize;
-        for i in 0..n {
-            len = (len << 8) | (*der.get(pos + 2 + i)? as usize);
-        }
-        // Long form must not be used for lengths that fit in short form.
-        if len < 0x80 {
-            return None;
-        }
-        (len, 2 + n)
-    };
-    let content_start = pos.checked_add(hdr_len)?;
-    let next = content_start.checked_add(len)?;
-    if next > der.len() {
-        return None;
+        let inner = RsaPrivateKeyDer::from_der(der_bytes).ok()?;
+        assemble_rsa_operand(&inner, out)
     }
-    Some((tag, content_start, len, next))
 }
 
-/// Reads a DER INTEGER at `pos`, returning its positive value `(start, len)`
-/// with the leading `0x00` sign pad (if present) stripped, plus the offset just
-/// past it. Because the input is untrusted recovered key material, this rejects
-/// negative integers (MSB set on the first content byte, i.e. no sign pad) and
-/// non-minimal encodings; the integer zero (a lone `0x00`) is still accepted so
-/// the PKCS#8/PKCS#1 `version` fields parse.
-fn der_int(der: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
-    let (tag, start, len, next) = der_tlv(der, pos)?;
-    if tag != 0x02 || len == 0 {
+/// Validates the RSA field sizes and writes `[d ‖ n ‖ e]` little-endian into
+/// `out`, returning `(vault_len, modulus_len)`. Rejects moduli that are not
+/// 2048/3072/4096-bit, an exponent wider than 4 bytes, or a `d` wider than the
+/// modulus.
+fn assemble_rsa_operand(key: &RsaPrivateKeyDer<'_>, out: &mut [u8]) -> Option<(usize, usize)> {
+    let n = key.modulus.as_bytes();
+    let e = key.public_exponent.as_bytes();
+    let d = key.private_exponent.as_bytes();
+    let modulus_len = n.len();
+    if !matches!(modulus_len, 256 | 384 | 512) || e.len() > 4 || d.len() > modulus_len {
         return None;
     }
-    let first = der[start];
-    // A negative INTEGER (two's-complement: MSB of the first byte set, with no
-    // `0x00` sign pad) is never a valid RSA field.
-    if first & 0x80 != 0 {
+    let vault_len = 2 * modulus_len + 4;
+    if vault_len > out.len() {
         return None;
     }
-    // A leading `0x00` is a sign pad; per DER it is minimal only when the next
-    // byte has its MSB set. The sole exception is the integer zero, encoded as
-    // a single `0x00` byte.
-    if first == 0x00 && len > 1 {
-        if der[start + 1] & 0x80 == 0 {
-            return None;
-        }
-        return Some((start + 1, len - 1, next));
-    }
-    Some((start, len, next))
-}
-
-/// Big-endian value ranges `((start, len), ...)` for the RSA `n`, `e`, `d`
-/// integers within a parsed DER buffer.
-type RsaDerRanges = ((usize, usize), (usize, usize), (usize, usize));
-
-/// Parses a DER RSA private key — PKCS#8 `PrivateKeyInfo` or a bare PKCS#1
-/// `RSAPrivateKey` — and returns the big-endian value ranges `(start, len)` of
-/// the modulus `n`, public exponent `e`, and private exponent `d`.
-fn parse_rsa_priv_der(der: &[u8]) -> Option<RsaDerRanges> {
-    // Outer SEQUENCE — must span the entire input (reject trailing garbage).
-    let (tag, seq_start, _seq_len, outer_next) = der_tlv(der, 0)?;
-    if tag != 0x30 || outer_next != der.len() {
-        return None;
-    }
-    // version INTEGER (skip).
-    let (_vs, _vl, after_ver) = der_int(der, seq_start)?;
-    let mut p = after_ver;
-    // A SEQUENCE here is the PKCS#8 algorithm id — validate it is
-    // `rsaEncryption` and descend through the OCTET STRING into the inner
-    // PKCS#1 key; an INTEGER is the PKCS#1 `n` directly.
-    let (peek_tag, alg_start, _acl, after_alg) = der_tlv(der, p)?;
-    if peek_tag == 0x30 {
-        // AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters NULL }.
-        let (oid_tag, oid_start, oid_len, after_oid) = der_tlv(der, alg_start)?;
-        if oid_tag != 0x06 || der[oid_start..oid_start + oid_len] != RSA_ENCRYPTION_OID {
-            return None;
-        }
-        // The rsaEncryption parameters must be NULL (tag 0x05, length 0), and
-        // must be the last field of the AlgorithmIdentifier SEQUENCE (no extra
-        // trailing fields).
-        let (null_tag, _null_start, null_len, null_next) = der_tlv(der, after_oid)?;
-        if null_tag != 0x05 || null_len != 0 || null_next != after_alg {
-            return None;
-        }
-        let (ot, oct_start, _ol, oct_next) = der_tlv(der, after_alg)?;
-        if ot != 0x04 {
-            return None;
-        }
-        // The privateKey OCTET STRING must wrap exactly the inner
-        // RSAPrivateKey SEQUENCE with no trailing bytes.
-        let (st, inner_start, _sl, inner_next) = der_tlv(der, oct_start)?;
-        if st != 0x30 || inner_next != oct_next {
-            return None;
-        }
-        let (_v2s, _v2l, after_v2) = der_int(der, inner_start)?;
-        p = after_v2;
-    }
-    // n, e, d in order (p, q, dp, dq, qinv follow but are unused for non-CRT).
-    let (ns, nl, after_n) = der_int(der, p)?;
-    let (es, el, after_e) = der_int(der, after_n)?;
-    let (ds, dl, _after_d) = der_int(der, after_e)?;
-    Some(((ns, nl), (es, el), (ds, dl)))
+    write_le(&mut out[0..modulus_len], d);
+    write_le(&mut out[modulus_len..2 * modulus_len], n);
+    write_le(&mut out[2 * modulus_len..vault_len], e);
+    Some((vault_len, modulus_len))
 }
 
 /// Writes the big-endian bytes `be` as little-endian into `dst`, zero-padding
@@ -312,34 +278,24 @@ impl HsmRsa for UnoHsmPal {
             buf.zeroize();
             return Err(HsmError::UnsupportedCmd);
         }
-        // Parse the recovered DER (PKCS#8 or bare PKCS#1) into the big-endian
-        // value ranges of the modulus `n`, public exponent `e`, and private
-        // exponent `d`. The ranges alias `buf`.
-        let Some(((ns, nl), (es, el), (ds, dl))) = parse_rsa_priv_der(&buf[..]) else {
+        // Decode + assemble the little-endian vault operand `[d(k) ‖ n(k) ‖ e(4)]`
+        // into a scratch buffer. This only reads `buf` (the recovered plaintext
+        // DER); the borrow ends before the in-place rewrite below.
+        let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
+        let Some((vault_len, modulus_len)) = rsa_der_to_vault_operand(&buf[..], &mut out) else {
             buf.zeroize();
+            out.zeroize();
             return Err(HsmError::InvalidArg);
         };
-        let modulus_len = nl;
-        if !matches!(modulus_len, 256 | 384 | 512) || el > 4 || dl > modulus_len {
-            buf.zeroize();
-            return Err(HsmError::InvalidArg);
-        }
-        // Assemble the vault operand `[d(k) ‖ n(k) ‖ e(4)]` little-endian in a
-        // scratch buffer, then write it back in place — the vault form is
-        // smaller than the source DER, so the overwrite is safe.
-        let vault_len = 2 * modulus_len + 4;
-        // The in-place rewrite requires the vault operand to fit within `buf`.
-        // A malformed / truncated DER (e.g. a very short `d`) can make
-        // `vault_len` exceed `buf.len()`; reject rather than panic on the
-        // slices below. `buf` still holds recovered plaintext, so scrub first.
+        // The vault form is smaller than the source DER, so the in-place rewrite
+        // is safe — but reject rather than panic if a malformed DER made
+        // `vault_len` exceed `buf`. `buf` holds recovered plaintext, so scrub
+        // first.
         if vault_len > buf.len() {
             buf.zeroize();
+            out.zeroize();
             return Err(HsmError::InvalidArg);
         }
-        let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
-        write_le(&mut out[0..modulus_len], &buf[ds..ds + dl]);
-        write_le(&mut out[modulus_len..2 * modulus_len], &buf[ns..ns + nl]);
-        write_le(&mut out[2 * modulus_len..vault_len], &buf[es..es + el]);
         buf[..vault_len].copy_from_slice(&out[..vault_len]);
         // Scrub the leftover source DER in the tail of `buf` — for a full
         // RSAPrivateKey it still holds secret CRT components (`p`, `q`, `dp`,
