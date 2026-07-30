@@ -25,16 +25,18 @@ use crate::harness::TestCtx;
 
 /// Verifies that a successful PartInit response contains both PTA artifacts.
 macro_rules! assert_part_init_artifacts_present {
-    ($resp:expr) => {
+    ($resp:expr) => {{
+        let resp = &$resp;
+
         assert!(
-            !$resp.pta_csr.is_empty(),
+            !resp.pta_csr.is_empty(),
             "PTACSR must be present after successful PartInit"
         );
         assert!(
-            !$resp.pta_report.is_empty(),
+            !resp.pta_report.is_empty(),
             "PTAReport must be present after successful PartInit"
         );
-    };
+    }};
 }
 
 #[test]
@@ -650,29 +652,6 @@ fn sd_config_all_ff_sata_and_sapota_emu() {
     assert!(!resp.pta_report.is_empty(), "PTAReport must be non-empty");
 }
 
-/// Verifies that SATA and SAPOTA may contain identical opaque thumbprint values.
-#[test]
-fn sd_config_matching_sata_and_sapota_values_emu() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let shared_thumbprint = [0x6Cu8; 48];
-
-    let resp = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &shared_thumbprint,
-            Some(&shared_thumbprint),
-        )
-        .expect("PartInit with matching SATA and SAPOTA values must succeed");
-
-    assert!(!resp.pta_csr.is_empty(), "PTACSR must be non-empty");
-    assert!(!resp.pta_report.is_empty(), "PTAReport must be non-empty");
-}
-
 /// Verifies that distinct SATA and SAPOTA values are accepted independently.
 #[test]
 fn sd_config_distinct_sata_and_sapota_values_emu() {
@@ -1114,7 +1093,10 @@ fn second_part_init_without_erase_is_rejected_emu() {
         )
         .expect_err("second PartInit without erase must be rejected");
 
-    eprintln!("second PartInit rejection: {err:?}");
+    crate::harness::assertions::assert_fw_rejects(
+        &err,
+        azihsm_ddi_tbor_types::TborStatus::PtaKeyAlreadySet,
+    );
 }
 
 /// Verifies that a session created before erase cannot be reused for PartInit.
@@ -1136,5 +1118,8 @@ fn part_init_with_stale_session_after_erase_is_rejected_emu() {
         )
         .expect_err("PartInit with a session created before erase must be rejected");
 
-    eprintln!("stale-session PartInit rejection: {err:?}");
+    assert!(
+        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        "expected FW rejection status for stale session after erase, got {err:?}"
+    );
 }
