@@ -18,4 +18,4 @@ jobs:
       - azihsm-arm64-gh-pool-westus2
     steps:
       - name: echo
-        run: echo "Hello world"
+        run: echo "Hello world, built"
