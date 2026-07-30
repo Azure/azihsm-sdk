@@ -20,7 +20,7 @@ use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
-use crate::emu_helpers::*;
+use crate::utils::emu_helpers::*;
 
 /// Well-formed fixed-size inputs for the non-`part_policy` `PartInit`
 /// fields.

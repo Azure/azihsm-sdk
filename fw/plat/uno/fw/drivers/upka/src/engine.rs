@@ -6,6 +6,7 @@ use core::task::Context;
 use core::task::Poll;
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_error::HsmResult;
 
 use crate::api::UpkaDriver;
@@ -34,6 +35,65 @@ impl<const DEPTH: usize, const ENGINES: usize> core::fmt::Debug for UpkaEngine<'
     }
 }
 
+/// PKA operation selector for an [`EccStep`], mapped to a per-curve opcode by
+/// [`UpkaEngine::ecc_run`]. These are the modular / elliptic-curve primitives
+/// the PAL composes into the deterministic ECDSA sign.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EccStepOp {
+    /// Compute the Montgomery constant for `arg1` (a modulus) and leave it
+    /// resident in the engine for the steps that follow.
+    MontConstCalc,
+    /// Elliptic-curve point multiply `result = arg2 * arg1` (`arg1` is the
+    /// affine `x ‖ y` point, `arg2` the scalar).
+    PointMul,
+    /// Modular reduction `result = arg1 mod n` (double-width `arg1`).
+    ModReduction,
+    /// Convert `arg1` into Montgomery representation.
+    MontReprIn,
+    /// Convert `arg1` out of Montgomery representation.
+    MontReprOut,
+    /// Modular inverse `result = arg1^-1 mod n`.
+    ModInverse,
+    /// Modular multiply `result = arg1 * arg2 mod n` (Montgomery form).
+    ModMul,
+    /// Modular add `result = arg1 + arg2 mod n` (Montgomery form).
+    ModAdd,
+}
+
+/// One step of a PKA sequence executed by [`UpkaEngine::ecc_run`].
+///
+/// Carries pre-resolved operand DMA addresses: `result` is the output address
+/// (`buf.as_mut_ptr() as u32`) and `arg1`/`arg2` are input addresses
+/// (`buf.as_ptr() as u32`, `arg2 == 0` when the op takes a single input). The
+/// caller owns the buffers and is responsible for their DMA-accessibility and
+/// per-op sizing (mirroring the checks in the typed step wrappers).
+#[derive(Clone, Copy, Debug)]
+pub struct EccStep {
+    /// The modular / EC operation to issue.
+    pub op: EccStepOp,
+    /// Output operand DMA address.
+    pub result: u32,
+    /// First input operand DMA address.
+    pub arg1: u32,
+    /// Second input operand DMA address, or 0 if the op takes one input.
+    pub arg2: u32,
+}
+
+impl EccStep {
+    /// Construct a step from an op and its pre-resolved operand DMA addresses
+    /// (`arg2 == 0` for single-input ops). A terse constructor so the sign's
+    /// step tables stay one line per step.
+    #[inline(always)]
+    pub const fn new(op: EccStepOp, result: u32, arg1: u32, arg2: u32) -> Self {
+        Self {
+            op,
+            result,
+            arg1,
+            arg2,
+        }
+    }
+}
+
 impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     const RESULT_WORD_LEN: usize = 4;
 
@@ -47,6 +107,14 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
 
     fn ensure_result_word(result: &DmaBuf) -> HsmResult<()> {
         Self::ensure_cmd_input(result.len() >= Self::RESULT_WORD_LEN)
+    }
+
+    /// Read the little-endian 32-bit status word from a result buffer.
+    ///
+    /// The caller must have validated the buffer with [`Self::ensure_result_word`]
+    /// (length ≥ [`Self::RESULT_WORD_LEN`]) before calling this.
+    fn read_result_word(result: &DmaBuf) -> u32 {
+        u32::from_le_bytes([result[0], result[1], result[2], result[3]])
     }
 
     /// Return the engine identifier.
@@ -64,7 +132,15 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     ///
     /// - `curve`: ECC curve selector.
     /// - `priv_key`: DMA-capable private key buffer.
-    /// - `hash`: DMA-capable digest buffer.
+    /// - `hash`: DMA-capable digest buffer. The engine DMA-reads a
+    ///   **word-aligned, field-width operand** — one `hsm_point_size(curve)`
+    ///   (32 / 48 / 68) — regardless of `hash.len()`. The length check below
+    ///   only enforces the digest **value** width (`hash_size`, 32 / 48 / 64),
+    ///   which is a lower bound; for P-521 the read extends past it (66-byte
+    ///   field padded to 68), so **the caller must ensure `hash` is backed to
+    ///   the operand width and zero-padded there** (the DDI `EccSign` handler
+    ///   enforces this against the full request buffer). A shorter backing
+    ///   over-reads adjacent memory and produces a wrong signature.
     /// - `signature`: DMA-capable output buffer for `r || s`.
     ///
     /// # Returns
@@ -238,6 +314,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// - `Ok(())`: Shared secret was written to `secret`.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
     ///   or hardware rejected the command.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ecdh_derive(
         &mut self,
         curve: UpkaEccCurve,
@@ -246,6 +323,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         secret: &mut DmaBuf,
         prime: &DmaBuf,
         mont_result: &mut DmaBuf,
+        point_valid: &mut DmaBuf,
     ) -> HsmResult<()> {
         Self::ensure_cmd_input(
             priv_key.len() >= hsm_point_size(curve)
@@ -254,11 +332,13 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
                 && prime.len() >= hsm_point_size(curve)
                 && mont_result.len() >= hsm_point_size(curve),
         )?;
+        Self::ensure_result_word(point_valid)?;
 
         // Required PKA setup: compute the Montgomery constant for the curve
-        // prime on this engine before the point multiplication. This leaves
-        // engine state the point-mul consumes; both run on the same engine
-        // acquisition (execute_cmd does not wipe between commands).
+        // prime on this engine before the point validation and multiplication.
+        // This leaves engine state both subsequent commands consume; all three
+        // run on the same engine acquisition (execute_cmd does not wipe between
+        // commands).
         self.execute_cmd(
             mont_const_calc_opcode(curve),
             mont_result.as_mut_ptr() as u32,
@@ -267,6 +347,25 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
             0,
         )
         .await?;
+
+        // Validate the peer public key is on the curve before the point
+        // multiply. Feeding an off-curve point to the multiply can fault the
+        // engine, so reject it here. This mirrors the reference firmware, which
+        // runs point validation between the Montgomery-constant setup and the
+        // ECDH compute on the same engine (the validation consumes the
+        // Montgomery context). A status word of 0 means the point is on the
+        // curve; any non-zero value means it is not.
+        self.execute_cmd(
+            ecc_point_validate_opcode(curve),
+            point_valid.as_mut_ptr() as u32,
+            pub_key.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await?;
+        if Self::read_result_word(point_valid) != 0 {
+            return Err(HsmError::EccPointValidationFailed);
+        }
 
         // ECDH point multiply: result = shared secret X (LE);
         // arg1 = peer public point (X || Y, LE); arg2 = private scalar (LE).
@@ -358,39 +457,6 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
-    /// Validate that a public key is on the specified ECC curve.
-    ///
-    /// `result` is a caller-allocated DMA-capable buffer (at least 4 bytes)
-    /// that receives the hardware validation status word.
-    ///
-    /// # Parameters
-    ///
-    /// - `curve`: ECC curve selector.
-    /// - `pub_key`: DMA-capable public key buffer.
-    /// - `result`: DMA-capable output status word buffer.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())`: Validation completed and status was written to `result`.
-    /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
-    ///   or hardware rejected the command.
-    pub async fn ecc_point_validate(
-        &mut self,
-        curve: UpkaEccCurve,
-        pub_key: &DmaBuf,
-        result: &mut DmaBuf,
-    ) -> HsmResult<()> {
-        Self::ensure_result_word(result)?;
-        self.execute_cmd(
-            ecc_point_validate_opcode(curve),
-            result.as_mut_ptr() as u32,
-            0,
-            pub_key.as_ptr() as u32,
-            0,
-        )
-        .await
-    }
-
     /// Derive a public key from a private key.
     ///
     /// # Parameters
@@ -459,9 +525,13 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         .await
     }
 
-    /// Point-multiply `result = (scalar * point).x`, where `point` is the
-    /// affine `x ‖ y` (contiguous, PKA little-endian). Requires a prior
-    /// `ecc_mont_const_calc` over the curve prime on this engine.
+    /// Point-multiply `result = scalar * point`, where `point` is the affine
+    /// `x ‖ y` (contiguous, PKA little-endian). The hardware writes the full
+    /// affine result `X ‖ Y` in wire format — one `hsm_point_size`-wide
+    /// coordinate each — so `result` must be at least `2 * hsm_point_size(curve)`
+    /// bytes; callers needing only the x-coordinate read its low `point_size`
+    /// bytes. Requires a prior `ecc_mont_const_calc` over the curve prime on
+    /// this engine.
     pub async fn ecc_point_mul(
         &mut self,
         curve: UpkaEccCurve,
@@ -472,7 +542,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         Self::ensure_cmd_input(
             point_xy.len() >= hsm_point_size(curve) * 2
                 && scalar.len() >= hsm_point_size(curve)
-                && result.len() >= point_size(curve),
+                && result.len() >= hsm_point_size(curve) * 2,
         )?;
 
         self.execute_cmd(
@@ -619,6 +689,52 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
             0,
         )
         .await
+    }
+
+    /// Execute a pre-built PKA `steps` sequence on this held engine as a single
+    /// awaited command loop.
+    ///
+    /// Every step is issued through the same [`execute_cmd`](Self::execute_cmd)
+    /// await, so the caller's async state machine holds ONE suspend point
+    /// regardless of the sequence length. Written as straight-line `.await`
+    /// calls, the ~14-step deterministic ECDSA sign expands to ~14 distinct
+    /// suspend states and a correspondingly large `.text` state machine; routing
+    /// them through this loop collapses that to one. Signing is a cold,
+    /// PKA-latency-bound path, so the per-step opcode dispatch costs nothing at
+    /// runtime.
+    ///
+    /// The Montgomery constant established by an [`EccStepOp::MontConstCalc`]
+    /// step stays resident for the steps that follow (`execute_cmd` does not
+    /// wipe between commands), so callers order the sequence accordingly. Operand
+    /// sizing/DMA-accessibility is the caller's responsibility (see [`EccStep`]);
+    /// a step with a null (`0`) `result`/`arg1`, or an `arg2` that does not match
+    /// the op's arity, is rejected with [`UpkaError::CMD_ERROR`].
+    pub async fn ecc_run(&mut self, curve: UpkaEccCurve, steps: &[EccStep]) -> HsmResult<()> {
+        for step in steps {
+            let (opcode, takes_arg2) = match step.op {
+                EccStepOp::MontConstCalc => (mont_const_calc_opcode(curve), false),
+                EccStepOp::PointMul => (ecc_point_mul_opcode(curve), true),
+                EccStepOp::ModReduction => (mod_reduction_opcode(curve), false),
+                EccStepOp::MontReprIn => (mont_repr_in_opcode(curve), false),
+                EccStepOp::MontReprOut => (mont_repr_out_opcode(curve), false),
+                EccStepOp::ModInverse => (mod_inverse_opcode(curve), false),
+                EccStepOp::ModMul => (mod_multiplication_opcode(curve), true),
+                EccStepOp::ModAdd => (mod_addition_opcode(curve), true),
+            };
+            // Every op writes `result` and reads `arg1`; a two-input op also reads
+            // `arg2`, while a single-input op must leave it 0. Because `EccStep`
+            // carries raw DMA addresses in public fields and `execute_cmd` does no
+            // validation, a null (`0`) operand or a mismatched `arg2` would
+            // silently submit a malformed hardware command (a null operand address
+            // faults the PKA/AXI bus). Release firmware can't rely on
+            // `debug_assert`, so reject the misuse with an error instead.
+            Self::ensure_cmd_input(
+                step.result != 0 && step.arg1 != 0 && (step.arg2 != 0) == takes_arg2,
+            )?;
+            self.execute_cmd(opcode, step.result, step.arg1, step.arg2, 0)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Wipe the engine's internal state.

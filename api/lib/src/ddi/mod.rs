@@ -3,6 +3,7 @@
 
 mod aes;
 mod aes_xts_key;
+mod descriptor_utils;
 mod dev;
 mod ecc;
 mod hkdf;
@@ -13,6 +14,9 @@ mod masked_key;
 mod partition;
 mod partition_ex;
 mod rsa;
+mod sd_create_remote_backup;
+mod sd_evidence;
+mod sd_reseal_remote_backup;
 mod sd_sealing_key_gen;
 mod session;
 mod session_ex;
@@ -23,14 +27,24 @@ pub(crate) use aes_xts_key::*;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::*;
 use azihsm_ddi_mbor_types::*;
+/// Maximum number of certificates in one SD-evidence certificate chain.
+pub use azihsm_ddi_tbor_types::EVIDENCE_CHAIN_MAX_CERTS;
 /// Size, in bytes, of the `part_final` `local_mk_backup` envelope.
 pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+/// Exact length of the local (masked) security-domain backup.
+pub use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 /// Maximum number of certificates in a `part_final` PTA chain.
 pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Exact length of the remote partition-owner-key backup (`SdCreate`/`SdReseal`).
+pub use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
 pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+/// Exact length of the security-domain masking-key backup envelope.
+pub use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
+use azihsm_ddi_tbor_types::TborStatus;
+pub(crate) use descriptor_utils::*;
 pub(crate) use dev::*;
 pub(crate) use ecc::*;
 pub(crate) use hkdf::*;
@@ -41,6 +55,9 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
+pub(crate) use sd_create_remote_backup::*;
+pub(crate) use sd_evidence::*;
+pub(crate) use sd_reseal_remote_backup::*;
 pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
 pub(crate) use session_ex::*;
@@ -103,6 +120,13 @@ impl From<DdiError> for HsmError {
             DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
                 HsmError::CannotDeleteInternalKeys
             }
+            DdiError::TborStatus(TborStatus::SdAlreadyInitialized) => {
+                HsmError::SdAlreadyInitialized
+            }
+            // Map the firmware's contract-level `InvalidArg` to the same
+            // `InvalidArgument` the host guards return, so callers see a
+            // consistent argument-rejection error across transports.
+            DdiError::TborStatus(TborStatus::InvalidArg) => HsmError::InvalidArgument,
             _ => {
                 tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");
                 HsmError::DdiCmdFailure

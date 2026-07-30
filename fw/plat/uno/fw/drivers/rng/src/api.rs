@@ -11,8 +11,9 @@
 //!
 //! * Returns `HsmResult<()>` from `fill_bytes` to match the existing
 //!   `HsmRng` trait shape used by the Uno PAL.
-//! * The post-enable settling delay is reduced from 100 ms to a
-//!   nominal value — see `RNG_INIT_DELAY_NOPS` below for rationale.
+//! * The post-enable settling delay matches the reference firmware's
+//!   `cpu_stall(100_000 µs)` (≈100 ms) — see `RNG_INIT_DELAY_NOPS`
+//!   below for rationale.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_static_ref::StaticRef;
@@ -36,12 +37,21 @@ const REGS: StaticRef<RngRegs> = unsafe { StaticRef::new(RNG_BASE as *const RngR
 
 /// Settling delay (in `nop` iterations) applied after `CTRL.ENABLE`.
 ///
-/// On real silicon, the analog TRBG clock may require 100 ms
-/// (≈22.5 M nops at 450 MHz) to stabilize. This Uno PAL reduces the
-/// delay to a token value to keep boot time bounded — production
-/// builds running on the actual analog block must raise this back to
-/// the silicon-recommended 100 ms.
-const RNG_INIT_DELAY_NOPS: u32 = 64;
+/// On real silicon the analog TRBG clock requires ~100 ms to stabilize
+/// after the RNG is enabled.
+///
+/// At the 450 MHz core clock, counting ~2 cycles per `nop` loop iteration
+/// (one `nop` + the loop's subtract/branch), that is:
+///
+/// ```text
+///   100_000 µs × 450 MHz ÷ 2 = 22_500_000 iterations
+/// ```
+///
+/// An insufficient delay here lets `wait_for_random_data` re-enable the
+/// block before it settles; under sustained load (e.g. rapid key
+/// generation) this degenerates into a tight enable/disable toggle loop
+/// and an imprecise bus fault on the `CTRL` MMIO write.
+const RNG_INIT_DELAY_NOPS: u32 = 100_000 * 450 / 2;
 
 /// TRBG / DRBG calibration parameters.
 ///

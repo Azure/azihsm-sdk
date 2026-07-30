@@ -80,12 +80,16 @@ impl From<SessionControlKind> for u8 {
 
 mod api_rev;
 mod evidence;
+mod get_unwrapping_key;
+mod hmac;
+mod hmac_generate_key;
 mod key_report;
 mod part_final;
 mod part_info;
 mod part_init;
 mod policy;
 mod psk_change;
+mod rsa_mod_exp;
 mod sd_create_peer_backup;
 mod sd_create_remote_backup;
 mod sd_reseal_remote_backup;
@@ -97,15 +101,20 @@ mod session_close;
 mod session_open_finish;
 mod session_open_init;
 mod status;
+mod unwrap_key;
 
 pub use api_rev::*;
 pub use evidence::*;
+pub use get_unwrapping_key::*;
+pub use hmac::*;
+pub use hmac_generate_key::*;
 pub use key_report::*;
 pub use part_final::*;
 pub use part_info::*;
 pub use part_init::*;
 pub use policy::*;
 pub use psk_change::*;
+pub use rsa_mod_exp::*;
 pub use sd_create_peer_backup::*;
 pub use sd_create_remote_backup::*;
 pub use sd_reseal_remote_backup::*;
@@ -117,6 +126,7 @@ pub use session_close::*;
 pub use session_open_finish::*;
 pub use session_open_init::*;
 pub use status::*;
+pub use unwrap_key::*;
 
 /// Trait implemented by host-side TBOR request value types.
 ///

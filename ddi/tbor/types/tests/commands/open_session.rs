@@ -186,7 +186,7 @@ fn session_open_finish_unknown_session_id_emu() {
         .tbor(&req)
         .expect_err("finish against unknown session_id must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection, got {err:?}",
     );
 }
@@ -205,7 +205,7 @@ fn open_session_double_finish_emu() {
         .tbor(&req)
         .expect_err("second finish against the same slot must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection, got {err:?}",
     );
 }

@@ -5,8 +5,16 @@ use std::ffi::c_void;
 
 use super::*;
 
+/// Validates that `ptr` is non-null **and** correctly aligned for `T`.
+///
+/// Both properties are required before the pointer is dereferenced (via
+/// [`deref_ptr`] / [`deref_mut_ptr`]) or used to form a slice with
+/// [`std::slice::from_raw_parts`]: a null or misaligned pointer from a C
+/// caller is undefined behavior to dereference, so reject it up front with
+/// `InvalidArgument` rather than rely solely on the caller's `# Safety`
+/// contract.
 pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
-    if ptr.is_null() {
+    if ptr.is_null() || !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
         Err(AzihsmStatus::InvalidArgument)
     } else {
         Ok(())
@@ -17,7 +25,10 @@ pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmSta
     if algo.len != std::mem::size_of::<T>() as u32 {
         Err(AzihsmStatus::InvalidArgument)?;
     }
-    validate_ptr(algo.params)
+    // Validate against the concrete `T` (not the `*const c_void` field type)
+    // so the alignment check uses `align_of::<T>()`, matching the `&T` that
+    // `cast_ptr` / `deref_mut_ptr` will form from this pointer.
+    validate_ptr(algo.params as *const T)
 }
 
 /// Validates that an algorithm descriptor intentionally carries no parameter payload.
@@ -53,25 +64,27 @@ pub(crate) fn validate_and_cast_algo_params_mut<T>(
 /// Safely dereference a mutable pointer
 ///
 /// # Safety
-/// The function validates that the pointer is non-null before dereferencing.
+/// The function validates that the pointer is non-null and aligned before
+/// dereferencing.
 #[allow(unsafe_code)]
 #[allow(unused)]
 pub(crate) fn deref_mut_ptr<'a, T>(ptr: *mut T) -> Result<&'a mut T, AzihsmStatus> {
     validate_ptr(ptr)?;
 
-    // SAFETY: Pointer has been validated as non-null above
+    // SAFETY: Pointer has been validated as non-null and aligned above
     Ok(unsafe { &mut *ptr })
 }
 
 /// Safely dereference a constant pointer
 ///
 /// # Safety
-/// The function validates that the pointer is non-null before dereferencing.
+/// The function validates that the pointer is non-null and aligned before
+/// dereferencing.
 #[allow(unsafe_code)]
 pub(crate) fn deref_ptr<'a, T>(ptr: *const T) -> Result<&'a T, AzihsmStatus> {
     validate_ptr(ptr)?;
 
-    // SAFETY: Pointer has been validated as non-null above
+    // SAFETY: Pointer has been validated as non-null and aligned above
     Ok(unsafe { &*ptr })
 }
 
@@ -107,6 +120,25 @@ pub(crate) fn validate_output_handle_ptrs(
         Err(AzihsmStatus::InvalidArgument)?;
     }
 
+    Ok(())
+}
+
+/// Validates that every output-buffer pointer is non-null, aligned, and
+/// pairwise distinct.
+///
+/// Used at the FFI boundary for APIs with multiple `azihsm_buffer` outputs:
+/// two identical pointers would let the callee form two `&mut AzihsmBuffer`
+/// references to the same location, which is undefined behavior. Rejects
+/// null/misaligned or aliasing pointers with `InvalidArgument`.
+pub(crate) fn validate_distinct_output_buffers(
+    buffers: &[*mut crate::AzihsmBuffer],
+) -> Result<(), AzihsmStatus> {
+    for (i, &ptr) in buffers.iter().enumerate() {
+        validate_ptr(ptr)?;
+        if buffers[..i].iter().any(|&other| std::ptr::eq(other, ptr)) {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+    }
     Ok(())
 }
 
@@ -150,15 +182,19 @@ pub(crate) fn validate_output_buffer(
 ///
 /// # Returns
 /// * `Ok(&T)` - Reference to the typed value
-/// * `Err(AzihsmError::NullPointer)` - If the pointer is null
+/// * `Err(AzihsmStatus::InvalidArgument)` - If the pointer is null or
+///   misaligned for `T`
 #[allow(unsafe_code)]
 pub(crate) fn cast_ptr<'a, T>(ptr: *const c_void) -> Result<&'a T, AzihsmStatus> {
+    // Cast to `*const T` before validating so the check uses `align_of::<T>()`;
+    // forming `&T` from a misaligned address is undefined behavior.
+    let ptr = ptr as *const T;
     validate_ptr(ptr)?;
 
-    // SAFETY: We have validated that the pointer is not null.
-    // The caller is responsible for ensuring the pointer points to valid memory
-    // containing a properly initialized value of type T.
-    Ok(unsafe { &*(ptr as *const T) })
+    // SAFETY: `ptr` has been validated as non-null and aligned for `T`. The
+    // caller is responsible for ensuring it points to valid memory containing
+    // a properly initialized value of type `T`.
+    Ok(unsafe { &*ptr })
 }
 
 /// Copy a byte slice into a key property buffer

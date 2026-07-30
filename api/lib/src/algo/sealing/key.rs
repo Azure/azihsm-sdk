@@ -78,6 +78,22 @@ impl HsmSecretKey for HsmSealingKey {}
 
 impl HsmDerivationKey for HsmSealingKey {}
 
+impl HsmKeyReportOp for HsmSealingKey {
+    type Error = HsmError;
+
+    /// Attests this non-resident sealing key via TBOR `KeyReport`,
+    /// routing on its masked-key envelope since there is no device
+    /// handle to reference.
+    fn generate_key_report(
+        &self,
+        report_data: &[u8],
+        report: Option<&mut [u8]>,
+    ) -> Result<usize, Self::Error> {
+        let masked_key = self.masked_key_vec()?;
+        ddi::masked_key_report(&self.session(), &masked_key, report_data, report)
+    }
+}
+
 #[derive(Default)]
 pub struct HsmSealingKeyGenAlgo {}
 

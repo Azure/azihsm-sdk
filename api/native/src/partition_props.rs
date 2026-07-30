@@ -68,6 +68,14 @@ pub enum AzihsmPartPropId {
     /// Partition identity (PID) public key in DER format.
     // Corresponds to AZIHSM_PART_PROP_ID_PART_PUB_KEY
     PartPubKey = 12,
+
+    /// 16-byte partition identity (PID).
+    // Corresponds to AZIHSM_PART_PROP_ID_PART_EX_PID
+    PartExPid = 13,
+
+    /// Raw ECC-P384 partition identity public key (`x ‖ y`, 96 bytes).
+    // Corresponds to AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY
+    PartExPubKey = 14,
 }
 
 /// UUID structure.
@@ -194,6 +202,14 @@ fn get_partition_prop(
         AzihsmPartPropId::PartPubKey => {
             let pub_key = partition.pub_key()?;
             copy_to_part_prop(part_prop, &pub_key)
+        }
+        AzihsmPartPropId::PartExPid => {
+            let pid = partition.pid()?;
+            copy_to_part_prop(part_prop, &pid)
+        }
+        AzihsmPartPropId::PartExPubKey => {
+            let ex_pub_key = partition.ex_pub_key()?;
+            copy_to_part_prop(part_prop, &ex_pub_key)
         }
         _ => Err(AzihsmStatus::UnsupportedProperty),
     }

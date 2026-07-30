@@ -36,7 +36,7 @@ pub(crate) async fn hmac<'p, P: HsmPal>(
 
     // Resolve the key's hash variant — an unknown id surfaces as
     // `KeyNotFound`, a non-HMAC kind as `InvalidKeyType`.
-    let algo = super::from_pal::hmac_hash(pal.vault_key_kind(io, key_id)?)?;
+    let algo = crate::ddi::hmac_hash(pal.vault_key_kind(io, key_id)?)?;
     let tag_len = algo.digest_len();
 
     // Generating a MAC is a PKCS#11 `C_Sign` operation, so the key

@@ -314,7 +314,7 @@ fn finish_unknown_session_id_rejected() {
     assert!(
         matches!(
             err,
-            azihsm_ddi_interface::DdiError::DdiError(_)
+            azihsm_ddi_interface::DdiError::TborStatus(_)
                 | azihsm_ddi_interface::DdiError::DdiStatus(_)
         ),
         "expected FW or driver rejection, got {err:?}",
@@ -347,7 +347,7 @@ fn double_finish_rejected() {
         .exec_op_tbor::<TborSessionOpenFinishReq>(&req, None, &mut cookie)
         .expect_err("second finish against the same slot must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection on double-finish, got {err:?}",
     );
     // Close the Active slot we established up front so this test
@@ -400,7 +400,7 @@ fn session_close_unknown_session_id_rejected() {
     assert!(
         matches!(
             err,
-            azihsm_ddi_interface::DdiError::DdiError(_)
+            azihsm_ddi_interface::DdiError::TborStatus(_)
                 | azihsm_ddi_interface::DdiError::DdiStatus(_)
         ),
         "expected FW or driver rejection on close-unknown, got {err:?}",
@@ -438,7 +438,7 @@ fn pk_init_all_zero_rejected() {
         .exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie)
         .expect_err("all-zero pk_init must be rejected");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection for all-zero pk_init, got {err:?}",
     );
 }
@@ -462,7 +462,7 @@ fn pk_init_not_on_curve_rejected() {
         .exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie)
         .expect_err("off-curve pk_init must be rejected");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection for off-curve pk_init, got {err:?}",
     );
 }
@@ -501,7 +501,7 @@ fn open_session_fills_table_then_recovers() {
                 // an FW-side rejection (not a driver / decode fault)
                 // before ending the ramp-up.
                 assert!(
-                    matches!(e, azihsm_ddi_interface::DdiError::DdiError(_)),
+                    matches!(e, azihsm_ddi_interface::DdiError::TborStatus(_)),
                     "table-full rejection must be FW-side, got {e:?}",
                 );
                 rejection_seen = true;

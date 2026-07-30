@@ -61,6 +61,10 @@ pub const BKS_TABLE_OFFSET: u32 = 0x1110;
 pub const BKS_TABLE_COUNT: u32 = 12;
 pub const BKS_TABLE_STRIDE: u32 = 0x29;
 pub const BKS_TABLE_SIZE: u32 = 0x29;
+pub const HSM_SEED_TABLE_OFFSET: u32 = 0x12FC;
+pub const HSM_SEED_TABLE_COUNT: u32 = 2;
+pub const HSM_SEED_TABLE_STRIDE: u32 = 0x30;
+pub const HSM_SEED_TABLE_SIZE: u32 = 0x30;
 pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D60;
 pub const SRAM_IO_BUF_COUNT: u32 = 33;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4800;
@@ -314,7 +318,8 @@ pub mod regs {
         pub IoGsramRegs {
             (0x0 => _reserved0),
             (0x1110 => pub bks_table: [u8; 492]),
-            (0x12fc => _reserved1),
+            (0x12fc => pub hsm_seed_table: [u8; 96]),
+            (0x135c => _reserved1),
             (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
             (0x7004 => pub ipc_admin_hsm_rx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_RX_PI::Register>),
             (0x7008 => pub ipc_admin_hsm_rx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_RX_CI::Register>),

@@ -158,10 +158,15 @@ pub enum HsmVaultKeyKind {
     /// and CU).
     ///
     /// Length-discriminated by session type:
-    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(80)]`
-    ///   = 120 B.
+    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(32)]`
+    ///   = 72 B.
     /// * **Authenticated (CO):** the above ‖ `mac_tx(48) ‖ mac_rx(48)`
-    ///   = 216 B.
+    ///   = 168 B.
+    ///
+    /// `masking_key` is the 32 B AES-256-GCM
+    /// [`SESSION_MASKING_KEY_LEN`](crate::SESSION_MASKING_KEY_LEN) key used
+    /// by the `key_masking::aead` TBOR masked-key system — distinct from the
+    /// legacy [`Session`](Self::Session) blob's 80 B `aes32 ‖ hmac48` CBC key.
     ///
     /// Written by
     /// [`HsmSessionManager::session_promote`](crate::HsmSessionManager::session_promote)

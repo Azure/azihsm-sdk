@@ -124,6 +124,25 @@ async fn handle_io(io: UnoHsmIo) {
     HSM.get().await.handle_io(io).await;
 }
 
+/// Dedicated core-liveliness heartbeat task.
+///
+/// Refreshes the SP-polled `CORE_RUN_STATUS` slot on its own independent
+/// 250 ms timer, decoupled from IPC traffic. As a standalone
+/// task, this timer is never raced by IPC and fires as long as the
+/// cooperative executor makes forward progress — which is exactly the
+/// liveness condition the SP is meant to observe.
+///
+/// # Returns
+/// Never returns (`!`).
+#[embassy_executor::task]
+async fn heartbeat() -> ! {
+    let hsm = HSM.get().await;
+    loop {
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(250)).await;
+        hsm.pal().update_liveliness();
+    }
+}
+
 /// IPC message/event receive loop — runs forever as a single
 /// Embassy task. PAL handles boot handshake internally;
 /// app spawns [`poll_io`] once boot completes.
@@ -184,6 +203,12 @@ async fn main(spawner: Spawner) {
     hsm.pal().init();
 
     if let Ok(token) = poll_ipc(spawner) {
+        spawner.spawn(token);
+    } else {
+        return;
+    }
+
+    if let Ok(token) = heartbeat() {
         spawner.spawn(token);
     } else {
         return;
