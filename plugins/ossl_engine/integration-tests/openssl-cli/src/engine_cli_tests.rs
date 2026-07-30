@@ -42,3 +42,16 @@ fn load_ec_key_via_engine() {
     })
     .expect("lit CLI test failed");
 }
+
+#[test]
+#[serial]
+fn import_rsa_key_via_tool() {
+    lit::run::tests(lit::event_handler::Default::default(), |config| {
+        config.add_search_path(search_path("testfiles/rsa_import"));
+        config.add_extension("sh");
+        config
+            .constants
+            .insert("bash".to_owned(), "/bin/bash".to_string());
+    })
+    .expect("lit CLI test failed");
+}

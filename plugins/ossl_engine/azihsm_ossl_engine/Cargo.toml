@@ -13,13 +13,15 @@ crate-type = ["cdylib", "lib"]
 [features]
 default = []
 engine = ["azihsm_ossl_engine_core/engine", "dep:foreign-types", "dep:openssl"]
-# Exposes the test-only masked-key generator (generate_masked_ec_p384_from_env)
-# for the integration harness; not built into the production engine cdylib.
-integration = ["engine"]
+# Exposes the provisioning helpers (masked EC keygen, RSA import) for the
+# integration harness and the masked-keygen tool; not built into the
+# production engine cdylib.
+integration = ["dep:azihsm_crypto", "engine"]
 mock = ["azihsm_api/mock"]
 
 [dependencies]
 azihsm_api.workspace = true
+azihsm_crypto = { optional = true, workspace = true }
 azihsm_ossl_engine_core.workspace = true
 azihsm_ossl_engine_resiliency.workspace = true
 parking_lot.workspace = true

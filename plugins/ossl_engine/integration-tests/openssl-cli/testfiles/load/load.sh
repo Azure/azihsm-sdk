@@ -10,7 +10,7 @@ blob="$KEYDIR/ec_key.bin"
 rm -f "$blob"
 
 # Generate the masked blob out-of-process (shares the keymat set above).
-"$MASKED_KEYGEN" "$blob"
+"$MASKED_KEYGEN" ec-generate --masked-out "$blob"
 
 # Load it via the engine (real ENGINE_load_private_key) and emit the public key.
 "$OPENSSL_BIN" pkey -engine azihsm -inform engine -in "azihsm://$blob;type=ec" -pubout

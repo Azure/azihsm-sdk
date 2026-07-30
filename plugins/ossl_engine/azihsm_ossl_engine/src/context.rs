@@ -40,9 +40,9 @@ use crate::SECRET_FILE_MODE;
 /// production build has no default, so an unset `AZIHSM_CREDENTIALS_*` is a
 /// hard error rather than a silent authentication with a well-known PIN.
 #[cfg(feature = "mock")]
-const DEFAULT_CRED_ID: [u8; 16] = [1u8; 16];
+pub(crate) const DEFAULT_CRED_ID: [u8; 16] = [1u8; 16];
 #[cfg(feature = "mock")]
-const DEFAULT_CRED_PIN: [u8; 16] = [2u8; 16];
+pub(crate) const DEFAULT_CRED_PIN: [u8; 16] = [2u8; 16];
 
 const ENV_CREDENTIALS_ID: &str = "AZIHSM_CREDENTIALS_ID";
 const ENV_CREDENTIALS_PIN: &str = "AZIHSM_CREDENTIALS_PIN";
@@ -167,6 +167,7 @@ impl EngineData {
             keys.remove(pos);
         }
     }
+
 }
 
 /// Live HSM partition + session.
@@ -494,7 +495,7 @@ use azihsm_ossl_engine_core::ffi;
 /// file (`O_EXCL`, no clobber) mode 0600 and refuse a symlink at the path
 /// (`O_NOFOLLOW`). Used by the round-trip tests to stage a masked-key blob.
 #[cfg(test)]
-fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -511,7 +512,7 @@ fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 #[allow(unsafe_code)]
 #[allow(clippy::unwrap_used)]
-fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
+pub(crate) fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
     // SAFETY: ENGINE_new returns a fresh structural ref; wrapping it in Engine
     // is sound for the test, and the caller ENGINE_free's the returned raw ref.
     unsafe {
@@ -525,8 +526,11 @@ fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
     }
 }
 
+/// Mock-test support shared with other modules' tests (see `integration`):
+/// scratch dirs, caller-sourced OBK/POTA settings, and the process-shared
+/// MOBK path.
 #[cfg(all(test, feature = "mock"))]
-mod tests {
+pub(crate) mod test_support {
     #![allow(clippy::unwrap_used)]
 
     use std::fs;
@@ -534,20 +538,10 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
-    use azihsm_api::HsmEccCurve;
-    use azihsm_api::HsmEccKeyGenAlgo;
-    use azihsm_api::HsmKeyClass;
-    use azihsm_api::HsmKeyCommonProps;
-    use azihsm_api::HsmKeyKind;
-    use azihsm_api::HsmKeyManager;
-    use azihsm_api::HsmKeyPropsBuilder;
-    use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
-    use openssl::pkey::Public;
-    use serial_test::serial;
 
     use super::*;
 
@@ -556,13 +550,13 @@ mod tests {
     /// persists the MOBK here; later tests re-init from that MOBK (re-running
     /// init_bk3 fails). Shared across tests so the second open sees the first
     /// open's persisted MOBK.
-    fn shared_mobk_path() -> PathBuf {
+    pub(crate) fn shared_mobk_path() -> PathBuf {
         std::env::temp_dir().join(format!("engine-test-mobk-{}.bin", std::process::id()))
     }
 
-    struct Scratch(PathBuf);
+    pub(crate) struct Scratch(pub(crate) PathBuf);
     impl Scratch {
-        fn new(tag: &str) -> Self {
+        pub(crate) fn new(tag: &str) -> Self {
             static N: AtomicU64 = AtomicU64::new(0);
             let n = N.fetch_add(1, Ordering::SeqCst);
             let pid = std::process::id();
@@ -579,7 +573,7 @@ mod tests {
 
     /// Materialize a fresh P-384 key pair on disk + a 48-byte OBK, return
     /// settings pointing at them with resiliency enabled.
-    fn caller_settings(scratch: &Scratch) -> ResiliencySettings {
+    pub(crate) fn caller_settings(scratch: &Scratch) -> ResiliencySettings {
         let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
         let ec = EcKey::generate(&group).unwrap();
         let pkey = PKey::from_ec_key(ec).unwrap();
@@ -606,6 +600,27 @@ mod tests {
             pota_pub_path: Some(pub_path),
         }
     }
+}
+
+#[cfg(all(test, feature = "mock"))]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use azihsm_api::HsmEccCurve;
+    use azihsm_api::HsmEccKeyGenAlgo;
+    use azihsm_api::HsmKeyClass;
+    use azihsm_api::HsmKeyCommonProps;
+    use azihsm_api::HsmKeyKind;
+    use azihsm_api::HsmKeyManager;
+    use azihsm_api::HsmKeyPropsBuilder;
+    use foreign_types::ForeignType;
+    use openssl::pkey::PKey;
+    use openssl::pkey::Public;
+    use serial_test::serial;
+
+    use super::test_support::Scratch;
+    use super::test_support::caller_settings;
+    use super::*;
 
     // `#[serial]`: these share the process-global mock device (BK3 state),
     // so they must not run concurrently.

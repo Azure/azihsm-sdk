@@ -23,6 +23,7 @@ azihsm_ossl_engine = { features = [
   "integration",
   "mock",
 ], optional = true, path = "../../azihsm_ossl_engine" }
+zeroize.workspace = true
 
 [lints]
 workspace = true
