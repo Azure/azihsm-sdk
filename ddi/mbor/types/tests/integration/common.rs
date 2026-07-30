@@ -177,19 +177,91 @@ pub fn helper_verify_cert_chain(collaterals: &[Vec<u8>]) -> Result<bool, X509Cer
     leaf.validate_chain(&certificates[1..certificates.len()])
 }
 
+
+/// Retrieves the device's leaf certificate with retry logic to handle transient
+/// `InvalidCertificate` errors that occur during concurrent iDFU (softreset) operations.
+/// Retries the `get_cert` call every 50ms until it succeeds or the specified
+/// `retry_secs` window elapses. Returns the last result (success or error).
+ fn helper_get_cert_with_retry(
+     dev: &<AzihsmDdi as Ddi>::Dev,
+     retry_secs: u64,
+ ) -> Result<DdiGetCertificateCmdResp, DdiError> {
+    let start = std::time::Instant::now();
+    let retry_window = std::time::Duration::from_secs(retry_secs);
+    let mut result;
+
+    loop {
+        tracing::debug!("Get Certificate");
+
+        let cert_info = helper_get_cert_chain_info(dev);
+        assert!(cert_info.is_ok(), "cert_info {:?}", cert_info);
+        let resp = cert_info.unwrap();
+        let num_certs = resp.data.num_certs;
+
+        result = helper_get_certificate(dev, num_certs - 1);
+
+        if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
+            if start.elapsed() > retry_window {
+                break;
+            }
+            println!("Retrying the get_cert operation");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        } else {
+            break;
+        }
+    }
+    result
+
+}
+
+ /// Retrieves a certificate by ID with retry logic to handle transient
+ /// `InvalidCertificate` errors during concurrent iDFU (softreset) operations.
+ /// Retries every 50ms until success or `retry_secs` elapses.
+ fn helper_get_cert_by_id_with_retry(
+     dev: &<DdiTest as Ddi>::Dev,
+     cert_id: u8,
+     retry_secs: u64,
+ ) -> Result<DdiGetCertificateCmdResp, DdiError> {
+     let start = std::time::Instant::now();
+     let retry_window = std::time::Duration::from_secs(retry_secs);
+     let mut result;
+ 
+     loop {
+         tracing::debug!("Get Certificate id={}", cert_id);
+ 
+         result = helper_get_certificate(dev, cert_id);
+ 
+         if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
+             if start.elapsed() > retry_window {
+                 break;
+             }
+             println!("Retrying the get_cert operation for cert_id {}", cert_id);
+             std::thread::sleep(std::time::Duration::from_millis(50));
+         } else {
+             break;
+         }
+     }
+     result
+ }
+
 #[allow(dead_code)]
 pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u8> {
-    let result = helper_get_cert_chain_info(dev);
-    assert!(result.is_ok(), "result {:?}", result);
-    let resp = result.unwrap();
-
-    let num_certs = resp.data.num_certs;
-
-    // The leaf certificate is the partition ID cert
-    let result = helper_get_certificate(dev, num_certs - 1);
-    assert!(result.is_ok(), "result {:?}", result);
-    let resp = result.unwrap();
-
+    let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
+    
+    let resp = if idfu_enabled {
+         tracing::debug!("Device is in IDfu mode");
+         helper_get_cert_with_retry(dev, 5).unwrap()
+     } else {
+         tracing::debug!("Device is not in IDfu mode");
+         let result = helper_get_cert_chain_info(dev);
+         assert!(result.is_ok(), "result {:?}", result);
+         let chain_resp = result.unwrap();
+         let num_certs = chain_resp.data.num_certs;
+         let result = helper_get_certificate(dev, num_certs - 1);
+         assert!(result.is_ok(), "result {:?}", result);
+         result.unwrap()
+     };
+    
     let cert_der = resp.data.certificate.as_slice();
 
     // Verify the leaf cert with the cert chain to ensure it is valid
@@ -272,6 +344,7 @@ pub fn helper_verify_leaf_cert(
     //    cert id is 0 to num_certs - 1.
     // 3. Gets the partition id cert using DDI command GetCertificate which is the last cert in the chain
 
+    let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
     let result = helper_get_cert_chain_info(dev);
     assert!(result.is_ok(), "result {:?}", result);
 
@@ -280,10 +353,19 @@ pub fn helper_verify_leaf_cert(
 
     let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
     for i in 0..num_certs - 1 {
-        let result = helper_get_certificate(dev, i);
-        assert!(result.is_ok(), "result {:?}", result);
+         let resp = if idfu_enabled {
+             tracing::debug!("Device is in IDfu mode, retrying get_certificate for cert {}", i);
+             helper_get_cert_by_id_with_retry(dev, i, 5).unwrap()
+         } else {
+             let result = helper_get_certificate(dev, i);
+             assert!(result.is_ok(), "result {:?}", result);
+             result.unwrap()
+         };
 
-        let resp = result.unwrap();
+        // let result: Result<DdiGetCertificateCmdResp, DdiError> = helper_get_certificate(dev, i);
+        // assert!(result.is_ok(), "result {:?}", result);
+
+        // let resp = result.unwrap();
         let der = &resp.data.certificate.as_slice();
         print!("cert DER {:?}", der);
 
@@ -298,9 +380,16 @@ pub fn helper_verify_leaf_cert(
 }
 
 pub fn helper_get_pota_endorsement(dev: &<DdiTest as Ddi>::Dev) -> (Vec<u8>, Vec<u8>) {
+    let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
     let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
-    // Get last cert
-    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let leaf_cert_id = get_cert_chain_info.data.num_certs - 1;
+    let cert_resp = if idfu_enabled {
+         tracing::debug!("Device is in IDfu mode");
+         helper_get_cert_by_id_with_retry(dev, leaf_cert_id, 5).unwrap()
+     } else {
+         tracing::debug!("Device is not in IDfu mode");
+         helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap()
+     };
     let cert = cert_resp.data.certificate.as_slice();
     let cert = X509Certificate::from_der(cert).unwrap();
     let cert_pub_key_der = cert.get_public_key_der().unwrap();
