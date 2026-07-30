@@ -14,9 +14,9 @@
 //! expensive, so it is never done at partition enable — each PAL
 //! materialises the key behind the property read instead: the std
 //! (emulator) PAL generates it lazily and synchronously on first read,
-//! while hardware PALs generate it in the background from partition
-//! init and leave the property unset until ready.  An absent id
-//! therefore means generation is still pending, which this handler
+//! while hardware PALs import it (staged in GSRAM by the HSP) on first
+//! read and leave the property unset until it is available.  An absent
+//! id therefore means the key is not yet available, which this handler
 //! surfaces as `PendingKeyGeneration` so the host retries.  No public
 //! key is cached: it is derived from the vault
 //! private key on demand (matching the reference firmware).
