@@ -18,13 +18,15 @@
 //!
 //! # Status
 //!
-//! AES-256-CBC, HKDF, KBKDF, per-engine RSA-2048 mod-exp (standard and CRT),
-//! ECDH-P384, ECDSA-P384, and the RNG/DRBG FW-mode KAT are implemented. Further
-//! tests are appended to [`run_pre_op`] as they are added — each is a direct
-//! call, with per-PKA-engine tests wrapped in a
+//! AES-256-CBC, AES-256-ECB, AES-256-KWP, HKDF, KBKDF, per-engine RSA-2048
+//! mod-exp (standard and CRT), ECDH-P384, ECDSA-P384, and the RNG/DRBG FW-mode
+//! KAT are implemented. Further tests are appended to [`run_pre_op`] as they
+//! are added — each is a direct call, with per-PKA-engine tests wrapped in a
 //! `for engine in 0..PKA_ENGINES` loop.
 
 mod aes_cbc;
+mod aes_ecb;
+mod aes_kwp;
 mod kdf;
 mod pka;
 mod vectors;
@@ -41,6 +43,8 @@ use crate::UnoHsmPal;
 /// the reference firmware's `preops_cast` — positive known-answer tests only.
 pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> {
     aes_cbc::run_aes_cbc(pal, io).await?;
+    aes_ecb::run_aes_ecb(pal, io).await?;
+    aes_kwp::run_aes_kwp(pal, io).await?;
     kdf::run_hkdf(pal, io).await?;
     kdf::run_kbkdf(pal, io).await?;
     for engine in 0..pka::PKA_ENGINES {
