@@ -250,7 +250,7 @@ pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u
     
     let resp = if idfu_enabled {
          tracing::debug!("Device is in IDfu mode");
-         helper_get_cert_with_retry(dev, 9).unwrap()
+         helper_get_cert_with_retry(dev, 15).unwrap()
      } else {
          tracing::debug!("Device is not in IDfu mode");
          let result = helper_get_cert_chain_info(dev);
@@ -355,7 +355,7 @@ pub fn helper_verify_leaf_cert(
     for i in 0..num_certs - 1 {
          let resp = if idfu_enabled {
              tracing::debug!("Device is in IDfu mode, retrying get_certificate for cert {}", i);
-             helper_get_cert_by_id_with_retry(dev, i, 9).unwrap()
+             helper_get_cert_by_id_with_retry(dev, i, 15).unwrap()
          } else {
              let result = helper_get_certificate(dev, i);
              assert!(result.is_ok(), "result {:?}", result);
@@ -385,7 +385,7 @@ pub fn helper_get_pota_endorsement(dev: &<DdiTest as Ddi>::Dev) -> (Vec<u8>, Vec
     let leaf_cert_id = get_cert_chain_info.data.num_certs - 1;
     let cert_resp = if idfu_enabled {
          tracing::debug!("Device is in IDfu mode");
-         helper_get_cert_by_id_with_retry(dev, leaf_cert_id, 9).unwrap()
+         helper_get_cert_by_id_with_retry(dev, leaf_cert_id, 15).unwrap()
      } else {
          tracing::debug!("Device is not in IDfu mode");
          helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap()
