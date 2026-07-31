@@ -350,6 +350,34 @@ pub enum HsmError {
     /// carries the requested selector (SVN / owner id).
     SeedNotFound = 0x08700100,
 
+    /// A per-command undo-log push failed because the fixed
+    /// per-command log buffer is full (its entry slots would overrun
+    /// the byte-pre-image arena).  Distinct from
+    /// [`NotEnoughSpace`](Self::NotEnoughSpace), which signals genuine
+    /// vault/resource exhaustion: an `UndoLogFull` instead indicates a
+    /// firmware sizing bug — the handler records more inverse actions
+    /// than its opcode's `UNDO_LOG_SIZE` budget allows — and should
+    /// never occur in a correctly-sized handler.
+    UndoLogFull = 0x08700101,
+
+    /// A command was asked to operate on a [`HsmKeyScope`](crate::HsmKeyScope)
+    /// whose backing key material does not (yet) exist on the partition.
+    /// Returned by `SdSealingKeyGen` for the `Session` and
+    /// `SecurityDomain` scopes: their masking keys are provisioned by
+    /// commands that are not yet implemented (session-key masking /
+    /// `CreateSD`'s `SDKMK`).  Distinct from
+    /// [`InvalidArg`](Self::InvalidArg) (a malformed request) — the
+    /// request is well-formed, the scope is simply unsupported for now.
+    UnsupportedKeyScope = 0x08700102,
+
+    /// Returned by `KeyReport` when the masked key's kind cannot be
+    /// attested: symmetric keys (no public component to bind), RSA
+    /// private keys (public-modulus extraction not yet implemented), and
+    /// every non-attestable / internal kind.  Distinct from
+    /// [`UnsupportedCmd`](Self::UnsupportedCmd) (an unknown command) —
+    /// the command is supported, the key type simply is not.
+    UnsupportedKeyType = 0x08700103,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed: not a whole number of 16-byte SGL descriptors, or
     /// larger than a single descriptor page.
@@ -359,6 +387,49 @@ pub enum HsmError {
     /// 4K-page-aligned, so the descriptor array could straddle a page.
     IoChannelInvalidOobAlignment = 0x08700105,
 
+    /// `PartFinal` was asked to restore a `prev_local_mk_backup` whose
+    /// bound SVN is **newer** than this firmware's current SVN — an
+    /// anti-rollback violation: a backup minted under a newer platform
+    /// SVN must not be restored on older firmware.  Distinct from
+    /// [`InvalidArg`](Self::InvalidArg) (a malformed request) — the
+    /// envelope is well-formed, its lineage is simply too new.
+    PartFinalBackupSvnRollback = 0x08700106,
+
+    /// `PartFinal` validated the supplied PTA certificate chain
+    /// (well-formed and correctly anchored to the policy `POTAPubKey`),
+    /// but the chain's **leaf** public key does not match this
+    /// partition's Partition Trust Anchor (PTA) key.  Distinct from an
+    /// [`X509`](Self::X509SignatureInvalid) chain error — the chain is
+    /// cryptographically valid, its identity is simply wrong.
+    PartFinalPtaMismatch = 0x08700107,
+
+    /// The TBOR `SdCreateRemoteBackup` handler was asked to create a
+    /// security domain on a partition whose one-shot
+    /// [`SD_INITIALIZED`](crate::PartPropId::SD_INITIALIZED) flag is
+    /// already set (the security-domain masking key `SDMK` is already
+    /// provisioned in this partition incarnation).  The one-shot gate
+    /// permits only `false → true`; reset happens PAL-internally on
+    /// partition free / NSSR.
+    SdAlreadyInitialized = 0x08700108,
+
+    /// A `SdRestore*` handler was asked to restore a security-domain
+    /// backup whose bound SVN is **newer** than the current firmware SVN.
+    /// A backup minted under a newer SVN cannot be restored on this
+    /// (older) firmware (anti-rollback); older-or-equal SVNs are accepted
+    /// since the masking keys are re-derivable from the versioned device
+    /// seeds.  Enforced only after the AEAD tag authenticates the
+    /// envelope, so a tampered cleartext SVN fails the tag rather than
+    /// spoofing this error.
+    SdBackupSvnRollback = 0x08700109,
+
+    /// A `SdCreatePeerBackup` / `SdRestorePeerBackup` handler was asked to
+    /// clone a security domain to (or from) a peer partition, but the
+    /// partition's unified [`PartPolicy`](crate::PartPolicy) does not permit
+    /// peer cloning (its `allow_peer_cloning` policy flag is clear).  Peer
+    /// backup/restore is only allowed when the security-domain owner has
+    /// opted in via policy.
+    SdPeerCloningNotAllowed = 0x0870010A,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
@@ -366,9 +437,11 @@ pub enum HsmError {
     // returned over the wire).
     /// A Rust `panic!` reached the firmware panic handler.
     Panic = 0x08F00001,
+
     /// A CPU `HardFault` exception was taken (an escalated bus/usage/mem
     /// fault, or a stack overflow).
     HardFault = 0x08F00002,
+
     /// An exception or interrupt with no dedicated handler reached the
     /// `DefaultHandler`.
     UnexpectedException = 0x08F00003,

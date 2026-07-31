@@ -18,11 +18,14 @@ use super::*;
 
 /// Handle `DdiEcdhKeyExchangeCmd`.
 ///
-/// No `partition_lock` is needed.  Although `vault_key_create` is now
-/// awaited (it can yield on Uno during the GDMA key copy), DDI commands
-/// run on a single-threaded cooperative executor with one command in
-/// flight per partition, so no concurrent handler can interleave with
-/// this one — there is nothing for a lock to serialize.
+/// No `partition_lock` is needed.  DDI commands execute on a
+/// single-threaded cooperative executor; multiple IOs are in flight and
+/// interleave at await points — including inside the awaited
+/// `vault_key_create` (which can yield on Uno during the GDMA key copy) —
+/// but this handler's only partition-state mutation is that single,
+/// self-contained `vault_key_create`, with no multi-step
+/// read-modify-write across an await for an interleaved handler to
+/// corrupt.
 pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -62,43 +65,71 @@ pub(crate) async fn ecdh_key_exchange<'p, P: HsmPal>(
         return Err(HsmError::InvalidArg);
     }
 
-    // Derive into a DMA scratch slot; `vault_key_create` copies it
-    // into vault-owned storage so the scratch can drop after.
-    let secret = pal.dma_alloc(io, curve.secret_len())?;
+    // Derive the shared secret into a per-IO DMA scratch slot. The fallible
+    // work between derivation and response encoding runs inside an `async`
+    // block so the raw secret can be scrubbed unconditionally afterwards —
+    // Uno does not clear per-IO DMA on scope rewind / IO teardown (only the
+    // bump watermark is reset), so an unscrubbed secret would linger in GSRAM
+    // and could leak into a later allocation.
+    //
+    // Allocate the secret zeroed to wire (word-padded) coordinate length
+    // to match vault storage format and ensure P-521 pad bytes are zero.
+    let secret = pal.dma_alloc_zeroed(io, curve.wire_coord_len())?;
     let priv_key = pal.vault_key(io, priv_key_id)?;
-    pal.ecdh_derive(
-        io,
-        curve,
-        priv_key,
-        &body.pub_key_der[..wire_pub_key_len],
-        secret,
-    )
-    .await?;
 
-    // RAII vault entry — rolls back if response encoding below
-    // fails.  `masked_key` is the host's opaque re-import blob;
-    // firmware-side masking is pending the `UnmaskKey` handler, so
-    // we emit an empty placeholder for wire validity.
-    let key_id: u16 = pal
-        .vault_key_create(
+    let res = async {
+        pal.ecdh_derive(
             io,
+            curve,
+            priv_key,
+            &body.pub_key_der[..wire_pub_key_len],
             secret,
-            super::from_pal::ecdh_secret(curve),
-            target_attrs.session().then_some(HsmSessId::from(sess_id)),
-            target_attrs,
         )
-        .await?
-        .into();
+        .await?;
 
-    let resp = pal.dma_alloc_var(io, |buf| {
-        super::encode_resp(
-            &super::success_hdr_sess(hdr, DdiOp::EcdhKeyExchange, sess_id),
-            &DdiEcdhKeyExchangeResp {
-                key_id,
-                masked_key: &[],
+        // Commit the derived shared secret to the vault, session-scoped
+        // iff requested.
+        let key_id: u16 = pal
+            .vault_key_create(
+                io,
+                secret,
+                super::from_pal::ecdh_secret(curve),
+                target_attrs.session().then_some(HsmSessId::from(sess_id)),
+                target_attrs,
+            )
+            .await?
+            .into();
+
+        // Envelope the derived shared secret into the host's re-import blob.
+        let masked_key = super::masking::mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            super::masking::MaskSpec {
+                attrs: target_attrs,
+                key_type: super::from_pal::ecdh_secret_ddi(curve),
+                key_label: body.key_properties.key_label,
+                key_length: secret.len() as u16,
             },
-            buf,
+            &secret[..],
         )
-    })?;
-    Ok(resp)
+        .await?;
+
+        let resp = pal.dma_alloc_var(io, |buf| {
+            super::encode_resp(
+                &super::success_hdr_sess(hdr, DdiOp::EcdhKeyExchange, sess_id),
+                &DdiEcdhKeyExchangeResp { key_id, masked_key },
+                buf,
+            )
+        })?;
+        Ok::<&'p DmaBuf, HsmError>(resp)
+    }
+    .await;
+
+    // Scrub the raw shared secret on every exit path — success and the `?`
+    // errors inside the block above — before the per-IO scratch is reused
+    // (Uno does not scrub per-IO DMA on teardown). `DmaBuf::zeroize` is a
+    // volatile, un-elidable wipe.
+    secret.zeroize();
+    res
 }

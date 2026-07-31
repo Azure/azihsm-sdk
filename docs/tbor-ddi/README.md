@@ -56,14 +56,23 @@ single `none` TOC placeholder and no typed body fields.
 | `0x05` | `SessionClose` | InSession | [`commands/session_close.md`](./commands/session_close.md) |
 | `0x06` | `PskChange` | InSession | [`commands/psk_change.md`](./commands/psk_change.md) |
 | `0x07` | `PartInit` | InSession | [`commands/part_init.md`](./commands/part_init.md) |
-| `0x08` | `PartFinal` (schema-only) | InSession | [`commands/part_final.md`](./commands/part_final.md) |
-| `0x09` | `SdSealingKeyGen` (schema-only) | InSession | [`commands/sd_sealing_key_gen.md`](./commands/sd_sealing_key_gen.md) |
-| `0x0A` | `SdCreateRemoteBackup` (schema-only) | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
-| `0x0B` | `SdResealBackup` (schema-only) | InSession | [`commands/sd_reseal_backup.md`](./commands/sd_reseal_backup.md) |
-| `0x0C` | `SdRestoreRemoteBackup` (schema-only) | InSession | [`commands/sd_restore_remote_backup.md`](./commands/sd_restore_remote_backup.md) |
-| `0x0D` | `SdRestoreLocalBackup` (schema-only) | InSession | [`commands/sd_restore_local_backup.md`](./commands/sd_restore_local_backup.md) |
-| `0x0E` | `SdCreatePeerBackup` (schema-only) | InSession | [`commands/sd_create_peer_backup.md`](./commands/sd_create_peer_backup.md) |
-| `0x0F` | `SdRestorePeerBackup` (schema-only) | InSession | [`commands/sd_restore_peer_backup.md`](./commands/sd_restore_peer_backup.md) |
+| `0x08` | `PartFinal` | InSession | [`commands/part_final.md`](./commands/part_final.md) |
+| `0x09` | `SdSealingKeyGen` | InSession | [`commands/sd_sealing_key_gen.md`](./commands/sd_sealing_key_gen.md) |
+| `0x0A` | `SdCreateRemoteBackup` | InSession | [`commands/sd_create_remote_backup.md`](./commands/sd_create_remote_backup.md) |
+| `0x0B` | `SdResealRemoteBackup` | InSession | [`commands/sd_reseal_remote_backup.md`](./commands/sd_reseal_remote_backup.md) |
+| `0x0C` | `SdRestoreRemoteBackup` | InSession | [`commands/sd_restore_remote_backup.md`](./commands/sd_restore_remote_backup.md) |
+| `0x0D` | `SdRestoreLocalBackup` | InSession | [`commands/sd_restore_local_backup.md`](./commands/sd_restore_local_backup.md) |
+| `0x0E` | `SdCreatePeerBackup` | InSession | [`commands/sd_create_peer_backup.md`](./commands/sd_create_peer_backup.md) |
+| `0x0F` | `SdRestorePeerBackup` | InSession | [`commands/sd_restore_peer_backup.md`](./commands/sd_restore_peer_backup.md) |
+| `0x10` | `KeyReport` | InSession | [`commands/key_report.md`](./commands/key_report.md) |
+| `0x11` | `HmacGenerateKey` | InSession | [`commands/hmac_generate_key.md`](./commands/hmac_generate_key.md) |
+| `0x12` | `Hmac` | InSession | [`commands/hmac.md`](./commands/hmac.md) |
+| `0x13` | `GetUnwrappingKey` | InSession | [`commands/get_unwrapping_key.md`](./commands/get_unwrapping_key.md) |
+| `0x14` | `UnwrapKey` | InSession | [`commands/unwrap_key.md`](./commands/unwrap_key.md) |
+| `0x17` | `EccGenerateKey` | InSession | [`commands/ecc_generate_key.md`](./commands/ecc_generate_key.md) |
+| `0x18` | `EccSign` | InSession | [`commands/ecc_sign.md`](./commands/ecc_sign.md) |
+| `0x19` | `EcdhDerive` | InSession | [`commands/ecdh_derive.md`](./commands/ecdh_derive.md) |
+| `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](./commands/rsa_mod_exp.md) |
 
 ## Default-PSK gate
 

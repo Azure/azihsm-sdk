@@ -13,8 +13,8 @@
 //!
 //! * `pk_hsm` retrieval via the MBOR cert-chain (`GetCertChainInfo`
 //!   + `GetCertificate`) — the production attestation path that reads
-//!   the partition-ID cert (its SubjectPublicKeyInfo carries the P-384
-//!   key the FW uses as `pk_s` in HPKE `auth_psk`).
+//!     the partition-ID cert (its SubjectPublicKeyInfo carries the P-384
+//!     key the FW uses as `pk_s` in HPKE `auth_psk`).
 
 use azihsm_crypto::*;
 use azihsm_ddi::AzihsmDdi;

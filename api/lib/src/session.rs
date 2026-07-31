@@ -135,6 +135,37 @@ impl HsmSession {
         self.inner.write().set_bmk_session(bmk_session);
     }
 
+    /// Returns the active TBOR (V2, security-domain) session id.
+    ///
+    /// Yields the session id for a V2 session, or
+    /// [`HsmError::InvalidSession`] for a V1 session. Used by the DDI
+    /// layer to bind security-domain commands to the session.
+    pub(crate) fn ex_session_id(&self) -> HsmResult<u16> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => Ok(inner.id),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `PskChange` (opcode `0x06`) on this session.
+    ///
+    /// Rotates this session's own partition PSK to `new_psk`, sealed
+    /// under the session `param_key`. The slot is implied by the session
+    /// role (CO session → CO, CU session → CU). Required once on a fresh
+    /// partition to move past the default-PSK gate before provisioning.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn change_psk(&self, new_psk: &[u8; PSK_LEN]) -> HsmResult<()> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { param_key, .. } => {
+                ddi::psk_change(&inner.partition, inner.id, param_key, new_psk)
+            }
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
     /// Issues TBOR `PartInit` (opcode `0x07`) on this CO session.
     ///
     /// Seals `mach_seed` under the session `param_key` and ships it
@@ -148,7 +179,7 @@ impl HsmSession {
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
         sapota_thumbprint: Option<&[u8]>,
-    ) -> HsmResult<PartInitResult> {
+    ) -> HsmResult<HsmPartInitExResult> {
         let inner = self.inner.read();
         match &inner.kind {
             SessionKind::Ver2 { param_key, .. } => ddi::part_init_ex(
@@ -160,6 +191,91 @@ impl HsmSession {
                 pota_thumbprint,
                 sata_thumbprint,
                 sapota_thumbprint,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `PartFinal` (opcode `0x08`) on this CO session.
+    ///
+    /// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+    /// and the PTA certificate chain (as a list of [`HsmCert`]s),
+    /// optionally restoring a prior `local_mk` backup. Only valid on a V2
+    /// session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn part_final_ex(
+        &self,
+        part_policy: &[u8],
+        pta_cert_chain: &[HsmCert<'_>],
+        prev_local_mk_backup: Option<&[u8]>,
+    ) -> HsmResult<HsmPartFinalExResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::part_final_ex(
+                &inner.partition,
+                inner.id,
+                part_policy,
+                pta_cert_chain,
+                prev_local_mk_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdCreateRemoteBackup` (opcode `0x0A`) on this CO
+    /// session.
+    ///
+    /// Creates a new security domain from the caller-supplied unified
+    /// `policy`, using the sender's `masked_sealing_key` (from
+    /// `SdSealingKeyGen`) and the receiver's attestation `evidence`.
+    /// Returns the remote backup together with the device-local backups.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_create_remote_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        receiver_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+    ) -> HsmResult<HsmSdRemoteBackupResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_create_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                receiver_evidence,
+                policy,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdResealRemoteBackup` (opcode `0x0B`) on this CO
+    /// session.
+    ///
+    /// HPKE-opens `src_remote_backup` with the receiver's
+    /// `masked_sealing_key` (authenticated by the source sender in
+    /// `src_evidence`) and reseals the recovered backup to the destination
+    /// receiver (`dest_evidence`), returning the resealed remote backup.
+    /// Only valid on a V2 session; a V1 session returns
+    /// [`HsmError::InvalidSession`].
+    pub fn sd_reseal_remote_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        src_evidence: &HsmSdEvidence<'_>,
+        dest_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        src_remote_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_reseal_remote_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                src_evidence,
+                dest_evidence,
+                policy,
+                src_remote_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }

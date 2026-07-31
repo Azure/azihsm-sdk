@@ -38,7 +38,9 @@
 mod alloc;
 mod cert;
 mod crypto;
+mod dev_id_cblob;
 mod gdma;
+mod gsram_alias;
 mod io;
 mod ipc;
 mod lock;

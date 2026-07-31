@@ -152,6 +152,20 @@ pub enum PartState {
     /// has not yet run.  No further `PartInit` is permitted until
     /// the next alloc/free cycle (one-shot enforcement).
     Initializing = 4,
+
+    /// The TBOR `PartFinal` handler has finalized the partition:
+    /// the partition-local masking keys are derived and the current
+    /// `local_mk` backup has been issued.  Reached once from
+    /// [`Initializing`](Self::Initializing) (one-shot per alloc/free
+    /// cycle); the partition continues to serve DDI traffic.
+    Initialized = 5,
+
+    /// The partition is **quarantined**: an undo-log rollback failed a
+    /// consistency-critical restore, so the in-memory state is incoherent.
+    /// Host IO is dropped (the dispatcher's enable gate excludes this state)
+    /// and the partition cannot be re-enabled — only a free/realloc cycle
+    /// (or reboot) clears the fault.
+    Faulted = 6,
 }
 
 impl PartState {
@@ -178,6 +192,8 @@ impl PartState {
             2 => Some(Self::Enabled),
             3 => Some(Self::Disabled),
             4 => Some(Self::Initializing),
+            5 => Some(Self::Initialized),
+            6 => Some(Self::Faulted),
             _ => None,
         }
     }
@@ -755,6 +771,15 @@ impl PartPropId {
     /// PAL-internally on partition free / NSSR.
     pub const BK3_INITIALIZED: PartPropId = PartPropId(0x0008);
 
+    /// One-shot security-domain initialization flag.  Bool,
+    /// `RequiredPresent`, `Rw`.  A redundant `true` write (the flag is
+    /// already set in this incarnation) is rejected with
+    /// [`HsmError::SdAlreadyInitialized`] — the atomic race-winner gate
+    /// for `SdCreateRemoteBackup`.  A `false` write is permitted so the
+    /// TBOR undo log can roll the claim back on a failed command; the
+    /// flag is also reset PAL-internally on partition free / NSSR.
+    pub const SD_INITIALIZED: PartPropId = PartPropId(0x0009);
+
     // ── Vault references (0x0010..) ───────────────────────────────
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition identity
@@ -775,8 +800,8 @@ impl PartPropId {
     pub const PTA_KEY_ID: PartPropId = PartPropId(0x0013);
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's
-    /// unwrapping key.  Read-only from caller perspective; assigned
-    /// by the PAL when the key is materialised.
+    /// unwrapping key.  Writable so `EstablishCredential` can re-import
+    /// the host-persisted key after a live migration.
     pub const RSA_UNWRAPPING_KEY_ID: PartPropId = PartPropId(0x0014);
 
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's
@@ -786,6 +811,23 @@ impl PartPropId {
     /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's
     /// one-shot establish-credential RSA-OAEP key.
     pub const ESTABLISH_CRED_KEY_ID: PartPropId = PartPropId(0x0016);
+
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition-local key
+    /// masking key (`PartLocalMK`).  Bound by the TBOR `PartFinal`
+    /// handler; recovered each launch from the caller-replayed
+    /// `local_mk_backup`.
+    pub const LOCAL_MK_KEY_ID: PartPropId = PartPropId(0x001B);
+
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the partition's ephemeral
+    /// key masking key (`EphemeralMK`).  Bound by the TBOR `PartFinal`
+    /// handler; freshly generated each launch (never backed up).
+    pub const EPHEMERAL_MK_KEY_ID: PartPropId = PartPropId(0x001C);
+
+    /// Vault [`HsmKeyId`](crate::HsmKeyId) for the security-domain key
+    /// masking key (`SDMK`).  Bound by the TBOR `SdCreateRemoteBackup`
+    /// handler; resolves the [`SecurityDomain`](crate::HsmKeyScope::SecurityDomain)
+    /// scope to its live masking key.
+    pub const SD_MK_KEY_ID: PartPropId = PartPropId(0x001D);
 
     /// Raw ECC-P384 public-key coordinates (x ∥ y, 96 B) of the
     /// partition identity key.  Read-only from caller perspective;
@@ -934,14 +976,19 @@ impl PartPropId {
             Self::GEN => PartPropMeta::scalar(U32, Ro, Req, false),
             Self::RES_COUNT => PartPropMeta::scalar(U8, Ro, Req, false),
             Self::BK3_INITIALIZED => PartPropMeta::scalar(Bool, Rw, Req, false),
+            Self::SD_INITIALIZED => PartPropMeta::scalar(Bool, Rw, Req, false),
 
             // ── Vault refs (HsmKeyId as u16) ──
-            Self::ID_KEY_ID | Self::RSA_UNWRAPPING_KEY_ID => VAULT_REF_RO,
+            Self::ID_KEY_ID => VAULT_REF_RO,
             Self::MK_KEY_ID
             | Self::UPS_KEY_ID
             | Self::PTA_KEY_ID
             | Self::SESSION_ENC_KEY_ID
-            | Self::ESTABLISH_CRED_KEY_ID => VAULT_REF_RW,
+            | Self::ESTABLISH_CRED_KEY_ID
+            | Self::LOCAL_MK_KEY_ID
+            | Self::EPHEMERAL_MK_KEY_ID
+            | Self::SD_MK_KEY_ID
+            | Self::RSA_UNWRAPPING_KEY_ID => VAULT_REF_RW,
 
             // ── Public-key views (fixed P-384 sizes) ──
             Self::ID_PUB_KEY | Self::SESSION_ENC_PUB_KEY | Self::ESTABLISH_CRED_PUB_KEY => {

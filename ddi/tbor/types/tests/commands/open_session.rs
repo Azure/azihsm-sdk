@@ -186,7 +186,7 @@ fn session_open_finish_unknown_session_id_emu() {
         .tbor(&req)
         .expect_err("finish against unknown session_id must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection, got {err:?}",
     );
 }
@@ -205,7 +205,7 @@ fn open_session_double_finish_emu() {
         .tbor(&req)
         .expect_err("second finish against the same slot must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection, got {err:?}",
     );
 }
@@ -254,4 +254,30 @@ fn open_session_multiple_concurrent_emu() {
         b.session_id(),
         "concurrent sessions must have distinct ids",
     );
+}
+
+#[test]
+fn open_session_cu_range_exhausted_rejected_emu() {
+    let ctx = TestCtx::new();
+    // The CU role occupies slots 1..=7 (7 slots); slot 0 is reserved for
+    // CO.  Fill every CU slot, holding the guards open, then a further CU
+    // handshake must be rejected because the range is exhausted.
+    let mut guards = Vec::new();
+    for _ in 0..7 {
+        guards.push(ctx.open_session(CU, SessionType::PlainText));
+    }
+    let err = ctx
+        .open_session_raw(CU, SessionType::PlainText)
+        .expect_err("a CU handshake with the range full must be rejected");
+
+    // Closing one session frees its slot, so a subsequent handshake
+    // succeeds again — the rejection was a capacity limit, not a
+    // permanent failure.
+    drop(guards.pop());
+    let _reopened = ctx.open_session(CU, SessionType::PlainText);
+
+    // Keep the remaining guards live until here so the table stayed full
+    // for the rejection above.
+    drop(guards);
+    let _ = err;
 }

@@ -37,6 +37,7 @@ pub(crate) enum HandleType {
     GenericSecretKey,
     RsaSignCtx,
     RsaVerifyCtx,
+    SealingKey,
 }
 
 struct Entry {

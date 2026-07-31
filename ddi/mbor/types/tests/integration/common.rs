@@ -738,7 +738,7 @@ pub fn store_rsa_keys_crt(
         Some(sess_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         rsa_priv_key,
-        DdiKeyClass::Rsa,
+        DdiKeyClass::RsaCrt,
         key_usage,
         key_tag,
     );
@@ -832,10 +832,8 @@ pub fn get_unwrapping_key(
         }
         assert!(resp.is_ok(), "resp {:?}", resp);
         let resp = resp.unwrap();
-        // The sim (mock) backend returns a populated masked-key
-        // envelope; the emu backend defers firmware-side masking and
-        // emits an empty placeholder for now, so only assert off-emu.
-        #[cfg(not(feature = "emu"))]
+        // Both the sim (mock) and emu (firmware) backends now return a
+        // populated masked-key envelope for the unwrapping key.
         assert!(!resp.data.masked_key.is_empty());
 
         return (

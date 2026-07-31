@@ -1,0 +1,22 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_core_evidence"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+azihsm_fw_core_crypto_key_report = { workspace = true }
+azihsm_fw_core_crypto_x509_chain = { workspace = true }
+azihsm_fw_ddi_tbor_types = { workspace = true }
+azihsm_fw_hsm_oob = { workspace = true }
+azihsm_fw_hsm_pal_traits = { workspace = true }
+
+[lints]
+workspace = true

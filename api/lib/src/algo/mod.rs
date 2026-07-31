@@ -42,6 +42,7 @@ mod hash;
 mod hmac;
 mod kdf;
 mod rsa;
+mod sealing;
 mod secret;
 
 pub use aes::*;
@@ -50,6 +51,7 @@ pub use hash::*;
 pub use hmac::*;
 pub use kdf::*;
 pub use rsa::*;
+pub use sealing::*;
 pub use secret::*;
 
 use super::*;
@@ -82,6 +84,13 @@ impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
         let res1 = ddi::delete_key(&session, handle.0, epoch);
         let res2 = ddi::delete_key(&session, handle.1, epoch);
         res1.and(res2)
+    }
+}
+
+impl HsmKeyHandleDelOp for ddi::HsmNoKeyHandle {
+    fn delete_key(_session: HsmSession, _handle: Self, _epoch: u64) -> Result<(), HsmError> {
+        // No-op: HsmNoKeyHandle represents a non-resident key with no device handle to delete.
+        Ok(())
     }
 }
 

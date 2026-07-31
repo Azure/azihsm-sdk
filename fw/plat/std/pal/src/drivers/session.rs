@@ -144,6 +144,41 @@ impl SessionTable {
         }
     }
 
+    /// Snapshot the set of Active session slots for a live-migration
+    /// disable.
+    ///
+    /// Returns a bitmask of the currently-Active slots so it can be
+    /// handed to [`restore`](Self::restore) after the partition's crypto
+    /// state has been cleared.  In-flight Pending handshakes are excluded
+    /// because they carry no reopenable credential state.  Mirrors the
+    /// reference firmware's `backup`/`restore` pair.
+    pub fn backup(&self) -> u8 {
+        self.alloc_mask & !self.pending_mask
+    }
+
+    /// Re-establish session slots preserved across a partition disable,
+    /// marking every survivor as [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation).
+    ///
+    /// `mask` is a snapshot taken by [`backup`](Self::backup) *before*
+    /// the partition's vault and keys were cleared.  Every bit set in
+    /// `mask` becomes an allocated slot needing renegotiation: its
+    /// physical vault mapping is dropped (the key material did not
+    /// survive the disable) and a subsequent `ReopenSession` re-keys it
+    /// via [`recreate`](Self::recreate).  Any leftover Pending state is
+    /// discarded.  Mirrors the reference firmware's `restore`.
+    pub fn restore(&mut self, mask: u8) {
+        self.alloc_mask = mask;
+        self.renego_mask = mask;
+        self.pending_mask = 0;
+        self.psk_change_mask = 0;
+        self.phys_ids = [0; MAX_SESSIONS];
+        for blob in &mut self.pending_blobs {
+            blob.clear();
+        }
+        self.pending_seqs = [0u64; MAX_SESSIONS];
+        self.next_init_seq = 0;
+    }
+
     /// Validate that a logical session ID refers to an allocated slot.
     /// Returns the slot index on success.
     fn active_slot(&self, id: HsmSessId) -> HsmResult<usize> {
@@ -307,7 +342,9 @@ impl SessionTable {
             return Ok(HsmSessId::from(slot as u16));
         }
 
-        // 3. All slots in range are Active or NeedsRenegotiation.
+        // 3. All slots in range are Active or NeedsRenegotiation.  A
+        //    NeedsRenegotiation slot is reserved for its own
+        //    `ReopenSession`; it is never reclaimed by a fresh handshake.
         Err(HsmError::VaultSessionLimitReached)
     }
 
@@ -598,6 +635,133 @@ mod tests {
             .create_pending(SessionRole::CryptoOfficer, b"x")
             .unwrap_err();
         assert_eq!(err, HsmError::VaultSessionLimitReached);
+    }
+
+    #[test]
+    fn co_init_with_slot_zero_renego_returns_limit_reached() {
+        let mut table = SessionTable::new();
+        // A CO session left NeedsRenegotiation by a live-migration disable
+        // is reserved for its own ReopenSession — a fresh CO handshake must
+        // NOT reclaim it, and reports the table full instead.
+        let id = table
+            .create_pending(SessionRole::CryptoOfficer, b"hs")
+            .unwrap();
+        table.promote(id, HsmKeyId::from(0xCAFE)).unwrap();
+        table.set_needs_renego(id);
+        assert!(matches!(
+            table.state(id),
+            HsmSessionState::NeedsRenegotiation
+        ));
+        let err = table
+            .create_pending(SessionRole::CryptoOfficer, b"fresh")
+            .unwrap_err();
+        assert_eq!(err, HsmError::VaultSessionLimitReached);
+    }
+
+    #[test]
+    fn cu_init_with_all_renego_returns_limit_reached() {
+        let mut table = SessionTable::new();
+        // Fill the CU range (slots 1..=7) with sessions and mark them all
+        // NeedsRenegotiation (as a live-migration disable would). A fresh
+        // CU handshake must NOT reclaim any of them — they are reserved for
+        // their own ReopenSession — and reports the table full instead.
+        for _ in 1u16..=7 {
+            let id = table
+                .create_pending(SessionRole::CryptoUser, b"cu")
+                .unwrap();
+            table.promote(id, HsmKeyId::from(0x100)).unwrap();
+            table.set_needs_renego(id);
+        }
+        let err = table
+            .create_pending(SessionRole::CryptoUser, b"fresh")
+            .unwrap_err();
+        assert_eq!(err, HsmError::VaultSessionLimitReached);
+    }
+
+    #[test]
+    fn legacy_create_skips_renego_slot_and_uses_next_free() {
+        let mut table = SessionTable::new();
+        // An Active session in slot 0 marked NeedsRenegotiation must be
+        // skipped by the legacy `create` path: a fresh session lands in the
+        // next free slot rather than reclaiming the renego slot.
+        let id0 = table.create(HsmKeyId::from(0x10)).unwrap();
+        table.set_needs_renego(id0);
+        assert!(matches!(
+            table.state(id0),
+            HsmSessionState::NeedsRenegotiation
+        ));
+
+        let id1 = table.create(HsmKeyId::from(0x11)).unwrap();
+        assert_eq!(u16::from(id1), 1);
+        // The renego slot is untouched and still reopenable.
+        assert!(matches!(
+            table.state(id0),
+            HsmSessionState::NeedsRenegotiation
+        ));
+    }
+
+    #[test]
+    fn legacy_create_with_all_renego_returns_limit_reached() {
+        let mut table = SessionTable::new();
+        for i in 0u16..MAX_SESSIONS as u16 {
+            let id = table.create(HsmKeyId::from(0x100 + i)).unwrap();
+            table.set_needs_renego(id);
+        }
+        let err = table.create(HsmKeyId::from(0x999)).unwrap_err();
+        assert_eq!(err, HsmError::VaultSessionLimitReached);
+    }
+
+    #[test]
+    fn backup_snapshots_active_and_renego_but_not_pending() {
+        let mut table = SessionTable::new();
+        // slot 0: Active (CO); slot 1: NeedsRenegotiation (CU); slot 2:
+        // Pending (CU, in-flight handshake).
+        table.create(HsmKeyId::from(0xA0)).unwrap(); // slot 0 Active
+        let renego = table.create_pending(SessionRole::CryptoUser, b"r").unwrap();
+        table.promote(renego, HsmKeyId::from(0xA1)).unwrap();
+        table.set_needs_renego(renego); // slot 1 renego
+        table.create_pending(SessionRole::CryptoUser, b"p").unwrap(); // slot 2 Pending
+
+        // Active + renego preserved; the in-flight Pending is excluded.
+        assert_eq!(table.backup(), 0b0000_0011);
+    }
+
+    #[test]
+    fn restore_marks_all_survivors_renego_and_drops_pending() {
+        let mut table = SessionTable::new();
+        // A Pending in-flight handshake must not survive the disable.
+        table.create_pending(SessionRole::CryptoUser, b"p").unwrap();
+        // Re-apply a snapshot of slots 0 and 3.
+        table.restore(0b0000_1001);
+
+        assert!(matches!(
+            table.state(HsmSessId::from(0)),
+            HsmSessionState::NeedsRenegotiation
+        ));
+        assert!(matches!(
+            table.state(HsmSessId::from(3)),
+            HsmSessionState::NeedsRenegotiation
+        ));
+        // The pre-restore Pending slot (2) is gone.
+        assert!(matches!(
+            table.state(HsmSessId::from(2)),
+            HsmSessionState::Invalid
+        ));
+    }
+
+    #[test]
+    fn delete_frees_a_renego_slot() {
+        let mut table = SessionTable::new();
+        // A NeedsRenegotiation session can still be torn down (CloseSession),
+        // which frees its slot for a subsequent fresh handshake.
+        let id = table.create(HsmKeyId::from(0x42)).unwrap();
+        table.set_needs_renego(id);
+        table.delete(id).unwrap();
+        assert!(matches!(table.state(id), HsmSessionState::Invalid));
+
+        // The freed slot is now reusable.
+        let reused = table.create(HsmKeyId::from(0x43)).unwrap();
+        assert_eq!(u16::from(reused), u16::from(id));
     }
 
     #[test]

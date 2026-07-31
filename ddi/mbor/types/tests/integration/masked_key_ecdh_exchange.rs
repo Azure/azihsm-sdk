@@ -60,7 +60,6 @@ fn test_ecdh_key_exchange(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, key_
             None,
         );
 
-    let key_tag = 1;
     let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
     let resp = helper_ecdh_key_exchange(
         dev,
@@ -68,7 +67,7 @@ fn test_ecdh_key_exchange(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, key_
         Some(DdiApiRev { major: 1, minor: 0 }),
         priv_key_id1,
         MborByteArray::new(pub_key2, pub_key2_len).expect("failed to create byte array"),
-        Some(key_tag),
+        None,
         key_type,
         key_props,
     );
@@ -85,28 +84,24 @@ fn test_ecdh_key_exchange(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, key_
         MaskedKeyAttributes::DERIVE | MaskedKeyAttributes::LOCAL
     ));
 
-    let resp = helper_get_new_key_id_from_unmask(
+    let del = helper_delete_key(
         dev,
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         key_id,
-        true,
-        masked_key,
     );
+    assert!(del.is_ok(), "delete_key {:?}", del);
 
-    assert!(resp.is_ok(), "resp {:?}", resp);
-    let (new_key_id, _, _) = resp.unwrap();
-
-    // Confirm we can find the secret by tag
-    let resp = helper_open_key(
+    let resp = helper_unmask_key(
         dev,
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
-        key_tag,
+        masked_key,
     );
-    assert!(resp.is_ok(), "resp {:?}", resp);
+    assert!(resp.is_ok(), "unmask {:?}", resp);
     let resp = resp.unwrap();
-
-    assert_eq!(resp.data.key_id, new_key_id);
-    assert_eq!(resp.data.key_kind, key_type);
+    assert_eq!(
+        resp.data.kind, key_type,
+        "unmasked kind must match the derived secret",
+    );
 }

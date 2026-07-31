@@ -57,8 +57,8 @@ const ECC384_KEY_LEN: usize = POLICY_MAX_KEY_LEN;
 /// describe a well-formed Ecc384 key.  When `required` is `true`,
 /// the slot must always be a well-formed Ecc384 key.
 fn validate_pubkey(key: &PolicyPubKey, required: bool) -> HsmResult<()> {
-    let kind = key.kind;
-    let key_len = key.len as usize;
+    let kind = key.kind();
+    let key_len = key.len();
 
     if !required && key_len == 0 {
         return Ok(());
@@ -75,20 +75,22 @@ fn validate_pubkey(key: &PolicyPubKey, required: bool) -> HsmResult<()> {
     Ok(())
 }
 
-/// Parse and validate a [`PART_POLICY_LEN`]-byte `PartPolicy`
-/// resident in DMA-eligible memory.
+/// Validate a [`PART_POLICY_LEN`]-byte `PartPolicy` resident in
+/// DMA-eligible memory and return a **zero-copy** [`PartPolicy`] view
+/// borrowing `buf`.
 ///
-/// Returns an **owned**, naturally-aligned [`PartPolicy`] copied out of
-/// `buf` (the struct is alignment-2, so it cannot be safely overlaid on
-/// an arbitrarily-aligned wire buffer).  Downstream code that needs the
-/// raw bytes for hashing or persistence keeps the original `&DmaBuf` and
-/// threads it into the next DMA primitive.
-pub fn from_bytes(buf: &DmaBuf) -> HsmResult<PartPolicy> {
+/// `PartPolicy` is [`Unaligned`](zerocopy::Unaligned), so it is borrowed
+/// directly from the (arbitrarily-aligned) wire buffer with
+/// `try_ref_from_bytes` — no copy.  The returned reference borrows `buf`
+/// for its lifetime; callers that also need the raw bytes for hashing or
+/// persistence keep the same `&DmaBuf` and thread it into the next DMA
+/// primitive.
+pub fn from_bytes(buf: &DmaBuf) -> HsmResult<&PartPolicy> {
     if buf.len() != PART_POLICY_LEN {
         return Err(HsmError::InvalidArg);
     }
 
-    let this = PartPolicy::try_read_from_bytes(buf).map_err(|_| HsmError::InvalidArg)?;
+    let this = PartPolicy::try_ref_from_bytes(buf).map_err(|_| HsmError::InvalidArg)?;
 
     if this.version.major != POLICY_VERSION_MAJOR {
         return Err(HsmError::InvalidArg);

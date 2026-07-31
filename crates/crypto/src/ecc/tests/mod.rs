@@ -11,6 +11,7 @@ mod ecc_hsm_format;
 mod ecc_p256;
 mod ecc_p384;
 mod ecc_p521;
+mod ecc_point_validation;
 mod ecdh_p256;
 mod ecdh_p384;
 mod ecdh_p521;

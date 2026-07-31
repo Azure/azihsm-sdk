@@ -4,12 +4,17 @@
 //! Partition provisioning over the TBOR transport at the DDI layer.
 //!
 //! This module hosts the host-side dispatch for the in-session
-//! Crypto-Officer `PartInit` command, mirroring the firmware handler:
+//! Crypto-Officer partition-provisioning commands, mirroring the
+//! firmware handlers:
 //!
 //! * **`PartInit`** (opcode `0x07`) — derive the partition PTA keypair,
 //!   persist the caller-asserted unified `PartPolicy` plus the POTA /
 //!   SATA / optional SAPOTA thumbprints, and return the PTA CSR +
 //!   COSE_Sign1 attestation report.
+//! * **`PartFinal`** (opcode `0x08`) — re-supply the unified
+//!   `PartPolicy` (for `POTAPubKey` recovery) and the PTA cert-chain
+//!   descriptors, optionally restore a prior `local_mk` backup, and
+//!   return the current `local_mk` backup envelope.
 //!
 //! It runs **inside an already-open CO session** established by
 //! [`super::session_ex::open_session_ex`]: the request carries the
@@ -28,24 +33,27 @@ use azihsm_ddi_tbor_types::*;
 
 use super::*;
 
-/// API-layer result of a TBOR `PartInit` provisioning command.
-///
-/// Mirrors [`TborPartInitResp`] with owned bytes so the wire response
-/// type stays confined to the DDI layer and never reaches `HsmSession`
+/// Converts the DDI/wire `PartInit` response into the API-layer
+/// [`HsmPartInitExResult`] with owned bytes, so the wire response type
+/// stays confined to the DDI layer and never reaches `HsmSession`
 /// callers.
-#[derive(Debug, Clone, Default)]
-pub struct PartInitResult {
-    /// DER-encoded PKCS#10 CertificationRequest for the PTA pubkey.
-    pub pta_csr: Vec<u8>,
-    /// COSE_Sign1 PTA key-attestation report signed by the PID.
-    pub pta_report: Vec<u8>,
-}
-
-impl From<TborPartInitResp> for PartInitResult {
+impl From<TborPartInitResp> for HsmPartInitExResult {
     fn from(resp: TborPartInitResp) -> Self {
         Self {
             pta_csr: resp.pta_csr,
             pta_report: resp.pta_report,
+        }
+    }
+}
+
+/// Converts the DDI/wire `PartFinal` response into the API-layer
+/// [`HsmPartFinalExResult`] with owned bytes, so the wire response type
+/// stays confined to the DDI layer and never reaches `HsmSession`
+/// callers.
+impl From<TborPartFinalResp> for HsmPartFinalExResult {
+    fn from(resp: TborPartFinalResp) -> Self {
+        Self {
+            local_mk_backup: resp.local_mk_backup,
         }
     }
 }
@@ -153,7 +161,7 @@ pub(crate) fn part_init_ex(
     pota_thumbprint: &[u8],
     sata_thumbprint: &[u8],
     sapota_thumbprint: Option<&[u8]>,
-) -> HsmResult<PartInitResult> {
+) -> HsmResult<HsmPartInitExResult> {
     if part_policy.len() != PART_POLICY_LEN
         || pota_thumbprint.len() != POTA_THUMBPRINT_LEN
         || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
@@ -183,7 +191,126 @@ pub(crate) fn part_init_ex(
     let dev = inner.dev();
     let mut cookie = None;
     dev.exec_op_tbor(&req, None, &mut cookie)
-        .map(PartInitResult::from)
+        .map(HsmPartInitExResult::from)
+        .map_err(HsmError::from)
+}
+
+/// Issue `PartFinal` (opcode `0x08`) on the active CO session.
+///
+/// Re-supplies the unified `part_policy` (for `POTAPubKey` recovery)
+/// and the PTA cert-chain descriptors, optionally restoring a prior
+/// `local_mk` backup. Returns the current `local_mk` backup envelope.
+///
+/// # Arguments
+///
+/// * `partition` - The HSM partition handle.
+/// * `session_id` - The active CO session id this request binds to.
+/// * `part_policy` - Caller-asserted unified [`PartPolicy`] image
+///   ([`PART_POLICY_LEN`] bytes), re-supplied from `PartInit`.
+/// * `pta_cert_chain` - PTA certificate chain as a list of
+///   [`HsmCert`]s (`1..=`[`MAX_CERTS`] entries). Each cert's DER
+///   bytes ship as their own out-of-band SGL Data Block; the wrapper
+///   derives the matching `(index, length)` descriptor list.
+/// * `prev_local_mk_backup` - Optional prior `local_mk` backup envelope
+///   to restore; `None` on first finalization.
+///
+/// # Errors
+///
+/// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
+/// wrong length or fails to decode, when `pta_cert_chain` is empty,
+/// exceeds [`MAX_CERTS`], contains an empty cert, or contains a cert
+/// whose length does not fit in the 16-bit descriptor field, or when a
+/// present `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`]
+/// bytes; returns [`HsmError::InternalError`] if the device returns a
+/// malformed (wrong-length) `local_mk_backup`; and surfaces DDI/device
+/// failures from the round-trip.
+pub(crate) fn part_final_ex(
+    partition: &HsmPartition,
+    session_id: u16,
+    part_policy: &[u8],
+    pta_cert_chain: &[HsmCert<'_>],
+    prev_local_mk_backup: Option<&[u8]>,
+) -> HsmResult<HsmPartFinalExResult> {
+    if part_policy.len() != PART_POLICY_LEN {
+        return Err(HsmError::InvalidArgument);
+    }
+    // The firmware treats a non-empty `prev_local_mk_backup` as a
+    // fixed-size envelope of exactly `LOCAL_MK_BACKUP_LEN` bytes, so
+    // reject any other present length up front (deterministic guard).
+    if prev_local_mk_backup.is_some_and(|b| b.len() != LOCAL_MK_BACKUP_LEN) {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    // Each DER cert ships as its own out-of-band SGL Data Block.
+    let mut oob: Vec<&[u8]> = Vec::with_capacity(pta_cert_chain.len());
+    let cert_descriptors = push_cert_chain(pta_cert_chain, &mut oob, MAX_CERTS)?;
+
+    let mut req = TborPartFinalReq {
+        session_id,
+        cert_descriptors,
+        ..Default::default()
+    };
+    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| HsmError::InvalidArgument)?;
+    if let Some(b) = prev_local_mk_backup {
+        req.prev_local_mk_backup = b.to_vec();
+    }
+
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let mut cookie = None;
+    let resp = dev
+        .exec_op_tbor(&req, Some(&oob), &mut cookie)
+        .map_err(HsmError::from)?;
+
+    // The firmware always returns a fixed-size `local_mk_backup`
+    // envelope; reject a malformed (wrong-length) device response rather
+    // than surfacing it to callers.
+    if resp.local_mk_backup.len() != LOCAL_MK_BACKUP_LEN {
+        return Err(HsmError::InternalError);
+    }
+    Ok(HsmPartFinalExResult::from(resp))
+}
+
+/// Partition identity returned by a `PartInfo` query: the stable PID plus
+/// the raw ECC-P384 identity public key.
+///
+/// DDI-internal carrier only. Public callers reach these fields through
+/// the [`HsmPartition::pid`] / [`HsmPartition::ex_pub_key`] getters, so the
+/// compound type never surfaces in the public API.
+pub(crate) struct HsmPartInfo {
+    /// 16-byte partition identity (PID).
+    pub pid: Vec<u8>,
+    /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B).
+    pub pid_pub_key: Vec<u8>,
+}
+
+/// Converts the DDI/wire `PartInfo` response into the DDI-internal
+/// [`HsmPartInfo`] with owned bytes, keeping the wire response type
+/// confined to the DDI layer.
+impl From<TborPartInfoResp> for HsmPartInfo {
+    fn from(resp: TborPartInfoResp) -> Self {
+        Self {
+            pid: resp.pid.to_vec(),
+            pid_pub_key: resp.pid_pub_key.to_vec(),
+        }
+    }
+}
+
+/// Issue `PartInfo` on the partition, returning its identity (PID) and
+/// raw identity public key.
+///
+/// This is a partition-level query and carries no session id.
+///
+/// # Errors
+///
+/// Surfaces DDI/device failures from the round-trip.
+pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let mut cookie = None;
+    dev.exec_op_tbor(&TborPartInfoReq::new(), None, &mut cookie)
+        .map(HsmPartInfo::from)
         .map_err(HsmError::from)
 }
 
@@ -202,101 +329,5 @@ mod tests {
         assert_eq!(&aad[label_len..label_len + 2], &[0x34, 0x12]);
         assert!(aad[label_len + 2..].iter().all(|&b| b == 0));
         assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
-    }
-}
-
-#[cfg(all(test, feature = "emu"))]
-mod emu_tests {
-    use parking_lot::Mutex;
-
-    use super::*;
-    use crate::partition::HsmPartitionManager;
-
-    /// PSK id selecting the Crypto Officer role (`PartInit` is CO-only).
-    const CO: u8 = 0;
-
-    /// Serialises tests against the process-global FW emulator
-    /// singleton. `cargo-nextest` runs each test in its own process, but
-    /// this keeps a plain `cargo test` (single process, multi-threaded)
-    /// correct too.
-    static EMU_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Open the emu partition at its maximum revision, factory-reset it,
-    /// and bring up a Crypto-Officer V2 session ready for `PartInit`.
-    fn fresh_co_session() -> HsmSession {
-        let info = HsmPartitionManager::partition_info_list()
-            .into_iter()
-            .next()
-            .expect("emu backend should advertise a partition");
-        let rev = info
-            .api_rev_range
-            .expect("emu partition should report an api-rev range")
-            .max();
-        let part =
-            HsmPartitionManager::open_partition(&info.path, rev).expect("open emu partition");
-        part.reset().expect("factory-reset emu partition");
-        part.open_session_ex(rev, CO, SessionType::Authenticated)
-            .expect("open CO session")
-    }
-
-    /// Well-formed fixed-size inputs for the non-`part_policy` fields.
-    fn valid_inputs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        (
-            vec![0u8; MACH_SEED_LEN],
-            vec![0u8; POTA_THUMBPRINT_LEN],
-            vec![0u8; SATA_THUMBPRINT_LEN],
-        )
-    }
-
-    /// A wrong-length `part_policy` is rejected up front, before any
-    /// device round-trip.
-    #[test]
-    fn part_init_rejects_bad_part_policy_len() {
-        let _guard = EMU_LOCK.lock();
-        let session = fresh_co_session();
-        let (mach_seed, pota, sata) = valid_inputs();
-        let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
-
-        let res = session.part_init_ex(&mach_seed, &bad_policy, &pota, &sata, None);
-        assert!(matches!(res, Err(HsmError::InvalidArgument)));
-    }
-
-    /// A wrong-length `pota_thumbprint` is rejected.
-    #[test]
-    fn part_init_rejects_bad_pota_thumbprint_len() {
-        let _guard = EMU_LOCK.lock();
-        let session = fresh_co_session();
-        let (mach_seed, _pota, sata) = valid_inputs();
-        let policy = vec![0u8; PART_POLICY_LEN];
-        let bad_pota = vec![0u8; POTA_THUMBPRINT_LEN + 1];
-
-        let res = session.part_init_ex(&mach_seed, &policy, &bad_pota, &sata, None);
-        assert!(matches!(res, Err(HsmError::InvalidArgument)));
-    }
-
-    /// A wrong-length `sata_thumbprint` is rejected.
-    #[test]
-    fn part_init_rejects_bad_sata_thumbprint_len() {
-        let _guard = EMU_LOCK.lock();
-        let session = fresh_co_session();
-        let (mach_seed, pota, _sata) = valid_inputs();
-        let policy = vec![0u8; PART_POLICY_LEN];
-        let bad_sata = vec![0u8; SATA_THUMBPRINT_LEN + 1];
-
-        let res = session.part_init_ex(&mach_seed, &policy, &pota, &bad_sata, None);
-        assert!(matches!(res, Err(HsmError::InvalidArgument)));
-    }
-
-    /// A present-but-wrong-length `sapota_thumbprint` is rejected.
-    #[test]
-    fn part_init_rejects_bad_sapota_thumbprint_len() {
-        let _guard = EMU_LOCK.lock();
-        let session = fresh_co_session();
-        let (mach_seed, pota, sata) = valid_inputs();
-        let policy = vec![0u8; PART_POLICY_LEN];
-        let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
-
-        let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, Some(&bad_sapota));
-        assert!(matches!(res, Err(HsmError::InvalidArgument)));
     }
 }

@@ -74,7 +74,7 @@ fn session_close_unknown_id_emu() {
         .session_close(0xFFFF)
         .expect_err("close of unknown id must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection, got {err:?}",
     );
 }
@@ -92,7 +92,7 @@ fn session_close_double_close_emu() {
         .session_close(session_id)
         .expect_err("second close against the same id must fail");
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
+        matches!(err, azihsm_ddi_interface::DdiError::TborStatus(_)),
         "expected FW-side rejection on double-close, got {err:?}",
     );
 }

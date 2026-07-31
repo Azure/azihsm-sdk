@@ -21,24 +21,52 @@
 //! per-IO allocator scope).
 
 pub(crate) mod api_rev;
+pub(crate) mod ecc_generate_key;
+pub(crate) mod ecc_sign;
+pub(crate) mod ecdh_derive;
+pub(crate) mod from_pal;
+pub(crate) mod get_unwrapping_key;
+pub(crate) mod hmac;
+pub(crate) mod hmac_generate_key;
+pub(crate) mod key_report;
+pub(crate) mod part_final;
 pub mod part_info;
 pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
+pub(crate) mod rsa_mod_exp;
+pub(crate) mod sd_backup;
+pub(crate) mod sd_create_peer_backup;
+pub(crate) mod sd_create_remote_backup;
+pub(crate) mod sd_reseal_remote_backup;
+pub(crate) mod sd_restore_local_backup;
+pub(crate) mod sd_restore_peer_backup;
+pub(crate) mod sd_restore_remote_backup;
+pub(crate) mod sd_sealing_key_gen;
 pub(crate) mod session_close;
 pub(crate) mod session_open_finish;
 pub(crate) mod session_open_init;
+pub(crate) mod unwrap_key;
 
 use azihsm_fw_ddi_tbor::RequestView;
 use azihsm_fw_ddi_tbor::ResponseEncoder;
 use azihsm_fw_ddi_tbor::TocEntry;
 use azihsm_fw_ddi_tbor::PROTOCOL_VERSION;
+use azihsm_fw_hsm_oob::OobPtr;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmIo;
+use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmPal;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
+use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
+use azihsm_fw_hsm_pal_traits::SESSION_MASKING_KEY_LEN;
+use azihsm_fw_hsm_undo::UndoLog;
 
 use super::*;
+use crate::part_state;
 
 /// TBOR opcodes recognised by the firmware dispatcher.
 ///
@@ -79,12 +107,232 @@ pub(crate) mod opcode {
     /// `PartInit` — bind PTA, policy, and POTA thumbprint.
     pub(crate) const PART_INIT: u8 = 0x07;
 
+    /// `PartFinal` — finalize the partition (FinalizePart + ConfigPartSD):
+    /// derive partition local masking keys and generate or restore the
+    /// `local_mk` backup.  See [`super::part_final`].
+    pub(crate) const PART_FINAL: u8 = 0x08;
+
     /// `PartInfo` — out-of-session info command reporting device kind /
     /// FIPS status plus the bound partition's lifecycle and identity
     /// (state, generation, owner/manufacturer SVN, PID, identity public
     /// key).  TBOR analogue of MBOR `GetDeviceInfo` + the Manticore
     /// `GetPartID` primitive.
     pub(crate) const PART_INFO: u8 = 0x02;
+
+    /// `SdSealingKeyGen` — generate a security-domain sealing key (a
+    /// P-384 ECC keypair for ECDH) under the active session's partition;
+    /// return the private half **masked** under the requested scope's
+    /// masking key (nothing is persisted on-device) plus the public key.
+    /// See [`super::sd_sealing_key_gen`].
+    pub(crate) const SD_SEALING_KEY_GEN: u8 = 0x09;
+
+    /// `SdCreateRemoteBackup` — create a security-domain remote backup:
+    /// a fresh BKS3 HPKE-Auth-sealed to the receiver's SD sealing public
+    /// key (from its `KeyReport`, carried out of band) and authenticated
+    /// by the sender's masked SD sealing key.  See
+    /// [`super::sd_create_remote_backup`].
+    pub(crate) const SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
+
+    /// `SdResealRemoteBackup` — reseal a security-domain remote backup from a
+    /// source recipient to a destination recipient: HPKE-Auth-open the
+    /// source backup with the masked receiver key, then HPKE-Auth-seal the
+    /// recovered BKS3 to the destination receiver.  See
+    /// [`super::sd_reseal_remote_backup`].
+    pub(crate) const SD_RESEAL_REMOTE_BACKUP: u8 = 0x0B;
+
+    /// `SdRestoreRemoteBackup` — restore a security domain from a remote
+    /// backup: HPKE-Auth-open `src_remote_backup` with the masked receiver
+    /// key (authenticated by the sender's attested key), recover SDMK from
+    /// `prev_sd_mk_backup`, and re-provision the SD.  See
+    /// [`super::sd_restore_remote_backup`].
+    pub(crate) const SD_RESTORE_REMOTE_BACKUP: u8 = 0x0C;
+
+    /// `SdRestoreLocalBackup` — restore a security domain from its
+    /// device-local backups: unmask `pok_local_backup` (BKS3 under
+    /// `PartLocalMK`) and `sd_mk_backup` (SDMK under the derived SDBMK),
+    /// re-mask both at the current SVN, and re-provision the SD.  See
+    /// [`super::sd_restore_local_backup`].
+    pub(crate) const SD_RESTORE_LOCAL_BACKUP: u8 = 0x0D;
+
+    /// `SdCreatePeerBackup` — create a peer-transferable backup of a
+    /// security domain: recover BKS3 from the caller's `pok_local_backup`
+    /// (under `PartLocalMK`) and HPKE-Auth-seal it to a destination peer
+    /// named by `dst_evidence`, authenticated by the sender's masked SD
+    /// sealing key.  Gated by the SD policy's `allow_peer_cloning`.  See
+    /// [`super::sd_create_peer_backup`].
+    pub(crate) const SD_CREATE_PEER_BACKUP: u8 = 0x0E;
+
+    /// `SdRestorePeerBackup` — restore a security domain from a peer backup:
+    /// HPKE-Auth-open `pok_peer_backup` with the masked receiver key
+    /// (authenticated by the sender peer's attested key), recover SDMK from
+    /// `prev_sd_mk_backup`, and re-provision the SD.  Gated by the SD
+    /// policy's `allow_peer_cloning`.  See [`super::sd_restore_peer_backup`].
+    pub(crate) const SD_RESTORE_PEER_BACKUP: u8 = 0x0F;
+
+    /// `KeyReport` — attest a masked key: unmask it, derive its public
+    /// component on-device, and return a PID-signed COSE_Sign1
+    /// key-attestation report over it.  See [`super::key_report`].
+    ///
+    /// `0x0A..=0x0F` are reserved by the Security-Domain backup schema
+    /// family, so `KeyReport` takes the next free opcode, `0x10`.
+    pub(crate) const KEY_REPORT: u8 = 0x10;
+
+    /// `HmacGenerateKey` — generate a fresh random HMAC key of the
+    /// requested SHA variant under the active session's partition; return
+    /// it **masked** under the requested scope's masking key (nothing is
+    /// persisted on-device).  See [`super::hmac_generate_key`].
+    pub(crate) const HMAC_GENERATE_KEY: u8 = 0x11;
+
+    /// `Hmac` — compute an HMAC tag over a host-supplied message using a
+    /// caller-held masked HMAC key (unmasked on-device for the operation,
+    /// then discarded).  See [`super::hmac`].
+    pub(crate) const HMAC: u8 = 0x12;
+
+    /// `GetUnwrappingKey` — return the partition's RSA-2048 unwrapping
+    /// public key, which the host uses to RSA-AES key-wrap a payload for a
+    /// future `UnwrapKey` import.  See [`super::get_unwrapping_key`].
+    pub(crate) const GET_UNWRAPPING_KEY: u8 = 0x13;
+
+    /// `UnwrapKey` — RSA-AES-unwrap a host-supplied wrapped key
+    /// (AES / RSA / ECC / HMAC) with the partition unwrapping key and
+    /// return it masked under the requested scope's masking key (plus the
+    /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
+    pub(crate) const UNWRAP_KEY: u8 = 0x14;
+
+    /// `EccGenerateKey` — generate a fresh ECC keypair on the requested
+    /// NIST curve and return the private key masked under the requested
+    /// scope's masking key plus the wire public key (nothing is persisted
+    /// on-device).  See [`super::ecc_generate_key`].
+    pub(crate) const ECC_GENERATE_KEY: u8 = 0x17;
+
+    /// `EccSign` — produce a raw ECDSA `r ‖ s` signature over a
+    /// host-supplied pre-computed digest using a caller-held masked ECC
+    /// private key (unmasked on-device).  See [`super::ecc_sign`].
+    pub(crate) const ECC_SIGN: u8 = 0x18;
+
+    /// `EcdhDerive` — derive an ECDH shared secret from a caller-held
+    /// masked local ECC private key and a host-supplied peer public key,
+    /// and return the secret masked under the requested scope's masking
+    /// key.  See [`super::ecdh_derive`].
+    pub(crate) const ECDH_DERIVE: u8 = 0x19;
+
+    /// `RsaModExp` — perform the RSA private-key primitive `x = y^d mod n`
+    /// using a caller-held masked RSA private key (imported via
+    /// `UnwrapKey`; unmasked on-device).  The raw modular exponentiation
+    /// underlying RSA decrypt / sign.  See [`super::rsa_mod_exp`].
+    pub(crate) const RSA_MOD_EXP: u8 = 0x1A;
+}
+
+/// Validate that `sess_id` belongs to an active Crypto-Officer session.
+fn validate_crypto_officer_active_session<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    sess_id: HsmSessId,
+) -> HsmResult<()> {
+    if sess_id.role() != SessionRole::CryptoOfficer {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    if !matches!(pal.session_state(io, sess_id), HsmSessionState::Active) {
+        return Err(HsmError::SessionNotFound);
+    }
+
+    Ok(())
+}
+
+/// Validate that `sess_id` belongs to an active session of any role
+/// (Crypto-Officer or Crypto-User).
+///
+/// Used by the general crypto commands (`HmacGenerateKey`, `Hmac`) which
+/// — unlike the security-domain administrative commands — are available
+/// to both CO and CU sessions.  The default-PSK gate (applied by the
+/// dispatcher) still requires the calling role's PSK to be rotated.
+fn validate_active_session<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    sess_id: HsmSessId,
+) -> HsmResult<()> {
+    if !matches!(pal.session_state(io, sess_id), HsmSessionState::Active) {
+        return Err(HsmError::SessionNotFound);
+    }
+    Ok(())
+}
+
+/// Resolve the vault id of the masking key associated with `scope`.
+fn masking_key_id_for_scope<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    scope: HsmKeyScope,
+) -> HsmResult<HsmKeyId> {
+    // Every provisioned scope's masking-key id is stored in an
+    // `AbsentUntilSet` partition property that is only written once the
+    // partition (`PartFinal`) or security domain (`CreateSD`) is
+    // finalized.  Before then the read returns `PartPropNotFound`; remap
+    // it to the documented `UnsupportedKeyScope` ("the requested scope
+    // has no masking key yet") so clients never observe a leaked
+    // `PartPropNotFound`.  Genuine read faults still propagate.
+    let remap_absent = |r: HsmResult<HsmKeyId>| match r {
+        Err(HsmError::PartPropNotFound) => Err(HsmError::UnsupportedKeyScope),
+        other => other,
+    };
+    match scope {
+        HsmKeyScope::Ephemeral => remap_absent(part_state::part_ephemeral_mk_key_id(pal, io)),
+        HsmKeyScope::Local => remap_absent(part_state::part_local_mk_key_id(pal, io)),
+        // Resolve the SecurityDomain masking key (`SDMK`) by `SD_MK_KEY_ID`
+        // presence — the single source of truth.  A request that observes a
+        // partially-written commit (the `SD_INITIALIZED` claim is set but
+        // `SD_MK_KEY_ID` is not yet written, or a rollback is in flight)
+        // gets the documented `UnsupportedKeyScope` rather than a leaked
+        // `PartPropNotFound`; genuine read faults still propagate.
+        HsmKeyScope::SecurityDomain => remap_absent(part_state::part_sd_mk_key_id(pal, io)),
+        _ => Err(HsmError::UnsupportedKeyScope),
+    }
+}
+
+/// Resolve the 32-byte AES-256-GCM masking key material for `scope`,
+/// returning a borrow of the on-device key.
+///
+/// `Session` scope resolves to the per-session masking key
+/// ([`HsmSessionManager::session_masking_key`](azihsm_fw_hsm_pal_traits::HsmSessionManager::session_masking_key));
+/// every other scope resolves via [`masking_key_id_for_scope`] and reads
+/// the vault key.  All scopes yield a 32-byte key suitable for the
+/// `key_masking::aead` (AES-GCM-256) masked-key system.
+///
+/// # Platform note
+///
+/// `Session`-scope masking is currently available only on the std/emu PAL.
+/// The Uno (hardware) PAL does not yet provision the per-session masking
+/// key and returns [`HsmError::UnsupportedCmd`] from
+/// `session_masking_key`, so `scope = Session` on masked-key commands
+/// (`UnwrapKey`, `Ecc*`, KDF, …) fails on Uno until session-key masking is
+/// implemented.  Callers targeting hardware should use a persisted scope
+/// (`Local` / `SecurityDomain`) provisioned by `PartFinal` / the SD
+/// lifecycle.
+fn resolve_masking_key<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
+    scope: HsmKeyScope,
+    sess_id: HsmSessId,
+) -> HsmResult<&'p DmaBuf> {
+    match scope {
+        HsmKeyScope::Session => {
+            // The std PAL's `session_masking_key` may return an 80-byte
+            // legacy MBOR `Session` blob key or the 32-byte TBOR `SessionEx`
+            // key.  The TBOR masked-key system is AES-256-GCM and requires
+            // exactly `SESSION_MASKING_KEY_LEN` (32) bytes, so reject a
+            // legacy-length key up front rather than letting AEAD masking
+            // fail deeper with a less specific error.
+            let key = pal.session_masking_key(io, sess_id)?;
+            if key.len() != SESSION_MASKING_KEY_LEN {
+                return Err(HsmError::UnsupportedKeyScope);
+            }
+            Ok(key)
+        }
+        _ => {
+            let mk_key_id = masking_key_id_for_scope(pal, io, scope)?;
+            pal.vault_key(io, mk_key_id)
+        }
+    }
 }
 
 /// Dispatch a parsed TBOR request to its handler.
@@ -115,6 +363,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     req_buf: &mut DmaBuf,
     opcode: u8,
     sqe_session_id: u16,
+    oob: Option<OobPtr>,
+    undo: &mut UndoLog<'p>,
 ) -> HsmResult<&'p DmaBuf> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
@@ -159,12 +409,39 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
 
     match opcode {
         opcode::API_REV => api_rev::handle(pal, io, req_buf),
-        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf).await,
-        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf).await,
+        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf, undo).await,
+        opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf, undo).await,
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
-        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf).await,
-        opcode::PART_INIT => part_init::handle(pal, io, req_buf).await,
+        opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf, undo).await,
+        opcode::PART_INIT => part_init::handle(pal, io, req_buf, undo).await,
+        opcode::PART_FINAL => part_final::handle(pal, io, req_buf, oob, undo).await,
         opcode::PART_INFO => part_info::handle(pal, io, req_buf),
+        opcode::SD_SEALING_KEY_GEN => sd_sealing_key_gen::handle(pal, io, req_buf).await,
+        opcode::SD_CREATE_REMOTE_BACKUP => {
+            sd_create_remote_backup::handle(pal, io, req_buf, oob, undo).await
+        }
+        opcode::SD_RESEAL_REMOTE_BACKUP => {
+            sd_reseal_remote_backup::handle(pal, io, req_buf, oob).await
+        }
+        opcode::SD_RESTORE_REMOTE_BACKUP => {
+            sd_restore_remote_backup::handle(pal, io, req_buf, oob, undo).await
+        }
+        opcode::SD_RESTORE_LOCAL_BACKUP => {
+            sd_restore_local_backup::handle(pal, io, req_buf, undo).await
+        }
+        opcode::SD_CREATE_PEER_BACKUP => sd_create_peer_backup::handle(pal, io, req_buf, oob).await,
+        opcode::SD_RESTORE_PEER_BACKUP => {
+            sd_restore_peer_backup::handle(pal, io, req_buf, oob, undo).await
+        }
+        opcode::KEY_REPORT => key_report::handle(pal, io, req_buf).await,
+        opcode::HMAC_GENERATE_KEY => hmac_generate_key::handle(pal, io, req_buf).await,
+        opcode::HMAC => hmac::handle(pal, io, req_buf).await,
+        opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
+        opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::ECC_GENERATE_KEY => ecc_generate_key::handle(pal, io, req_buf).await,
+        opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
+        opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
+        opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -182,7 +459,24 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::SESSION_CLOSE
             | opcode::PSK_CHANGE
             | opcode::PART_INIT
+            | opcode::PART_FINAL
             | opcode::PART_INFO
+            | opcode::SD_SEALING_KEY_GEN
+            | opcode::SD_CREATE_REMOTE_BACKUP
+            | opcode::SD_RESEAL_REMOTE_BACKUP
+            | opcode::SD_RESTORE_REMOTE_BACKUP
+            | opcode::SD_RESTORE_LOCAL_BACKUP
+            | opcode::SD_CREATE_PEER_BACKUP
+            | opcode::SD_RESTORE_PEER_BACKUP
+            | opcode::KEY_REPORT
+            | opcode::HMAC_GENERATE_KEY
+            | opcode::HMAC
+            | opcode::GET_UNWRAPPING_KEY
+            | opcode::UNWRAP_KEY
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
+            | opcode::RSA_MOD_EXP
     )
 }
 
@@ -205,7 +499,26 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::SESSION_OPEN_INIT
         | opcode::SESSION_OPEN_FINISH
         | opcode::PART_INFO => false,
-        opcode::SESSION_CLOSE | opcode::PSK_CHANGE | opcode::PART_INIT => true,
+        opcode::SESSION_CLOSE
+        | opcode::PSK_CHANGE
+        | opcode::PART_INIT
+        | opcode::PART_FINAL
+        | opcode::SD_SEALING_KEY_GEN
+        | opcode::SD_CREATE_REMOTE_BACKUP
+        | opcode::SD_RESEAL_REMOTE_BACKUP
+        | opcode::SD_RESTORE_REMOTE_BACKUP
+        | opcode::SD_RESTORE_LOCAL_BACKUP
+        | opcode::SD_CREATE_PEER_BACKUP
+        | opcode::SD_RESTORE_PEER_BACKUP
+        | opcode::KEY_REPORT
+        | opcode::HMAC_GENERATE_KEY
+        | opcode::HMAC
+        | opcode::GET_UNWRAPPING_KEY
+        | opcode::UNWRAP_KEY
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
+        | opcode::RSA_MOD_EXP => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -238,7 +551,24 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         opcode::SESSION_OPEN_FINISH
         | opcode::SESSION_CLOSE
         | opcode::PSK_CHANGE
-        | opcode::PART_INIT => true,
+        | opcode::PART_INIT
+        | opcode::PART_FINAL
+        | opcode::SD_SEALING_KEY_GEN
+        | opcode::SD_CREATE_REMOTE_BACKUP
+        | opcode::SD_RESEAL_REMOTE_BACKUP
+        | opcode::SD_RESTORE_REMOTE_BACKUP
+        | opcode::SD_RESTORE_LOCAL_BACKUP
+        | opcode::SD_CREATE_PEER_BACKUP
+        | opcode::SD_RESTORE_PEER_BACKUP
+        | opcode::KEY_REPORT
+        | opcode::HMAC_GENERATE_KEY
+        | opcode::HMAC
+        | opcode::GET_UNWRAPPING_KEY
+        | opcode::UNWRAP_KEY
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
+        | opcode::RSA_MOD_EXP => true,
         _ => true,
     }
 }
@@ -321,6 +651,13 @@ mod tests {
             opcode::SESSION_OPEN_FINISH,
             opcode::SESSION_CLOSE,
             opcode::PSK_CHANGE,
+            opcode::PART_INIT,
+            opcode::PART_INFO,
+            opcode::PART_FINAL,
+            opcode::SD_SEALING_KEY_GEN,
+            opcode::SD_CREATE_REMOTE_BACKUP,
+            opcode::SD_RESEAL_REMOTE_BACKUP,
+            opcode::KEY_REPORT,
         ] {
             assert!(is_known_opcode(op), "{op:#04x} should be known");
         }
@@ -346,6 +683,16 @@ mod tests {
     }
 
     #[test]
+    fn sd_sealing_key_gen_is_in_session() {
+        assert!(is_in_session(opcode::SD_SEALING_KEY_GEN));
+    }
+
+    #[test]
+    fn key_report_is_in_session() {
+        assert!(is_in_session(opcode::KEY_REPORT));
+    }
+
+    #[test]
     fn unknown_opcode_defaults_to_in_session() {
         // Default-deny: an unknown future opcode is treated as
         // in-session so the default-PSK gate applies to it until it
@@ -362,6 +709,7 @@ mod tests {
             opcode::API_REV,
             opcode::SESSION_OPEN_INIT,
             opcode::SESSION_OPEN_FINISH,
+            opcode::SD_SEALING_KEY_GEN,
             SYNTHETIC_FUTURE_OPCODE,
             0x00,
             0xFF,

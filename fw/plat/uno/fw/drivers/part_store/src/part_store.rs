@@ -52,21 +52,25 @@ const RESERVED3_LEN: usize = 626
     - 4  // state
     - 4  // generation
     - RES_MASK_LEN
-    - 7 * 2  // key handles (u16 + sentinel)
+    - 10 * 2  // key handles (u16 + sentinel)
     - PUB_KEY_LEN  // ec_pub_key
     - PUB_KEY_LEN  // se_pub_key
     - PSK_LEN  // psk_co
     - PSK_LEN  // psk_cu
     - CREDENTIAL_LEN
-    - 1  // credential_valid
-    - 1  // pota_thumbprint_valid
-    - 1  // sata_thumbprint_valid
-    - 1  // sapota_thumbprint_valid
+    - 1  // valid_flags (8 packed presence/init bits)
     - PUB_KEY_LEN  // pta_pub_key
-    - 1  // pta_pub_key_valid
-    - 1  // policy_hash_valid
-    - 1  // bk3_initialized
     - 2; // session_meta (pending_mask + psk_change_mask)
+
+/// Bit positions packed into the per-partition `valid_flags` byte.
+const FLAG_CREDENTIAL_VALID: u8 = 1 << 0;
+const FLAG_POTA_THUMBPRINT_VALID: u8 = 1 << 1;
+const FLAG_SATA_THUMBPRINT_VALID: u8 = 1 << 2;
+const FLAG_SAPOTA_THUMBPRINT_VALID: u8 = 1 << 3;
+const FLAG_PTA_PUB_KEY_VALID: u8 = 1 << 4;
+const FLAG_POLICY_HASH_VALID: u8 = 1 << 5;
+const FLAG_BK3_INITIALIZED: u8 = 1 << 6;
+const FLAG_SD_INITIALIZED: u8 = 1 << 7;
 
 /// Total per-partition slot size (matches the reference layout).
 const STORE_SIZE: usize = 3072;
@@ -93,10 +97,47 @@ fn write_handle(key: Option<HsmKeyId>) -> [u8; 2] {
 }
 
 /// Absolute GSRAM base address of partition slot 0.
+#[cfg_attr(test, allow(dead_code))]
 const PART_STORE_BASE: usize = (IO_GSRAM_BASE + PART_STORE_T_BASE) as usize;
 
 /// Bytes between consecutive partition slots.
 const STRIDE: usize = size_of::<Storage>();
+
+/// Base address of partition slot 0's backing store.
+///
+/// In production this resolves to the fixed GSRAM MMIO region
+/// ([`PART_STORE_BASE`]). Host unit tests have no such region, so a single
+/// leaked, zero-initialised heap allocation laid out identically
+/// (`NUM_PARTITIONS` x `STRIDE`, `Storage` alignment) stands in for it, letting
+/// every [`Partition`] handle address real memory so the lifecycle clears can
+/// be exercised and asserted off-target.
+#[cfg(not(test))]
+#[inline]
+fn store_base() -> usize {
+    PART_STORE_BASE
+}
+
+#[cfg(test)]
+fn store_base() -> usize {
+    use core::mem::align_of;
+    use std::alloc::alloc_zeroed;
+    use std::alloc::Layout;
+    use std::sync::OnceLock;
+
+    static BASE: OnceLock<usize> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        let size = NUM_PARTITIONS
+            .checked_mul(STRIDE)
+            .expect("part-store test size overflow");
+        let layout = Layout::from_size_align(size, align_of::<Storage>())
+            .expect("valid part-store test layout");
+        // SAFETY: `layout` has a non-zero size and an all-zero bit pattern is a
+        // valid `Storage` (every field is a byte array or a zero-valued scalar).
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert!(!ptr.is_null(), "part-store test backing allocation failed");
+        ptr as usize
+    })
+}
 
 // ── Lockout policy (reference `PinPolicy`) ───────────────────────────────
 
@@ -182,8 +223,16 @@ struct Storage {
     version: u8,
     flags: [u8; 3],
     session_table: [u8; SESSION_TABLE_LEN],
-    reserved1: u8,
-    unwrapping_key_bk_valid: bool,
+    /// Gate-1 staging flag (offset 22, was `reserved1`): CP writes, SP reads.
+    /// `false` = not armed, `true` = armed. When armed (set on `SetResource`
+    /// with a non-zero mask), the SP stages the RSA-2048 unwrapping key into
+    /// `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero.
+    unwrapping_key_required: bool,
+    /// Unwrapping-key slot state, written by the SP. `0` = empty; non-zero =
+    /// occupied (the SP uses a 3-state `UnwrappingKeyValidity` enum —
+    /// Empty / PendingPct / PctPassed — so this is a `u8`, not a `bool`;
+    /// reading a value > 1 as a Rust `bool` would be UB).
+    unwrapping_key_bk_valid: u8,
     unwrapping_key_bk: [u8; UNWRAPPING_KEY_BK_LEN],
     pin_policy: PinPolicy,
     vm_launch_guid: [u8; GUID_LEN],
@@ -225,19 +274,15 @@ struct Storage {
     ups_key_id: [u8; 2],
     pta_key_id: [u8; 2],
     unwrapping_key_id: [u8; 2],
-    // Presence flags for `AbsentUntilSet` byte fields (placed after the
-    // key handles, before `reserved3`, where 1-byte alignment is
-    // harmless and the DMA-target public keys above stay 4-aligned).
-    credential_valid: bool,
-    pota_thumbprint_valid: bool,
-    sata_thumbprint_valid: bool,
-    sapota_thumbprint_valid: bool,
-    pta_pub_key_valid: bool,
-    policy_hash_valid: bool,
-    // One-shot InitBk3 gate. Distinct from `bk3_session_key.is_valid`,
-    // which tracks presence of the BK3 *session key*; this flag records
-    // that InitBk3 has run and must not run again.
-    bk3_initialized: bool,
+    local_mk_key_id: [u8; 2],
+    ephemeral_mk_key_id: [u8; 2],
+    sd_mk_key_id: [u8; 2],
+    // Presence flags for `AbsentUntilSet` byte fields plus the one-shot
+    // InitBk3 and security-domain (`SD_INITIALIZED`) gates, bit-packed into
+    // a single byte (see the `FLAG_*` constants).  Placed after the key
+    // handles, before `reserved3`, where 1-byte alignment is harmless and
+    // the DMA-target public keys above stay 4-aligned.
+    valid_flags: u8,
     // Volatile TBOR session slot metadata: byte 0 = pending_mask
     // (bit N set while slot N's handshake is in flight), byte 1 =
     // psk_change_mask (bit N set once slot N has consumed its one
@@ -246,15 +291,8 @@ struct Storage {
     reserved3: [u8; RESERVED3_LEN],
 }
 
-// Lock the layout to the reference 3072-byte slot. The whole partition-store
-// GSRAM region (`PART_STORE_T_BASE`..key vault) is sized for exactly
-// `NUM_PARTITIONS` of these.
-const _: () = assert!(size_of::<Storage>() == STORE_SIZE);
-const _: () = assert!(STRIDE == STORE_SIZE);
-// The ECC keygen engine writes the public keys directly into these fields
-// via DMA, which requires 4-byte alignment (see `Storage` field ordering).
-const _: () = assert!(core::mem::offset_of!(Storage, ec_pub_key) % 4 == 0);
-const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
+// Compile-time layout assertions (see `part_store/layout_asserts.rs`).
+mod layout_asserts;
 
 /// GSRAM-backed partition persistent store.
 ///
@@ -264,6 +302,20 @@ const _: () = assert!(core::mem::offset_of!(Storage, se_pub_key) % 4 == 0);
 /// every slot at PAL boot.
 #[derive(Debug)]
 pub struct PartStore;
+
+/// Selects how much partition state [`Partition::clear_state`] wipes.
+///
+/// Both kinds clear the per-tenant runtime state (enable-time keys,
+/// credential, BK3 session key, nonce, session table, and PIN policy);
+/// they differ only in whether the write-once provisioning material is
+/// preserved. Future reset flavours can be added as additional variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartResetKind {
+    /// NSSR `Migrate`: preserve the partition's provisioning material.
+    Migrate,
+    /// Partition deallocation / disable: also wipe the provisioning material.
+    Disable,
+}
 
 /// A validated partition-store slot.
 ///
@@ -305,7 +357,7 @@ impl Partition {
     #[inline]
     fn slot_ptr(self) -> *mut Storage {
         // `self.0 < NUM_PARTITIONS` by construction (see `PartStore::partition`).
-        (PART_STORE_BASE + self.0 * STRIDE) as *mut Storage
+        (store_base() + self.0 * STRIDE) as *mut Storage
     }
 
     /// Shared reference to this partition's slot.
@@ -360,6 +412,9 @@ impl Partition {
         slot.mk_key_id = absent;
         slot.ups_key_id = absent;
         slot.pta_key_id = absent;
+        slot.local_mk_key_id = absent;
+        slot.ephemeral_mk_key_id = absent;
+        slot.sd_mk_key_id = absent;
         slot.unwrapping_key_id = absent;
     }
 
@@ -382,49 +437,76 @@ impl Partition {
         self.se_pub_key_mut().fill(0);
     }
 
-    /// Zeroizes all per-tenant state established at enable and `PartInit`.
+    /// Clears a partition's state for a given [`PartResetKind`].
     ///
-    /// Clears the enable-time and provisioning vault-key handles (the
-    /// vault deletions themselves are the PAL's responsibility), the
-    /// cached public keys, every caller-presented secret and write-once
-    /// provisioning field (with their presence flags), the nonce, VM
-    /// launch GUID, BK3 incarnation flag, and the per-partition session
-    /// table.
+    /// The shared core (cleared for every kind) drops the enable-time and
+    /// provisioning vault-key handles (the vault deletions themselves are the
+    /// PAL's responsibility), the cached public keys, the caller-presented
+    /// credential, the derived BK3 session key, the nonce, the per-partition
+    /// session table + metadata, and the PIN lockout policy — matching the
+    /// reference `state.disable()` / `state.migrate()`, which both reset the
+    /// policy.
     ///
-    /// The partition identity and `Masked_BK_BOOT` are deliberately
-    /// preserved — they are torn down only on free (see [`reset`]). The
-    /// resource mask, generation counter, and lifecycle state are left
-    /// for the caller to manage.
+    /// [`PartResetKind::Disable`] additionally wipes the write-once
+    /// provisioning material (PTA public key, policy hash, POTA/SATA/SAPOTA
+    /// thumbprints, sealed BK3 + incarnation flag, rotated PSKs, and the VM
+    /// launch GUID); [`PartResetKind::Migrate`] preserves it so a host that
+    /// resets via NSSR keeps its provisioning and only re-establishes its
+    /// credential. The partition identity and `Masked_BK_BOOT` are preserved
+    /// for both — they are torn down only on free (see [`reset`]). The
+    /// resource mask, generation counter, and lifecycle state are left for the
+    /// caller to manage.
     ///
     /// [`reset`]: Self::reset
     #[inline(never)]
-    pub fn clear_enabled_state(mut self) {
+    pub fn clear_state(mut self, kind: PartResetKind) {
+        // ── Per-tenant runtime state (cleared for every reset kind) ──
         // Enable-time keys + cached public keys.
         self.clear_enabled_keys();
-        // Provisioning vault-key handles.
+        // Provisioning vault-key handles (material wiped wholesale by caller).
         self.set_mk_key_id(None);
         self.set_ups_key_id(None);
         self.set_pta_key_id(None);
+        self.set_local_mk_key_id(None);
+        self.set_ephemeral_mk_key_id(None);
+        self.set_sd_mk_key_id(None);
         self.set_unwrapping_key_id(None);
-        // Write-once provisioning material + presence flags.
-        self.clear_pta_pub_key();
-        self.clear_policy_hash();
-        self.clear_pota_thumbprint();
-        self.clear_sata_thumbprint();
-        self.clear_sapota_thumbprint();
+        // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
-        // BK3 session/sealed material + incarnation flag.
         self.clear_bk3_session();
-        self.clear_sealed_bk3();
-        self.set_bk3_initialized(false);
-        // Rotated PSKs, nonce, VM launch GUID, and session table.
-        let slot = self.slot_mut();
-        slot.psk_co = [0u8; PSK_LEN];
-        slot.psk_cu = [0u8; PSK_LEN];
-        slot.nonce = [0u8; NONCE_LEN];
-        slot.vm_launch_guid = [0u8; GUID_LEN];
-        slot.session_table = [0u8; SESSION_TABLE_LEN];
-        slot.session_meta = [0u8; 2];
+        // Reset the PIN lockout policy to default (matches the reference
+        // `state.disable()` and `state.migrate()`).
+        self.set_pin_policy(PinPolicy::default());
+        // Per-tenant runtime: nonce, session table, session metadata.
+        {
+            let slot = self.slot_mut();
+            slot.nonce = [0u8; NONCE_LEN];
+            slot.session_table = [0u8; SESSION_TABLE_LEN];
+            slot.session_meta = [0u8; 2];
+        }
+
+        // ── Write-once provisioning material ──
+        // Preserved by `Migrate` (NSSR keeps provisioning); wiped by `Disable`
+        // (partition deallocation).
+        if matches!(kind, PartResetKind::Disable) {
+            self.clear_pta_pub_key();
+            self.clear_policy_hash();
+            self.clear_pota_thumbprint();
+            self.clear_sata_thumbprint();
+            self.clear_sapota_thumbprint();
+            self.clear_sealed_bk3();
+            self.set_bk3_initialized(false);
+            self.set_sd_initialized(false);
+            // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
+            // belongs to a partition that is being deallocated. A later
+            // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
+            // key.
+            self.clear_unwrapping_key();
+            let slot = self.slot_mut();
+            slot.psk_co = [0u8; PSK_LEN];
+            slot.psk_cu = [0u8; PSK_LEN];
+            slot.vm_launch_guid = [0u8; GUID_LEN];
+        }
     }
 
     /// Borrows the partition's 16-byte identity.
@@ -689,13 +771,36 @@ impl Partition {
     /// Whether InitBk3 has already run for this partition (one-shot gate).
     #[inline(never)]
     pub fn bk3_initialized(self) -> bool {
-        self.slot().bk3_initialized
+        self.slot().valid_flags & FLAG_BK3_INITIALIZED != 0
     }
 
     /// Sets the one-shot InitBk3 gate.
     #[inline(never)]
     pub fn set_bk3_initialized(mut self, valid: bool) {
-        self.slot_mut().bk3_initialized = valid;
+        let slot = self.slot_mut();
+        if valid {
+            slot.valid_flags |= FLAG_BK3_INITIALIZED;
+        } else {
+            slot.valid_flags &= !FLAG_BK3_INITIALIZED;
+        }
+    }
+
+    /// Whether a security domain has already been created for this
+    /// partition (one-shot gate).
+    #[inline(never)]
+    pub fn sd_initialized(self) -> bool {
+        self.slot().valid_flags & FLAG_SD_INITIALIZED != 0
+    }
+
+    /// Sets the one-shot security-domain init gate.
+    #[inline(never)]
+    pub fn set_sd_initialized(mut self, valid: bool) {
+        let slot = self.slot_mut();
+        if valid {
+            slot.valid_flags |= FLAG_SD_INITIALIZED;
+        } else {
+            slot.valid_flags &= !FLAG_SD_INITIALIZED;
+        }
     }
 
     // ── lockout policy ───────────────────────────────────────────────────
@@ -741,14 +846,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.policy_hash.copy_from_slice(src);
-        slot.policy_hash_valid = true;
+        slot.valid_flags |= FLAG_POLICY_HASH_VALID;
         Ok(())
     }
 
     /// Whether the partition policy hash has been provisioned.
     #[inline(never)]
     pub fn policy_hash_valid(self) -> bool {
-        self.slot().policy_hash_valid
+        self.slot().valid_flags & FLAG_POLICY_HASH_VALID != 0
     }
 
     /// Clears the partition policy hash (zeroizes and marks absent).
@@ -756,7 +861,7 @@ impl Partition {
     pub fn clear_policy_hash(mut self) {
         let slot = self.slot_mut();
         slot.policy_hash = [0u8; POLICY_HASH_LEN];
-        slot.policy_hash_valid = false;
+        slot.valid_flags &= !FLAG_POLICY_HASH_VALID;
     }
 
     /// Borrows the POTA public-key thumbprint (48 B).
@@ -787,14 +892,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.pota_thumbprint.copy_from_slice(src);
-        slot.pota_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_POTA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a POTA thumbprint has been provisioned.
     #[inline(never)]
     pub fn pota_thumbprint_valid(self) -> bool {
-        self.slot().pota_thumbprint_valid
+        self.slot().valid_flags & FLAG_POTA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the POTA thumbprint (zeroizes and marks absent).
@@ -802,7 +907,7 @@ impl Partition {
     pub fn clear_pota_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.pota_thumbprint = [0u8; POTA_THUMBPRINT_LEN];
-        slot.pota_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_POTA_THUMBPRINT_VALID;
     }
 
     /// Borrows the SATA thumbprint (48 B).
@@ -826,14 +931,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.sata_thumbprint.copy_from_slice(src);
-        slot.sata_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_SATA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a SATA thumbprint has been provisioned.
     #[inline(never)]
     pub fn sata_thumbprint_valid(self) -> bool {
-        self.slot().sata_thumbprint_valid
+        self.slot().valid_flags & FLAG_SATA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the SATA thumbprint (zeroizes and marks absent).
@@ -841,7 +946,7 @@ impl Partition {
     pub fn clear_sata_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.sata_thumbprint = [0u8; SATA_THUMBPRINT_LEN];
-        slot.sata_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_SATA_THUMBPRINT_VALID;
     }
 
     /// Borrows the SAPOTA thumbprint (48 B).
@@ -865,14 +970,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.sapota_thumbprint.copy_from_slice(src);
-        slot.sapota_thumbprint_valid = true;
+        slot.valid_flags |= FLAG_SAPOTA_THUMBPRINT_VALID;
         Ok(())
     }
 
     /// Whether a SAPOTA thumbprint has been provisioned.
     #[inline(never)]
     pub fn sapota_thumbprint_valid(self) -> bool {
-        self.slot().sapota_thumbprint_valid
+        self.slot().valid_flags & FLAG_SAPOTA_THUMBPRINT_VALID != 0
     }
 
     /// Clears the SAPOTA thumbprint (zeroizes and marks absent).
@@ -880,7 +985,7 @@ impl Partition {
     pub fn clear_sapota_thumbprint(mut self) {
         let slot = self.slot_mut();
         slot.sapota_thumbprint = [0u8; SAPOTA_THUMBPRINT_LEN];
-        slot.sapota_thumbprint_valid = false;
+        slot.valid_flags &= !FLAG_SAPOTA_THUMBPRINT_VALID;
     }
 
     // ── lifecycle state / generation / resource mask ─────────────────────
@@ -1025,6 +1130,118 @@ impl Partition {
         self.slot_mut().unwrapping_key_id = write_handle(key);
     }
 
+    // ── RSA unwrapping-key backup (SP-published) — two-gate CP↔SP handshake ──
+    //
+    // Gate 1: the CP arms `unwrapping_key_required` (via `set_unwrapping_key_required`,
+    // on `SetResource` with a non-zero mask). Gate 2: the SP, seeing Gate 1
+    // armed, stages a ready-to-use 516-byte PKA-LE RSA-2048 private key into
+    // `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero. The HSM
+    // then imports it into its vault (recording `unwrapping_key_id`). The key
+    // persists in the slot (it is not consumed on import); it is wiped only on
+    // partition deallocation. The 516-byte payload is the RSA-2048 private key
+    // in PKA little-endian order, `d(256) ‖ n(256) ‖ e(4)`; the wire public key
+    // is the trailing `n ‖ e` (derived on demand by `rsa_priv_pub_key`).
+
+    /// Arms/disarms Gate 1 (`unwrapping_key_required`): the CP-only flag the SP
+    /// reads to decide whether to stage an unwrapping key for this partition.
+    #[inline(never)]
+    pub fn set_unwrapping_key_required(mut self, required: bool) {
+        // Volatile: this is a CP→SP shared-memory mailbox byte. A plain store
+        // could be reordered or elided by the compiler, breaking the handshake.
+        // SAFETY: valid, aligned, writable byte in this partition's GSRAM slot.
+        unsafe {
+            core::ptr::write_volatile(&mut self.slot_mut().unwrapping_key_required, required);
+        }
+    }
+
+    /// Whether Gate 1 (`unwrapping_key_required`) is currently armed.
+    #[inline(never)]
+    pub fn unwrapping_key_required(self) -> bool {
+        // Volatile read of the CP↔SP mailbox byte.
+        // SAFETY: valid, aligned, readable byte in this partition's GSRAM slot.
+        unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_required) }
+    }
+
+    /// Whether the SP has published a valid RSA-2048 unwrapping key into this
+    /// partition's GSRAM slot. The SP writes a `UnwrappingKeyValidity` `u8`
+    /// (`0` = empty; non-zero = occupied), so occupancy is `!= 0`.
+    #[inline(never)]
+    pub fn unwrapping_key_bk_valid(self) -> bool {
+        // Volatile read: the SP writes this mailbox byte from another processor,
+        // so a cached/hoisted load could miss the publish.
+        // SAFETY: valid, aligned, readable byte in this partition's GSRAM slot.
+        let valid = unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_bk_valid) } != 0;
+        // Acquire fence pairing the SP's release before it sets this byte: the
+        // producer writes the 516-byte `unwrapping_key_bk` payload *before*
+        // marking this valid, so a consumer that observes it set must not have
+        // its subsequent payload loads (in `unwrapping_key_bk`) hoisted ahead of
+        // this observation.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
+        valid
+    }
+
+    /// Borrows the 516-byte PKA-LE RSA-2048 unwrapping-key backup published by
+    /// the HSP. Only meaningful when
+    /// [`unwrapping_key_bk_valid`](Self::unwrapping_key_bk_valid) is true.
+    #[inline(never)]
+    pub fn unwrapping_key_bk(self) -> &'static DmaBuf {
+        // SAFETY: `unwrapping_key_bk` is an align-1 packed field; GSRAM bytes
+        // branded as DMA-accessible; valid for 'static.
+        unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
+    }
+
+    /// Resets the SP↔CP unwrapping-key slot on partition teardown: disarms
+    /// Gate 1, volatile-wipes the 516-byte payload (so the private key can't be
+    /// recovered from GSRAM), and clears the validity byte. A later
+    /// `SetResource` re-arms Gate 1 and the SP re-stages a fresh key.
+    #[inline(never)]
+    pub fn clear_unwrapping_key(mut self) {
+        let slot = self.slot_mut();
+        // The gate + validity are CP↔SP mailbox bytes → volatile writes; the
+        // payload is volatile-wiped. SAFETY: valid, aligned bytes in this slot.
+        unsafe {
+            core::ptr::write_volatile(&mut slot.unwrapping_key_required, false);
+            DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk).zeroize();
+            core::ptr::write_volatile(&mut slot.unwrapping_key_bk_valid, 0);
+        }
+    }
+
+    /// Reads the partition-local masking key (`PartLocalMK`) handle.
+    #[inline(never)]
+    pub fn local_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().local_mk_key_id)
+    }
+
+    /// Sets (or clears) the partition-local masking key handle.
+    #[inline(never)]
+    pub fn set_local_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().local_mk_key_id = write_handle(key);
+    }
+
+    /// Reads the partition ephemeral masking key (`EphemeralMK`) handle.
+    #[inline(never)]
+    pub fn ephemeral_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().ephemeral_mk_key_id)
+    }
+
+    /// Sets (or clears) the partition ephemeral masking key handle.
+    #[inline(never)]
+    pub fn set_ephemeral_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().ephemeral_mk_key_id = write_handle(key);
+    }
+
+    /// Reads the security-domain masking key (`SDMK`) handle.
+    #[inline(never)]
+    pub fn sd_mk_key_id(self) -> Option<HsmKeyId> {
+        read_handle(self.slot().sd_mk_key_id)
+    }
+
+    /// Sets (or clears) the security-domain masking key handle.
+    #[inline(never)]
+    pub fn set_sd_mk_key_id(mut self, key: Option<HsmKeyId>) {
+        self.slot_mut().sd_mk_key_id = write_handle(key);
+    }
+
     // ── cached public keys (establish-cred / session-enc) ────────────────
 
     /// Borrows the establish-credential public key (X ‖ Y, 96 B).
@@ -1107,14 +1324,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.pta_pub_key.copy_from_slice(src);
-        slot.pta_pub_key_valid = true;
+        slot.valid_flags |= FLAG_PTA_PUB_KEY_VALID;
         Ok(())
     }
 
     /// Whether the platform trust-anchor public key has been provisioned.
     #[inline(never)]
     pub fn pta_pub_key_valid(self) -> bool {
-        self.slot().pta_pub_key_valid
+        self.slot().valid_flags & FLAG_PTA_PUB_KEY_VALID != 0
     }
 
     /// Clears the platform trust-anchor public key (zeroizes and marks absent).
@@ -1122,7 +1339,7 @@ impl Partition {
     pub fn clear_pta_pub_key(mut self) {
         let slot = self.slot_mut();
         slot.pta_pub_key = [0u8; PUB_KEY_LEN];
-        slot.pta_pub_key_valid = false;
+        slot.valid_flags &= !FLAG_PTA_PUB_KEY_VALID;
     }
 
     /// Borrows the crypto-officer PSK (32 B).
@@ -1212,14 +1429,14 @@ impl Partition {
         }
         let slot = self.slot_mut();
         slot.credential.copy_from_slice(src);
-        slot.credential_valid = true;
+        slot.valid_flags |= FLAG_CREDENTIAL_VALID;
         Ok(())
     }
 
     /// Whether a user credential has been provisioned.
     #[inline(never)]
     pub fn credential_valid(self) -> bool {
-        self.slot().credential_valid
+        self.slot().valid_flags & FLAG_CREDENTIAL_VALID != 0
     }
 
     /// Clears the user credential (zeroizes and marks absent).
@@ -1227,7 +1444,7 @@ impl Partition {
     pub fn clear_credential(mut self) {
         let slot = self.slot_mut();
         slot.credential = [0u8; CREDENTIAL_LEN];
-        slot.credential_valid = false;
+        slot.valid_flags &= !FLAG_CREDENTIAL_VALID;
     }
 
     // ── session table (raw region; typed view in drivers/session_store) ──
@@ -1259,17 +1476,4 @@ impl Partition {
 }
 
 #[cfg(test)]
-mod align_probe {
-    use core::mem::offset_of;
-
-    use super::*;
-    #[test]
-    fn pub_key_offsets() {
-        std::eprintln!(
-            "id_pub  = {}",
-            offset_of!(Storage, partition_identifier) + 16 + 48
-        );
-        std::eprintln!("ec_pub  = {}", offset_of!(Storage, ec_pub_key));
-        std::eprintln!("se_pub  = {}", offset_of!(Storage, se_pub_key));
-    }
-}
+mod tests;

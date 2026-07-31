@@ -70,6 +70,25 @@ impl HsmEccCurve {
         }
     }
 
+    /// Return the ECDSA digest field width in bytes that the sign path
+    /// zero-extends the host digest to before handing it to the signing
+    /// primitive: the raw curve field size ([`HsmEccCurve::priv_key_len`])
+    /// capped at the largest FIPS digest (SHA-512, 64 bytes).
+    ///
+    /// | Curve  | Width |
+    /// |--------|-------|
+    /// | P-256  | 32    |
+    /// | P-384  | 48    |
+    /// | P-521  | 64    |
+    ///
+    /// A host digest shorter than this (e.g. a SHA-256 digest signed with a
+    /// P-384 key) is zero-extended up to this width so the on-chip PKA engine
+    /// receives a full field-width little-endian operand; the width stays
+    /// `<= 64` so the OpenSSL-backed std PAL signs it without truncation.
+    pub fn ecdsa_digest_len(&self) -> usize {
+        self.priv_key_len().min(64)
+    }
+
     /// Return the **raw cryptographic** public-key length in bytes
     /// (`X || Y`, each [`HsmEccCurve::priv_key_len`] bytes).
     ///
@@ -260,11 +279,17 @@ pub trait HsmEcc {
     ///   (32 / 48 / 68 bytes for P-256 / P-384 / P-521).
     /// - `hash` — message digest to sign, in **little-endian** byte
     ///   order to match the wire-native format produced by real PKA
-    ///   hardware.  Must contain exactly the digest's native length
-    ///   (e.g. 32 bytes for SHA-256, 64 bytes for SHA-512); ECDSA
-    ///   truncates internally if longer than the curve's order.
-    ///   Implementations that delegate to a big-endian-native
-    ///   primitive (e.g. OpenSSL) must reverse the bytes internally.
+    ///   hardware.  This is the field-width sign *operand*, not
+    ///   necessarily the raw digest: the caller (the DDI `EccSign`
+    ///   handler) widens a short digest to at least
+    ///   `HsmEccCurve::ecdsa_digest_len(curve)` (32 / 48 / 64 for
+    ///   P-256 / P-384 / P-521) by zero-extending the trailing bytes,
+    ///   so e.g. a SHA-256 digest signed with a P-384 key arrives as
+    ///   48 bytes with the high 16 zero.  Any bytes past the digest
+    ///   must be zero.  A digest longer than the curve's order is
+    ///   ECDSA-truncated internally.  Implementations that delegate to
+    ///   a big-endian-native primitive (e.g. OpenSSL) must reverse the
+    ///   bytes internally.
     /// - `signature` — output buffer.  On return, holds `r || s`
     ///   with **each component in little-endian** byte order — the
     ///   wire-native format produced by real PKA hardware.  P-521
@@ -304,8 +329,15 @@ pub trait HsmEcc {
     ///   delegate to a big-endian-native primitive (e.g. OpenSSL)
     ///   must strip the per-coordinate padding and reverse each
     ///   coordinate internally.
-    /// - `hash` — message digest that was signed.  Raw digest bytes;
-    ///   no endianness conversion is applied.
+    /// - `hash` — message digest that was signed, in **little-endian**
+    ///   byte order: the natural big-endian digest with **all bytes fully
+    ///   reversed** (BE->LE), at least the curve's digest length.  This is a
+    ///   full-digest reversal, distinct from
+    ///   `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within
+    ///   each 32-bit word.  The digest is PKA-native LE like `pub_key` /
+    ///   `signature`; the DDI handler performs the conversion (hash big-endian,
+    ///   then reverse), so PKA-native PALs consume it as-is while
+    ///   big-endian-native PALs (e.g. OpenSSL) reverse it internally.
     /// - `signature` — signature to verify; must be exactly
     ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
     ///   is in little-endian byte order** with P-521 components
@@ -373,6 +405,44 @@ pub trait HsmEcc {
         pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize>;
 
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Computes the public point by base-point scalar multiplication and
+    /// serializes it in the little-endian DDI wire form. Performs no
+    /// hashing and no signing.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve the private key is on.
+    /// - `priv_key` — private key in raw HSM-format scalar bytes
+    ///   (`curve.wire_priv_key_len()`: 32 / 48 / 68 bytes for
+    ///   P-256 / P-384 / P-521), **little-endian** to match the
+    ///   wire-native format produced by real PKA hardware.
+    /// - `pub_key` — output buffer for the uncompressed point `x || y`;
+    ///   must be **at least** `curve.wire_pub_key_len()` bytes. Only the
+    ///   first `wire_pub_key_len()` bytes are written (any tail is left
+    ///   untouched — see *Returns*). **Each coordinate is written
+    ///   little-endian** with P-521 coordinates padded to 68 bytes —
+    ///   matching the on-wire DDI representation and real PKA hardware.
+    ///   Implementations that delegate to a big-endian-native primitive
+    ///   (e.g. OpenSSL) must reverse each coordinate internally.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `pub_key[..wire_pub_key_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `priv_key` not `wire_priv_key_len()`
+    ///   bytes, `pub_key` shorter than `wire_pub_key_len()`, or an invalid
+    ///   private scalar.
+    /// - `Err(HsmError)` — propagated from the PKA driver.
+    async fn ecc_pub_from_priv(
+        &self,
+        io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
     /// ECDH key agreement: derives a shared secret from a local
     /// private key and a remote public key.
     ///
@@ -392,8 +462,10 @@ pub trait HsmEcc {
     ///   OpenSSL) must strip the per-coordinate padding and reverse
     ///   each coordinate internally.
     /// - `secret` — output buffer; must be at least
-    ///   `curve.secret_len()` bytes.  On success, holds the
-    ///   x-coordinate of the shared point.
+    ///   `curve.secret_len()` bytes.  On success, holds the x-coordinate of
+    ///   the shared point in **little-endian** (PKA-native) byte order.
+    ///   Byte-order conversion for a specific consumer (e.g. LE->BE before an
+    ///   openssl-matching HKDF) is the DDI handler's responsibility.
     ///
     /// # Returns
     ///

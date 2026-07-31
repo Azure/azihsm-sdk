@@ -77,8 +77,8 @@ use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
 use azihsm_fw_uno_trace::tracing::*;
-use embassy_futures::select::Either3;
-use embassy_futures::select::select3;
+use embassy_futures::select::Either;
+use embassy_futures::select::select;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -282,8 +282,10 @@ pub struct UnoHsmPal {
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
-// executor on a single-core Cortex-M7 with no preemptive ISRs.
-// The Cell<BootPhase> field is never accessed from interrupt context.
+// executor on a single-core Cortex-M7 with no preemptive ISRs.  The
+// interior-mutable field (Cell<BootPhase>) is never accessed from
+// interrupt context, so concurrent access is impossible despite the
+// asserted Sync.
 unsafe impl Sync for UnoHsmPal {}
 
 impl Default for UnoHsmPal {
@@ -385,8 +387,11 @@ impl UnoHsmPal {
 
     /// Process one IPC receive cycle.
     ///
-    /// Awaits the next message, event, or 60s keepalive tick, then
-    /// dispatches to the appropriate handler. Returns after one iteration.
+    /// Awaits the next AdminMessage or AdminEvent, then dispatches to the
+    /// appropriate handler. Returns after one iteration. The wait is fully
+    /// waker-driven (the recv futures register a waker woken from the INTC
+    /// IRQ via the NVIC poll loop), so the task parks with zero cost until
+    /// IPC arrives — no polling timer is needed.
     ///
     /// # Parameters
     /// - `self`: PAL instance used to receive IPC traffic and dispatch handlers.
@@ -399,35 +404,33 @@ impl UnoHsmPal {
     /// # Side Effects
     /// - Consumes one message from [`IpcChannel::Message`] when available.
     /// - Acknowledges one event on [`IpcChannel::Event`] when available.
-    /// - Emits a periodic trace tick on timeout.
     pub async fn poll_ipc(&self) {
         let mut recv_msg = [0u32; 16];
 
-        let result = select3(
+        let result = select(
             self.ipc.recv(IpcChannel::AdminMessage as u8, &mut recv_msg),
             self.ipc.recv_event(IpcChannel::AdminEvent as u8),
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
         )
         .await;
         match result {
-            Either3::First(_) => {
+            Either::First(_) => {
                 self.handle_ipc_message(IpcChannel::AdminMessage, &mut recv_msg)
                     .await;
             }
-            Either3::Second(value) => {
+            Either::Second(value) => {
                 self.handle_ipc_event(IpcChannel::AdminEvent, value);
-            }
-            Either3::Third(()) => {
-                self.heartbeat();
             }
         }
     }
 
-    /// Write the core liveliness heartbeat to DTCM.
+    /// Refresh the core liveliness indicator polled by the SP.
     ///
-    /// SP polls CORE_RUN_STATUS and zeroes it; if zero on the next
-    /// poll cycle, SP declares the core hung.
-    fn heartbeat(&self) {
+    /// SP polls CORE_RUN_STATUS and zeroes it each cycle; if it reads zero
+    /// on the next poll, it declares the core hung and resets it. Driven by
+    /// the dedicated heartbeat task on an independent timer so the refresh is
+    /// decoupled from IPC traffic, mirroring the reference firmware's
+    /// timer-driven `update_core_liveliness` (`on_timer_elapsed`).
+    pub fn update_liveliness(&self) {
         core_status::set(CoreStatus::Alive);
     }
 
@@ -600,11 +603,21 @@ impl UnoHsmPal {
         // PF (PcieFunction::Pf == 64) is enabled before its resources are
         // assigned; a VF is enabled after. `part_enable` needs to know which.
         let is_pf = msg.info.pfn == 64;
-        // Map the IPC action onto a partition-lifecycle primitive; Migrate
-        // and any unknown action are not supported.
+        // Map the IPC action onto a partition-lifecycle primitive. `Migrate`
+        // drives an NSSR reset (handled by `part_migrate` below); only an
+        // unknown action is rejected as unsupported. No partition lock: a
+        // partition cannot be disabled/freed while host IOs are in flight,
+        // and admin-IPC is strictly serial, so this cannot race a host
+        // command (see lock.rs).
         let result = match PfnEnableDisableAction(msg.info.action) {
             PfnEnableDisableAction::Enable => self.part_enable(pid, is_pf).await,
             PfnEnableDisableAction::Disable => self.part_disable(pid).await,
+            // NSSR: the Admin sends `Migrate` to reset a partition's per-tenant
+            // state. `part_migrate` mirrors the reference `state.migrate()`:
+            // wipe the key vault and clear the per-tenant state while preserving
+            // the partition's provisioning, then regenerate the enable-time
+            // keys, leaving the partition enabled and re-provisionable.
+            PfnEnableDisableAction::Migrate => self.part_migrate(pid).await,
             _ => Err(HsmError::UnsupportedCmd),
         };
         let status = match result {
@@ -660,6 +673,8 @@ impl UnoHsmPal {
         // A zero mask frees the partition; any other mask (re)allocates it.
         // The ACK's owned-table count is a pure function of the mask — an
         // IPC-reply concern, computed here rather than in the partition layer.
+        // No partition lock: a partition cannot be freed/allocated while host
+        // IOs are in flight, and admin-IPC is strictly serial (see lock.rs).
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {

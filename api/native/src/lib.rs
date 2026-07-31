@@ -30,6 +30,7 @@ mod partition;
 mod partition_props;
 mod resiliency;
 mod session;
+mod session_ex;
 mod session_props;
 #[allow(unused)]
 #[path = "../../lib/src/shared_types.rs"]
@@ -137,6 +138,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
             10 => Ok(AzihsmKeyKind::AesGcm),
+            11 => Ok(AzihsmKeyKind::Sealing),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
@@ -552,6 +554,15 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
     }
 }
 
+impl TryFrom<AzihsmHandle> for api::HsmSealingKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmSealingKey, Self::Error> {
+        let key: &api::HsmSealingKey = HANDLE_TABLE.as_ref(value, HandleType::SealingKey)?;
+        Ok(key.clone())
+    }
+}
+
 impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
     type Error = AzihsmStatus;
 
@@ -577,5 +588,41 @@ impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
             std::slice::from_raw_parts_mut(key_prop.val as *mut u8, key_prop.len as usize)
         };
         Ok(slice)
+    }
+}
+
+type AzihsmSessionExType = shared_types::HsmSessionExType;
+
+impl TryFrom<u32> for AzihsmSessionExType {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(AzihsmSessionExType::PlainText),
+            1 => Ok(AzihsmSessionExType::Authenticated),
+            _ => Err(AzihsmStatus::InvalidArgument),
+        }
+    }
+}
+
+impl From<api::HsmSessionExType> for AzihsmSessionExType {
+    /// Converts an `api::HsmSessionExType` into an `AzihsmSessionExType`.
+    ///
+    /// Both types are `#[open_enum]` wrappers over a `u32`, so the
+    /// conversion copies the underlying discriminant directly and never
+    /// relies on layout assumptions.
+    fn from(session_type: api::HsmSessionExType) -> Self {
+        shared_types::HsmSessionExType(session_type.0)
+    }
+}
+
+impl From<AzihsmSessionExType> for api::HsmSessionExType {
+    /// Converts an `AzihsmSessionExType` into an `api::HsmSessionExType`.
+    ///
+    /// Both types are `#[open_enum]` wrappers over a `u32`, so the
+    /// conversion copies the underlying discriminant directly and never
+    /// relies on layout assumptions.
+    fn from(session_type: AzihsmSessionExType) -> Self {
+        api::HsmSessionExType(session_type.0)
     }
 }

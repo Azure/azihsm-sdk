@@ -62,6 +62,16 @@ impl HsmVault for UnoHsmPal {
         v.delete(self, io, key_id).await
     }
 
+    fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let mut v = vault(io);
+        v.disable(key_id)
+    }
+
+    fn vault_key_enable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let mut v = vault(io);
+        v.enable(key_id)
+    }
+
     async fn vault_key_delete_by_session(
         &self,
         io: &impl HsmIo,

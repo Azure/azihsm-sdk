@@ -107,11 +107,21 @@ impl HsmEcc for StdHsmPal {
 
         let (pk, pub_key) = self.ecc.gen_keypair(to_ecc_curve(curve)).await?;
         self.ecc.pub_coords(&pub_key, false, scratch_pub).await?;
-        pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
-            .map_err(|_| HsmError::EccExportError)?;
+        // From here the private scalar is in `scratch_priv`; wipe it on
+        // every exit (scope rewind does not clear DMA memory).
+        if pk.to_hsm_bytes(&mut scratch_priv[..priv_len]).is_err() {
+            scratch_priv.zeroize();
+            return Err(HsmError::EccExportError);
+        }
 
         priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
         pub_out[..wire_pub_len].copy_from_slice(scratch_pub);
+
+        // Scrub the private-scalar half of the scratch before returning:
+        // scope rewind does not clear DMA memory, so the freshly generated
+        // scalar would otherwise linger in — and leak through — a later
+        // per-IO allocation. (The pub half is not secret.)
+        scratch_priv.zeroize();
 
         Ok((priv_len, wire_pub_len))
     }
@@ -146,16 +156,25 @@ impl HsmEcc for StdHsmPal {
 
         let pk = EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), okm)
             .map_err(|_| HsmError::EccGenerateError)?;
-        pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
-            .map_err(|_| HsmError::EccExportError)?;
 
-        let pub_key = pk
-            .public_key()
-            .map_err(|_| HsmError::EccGetCoordinatesError)?;
-        self.ecc.pub_coords(&pub_key, false, scratch_pub).await?;
-
-        priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
-        pub_out[..wire_pub_len].copy_from_slice(scratch_pub);
+        // Serialize the scalar into `scratch_priv`, derive the public
+        // coordinates, and copy both out.  Once the scalar is in DMA
+        // scratch, every exit must wipe it (scope rewind does not clear DMA
+        // memory), so run the fallible tail and scrub unconditionally after.
+        let fill = async {
+            pk.to_hsm_bytes(&mut scratch_priv[..priv_len])
+                .map_err(|_| HsmError::EccExportError)?;
+            let pub_key = pk
+                .public_key()
+                .map_err(|_| HsmError::EccGetCoordinatesError)?;
+            self.ecc.pub_coords(&pub_key, false, scratch_pub).await?;
+            priv_out[..priv_len].copy_from_slice(&scratch_priv[..priv_len]);
+            pub_out[..wire_pub_len].copy_from_slice(scratch_pub);
+            Ok::<(), HsmError>(())
+        }
+        .await;
+        scratch_priv.zeroize();
+        fill?;
 
         Ok((priv_len, wire_pub_len))
     }
@@ -215,6 +234,32 @@ impl HsmEcc for StdHsmPal {
         result.fill(0);
         result[0] = if valid { 0 } else { 1 };
         Ok(())
+    }
+
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Delegates to the driver's `pub_from_priv_le`, which runs the
+    /// OpenSSL key reconstruction and public-point derivation on the
+    /// worker pool and emits the little-endian DDI wire form.
+    async fn ecc_pub_from_priv(
+        &self,
+        _io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let wire_priv_len = curve.wire_priv_key_len();
+        let wire_pub_len = curve.wire_pub_key_len();
+        if priv_key.len() != wire_priv_len || pub_key.len() < wire_pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+        self.ecc
+            .pub_from_priv_le(
+                to_ecc_curve(curve),
+                &priv_key[..wire_priv_len],
+                &mut pub_key[..wire_pub_len],
+            )
+            .await
     }
 
     /// ECDH key agreement — derives a shared secret.

@@ -47,6 +47,8 @@
 //! On real Cortex-M7 hardware, these operations would be offloaded
 //! to a PKA (Public Key Accelerator) engine via DMA.
 
+use core::cmp::Ordering;
+
 use azihsm_crypto::DecryptOp;
 use azihsm_crypto::EncryptOp;
 use azihsm_crypto::HashAlgo;
@@ -168,11 +170,14 @@ impl StdRsa {
     ///
     /// # Parameters
     /// - `priv_key` — The RSA private key handle.
-    /// - `y` — Input data. Must be exactly the key size in bytes.
+    /// - `y` — Input data, exactly the key size in bytes; its value must
+    ///   satisfy `1 < y < n-1` (FIPS / NIST ACVP).
     /// - `x` — Output buffer for the result. Must be exactly the key
     ///   size in bytes.
     ///
     /// # Errors
+    /// - [`HsmError::InvalidArg`] — `y` is outside the required range
+    ///   `1 < y < n-1`, or its length disagrees with the modulus.
     /// - [`HsmError::RsaDecryptFailed`] — the modular exponentiation failed.
     pub async fn mod_exp_priv(
         &self,
@@ -180,8 +185,17 @@ impl StdRsa {
         y: &[u8],
         x: &mut [u8],
     ) -> HsmResult<()> {
+        // FIPS / NIST ACVP: the input value `m` must satisfy `1 < m < n-1`.
+        // Reject out-of-range inputs with `InvalidArg` before the
+        // exponentiation.  The check lives at the driver level so every
+        // backend enforces it — real PKA hardware compares against the
+        // modulus natively; here it is a software byte compare.
+        reject_out_of_range_mod_exp_input(priv_key, y)?;
+
         let key = priv_key.clone();
-        let y_owned = y.to_vec();
+        // Wire operands are little-endian; OpenSSL is big-endian.
+        let mut y_be = y.to_vec();
+        y_be.reverse();
         let out_len = x.len();
 
         let result = self
@@ -189,13 +203,14 @@ impl StdRsa {
             .submit_with_result(async move {
                 let mut algo = RsaEncryptAlgo::with_no_padding();
                 let mut buf = vec![0u8; out_len];
-                algo.decrypt(&key, &y_owned, Some(&mut buf))
+                algo.decrypt(&key, &y_be, Some(&mut buf))
                     .map_err(|_| HsmError::RsaDecryptFailed)?;
                 Ok::<_, HsmError>(buf)
             })
             .await?;
 
-        x.copy_from_slice(&result);
+        // `result` is big-endian; emit the little-endian wire form.
+        super::reverse_copy(x, &result);
         Ok(())
     }
 
@@ -223,7 +238,9 @@ impl StdRsa {
         y: &mut [u8],
     ) -> HsmResult<()> {
         let key = pub_key.clone();
-        let x_owned = x_input.to_vec();
+        // Wire operands are little-endian; OpenSSL is big-endian.
+        let mut x_be = x_input.to_vec();
+        x_be.reverse();
         let out_len = y.len();
 
         let result = self
@@ -231,13 +248,14 @@ impl StdRsa {
             .submit_with_result(async move {
                 let mut algo = RsaEncryptAlgo::with_no_padding();
                 let mut buf = vec![0u8; out_len];
-                algo.encrypt(&key, &x_owned, Some(&mut buf))
+                algo.encrypt(&key, &x_be, Some(&mut buf))
                     .map_err(|_| HsmError::RsaEncryptFailed)?;
                 Ok::<_, HsmError>(buf)
             })
             .await?;
 
-        y.copy_from_slice(&result);
+        // `result` is big-endian; emit the little-endian wire form.
+        super::reverse_copy(y, &result);
         Ok(())
     }
 
@@ -302,6 +320,84 @@ impl StdRsa {
     }
 }
 
+/// Reject an RSA modular-exponentiation input outside the FIPS / NIST
+/// ACVP range `1 < m < n - 1`, where `n` is the private key's modulus.
+///
+/// `m_le` is the little-endian, modulus-length input value.  The modulus
+/// is recovered from the key's derived public key (uniform for CRT and
+/// non-CRT keys).  Returns [`HsmError::InvalidArg`] when the input is out
+/// of range or its length disagrees with the modulus.
+fn reject_out_of_range_mod_exp_input(priv_key: &RsaPrivateKey, m_le: &[u8]) -> HsmResult<()> {
+    /// Largest supported modulus (RSA-4096) in bytes.
+    const MAX_MODULUS_LEN: usize = 512;
+
+    let pubk = priv_key
+        .public_key()
+        .map_err(|_| HsmError::RsaDecryptFailed)?;
+    let n_len = pubk.n(None).map_err(|_| HsmError::RsaDecryptFailed)?;
+    if n_len > MAX_MODULUS_LEN || n_len != m_le.len() {
+        return Err(HsmError::InvalidArg);
+    }
+    // OpenSSL yields the modulus big-endian; reverse to the little-endian
+    // wire order the input uses so the two are compared in the same order.
+    let mut n_be = [0u8; MAX_MODULUS_LEN];
+    pubk.n(Some(&mut n_be[..n_len]))
+        .map_err(|_| HsmError::RsaDecryptFailed)?;
+    let mut n_le = [0u8; MAX_MODULUS_LEN];
+    super::reverse_copy(&mut n_le[..n_len], &n_be[..n_len]);
+
+    if mod_exp_input_in_range(&n_le[..n_len], m_le) {
+        Ok(())
+    } else {
+        Err(HsmError::InvalidArg)
+    }
+}
+
+/// Byte-wise check that the little-endian value `m` satisfies
+/// `1 < m < n - 1`, where `n` is the little-endian modulus of equal
+/// length.
+///
+/// Mirrors the reference firmware's NIST-ACVP input validation: it walks
+/// from the most- to least-significant byte and decides as soon as the
+/// bytes differ, avoiding a general big-integer subtraction (the same
+/// comparison real PKA hardware performs).
+fn mod_exp_input_in_range(n: &[u8], m: &[u8]) -> bool {
+    if n.len() != m.len() || n.is_empty() {
+        return false;
+    }
+    // Whether a more-significant byte of `m` is already non-zero, which
+    // by itself proves `m > 1`.
+    let mut m_gt_one = false;
+    for i in (1..n.len()).rev() {
+        m_gt_one |= m[i] > 0;
+        match n[i].cmp(&m[i]) {
+            Ordering::Greater => {
+                // `m == n - 1` only if the difference is exactly one here
+                // and every lower byte forms the borrow pattern (n's lower
+                // bytes all 0x00, m's all 0xFF).
+                if n[i] - m[i] == 1
+                    && n[..i].iter().all(|&b| b == 0)
+                    && m[..i].iter().all(|&b| b == 0xFF)
+                {
+                    return false;
+                }
+                // `m < n - 1` holds here; valid iff `m > 1`.
+                if m_gt_one {
+                    return true;
+                }
+                return m[1..i].iter().any(|&b| b > 0) || m[0] > 1;
+            }
+            // `m > n`, so `m < n - 1` is false.
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+    // All bytes above the least-significant are equal: `m` and `n` differ
+    // only in the low byte, so `1 < m < n - 1` iff `m > 1` and
+    // `n[0] - m[0] > 1`.
+    (m_gt_one || m[0] > 1) && n[0] > m[0] && n[0] - m[0] > 1
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::runtime::Handle;
@@ -319,6 +415,30 @@ mod tests {
         let mut msg = vec![0u8; key_size_bytes];
         msg[key_size_bytes - 1] = 0x02;
         msg
+    }
+
+    /// Edge cases for the `1 < m < n - 1` input-range check (all values
+    /// little-endian).
+    #[test]
+    fn mod_exp_input_range_check() {
+        // n = 0x0100FF (65791); valid m is 2..=65789 (1 < m < n-1).
+        let n = [0xFF, 0x00, 0x01];
+        assert!(!mod_exp_input_in_range(&n, &[0x00, 0x00, 0x00]), "m = 0");
+        assert!(!mod_exp_input_in_range(&n, &[0x01, 0x00, 0x00]), "m = 1");
+        assert!(mod_exp_input_in_range(&n, &[0x02, 0x00, 0x00]), "m = 2");
+        assert!(mod_exp_input_in_range(&n, &[0xFD, 0x00, 0x01]), "m = n-2");
+        assert!(!mod_exp_input_in_range(&n, &[0xFE, 0x00, 0x01]), "m = n-1");
+        assert!(!mod_exp_input_in_range(&n, &[0xFF, 0x00, 0x01]), "m = n");
+        assert!(!mod_exp_input_in_range(&n, &[0x00, 0x01, 0x01]), "m = n+1");
+
+        // Borrow pattern: n = 0x010000, so n-1 = 0x00FFFF.
+        let n2 = [0x00, 0x00, 0x01];
+        assert!(!mod_exp_input_in_range(&n2, &[0xFF, 0xFF, 0x00]), "m = n-1");
+        assert!(mod_exp_input_in_range(&n2, &[0xFE, 0xFF, 0x00]), "m = n-2");
+
+        // Length mismatch and empty inputs are rejected.
+        assert!(!mod_exp_input_in_range(&n, &[0x02, 0x00]));
+        assert!(!mod_exp_input_in_range(&[], &[]));
     }
 
     // ── Key generation ──────────────────────────────────────────
@@ -382,6 +502,38 @@ mod tests {
         mod_exp_roundtrip(4096).await;
     }
 
+    /// End-to-end driver check: `mod_exp_priv` recovers the modulus from
+    /// the OpenSSL key and rejects out-of-range wire inputs with
+    /// `InvalidArg`.  `m = 0` and `m = 1` (little-endian, byte 0 is the
+    /// LSB) are out of the `1 < m < n-1` range; a valid `m = 2` succeeds.
+    #[tokio::test]
+    async fn mod_exp_priv_rejects_out_of_range_inputs() {
+        let driver = make_driver();
+        let key_size_bytes = 256; // RSA-2048
+        let (priv_key, _pub_key) = driver.gen_keypair(2048).await.unwrap();
+        let mut out = vec![0u8; key_size_bytes];
+
+        let m_zero = vec![0u8; key_size_bytes];
+        assert!(matches!(
+            driver.mod_exp_priv(&priv_key, &m_zero, &mut out).await,
+            Err(HsmError::InvalidArg)
+        ));
+
+        let mut m_one = vec![0u8; key_size_bytes];
+        m_one[0] = 1;
+        assert!(matches!(
+            driver.mod_exp_priv(&priv_key, &m_one, &mut out).await,
+            Err(HsmError::InvalidArg)
+        ));
+
+        let mut m_two = vec![0u8; key_size_bytes];
+        m_two[0] = 2;
+        driver
+            .mod_exp_priv(&priv_key, &m_two, &mut out)
+            .await
+            .unwrap();
+    }
+
     // ── Identity test: pub(priv(m)) == m ─────────────────────────
 
     #[tokio::test]
@@ -406,6 +558,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(recovered, plaintext);
+    }
+
+    // ── Wire byte-order contract (little-endian operands) ────────
+    //
+    // The round-trip / identity tests above reverse symmetrically, so
+    // they pass even if the LE<->BE flips are wrong (or absent). These
+    // tests pin the *absolute* wire byte order by comparing the driver
+    // against a direct OpenSSL no-padding operation: on the wire the
+    // operands are little-endian, while OpenSSL is big-endian. A
+    // non-palindrome input (`m_be != reverse(m_be)`) makes the two byte
+    // orders distinguishable.
+
+    /// Build a non-palindrome big-endian test integer `< n` (leading
+    /// byte `0x01`), so reversing it yields a genuinely different value.
+    fn nonpalindrome_be(key_size_bytes: usize) -> Vec<u8> {
+        let mut m = vec![0u8; key_size_bytes];
+        m[0] = 0x01;
+        m[1] = 0x23;
+        m[key_size_bytes - 1] = 0x02;
+        m
+    }
+
+    /// `mod_exp_pub` must consume a little-endian `x` and emit a
+    /// little-endian `y`, i.e. `y == reverse(m_be^e mod n)`, verified
+    /// against a direct big-endian OpenSSL no-padding public op.
+    #[tokio::test]
+    async fn mod_exp_pub_wire_le_matches_openssl() {
+        let driver = make_driver();
+        let key_size_bytes = 256;
+        let (_priv_key, pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        let m_be = nonpalindrome_be(key_size_bytes);
+
+        // Independent reference: raw RSA public op in big-endian.
+        let mut ref_be = vec![0u8; key_size_bytes];
+        {
+            let mut algo = RsaEncryptAlgo::with_no_padding();
+            let written = algo.encrypt(&pub_key, &m_be, Some(&mut ref_be)).unwrap();
+            assert_eq!(written, key_size_bytes);
+        }
+        let mut expected_le = ref_be.clone();
+        expected_le.reverse();
+
+        // Driver consumes little-endian `x` and emits little-endian `y`.
+        let mut m_le = m_be.clone();
+        m_le.reverse();
+        let mut y_le = vec![0u8; key_size_bytes];
+        driver
+            .mod_exp_pub(&pub_key, &m_le, &mut y_le)
+            .await
+            .unwrap();
+
+        assert_eq!(y_le, expected_le);
+        // Guard: the output must be little-endian, not the big-endian
+        // OpenSSL form (would be equal only if the output flip were missing).
+        assert_ne!(y_le, ref_be);
+    }
+
+    /// `mod_exp_priv` must consume a little-endian `y` and emit a
+    /// little-endian `x`, i.e. `x == reverse(m_be^d mod n)`, verified
+    /// against a direct big-endian OpenSSL no-padding private op.
+    #[tokio::test]
+    async fn mod_exp_priv_wire_le_matches_openssl() {
+        let driver = make_driver();
+        let key_size_bytes = 256;
+        let (priv_key, _pub_key) = driver.gen_keypair(2048).await.unwrap();
+
+        let m_be = nonpalindrome_be(key_size_bytes);
+
+        // Independent reference: raw RSA private op in big-endian.
+        let mut ref_be = vec![0u8; key_size_bytes];
+        {
+            let mut algo = RsaEncryptAlgo::with_no_padding();
+            algo.decrypt(&priv_key, &m_be, Some(&mut ref_be)).unwrap();
+        }
+        let mut expected_le = ref_be.clone();
+        expected_le.reverse();
+
+        // Driver consumes little-endian `y` and emits little-endian `x`.
+        let mut m_le = m_be.clone();
+        m_le.reverse();
+        let mut x_le = vec![0u8; key_size_bytes];
+        driver
+            .mod_exp_priv(&priv_key, &m_le, &mut x_le)
+            .await
+            .unwrap();
+
+        assert_eq!(x_le, expected_le);
+        assert_ne!(x_le, ref_be);
     }
 
     // ── OAEP decrypt (wire-LE ciphertext → recovered plaintext) ──

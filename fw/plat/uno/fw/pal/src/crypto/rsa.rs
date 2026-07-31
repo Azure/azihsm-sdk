@@ -132,12 +132,29 @@ impl HsmRsa for UnoHsmPal {
     fn rsa_priv_pub_key(
         &self,
         _io: &impl HsmIo,
-        _priv_key: &DmaBuf,
-        _pub_out: Option<&mut DmaBuf>,
+        priv_key: &DmaBuf,
+        pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize> {
-        // TODO: convert the raw vault-format RSA private key into the
-        // wire public key on Uno PKA (GetUnwrappingKey / RsaUnwrap).
-        Err(HsmError::UnsupportedCmd)
+        // The Uno vault RSA private key is the PKA little-endian layout
+        // `d(k) ‖ n(k) ‖ e(4)` (k = modulus length), the same 516-byte form the
+        // HSP publishes for RSA-2048, so `priv_key.len() == 2*k + 4`. The wire
+        // public key is `n_le ‖ e_le` (`k + 4` bytes) — already little-endian,
+        // so it is exactly the trailing `priv_key[k..]` slice with no
+        // endianness flip and no PKA operation.
+        const EXP_WIRE_LEN: usize = 4;
+        let total = priv_key.len();
+        if total <= EXP_WIRE_LEN || !(total - EXP_WIRE_LEN).is_multiple_of(2) {
+            return Err(HsmError::InvalidArg);
+        }
+        let modulus_len = (total - EXP_WIRE_LEN) / 2;
+        let wire_len = modulus_len + EXP_WIRE_LEN;
+        if let Some(out) = pub_out {
+            if out.len() < wire_len {
+                return Err(HsmError::RsaInvalidKeyLength);
+            }
+            out[..wire_len].copy_from_slice(&priv_key[modulus_len..total]);
+        }
+        Ok(wire_len)
     }
 
     fn rsa_priv_der_to_vault(

@@ -45,19 +45,17 @@ pub fn assert_tbor_decode_error(err: &DdiError) {
 /// response header `status` field. The host-side `decode_response`
 /// short-circuits on `status != 0` and the conversion in
 /// `azihsm_ddi_interface::error` maps that to
-/// [`DdiError::DdiError(status)`]. If the contract ever changes, this
-/// is the single site that needs updating.
+/// [`DdiError::TborStatus`]. If the contract ever changes, this is the
+/// single site that needs updating.
 #[track_caller]
 pub fn assert_fw_rejects(err: &DdiError, expected: TborStatus) {
-    let expected_code = expected.0;
     match err {
-        DdiError::DdiError(code) => assert_eq!(
-            *code, expected_code,
-            "FW rejected with wrong TborStatus: expected {expected:?} (0x{expected_code:08X}), \
-             got 0x{code:08X}",
+        DdiError::TborStatus(status) => assert_eq!(
+            *status, expected,
+            "FW rejected with wrong TborStatus: expected {expected:?} (0x{:08X}), \
+             got {status:?} (0x{:08X})",
+            expected.0, status.0,
         ),
-        other => panic!(
-            "expected DdiError::DdiError(0x{expected_code:08X}) for {expected:?}, got {other:?}",
-        ),
+        other => panic!("expected DdiError::TborStatus({expected:?}), got {other:?}"),
     }
 }

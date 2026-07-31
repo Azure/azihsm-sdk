@@ -30,6 +30,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_uno_drivers_part_store::PartResetKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_session_store::SessionStore;
 
@@ -92,6 +93,15 @@ impl UnoHsmPal {
         }
         part.set_res_mask(mask);
 
+        // Arm Gate 1 so the SP may stage an unwrapping key for this partition;
+        // gate on `mask != 0` to never arm an idle PFN. The SP polls
+        // `unwrapping_key_required` and, once armed, publishes the RSA-2048 key
+        // into the partition's `unwrapping_key_bk` slot (read on first
+        // `GetUnwrappingKey`). Mirrors the reference firmware's `part_init`.
+        if mask != 0 {
+            part.set_unwrapping_key_required(true);
+        }
+
         // Provision the identity then the masked boot key; on any failure
         // roll the whole allocation back so the slot is left fully
         // `Unallocated` — no leaked vault key, no stale resource mask. A
@@ -142,6 +152,11 @@ impl UnoHsmPal {
         }
         part.clear_identity();
         part.clear_masked_bk_boot();
+        // Disarm Gate 1 and wipe any SP-staged unwrapping key: `set_resource`
+        // armed Gate 1 before provisioning, so on this failure path the SP must
+        // not be left thinking a key is still required for a partition rolled
+        // back to `Unallocated`.
+        part.clear_unwrapping_key();
         part.set_res_mask(0);
         part.set_state(PartState::Unallocated);
     }
@@ -238,7 +253,15 @@ impl UnoHsmPal {
         // field (selected by `kind`). This borrow of the PartStore slot is
         // strictly synchronous — no `.await` is reached while it is held.
         match kind {
-            HsmVaultKeyKind::Ecc384Private => part.set_id_pub_key(pub_buf)?,
+            HsmVaultKeyKind::Ecc384Private => {
+                // The PKA emits the public key little-endian; store the identity
+                // key big-endian (natural SEC1/DER order) so every host-facing
+                // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
+                // reads `part_id_pub_key` directly without per-handler swaps.
+                pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
+                pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
+                part.set_id_pub_key(pub_buf)?
+            }
             HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
             HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
             _ => return Err(HsmError::InternalError),
@@ -380,6 +403,8 @@ impl UnoHsmPal {
             part.ups_key_id(),
             part.pta_key_id(),
             part.unwrapping_key_id(),
+            part.local_mk_key_id(),
+            part.ephemeral_mk_key_id(),
         ]
         .into_iter()
         .flatten()
@@ -394,7 +419,7 @@ impl UnoHsmPal {
                 self.delete_key(pid, key_id).await;
             }
         }
-        part.clear_enabled_state();
+        part.clear_state(PartResetKind::Disable);
     }
 
     /// Enables partition `pid` (mirrors the reference firmware's
@@ -454,6 +479,118 @@ impl UnoHsmPal {
             _ => Err(HsmError::InvalidArg),
         }
     }
+
+    /// Resets partition `pid`'s per-tenant state for an NSSR `Migrate`,
+    /// mirroring the reference firmware's `state.migrate()`.
+    ///
+    /// Wipes ALL vault key material (app, session, and internal keys — the
+    /// reference does `vault().clear()` / `KeyStore::nuke()`) so no prior
+    /// tenant key survives, then clears only the per-tenant persistent state
+    /// (credential, enable-time/provisioning key handles, nonce, session table,
+    /// BK3 session key, PIN policy) while PRESERVING the provisioning material
+    /// (sealed BK3 + incarnation flag, PTA public key, policy hash,
+    /// POTA/SATA/SAPOTA thumbprints, PSKs, VM launch GUID, and
+    /// `Masked_BK_BOOT`). Because the vault wipe also removes the identity
+    /// private key, a fresh partition identity (keypair + id blob) is
+    /// regenerated — matching the *std* reference firmware, whose NSSR/erase
+    /// always provisions a fresh identity. Note this intentionally diverges
+    /// from mcr-hsm, whose `state.migrate()` preserves the PID keypair inline
+    /// in its persistent store. Finally regenerates the enable-time
+    /// establish-credential and session-encryption keys.
+    ///
+    /// The net effect matches the reference: the partition keeps its
+    /// provisioning across the reset — with a freshly regenerated identity —
+    /// and only needs its credential re-established, preserving the
+    /// impactless-update guarantee — unlike a full [`part_disable`], which
+    /// additionally tears down the provisioning material.
+    ///
+    /// [`part_disable`]: Self::part_disable
+    pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
+        let part = PartStore::partition(pid)?;
+        match part.state()? {
+            PartState::Enabled => {
+                // Wipe every vault key (app + session + internal) so no prior
+                // tenant key material survives the reset.
+                let admin_io = UnoHsmIo::admin(pid);
+                crate::vault::vault(&admin_io)
+                    .clear(self, &admin_io)
+                    .await?;
+                // Clear per-tenant persistent state, preserving provisioning.
+                part.clear_state(PartResetKind::Migrate);
+                // The `vault.clear()` above also deleted the identity private
+                // key. Zero the identity fields (id, `id_key_id`, cached public
+                // key) *before* awaiting so no concurrent reader can observe
+                // `id_key_id` dangling at a deleted vault key while a fresh
+                // identity is being provisioned across the await points below.
+                part.clear_identity();
+                // Regenerate a fresh partition identity (new keypair + id blob).
+                // Matches the std reference firmware, which always provisions a
+                // fresh identity on NSSR (diverges from mcr-hsm, which preserves
+                // the PID keypair).
+                self.provision_identity(pid).await?;
+                // Regenerate the enable-time establish-credential and
+                // session-encryption keys (this PAL provisions them eagerly).
+                self.provision_enabled_keys(pid).await
+            }
+            _ => Err(HsmError::InvalidArg),
+        }
+    }
+
+    /// Materialise the partition's RSA-2048 unwrapping key into the vault on
+    /// first use, if the HSP has published it into the GSRAM backup slot but it
+    /// is not yet imported. No-op if it is already imported or not yet
+    /// published.
+    ///
+    /// Runs synchronously — a CPU-copy vault insert via
+    /// [`create_sync`](azihsm_fw_uno_key_vault::KeyVault::create_sync), with no
+    /// `.await` — so the check → import → commit sequence is atomic with respect
+    /// to the cooperative scheduler: two concurrent first-use reads cannot both
+    /// import. The `&'static` GSRAM blob is fed straight into the vault, so there
+    /// is no transient DMA-scratch copy of the private key to scrub.
+    fn ensure_unwrapping_key_imported(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let pid = io.pid();
+        let bk = {
+            let part = PartStore::partition(pid)?;
+            if part.unwrapping_key_id().is_some() {
+                return Ok(());
+            }
+            if !part.unwrapping_key_bk_valid() {
+                // The HSP has not published a key into this partition's GSRAM
+                // slot yet. Leave the id absent so the read surfaces
+                // `PartPropNotFound` → `PendingKeyGeneration` and the host
+                // retries once the key is available. `unwrapping_key_bk` returns
+                // `&'static` GSRAM memory that stays valid while the slot is
+                // marked valid.
+                return Ok(());
+            }
+            part.unwrapping_key_bk()
+        };
+
+        // Import as the partition's RSA-2048 unwrapping key: internal, local,
+        // unwrap-only (matches the reference firmware and the emulator PAL). The
+        // synchronous CPU-copy insert lets us pass the `&'static` GSRAM blob
+        // directly — no transient scratch copy of the private key.
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_unwrap(true);
+        let admin_io = UnoHsmIo::admin(pid);
+        let kid = crate::vault::vault(&admin_io).create_sync(
+            u8::from(pid),
+            bk,
+            HsmVaultKeyKind::Rsa2kPrivate,
+            None,
+            attrs,
+        )?;
+
+        // Commit: record the vault id. The HSP-published key stays in its GSRAM
+        // slot (it persists as the partition's stable unwrapping key), so after
+        // a partition erase — which wipes the vault and this id but not the
+        // HSP's slot — the next first-use read re-imports it.
+        let part = PartStore::partition(pid)?;
+        part.set_unwrapping_key_id(Some(kid));
+        Ok(())
+    }
 }
 
 impl HsmPartitionManager for UnoHsmPal {
@@ -470,31 +607,13 @@ impl HsmPartitionManager for UnoHsmPal {
         let part = PartStore::partition(io.pid())?;
         match id {
             PartPropId::STATE => {
+                // Raw mechanism: write the discriminant directly. Transition
+                // validation + the `PartInit` provisioning gate are upper-layer
+                // policy (`part_state::part_set_state`); the undo log restores
+                // prior states through this raw path.
                 let target = PartState::from_u8(value).ok_or(HsmError::InvalidArg)?;
-                let current = part.state()?;
-                match (current, target) {
-                    // The single caller-facing transition: `Enabled →
-                    // Initializing`, which additionally requires the four
-                    // write-once provisioning fields (PTA key, UPS key,
-                    // policy hash, POTA thumbprint) to be present. Mirrors
-                    // the std PAL property-API contract.
-                    (PartState::Enabled, PartState::Initializing) => {
-                        if part.pta_key_id().is_none()
-                            || part.ups_key_id().is_none()
-                            || !part.policy_hash_valid()
-                            || !part.pota_thumbprint_valid()
-                        {
-                            return Err(HsmError::InvalidArg);
-                        }
-                        part.set_state(PartState::Initializing);
-                        Ok(())
-                    }
-                    // No-op writes (same state) are accepted as a convenience.
-                    (cur, tgt) if cur == tgt => Ok(()),
-                    // All other transitions are PAL-internal (driven by the
-                    // device-command lifecycle) — reject from the prop API.
-                    _ => Err(HsmError::InvalidArg),
-                }
+                part.set_state(target);
+                Ok(())
             }
             // RES_COUNT is read-only; it is derived from the resource mask.
             _ => Err(HsmError::UnsupportedCmd),
@@ -502,6 +621,14 @@ impl HsmPartitionManager for UnoHsmPal {
     }
 
     fn part_prop_get_u16(&self, io: &impl HsmIo, id: PartPropId) -> HsmResult<u16> {
+        // The unwrapping key is materialised lazily on first read: if the HSP
+        // has published it into the GSRAM backup slot but it is not yet in the
+        // vault, import it now (synchronously) and record its id. An absent id
+        // afterwards means the HSP has not published yet, which the handler
+        // surfaces as `PendingKeyGeneration`.
+        if id == PartPropId::RSA_UNWRAPPING_KEY_ID {
+            self.ensure_unwrapping_key_imported(io)?;
+        }
         let part = PartStore::partition(io.pid())?;
         let key = match id {
             PartPropId::ID_KEY_ID => part.id_key_id(),
@@ -511,6 +638,9 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::RSA_UNWRAPPING_KEY_ID => part.unwrapping_key_id(),
             PartPropId::ESTABLISH_CRED_KEY_ID => part.ec_key_id(),
             PartPropId::SESSION_ENC_KEY_ID => part.se_key_id(),
+            PartPropId::LOCAL_MK_KEY_ID => part.local_mk_key_id(),
+            PartPropId::EPHEMERAL_MK_KEY_ID => part.ephemeral_mk_key_id(),
+            PartPropId::SD_MK_KEY_ID => part.sd_mk_key_id(),
             _ => return Err(HsmError::UnsupportedCmd),
         };
         key.map(u16::from).ok_or(HsmError::PartPropNotFound)
@@ -523,20 +653,16 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::MK_KEY_ID => part.set_mk_key_id(Some(key)),
             PartPropId::SESSION_ENC_KEY_ID => part.set_se_key_id(Some(key)),
             PartPropId::ESTABLISH_CRED_KEY_ID => part.set_ec_key_id(Some(key)),
-            // UPS / PTA key ids are write-once provisioning fields.
-            PartPropId::UPS_KEY_ID => {
-                if part.ups_key_id().is_some() {
-                    return Err(HsmError::UpsKeyAlreadySet);
-                }
-                part.set_ups_key_id(Some(key));
-            }
-            PartPropId::PTA_KEY_ID => {
-                if part.pta_key_id().is_some() {
-                    return Err(HsmError::PtaKeyAlreadySet);
-                }
-                part.set_pta_key_id(Some(key));
-            }
-            // ID_KEY_ID / RSA_UNWRAPPING_KEY_ID are read-only.
+            PartPropId::LOCAL_MK_KEY_ID => part.set_local_mk_key_id(Some(key)),
+            PartPropId::EPHEMERAL_MK_KEY_ID => part.set_ephemeral_mk_key_id(Some(key)),
+            PartPropId::SD_MK_KEY_ID => part.set_sd_mk_key_id(Some(key)),
+            // Raw mechanism: UPS / PTA write-once is upper-layer policy
+            // (`part_state::part_set_ups_key_id` / `part_set_pta_key_id`); the
+            // undo log restores a prior id through this raw path.
+            PartPropId::UPS_KEY_ID => part.set_ups_key_id(Some(key)),
+            PartPropId::PTA_KEY_ID => part.set_pta_key_id(Some(key)),
+            PartPropId::RSA_UNWRAPPING_KEY_ID => part.set_unwrapping_key_id(Some(key)),
+            // ID_KEY_ID is read-only.
             _ => return Err(HsmError::UnsupportedCmd),
         }
         Ok(())
@@ -558,6 +684,7 @@ impl HsmPartitionManager for UnoHsmPal {
         let part = PartStore::partition(io.pid())?;
         match id {
             PartPropId::BK3_INITIALIZED => Ok(part.bk3_initialized()),
+            PartPropId::SD_INITIALIZED => Ok(part.sd_initialized()),
             _ => Err(HsmError::UnsupportedCmd),
         }
     }
@@ -577,6 +704,14 @@ impl HsmPartitionManager for UnoHsmPal {
                     return Err(HsmError::Bk3AlreadyInitialized);
                 }
                 part.set_bk3_initialized(true);
+                Ok(())
+            }
+            PartPropId::SD_INITIALIZED => {
+                // One-shot claim; `false` permitted for undo rollback.
+                if value && part.sd_initialized() {
+                    return Err(HsmError::SdAlreadyInitialized);
+                }
+                part.set_sd_initialized(value);
                 Ok(())
             }
             _ => Err(HsmError::UnsupportedCmd),
@@ -670,6 +805,9 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::PTA_KEY_ID => p.set_pta_key_id(None),
             PartPropId::SESSION_ENC_KEY_ID => p.set_se_key_id(None),
             PartPropId::ESTABLISH_CRED_KEY_ID => p.set_ec_key_id(None),
+            PartPropId::LOCAL_MK_KEY_ID => p.set_local_mk_key_id(None),
+            PartPropId::EPHEMERAL_MK_KEY_ID => p.set_ephemeral_mk_key_id(None),
+            PartPropId::SD_MK_KEY_ID => p.set_sd_mk_key_id(None),
             // AbsentUntilSet byte fields zeroize and reset to absent.
             PartPropId::CREDENTIAL => p.clear_credential(),
             PartPropId::POTA_THUMBPRINT => p.clear_pota_thumbprint(),

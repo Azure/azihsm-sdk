@@ -20,7 +20,10 @@
 //! `_pct` parameter is accepted for API parity with the trait but no
 //! self-test is run.
 
+use core::cmp::Ordering;
+
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
@@ -29,6 +32,7 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
+use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
 
 use crate::UnoHsmPal;
@@ -60,6 +64,113 @@ fn map_ecc_curve(curve: HsmEccCurve) -> HsmResult<UpkaEccCurve> {
         HsmEccCurve::P521 => Ok(UpkaEccCurve::P521),
         _ => Err(HsmError::InvalidArg),
     }
+}
+
+/// NIST P-256 prime modulus in PKA little-endian operand order.
+const PRIME256_LE: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-384 prime modulus in PKA little-endian operand order.
+pub(super) const PRIME384_LE: [u8; 48] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+    0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
+
+/// NIST P-521 prime modulus in PKA little-endian operand order (68-byte,
+/// DWORD-aligned per PKA hardware requirement).
+const PRIME521_LE: [u8; 68] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0x01, 0x00, 0x00,
+];
+
+/// Curve prime modulus (PKA little-endian) for the Montgomery-constant setup.
+fn curve_prime_le(curve: UpkaEccCurve) -> &'static [u8] {
+    match curve {
+        UpkaEccCurve::P256 => &PRIME256_LE,
+        UpkaEccCurve::P384 => &PRIME384_LE,
+        UpkaEccCurve::P521 => &PRIME521_LE,
+    }
+}
+
+// =============================================================================
+// Peer public-key range validation
+// =============================================================================
+
+/// Validate that a single coordinate satisfies `1 <= coordinate <= p - 1`.
+///
+/// `coordinate` and `p` are equal-length big numbers in little-endian byte
+/// order. This is a byte-wise port of the reference firmware's
+/// `EccPublicKeyRangeValidation::is_in_valid_range`: it walks from the most
+/// significant byte (highest index in little-endian) down to the least,
+/// short-circuiting as soon as the comparison is decided.
+///
+/// # Returns
+/// * `true` — the coordinate is in the closed interval `[1, p - 1]`.
+/// * `false` — the coordinate is `0`, is `>= p`, or the lengths differ.
+fn coord_in_valid_range(coordinate: &[u8], p: &[u8]) -> bool {
+    // A length mismatch means a malformed coordinate; reject it.
+    if coordinate.len() != p.len() {
+        return false;
+    }
+
+    // Tracks whether any non-least-significant byte of the coordinate is > 0,
+    // i.e. whether the coordinate is already known to be >= 1.
+    let mut coord_gt_zero = false;
+
+    // Compare bytes from most to least significant (right to left in
+    // little-endian). At a non-LSB position i:
+    // - p[i] > coordinate[i]: the gap is at least 2^8, so coordinate < p.
+    // - p[i] < coordinate[i]: coordinate exceeds p, so coordinate >= p.
+    // - equal: continue to the next lower byte.
+    for i in (1..p.len()).rev() {
+        coord_gt_zero |= coordinate[i] > 0;
+
+        match p[i].cmp(&coordinate[i]) {
+            Ordering::Greater => {
+                if coord_gt_zero {
+                    return true;
+                }
+                // coordinate < p is established; it is valid iff coordinate >= 1.
+                return coordinate[1..i].iter().rev().any(|&byte| byte > 0) || coordinate[0] >= 1;
+            }
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+
+    // All non-LSB bytes were equal: valid iff coordinate >= 1 and
+    // coordinate[0] <= p[0] - 1 (i.e. coordinate[0] < p[0], as p[0] > 0 for
+    // every supported curve prime).
+    (coord_gt_zero || coordinate[0] >= 1) && coordinate[0] < p[0]
+}
+
+/// Validate that a peer public key `(X ‖ Y)` has both coordinates in
+/// `[1, p - 1]` for the given curve.
+///
+/// `pub_key` is the little-endian wire buffer laid out as two
+/// [`hsm_point_size`] slots (`X` then `Y`). Each coordinate is validated at
+/// its **full wire width** against the wire-width curve prime
+/// ([`curve_prime_le`], whose P-521 DWORD-alignment pad bytes are zero).
+/// Comparing the padded coordinate against the padded prime means a
+/// non-zero MSB pad byte (P-521's 2 trailing bytes) makes the coordinate
+/// compare `>= p` and is rejected here, rather than being silently ignored
+/// and slipping an out-of-range coordinate through to the PKA. This matches
+/// the exact bytes the hardware will consume. The caller must have ensured
+/// `pub_key.len() >= hsm_point_size(curve) * 2`.
+fn pub_key_in_valid_range(pub_key: &[u8], curve: UpkaEccCurve) -> bool {
+    let wire = hsm_point_size(curve);
+    let p = &curve_prime_le(curve)[..wire];
+
+    let x = &pub_key[..wire];
+    let y = &pub_key[wire..wire * 2];
+
+    coord_in_valid_range(x, p) && coord_in_valid_range(y, p)
 }
 
 // =============================================================================
@@ -126,11 +237,26 @@ impl HsmEcc for UnoHsmPal {
         }
 
         let scratch = alloc.dma_alloc(pub_len + priv_len)?;
-        let total_len = self.pka.ecc_gen_keypair(pka_curve, scratch).await?;
+        let total_len = match self.pka.ecc_gen_keypair(pka_curve, scratch).await {
+            Ok(n) => n,
+            Err(e) => {
+                // Keygen may have written partial key material into
+                // `scratch`; wipe the whole buffer before it returns to the
+                // per-IO pool (scope rewind does not clear DMA memory).
+                scratch.zeroize();
+                return Err(e);
+            }
+        };
         let (pub_key, priv_key) = scratch[..total_len].split_at(pub_len);
 
         priv_out[..priv_len].copy_from_slice(priv_key);
         pub_out[..pub_len].copy_from_slice(pub_key);
+
+        // Scrub the private-scalar half of the scratch before returning:
+        // scope rewind does not clear DMA memory, so the freshly generated
+        // scalar would otherwise linger in — and leak through — a later
+        // per-IO allocation. (The pub half is not secret.)
+        scratch[pub_len..total_len].zeroize();
 
         Ok((priv_len, pub_len))
     }
@@ -203,7 +329,7 @@ impl HsmEcc for UnoHsmPal {
     ///   inputs, hardware fault).
     async fn ecc_verify(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         pub_key: &DmaBuf,
         hash: &DmaBuf,
@@ -211,9 +337,47 @@ impl HsmEcc for UnoHsmPal {
         result: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
-        self.pka
-            .ecc_verify(pka_curve, pub_key, hash, signature, result)
-            .await
+
+        let digest_len = hash_size(pka_curve);
+        if hash.len() < digest_len {
+            return Err(HsmError::InvalidArg);
+        }
+        let prime_le = curve_prime_le(pka_curve);
+
+        // Allocate the per-call PKA scratch (curve prime + transient
+        // Montgomery-constant scratch) from a scoped heap so it is released
+        // as soon as the verify completes rather than living for the whole
+        // IO. A single IO that verifies several signatures (e.g. cert-chain
+        // validation) would otherwise accumulate this scratch and can
+        // exhaust the DMA pool.
+        self.alloc_scoped_async(io, async |scope| {
+            // The digest arrives PKA-native little-endian: the DDI handler
+            // hashes big-endian and then fully byte-reverses it (a full BE->LE
+            // reversal, not `hash(.., big_endian = false)`, which only swaps
+            // within each 32-bit word). pub_key and signature likewise arrive
+            // LE via the host DDI serde. No byte-order conversion is done below
+            // the PAL.
+
+            // Per-call Montgomery constant from the curve prime (like
+            // ecdh_derive). `mont_result` is transient scratch consumed
+            // internally by the driver's verify; it is not surfaced back.
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
+
+            self.pka
+                .ecc_verify(
+                    pka_curve,
+                    pub_key,
+                    &hash[..digest_len],
+                    signature,
+                    result,
+                    prime,
+                    mont_result,
+                )
+                .await
+        })
+        .await
     }
 
     /// Derive an ECDH shared secret.
@@ -233,20 +397,74 @@ impl HsmEcc for UnoHsmPal {
     /// # Errors
     /// * [`HsmError::InvalidArg`] if `curve` is not one of the supported
     ///   NIST curves.
-    /// * Any [`HsmError`] surfaced by the PKA driver (e.g. invalid
-    ///   public-key point, undersized buffer, hardware fault).
+    /// * [`HsmError::EccDerKeyShorterThanCurve`] if `pub_key` is too short to
+    ///   hold both wire-format coordinates.
+    /// * [`HsmError::EccPublicKeyValidationFailed`] if either coordinate is
+    ///   outside `[1, p - 1]`.
+    /// * [`HsmError::EccPointValidationFailed`] if the point is not on the
+    ///   curve.
+    /// * Any [`HsmError`] surfaced by the PKA driver (e.g. undersized buffer,
+    ///   hardware fault).
     async fn ecdh_derive(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         priv_key: &DmaBuf,
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()> {
         let pka_curve = map_ecc_curve(curve)?;
-        self.pka
-            .ecdh_derive(pka_curve, priv_key, pub_key, secret)
-            .await
+
+        // Reject a peer public key that cannot even hold both wire-format
+        // coordinates, then reject one whose coordinates are out of range,
+        // before touching the PKA. This mirrors the reference firmware, which
+        // range-checks the software-visible coordinates prior to the hardware
+        // on-curve validation, and also prevents a coordinate equal to the
+        // curve prime from ever reaching the engine.
+        let wire = hsm_point_size(pka_curve);
+        if pub_key.len() < wire * 2 {
+            return Err(HsmError::EccDerKeyShorterThanCurve);
+        }
+        if !pub_key_in_valid_range(pub_key, pka_curve) {
+            return Err(HsmError::EccPublicKeyValidationFailed);
+        }
+
+        let prime_le = curve_prime_le(pka_curve);
+
+        // Scope the per-call Montgomery scratch (curve prime + result) so it is
+        // freed as soon as the point-multiply completes instead of living for
+        // the whole IO; keeping it IO-bounded needlessly grows DMA-pool
+        // pressure in multi-step flows.
+        self.alloc_scoped_async(io, async |scope| {
+            // The PKA point-multiply requires a per-call Montgomery constant
+            // computed from the curve prime.
+            let prime = scope.dma_alloc(prime_le.len())?;
+            prime.copy_from_slice(prime_le);
+            let mont_result = scope.dma_alloc(prime_le.len())?;
+
+            // Status word for the hardware on-curve validation that runs
+            // between the Montgomery-constant setup and the ECDH compute.
+            let point_valid = scope.dma_alloc(4)?;
+
+            self.pka
+                .ecdh_derive(
+                    pka_curve,
+                    priv_key,
+                    pub_key,
+                    secret,
+                    prime,
+                    mont_result,
+                    point_valid,
+                )
+                .await?;
+
+            // The shared secret is returned PKA-native little-endian, like
+            // pub_key and priv_key. Any byte-order conversion (e.g. LE->BE for
+            // an internal HKDF consumer that must match the host's openssl-BE
+            // secret) is the DDI handler's responsibility, not the PAL's.
+            Ok(())
+        })
+        .await
     }
 
     fn ecc_priv_der_to_vault(
@@ -269,5 +487,42 @@ impl HsmEcc for UnoHsmPal {
         // TODO: derive the wire public key from a vault-stored ECC private
         // key on Uno PKA (RsaUnwrap ECC import).
         Err(HsmError::UnsupportedCmd)
+    }
+
+    /// Derive the public key from a raw private scalar (`pub = priv · G`).
+    ///
+    /// Delegates to [`UnoHsmPal::pka.ecc_gen_pub_key`] (PKA base-point
+    /// scalar multiplication) after curve mapping. Both buffers are in
+    /// the little-endian PKA wire format.
+    ///
+    /// # Parameters
+    /// * `curve` — NIST curve the private key is on.
+    /// * `priv_key` — raw HSM-format private scalar
+    ///   ([`HsmEccCurve::wire_priv_key_len`] bytes).
+    /// * `pub_key` — output buffer for `X ‖ Y`
+    ///   ([`HsmEccCurve::wire_pub_key_len`] bytes).
+    ///
+    /// # Errors
+    /// * [`HsmError::InvalidArg`] if `curve` is unsupported or a buffer is
+    ///   undersized.
+    /// * Any [`HsmError`] surfaced by the PKA driver.
+    async fn ecc_pub_from_priv(
+        &self,
+        _io: &impl HsmIo,
+        curve: HsmEccCurve,
+        priv_key: &DmaBuf,
+        pub_key: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let pka_curve = map_ecc_curve(curve)?;
+        let wire_pub_len = curve.wire_pub_key_len();
+        if priv_key.len() != curve.wire_priv_key_len() || pub_key.len() < wire_pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+        // Pass an exact-sized sub-view: the PKA writes a fixed number of
+        // bytes per curve and is not given a length, so an oversized caller
+        // buffer would otherwise keep stale bytes in its tail.
+        self.pka
+            .ecc_gen_pub_key(pka_curve, priv_key, &mut pub_key[..wire_pub_len])
+            .await
     }
 }

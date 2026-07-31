@@ -34,12 +34,14 @@ const SESSION_MASKING_KEY_SIZE: usize = 80;
 const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE;
 
 /// `SessionEx`-kind blob size for **PlainText (CU)** sessions:
-/// `api_rev(8) || param_key(32) || masking_key(80)` = 120 B.
+/// `api_rev(8) || param_key(32) || masking_key(32)` = 72 B.  The
+/// SessionEx masking key is the 32 B AES-256-GCM `key_masking::aead`
+/// key ([`SESSION_MASKING_KEY_LEN`]), not the legacy 80 B cbc key.
 const SESSION_CU_BLOB_SIZE: usize =
     SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
 /// `SessionEx`-kind blob size for **Authenticated (CO)** sessions:
-/// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 216 B.
+/// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 168 B.
 const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
 impl HsmSessionManager for StdHsmPal {
@@ -72,12 +74,21 @@ impl HsmSessionManager for StdHsmPal {
         let pid = io.pid();
         let entry = self.active_part_mut(pid)?;
 
-        // On re-key: clean up old session-scoped keys and old session key
-        // before creating the replacement.
+        // On re-key: clean up the old session-scoped keys and the old
+        // session key before creating the replacement.  A slot awaiting
+        // renegotiation after a live-migration disable has already had
+        // its vault key material cleared, so there is nothing to tear
+        // down — `recreate` below simply installs the fresh mapping
+        // (mirroring the reference firmware's `recreate_session`).
         if let Some(reopen_id) = id {
-            let old_phys = entry.session_table.physical_id(reopen_id)?;
-            entry.vault.delete_by_session_key(old_phys)?;
-            entry.vault.delete(old_phys)?;
+            if !matches!(
+                entry.session_table.state(reopen_id),
+                HsmSessionState::NeedsRenegotiation
+            ) {
+                let old_phys = entry.session_table.physical_id(reopen_id)?;
+                entry.vault.delete_by_session_key(old_phys)?;
+                entry.vault.delete(old_phys)?;
+            }
         }
 
         // Build 88-byte session blob: [api_rev(8) || masking_key(80)].
@@ -219,8 +230,8 @@ impl HsmSessionManager for StdHsmPal {
         let attrs = HsmVaultKeyAttrs::new().with_internal(true);
 
         // Length-discriminated blob:
-        // - PlainText:     api_rev(8) + param_key(32) + masking_key(80)         = 120 B
-        // - Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                       = 216 B
+        // - PlainText:     api_rev(8) + param_key(32) + masking_key(32)         = 72 B
+        // - Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                       = 168 B
         let mut blob = [0u8; SESSION_CU_AUTH_BLOB_SIZE];
         blob[..SESSION_API_REV_SIZE].copy_from_slice(api_rev);
         blob[SESSION_API_REV_SIZE..SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN]
@@ -262,6 +273,30 @@ impl HsmSessionManager for StdHsmPal {
         let key_bytes = &blob[SESSION_API_REV_SIZE..SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN];
         // SAFETY: same justification as `vault_key` — on the host,
         // any heap byte is reachable; branding the sub-slice as
+        // `DmaBuf` only satisfies the type system.
+        Ok(unsafe { DmaBuf::from_raw(key_bytes) })
+    }
+
+    fn session_masking_key(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<&DmaBuf> {
+        let entry = self.active_part(io.pid())?;
+        let kid = entry.session_table.physical_id(id)?;
+        let blob = entry.vault.key(kid)?;
+        // The masking key follows `api_rev` in a legacy MBOR `Session`
+        // blob (80 B `aes32 ‖ hmac48` cbc key), or `api_rev ‖ param_key`
+        // in a `SessionEx` (CU/CO) blob (32 B AES-256-GCM aead key); pick
+        // the offset *and length* from the blob length so both schedules
+        // work.
+        let (offset, size) = match blob.len() {
+            SESSION_BLOB_SIZE => (SESSION_API_REV_SIZE, SESSION_MASKING_KEY_SIZE),
+            SESSION_CU_BLOB_SIZE | SESSION_CU_AUTH_BLOB_SIZE => (
+                SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN,
+                SESSION_MASKING_KEY_LEN,
+            ),
+            _ => return Err(HsmError::InternalError),
+        };
+        let key_bytes = &blob[offset..offset + size];
+        // SAFETY: same justification as `session_param_key` — on the
+        // host, any heap byte is reachable; branding the sub-slice as
         // `DmaBuf` only satisfies the type system.
         Ok(unsafe { DmaBuf::from_raw(key_bytes) })
     }

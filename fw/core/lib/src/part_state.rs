@@ -137,17 +137,54 @@ pub fn part_state(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<
     PartState::from_u8(raw).ok_or(HsmError::InternalError)
 }
 
+/// Presence probe for an `AbsentUntilSet` property slot.
+///
+/// Maps a getter result to a presence flag: `Ok(true)` when the getter
+/// succeeds, `Ok(false)` **only** for [`HsmError::PartPropNotFound`]
+/// (the slot is genuinely absent), and propagates every other read error
+/// so a real fault (e.g. internal corruption / IO failure) is never
+/// silently misread as "absent".  Mirrors the pattern used by
+/// [`part_is_provisioned`].
+#[inline]
+pub(crate) fn prop_present<T>(result: HsmResult<T>) -> HsmResult<bool> {
+    match result {
+        Ok(_) => Ok(true),
+        Err(HsmError::PartPropNotFound) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// Set the partition lifecycle state.
 ///
-/// Wraps [`PartPropId::STATE`].  The PAL impl is responsible for
-/// rejecting any state byte that violates the partition's allowed
-/// transition graph — this wrapper performs no validation of its
-/// own and serialises the discriminant directly.
+/// Wraps [`PartPropId::STATE`].  **Transition policy lives here, in the
+/// upper layer:** the generic PAL `part_prop_set_u8(STATE)` is a raw
+/// mechanism (it writes the discriminant directly), so the undo log can
+/// restore any prior state through it.  This wrapper accepts only the two
+/// caller-facing transitions — `Enabled → Initializing` (`PartInit`,
+/// which additionally requires the four write-once provisioning fields —
+/// PTA key, UPS key, policy hash, POTA thumbprint — to be present) and
+/// `Initializing → Initialized` (`PartFinal`).  A same-state write is a
+/// no-op; any other pair is rejected with [`HsmError::InvalidArg`].
 pub fn part_set_state(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
     s: PartState,
 ) -> HsmResult<()> {
+    let current = part_state(pal, io)?;
+    match (current, s) {
+        (PartState::Enabled, PartState::Initializing) => {
+            let provisioned = prop_present(part_pta_key_id(pal, io))?
+                && prop_present(part_ups_key_id(pal, io))?
+                && prop_present(part_policy_hash(pal, io))?
+                && prop_present(part_pota_thumbprint(pal, io))?;
+            if !provisioned {
+                return Err(HsmError::InvalidArg);
+            }
+        }
+        (PartState::Initializing, PartState::Initialized) => {}
+        (cur, tgt) if cur == tgt => return Ok(()),
+        _ => return Err(HsmError::InvalidArg),
+    }
     pal.part_prop_set_u8(io, PartPropId::STATE, s as u8)
 }
 
@@ -155,6 +192,19 @@ pub fn part_set_state(
 #[inline]
 pub const fn part_state_prop_id() -> PartPropId {
     PartPropId::STATE
+}
+
+/// Quarantine the partition by forcing it to [`PartState::Faulted`].
+///
+/// Called by the dispatcher when an undo walk reports a poisoned
+/// (consistency-critical) failure: the partition's in-memory state is
+/// incoherent, so it is fenced off — the `partition_enabled` gate then drops
+/// all further host IO, and neither `PartInit`/`PartFinal` nor an admin
+/// `PfnEnable` can transition out of `Faulted`.  Only a free/realloc cycle
+/// (or reboot) clears it.  Uses the raw STATE setter because this is an
+/// out-of-band fault transition, not a normal lifecycle step.
+pub fn part_set_faulted(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_u8(io, PartPropId::STATE, PartState::Faulted as u8)
 }
 
 /// Monotonic partition generation counter.
@@ -276,6 +326,25 @@ fn key_id_set(
     pal.part_prop_set_u16(io, id, u16::from(key_id))
 }
 
+/// Enforce write-once for an `AbsentUntilSet` key-id property.
+///
+/// Write-once is **upper-layer policy**: the generic PAL
+/// `part_prop_set_u16` is a raw mechanism (so the undo log can restore a
+/// prior id), so the typed setters that must be write-once gate on the
+/// current presence here.  Returns `err` if the slot is already
+/// populated, and propagates any non-absent read error.
+fn ensure_key_id_unset(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    id: PartPropId,
+    err: HsmError,
+) -> HsmResult<()> {
+    if prop_present(key_id_get(pal, io, id))? {
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Vault id of the partition identity (ECC-P384) key.
 ///
 /// Wraps [`PartPropId::ID_KEY_ID`] (`U16 → HsmKeyId`,
@@ -344,6 +413,7 @@ pub fn part_set_ups_key_id(
     io: &impl HsmIo,
     key_id: HsmKeyId,
 ) -> HsmResult<()> {
+    ensure_key_id_unset(pal, io, PartPropId::UPS_KEY_ID, HsmError::UpsKeyAlreadySet)?;
     key_id_set(pal, io, PartPropId::UPS_KEY_ID, key_id)
 }
 
@@ -367,6 +437,7 @@ pub fn part_set_pta_key_id(
     io: &impl HsmIo,
     key_id: HsmKeyId,
 ) -> HsmResult<()> {
+    ensure_key_id_unset(pal, io, PartPropId::PTA_KEY_ID, HsmError::PtaKeyAlreadySet)?;
     key_id_set(pal, io, PartPropId::PTA_KEY_ID, key_id)
 }
 
@@ -376,15 +447,108 @@ pub const fn part_pta_key_id_prop_id() -> PartPropId {
     PartPropId::PTA_KEY_ID
 }
 
+/// Vault id of the partition-local key masking key (`PartLocalMK`).
+///
+/// Wraps [`PartPropId::LOCAL_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `PartFinal` handler.
+pub fn part_local_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::LOCAL_MK_KEY_ID)
+}
+
+/// Set the partition-local masking-key id.
+pub fn part_set_local_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::LOCAL_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_local_mk_key_id`] /
+/// [`part_set_local_mk_key_id`].
+#[inline]
+pub const fn part_local_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::LOCAL_MK_KEY_ID
+}
+
+/// Vault id of the partition's ephemeral key masking key
+/// (`EphemeralMK`).
+///
+/// Wraps [`PartPropId::EPHEMERAL_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `PartFinal` handler.
+pub fn part_ephemeral_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::EPHEMERAL_MK_KEY_ID)
+}
+
+/// Set the partition ephemeral masking-key id.
+pub fn part_set_ephemeral_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::EPHEMERAL_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_ephemeral_mk_key_id`] /
+/// [`part_set_ephemeral_mk_key_id`].
+#[inline]
+pub const fn part_ephemeral_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::EPHEMERAL_MK_KEY_ID
+}
+
+/// Vault id of the security-domain key masking key (`SDMK`).
+///
+/// Wraps [`PartPropId::SD_MK_KEY_ID`] (`U16 → HsmKeyId`,
+/// `AbsentUntilSet`).  Bound by the TBOR `SdCreateRemoteBackup` handler;
+/// resolves the [`SecurityDomain`](azihsm_fw_hsm_pal_traits::HsmKeyScope::SecurityDomain)
+/// scope to its live masking key.
+pub fn part_sd_mk_key_id(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+    key_id_get(pal, io, PartPropId::SD_MK_KEY_ID)
+}
+
+/// Set the security-domain masking-key id.
+pub fn part_set_sd_mk_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::SD_MK_KEY_ID, key_id)
+}
+
+/// [`PartPropId`] backing [`part_sd_mk_key_id`] /
+/// [`part_set_sd_mk_key_id`].
+#[inline]
+pub const fn part_sd_mk_key_id_prop_id() -> PartPropId {
+    PartPropId::SD_MK_KEY_ID
+}
+
 /// Vault id of the partition's unwrapping key.
 ///
 /// Wraps [`PartPropId::RSA_UNWRAPPING_KEY_ID`] (`U16 → HsmKeyId`,
-/// `AbsentUntilSet`, **read-only**).
+/// `AbsentUntilSet`).
 pub fn part_unwrapping_key_id(
     pal: &impl HsmPartitionManager,
     io: &impl HsmIo,
 ) -> HsmResult<HsmKeyId> {
     key_id_get(pal, io, PartPropId::RSA_UNWRAPPING_KEY_ID)
+}
+
+/// Set the partition's unwrapping key id.
+///
+/// Used by `EstablishCredential` to re-import the host-persisted key
+/// after a live migration.
+pub fn part_set_unwrapping_key_id(
+    pal: &impl HsmPartitionManager,
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+) -> HsmResult<()> {
+    key_id_set(pal, io, PartPropId::RSA_UNWRAPPING_KEY_ID, key_id)
 }
 
 /// [`PartPropId`] backing [`part_unwrapping_key_id`].
@@ -991,7 +1155,7 @@ pub fn part_set_pta_key(
     pub_sec1: &DmaBuf,
 ) -> HsmResult<()> {
     let raw = pta_sec1_to_raw(pub_sec1)?;
-    key_id_set(pal, io, PartPropId::PTA_KEY_ID, key_id)?;
+    part_set_pta_key_id(pal, io, key_id)?;
     pal.part_prop_set_bytes(io, PartPropId::PTA_PUB_KEY, raw)
 }
 
@@ -1023,6 +1187,30 @@ pub fn part_is_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) 
 /// authoritative race-winner gate for `DdiInitBk3`.
 pub fn part_mark_bk3_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
     pal.part_prop_set_bool(io, PartPropId::BK3_INITIALIZED, true)
+}
+
+/// Whether the partition has completed one-shot security-domain
+/// initialization (its `SDMK` is provisioned).
+pub fn part_is_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<bool> {
+    pal.part_prop_get_bool(io, PartPropId::SD_INITIALIZED)
+}
+
+/// Atomically commit the partition's one-shot security-domain init
+/// state to `true`.  Returns [`HsmError::SdAlreadyInitialized`] if the
+/// flag was already set in the current partition incarnation.  This is
+/// the authoritative race-winner gate for `SdCreateRemoteBackup`.
+pub fn part_mark_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, true)
+}
+
+/// Clear the partition's one-shot security-domain init flag.
+///
+/// Used only to best-effort roll back a just-made claim when its undo
+/// inverse could not be recorded, so a full undo log cannot permanently
+/// wedge the partition's SD gate.  (The one-shot setter permits
+/// `→ false`; the normal rollback path is the undo log.)
+pub fn part_clear_sd_initialized(pal: &impl HsmPartitionManager, io: &impl HsmIo) -> HsmResult<()> {
+    pal.part_prop_set_bool(io, PartPropId::SD_INITIALIZED, false)
 }
 
 /// Current owner-seed (BKS2) selector (BKS2 lineage; always 0 today).

@@ -39,6 +39,11 @@ path = "tests/azihsm_ddi_tbor_tests.rs"
 emu = ["azihsm_ddi/emu"]
 mock = ["azihsm_ddi/mock"]
 sock = ["azihsm_ddi/sock"]
+# Opt-in feature for the `hw::` smoke tests. These tests drive real
+# silicon via the native OS backend and require a physical device;
+# excluded from the default `cargo test` build so contributor / CI
+# runs on machines without a board don't panic in `open_hw_dev`.
+hw-tests = []
 table-4 = ["azihsm_ddi/table-4"]
 table-64 = ["azihsm_ddi/table-64"]
 

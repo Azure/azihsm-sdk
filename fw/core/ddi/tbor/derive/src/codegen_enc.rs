@@ -440,7 +440,97 @@ fn gen_field_write(i: usize, schema: &Schema, layout: &TocLayout) -> TokenStream
     }
 }
 
-// ── Helper: state impl blocks ─────────────────────────────────────────
+// ── Helper: field reserve code (fill-later) ───────────────────────────
+
+/// Generate the token stream that reserves a buffer / sealed_key field's
+/// `len` bytes **without** copying data — the TOC entry and data-section
+/// offset are advanced, but the region is left for the caller to fill in
+/// place later (via `decode_mut`).  Mirrors [`gen_field_write`]'s buffer
+/// arm minus the `copy_from_slice`.  Only emitted for `#[tbor(mutable)]`
+/// fields, which the schema parser guarantees are non-optional buffer /
+/// sealed_key fields.
+fn gen_field_reserve(i: usize, schema: &Schema, layout: &TocLayout) -> TokenStream {
+    let f = &schema.fields[i];
+    let toc_type_id = f.toc_type_id;
+    let field_toc_idx = effective_toc_idx(i, layout, &schema.fields);
+    let has_padding = f.has_padding();
+    let align = f.align_expr().unwrap_or_else(|| quote! { 1 });
+
+    let pad_toc_idx = if has_padding {
+        let local_pad = layout
+            .padding_positions
+            .iter()
+            .find(|&&(_, fi)| fi == i)
+            .map(|&(ti, _)| ti)
+            .unwrap();
+        let ga: Vec<_> = schema.fields[..i]
+            .iter()
+            .filter_map(|pf| {
+                pf.include_group
+                    .as_ref()
+                    .map(|pg| quote! { + #pg::TOC_COUNT })
+            })
+            .collect();
+        quote! { (#local_pad #(#ga)*) }
+    } else {
+        quote! { 0 }
+    };
+
+    let pad_write = if has_padding {
+        quote! {
+            let pad_len = (#align - (self.data_offset % #align)) % #align;
+            let pad_end = DATA_START + self.data_offset + pad_len;
+            if pad_end > self.buf.len() {
+                return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
+            }
+            for j in 0..pad_len {
+                self.buf[DATA_START + self.data_offset + j] = 0;
+            }
+            let pad_word = azihsm_fw_ddi_tbor::toc::build_toc_offset_len(9, pad_len, self.data_offset);
+            azihsm_fw_ddi_tbor::toc::write_toc_word(self.buf, HEADER_LEN, #pad_toc_idx, pad_word);
+            self.data_offset += pad_len;
+        }
+    } else {
+        quote! {}
+    };
+
+    let min_l = f.min_len;
+    let max_l = f.max_len;
+    let len_check = if f.fixed_len.is_some() || min_l > 0 || max_l < 8191 {
+        let effective_min = f.fixed_len.unwrap_or(min_l);
+        let effective_max = f.fixed_len.unwrap_or(max_l);
+        quote! {
+            if !(#effective_min..=#effective_max).contains(&len) {
+                return Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge);
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #pad_write
+        let off = self.data_offset;
+        #len_check
+        let end = DATA_START + off + len;
+        if end > self.buf.len() {
+            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborBufferTooSmall);
+        }
+        if self.data_offset + len > azihsm_fw_ddi_tbor::MAX_DATA_SIZE {
+            return Err(azihsm_fw_hsm_pal_traits::HsmError::TborDataTooLarge);
+        }
+        // Zero the reserved region: a `<field>_reserve(len)` caller fills it
+        // separately (e.g. `decode_mut`), so a partially-filled slot — or an
+        // early return on an error path after reserving — must not leak prior
+        // DMA-arena contents into the response.
+        for __b in &mut self.buf[DATA_START + off..end] {
+            *__b = 0;
+        }
+        self.data_offset += len;
+        let word = azihsm_fw_ddi_tbor::toc::build_toc_offset_len(#toc_type_id, len, off);
+        azihsm_fw_ddi_tbor::toc::write_toc_word(self.buf, HEADER_LEN, #field_toc_idx, word);
+    }
+}
 
 /// Generate the `impl` blocks for each typestate, containing field setter
 /// methods and `finish()`.
@@ -521,6 +611,29 @@ fn gen_state_impls(
                         Ok(#enc_name { buf: self.buf, data_offset: self.data_offset, #resp_extra_pass _state: core::marker::PhantomData })
                     }
                 });
+
+                // For a `#[tbor(mutable)]` buffer / sealed_key field, also
+                // emit a `<field>_reserve(len)` setter that reserves the
+                // slot without copying — the caller fills it in place later
+                // via `decode_mut` (zero-copy "reserve + fill").
+                if f.mutable {
+                    let reserve_name = format_ident!("{}_reserve", field_name);
+                    let reserve_code = gen_field_reserve(j, schema, layout);
+                    methods.push(quote! {
+                        /// Reserve this field's `len` data bytes without
+                        /// copying; fill the region in place afterwards via
+                        /// [`decode_mut`].  Advances the encoder to the next
+                        /// field exactly like the value setter.
+                        pub fn #reserve_name(mut self, len: usize) -> Result<#enc_name<'a, #target_state>, azihsm_fw_hsm_pal_traits::HsmError> {
+                            const HEADER_LEN: usize = #header_len_tokens;
+                            const TOC_COUNT: usize = #toc_count_expr;
+                            const DATA_START: usize = HEADER_LEN + TOC_COUNT * 4;
+                            #skip_nones
+                            #reserve_code
+                            Ok(#enc_name { buf: self.buf, data_offset: self.data_offset, #resp_extra_pass _state: core::marker::PhantomData })
+                        }
+                    });
+                }
             }
         }
 

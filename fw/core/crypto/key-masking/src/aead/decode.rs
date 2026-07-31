@@ -52,8 +52,11 @@ pub struct UnmaskedView<'a> {
     pub key_label: &'a [u8],
 
     /// Recovered target-key bytes (decrypted in place inside the
-    /// caller's `blob`).
-    pub target_key: &'a [u8],
+    /// caller's `blob`).  Borrows the `blob` buffer directly (a
+    /// [`DmaBuf`] sub-view of the decrypted payload region), so callers
+    /// that forward the key to another PAL/crypto verb needing a
+    /// `&DmaBuf` can pass it through without an intermediate copy.
+    pub target_key: &'a DmaBuf,
 }
 
 /// In-place unmask: parse, authenticate, decrypt, and validate a

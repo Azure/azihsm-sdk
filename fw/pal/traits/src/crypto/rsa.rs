@@ -211,9 +211,12 @@ pub trait HsmRsa {
     /// - `key` — RSA private key in PAL-defined serialization
     ///   matching `key_size.is_crt()`.
     /// - `y` — input integer; must be exactly
-    ///   `key_size.modulus_len()` bytes.
+    ///   `key_size.modulus_len()` bytes, in wire **little-endian** byte
+    ///   order.  The PAL flips to its primitive's native order (e.g. the
+    ///   std/OpenSSL PAL reverses to big-endian).
     /// - `x` — output integer; must be exactly
-    ///   `key_size.modulus_len()` bytes.
+    ///   `key_size.modulus_len()` bytes, written in wire **little-endian**
+    ///   byte order.
     ///
     /// # Returns
     ///
@@ -239,9 +242,12 @@ pub trait HsmRsa {
     /// - `key_size` — modulus size selector.
     /// - `key` — RSA public key.
     /// - `x` — input integer; must be exactly
-    ///   `key_size.modulus_len()` bytes.
+    ///   `key_size.modulus_len()` bytes, in wire **little-endian** byte
+    ///   order.  The PAL flips to its primitive's native order (e.g. the
+    ///   std/OpenSSL PAL reverses to big-endian).
     /// - `y` — output integer; must be exactly
-    ///   `key_size.modulus_len()` bytes.
+    ///   `key_size.modulus_len()` bytes, written in wire **little-endian**
+    ///   byte order.
     ///
     /// # Returns
     ///

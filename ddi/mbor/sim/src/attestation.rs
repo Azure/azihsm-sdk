@@ -21,7 +21,7 @@ use crate::report::*;
 pub struct KeyAttester {
     protected_header: [u8; PROTECTED_HEADER_SIZE],
     unprotected_header: UnprotectedHeader,
-    report: [u8; PAYLOAD_MAX_SIZE],
+    report: [u8; PAYLOAD_MAX_SIZE_V2],
     report_size: usize,
     signature: [u8; SIGNATURE_SIZE],
 }
@@ -37,7 +37,7 @@ impl KeyAttester {
         Self {
             protected_header: PROTECTED_HEADER,
             unprotected_header,
-            report: [0u8; PAYLOAD_MAX_SIZE],
+            report: [0u8; PAYLOAD_MAX_SIZE_V2],
             report_size: 0,
             signature: [0u8; SIGNATURE_SIZE],
         }
@@ -66,7 +66,11 @@ impl KeyAttester {
         report_data: &[u8; REPORT_DATA_SIZE],
         vm_launch_id: &[u8; VM_LAUNCH_ID_SIZE],
     ) -> Result<(), ManticoreError> {
-        (self.report, self.report_size) = CoseSign1::create_payload(
+        // The sim only generates v1 payloads (`create_payload` returns a
+        // [`PAYLOAD_MAX_SIZE`] buffer); copy it into the v2-sized report
+        // buffer, which is also large enough to hold a firmware-minted v2
+        // report on the `parse` path.
+        let (payload, payload_size) = CoseSign1::create_payload(
             REPORT_VERSION,
             public_key,
             public_key_size,
@@ -75,6 +79,8 @@ impl KeyAttester {
             report_data,
             vm_launch_id,
         )?;
+        self.report[..payload_size].copy_from_slice(&payload[..payload_size]);
+        self.report_size = payload_size;
 
         Ok(())
     }
@@ -122,11 +128,11 @@ impl KeyAttester {
         let cose_sign1_object = CoseSign1Object::decode(report)?;
 
         let report_size = cose_sign1_object.payload.len();
-        if report_size > PAYLOAD_MAX_SIZE {
+        if report_size > PAYLOAD_MAX_SIZE_V2 {
             return Err(ManticoreError::InvalidArgument);
         }
 
-        let mut report = [0u8; PAYLOAD_MAX_SIZE];
+        let mut report = [0u8; PAYLOAD_MAX_SIZE_V2];
         report[..report_size].copy_from_slice(cose_sign1_object.payload);
 
         Ok(KeyAttester {
@@ -354,15 +360,15 @@ impl CoseSign1 {
     /// * `payload` - The `payload` parameter of the `Sig_structure`.
     ///
     /// # Returns
-    /// * `([u8; SIG_STRUCTURE_MAX_SIZE], usize)` - The payload buffer and the size of the payload.
+    /// * `([u8; SIG_STRUCTURE_MAX_SIZE_V2], usize)` - The encoded `Sig_structure` (to-be-signed) buffer and its size.
     ///
     /// # Errors
     /// * `ManticoreError::CborEncodeError` - If CBOR encoding fails during creation.
     fn create_tbs(
         body_protected: &[u8],
         payload: &[u8],
-    ) -> Result<([u8; SIG_STRUCTURE_MAX_SIZE], usize), ManticoreError> {
-        let mut sig_struct_buffer = [0u8; SIG_STRUCTURE_MAX_SIZE];
+    ) -> Result<([u8; SIG_STRUCTURE_MAX_SIZE_V2], usize), ManticoreError> {
+        let mut sig_struct_buffer = [0u8; SIG_STRUCTURE_MAX_SIZE_V2];
 
         let sig_struct_size = encode_sig_struct(body_protected, payload, &mut sig_struct_buffer)?;
 

@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
-use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::*;
 use resiliency_macro::resiliency_open_part;
 use tracing::*;
@@ -575,16 +574,17 @@ impl HsmPartition {
     /// # Arguments
     ///
     /// * `api_rev` - The negotiated API revision.
-    /// * `psk_id` - PSK identity selecting the role (0 = CO, 1 = CU).
+    /// * `psk` - PSK credential: the role slot plus an optional
+    ///   caller-supplied PSK (`None` selects the partition default PSK).
     /// * `session_type` - Channel integrity profile to pin.
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session_ex(
         &self,
         api_rev: HsmApiRev,
-        psk_id: u8,
-        session_type: SessionType,
+        psk: HsmSessionPsk<'_>,
+        session_type: HsmSessionExType,
     ) -> HsmResult<HsmSession> {
-        let result = ddi::open_session_ex(self, api_rev, psk_id, session_type)?;
+        let result = ddi::open_session_ex(self, api_rev, psk.psk_id as u8, psk.psk, session_type)?;
         Ok(HsmSession::new_ex(api_rev, self.clone(), result))
     }
 
@@ -839,6 +839,26 @@ impl HsmPartition {
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
         ddi::get_cert_chain(self, slot)
+    }
+
+    /// Queries the partition's stable identity (PID) via `PartInfo`.
+    ///
+    /// Returns the 16-byte PID, which a caller uses to name this
+    /// partition as the backing partition when building a
+    /// security-domain backup policy.
+    pub fn pid(&self) -> HsmResult<Vec<u8>> {
+        Ok(ddi::part_info(self)?.pid)
+    }
+
+    /// Queries the partition's raw identity public key via `PartInfo`.
+    ///
+    /// Returns the raw ECC-P384 identity public-key coordinates
+    /// (`x ‖ y`, 96 B). Unlike [`Self::pub_key`] — which returns the
+    /// DER-encoded public key parsed from the PID certificate — this
+    /// comes straight from the `PartInfo` query and is available before
+    /// the partition is endorsed.
+    pub fn ex_pub_key(&self) -> HsmResult<Vec<u8>> {
+        Ok(ddi::part_info(self)?.pid_pub_key)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.

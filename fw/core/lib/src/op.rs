@@ -257,7 +257,26 @@ impl SessionCtrl {
         match opcode {
             opcode::API_REV => Self::NoSession,
             opcode::SESSION_OPEN_INIT => Self::Open,
-            opcode::SESSION_OPEN_FINISH | opcode::PSK_CHANGE | opcode::PART_INIT => Self::InSession,
+            opcode::SESSION_OPEN_FINISH
+            | opcode::PSK_CHANGE
+            | opcode::PART_INIT
+            | opcode::PART_FINAL
+            | opcode::SD_SEALING_KEY_GEN
+            | opcode::SD_CREATE_REMOTE_BACKUP
+            | opcode::SD_RESEAL_REMOTE_BACKUP
+            | opcode::SD_RESTORE_REMOTE_BACKUP
+            | opcode::SD_RESTORE_LOCAL_BACKUP
+            | opcode::SD_CREATE_PEER_BACKUP
+            | opcode::SD_RESTORE_PEER_BACKUP
+            | opcode::KEY_REPORT
+            | opcode::HMAC_GENERATE_KEY
+            | opcode::HMAC
+            | opcode::GET_UNWRAPPING_KEY
+            | opcode::UNWRAP_KEY
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
+            | opcode::RSA_MOD_EXP => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

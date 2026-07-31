@@ -276,6 +276,19 @@ pub enum TborStatus {
     UmsKeyAlreadySet = 0x087000FD,
     UmsKeyNotSet = 0x087000FE,
 
+    /// A per-command undo-log push failed (mirror of
+    /// `HsmError::UndoLogFull`).
+    UndoLogFull = 0x08700101,
+
+    /// A command was asked to operate on a `HsmKeyScope` whose backing
+    /// key material does not yet exist (mirror of
+    /// `HsmError::UnsupportedKeyScope`).
+    UnsupportedKeyScope = 0x08700102,
+
+    /// Returned by `KeyReport` when the masked key's kind cannot be
+    /// attested (mirror of `HsmError::UnsupportedKeyType`).
+    UnsupportedKeyType = 0x08700103,
+
     /// The SQE's out-of-band descriptor-array length (`oob_len`) is
     /// malformed (mirror of `HsmError::IoChannelInvalidOobLen`).
     IoChannelInvalidOobLen = 0x08700104,
@@ -283,6 +296,33 @@ pub enum TborStatus {
     /// The SQE's out-of-band descriptor-array pointer (`oob_prp`) is not
     /// 4K-page-aligned (mirror of `HsmError::IoChannelInvalidOobAlignment`).
     IoChannelInvalidOobAlignment = 0x08700105,
+
+    /// `PartFinal` was asked to restore a `prev_local_mk_backup` whose
+    /// bound SVN is newer than the current firmware SVN (mirror of
+    /// `HsmError::PartFinalBackupSvnRollback`).
+    PartFinalBackupSvnRollback = 0x08700106,
+
+    /// `PartFinal`'s supplied PTA certificate chain is valid and
+    /// POTA-anchored, but its leaf public key does not match the
+    /// partition's PTA key (mirror of `HsmError::PartFinalPtaMismatch`).
+    PartFinalPtaMismatch = 0x08700107,
+
+    /// `SdCreateRemoteBackup` was asked to create a security domain on a
+    /// partition whose security-domain masking key (`SDMK`) is already
+    /// provisioned in this incarnation (mirror of
+    /// `HsmError::SdAlreadyInitialized`).
+    SdAlreadyInitialized = 0x08700108,
+
+    /// A `SdRestore*` handler was asked to restore a security-domain
+    /// backup whose bound SVN is newer than the current firmware SVN
+    /// (mirror of `HsmError::SdBackupSvnRollback`).
+    SdBackupSvnRollback = 0x08700109,
+
+    /// A `SdCreatePeerBackup` / `SdRestorePeerBackup` handler was asked to
+    /// clone a security domain to (or from) a peer, but the partition's
+    /// policy does not permit peer cloning (mirror of
+    /// `HsmError::SdPeerCloningNotAllowed`).
+    SdPeerCloningNotAllowed = 0x0870010A,
 }
 
 impl core::fmt::Debug for TborStatus {

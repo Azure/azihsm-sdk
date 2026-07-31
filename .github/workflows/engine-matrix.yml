@@ -5,9 +5,12 @@
 # system OpenSSL and verifies it loads via `openssl engine -t`.  Each cell is
 # its own job and shows up as its own PR check.
 #
-# The engine targets the legacy 1.1 ABI the provider can't serve; only
-# Ubuntu 20.04 (OpenSSL 1.1.1f) for now, further 1.1.x distros can be added
-# as cells.
+# The engine targets the legacy 1.1 ABI the provider can't serve, so every
+# cell runs a system OpenSSL in the 1.1.x series: Ubuntu 20.04 (1.1.1f) and
+# Debian 11 (1.1.1w) from the debian family, AlmaLinux 8 (1.1.1k) from the
+# rhel family.  `matrix.family` selects the bootstrap.  OpenSSL 1.0.2 distros
+# are intentionally excluded: build.rs rejects anything below 1.1.0 and there
+# is no 1.0.2 backend.
 
 name: Engine matrix
 
@@ -38,15 +41,28 @@ jobs:
           - distro: u2004
             label:  Ubuntu 20.04 (OpenSSL 1.1.1f)
             image:  ubuntu:20.04
+            family: debian
+
+          - distro: debian11
+            label:  Debian 11 (OpenSSL 1.1.1w)
+            image:  debian:11
+            family: debian
+
+          - distro: alma8
+            label:  AlmaLinux 8 (OpenSSL 1.1.1k)
+            image:  almalinux:8
+            family: rhel
 
     steps:
-      # clang/libclang-dev are for bindgen (openssl-sys-engine build.rs).
+      # clang/libclang-dev are for bindgen (azihsm_ossl_engine_sys build.rs).
       # DEBIAN_FRONTEND: 20.04's tzdata otherwise blocks on an interactive
       # timezone prompt during install.
       # Node 20 via the NodeSource apt repo (signature-verified against its
-      # keyring): 20.04's apt nodejs is Node 10, too old for the JS actions
-      # when run under `act` (GHA injects its own node).
-      - name: Bootstrap
+      # keyring): 20.04's and Debian 11's apt nodejs are too old for the JS
+      # actions when run under `act` (GHA injects its own node).  The nodistro
+      # NodeSource suite serves both Ubuntu and Debian.
+      - name: Bootstrap (debian)
+        if: matrix.family == 'debian'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -61,6 +77,20 @@ jobs:
             > /etc/apt/sources.list.d/nodesource.list
           apt-get update
           apt-get install -y --no-install-recommends nodejs
+
+      # clang + clang-devel provide libclang for bindgen (build.rs).  el8's
+      # default nodejs module is Node 10, too old for the JS actions under
+      # `act`; enable the 20 stream first.  el8 keeps OpenSSL at 1.1.1k for
+      # its lifetime, so no repo pinning (unlike the provider's el9 cells).
+      - name: Bootstrap (rhel)
+        if: matrix.family == 'rhel'
+        run: |
+          dnf module reset -y nodejs
+          dnf module enable -y nodejs:20
+          dnf install -y --setopt=install_weak_deps=False \
+            ca-certificates curl git \
+            gcc gcc-c++ make pkgconf-pkg-config clang clang-devel \
+            openssl openssl-devel nodejs
 
       - uses: actions/checkout@v6
 
@@ -90,7 +120,7 @@ jobs:
 
       - name: Build engine
         run: |
-          cargo build -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+          cargo build -p azihsm_ossl_engine -p azihsm_ossl_engine_core -p azihsm_ossl_engine_sys \
             --features engine
 
       # Without the `engine` feature the crates are empty stubs (that's what
@@ -99,14 +129,60 @@ jobs:
       - name: Clippy engine
         run: |
           cargo xtask rustup-component-add --component clippy
-          cargo clippy -p azihsm_engine -p openssl-engine -p openssl-sys-engine \
+          cargo clippy -p azihsm_ossl_engine -p azihsm_ossl_engine_core -p azihsm_ossl_engine_sys \
             --features engine --all-targets -- -D warnings
 
-      # openssl-engine's unit tests (error queue, ex_data, set_destroy) depend
-      # only on the 1.1 FFI, so they run here. The azihsm_engine mock lifecycle
-      # tests pull the OpenSSL-3.x SDK and need separate handling (roadmap #19).
-      - name: Test openssl-engine
-        run: cargo test -p openssl-engine --features engine
+      # azihsm_crypto's *_ossl11.rs backends only compile under cfg(not(ossl300)),
+      # so the 3.x workspace clippy in rust.yml never lints them; lint them here.
+      - name: Clippy azihsm_crypto
+        run: cargo clippy -p azihsm_crypto --all-targets -- -D warnings
+
+      # cargo-nextest isn't in the base image and building it from source is
+      # unreliable here; fetch the prebuilt binary, pinned to the version xtask
+      # installs elsewhere (xtask/src/setup.rs CARGO_NEXTEST_VERSION).
+      - name: Install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/0.9.132/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+
+      # azihsm_ossl_engine_core's unit tests (error queue, ex_data, set_destroy) depend
+      # only on the 1.1 FFI, so they run here.
+      - name: Test azihsm_ossl_engine_core
+        run: cargo nextest run -p azihsm_ossl_engine_core --features engine
+
+      # azihsm_ossl_engine's mock lifecycle tests drive the HSM open path against the
+      # mock DDI.
+      - name: Test azihsm_ossl_engine (mock lifecycle)
+        run: cargo nextest run -p azihsm_ossl_engine --features engine,mock
+
+      - name: Test azihsm_crypto
+        run: cargo nextest run -p azihsm_crypto
+
+      # nextest does not run doctests; run azihsm_crypto's separately.
+      - name: Doctests
+        run: cargo test --doc -p azihsm_crypto
 
       - name: Load engine
-        run: openssl engine -t "$(pwd)/target/debug/libazihsm_engine.so"
+        run: openssl engine -t "$(pwd)/target/debug/libazihsm_ossl_engine.so"
+
+      # The integration suites load a key through the engine end to end; they
+      # need a mock-backed .so, so (re)build it and the masked-key generator.
+      - name: Build engine (mock) + generator for integration tests
+        run: |
+          cargo build -p azihsm_ossl_engine --features engine,mock
+          cargo build -p azihsm-engine-masked-keygen --features integration
+
+      - name: Integration tests — CLI (openssl -engine)
+        run: |
+          export OPENSSL_BIN=/usr/bin/openssl
+          export ENGINE_SO="$(pwd)/target/debug/libazihsm_ossl_engine.so"
+          export MASKED_KEYGEN="$(pwd)/target/debug/masked-keygen"
+          export AZIHSM_ENGINE_TEST_KEYDIR="$(pwd)/target/test-keymat/engine-cli"
+          rm -rf "$AZIHSM_ENGINE_TEST_KEYDIR"
+          cargo nextest run -p engine-integration-tests-cli --features integration --no-fail-fast
+
+      # !cancelled(): run even if the CLI step failed, so the two are independent checks.
+      - name: Integration tests — ABI (ENGINE C API)
+        if: ${{ !cancelled() }}
+        run: |
+          export ENGINE_SO="$(pwd)/target/debug/libazihsm_ossl_engine.so"
+          export MASKED_KEYGEN="$(pwd)/target/debug/masked-keygen"
+          cargo nextest run -p engine-integration-tests-capi --features integration --no-fail-fast

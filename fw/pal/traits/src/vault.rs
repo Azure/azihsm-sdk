@@ -45,7 +45,7 @@ use super::*;
 /// Types of keys that can be managed by the HSM key vault.
 ///
 /// Each variant corresponds to a specific cryptographic algorithm and
-/// key size.  The discriminant values (`0..34`) match the firmware's
+/// key size.  The discriminant values (`0..=41`) match the firmware's
 /// `EntryKind` enum so that key type information is wire-compatible
 /// across the DDI protocol.
 ///
@@ -66,6 +66,12 @@ use super::*;
 /// | 28–30 | HMAC fixed-length | `_HmacSha256`, `_HmacSha384`, `_HmacSha512` |
 /// | 31 | Masking key | `MaskingKey` |
 /// | 32–34 | HMAC variable-length | `VarLenHmacSha256` .. `VarLenHmacSha512` |
+/// | 35–36 | TBOR session blobs | `SessionExPending`, `SessionEx` |
+/// | 37–38 | Partition incarnation keys | `PartitionTrustAnchor`, `UniquePartitionSecret` |
+/// | 39–40 | PartFinal masking keys | `PartitionLocalMaskingKey`, `PartitionEphemeralMaskingKey` |
+/// | 41 | Security-domain sealing key | `SdSealing` |
+/// | 42 | Security-domain masking key | `SdMasking` |
+/// | 43 | Security-domain partition-owner seed | `SdPartitionOwnerSeed` |
 #[repr(u8)]
 #[open_enum]
 #[derive(Clone, Copy, Debug)]
@@ -152,10 +158,15 @@ pub enum HsmVaultKeyKind {
     /// and CU).
     ///
     /// Length-discriminated by session type:
-    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(80)]`
-    ///   = 120 B.
+    /// * **PlainText (CU):** `[api_rev(8) ‖ param_key(32) ‖ masking_key(32)]`
+    ///   = 72 B.
     /// * **Authenticated (CO):** the above ‖ `mac_tx(48) ‖ mac_rx(48)`
-    ///   = 216 B.
+    ///   = 168 B.
+    ///
+    /// `masking_key` is the 32 B AES-256-GCM
+    /// [`SESSION_MASKING_KEY_LEN`](crate::SESSION_MASKING_KEY_LEN) key used
+    /// by the `key_masking::aead` TBOR masked-key system — distinct from the
+    /// legacy [`Session`](Self::Session) blob's 80 B `aes32 ‖ hmac48` CBC key.
     ///
     /// Written by
     /// [`HsmSessionManager::session_promote`](crate::HsmSessionManager::session_promote)
@@ -172,18 +183,73 @@ pub enum HsmVaultKeyKind {
     /// [`HsmError::PtaKeyAlreadySet`]: crate::HsmError::PtaKeyAlreadySet
     PartitionTrustAnchor = 37,
 
-    /// Partition Unique Machine Secret (UMS) — 48 B HMAC-SHA-384-sized
-    /// secret derived in `PartInit` from `UDS` plus the request-side
-    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`) inputs.
+    /// Partition Unique Secret — the 48 B HMAC-SHA-384-sized root of the
+    /// partition key schedule.  Initially the Unique Machine Secret (UMS)
+    /// derived in `PartInit` from `UDS` plus the request-side inputs
+    /// (`MachineSeed`, `PartPolicy`, `POTAThumbprint`); `PartFinal`
+    /// replaces it with the Unique Partition Secret (UPS).
     ///
     /// Persisted in the partition key vault for the lifetime of the
-    /// partition incarnation so that later phases (e.g. FinalizePart)
-    /// can derive secondary partition secrets without re-supplying
-    /// `MachineSeed`.  One per partition incarnation; rebinding is
-    /// rejected with [`HsmError::UmsKeyAlreadySet`].
+    /// partition incarnation so later phases can derive secondary
+    /// partition secrets without re-supplying `MachineSeed`.  One per
+    /// incarnation; rebinding is rejected with
+    /// [`HsmError::UmsKeyAlreadySet`].
     ///
     /// [`HsmError::UmsKeyAlreadySet`]: crate::HsmError::UmsKeyAlreadySet
-    PartitionUniqueMachineSecret = 38,
+    UniquePartitionSecret = 38,
+
+    /// Partition Local Key Masking Key (PartLocalMK) — 32 B AES-256-GCM
+    /// masking key derived in `PartFinal` and masked into the
+    /// `local_mk_backup` envelope.  Masks partition-local keys
+    /// ([`HsmKeyScope::Local`]); recovered across launches from the
+    /// caller-replayed backup.
+    PartitionLocalMaskingKey = 39,
+
+    /// Ephemeral Key Masking Key (EphemeralMK) — 32 B random
+    /// AES-256-GCM masking key generated in `PartFinal`.  Masks
+    /// [`HsmKeyScope::Ephemeral`] keys; never backed up, so it is
+    /// implicitly revoked (along with everything it masked) on the next
+    /// partition reset.
+    PartitionEphemeralMaskingKey = 40,
+
+    /// Security-domain sealing key — ECC-P384 private key.
+    ///
+    /// Generated on device by the TBOR `SdSealingKeyGen` handler for ECDH
+    /// key agreement (ECIES-style seal / unseal).  The private half is
+    /// **not** stored on-device: it is returned to the caller masked under
+    /// the requested scope's masking key, and this kind is recorded only
+    /// as the masked blob's `key_kind` metadata.  Tagged with the caller's
+    /// requested [`HsmKeyScope`] (currently `Ephemeral` or `Local`;
+    /// `SecurityDomain` is not yet supported) via its attribute `scope`
+    /// field.  Represented as the 48-byte raw private scalar, mirroring
+    /// [`PartitionTrustAnchor`](Self::PartitionTrustAnchor).
+    SdSealing = 41,
+
+    /// Security-domain key masking key (`SDMK`) — 32 B AES-256-GCM
+    /// masking key.
+    ///
+    /// Minted (random) on device by the TBOR `SdCreateRemoteBackup`
+    /// handler when a security domain is created, vaulted with
+    /// [`HsmKeyScope::SecurityDomain`] scope, and backed up to the caller
+    /// as `sd_mk_backup` (masked under the derived `SDBMK`).  It is the
+    /// live masking key that
+    /// [`SecurityDomain`](HsmKeyScope::SecurityDomain)-scoped keys are
+    /// masked under; recovered across launches from the caller-replayed
+    /// `sd_mk_backup` (parity with
+    /// [`PartitionLocalMaskingKey`](Self::PartitionLocalMaskingKey)).
+    SdMasking = 42,
+
+    /// Security-domain partition-owner seed (`BKS3`) — the 48 B root
+    /// secret of a security domain (firmware `BK3`).
+    ///
+    /// Never stored live on-device: minted (random) by
+    /// `SdCreateRemoteBackup`, HPKE-Auth-sealed to a recipient as
+    /// `pok_remote_backup` and masked under the partition-local masking
+    /// key (`PartLocalMK`) as `pok_local_backup`.  This kind is recorded
+    /// only as the masked blob's `key_kind` metadata (parity with
+    /// [`SdSealing`](Self::SdSealing)); the on-device security domain is
+    /// re-derived from it on restore.
+    SdPartitionOwnerSeed = 43,
 }
 
 /// Key scope: the lifecycle / visibility domain a vault key belongs
@@ -426,6 +492,39 @@ pub trait HsmVault {
     /// - `Err(HsmError::NotPermitted)` if the key's `destroyable` bit
     ///   is unset (e.g. internal device keys).
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Marks a key as **disabled** without freeing its slot or zeroizing
+    /// its material — the staging half of a reversible delete.
+    ///
+    /// A disabled key is invisible to all lookups
+    /// ([`vault_key`](Self::vault_key), [`vault_key_kind`](Self::vault_key_kind),
+    /// …) which return [`HsmError::KeyNotFound`], but its slot and bytes
+    /// remain reserved.  It can be re-enabled with
+    /// [`vault_key_enable`](Self::vault_key_enable) or finalized (zeroized)
+    /// with [`vault_key_delete`](Self::vault_key_delete).
+    ///
+    /// This is the vault primitive the upper-layer undo log drives for a
+    /// reversible delete: `disable` at mutation time, `enable` to roll
+    /// back on failure, `delete` to commit on success.  The PAL itself
+    /// stays undo-unaware.  Unlike `vault_key_delete` it performs no
+    /// zeroize, so it is synchronous and cannot fail beyond the liveness
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a live
+    ///   (present, not-already-disabled) key in the caller's partition.
+    fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
+
+    /// Re-enables a [`vault_key_disable`](Self::vault_key_disable)d key,
+    /// making it visible to lookups again.  The inverse of
+    /// `vault_key_disable`.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a present
+    ///   slot in the caller's partition.
+    fn vault_key_enable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
 
     /// Deletes every key whose `session_id` matches `session_id`.
     ///

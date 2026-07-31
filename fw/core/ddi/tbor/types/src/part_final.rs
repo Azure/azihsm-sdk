@@ -22,11 +22,12 @@
 //!   it.  Layout owned by [`crate::policy::PartPolicy`]; length pinned by
 //!   [`PART_POLICY_LEN`].
 //! * `cert_descriptors` — a packed list of [`CertDescriptor`] entries
-//!   `(offset, length)` describing where each DER certificate of the PTA
-//!   chain lives in the **side-band** data buffer (the certificate bytes
-//!   are transferred out of band, not in the TBOR message).  The number
-//!   of certificates is `cert_descriptors.len() / CERT_DESCRIPTOR_LEN`,
-//!   capped at [`MAX_CERTS`](crate::evidence::MAX_CERTS).
+//!   `(index, length)` referencing where each DER certificate of the PTA
+//!   chain is carried **out of band** as an SGL Data Block (the
+//!   certificate bytes are transferred out of band, not in the TBOR
+//!   message).  Decoded as a `&[CertDescriptor]`, so the certificate
+//!   count is `cert_descriptors.len()`, capped at
+//!   [`MAX_CERTS`](crate::evidence::MAX_CERTS).
 //! * `prev_local_mk_backup` — optional previously-generated `local_mk`
 //!   backup envelope to restore.  An **empty** field means absent — the
 //!   handler then generates a fresh `local_mk` and returns its backup.
@@ -34,7 +35,7 @@
 //! Outputs:
 //!
 //! * `local_mk_backup` — current `local_mk` backup envelope
-//!   (`CurrPartLocalKMKBackup`), to be persisted by the host and replayed
+//!   (`CurrPartLocalMKBackup`), to be persisted by the host and replayed
 //!   as `prev_local_mk_backup` on subsequent launches.
 
 use azihsm_fw_ddi_tbor_api::tbor;
@@ -68,12 +69,19 @@ pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
 // both the breakdown above and the field attributes.
 const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
 
+// Pin the `cert_descriptors` `#[tbor(min_len/max_len)]` literals to their
+// descriptor-size constants (the derive requires integer literals): a
+// single descriptor (`min_len`) and `MAX_CERTS` descriptors (`max_len`).
+// If a descriptor size or `MAX_CERTS` changes, update the field attribute.
+const _: () = assert!(crate::evidence::CERT_DESCRIPTOR_LEN == 3);
+const _: () = assert!(crate::evidence::CERT_DESCRIPTORS_MAX_LEN == 6);
+
 /// `PartFinal` request schema.
 ///
 /// Finalizes the partition: re-supplies the unified [`PartPolicy`] (for
-/// `POTAPubKey` recovery), the PTA cert-chain descriptor list (pointing
-/// into the side-band buffer), and an optional prior `local_mk` backup
-/// to restore.
+/// `POTAPubKey` recovery), the PTA cert-chain descriptor list
+/// (referencing out-of-band SGL Data Blocks), and an optional prior
+/// `local_mk` backup to restore.
 ///
 /// [`PartPolicy`]: crate::policy::PartPolicy
 #[tbor(opcode = 0x08)]
@@ -97,20 +105,34 @@ pub struct TborPartFinalReq<'a> {
     #[tbor(buffer, len = 484)]
     pub part_policy: &'a [u8],
 
-    /// Packed list of [`CertDescriptor`] entries `(offset, length)` for
-    /// the PTA certificate chain in the side-band buffer.  Decoded as a
+    /// Packed list of [`CertDescriptor`] entries `(index, length)` for
+    /// the PTA certificate chain carried out of band.  Decoded as a
     /// zero-copy typed slice; because [`CertDescriptor`] is `Unaligned`
     /// (alignment 1) the `&[CertDescriptor]` cast is sound at any offset,
-    /// so no alignment padding is inserted.  Byte length is a non-zero
-    /// multiple of [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN), up to
-    /// [`CERT_DESCRIPTORS_MAX_LEN`](crate::evidence::CERT_DESCRIPTORS_MAX_LEN).
-    #[tbor(buffer, min_len = 1, max_len = 8)]
+    /// so no alignment padding is inserted.
+    ///
+    /// `min_len`/`max_len` are a coarse wire-size guard bounding the byte
+    /// length to `[CERT_DESCRIPTOR_LEN, CERT_DESCRIPTORS_MAX_LEN]` =
+    /// `[3, 6]`; they cannot by themselves enforce a whole-descriptor
+    /// multiple.  A wire length that is not a multiple of
+    /// [`CERT_DESCRIPTOR_LEN`](crate::evidence::CERT_DESCRIPTOR_LEN) (e.g.
+    /// 4 or 5 B) fails the zero-copy cast and decodes as an **empty**
+    /// slice — the derive does **not** reject it
+    /// (`try_ref_from_bytes(..).unwrap_or(&[])`); the PartFinal handler is
+    /// therefore responsible for treating an empty `cert_descriptors` as a
+    /// malformed request.
+    #[tbor(buffer, min_len = 3, max_len = 6)]
     pub cert_descriptors: &'a [CertDescriptor],
 
     /// Optional previously-generated `local_mk` backup envelope to
     /// restore.  An **empty** field means absent; when present it is
     /// exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
-    #[tbor(buffer, max_len = 164)]
+    ///
+    /// Marked `#[tbor(mutable)]` so the handler can AEAD-unmask the
+    /// envelope **in place** in the request buffer via
+    /// [`decode_mut`](TborPartFinalReq::decode_mut), avoiding a scratch
+    /// staging copy.
+    #[tbor(buffer, max_len = 164, mutable)]
     pub prev_local_mk_backup: &'a [u8],
 }
 
@@ -119,7 +141,7 @@ pub struct TborPartFinalReq<'a> {
 /// Carries the current `local_mk` backup envelope.
 #[tbor(response)]
 pub struct TborPartFinalResp<'a> {
-    /// Current `local_mk` backup envelope (`CurrPartLocalKMKBackup`).
+    /// Current `local_mk` backup envelope (`CurrPartLocalMKBackup`).
     /// Always exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
     #[tbor(buffer, len = 164)]
     pub local_mk_backup: &'a [u8],
@@ -151,11 +173,11 @@ mod tests {
         let policy = [0u8; PART_POLICY_LEN];
         let descs = [
             CertDescriptor {
-                offset: U16::new(16),
+                index: 0,
                 length: U16::new(32),
             },
             CertDescriptor {
-                offset: U16::new(48),
+                index: 1,
                 length: U16::new(64),
             },
         ];
@@ -174,7 +196,7 @@ mod tests {
             .finish();
 
         // The encoder serialized `&[CertDescriptor]` to its raw bytes:
-        // two 4-byte descriptors, little-endian.
+        // two 3-byte descriptors, little-endian.
         let raw = frame.cert_descriptors();
         assert_eq!(raw.len(), descs.len() * CERT_DESCRIPTOR_LEN);
         assert_eq!(raw, IntoBytes::as_bytes(&descs[..]));

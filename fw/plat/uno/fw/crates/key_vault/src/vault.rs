@@ -80,13 +80,76 @@ impl<S: TableStorage> KeyVault<S> {
         session: Option<u16>,
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId> {
+        let (table, slot, start) = self.stage_key_slot(app_id, kind, session, attrs, key.len())?;
+
+        // Write key material. On failure, use evict to clean up the staged
+        // region (scrub + free the run).
+        if let Err(e) = self.write_key(gdma, io, table, start, key).await {
+            let entry = *self.storage.entry(table, slot)?;
+            self.evict(gdma, io, table, slot, entry).await?;
+            return Err(e);
+        }
+
+        Ok(make_key_id(table, slot))
+    }
+
+    /// Synchronously stores a new key by CPU copy, returning its
+    /// [`HsmKeyId`].
+    ///
+    /// Identical to [`create`](Self::create) but copies the key material with
+    /// the CPU (`copy_from_slice`) instead of routing large keys through the
+    /// GDMA engine, so it needs no [`HsmGdmaController`] and — crucially — has
+    /// no `.await`. This lets a synchronous, non-yielding caller (e.g. lazy
+    /// materialisation inside a `part_prop_get`) create a key atomically with
+    /// respect to the cooperative scheduler. The vault blob is CPU-writable
+    /// (the attribute blob is always CPU-copied), so the only cost versus
+    /// `create` is a slower copy for large keys; intended for small, fixed-size
+    /// internal keys such as the RSA-2048 unwrapping key. Because a
+    /// `copy_from_slice` cannot fail after staging, there is no key-write
+    /// rollback path.
+    ///
+    /// # Errors
+    ///
+    /// Same size/space errors as [`create`](Self::create).
+    pub fn create_sync(
+        &mut self,
+        app_id: u8,
+        key: &DmaBuf,
+        kind: HsmVaultKeyKind,
+        session: Option<u16>,
+        attrs: HsmVaultKeyAttrs,
+    ) -> HsmResult<HsmKeyId> {
+        let (table, slot, start) = self.stage_key_slot(app_id, kind, session, attrs, key.len())?;
+
+        // Synchronous CPU copy of the key material (no GDMA, no `.await`).
+        let len = key.len();
+        let key_off = usize::from(start) * BLOCK_ALIGNMENT + ATTRIBUTES_BLOB_SIZE;
+        self.storage.blob_mut(table)?[key_off..key_off + len].copy_from_slice(key);
+
+        Ok(make_key_id(table, slot))
+    }
+
+    /// Finds a table the partition owns with a free entry slot and block run,
+    /// stages the entry metadata and attribute blob for a key of `key_bytes`
+    /// bytes, and returns `(table, slot, block_start)`. The caller writes the
+    /// key material (and, on the fallible GDMA path, rolls back via `evict`).
+    ///
+    /// The block run is reserved directly in the table's bitmap (in place — no
+    /// working copy). The entry is not live for lookups until the key write
+    /// completes.
+    fn stage_key_slot(
+        &mut self,
+        app_id: u8,
+        kind: HsmVaultKeyKind,
+        session: Option<u16>,
+        attrs: HsmVaultKeyAttrs,
+        key_bytes: usize,
+    ) -> HsmResult<(usize, usize, u16)> {
         let spec = key_len(kind)?;
-        let persisted_len = spec.check(key.len())?;
+        let persisted_len = spec.check(key_bytes)?;
         let total = storage_bytes(persisted_len);
         let need = blocks_for(total);
 
-        // Find a table the partition owns with both a free entry slot and
-        // a free block run.
         let mut saw_defrag = false;
         for table in 0..self.storage.table_count() {
             if !self.storage.is_valid_table(table) {
@@ -97,11 +160,6 @@ impl<S: TableStorage> KeyVault<S> {
                 continue;
             };
 
-            // Reserve the run directly in the table's bitmap (in place — no
-            // working copy is materialized). The reservation is committed
-            // before the `.await` so nothing bitmap-sized crosses it; on a
-            // failed key write we roll back: scrub the staged region and
-            // free the run.
             let start = match crate::block::alloc(self.storage.bitmap_mut(table)?, need) {
                 Ok(s) => s,
                 Err(HsmError::DefragmentationNeeded) => {
@@ -112,9 +170,7 @@ impl<S: TableStorage> KeyVault<S> {
                 Err(e) => return Err(e),
             };
 
-            // Stage the entry's fields directly in storage. The slot is
-            // not yet live for lookups until the key write succeeds (a
-            // failed write rolls it back via `evict`).
+            // Stage the entry's fields directly in storage.
             {
                 let entry = self.storage.entry_mut(table, slot)?;
                 entry.set_block_offset(start);
@@ -133,14 +189,7 @@ impl<S: TableStorage> KeyVault<S> {
             }
             self.write_attrs(table, start, attrs_blob)?;
 
-            // Write key material. On failure, use evict to clean up the staged region.
-            if let Err(e) = self.write_key(gdma, io, table, start, key).await {
-                let entry = *self.storage.entry(table, slot)?;
-                self.evict(gdma, io, table, slot, entry).await?;
-                return Err(e);
-            }
-
-            return Ok(make_key_id(table, slot));
+            return Ok((table, slot, start));
         }
 
         Err(if saw_defrag {
@@ -163,8 +212,61 @@ impl<S: TableStorage> KeyVault<S> {
         key_id: HsmKeyId,
     ) -> HsmResult<()> {
         let (table, slot) = split_key_id(key_id);
-        let entry = self.entry(table, slot)?;
+        // Delete operates on any *present* key — live or disabled — so the
+        // undo-log commit path can zeroize a soft-deleted (disabled) key.
+        // Only a genuinely free slot is rejected (matches `delete_by_session`
+        // / `clear`, which already evict on a bare `!is_free()` check).
+        let entry = *self.storage.entry(table, slot)?;
+        if entry.is_free() {
+            return Err(HsmError::KeyNotFound);
+        }
         self.evict(gdma, io, table, slot, entry).await
+    }
+
+    /// Marks a live key as **disabled** without freeing its slot or
+    /// zeroizing its material.
+    ///
+    /// A disabled key is invisible to lookups ([`key`](Self::key),
+    /// [`key_kind`](Self::key_kind), [`key_location`](Self::key_location)
+    /// all return [`HsmError::KeyNotFound`]) but its slot and bytes
+    /// remain reserved.  It can be re-enabled via [`enable`](Self::enable)
+    /// or finalized (zeroized) via [`delete`](Self::delete).
+    ///
+    /// This is the staging half of a reversible delete used by the
+    /// upper-layer undo log: `disable` at mutation time, `enable` to roll
+    /// back on failure, `delete` to commit (zeroize) on success.  Unlike
+    /// `delete` it performs no GDMA, so it is synchronous and infallible
+    /// beyond the liveness check.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a live
+    ///   (present, not-already-disabled) key in this vault.
+    pub fn disable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        let (table, slot) = split_key_id(key_id);
+        // Must currently be live: `entry` rejects free or already-disabled
+        // slots, so this enforces disable-once semantics.
+        let _ = self.entry(table, slot)?;
+        self.storage.entry_mut(table, slot)?.set_disabled(true);
+        Ok(())
+    }
+
+    /// Re-enables a [`disable`](Self::disable)d key, making it visible to
+    /// lookups again.  The inverse of `disable`.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::KeyNotFound`] — `key_id` does not refer to a present
+    ///   slot (a free slot cannot be enabled).
+    pub fn enable(&mut self, key_id: HsmKeyId) -> HsmResult<()> {
+        let (table, slot) = split_key_id(key_id);
+        // Disabled-aware lookup: a disabled entry is hidden from `entry`,
+        // so read it raw and reject only a genuinely free slot.
+        if self.storage.entry(table, slot)?.is_free() {
+            return Err(HsmError::KeyNotFound);
+        }
+        self.storage.entry_mut(table, slot)?.set_disabled(false);
+        Ok(())
     }
 
     /// Deletes every session-scoped key bound to `session`.

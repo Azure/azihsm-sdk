@@ -59,7 +59,7 @@ pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
 /// `fw/core/ddi/tbor/types/src/policy.rs`: POTA + SATA trust anchors are
 /// populated Ecc384 keys; SAPOTA + backing-partition keys are left
 /// absent (zero `len`); flags are clear; `info` is filled.
-pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
+pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
     const OFF_SATA: usize = 102;
     const OFF_FLAGS: usize = 418;
@@ -84,6 +84,17 @@ pub(super) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
         *b = 0xAB;
     }
+    bytes
+}
+
+/// Like [`known_good_part_policy`] but with a caller-supplied **real**
+/// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can validate
+/// a PTA certificate chain anchored to it.
+pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
+    const OFF_POTA: usize = 2;
+    let mut bytes = known_good_part_policy();
+    // POTA slot layout: kind(2) ‖ len(2) ‖ data(96); overwrite the data.
+    bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
     bytes
 }
 
