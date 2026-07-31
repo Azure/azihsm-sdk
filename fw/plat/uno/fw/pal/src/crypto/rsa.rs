@@ -23,15 +23,11 @@ use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
-use der::Decode;
-use der::Sequence;
-use der::asn1::Null;
-use der::asn1::ObjectIdentifier;
-use der::asn1::OctetStringRef;
-use der::asn1::UintRef;
 use zeroize::Zeroize;
 
 use crate::UnoHsmPal;
+use crate::asn1::RsaPrivateKeyAsn1;
+use crate::asn1::parse_rsa_private_key;
 
 // =============================================================================
 // Helper functions
@@ -75,78 +71,18 @@ fn digest_info_prefix(algo: HsmHashAlgo) -> &'static [u8] {
 }
 
 // =============================================================================
-// DER parsing for RSA private-key import (PKCS#8 / PKCS#1 RSAPrivateKey)
+// Vault operand assembly (imported RSA private key → PKA layout)
 // =============================================================================
 
 /// Maximum RSA modulus length in bytes (RSA-4096).
 const MAX_RSA_MODULUS_LEN: usize = 512;
 
-/// rsaEncryption OID (1.2.840.113549.1.1.1) — the algorithm identifier of an
-/// RSA key inside a PKCS#8 `PrivateKeyInfo`.
-const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
-
-/// PKCS#8 `AlgorithmIdentifier` for RSA: the `rsaEncryption` OID with the
-/// explicit `NULL` parameters required by RFC 3279 §2.3.1.
-#[derive(Sequence)]
-struct RsaAlgorithmIdentifier {
-    algorithm: ObjectIdentifier,
-    parameters: Null,
-}
-
-/// PKCS#8 `PrivateKeyInfo` (RFC 5208) whose `privateKey` OCTET STRING wraps a
-/// PKCS#1 `RSAPrivateKey`.
-#[derive(Sequence)]
-struct RsaPrivateKeyInfo<'a> {
-    version: u8,
-    algorithm: RsaAlgorithmIdentifier,
-    private_key: &'a OctetStringRef,
-}
-
-/// PKCS#1 `RSAPrivateKey` (RFC 8017 A.1.2), two-prime form (version 0). The full
-/// SEQUENCE is decoded so the `der` reader validates every field; only
-/// `modulus`, `public_exponent`, and `private_exponent` feed the non-CRT vault
-/// operand.
-#[derive(Sequence)]
-struct RsaPrivateKeyDer<'a> {
-    version: u8,
-    modulus: UintRef<'a>,
-    public_exponent: UintRef<'a>,
-    private_exponent: UintRef<'a>,
-    prime1: UintRef<'a>,
-    prime2: UintRef<'a>,
-    exponent1: UintRef<'a>,
-    exponent2: UintRef<'a>,
-    coefficient: UintRef<'a>,
-}
-
-/// Decodes a recovered RSA private key — a PKCS#8 `PrivateKeyInfo` or a bare
-/// PKCS#1 `RSAPrivateKey` — and assembles the little-endian PKA vault operand
-/// `[d(k) ‖ n(k) ‖ e(4)]` into `out`, returning `(vault_len, modulus_len)`.
-///
-/// The `der` crate enforces canonical DER (definite minimal-length encodings, no
-/// trailing bytes via `from_der`) and rejects negative / non-minimal INTEGERs,
-/// so this carries no hand-rolled TLV / INTEGER validation. Reads `der_bytes`
-/// only; the caller scrubs the recovered plaintext on any error.
-fn rsa_der_to_vault_operand(der_bytes: &[u8], out: &mut [u8]) -> Option<(usize, usize)> {
-    // Assemble inside each arm while the decoded `RSAPrivateKey` — and the
-    // `UintRef`s borrowing `der_bytes` — is still alive.
-    if let Ok(pki) = RsaPrivateKeyInfo::from_der(der_bytes) {
-        if pki.algorithm.algorithm != RSA_ENCRYPTION {
-            return None;
-        }
-        let inner = RsaPrivateKeyDer::from_der(pki.private_key.as_bytes()).ok()?;
-        assemble_rsa_operand(&inner, out)
-    } else {
-        let inner = RsaPrivateKeyDer::from_der(der_bytes).ok()?;
-        assemble_rsa_operand(&inner, out)
-    }
-}
-
 /// Validates the RSA field sizes and writes `[d ‖ n ‖ e]` little-endian into
 /// `out`, returning `(vault_len, modulus_len)`. Rejects moduli that are not
 /// 2048/3072/4096-bit, an exponent wider than 4 bytes, or a `d` wider than the
-/// modulus.
-fn assemble_rsa_operand(key: &RsaPrivateKeyDer<'_>, out: &mut [u8]) -> Option<(usize, usize)> {
+/// modulus. Structural validation (versions, algorithm OID) is done upstream by
+/// [`parse_rsa_private_key`](super::asn1::parse_rsa_private_key).
+fn assemble_rsa_operand(key: &RsaPrivateKeyAsn1<'_>, out: &mut [u8]) -> Option<(usize, usize)> {
     let n = key.modulus.as_bytes();
     let e = key.public_exponent.as_bytes();
     let d = key.private_exponent.as_bytes();
@@ -279,10 +215,13 @@ impl HsmRsa for UnoHsmPal {
             return Err(HsmError::UnsupportedCmd);
         }
         // Decode + assemble the little-endian vault operand `[d(k) ‖ n(k) ‖ e(4)]`
-        // into a scratch buffer. This only reads `buf` (the recovered plaintext
-        // DER); the borrow ends before the in-place rewrite below.
+        // into a scratch buffer. Only `buf` is read (the recovered plaintext
+        // DER); the decoded `UintRef`s alias into it, and the borrow ends
+        // before the in-place rewrite below.
         let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
-        let Some((vault_len, modulus_len)) = rsa_der_to_vault_operand(&buf[..], &mut out) else {
+        let assembled =
+            parse_rsa_private_key(&buf[..]).and_then(|key| assemble_rsa_operand(&key, &mut out));
+        let Some((vault_len, modulus_len)) = assembled else {
             buf.zeroize();
             out.zeroize();
             return Err(HsmError::InvalidArg);
