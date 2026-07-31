@@ -3,7 +3,7 @@
 
 #include "sd_provision.hpp"
 
-#if defined(AZIHSM_FEATURE_EMU)
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <cstdint>
@@ -1251,4 +1251,4 @@ SdEvidenceHolder build_receiver_evidence(
     return holder;
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)

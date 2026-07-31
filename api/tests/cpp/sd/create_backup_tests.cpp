@@ -12,9 +12,9 @@
 // to its own attested identity key.
 //
 // The whole file needs the two-phase TBOR HPKE handshake and a fully
-// provisioned partition, which only the emu (in-process firmware) backend
-// provides, so it is gated to `AZIHSM_FEATURE_EMU`.
-#if defined(AZIHSM_FEATURE_EMU)
+// provisioned partition, which the mock backend does not implement, so it is
+// excluded from the mock lane and runs on the emu and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <azihsm_api.h>
@@ -366,4 +366,4 @@ TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
     });
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)

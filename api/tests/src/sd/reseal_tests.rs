@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! api-level `SdResealRemoteBackup` round trip against the emulator.
+//! api-level `SdResealRemoteBackup` round trip against the emulator or
+//! hardware backend.
 //!
 //! Self-reseal on one partition: mint receiver / sender / destination SD
 //! sealing keys, use `sd_create_remote_backup` to produce a real source
@@ -13,7 +14,7 @@
 use azihsm_api::*;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 
-use crate::utils::emu_helpers::EMU_LOCK;
+use crate::utils::partition_ex_helpers::PARTITION_LOCK;
 use crate::utils::sd_provision::CaKey;
 use crate::utils::sd_provision::RAW_PUB_LEN;
 use crate::utils::sd_provision::build_receiver_evidence;
@@ -41,7 +42,7 @@ fn create_source_backup(
 /// non-zero backup distinct from the source ciphertext.
 #[test]
 fn sd_reseal_remote_backup_roundtrip() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
@@ -90,7 +91,7 @@ fn sd_reseal_remote_backup_roundtrip() {
 /// ciphertexts (a fresh HPKE ephemeral each call).
 #[test]
 fn sd_reseal_remote_backup_rerandomizes() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 

@@ -39,7 +39,7 @@ use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use zerocopy::IntoBytes;
 
-use crate::utils::emu_helpers::fresh_emu_partition;
+use crate::utils::partition_ex_helpers::new_partition;
 
 const SEC1_PUB_LEN: usize = 97;
 pub(crate) const RAW_PUB_LEN: usize = 96;
@@ -417,7 +417,7 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
 /// `part_final_ex`.
 pub(crate) fn finalized_co_session() -> HsmSession {
-    let (part, rev) = fresh_emu_partition();
+    let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
     // bootstrap session closes on drop at the end of this block.
@@ -608,7 +608,7 @@ pub(crate) fn provision_backing(
     [u8; RAW_PUB_LEN],
     Vec<u8>,
 ) {
-    let (part, rev) = fresh_emu_partition();
+    let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
     // bootstrap session closes on drop at the end of this block.
