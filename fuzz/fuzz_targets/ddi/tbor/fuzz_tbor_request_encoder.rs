@@ -6,12 +6,12 @@
 #[path = "../../common.rs"]
 mod common;
 
-use common::{EncoderTOCBuilders, FUZZ_BUF_SIZE};
+use azihsm_ddi_tbor_codec::RequestEncoder;
+use common::EncoderTOCBuilders;
+use common::FUZZ_BUF_SIZE;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-use azihsm_ddi_tbor_codec::RequestEncoder;
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
