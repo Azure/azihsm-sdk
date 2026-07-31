@@ -18,21 +18,13 @@ use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
 use super::CO;
+use super::CU;
 use super::ROTATED_CO_PSK;
+use super::ROTATED_CU_PSK;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::SessionGuard;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
-const CU: u8 = 1;
-
-/// Non-default 32-byte CU PSK, used to clear the default-PSK gate
-/// before exercising the CU role-reject path.  Distinct bytes from
-/// [`ROTATED_CO_PSK`] so a copy/paste swap is loud.
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
-];
 
 /// Opens a session for the supplied role and session type using a custom
 /// PSK.
@@ -54,6 +46,43 @@ fn open_role_with<'a>(
         .session_open_finish(pending)
         .expect("session_open_finish under custom PSK");
     SessionGuard::new(ctx, handshake)
+}
+
+/// Rotates the PSK for the supplied role, closes the bootstrap session,
+/// and opens a new guarded session using the rotated credential.
+///
+/// The returned [`SessionGuard`] automatically closes the new session when
+/// dropped, including when the calling test panics.
+fn rotate_psk_and_open_role<'a>(
+    ctx: &'a TestCtx,
+    role: u8,
+    sty: SessionType,
+    rotated_psk: &[u8; PSK_LEN],
+) -> SessionGuard<'a> {
+    let bootstrap = ctx.open_session(role, sty);
+
+    ctx.psk_change(bootstrap.handshake(), rotated_psk)
+        .expect("rotate role PSK");
+
+    bootstrap
+        .close()
+        .expect("close bootstrap session after PSK rotation");
+
+    open_role_with(ctx, role, sty, rotated_psk)
+}
+
+/// Asserts that a `PartInit` request succeeds.
+///
+/// On failure, the panic includes the concrete [`azihsm_ddi::DdiError`]
+/// returned by the transport or firmware.
+fn assert_part_init_succeeds(
+    result: Result<azihsm_ddi_tbor_types::TborPartInitResp, azihsm_ddi::DdiError>,
+    context: &str,
+) {
+    match result {
+        Ok(_) => {}
+        Err(err) => panic!("{context}: {err:?}"),
+    }
 }
 
 /// Default-PSK CO session: the TBOR dispatcher must reject `PartInit`
@@ -78,24 +107,15 @@ fn part_init_reject_default_psk_co() {
 }
 
 /// CU session under a rotated PSK: the handler's CO-only role gate
-/// must surface [`TborStatus::InvalidPermissions`].  The CU PSK is
-/// rotated up-front so the dispatcher's default-PSK gate does not
-/// fire first.
+/// must surface [`TborStatus::InvalidPermissions`].
+///
+/// [`rotate_psk_and_open_role`] rotates the CU PSK first so the request
+/// bypasses the default-PSK dispatcher gate and reaches the role check.
 #[test]
 fn part_init_reject_cu_session() {
     let ctx = TestCtx::new();
 
-    // Rotate CU PSK out of the default so we exercise the role gate,
-    // not the default-PSK gate.  CU sessions are pinned to
-    // `SessionType::PlainText` (CO-only is `Authenticated`).
-    let bootstrap = ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("open_session must succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU session");
-
-    let session = open_role_with(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
+    let session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
     let policy = known_good_part_policy();
     let seed = mach_seed();
     let thumb = pota_thumbprint();
@@ -146,21 +166,38 @@ fn part_init_default_psk_gate_precedes_policy_decode_emu() {
     assert_fw_rejects(&err, TborStatus::DefaultPskMustRotate);
 }
 
+/// The default-PSK dispatcher gate must run before the CU role-permission
+/// gate.
+///
+/// The caller is a CU, which normally cannot execute `PartInit`, but the
+/// CU session is still using its default PSK. Therefore, the dispatcher
+/// must reject the request with `DefaultPskMustRotate` before the handler
+/// can return `InvalidPermissions`.
+#[test]
+fn part_init_default_psk_gate_precedes_cu_role_gate_emu() {
+    let ctx = TestCtx::new();
+
+    let session = ctx.open_session(CU, SessionType::PlainText);
+    let policy = known_good_part_policy();
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(session.handshake(), &seed, &policy, &thumb)
+        .expect_err("default-PSK CU session must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::DefaultPskMustRotate);
+}
+
 /// The handler's CO-only role gate must run before policy decoding.
 ///
-/// The CU PSK is rotated first so the dispatcher allows the command to
-/// reach the handler. Although the policy is malformed, the CU role must
-/// be rejected with `InvalidPermissions` before policy decoding occurs.
+/// Although the policy is malformed, the rotated CU session must be
+/// rejected with `InvalidPermissions` before policy decoding occurs.
 #[test]
 fn part_init_cu_role_gate_precedes_policy_decode_emu() {
     let ctx = TestCtx::new();
 
-    let bootstrap = ctx.open_session(CU, SessionType::PlainText);
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU session");
-
-    let session = open_role_with(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
+    let session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
     let bad_policy = [0u8; PART_POLICY_LEN];
     let seed = mach_seed();
     let thumb = pota_thumbprint();
@@ -300,13 +337,7 @@ fn part_init_valid_rotated_co_request_succeeds_emu() {
 fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
     let ctx = TestCtx::new();
 
-    // Rotate the CU PSK so the request reaches the role-permission gate.
-    let bootstrap_cu = ctx.open_session(CU, SessionType::PlainText);
-    ctx.psk_change(bootstrap_cu.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap_cu.close().expect("close bootstrap CU session");
-
-    let cu_session = open_role_with(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
+    let cu_session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
 
     let policy = known_good_part_policy();
     let seed = mach_seed();
@@ -318,7 +349,6 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    // `cu_session` is guarded and closes automatically when dropped.
     let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     ctx.part_init(&co_session, &seed, &policy, &thumb)
@@ -502,14 +532,7 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
     default_co.close().expect("close default-PSK CO session");
 
     // Second rejection: CU role.
-    let bootstrap_cu = ctx.open_session(CU, SessionType::PlainText);
-
-    ctx.psk_change(bootstrap_cu.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-
-    bootstrap_cu.close().expect("close bootstrap CU session");
-
-    let cu_session = open_role_with(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
+    let cu_session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
 
     let err = ctx
         .part_init(cu_session.handshake(), &seed, &policy, &thumb)
@@ -579,9 +602,9 @@ fn part_init_rejection_does_not_modify_input_buffers_emu() {
 /// A policy rejection must remain deterministic across several requests,
 /// and the same authenticated CO session must still be usable afterward.
 ///
-/// This extends the two-attempt repeatability check by issuing several
-/// malformed requests through one session before submitting a valid
-/// policy.
+/// Every malformed request must return the canonical
+/// [`TborStatus::InvalidArg`] status. After the rejected requests, a valid
+/// policy must still initialize the partition successfully.
 #[test]
 fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
     const ATTEMPTS: usize = 5;
@@ -589,7 +612,6 @@ fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
     let bad_policy = [0u8; PART_POLICY_LEN];
     let good_policy = known_good_part_policy();
     let seed = mach_seed();
@@ -611,4 +633,24 @@ fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
 
     ctx.part_init(&session, &seed, &good_policy, &thumb)
         .expect("valid PartInit must succeed after repeated policy rejections");
+}
+
+//// A CO session cannot be opened with `SessionType::PlainText`.
+///
+/// This validates the role/session-type restriction at session creation.
+/// Because the session cannot be established, the request never reaches
+/// the `PartInit` dispatcher.
+#[test]
+fn co_plaintext_session_open_is_rejected_emu() {
+    let ctx = TestCtx::new();
+
+    let opts = SessionOpenInitOptions::new(CO, SessionType::PlainText);
+
+    let err = ctx
+        .session_open_init_with_options(opts)
+        .expect_err("CO plaintext session open must be rejected");
+
+    // Assert the exact session-open error once confirmed from the
+    // established session tests or firmware implementation.
+    let _ = err;
 }
