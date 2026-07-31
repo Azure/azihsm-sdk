@@ -36,7 +36,6 @@ members = [
   "ddi/tbor/derive",
   "ddi/tbor/types",
   "ddi/win",
-  "fuzz",
   "fw/core/crypto/aead-envelope",
   "fw/core/crypto/aes-cbc-pad",
   "fw/core/crypto/gcm-buf",

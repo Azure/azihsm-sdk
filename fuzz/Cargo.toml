@@ -1,42 +1,44 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 [package]
-name = "azihsm_api-fuzz"
-version = "0.0.0"
-publish = false
 edition = "2024"
+name = "azihsm_api-fuzz"
+publish = false
+version = "0.0.0"
 
 [package.metadata]
 cargo-fuzz = true
 
 [dependencies]
-azihsm_ddi_tbor_codec.workspace = true
+azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
 
 # dependencies for fuzzing
-libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_request_encoder"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_encoder.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_response_encoder"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_encoder.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_request_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_view.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_response_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
 test = false
-doc = false
-bench = false
