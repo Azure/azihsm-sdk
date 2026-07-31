@@ -18,8 +18,9 @@
 // a real C consumer performs, except the consumer brings its own PKI chain.
 //
 // The chain is built with the platform host crypto (OpenSSL on Linux,
-// BCrypt on Windows), no HSM session. Gated to the emu backend.
-#if defined(AZIHSM_FEATURE_EMU)
+// BCrypt on Windows), no HSM session. Excluded from the mock backend; runs
+// on the emu and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 /// Provision a freshly-reset partition's security domain and return a live,
 /// provisioned Crypto-Officer session handle (`Initialized` state):
@@ -148,4 +149,4 @@ SdEvidenceHolder build_receiver_evidence(
     const std::vector<uint8_t> &report
 );
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)
