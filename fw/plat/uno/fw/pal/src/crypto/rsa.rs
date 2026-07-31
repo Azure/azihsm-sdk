@@ -11,6 +11,7 @@
 //! off-platform.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHash;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
@@ -22,6 +23,7 @@ use azihsm_fw_hsm_pal_traits::HsmRsa;
 use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_uno_drivers_upka::UpkaModSize;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
 use zeroize::Zeroize;
 
@@ -133,6 +135,156 @@ impl UnoHsmPal {
         self.hash_finish(io, ctx, &mut digest[..algo.digest_len()], true)
             .await
     }
+
+    /// Compute the derived RSA-CRT PKA operands from the recovered primes.
+    ///
+    /// `n1q = qInv·q` and `n2p = (p⁻¹ mod q)·p` are the two values the Uno PKA
+    /// needs in the CRT private operand beyond the raw DER fields. Inputs are
+    /// the big-endian magnitudes of `p`, `q`, and `qInv` (`qInv = q⁻¹ mod p`)
+    /// as recovered from the DER; `modulus_len` (k) is 256/384/512. Writes the
+    /// `k`-byte little-endian results into the first `k` bytes of `n1q_out` /
+    /// `n2p_out`.
+    ///
+    /// The two products use an all-`0xFF` modulus so the PKA performs no
+    /// reduction — the mathematical products `qInv·q` and `p⁻¹·p` are already
+    /// `< 2^(8k)`, so the full-width result is exact — while the `p⁻¹ mod q`
+    /// inverse runs at the half operand size with modulus `q`. All PKA scratch
+    /// lives in a nested alloc scope and is scrubbed then freed on return; each
+    /// derived value runs atomically on one held engine.
+    // The primes, coefficient, and two output operands are distinct crypto
+    // values with no natural grouping; a parameter struct would only obscure them.
+    #[allow(clippy::too_many_arguments)]
+    async fn compute_crt_params(
+        &self,
+        io: &impl HsmIo,
+        modulus_len: usize,
+        p_be: &[u8],
+        q_be: &[u8],
+        qinv_be: &[u8],
+        n1q_out: &mut DmaBuf,
+        n2p_out: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        // Full operand = the modulus size k; the `p⁻¹ mod q` inverse runs at
+        // the next PKA size that covers the k/2-byte prime.
+        let (full, half) = match modulus_len {
+            256 => (UpkaModSize::Rsa2k, UpkaModSize::Rsa1k),
+            384 => (UpkaModSize::Rsa3k, UpkaModSize::Rsa2k),
+            512 => (UpkaModSize::Rsa4k, UpkaModSize::Rsa2k),
+            _ => return Err(HsmError::InvalidArg),
+        };
+        let k = modulus_len;
+        let half_len = k / 2;
+        let half_op = half.operand_len();
+        if p_be.len() > half_len
+            || q_be.len() > half_len
+            || qinv_be.len() > half_len
+            || n1q_out.len() < k
+            || n2p_out.len() < k
+        {
+            return Err(HsmError::InvalidArg);
+        }
+
+        self.alloc_scoped_async(io, async |scope| {
+            // Full-size (k) scratch, reused across the n1q and n2p multiplies.
+            // The all-`0xFF` buffer is the no-reduction modulus.
+            let ff = scope.dma_alloc(k)?;
+            ff.fill(0xff);
+            let mont_c = scope.dma_alloc(k)?;
+            let a_full = scope.dma_alloc_zeroed(k)?;
+            let b_full = scope.dma_alloc_zeroed(k)?;
+            let a_mont = scope.dma_alloc_zeroed(k + 4)?;
+            let b_mont = scope.dma_alloc_zeroed(k + 4)?;
+            let prod_mont = scope.dma_alloc_zeroed(k + 4)?;
+
+            // Half-size scratch for p⁻¹ mod q (modulus q, zero-padded to the
+            // half operand width). Allocate every fallible buffer BEFORE writing
+            // any secret prime material, so an allocation failure (`?`) cannot
+            // return early leaving `p`/`q` in reused DMA SRAM ahead of the
+            // scrub block below.
+            let q_half = scope.dma_alloc_zeroed(half_op)?;
+            let p_half = scope.dma_alloc_zeroed(half_op)?;
+            let mont_c_h = scope.dma_alloc(half_op)?;
+            let p_mont_h = scope.dma_alloc_zeroed(half_op + 4)?;
+            let pinv_mont_h = scope.dma_alloc_zeroed(half_op + 4)?;
+            let pinvq = scope.dma_alloc_zeroed(half_op)?;
+
+            // All DMA scratch is now reserved; from here no `?` can early-return
+            // before the unconditional scrub, so it is safe to write secrets.
+            write_le(&mut q_half[..half_len], q_be);
+            write_le(&mut p_half[..half_len], p_be);
+
+            // Run the three PKA phases, capturing the outcome instead of
+            // `?`-returning, so the scrub below runs on BOTH success and error
+            // paths. A mid-computation PKA failure would otherwise return
+            // before scrubbing, and the scoped alloc Drop only resets
+            // watermarks — it does not wipe the reused DMA SRAM. Each phase is
+            // gated on the previous succeeding so no PKA op runs on stale data.
+
+            // n1q = qInv · q. Operands sit in the low half of the full width;
+            // the all-`0xFF` modulus disables reduction so the product is exact.
+            write_le(&mut a_full[..half_len], qinv_be);
+            write_le(&mut b_full[..half_len], q_be);
+            let mut result = self
+                .pka
+                .with_engine(async |eng| {
+                    eng.rsa_mont_const_calc(full, ff, mont_c).await?;
+                    eng.rsa_mont_repr_in(full, a_mont, a_full).await?;
+                    eng.rsa_mont_repr_in(full, b_mont, b_full).await?;
+                    eng.rsa_mod_mul(full, prod_mont, a_mont, b_mont).await?;
+                    eng.rsa_mont_repr_out(full, n1q_out, prod_mont).await
+                })
+                .await;
+
+            // p⁻¹ mod q (half size, modulus q).
+            if result.is_ok() {
+                result = self
+                    .pka
+                    .with_engine(async |eng| {
+                        eng.rsa_mont_const_calc(half, q_half, mont_c_h).await?;
+                        eng.rsa_mont_repr_in(half, p_mont_h, p_half).await?;
+                        eng.rsa_mod_inverse(half, pinv_mont_h, p_mont_h).await?;
+                        eng.rsa_mont_repr_out(half, pinvq, pinv_mont_h).await
+                    })
+                    .await;
+            }
+
+            // n2p = (p⁻¹ mod q) · p. Reuse the full-size scratch: load the plain
+            // little-endian inverse and p, then multiply with no reduction.
+            if result.is_ok() {
+                a_full.fill(0);
+                a_full[..half_len].copy_from_slice(&pinvq[..half_len]);
+                b_full.fill(0);
+                write_le(&mut b_full[..half_len], p_be);
+                result = self
+                    .pka
+                    .with_engine(async |eng| {
+                        eng.rsa_mont_const_calc(full, ff, mont_c).await?;
+                        eng.rsa_mont_repr_in(full, a_mont, a_full).await?;
+                        eng.rsa_mont_repr_in(full, b_mont, b_full).await?;
+                        eng.rsa_mod_mul(full, prod_mont, a_mont, b_mont).await?;
+                        eng.rsa_mont_repr_out(full, n2p_out, prod_mont).await
+                    })
+                    .await;
+            }
+
+            // Scrub scratch that held secret prime-derived material on every
+            // path (success or a failed PKA op above), before the scope frees
+            // and later reuses the DMA SRAM.
+            a_full.zeroize();
+            b_full.zeroize();
+            a_mont.zeroize();
+            b_mont.zeroize();
+            prod_mont.zeroize();
+            q_half.zeroize();
+            p_half.zeroize();
+            mont_c_h.zeroize();
+            p_mont_h.zeroize();
+            pinv_mont_h.zeroize();
+            pinvq.zeroize();
+            result
+        })
+        .await
+    }
 }
 
 impl HsmRsa for UnoHsmPal {
@@ -177,75 +329,158 @@ impl HsmRsa for UnoHsmPal {
         priv_key: &DmaBuf,
         pub_out: Option<&mut DmaBuf>,
     ) -> HsmResult<usize> {
-        // The Uno vault RSA private key is the PKA little-endian layout
-        // `d(k) ‖ n(k) ‖ e(4)` (k = modulus length), the same 516-byte form the
-        // HSP publishes for RSA-2048, so `priv_key.len() == 2*k + 4`. The wire
-        // public key is `n_le ‖ e_le` (`k + 4` bytes) — already little-endian,
-        // so it is exactly the trailing `priv_key[k..]` slice with no
-        // endianness flip and no PKA operation.
+        // The wire public key is `n_le ‖ e_le` (`k + 4` bytes), extracted from
+        // the Uno vault private operand. Two vault layouts carry the same
+        // `n`/`e`, both little-endian:
+        //   non-CRT `d(k) ‖ n(k) ‖ e(4)`                          (`2k+4` bytes)
+        //   CRT     `p ‖ q ‖ dp ‖ dq ‖ n(k) ‖ n1q(k) ‖ n2p(k) ‖ e(4)` (`5k+4`)
+        // In both, `e` is the trailing 4 bytes; `n` starts at offset `k`
+        // (non-CRT) or `2k` (CRT). The two length sets are disjoint, so the
+        // operand length selects the layout — no endianness flip / PKA op.
         const EXP_WIRE_LEN: usize = 4;
         let total = priv_key.len();
-        if total <= EXP_WIRE_LEN || !(total - EXP_WIRE_LEN).is_multiple_of(2) {
+        if total <= EXP_WIRE_LEN {
             return Err(HsmError::InvalidArg);
         }
-        let modulus_len = (total - EXP_WIRE_LEN) / 2;
+        let body = total - EXP_WIRE_LEN;
+        let (modulus_len, n_off) = if body.is_multiple_of(2) && matches!(body / 2, 256 | 384 | 512)
+        {
+            let k = body / 2;
+            (k, k)
+        } else if body.is_multiple_of(5) && matches!(body / 5, 256 | 384 | 512) {
+            let k = body / 5;
+            (k, 2 * k)
+        } else {
+            return Err(HsmError::InvalidArg);
+        };
         let wire_len = modulus_len + EXP_WIRE_LEN;
         if let Some(out) = pub_out {
             if out.len() < wire_len {
                 return Err(HsmError::RsaInvalidKeyLength);
             }
-            out[..wire_len].copy_from_slice(&priv_key[modulus_len..total]);
+            out[..modulus_len].copy_from_slice(&priv_key[n_off..n_off + modulus_len]);
+            out[modulus_len..wire_len].copy_from_slice(&priv_key[total - EXP_WIRE_LEN..total]);
         }
         Ok(wire_len)
     }
 
-    fn rsa_priv_der_to_vault(
-        &self,
-        _io: &impl HsmIo,
-        buf: &mut DmaBuf,
+    async fn rsa_priv_der_to_vault<'a>(
+        &'a self,
+        io: &impl HsmIo,
+        der: &'a mut DmaBuf,
         crt: bool,
-    ) -> HsmResult<(usize, usize)> {
-        // CRT import needs the derived PKA operands (n1q, n2p) computed from
-        // p/q/n via PKA modular arithmetic — not yet brought up on Uno.
+    ) -> HsmResult<(&'a DmaBuf, usize)> {
         if crt {
-            // `buf` still holds the recovered plaintext DER; scrub it before
-            // any early return so no secret key material lingers in the reused
-            // DMA SRAM after a failed import.
-            buf.zeroize();
-            return Err(HsmError::UnsupportedCmd);
+            // Decode the recovered CRT DER into its big-endian field magnitudes
+            // (modulus `n`, exponent `e`, primes `p`/`q`, CRT exponents `dp`/`dq`,
+            // coefficient `qInv = q⁻¹ mod p`). The `UintRef`s alias `der`; the
+            // borrow ends at the `compute_crt_params` call below, before `der`
+            // is scrubbed.
+            let Some(key) = parse_rsa_private_key(&der[..]) else {
+                der.zeroize();
+                return Err(HsmError::InvalidArg);
+            };
+            let n = key.modulus.as_bytes();
+            let e = key.public_exponent.as_bytes();
+            let p = key.prime1.as_bytes();
+            let q = key.prime2.as_bytes();
+            let dp = key.exponent1.as_bytes();
+            let dq = key.exponent2.as_bytes();
+            let qinv = key.coefficient.as_bytes();
+            let k = n.len();
+            let half = k / 2;
+            // The modulus must be a supported size; `e` fits 4 bytes; each
+            // prime-sized field fits the half width (a proper prime is exactly
+            // `k/2` bytes, and dp/dq/qInv are `< p`).
+            if !matches!(k, 256 | 384 | 512)
+                || e.len() > 4
+                || p.len() > half
+                || q.len() > half
+                || dp.len() > half
+                || dq.len() > half
+                || qinv.len() > half
+            {
+                der.zeroize();
+                return Err(HsmError::InvalidArg);
+            }
+
+            // The Uno CRT operand (`5k+4`) is larger than the source DER, so it
+            // cannot be built in place — allocate a right-sized buffer. Assemble
+            // the little-endian PKA operand
+            // `[ p(k/2) ‖ q(k/2) ‖ dp(k/2) ‖ dq(k/2) ‖ n(k) ‖ n1q(k) ‖ n2p(k) ‖ e(4) ]`
+            // into it (zeroed first so short fields are left-padded and the
+            // derived `n1q`/`n2p` regions start clean).
+            let vault_len = 5 * k + 4;
+            // Scrub the recovered plaintext DER (holds the primes/CRT
+            // components) if the vault allocation fails, before surfacing the
+            // error — the scoped DMA SRAM is reused without automatic wiping.
+            let out = match self.dma_alloc(io, vault_len) {
+                Ok(out) => out,
+                Err(err) => {
+                    der.zeroize();
+                    return Err(err);
+                }
+            };
+            out.fill(0);
+            write_le(&mut out[0..half], p);
+            write_le(&mut out[half..k], q);
+            write_le(&mut out[k..k + half], dp);
+            write_le(&mut out[k + half..2 * k], dq);
+            write_le(&mut out[2 * k..3 * k], n);
+            write_le(&mut out[5 * k..vault_len], e);
+
+            // Derive `n1q = qInv·q` and `n2p = (p⁻¹ mod q)·p` on the PKA straight
+            // into the operand: split off the `[3k..5k]` region into two disjoint
+            // `k`-byte views so no extra copy is needed.
+            let (_head, tail) = out.split_at_mut(3 * k);
+            let (n1q_out, rest) = tail.split_at_mut(k);
+            let (n2p_out, _e) = rest.split_at_mut(k);
+            let result = self
+                .compute_crt_params(io, k, p, q, qinv, n1q_out, n2p_out)
+                .await;
+            // The recovered DER holds the plaintext primes; scrub it regardless
+            // of outcome now that every field has been consumed.
+            der.zeroize();
+            if let Err(err) = result {
+                // A PKA failure leaves partially-derived secret material in `out`.
+                out.zeroize();
+                return Err(err);
+            }
+            return Ok((&out[..vault_len], k));
         }
-        // Decode + assemble the little-endian vault operand `[d(k) ‖ n(k) ‖ e(4)]`
-        // into a scratch buffer. Only `buf` is read (the recovered plaintext
-        // DER); the decoded `UintRef`s alias into it, and the borrow ends
-        // before the in-place rewrite below.
+
+        // Non-CRT: decode + assemble the little-endian vault operand
+        // `[d(k) ‖ n(k) ‖ e(4)]` into a scratch buffer. Only `der` is read (the
+        // recovered plaintext DER); the decoded `UintRef`s alias into it, and
+        // the borrow ends before the in-place rewrite below.
         let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
         let assembled =
-            parse_rsa_private_key(&buf[..]).and_then(|key| assemble_rsa_operand(&key, &mut out));
+            parse_rsa_private_key(&der[..]).and_then(|key| assemble_rsa_operand(&key, &mut out));
         let Some((vault_len, modulus_len)) = assembled else {
-            buf.zeroize();
+            der.zeroize();
             out.zeroize();
             return Err(HsmError::InvalidArg);
         };
         // The vault form is smaller than the source DER, so the in-place rewrite
         // is safe — but reject rather than panic if a malformed DER made
-        // `vault_len` exceed `buf`. `buf` holds recovered plaintext, so scrub
+        // `vault_len` exceed `der`. `der` holds recovered plaintext, so scrub
         // first.
-        if vault_len > buf.len() {
-            buf.zeroize();
+        if vault_len > der.len() {
+            der.zeroize();
             out.zeroize();
             return Err(HsmError::InvalidArg);
         }
-        buf[..vault_len].copy_from_slice(&out[..vault_len]);
-        // Scrub the leftover source DER in the tail of `buf` — for a full
+        der[..vault_len].copy_from_slice(&out[..vault_len]);
+        // Scrub the leftover source DER in the tail of `der` — for a full
         // RSAPrivateKey it still holds secret CRT components (`p`, `q`, `dp`,
         // `dq`, `qinv`). The scoped DMA buffer is reused without automatic
         // wiping, so scrub it here before returning.
-        buf[vault_len..].zeroize();
+        der[vault_len..].zeroize();
         // Scrub the assembled operand (holds the private exponent `d`) from the
         // stack scratch. `Zeroize` uses volatile writes so the wipe is not
         // elided as a dead store.
         out.zeroize();
-        Ok((vault_len, modulus_len))
+        Ok((&der[..vault_len], modulus_len))
     }
 
     // ── PKCS#1 v1.5 encryption ─────────────────────────────────────
