@@ -39,9 +39,9 @@ use azihsm_fw_uno_drivers_upka::mont_operand_size;
 use super::ecc_det::ORDER384_BE;
 use super::ecc_det::ct_in_range;
 use super::ecc_det::ct_in_range_le;
-use super::rsa::der_tlv;
 use super::rsa::write_le;
 use crate::UnoHsmPal;
+use crate::asn1::parse_ec_private_key;
 
 // =============================================================================
 // Curve mapping
@@ -183,82 +183,6 @@ fn curve_order_be(curve: HsmEccCurve) -> &'static [u8] {
         HsmEccCurve::P384 => &ORDER384_BE,
         HsmEccCurve::P521 => &ORDER521_BE,
     }
-}
-
-/// DER OID value bytes of `id-ecPublicKey` (1.2.840.10045.2.1).
-const OID_EC_PUBLIC_KEY: [u8; 7] = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
-/// DER OID value bytes of `prime256v1` / `secp256r1` (1.2.840.10045.3.1.7).
-const OID_P256: [u8; 8] = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
-/// DER OID value bytes of `secp384r1` (1.3.132.0.34).
-const OID_P384: [u8; 5] = [0x2b, 0x81, 0x04, 0x00, 0x22];
-/// DER OID value bytes of `secp521r1` (1.3.132.0.35).
-const OID_P521: [u8; 5] = [0x2b, 0x81, 0x04, 0x00, 0x23];
-
-/// Classify a NIST curve from its `namedCurve` OID value bytes.
-fn curve_from_oid(oid: &[u8]) -> Option<HsmEccCurve> {
-    if oid == OID_P256 {
-        Some(HsmEccCurve::P256)
-    } else if oid == OID_P384 {
-        Some(HsmEccCurve::P384)
-    } else if oid == OID_P521 {
-        Some(HsmEccCurve::P521)
-    } else {
-        None
-    }
-}
-
-/// Parse a PKCS#8 DER ECC private key (`PrivateKeyInfo` wrapping an SEC1
-/// `ECPrivateKey`) into `(curve, scalar_start, scalar_len)`, where the scalar
-/// `d` is the big-endian value `der[scalar_start..][..scalar_len]`.
-fn parse_ec_priv_der(der: &[u8]) -> Option<(HsmEccCurve, usize, usize)> {
-    // Outer SEQUENCE (PrivateKeyInfo) — must span the entire input (reject
-    // trailing garbage).
-    let (tag, seq_start, _seq_len, outer_next) = der_tlv(der, 0)?;
-    if tag != 0x30 || outer_next != der.len() {
-        return None;
-    }
-    // PKCS#8 PrivateKeyInfo version INTEGER: must be the value 0 (v1).
-    let (vtag, vs, vl, after_ver) = der_tlv(der, seq_start)?;
-    if vtag != 0x02 || vl != 1 || der[vs] != 0 {
-        return None;
-    }
-    // AlgorithmIdentifier ::= SEQUENCE { id-ecPublicKey OID, namedCurve OID }.
-    let (atag, alg_start, _al, after_alg) = der_tlv(der, after_ver)?;
-    if atag != 0x30 {
-        return None;
-    }
-    let (otag, oid_s, oid_l, after_oid) = der_tlv(der, alg_start)?;
-    if otag != 0x06 || der[oid_s..oid_s + oid_l] != OID_EC_PUBLIC_KEY {
-        return None;
-    }
-    // The namedCurve OID must be the last field of the AlgorithmIdentifier
-    // SEQUENCE (no extra trailing fields).
-    let (ctag, cs, cl, after_curve) = der_tlv(der, after_oid)?;
-    if ctag != 0x06 || after_curve != after_alg {
-        return None;
-    }
-    let curve = curve_from_oid(&der[cs..cs + cl])?;
-    // privateKey OCTET STRING must wrap exactly the inner ECPrivateKey
-    // SEQUENCE with no trailing bytes.
-    let (ptag, pk_start, _pl, pk_next) = der_tlv(der, after_alg)?;
-    if ptag != 0x04 {
-        return None;
-    }
-    let (itag, inner_start, _il, inner_next) = der_tlv(der, pk_start)?;
-    if itag != 0x30 || inner_next != pk_next {
-        return None;
-    }
-    // Inner ECPrivateKey version INTEGER: must be the value 1 (ecPrivkeyVer1).
-    let (ivtag, ivs, ivl, after_iver) = der_tlv(der, inner_start)?;
-    if ivtag != 0x02 || ivl != 1 || der[ivs] != 1 {
-        return None;
-    }
-    // privateKey OCTET STRING = the raw scalar `d` (big-endian, field-length).
-    let (dtag, ds, dl, _dn) = der_tlv(der, after_iver)?;
-    if dtag != 0x04 || dl == 0 {
-        return None;
-    }
-    Some((curve, ds, dl))
 }
 
 // =============================================================================
@@ -636,22 +560,22 @@ impl HsmEcc for UnoHsmPal {
         der: &DmaBuf,
         out: Option<&mut DmaBuf>,
     ) -> HsmResult<(usize, HsmEccCurve)> {
-        // Parse the recovered PKCS#8 ECC private key: classify the curve from
-        // its `namedCurve` OID and locate the raw scalar `d` (big-endian).
-        let (curve, ds, dl) = parse_ec_priv_der(der).ok_or(HsmError::InvalidArg)?;
+        // Parse the recovered PKCS#8 ECC private key (curve from its `namedCurve`
+        // OID, plus the raw big-endian scalar `d`).
+        let (curve, scalar) = parse_ec_private_key(der).ok_or(HsmError::InvalidArg)?;
         let vault_len = curve.wire_coord_len();
         // SEC1 / RFC 5915 encodes the scalar as a fixed-width octet string for
         // the curve (P-256 32, P-384 48, P-521 66 bytes). Require exactly that
         // raw length — reject shorter (non-canonical) or overlong scalars,
         // matching the std PAL. `vault_len` is only the (padded) vault / output
         // size, used for wire zero-padding below.
-        if dl != curve.priv_key_len() {
+        if scalar.len() != curve.priv_key_len() {
             return Err(HsmError::InvalidArg);
         }
         // SEC1 requires the scalar in `[1, n-1]`; reject `d == 0` or `d >= n`
         // (the curve order). `ct_in_range` compares the same-length big-endian
         // `d` and `n` in constant time, matching the std PAL's `check_key`.
-        if !ct_in_range(&der[ds..ds + dl], curve_order_be(curve)) {
+        if !ct_in_range(scalar, curve_order_be(curve)) {
             return Err(HsmError::InvalidArg);
         }
         if let Some(out) = out {
@@ -660,7 +584,7 @@ impl HsmEcc for UnoHsmPal {
             }
             // The vault stores the scalar little-endian (PKA-native),
             // zero-padded to the wire coordinate length.
-            write_le(&mut out[..vault_len], &der[ds..ds + dl]);
+            write_le(&mut out[..vault_len], scalar);
         }
         Ok((vault_len, curve))
     }

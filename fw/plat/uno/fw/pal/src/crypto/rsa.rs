@@ -102,7 +102,7 @@ fn assemble_rsa_operand(key: &RsaPrivateKeyAsn1<'_>, out: &mut [u8]) -> Option<(
 
 /// Writes the big-endian bytes `be` as little-endian into `dst`, zero-padding
 /// the remaining high bytes. Requires `be.len() <= dst.len()`.
-fn write_le(dst: &mut [u8], be: &[u8]) {
+pub(super) fn write_le(dst: &mut [u8], be: &[u8]) {
     for (i, &b) in be.iter().rev().enumerate() {
         dst[i] = b;
     }
