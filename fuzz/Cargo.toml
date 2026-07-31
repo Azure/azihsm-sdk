@@ -14,8 +14,29 @@ azihsm_ddi_tbor_codec.workspace = true
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 
 [[bin]]
-name = "fuzz_tbor_encoder"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_encoder.rs"
+name = "fuzz_tbor_request_encoder"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_encoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tbor_response_encoder"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_encoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tbor_request_view"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_view.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tbor_response_view"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
 test = false
 doc = false
 bench = false
