@@ -372,6 +372,30 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdRestoreLocalBackup` (opcode `0x0D`) on this CO
+    /// session.
+    ///
+    /// Restores the security domain from the device-local `pok_local_backup`
+    /// and `sd_mk_backup` (no attestation evidence is involved), returning
+    /// the refreshed device-local backups. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
+    pub fn sd_restore_local_backup(
+        &self,
+        pok_local_backup: &[u8],
+        sd_mk_backup: &[u8],
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_restore_local_backup_ex(
+                &inner.partition,
+                inner.id,
+                pok_local_backup,
+                sd_mk_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.
