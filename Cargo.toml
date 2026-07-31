@@ -81,6 +81,10 @@ members = [
 
 ]
 
+exclude = [
+  "fuzz",
+]
+
 [workspace.dependencies]
 # Internal crates
 azihsm_api = { path = "api/lib" }
