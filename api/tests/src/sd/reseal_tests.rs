@@ -81,8 +81,7 @@ fn sd_reseal_remote_backup_roundtrip() {
     );
     // The resealed backup is a fresh HPKE encapsulation, not the source.
     assert_ne!(
-        dst_backup,
-        src_backup.to_vec(),
+        dst_backup, src_backup,
         "reseal must produce a fresh encapsulation, not echo the source",
     );
 }
