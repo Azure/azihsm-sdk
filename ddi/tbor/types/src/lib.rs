@@ -79,6 +79,9 @@ impl From<SessionControlKind> for u8 {
 }
 
 mod api_rev;
+mod ecc_generate_key;
+mod ecc_sign;
+mod ecdh_derive;
 mod evidence;
 mod get_unwrapping_key;
 mod hmac;
@@ -104,6 +107,9 @@ mod status;
 mod unwrap_key;
 
 pub use api_rev::*;
+pub use ecc_generate_key::*;
+pub use ecc_sign::*;
+pub use ecdh_derive::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
 pub use hmac::*;

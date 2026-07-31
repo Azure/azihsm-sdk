@@ -21,6 +21,9 @@
 //! per-IO allocator scope).
 
 pub(crate) mod api_rev;
+pub(crate) mod ecc_generate_key;
+pub(crate) mod ecc_sign;
+pub(crate) mod ecdh_derive;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
 pub(crate) mod hmac;
@@ -195,6 +198,23 @@ pub(crate) mod opcode {
     /// return it masked under the requested scope's masking key (plus the
     /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
     pub(crate) const UNWRAP_KEY: u8 = 0x14;
+
+    /// `EccGenerateKey` — generate a fresh ECC keypair on the requested
+    /// NIST curve and return the private key masked under the requested
+    /// scope's masking key plus the wire public key (nothing is persisted
+    /// on-device).  See [`super::ecc_generate_key`].
+    pub(crate) const ECC_GENERATE_KEY: u8 = 0x17;
+
+    /// `EccSign` — produce a raw ECDSA `r ‖ s` signature over a
+    /// host-supplied pre-computed digest using a caller-held masked ECC
+    /// private key (unmasked on-device).  See [`super::ecc_sign`].
+    pub(crate) const ECC_SIGN: u8 = 0x18;
+
+    /// `EcdhDerive` — derive an ECDH shared secret from a caller-held
+    /// masked local ECC private key and a host-supplied peer public key,
+    /// and return the secret masked under the requested scope's masking
+    /// key.  See [`super::ecdh_derive`].
+    pub(crate) const ECDH_DERIVE: u8 = 0x19;
 
     /// `RsaModExp` — perform the RSA private-key primitive `x = y^d mod n`
     /// using a caller-held masked RSA private key (imported via
@@ -418,6 +438,9 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::ECC_GENERATE_KEY => ecc_generate_key::handle(pal, io, req_buf).await,
+        opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
+        opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
         opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
@@ -450,6 +473,9 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
             | opcode::RSA_MOD_EXP
     )
 }
@@ -489,6 +515,9 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
         | opcode::RSA_MOD_EXP => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
@@ -536,6 +565,9 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
         | opcode::RSA_MOD_EXP => true,
         _ => true,
     }

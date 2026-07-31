@@ -69,6 +69,9 @@ single `none` TOC placeholder and no typed body fields.
 | `0x12` | `Hmac` | InSession | [`commands/hmac.md`](./commands/hmac.md) |
 | `0x13` | `GetUnwrappingKey` | InSession | [`commands/get_unwrapping_key.md`](./commands/get_unwrapping_key.md) |
 | `0x14` | `UnwrapKey` | InSession | [`commands/unwrap_key.md`](./commands/unwrap_key.md) |
+| `0x17` | `EccGenerateKey` | InSession | [`commands/ecc_generate_key.md`](./commands/ecc_generate_key.md) |
+| `0x18` | `EccSign` | InSession | [`commands/ecc_sign.md`](./commands/ecc_sign.md) |
+| `0x19` | `EcdhDerive` | InSession | [`commands/ecdh_derive.md`](./commands/ecdh_derive.md) |
 | `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](./commands/rsa_mod_exp.md) |
 
 ## Default-PSK gate

@@ -7,6 +7,9 @@
 
 pub mod api_rev;
 pub mod default_psk_gate;
+pub mod ecc_generate_key;
+pub mod ecc_sign;
+pub mod ecdh_derive;
 pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_unwrapping_key;
