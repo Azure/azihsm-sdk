@@ -3,11 +3,15 @@
 
 //! Integration tests for the TBOR `PartInit` command.
 //!
-//! Every test runs against the `emu` backend.  Cross-test isolation
-//! comes from [`TestCtx::new`] (factory-reset + process-global lock
-//! held for the ctx's lifetime, see [`crate::harness::fixture`]) so
-//! each test starts from a pristine `Enabled` partition with the
-//! canonical default PSKs.
+//! `PartInit` is mainline-supported on both `emu` and hardware. Tests
+//! run on both backends by default; only the sim-only
+//! `verify_pta_report` helper in [`happy_path`] (which uses the
+//! `azihsm_ddi_mbor_sim` COSE verifier) stays `#[cfg(feature = "emu")]`.
+//!
+//! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
+//! process-global lock held for the ctx's lifetime, see
+//! [`crate::harness::fixture`]) so each test starts from a pristine
+//! `Enabled` partition with the canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
 //! * [`happy_path`] — the full `OpenSession → PskChange → PartInit`
@@ -23,8 +27,6 @@
 //! `pota_thumbprint` fixtures, and the rotated CO PSK constant)
 //! live in this module and are `pub(super)` so each submodule can
 //! reach them via `super::*`.
-
-#![cfg(feature = "emu")]
 
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
@@ -90,11 +92,28 @@ pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 /// Like [`known_good_part_policy`] but with a caller-supplied **real**
 /// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can validate
 /// a PTA certificate chain anchored to it.
+///
+/// TODO(hw): gated to `feature = "emu"` because the only consumers
+/// (`part_final`, `sd_sealing_key_gen`, `sd_create_remote_backup`)
+/// are not yet supported on hw. Remove this gate once those commands
+/// land on hw.
+#[cfg(feature = "emu")]
 pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
     let mut bytes = known_good_part_policy();
     // POTA slot layout: kind(2) ‖ len(2) ‖ data(96); overwrite the data.
     bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
+    bytes
+}
+
+/// Like [`known_good_part_policy`] but with a caller-supplied `flags`
+/// byte, so tests can toggle individual `PolicyFlags` bits (e.g.
+/// `PolicyFlags::INCLUDE_FMC_CDI`) while keeping every other field
+/// byte-identical to the canonical fixture.
+pub(crate) fn part_policy_with_flags(flags: u8) -> [u8; PART_POLICY_LEN] {
+    const OFF_FLAGS: usize = 418;
+    let mut bytes = known_good_part_policy();
+    bytes[OFF_FLAGS] = flags;
     bytes
 }
 
@@ -169,7 +188,9 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
 /// under the rotated PSK — ready for the in-session command under
 /// test.
 pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), target_psk)
         .expect("rotate CO PSK");
     bootstrap.close().expect("close bootstrap CO session");

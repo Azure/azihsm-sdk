@@ -47,11 +47,13 @@ use crate::harness::api_rev::helper_api_rev_tbor;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::fixture::open_dev;
+use crate::harness::fixture::open_dev_secondary;
 use crate::harness::fixture::TestDev;
 use crate::harness::session::part_final as part_final_helper;
 use crate::harness::session::part_init as part_init_helper;
 use crate::harness::session::psk_change as psk_change_helper;
 use crate::harness::session::session_close as session_close_helper;
+use crate::harness::session::session_open as session_open_helper;
 use crate::harness::session::session_open_finish as session_open_finish_helper;
 use crate::harness::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
 use crate::harness::session::session_open_init as session_open_init_helper;
@@ -79,10 +81,38 @@ impl TestCtx {
         Self { dev: open_dev() }
     }
 
-    /// Factory-reset the partition. Available only on `emu`; the
-    /// determinism tests in `commands::part_init` call this between
-    /// cold-restart iterations.
-    #[cfg(feature = "emu")]
+    /// Open a secondary `TestCtx` on the same backend `path` as the
+    /// primary `TestCtx` already alive in this test.
+    ///
+    /// Does not acquire `TEST_LOCK` — the primary already holds it,
+    /// and `parking_lot::Mutex` is not reentrant, so a second
+    /// acquisition on this thread would deadlock. Also skips `erase`:
+    /// the primary owns the device state.
+    ///
+    /// Multi-fd tests need distinct `Dev` handles (hw enforces
+    /// `AZIHSM_MAX_SESSIONS_PER_FD = 1`); each secondary `TestCtx`
+    /// owns one such handle and otherwise behaves identically to a
+    /// primary — `open_session`, `tbor`, `mbor`, etc. all work the
+    /// same. Caller must ensure the primary `TestCtx` outlives every
+    /// secondary, otherwise the lock guard drops mid-test.
+    pub fn new_with_path(path: &str) -> Self {
+        Self {
+            dev: open_dev_secondary(path),
+        }
+    }
+
+    /// The backend path this ctx's [`TestDev`] was opened on. Multi-fd
+    /// tests thread it into [`TestCtx::new_with_path`] so every extra
+    /// ctx binds to the same underlying device as the primary.
+    pub fn path(&self) -> &str {
+        self.dev.path()
+    }
+
+    /// Factory-reset the partition. Used by the
+    /// `commands::part_init` determinism test for cold-restart
+    /// iterations. Available on every backend the harness compiles
+    /// under (emu + hw); `mock`/`sock` gate the whole harness out at
+    /// the crate root.
     pub fn erase(&self) -> DdiResult<()> {
         self.dev.erase()
     }
@@ -232,16 +262,14 @@ impl TestCtx {
     /// One-shot happy-path handshake that returns the raw
     /// [`SessionHandshake`] *without* a `SessionGuard`. Callers are
     /// responsible for the matching [`Self::session_close`]. Used
-    /// when the test needs to compare two open sessions opened under
-    /// a non-default PSK, or to inspect the handshake before closing
-    /// it explicitly.
-    pub fn open_session_raw(
+    /// when the test needs to inspect the handshake before closing
+    /// it explicitly or move the handshake into a container.
+    pub(crate) fn open_session_raw(
         &self,
         psk_id: u8,
         session_type: SessionType,
     ) -> DdiResult<SessionHandshake> {
-        let pending = self.session_open_init(psk_id, session_type)?;
-        self.session_open_finish(pending)
+        session_open_helper(&self.dev, psk_id, session_type)
     }
 
     /// Issue `SessionClose(session_id)`. Used by negative-path
@@ -331,13 +359,11 @@ impl TestCtx {
     // -------------------------------------------------------------------
 
     /// MBOR `GetCertChainInfo(slot_id=0)`.
-    #[cfg(feature = "emu")]
     pub fn cert_chain_info(&self) -> DdiResult<azihsm_ddi_mbor_types::DdiGetCertChainInfoCmdResp> {
         azihsm_ddi_mbor_test_helpers::helper_get_cert_chain_info(&self.dev)
     }
 
     /// MBOR `GetCertificate(slot_id=0, cert_id)`.
-    #[cfg(feature = "emu")]
     pub fn get_certificate(
         &self,
         cert_id: u8,

@@ -36,14 +36,18 @@ const CU: u8 = 1;
 #[test]
 fn session_close_cu_plaintext_active_emu() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     session.close().expect("close active CU session");
 }
 
 #[test]
 fn session_close_co_authenticated_active_emu() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     session.close().expect("close active CO session");
 }
 
@@ -85,7 +89,9 @@ fn session_close_double_close_emu() {
     // Take the `SessionHandshake` out of the guard via `.close()` so
     // we own the lifecycle for the second (failing) call. The first
     // close therefore must succeed — the test asserts the second.
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     let session_id = session.session_id();
     session.close().expect("first close succeeds");
     let err = ctx
@@ -104,9 +110,13 @@ fn session_close_double_close_emu() {
 #[test]
 fn session_close_then_reopen_emu() {
     let ctx = TestCtx::new();
-    let first = ctx.open_session(CU, SessionType::PlainText);
+    let first = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     first.close().expect("close first");
     // FW is free to reuse the freed slot id; we only assert the
     // second handshake completes end-to-end (guard drops it).
-    let _second = ctx.open_session(CU, SessionType::PlainText);
+    let _second = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
 }
