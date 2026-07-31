@@ -792,3 +792,93 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_create_peer_backup(
         Ok(())
     })
 }
+
+/// Input buffers for [`azihsm_sess_ex_sd_restore_peer_backup`].
+#[repr(C)]
+pub struct AzihsmSessExSdRestorePeerBackupParams {
+    /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
+    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    pub masked_sealing_key: *const AzihsmBuffer,
+    /// Source (peer) attestation evidence.
+    pub src_evidence: *const AzihsmSdEvidence,
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub policy: *const AzihsmBuffer,
+    /// Peer backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
+    pub pok_peer_backup: *const AzihsmBuffer,
+    /// Previous security-domain masking-key backup, exactly
+    /// `SD_MK_BACKUP_LEN` (164 B).
+    pub prev_sd_mk_backup: *const AzihsmBuffer,
+}
+
+/// @brief Restore a security domain from a peer backup
+///
+/// HPKE-opens `params.pok_peer_backup` with the receiver's masked sealing
+/// key (authenticated by the source peer in `params.src_evidence`), recovers
+/// the security-domain masking key from `params.prev_sd_mk_backup`, and
+/// returns the refreshed device-local backups.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Restore-backup input buffers
+/// @param[in,out] pok_local_backup Output buffer for the local
+///                partition-owner-key backup (180 B).
+/// @param[in,out] sd_mk_backup Output buffer for the security-domain
+///                masking-key backup (164 B).
+///
+/// Both output buffers follow the probe/fill convention and are validated
+/// **before** the restore is performed.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` and each of its buffer/evidence pointers must be valid; each
+///   `AzihsmSdCertChain.certs` must point to `len` valid `azihsm_buffer`s.
+/// - Each output buffer must be a valid `azihsm_buffer` with writable
+///   backing storage of the advertised length.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_peer_backup(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExSdRestorePeerBackupParams,
+    pok_local_backup: *mut AzihsmBuffer,
+    sd_mk_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
+        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let pok_peer_backup: &[u8] = deref_ptr(params.pok_peer_backup)?.try_into()?;
+        let prev_sd_mk_backup: &[u8] = deref_ptr(params.prev_sd_mk_backup)?.try_into()?;
+
+        let src = deref_ptr(params.src_evidence)?;
+        let src = SdEvidence::try_from(src)?;
+        let src = api::HsmSdEvidence::from(&src);
+
+        // Reject null/misaligned or aliasing output pointers before taking a
+        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
+        // would be undefined behavior.
+        validate_distinct_output_buffers(&[pok_local_backup, sd_mk_backup])?;
+
+        let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
+        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
+
+        let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
+        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+
+        let result = session.sd_restore_peer_backup(
+            masked_sealing_key,
+            &src,
+            policy,
+            pok_peer_backup,
+            prev_sd_mk_backup,
+        )?;
+
+        copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;
+        copy_to_buffer(sd_mk_backup, &result.sd_mk_backup)?;
+
+        Ok(())
+    })
+}
