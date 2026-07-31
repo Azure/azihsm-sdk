@@ -81,9 +81,7 @@ members = [
 
 ]
 
-exclude = [
-  "fuzz",
-]
+exclude = ["fuzz"]
 
 [workspace.dependencies]
 # Internal crates
