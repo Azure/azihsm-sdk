@@ -53,7 +53,7 @@ impl HsmRsaPrivateKey {
         //RSA private key supported flags are DECRYPT, UNWRAP, SIGN
         let supported_flags = HsmKeyFlags::DECRYPT | HsmKeyFlags::SIGN | HsmKeyFlags::UNWRAP;
 
-        // Kind/class: ensure we're validating an AES *secret* key.
+        // Kind/class: ensure we're validating an RSA *private* key.
         if props.kind() != HsmKeyKind::Rsa && props.kind() != HsmKeyKind::RsaCrt {
             Err(HsmError::InvalidKeyProps)?;
         }

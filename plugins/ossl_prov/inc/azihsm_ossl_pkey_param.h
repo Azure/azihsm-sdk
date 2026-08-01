@@ -20,13 +20,12 @@ extern "C"
 #define AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY "azihsm.input_key"
 #define AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY "azihsm.wrapped_key"
 
-/* Opaque AES key kind for SKEYMGMT import/generate: "AES" (default), "AES-GCM", or "AES-XTS". */
+/*
+ * Key kind selector.
+ * SKEYMGMT (AES): "AES" (default), "AES-GCM", or "AES-XTS".
+ * KEYMGMT (RSA import): "RSA" or "RSA-CRT" (default).
+ */
 #define AZIHSM_OSSL_PKEY_PARAM_KEY_KIND "azihsm.key_kind"
-
-/* RSA key form for import: "rsa" or "rsa-crt".  When unset, azihsm.input_key
- * imports auto-detect the form from the key's CRT components and
- * azihsm.wrapped_key imports default to plain "rsa". */
-#define AZIHSM_OSSL_PKEY_PARAM_KEY_TYPE "azihsm.key_type"
 
 /* Key usage types - single usage for the entire key pair */
 typedef enum

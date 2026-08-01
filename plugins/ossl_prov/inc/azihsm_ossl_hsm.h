@@ -88,16 +88,6 @@ azihsm_status azihsm_import_key_pair(
 );
 
 /*
- * Determine the HSM key kind for an RSA private key file.
- *
- * Reads and normalizes the DER key at input_key_file and returns
- * AZIHSM_KEY_KIND_RSA_CRT when its CRT components (prime1..coefficient) are
- * present and non-zero, AZIHSM_KEY_KIND_RSA otherwise. Read or parse failures
- * also return AZIHSM_KEY_KIND_RSA so the import path reports the real error.
- */
-azihsm_key_kind azihsm_rsa_detect_key_kind(const char *input_key_file);
-
-/*
  * Import a pre-wrapped key blob into the HSM.
  *
  * Reads the file at wrapped_key_file (produced by the wrap_key tool) and

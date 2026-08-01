@@ -56,15 +56,15 @@
  *   Example:
  *      -pkeyopt azihsm.input_key:/path/to/rsa_key.der
  *
- *   @azihsm.key_type
- *   Description: Key form to import: plain RSA or RSA-CRT (HSM keeps the CRT
- *   components for faster private-key operations).
- *   Accepted values: rsa, rsa-crt
- *   Default value: auto-detected from the key's CRT components for
- *                  azihsm.input_key; rsa for azihsm.wrapped_key (the wrapped
- *                  blob is opaque, so the caller must declare rsa-crt)
+ *   @azihsm.key_kind
+ *   Description: Key form to import: plain RSA or RSA-CRT (the HSM keeps the
+ *   CRT components for faster private-key operations). The imported key must
+ *   carry the CRT components (PKCS#1 makes them mandatory) unless RSA is
+ *   selected explicitly.
+ *   Accepted values: RSA, RSA-CRT
+ *   Default value: RSA-CRT
  *   Example:
- *      -pkeyopt azihsm.key_type:rsa-crt
+ *      -pkeyopt azihsm.key_kind:RSA
  *
  *   @azihsm.masked_key
  *   Description: Path to write the masked key blob for later reload via store
@@ -127,7 +127,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
     /* The public half of a CRT pair is still a plain RSA public key. */
     const azihsm_key_kind pub_key_kind = AZIHSM_KEY_KIND_RSA;
-    azihsm_key_kind priv_key_kind = genctx->key_kind;
+    const azihsm_key_kind priv_key_kind = genctx->key_kind;
 
     /*
      * keyWrapping usage: retrieve the HSM's internal unwrapping key pair.
@@ -192,18 +192,6 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
             "-pkeyopt azihsm.wrapped_key:/path/to/wrapped.bin"
         );
         return NULL;
-    }
-
-    /*
-     * Resolve the private key form unless azihsm.key_type forced one:
-     * plaintext input keys are inspected for usable CRT components,
-     * pre-wrapped blobs are opaque and default to plain RSA.
-     */
-    if (priv_key_kind == 0)
-    {
-        priv_key_kind = (genctx->input_key_file[0] != '\0')
-                            ? azihsm_rsa_detect_key_kind(genctx->input_key_file)
-                            : AZIHSM_KEY_KIND_RSA;
     }
 
     /* RSA key properties: class, kind, bit_len, usage, and optionally session */
@@ -434,21 +422,21 @@ static void azihsm_ossl_keymgmt_gen_cleanup(AZIHSM_RSA_GEN_CTX *genctx)
 }
 
 /*
- * Parse the azihsm.key_type string into an HSM key kind.
+ * Parse the azihsm.key_kind string into an HSM key kind.
  * Returns 1 on success, 0 on failure.
  */
-static int azihsm_rsa_key_type_from_str(const char *s, azihsm_key_kind *kind)
+static int azihsm_rsa_kind_from_str(const char *s, azihsm_key_kind *kind)
 {
     if (s == NULL)
     {
         return 0;
     }
-    if (OPENSSL_strcasecmp(s, "rsa") == 0)
+    if (OPENSSL_strcasecmp(s, "RSA") == 0)
     {
         *kind = AZIHSM_KEY_KIND_RSA;
         return 1;
     }
-    if (OPENSSL_strcasecmp(s, "rsa-crt") == 0)
+    if (OPENSSL_strcasecmp(s, "RSA-CRT") == 0)
     {
         *kind = AZIHSM_KEY_KIND_RSA_CRT;
         return 1;
@@ -572,7 +560,7 @@ static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const 
         genctx->wrapped_key_file[sizeof(genctx->wrapped_key_file) - 1] = '\0';
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_TYPE)) != NULL)
+    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_KIND)) != NULL)
     {
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
@@ -580,12 +568,12 @@ static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const 
             return OSSL_FAILURE;
         }
 
-        if (!azihsm_rsa_key_type_from_str(p->data, &genctx->key_kind))
+        if (!azihsm_rsa_kind_from_str(p->data, &genctx->key_kind))
         {
             ERR_raise_data(
                 ERR_LIB_PROV,
                 PROV_R_INVALID_KEY,
-                "azihsm: azihsm.key_type must be 'rsa' or 'rsa-crt'"
+                "azihsm: azihsm.key_kind must be 'RSA' or 'RSA-CRT'"
             );
             return OSSL_FAILURE;
         }
@@ -646,7 +634,7 @@ static AZIHSM_RSA_GEN_CTX *azihsm_ossl_keymgmt_gen_init_common(
     genctx->masked_key_file[0] = '\0';
     genctx->input_key_file[0] = '\0';
     genctx->wrapped_key_file[0] = '\0';
-    genctx->key_kind = 0; /* auto-detect */
+    genctx->key_kind = AZIHSM_KEY_KIND_RSA_CRT;
 
     if (azihsm_ossl_keymgmt_gen_set_params(genctx, params) == 0)
     {
@@ -862,7 +850,7 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY, NULL, 0),
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY, NULL, 0),
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY, NULL, 0),
-        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_KEY_TYPE, NULL, 0),
+        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_KEY_KIND, NULL, 0),
         OSSL_PARAM_END
     };
 

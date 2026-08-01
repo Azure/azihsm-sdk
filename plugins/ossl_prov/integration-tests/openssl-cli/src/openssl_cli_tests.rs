@@ -440,9 +440,9 @@ fn test_ec_round_trip() {
 
 #[test]
 #[serial]
-fn test_rsa_key_type() {
+fn test_rsa_key_kind() {
     lit::run::tests(lit::event_handler::Default::default(), |config| {
-        config.add_search_path(search_path("testfiles/rsa/key_type"));
+        config.add_search_path(search_path("testfiles/rsa/key_kind"));
         config.add_extension("sh");
         config
             .constants

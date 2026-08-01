@@ -6,18 +6,18 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../../env.sh"
 
 cleanup=$1
-keyfile=./rsa_key_type_input.der
-masked_auto=./masked_rsa_key_type_auto.bin
-masked_plain=./masked_rsa_key_type_plain.bin
-masked_wrapped=./masked_rsa_key_type_wrapped.bin
-wrapping_pub=./rsa_key_type_wrapping_pub.pem
-kek_bin=./rsa_key_type_kek.bin
-encrypted_kek=./rsa_key_type_encrypted_kek.bin
-wrapped_payload=./rsa_key_type_wrapped_payload.bin
-wrapped_blob=./rsa_key_type_wrapped.bin
-testdata=./rsa_key_type_testdata.bin
-signature=./rsa_key_type.sig
-pubkey=./rsa_key_type_pub.pem
+keyfile=./rsa_key_kind_input.der
+masked_default=./masked_rsa_key_kind_default.bin
+masked_plain=./masked_rsa_key_kind_plain.bin
+masked_wrapped=./masked_rsa_key_kind_wrapped.bin
+wrapping_pub=./rsa_key_kind_wrapping_pub.pem
+kek_bin=./rsa_key_kind_kek.bin
+encrypted_kek=./rsa_key_kind_encrypted_kek.bin
+wrapped_payload=./rsa_key_kind_wrapped_payload.bin
+wrapped_blob=./rsa_key_kind_wrapped.bin
+testdata=./rsa_key_kind_testdata.bin
+signature=./rsa_key_kind.sig
+pubkey=./rsa_key_kind_pub.pem
 
 # The masked key blob metadata is plaintext: a 4-byte header, a 48-byte AES
 # header (iv_len and post_iv_pad_len as LE u16 at offsets 4 and 6), the IV,
@@ -29,40 +29,41 @@ masked_key_type() {
     iv_len=$(od -An -tu2 -j4 -N2 "$1" | tr -d ' ')
     post_iv=$(od -An -tu2 -j6 -N2 "$1" | tr -d ' ')
     md_start=$((4 + 48 + iv_len + post_iv))
-    od -An -tu1 -j$((md_start + 18)) -N1 "$1" | tr -d ' '
+    od -An -tu1 -j$((md_start + 15)) -N4 "$1" |
+        awk '{ print ($1 * 16777216) + ($2 * 65536) + ($3 * 256) + $4 }'
 }
 
-# Generate an external RSA key; standard generation carries CRT components
+# Generate an external RSA key (the HSM cannot generate RSA natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
     -pkeyopt rsa_keygen_bits:2048 \
     -outform DER \
     -out "$keyfile"
 
-# Import without azihsm.key_type: the CRT form is auto-detected
+# Import without azihsm.key_kind: defaults to the CRT form
 "$OPENSSL_BIN" genpkey \
     -propquery "$PROPQUERY" \
     -algorithm RSA \
     -pkeyopt rsa_keygen_bits:2048 \
     -pkeyopt "azihsm.input_key:$keyfile" \
-    -pkeyopt "azihsm.masked_key:$masked_auto" \
+    -pkeyopt "azihsm.masked_key:$masked_default" \
     -outform DER > /dev/null
 
-#CHECK: auto-detected key type: 4
-echo "auto-detected key type: $(masked_key_type "$masked_auto")"
+#CHECK: default key type: 4
+echo "default key type: $(masked_key_type "$masked_default")"
 
-# Import with azihsm.key_type:rsa: forces the plain RSA form
+# Import with azihsm.key_kind set to RSA selects the plain RSA form
 "$OPENSSL_BIN" genpkey \
     -propquery "$PROPQUERY" \
     -algorithm RSA \
     -pkeyopt rsa_keygen_bits:2048 \
-    -pkeyopt azihsm.key_type:rsa \
+    -pkeyopt azihsm.key_kind:RSA \
     -pkeyopt "azihsm.input_key:$keyfile" \
     -pkeyopt "azihsm.masked_key:$masked_plain" \
     -outform DER > /dev/null
 
-#CHECK: forced-plain key type: 1
-echo "forced-plain key type: $(masked_key_type "$masked_plain")"
+#CHECK: plain key type: 1
+echo "plain key type: $(masked_key_type "$masked_plain")"
 
 # The masked CRT key must reload via store and sign; verify against the
 # input key's public half using the default provider
@@ -70,7 +71,7 @@ echo "sign me" > "$testdata"
 "$OPENSSL_BIN" pkeyutl \
     -propquery "$PROPQUERY" \
     -sign -rawin -digest sha256 \
-    -inkey "azihsm://$masked_auto;type=rsa" \
+    -inkey "azihsm://$masked_default;type=rsa" \
     -in "$testdata" \
     -out "$signature"
 
@@ -83,8 +84,8 @@ echo "sign me" > "$testdata"
     -in "$testdata" \
     -sigfile "$signature"
 
-# Wrapped-key import: the blob is opaque, so azihsm.key_type:rsa-crt
-# declares the CRT form (RSA-AES Key Wrap as in import_wrapped_key.sh)
+# Wrapped-key import honours azihsm.key_kind the same way
+# (RSA-AES Key Wrap as in import_wrapped_key.sh)
 "$OPENSSL_BIN" genpkey \
     -propquery "$PROPQUERY" \
     -algorithm RSA \
@@ -116,7 +117,7 @@ cat "$encrypted_kek" "$wrapped_payload" > "$wrapped_blob"
     -propquery "$PROPQUERY" \
     -algorithm RSA \
     -pkeyopt rsa_keygen_bits:2048 \
-    -pkeyopt azihsm.key_type:rsa-crt \
+    -pkeyopt azihsm.key_kind:RSA-CRT \
     -pkeyopt "azihsm.wrapped_key:$wrapped_blob" \
     -pkeyopt "azihsm.masked_key:$masked_wrapped" \
     -outform DER > /dev/null
@@ -124,19 +125,19 @@ cat "$encrypted_kek" "$wrapped_payload" > "$wrapped_blob"
 #CHECK: wrapped-import key type: 4
 echo "wrapped-import key type: $(masked_key_type "$masked_wrapped")"
 
-# An unknown azihsm.key_type value must be rejected
-#CHECK: invalid key type rejected
+# An unknown azihsm.key_kind value must be rejected
+#CHECK: invalid key kind rejected
 if ! "$OPENSSL_BIN" genpkey \
     -propquery "$PROPQUERY" \
     -algorithm RSA \
-    -pkeyopt azihsm.key_type:bogus \
+    -pkeyopt azihsm.key_kind:bogus \
     -pkeyopt "azihsm.input_key:$keyfile" \
     -outform DER > /dev/null 2>&1; then
-    echo "invalid key type rejected"
+    echo "invalid key kind rejected"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm -f "$keyfile" "$masked_auto" "$masked_plain" "$masked_wrapped" \
+    rm -f "$keyfile" "$masked_default" "$masked_plain" "$masked_wrapped" \
         "$wrapping_pub" "$kek_bin" "$encrypted_kek" "$wrapped_payload" \
         "$wrapped_blob" "$testdata" "$signature" "$pubkey"
 fi
