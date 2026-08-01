@@ -444,9 +444,13 @@ static int azihsm_rsa_kind_from_str(const char *s, azihsm_key_kind *kind)
     return 0;
 }
 
+/* Fits the longest accepted key usage, session and key kind value. */
+#define AIHSM_RSA_PARAM_STR_MAX 64
+
 static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const OSSL_PARAM params[])
 {
     const OSSL_PARAM *p;
+    char str_val[AIHSM_RSA_PARAM_STR_MAX];
 
     if (params == NULL)
     {
@@ -472,103 +476,122 @@ static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const 
         genctx->pubkey_bits = bits;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE)) != NULL)
+    switch (azihsm_ossl_get_str_param(
+        params,
+        AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE,
+        str_val,
+        sizeof(str_val)
+    ))
     {
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        if (azihsm_ossl_key_usage_from_str(p->data, &genctx->key_usage) < 0)
+    case 1:
+        if (azihsm_ossl_key_usage_from_str(str_val, &genctx->key_usage) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
             return OSSL_FAILURE;
         }
+        break;
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_SESSION)) != NULL)
+    switch (
+        azihsm_ossl_get_str_param(params, AZIHSM_OSSL_PKEY_PARAM_SESSION, str_val, sizeof(str_val))
+    )
     {
-        int session_result;
+    case 1: {
+        int session_result = azihsm_ossl_session_from_str(str_val);
 
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        if ((session_result = azihsm_ossl_session_from_str(p->data)) < 0)
+        if (session_result < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
         genctx->session_flag = (bool)session_result;
+        break;
+    }
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY)) != NULL)
+    switch (azihsm_ossl_get_str_param(
+        params,
+        AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY,
+        genctx->masked_key_file,
+        sizeof(genctx->masked_key_file)
+    ))
     {
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
+    case 1:
+        if (azihsm_ossl_masked_key_filepath_validate(genctx->masked_key_file) < 0)
         {
+            genctx->masked_key_file[0] = '\0';
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
-
-        if (azihsm_ossl_masked_key_filepath_validate(p->data) < 0)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        strncpy(genctx->masked_key_file, p->data, sizeof(genctx->masked_key_file) - 1);
-        genctx->masked_key_file[sizeof(genctx->masked_key_file) - 1] = '\0';
+        break;
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY)) != NULL)
+    switch (azihsm_ossl_get_str_param(
+        params,
+        AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY,
+        genctx->input_key_file,
+        sizeof(genctx->input_key_file)
+    ))
     {
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
+    case 1:
+        if (azihsm_ossl_input_key_filepath_validate(genctx->input_key_file) < 0)
         {
+            genctx->input_key_file[0] = '\0';
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
-
-        if (azihsm_ossl_input_key_filepath_validate(p->data) < 0)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        strncpy(genctx->input_key_file, p->data, sizeof(genctx->input_key_file) - 1);
-        genctx->input_key_file[sizeof(genctx->input_key_file) - 1] = '\0';
+        break;
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY)) != NULL)
+    switch (azihsm_ossl_get_str_param(
+        params,
+        AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY,
+        genctx->wrapped_key_file,
+        sizeof(genctx->wrapped_key_file)
+    ))
     {
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
+    case 1:
+        if (azihsm_ossl_input_key_filepath_validate(genctx->wrapped_key_file) < 0)
         {
+            genctx->wrapped_key_file[0] = '\0';
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
-
-        if (azihsm_ossl_input_key_filepath_validate(p->data) < 0)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        strncpy(genctx->wrapped_key_file, p->data, sizeof(genctx->wrapped_key_file) - 1);
-        genctx->wrapped_key_file[sizeof(genctx->wrapped_key_file) - 1] = '\0';
+        break;
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_KIND)) != NULL)
+    switch (
+        azihsm_ossl_get_str_param(params, AZIHSM_OSSL_PKEY_PARAM_KEY_KIND, str_val, sizeof(str_val))
+    )
     {
-        if (p->data_type != OSSL_PARAM_UTF8_STRING)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return OSSL_FAILURE;
-        }
-
-        if (!azihsm_rsa_kind_from_str(p->data, &genctx->key_kind))
+    case 1:
+        if (!azihsm_rsa_kind_from_str(str_val, &genctx->key_kind))
         {
             ERR_raise_data(
                 ERR_LIB_PROV,
@@ -577,6 +600,12 @@ static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const 
             );
             return OSSL_FAILURE;
         }
+        break;
+    case -1:
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    default: /* absent */
+        break;
     }
 
     /* Reject if both input_key and wrapped_key are set */
