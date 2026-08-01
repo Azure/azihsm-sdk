@@ -23,10 +23,8 @@ use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
-use zeroize::Zeroize;
 
 use crate::UnoHsmPal;
-use crate::asn1::RsaPrivateKeyAsn1;
 use crate::asn1::parse_rsa_private_key;
 
 // =============================================================================
@@ -74,15 +72,33 @@ fn digest_info_prefix(algo: HsmHashAlgo) -> &'static [u8] {
 // Vault operand assembly (imported RSA private key → PKA layout)
 // =============================================================================
 
-/// Maximum RSA modulus length in bytes (RSA-4096).
-const MAX_RSA_MODULUS_LEN: usize = 512;
+/// Big-endian layout of the three RSA fields the non-CRT vault operand needs,
+/// recovered from a parsed DER: the byte offsets of the modulus `n` and private
+/// exponent `d` within the source buffer, plus a copy of the (short) public
+/// exponent `e`. `n` is exactly `modulus_len` bytes; `d` is `d_len ≤ modulus_len`.
+struct RsaOperandLayout {
+    modulus_len: usize,
+    n_off: usize,
+    d_off: usize,
+    d_len: usize,
+    e: [u8; 4],
+    e_len: usize,
+}
 
-/// Validates the RSA field sizes and writes `[d ‖ n ‖ e]` little-endian into
-/// `out`, returning `(vault_len, modulus_len)`. Rejects moduli that are not
-/// 2048/3072/4096-bit, an exponent wider than 4 bytes, or a `d` wider than the
-/// modulus. Structural validation (versions, algorithm OID) is done upstream by
-/// [`parse_rsa_private_key`](super::asn1::parse_rsa_private_key).
-fn assemble_rsa_operand(key: &RsaPrivateKeyAsn1<'_>, out: &mut [u8]) -> Option<(usize, usize)> {
+/// Byte offset of `field` within `buf`. Sound because `field` is a `UintRef`
+/// sub-slice of `buf` (same allocation), so the pointer difference is in range.
+fn offset_in(buf: &[u8], field: &[u8]) -> usize {
+    (field.as_ptr() as usize) - (buf.as_ptr() as usize)
+}
+
+/// Parses and validates the RSA key in `buf`, returning the [`RsaOperandLayout`]
+/// for in-place operand assembly. Rejects moduli that are not 2048/3072/4096-bit,
+/// an exponent wider than 4 bytes, or a `d` wider than the modulus. `e` is copied
+/// out (it is tiny and its DER slot is overwritten during assembly); `n`/`d` are
+/// located by offset so the assembler can move them once the borrow of `buf`
+/// (held by the decoded `UintRef`s) is released.
+fn rsa_operand_layout(buf: &[u8]) -> Option<RsaOperandLayout> {
+    let key = parse_rsa_private_key(buf)?;
     let n = key.modulus.as_bytes();
     let e = key.public_exponent.as_bytes();
     let d = key.private_exponent.as_bytes();
@@ -90,23 +106,48 @@ fn assemble_rsa_operand(key: &RsaPrivateKeyAsn1<'_>, out: &mut [u8]) -> Option<(
     if !matches!(modulus_len, 256 | 384 | 512) || e.len() > 4 || d.len() > modulus_len {
         return None;
     }
-    let vault_len = 2 * modulus_len + 4;
-    if vault_len > out.len() {
-        return None;
-    }
-    write_le(&mut out[0..modulus_len], d);
-    write_le(&mut out[modulus_len..2 * modulus_len], n);
-    write_le(&mut out[2 * modulus_len..vault_len], e);
-    Some((vault_len, modulus_len))
+    let mut e_arr = [0u8; 4];
+    e_arr[..e.len()].copy_from_slice(e);
+    Some(RsaOperandLayout {
+        modulus_len,
+        n_off: offset_in(buf, n),
+        d_off: offset_in(buf, d),
+        d_len: d.len(),
+        e: e_arr,
+        e_len: e.len(),
+    })
 }
 
-/// Writes the big-endian bytes `be` as little-endian into `dst`, zero-padding
-/// the remaining high bytes. Requires `be.len() <= dst.len()`.
-fn write_le(dst: &mut [u8], be: &[u8]) {
-    for (i, &b) in be.iter().rev().enumerate() {
-        dst[i] = b;
-    }
-    dst[be.len()..].fill(0);
+/// Assembles the little-endian vault operand `[d(k) ‖ n(k) ‖ e(4)]` into the
+/// front of `buf`, entirely in place.
+///
+/// The operand overlaps the DER field offsets it reads from (`d` and `n` mutually
+/// clobber each other's source), so `d` is first staged into `buf`'s tail scratch
+/// (`[vault_len..]`, which the caller scrubs) via `copy_within` (memmove — safe on
+/// overlap); `n` is then moved and reversed big-endian→little-endian into place,
+/// followed by the staged `d` and the saved `e`. Requires `buf.len() >=
+/// vault_len + d_len` (checked by the caller).
+fn assemble_rsa_operand_in_place(buf: &mut [u8], layout: &RsaOperandLayout) {
+    let k = layout.modulus_len;
+    let vault_len = 2 * k + 4;
+    let d_len = layout.d_len;
+    // 1. Stage big-endian `d` into the tail scratch before its source is
+    //    clobbered by the `n` move below.
+    buf.copy_within(layout.d_off..layout.d_off + d_len, vault_len);
+    // 2. vault `n` at [k, 2k): move DER `n` (big-endian, exactly k bytes) into
+    //    place, then reverse to little-endian.
+    buf.copy_within(layout.n_off..layout.n_off + k, k);
+    buf[k..2 * k].reverse();
+    // 3. vault `d` at [0, k): move the staged big-endian `d` to the front,
+    //    reverse to little-endian, and zero-pad the high bytes.
+    buf.copy_within(vault_len..vault_len + d_len, 0);
+    buf[0..d_len].reverse();
+    buf[d_len..k].fill(0);
+    // 4. vault `e` at [2k, 2k+4): write the saved exponent little-endian.
+    let e_len = layout.e_len;
+    buf[2 * k..2 * k + e_len].copy_from_slice(&layout.e[..e_len]);
+    buf[2 * k..2 * k + e_len].reverse();
+    buf[2 * k + e_len..vault_len].fill(0);
 }
 
 // =============================================================================
@@ -205,8 +246,9 @@ impl HsmRsa for UnoHsmPal {
         buf: &mut DmaBuf,
         crt: bool,
     ) -> HsmResult<(usize, usize)> {
-        // CRT import needs the derived PKA operands (n1q, n2p) computed from
-        // p/q/n via PKA modular arithmetic — not yet brought up on Uno.
+        // TODO(RSA-CRT bring-up): derive the CRT PKA operands (n1q = qInv·q and
+        // n2p = (p⁻¹ mod q)·p) from p/q/n via PKA modular arithmetic and assemble
+        // the CRT vault operand. Not yet brought up on Uno, so reject CRT keys.
         if crt {
             // `buf` still holds the recovered plaintext DER; scrub it before
             // any early return so no secret key material lingers in the reused
@@ -214,38 +256,29 @@ impl HsmRsa for UnoHsmPal {
             buf.zeroize();
             return Err(HsmError::UnsupportedCmd);
         }
-        // Decode + assemble the little-endian vault operand `[d(k) ‖ n(k) ‖ e(4)]`
-        // into a scratch buffer. Only `buf` is read (the recovered plaintext
-        // DER); the decoded `UintRef`s alias into it, and the borrow ends
-        // before the in-place rewrite below.
-        let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
-        let assembled =
-            parse_rsa_private_key(&buf[..]).and_then(|key| assemble_rsa_operand(&key, &mut out));
-        let Some((vault_len, modulus_len)) = assembled else {
+        // Parse + validate + capture the field layout. The `key` borrow of `buf`
+        // (held by the decoded `UintRef`s) is released before the in-place
+        // rewrite below.
+        let Some(layout) = rsa_operand_layout(&buf[..]) else {
             buf.zeroize();
-            out.zeroize();
             return Err(HsmError::InvalidArg);
         };
-        // The vault form is smaller than the source DER, so the in-place rewrite
-        // is safe — but reject rather than panic if a malformed DER made
-        // `vault_len` exceed `buf`. `buf` holds recovered plaintext, so scrub
-        // first.
-        if vault_len > buf.len() {
+        let k = layout.modulus_len;
+        let vault_len = 2 * k + 4;
+        // In-place assembly stages `d` into `buf[vault_len..]`, so the recovered
+        // DER must be at least `vault_len + d_len` bytes. A full RSAPrivateKey is
+        // always larger, but reject rather than panic on a malformed / truncated
+        // DER. `buf` holds recovered plaintext, so scrub first.
+        if buf.len() < vault_len + layout.d_len {
             buf.zeroize();
-            out.zeroize();
             return Err(HsmError::InvalidArg);
         }
-        buf[..vault_len].copy_from_slice(&out[..vault_len]);
-        // Scrub the leftover source DER in the tail of `buf` — for a full
-        // RSAPrivateKey it still holds secret CRT components (`p`, `q`, `dp`,
-        // `dq`, `qinv`). The scoped DMA buffer is reused without automatic
-        // wiping, so scrub it here before returning.
+        assemble_rsa_operand_in_place(&mut buf[..], &layout);
+        // Scrub the tail — the staged `d` plus the leftover DER CRT components
+        // (`p`, `q`, `dp`, `dq`, `qinv`). The scoped DMA buffer is reused without
+        // automatic wiping, so scrub it here before returning.
         buf[vault_len..].zeroize();
-        // Scrub the assembled operand (holds the private exponent `d`) from the
-        // stack scratch. `Zeroize` uses volatile writes so the wipe is not
-        // elided as a dead store.
-        out.zeroize();
-        Ok((vault_len, modulus_len))
+        Ok((vault_len, k))
     }
 
     // ── PKCS#1 v1.5 encryption ─────────────────────────────────────
