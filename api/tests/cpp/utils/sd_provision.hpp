@@ -55,7 +55,7 @@ struct SdBackingContext
     /// POTA anchor key that roots the CSR -> PTA chain. Retained so a
     /// restore target can re-provision under the same policy.
     std::shared_ptr<CaKey> pota_key;
-    /// Device-local partition-owner-key backup emitted by `PartFinal`.
+    /// Device-local master-key (`local_mk`) backup emitted by `PartFinal`.
     std::vector<uint8_t> local_mk_backup;
 };
 

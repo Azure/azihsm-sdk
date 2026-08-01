@@ -440,10 +440,11 @@ fn unpack_cert_chain(chain: &AzihsmSdCertChain) -> Result<Vec<api::HsmCert<'_>>,
 
 /// Owned, validated decode of one C [`AzihsmSdEvidence`]: the three cert
 /// chains materialized as `HsmCert` vectors plus the report slice (the DER
-/// bytes stay borrowed from the caller's buffers). Convert a reference with
-/// `HsmSdEvidence::from` for the borrowing [`api::HsmSdEvidence`] view the
-/// session API expects; that view borrows these owned vectors, so it cannot
-/// be produced from the C struct in a single step.
+/// bytes stay borrowed from the caller's buffers). Convert a reference
+/// with `api::HsmSdEvidence::from` for the borrowing
+/// [`api::HsmSdEvidence`] view the session API expects; that view
+/// borrows these owned vectors, so it cannot be produced from the C
+/// struct in a single step.
 struct SdEvidence<'a> {
     mfgr: Vec<api::HsmCert<'a>>,
     owner: Vec<api::HsmCert<'a>>,

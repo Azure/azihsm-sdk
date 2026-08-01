@@ -1133,7 +1133,7 @@ static SdBackingContext provision_backing_impl(
     final_params.part_policy = &policy_buf;
     final_params.pta_cert_chain = chain_bufs;
     final_params.pta_cert_chain_len = 2;
-    if (reuse != nullptr)
+    if (reuse != nullptr && !reuse->local_mk_backup.empty())
     {
         prev_mk_buf = { const_cast<uint8_t *>(reuse->local_mk_backup.data()),
                         static_cast<uint32_t>(reuse->local_mk_backup.size()) };
