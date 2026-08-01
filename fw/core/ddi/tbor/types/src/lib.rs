@@ -34,6 +34,8 @@ pub mod tbor_int {
     pub use zerocopy::little_endian::U64;
 }
 
+pub mod aes_encrypt_decrypt;
+pub mod aes_generate_key;
 pub mod api_rev;
 pub mod ecc_generate_key;
 pub mod ecc_sign;
@@ -62,6 +64,8 @@ pub mod session_open_finish;
 pub mod session_open_init;
 pub mod unwrap_key;
 
+pub use aes_encrypt_decrypt::*;
+pub use aes_generate_key::*;
 pub use api_rev::*;
 pub use ecc_generate_key::*;
 pub use ecc_sign::*;

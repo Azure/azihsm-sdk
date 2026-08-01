@@ -273,6 +273,8 @@ impl SessionCtrl {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::AES_GENERATE_KEY
+            | opcode::AES_ENCRYPT_DECRYPT
             | opcode::ECC_GENERATE_KEY
             | opcode::ECC_SIGN
             | opcode::ECDH_DERIVE

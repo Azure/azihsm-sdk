@@ -5,6 +5,8 @@
 //! backend feature(s) that can satisfy it (e.g., TBOR commands require
 //! `emu` for a real round-trip).
 
+pub mod aes_encrypt_decrypt;
+pub mod aes_generate_key;
 pub mod api_rev;
 pub mod default_psk_gate;
 pub mod ecc_generate_key;
