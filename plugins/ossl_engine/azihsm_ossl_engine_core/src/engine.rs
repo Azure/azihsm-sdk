@@ -317,6 +317,9 @@ unsafe fn ecdsa_sign_inner<H: EcdsaSignHandler>(
     if dgst.is_null() {
         return Err(EngineError::NullParam("dgst"));
     }
+    if eckey.is_null() {
+        return Err(EngineError::NullParam("eckey"));
+    }
     let len = usize::try_from(dgst_len)
         .map_err(|_| EngineError::Other("negative digest length".into()))?;
     // SAFETY: dgst is non-null (checked) and valid for `len` bytes per contract.
