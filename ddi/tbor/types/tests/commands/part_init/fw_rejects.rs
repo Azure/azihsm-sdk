@@ -22,7 +22,7 @@ use super::CU;
 use super::ROTATED_CO_PSK;
 use super::ROTATED_CU_PSK;
 use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::SessionGuard;
+use crate::harness::session_guard::SessionGuard;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -59,7 +59,7 @@ fn rotate_psk_and_open_role<'a>(
     sty: SessionType,
     rotated_psk: &[u8; PSK_LEN],
 ) -> SessionGuard<'a> {
-    let bootstrap = ctx.open_session(role, sty);
+    let bootstrap = ctx.open_session(role, sty).expect("open bootstrap session");
 
     ctx.psk_change(bootstrap.handshake(), rotated_psk)
         .expect("rotate role PSK");
@@ -143,7 +143,9 @@ fn part_init_reject_bad_policy() {
 fn part_init_default_psk_gate_precedes_policy_decode_emu() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open default-PSK CO session");
     let bad_policy = [0u8; PART_POLICY_LEN];
     let seed = mach_seed();
     let thumb = pota_thumbprint();
@@ -166,7 +168,9 @@ fn part_init_default_psk_gate_precedes_policy_decode_emu() {
 fn part_init_default_psk_gate_precedes_cu_role_gate_emu() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open default-PSK CU session");
     let policy = known_good_part_policy();
     let seed = mach_seed();
     let thumb = pota_thumbprint();
@@ -468,7 +472,9 @@ fn part_init_session_remains_usable_after_policy_rejections_emu() {
 fn part_init_default_psk_rejection_does_not_mutate_partition_state_emu() {
     let ctx = TestCtx::new();
 
-    let default_session = ctx.open_session(CO, SessionType::Authenticated);
+    let default_session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open default-PSK CO session");
 
     let policy = known_good_part_policy();
     let seed = mach_seed();
@@ -510,8 +516,9 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
     let thumb = pota_thumbprint();
 
     // First rejection: default CO PSK.
-    let default_co = ctx.open_session(CO, SessionType::Authenticated);
-
+    let default_co = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open default-PSK CO session");
     let err = ctx
         .part_init(default_co.handshake(), &seed, &policy, &thumb)
         .expect_err("PartInit under default CO PSK must be rejected");
