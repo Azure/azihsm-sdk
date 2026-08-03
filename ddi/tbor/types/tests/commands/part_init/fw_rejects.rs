@@ -71,20 +71,6 @@ fn rotate_psk_and_open_role<'a>(
     open_role_with(ctx, role, sty, rotated_psk)
 }
 
-/// Asserts that a `PartInit` request succeeds.
-///
-/// On failure, the panic includes the concrete [`azihsm_ddi::DdiError`]
-/// returned by the transport or firmware.
-fn assert_part_init_succeeds(
-    result: Result<azihsm_ddi_tbor_types::TborPartInitResp, azihsm_ddi::DdiError>,
-    context: &str,
-) {
-    match result {
-        Ok(_) => {}
-        Err(err) => panic!("{context}: {err:?}"),
-    }
-}
-
 /// Default-PSK CO session: the TBOR dispatcher must reject `PartInit`
 /// with [`TborStatus::DefaultPskMustRotate`] **before** the handler
 /// runs.  Independent of partition state: the rejection lives in the
@@ -126,23 +112,26 @@ fn part_init_reject_cu_session() {
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 }
 
-/// Rotated CO session with a syntactically invalid `PartPolicy`
-/// (all-zero bytes — `version.major == 0` fails the canonical decode
-/// gate in `policy::from_bytes`): the handler must reject with
-/// [`TborStatus::InvalidArg`] **before** any setter runs, leaving
-/// partition state untouched.
+/// A malformed partition policy must be rejected before firmware
+/// applies any partition configuration.
+///
+/// The rotated CO session is wrapped in [`SessionGuard`] so the session
+/// is closed automatically if an assertion or request unexpectedly
+/// panics.
 #[test]
 fn part_init_reject_bad_policy() {
     let ctx = TestCtx::new();
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let bad_policy = [0u8; PART_POLICY_LEN];
+    let session = SessionGuard::new(&ctx, bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK));
+
     let seed = mach_seed();
+    let bad_policy = [0u8; PART_POLICY_LEN];
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(&session, &seed, &bad_policy, &thumb)
+        .part_init(session.handshake(), &seed, &bad_policy, &thumb)
         .expect_err("PartInit with malformed PartPolicy must be rejected");
+
     assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
@@ -635,22 +624,18 @@ fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
         .expect("valid PartInit must succeed after repeated policy rejections");
 }
 
-//// A CO session cannot be opened with `SessionType::PlainText`.
+/// A CO session cannot be opened with [`SessionType::PlainText`].
 ///
-/// This validates the role/session-type restriction at session creation.
-/// Because the session cannot be established, the request never reaches
-/// the `PartInit` dispatcher.
+/// CO commands require an authenticated session, so the session-open
+/// request must fail with [`TborStatus::InvalidSessionType`] before a
+/// `PartInit` request can be submitted.
 #[test]
-fn co_plaintext_session_open_is_rejected_emu() {
+fn part_init_co_plaintext_session_rejected_emu() {
     let ctx = TestCtx::new();
 
-    let opts = SessionOpenInitOptions::new(CO, SessionType::PlainText);
-
     let err = ctx
-        .session_open_init_with_options(opts)
-        .expect_err("CO plaintext session open must be rejected");
+        .session_open_init(0, SessionType::PlainText)
+        .expect_err("CO PlainText session must be rejected");
 
-    // Assert the exact session-open error once confirmed from the
-    // established session tests or firmware implementation.
-    let _ = err;
+    assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
