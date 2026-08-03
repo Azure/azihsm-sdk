@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! CLI integration tests for the OpenSSL 3.x provider, driven by `lit`.
+//!
+//! RSA note: the HSM cannot generate RSA keys, so every RSA test imports one.
+//! Those that do not pass `azihsm.key_kind` therefore exercise the provider
+//! default, which is the CRT form (`RSA-CRT`). `test_rsa_key_kind` covers the
+//! selection itself and `test_rsa_key_kind_ops` runs sign/verify and
+//! encrypt/decrypt against both forms explicitly, so neither depends on the
+//! default staying what it is.
+
 #![cfg(feature = "integration")]
 
 use std::path::PathBuf;
@@ -452,6 +461,29 @@ fn test_rsa_key_kind() {
             .insert("cleanup".to_owned(), CLEANUP.to_string());
     })
     .expect("Lit test failed");
+}
+
+/// Sign/verify and encrypt/decrypt against each selectable RSA key form.
+/// One key size is enough: the form, not the modulus, is what varies here.
+#[test]
+#[serial]
+fn test_rsa_key_kind_ops() {
+    let key_kinds = vec!["RSA".to_string(), "RSA-CRT".to_string()];
+
+    for kind in &key_kinds {
+        lit::run::tests(lit::event_handler::Default::default(), |config| {
+            config.add_search_path(search_path("testfiles/rsa/key_kind_ops"));
+            config.add_extension("sh");
+            config
+                .constants
+                .insert("bash".to_owned(), "/bin/bash".to_string());
+            config.constants.insert("keykind".to_owned(), kind.clone());
+            config
+                .constants
+                .insert("cleanup".to_owned(), CLEANUP.to_string());
+        })
+        .expect("Lit test failed");
+    }
 }
 
 #[test]

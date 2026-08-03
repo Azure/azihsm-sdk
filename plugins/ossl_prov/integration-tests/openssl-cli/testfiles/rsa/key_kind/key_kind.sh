@@ -19,19 +19,7 @@ testdata=./rsa_key_kind_testdata.bin
 signature=./rsa_key_kind.sig
 pubkey=./rsa_key_kind_pub.pem
 
-# The masked key blob metadata is plaintext: a 4-byte header, a 48-byte AES
-# header (iv_len and post_iv_pad_len as LE u16 at offsets 4 and 6), the IV,
-# padding, then the MBOR-encoded metadata whose second field (bytes 15..18,
-# big-endian u32) is the DDI key type: 1 = RSA 2K private, 4 = RSA 2K
-# private CRT.
-masked_key_type() {
-    local iv_len post_iv md_start
-    iv_len=$(od -An -tu2 -j4 -N2 "$1" | tr -d ' ')
-    post_iv=$(od -An -tu2 -j6 -N2 "$1" | tr -d ' ')
-    md_start=$((4 + 48 + iv_len + post_iv))
-    od -An -tu1 -j$((md_start + 15)) -N4 "$1" |
-        awk '{ print ($1 * 16777216) + ($2 * 65536) + ($3 * 256) + $4 }'
-}
+# masked_key_type() reads the DDI key type from a masked blob; see env.sh.
 
 # Generate an external RSA key (the HSM cannot generate RSA natively)
 "$OPENSSL_BIN" genpkey \
