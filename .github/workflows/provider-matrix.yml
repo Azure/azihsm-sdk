@@ -45,13 +45,10 @@ defaults:
 jobs:
   matrix:
     name: ${{ matrix.label }}
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-ubuntu-image # TODO: Update this to a real image once it's available
-    - JobId=${{ matrix.label }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+    runs-on: [azihsm-arm64-gh-pool-westus2-New]
     container: ${{ matrix.image }}
     env:
+      JOB_ID: ${{ matrix.label }}-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
       OPENSSL_LIB_DIR: ${{ matrix.lib_dir }}
       # Exported so the suites' version-gating primitives can skip tests that
       # require a newer OpenSSL than this cell provides.

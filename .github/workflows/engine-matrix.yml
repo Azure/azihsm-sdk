@@ -32,7 +32,10 @@ defaults:
 jobs:
   matrix:
     name: ${{ matrix.label }}
-    runs-on: ubuntu-24.04
+    env:
+      JOB_ID: ${{ matrix.label }}-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on: [azihsm-arm64-gh-pool-westus2-New]
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false

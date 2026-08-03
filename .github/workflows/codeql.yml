@@ -19,11 +19,12 @@ env:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on:
-    - self-hosted
-    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
-    - 1ES.ImageOverride=dummy-ubuntu-image # TODO: Update this to a real image once it's available
-    - JobId=analyze-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    env:
+      JOB_ID: analyze-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+
     permissions:
       security-events: write
       packages: read
