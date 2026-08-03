@@ -299,9 +299,8 @@ mod integration {
         let provider_so = provider_path.join("azihsm_provider.so");
         let conf_path = keymat_dir.join("openssl.cnf");
 
-        // TPM sources when AZIHSM_USE_TPM=1, caller sources otherwise.
-        let (obk_source, pota_source) = if env::var("AZIHSM_USE_TPM").is_ok_and(|value| value == "1")
-        {
+        // TPM sources when AZIHSM_USE_TPM is set, caller sources otherwise.
+        let (obk_source, pota_source) = if env::var("AZIHSM_USE_TPM").is_ok() {
             ("tpm", "tpm")
         } else {
             ("caller", "caller")
