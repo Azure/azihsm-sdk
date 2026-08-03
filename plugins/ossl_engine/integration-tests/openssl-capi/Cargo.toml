@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "engine-integration-tests-capi"
+publish = false
+version = "0.1.0"
+
+# Gated so a plain `cargo build --workspace` (e.g. the OpenSSL 3.x rust.yml
+# cells) doesn't pull the OpenSSL 1.1.x FFI; the harness builds with
+# `--features integration`.
+[features]
+integration = ["dep:azihsm_ossl_engine_sys", "dep:openssl"]
+
+[dependencies]
+azihsm_ossl_engine_sys = { features = [
+  "engine",
+], optional = true, path = "../../azihsm_ossl_engine_sys" }
+openssl = { optional = true, workspace = true }
+
+[dev-dependencies]
+serial_test = { workspace = true }
+
+[[test]]
+name = "engine_capi_tests"
+path = "src/engine_capi_tests.rs"
+
+[lints]
+workspace = true

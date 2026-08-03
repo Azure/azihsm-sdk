@@ -267,7 +267,17 @@ impl SessionCtrl {
             | opcode::SD_RESTORE_LOCAL_BACKUP
             | opcode::SD_CREATE_PEER_BACKUP
             | opcode::SD_RESTORE_PEER_BACKUP
-            | opcode::KEY_REPORT => Self::InSession,
+            | opcode::KEY_REPORT
+            | opcode::HMAC_GENERATE_KEY
+            | opcode::HMAC
+            | opcode::GET_UNWRAPPING_KEY
+            | opcode::UNWRAP_KEY
+            | opcode::AES_GENERATE_KEY
+            | opcode::AES_ENCRYPT_DECRYPT
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
+            | opcode::RSA_MOD_EXP => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

@@ -12,11 +12,11 @@ mod resiliency_tests;
 mod session_tests;
 mod utils;
 
-#[cfg(feature = "emu")]
-mod emu_helpers;
-#[cfg(feature = "emu")]
+#[cfg(not(feature = "mock"))]
 mod partition_ex_tests;
-#[cfg(feature = "emu")]
+#[cfg(not(feature = "mock"))]
+mod sd;
+#[cfg(not(feature = "mock"))]
 mod session_ex_tests;
 
 use azihsm_api::*;

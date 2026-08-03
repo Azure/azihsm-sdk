@@ -32,6 +32,7 @@ use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::SESSION_MAC_DIR_KEY_LEN;
+use azihsm_fw_hsm_pal_traits::SESSION_MASKING_KEY_LEN;
 use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
 use azihsm_fw_hsm_pal_traits::SESSION_PENDING_BLOB_MAX;
 use azihsm_fw_hsm_pal_traits::SessionRole;
@@ -42,20 +43,22 @@ use crate::UnoHsmPal;
 /// API-revision portion of the session blob (bytes).
 const SESSION_API_REV_SIZE: usize = 8;
 
-/// Masking-key portion of the session blob: AES-CBC-256 (32) + HMAC-SHA-384
-/// (48) = 80 bytes.
+/// Masking-key portion of a **legacy MBOR `Session`** blob: AES-CBC-256
+/// (32) + HMAC-SHA-384 (48) = 80 bytes (the `key_masking::cbc` key).
 const SESSION_MASKING_KEY_SIZE: usize = 80;
 
 /// `Session`-kind blob: `[api_rev(8) || masking_key(80)]` = 88 bytes.
 const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE;
 
 /// `SessionEx` plaintext (CU) blob:
-/// `[api_rev(8) || param_key(32) || masking_key(80)]` = 120 bytes.
+/// `[api_rev(8) || param_key(32) || masking_key(32)]` = 72 bytes.  The
+/// SessionEx masking key is the 32 B AES-256-GCM `key_masking::aead` key
+/// ([`SESSION_MASKING_KEY_LEN`]), not the legacy 80 B cbc key.
 const SESSION_CU_BLOB_SIZE: usize =
-    SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_SIZE;
+    SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
 /// `SessionEx` authenticated (CO) blob: the plaintext blob followed by
-/// `mac_tx(48) || mac_rx(48)` = 216 bytes.
+/// `mac_tx(48) || mac_rx(48)` = 168 bytes.
 const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
 impl HsmSessionManager for UnoHsmPal {
@@ -237,7 +240,7 @@ impl HsmSessionManager for UnoHsmPal {
     ) -> HsmResult<()> {
         if api_rev.len() != SESSION_API_REV_SIZE
             || param_key.len() != SESSION_PARAM_KEY_LEN
-            || masking_key.len() != SESSION_MASKING_KEY_SIZE
+            || masking_key.len() != SESSION_MASKING_KEY_LEN
         {
             return Err(HsmError::InvalidArg);
         }
@@ -261,8 +264,8 @@ impl HsmSessionManager for UnoHsmPal {
         }
 
         // Build the length-discriminated SessionEx blob:
-        //   PlainText:     api_rev(8) ‖ param_key(32) ‖ masking_key(80)        = 120 B
-        //   Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                     = 216 B
+        //   PlainText:     api_rev(8) ‖ param_key(32) ‖ masking_key(32)        = 72 B
+        //   Authenticated: above ‖ mac_tx(48) ‖ mac_rx(48)                     = 168 B
         let blob_len = match mac_pair {
             None => SESSION_CU_BLOB_SIZE,
             Some(_) => SESSION_CU_AUTH_BLOB_SIZE,
@@ -331,11 +334,12 @@ impl HsmSessionManager for UnoHsmPal {
         let table = SessionStore::partition(io.pid())?;
         let physical_id = table.physical_id(id)?;
         let blob = self.vault_key(io, physical_id)?;
-        // The masking key follows `api_rev` in a `Session` blob, or
-        // `api_rev || param_key` in a `SessionEx` (CU/CO) blob; select the
-        // offset from the blob length so both schedules resolve. A blob of
-        // any other length indicates vault corruption, surfaced as
-        // `InternalError` (matches the trait contract and the std PAL).
+        // The masking key follows `api_rev` in a legacy MBOR `Session`
+        // blob, or `api_rev ‖ param_key` in a `SessionEx` (CU/CO) blob;
+        // pick the offset from the blob length so both schedules work.
+        // A blob of any other length indicates vault corruption, not a
+        // caller error — surface it as `InternalError` (matches the trait
+        // contract and the std PAL).
         let offset = match blob.len() {
             SESSION_BLOB_SIZE => SESSION_API_REV_SIZE,
             SESSION_CU_BLOB_SIZE | SESSION_CU_AUTH_BLOB_SIZE => {
@@ -343,11 +347,7 @@ impl HsmSessionManager for UnoHsmPal {
             }
             _ => return Err(HsmError::InternalError),
         };
-        Ok(blob
-            .split_at(offset)
-            .1
-            .split_at(SESSION_MASKING_KEY_SIZE)
-            .0)
+        Ok(blob.split_at(offset).1.split_at(SESSION_MASKING_KEY_SIZE).0)
     }
 
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {

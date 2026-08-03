@@ -223,8 +223,16 @@ struct Storage {
     version: u8,
     flags: [u8; 3],
     session_table: [u8; SESSION_TABLE_LEN],
-    reserved1: u8,
-    unwrapping_key_bk_valid: bool,
+    /// Gate-1 staging flag (offset 22, was `reserved1`): CP writes, SP reads.
+    /// `false` = not armed, `true` = armed. When armed (set on `SetResource`
+    /// with a non-zero mask), the SP stages the RSA-2048 unwrapping key into
+    /// `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero.
+    unwrapping_key_required: bool,
+    /// Unwrapping-key slot state, written by the SP. `0` = empty; non-zero =
+    /// occupied (the SP uses a 3-state `UnwrappingKeyValidity` enum —
+    /// Empty / PendingPct / PctPassed — so this is a `u8`, not a `bool`;
+    /// reading a value > 1 as a Rust `bool` would be UB).
+    unwrapping_key_bk_valid: u8,
     unwrapping_key_bk: [u8; UNWRAPPING_KEY_BK_LEN],
     pin_policy: PinPolicy,
     vm_launch_guid: [u8; GUID_LEN],
@@ -489,6 +497,11 @@ impl Partition {
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
             self.set_sd_initialized(false);
+            // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
+            // belongs to a partition that is being deallocated. A later
+            // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
+            // key.
+            self.clear_unwrapping_key();
             let slot = self.slot_mut();
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];
@@ -1115,6 +1128,82 @@ impl Partition {
     #[inline(never)]
     pub fn set_unwrapping_key_id(mut self, key: Option<HsmKeyId>) {
         self.slot_mut().unwrapping_key_id = write_handle(key);
+    }
+
+    // ── RSA unwrapping-key backup (SP-published) — two-gate CP↔SP handshake ──
+    //
+    // Gate 1: the CP arms `unwrapping_key_required` (via `set_unwrapping_key_required`,
+    // on `SetResource` with a non-zero mask). Gate 2: the SP, seeing Gate 1
+    // armed, stages a ready-to-use 516-byte PKA-LE RSA-2048 private key into
+    // `unwrapping_key_bk` and marks `unwrapping_key_bk_valid` non-zero. The HSM
+    // then imports it into its vault (recording `unwrapping_key_id`). The key
+    // persists in the slot (it is not consumed on import); it is wiped only on
+    // partition deallocation. The 516-byte payload is the RSA-2048 private key
+    // in PKA little-endian order, `d(256) ‖ n(256) ‖ e(4)`; the wire public key
+    // is the trailing `n ‖ e` (derived on demand by `rsa_priv_pub_key`).
+
+    /// Arms/disarms Gate 1 (`unwrapping_key_required`): the CP-only flag the SP
+    /// reads to decide whether to stage an unwrapping key for this partition.
+    #[inline(never)]
+    pub fn set_unwrapping_key_required(mut self, required: bool) {
+        // Volatile: this is a CP→SP shared-memory mailbox byte. A plain store
+        // could be reordered or elided by the compiler, breaking the handshake.
+        // SAFETY: valid, aligned, writable byte in this partition's GSRAM slot.
+        unsafe {
+            core::ptr::write_volatile(&mut self.slot_mut().unwrapping_key_required, required);
+        }
+    }
+
+    /// Whether Gate 1 (`unwrapping_key_required`) is currently armed.
+    #[inline(never)]
+    pub fn unwrapping_key_required(self) -> bool {
+        // Volatile read of the CP↔SP mailbox byte.
+        // SAFETY: valid, aligned, readable byte in this partition's GSRAM slot.
+        unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_required) }
+    }
+
+    /// Whether the SP has published a valid RSA-2048 unwrapping key into this
+    /// partition's GSRAM slot. The SP writes a `UnwrappingKeyValidity` `u8`
+    /// (`0` = empty; non-zero = occupied), so occupancy is `!= 0`.
+    #[inline(never)]
+    pub fn unwrapping_key_bk_valid(self) -> bool {
+        // Volatile read: the SP writes this mailbox byte from another processor,
+        // so a cached/hoisted load could miss the publish.
+        // SAFETY: valid, aligned, readable byte in this partition's GSRAM slot.
+        let valid = unsafe { core::ptr::read_volatile(&self.slot().unwrapping_key_bk_valid) } != 0;
+        // Acquire fence pairing the SP's release before it sets this byte: the
+        // producer writes the 516-byte `unwrapping_key_bk` payload *before*
+        // marking this valid, so a consumer that observes it set must not have
+        // its subsequent payload loads (in `unwrapping_key_bk`) hoisted ahead of
+        // this observation.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
+        valid
+    }
+
+    /// Borrows the 516-byte PKA-LE RSA-2048 unwrapping-key backup published by
+    /// the HSP. Only meaningful when
+    /// [`unwrapping_key_bk_valid`](Self::unwrapping_key_bk_valid) is true.
+    #[inline(never)]
+    pub fn unwrapping_key_bk(self) -> &'static DmaBuf {
+        // SAFETY: `unwrapping_key_bk` is an align-1 packed field; GSRAM bytes
+        // branded as DMA-accessible; valid for 'static.
+        unsafe { DmaBuf::from_raw(&self.slot().unwrapping_key_bk) }
+    }
+
+    /// Resets the SP↔CP unwrapping-key slot on partition teardown: disarms
+    /// Gate 1, volatile-wipes the 516-byte payload (so the private key can't be
+    /// recovered from GSRAM), and clears the validity byte. A later
+    /// `SetResource` re-arms Gate 1 and the SP re-stages a fresh key.
+    #[inline(never)]
+    pub fn clear_unwrapping_key(mut self) {
+        let slot = self.slot_mut();
+        // The gate + validity are CP↔SP mailbox bytes → volatile writes; the
+        // payload is volatile-wiped. SAFETY: valid, aligned bytes in this slot.
+        unsafe {
+            core::ptr::write_volatile(&mut slot.unwrapping_key_required, false);
+            DmaBuf::from_raw_mut(&mut slot.unwrapping_key_bk).zeroize();
+            core::ptr::write_volatile(&mut slot.unwrapping_key_bk_valid, 0);
+        }
     }
 
     /// Reads the partition-local masking key (`PartLocalMK`) handle.

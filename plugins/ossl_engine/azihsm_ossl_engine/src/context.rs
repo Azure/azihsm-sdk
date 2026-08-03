@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use azihsm_api::HsmCredentials;
+use azihsm_api::HsmEccPrivateKey;
 use azihsm_api::HsmError;
 use azihsm_api::HsmOwnerBackupKey;
 use azihsm_api::HsmOwnerBackupKeyConfig;
@@ -48,6 +49,24 @@ const ENV_CREDENTIALS_PIN: &str = "AZIHSM_CREDENTIALS_PIN";
 
 /// Per-engine state stored in `ENGINE` ex_data.
 pub struct EngineData {
+    /// HSM private keys loaded via the engine's `load_private_key` path. Owned
+    /// here — never via an `EC_KEY` ex_data free callback, which would leave a
+    /// libcrypto-held function pointer into this `.so` (see the module docs of
+    /// [`azihsm_ossl_engine_core::exdata`]). Each key's `Drop` deletes it from
+    /// the HSM; that runs when this `EngineData` is dropped by the destroy
+    /// handler, while the `.so` is loaded. Declared before `hsm` so it drops
+    /// first, while the session is still open.
+    ///
+    /// Keys therefore accumulate for the engine's lifetime: repeated loads (even
+    /// of the same URI) each retain a handle. That is fine for the usual load-key-
+    /// once pattern; a URI-keyed dedupe cache could bound it if a workload ever
+    /// loads keys repeatedly.
+    //
+    // `Box` gives each key a stable heap address: keyload stashes a raw pointer
+    // to it in EC_KEY ex_data, which must stay valid across `Vec` growth — so
+    // the `vec_box` suggestion to drop the `Box` does not apply.
+    #[allow(clippy::vec_box)]
+    loaded_keys: Mutex<Vec<Box<HsmEccPrivateKey>>>,
     hsm: Mutex<Option<HsmEngineContext>>,
 }
 
@@ -60,6 +79,7 @@ impl Default for EngineData {
 impl EngineData {
     pub fn new() -> Self {
         Self {
+            loaded_keys: Mutex::new(Vec::new()),
             hsm: Mutex::new(None),
         }
     }
@@ -90,11 +110,62 @@ impl EngineData {
 
     /// Open the HSM by reading settings + credentials from the process
     /// environment.
+    ///
+    /// Idempotent: if the HSM is already open (e.g. opened earlier via
+    /// [`open_hsm_with`]) this returns `Ok` without touching the environment,
+    /// so a caller like the key loader can invoke it unconditionally.
     pub fn open_hsm_from_env(&self) -> EngineResult<()> {
+        if self.is_hsm_open() {
+            return Ok(());
+        }
         let settings = ResiliencySettings::from_env()
             .map_err(|e| EngineError::wrap("resiliency settings", e))?;
         let creds = credentials_from_env()?;
         self.open_hsm_with(settings, creds)
+    }
+
+    /// Run `f` with the open HSM session. The lock is held across `f`, so key
+    /// operations serialize with each other and with the open. Errors if the
+    /// HSM has not been opened.
+    ///
+    /// Crate-internal: it hands out a raw `HsmSession`, so it is used only by
+    /// the key loader (and tests), not exposed as public engine API.
+    pub(crate) fn with_session<F, R>(&self, f: F) -> EngineResult<R>
+    where
+        F: FnOnce(&HsmSession) -> EngineResult<R>,
+    {
+        let guard = self.hsm.lock();
+        let ctx = guard
+            .as_ref()
+            .ok_or_else(|| EngineError::Other("HSM session not open".into()))?;
+        f(&ctx.session)
+    }
+
+    /// Take ownership of a loaded HSM private key so it lives until the engine
+    /// is destroyed (its `Drop` deletes it from the HSM), and return a stable
+    /// non-owning pointer to it for stashing in `EC_KEY` ex_data. Boxing keeps
+    /// the address stable across `Vec` growth; the returned pointer stays valid
+    /// until this `EngineData` is dropped by the destroy handler, or until
+    /// [`release_loaded_key`](Self::release_loaded_key) drops it early.
+    ///
+    /// Crate-internal: an implementation detail of the key loader.
+    pub(crate) fn retain_loaded_key(&self, key: HsmEccPrivateKey) -> *const HsmEccPrivateKey {
+        let boxed = Box::new(key);
+        let ptr: *const HsmEccPrivateKey = boxed.as_ref();
+        self.loaded_keys.lock().push(boxed);
+        ptr
+    }
+
+    /// Drop a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
+    /// identified by the pointer it returned. Used to roll back on a partial
+    /// load failure (e.g. if stashing the ex_data pointer fails) so the key
+    /// doesn't linger in the HSM until engine teardown. A no-op if the pointer
+    /// isn't currently retained. Dropping the box deletes the key from the HSM.
+    pub(crate) fn release_loaded_key(&self, ptr: *const HsmEccPrivateKey) {
+        let mut keys = self.loaded_keys.lock();
+        if let Some(pos) = keys.iter().position(|k| std::ptr::eq(k.as_ref(), ptr)) {
+            keys.remove(pos);
+        }
     }
 }
 
@@ -403,6 +474,57 @@ fn hex_decode_16(s: &str, var: &'static str) -> EngineResult<[u8; 16]> {
     Ok(out)
 }
 
+// Imports for the shared test helpers below. Kept at module scope (not in the
+// function bodies) and gated on `test` so they serve both the `mock` unit tests
+// and the hardware tests, which have opposite `mock` gates.
+#[cfg(test)]
+use std::io::Write;
+#[cfg(test)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(test)]
+use std::ptr::NonNull;
+
+#[cfg(test)]
+use azihsm_ossl_engine_core::engine::Engine;
+#[cfg(test)]
+use azihsm_ossl_engine_core::ffi;
+
+/// Test helper: write key-material bytes to `path` with owner-only permissions
+/// and the same open hardening the engine uses for secret files — create a new
+/// file (`O_EXCL`, no clobber) mode 0600 and refuse a symlink at the path
+/// (`O_NOFOLLOW`). Used by the round-trip tests to stage a masked-key blob.
+#[cfg(test)]
+fn write_key_material(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(SECRET_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    file.write_all(data)
+}
+
+/// Test helper: a throwaway ENGINE for driving `keyload::load_key` in-process.
+/// The loader binds returned keys to it (`EC_KEY_new_method`), so it must
+/// outlive the loaded `EVP_PKEY`; the raw structural ref is returned so the
+/// caller frees it with `ENGINE_free` after dropping the key.
+#[cfg(test)]
+#[allow(unsafe_code)]
+#[allow(clippy::unwrap_used)]
+fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
+    // SAFETY: ENGINE_new returns a fresh structural ref; wrapping it in Engine
+    // is sound for the test, and the caller ENGINE_free's the returned raw ref.
+    unsafe {
+        let raw = ffi::ENGINE_new();
+        assert!(!raw.is_null(), "ENGINE_new");
+        let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
+        // The loader binds keys via EC_KEY_new_method, which needs an EC method
+        // on the engine (bind_helper does this in production).
+        engine.set_default_ec_method().unwrap();
+        (engine, raw)
+    }
+}
+
 #[cfg(all(test, feature = "mock"))]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -412,10 +534,19 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
+    use azihsm_api::HsmEccCurve;
+    use azihsm_api::HsmEccKeyGenAlgo;
+    use azihsm_api::HsmKeyClass;
+    use azihsm_api::HsmKeyCommonProps;
+    use azihsm_api::HsmKeyKind;
+    use azihsm_api::HsmKeyManager;
+    use azihsm_api::HsmKeyPropsBuilder;
+    use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
+    use openssl::pkey::Public;
     use serial_test::serial;
 
     use super::*;
@@ -492,6 +623,79 @@ mod tests {
         assert!(!data.is_hsm_open());
         data.open_hsm_with(settings, creds).unwrap();
         assert!(data.is_hsm_open());
+    }
+
+    /// Full engine key-load round trip: generate an EC key + its masked blob in
+    /// the HSM, write the blob to disk, load it back through the engine's
+    /// `load_private_key` path, and verify the returned EVP_PKEY's public key
+    /// matches. Dropping the EVP_PKEY (no ex_data free callback) and then the
+    /// EngineData (which deletes the loaded key from the HSM) must not crash.
+    #[test]
+    #[serial]
+    #[allow(unsafe_code)]
+    fn load_ec_key_round_trips_through_engine() {
+        let scratch = Scratch::new("load");
+        // Leave the `res` storage dir to the open path (setup_storage_dir),
+        // which creates it mode 0700; pre-creating it here would inherit the
+        // umask and be rejected as insecure (see open_hsm_with_resiliency_succeeds).
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+
+        // Generate a persistent EC P-384 key in the HSM and export its masked
+        // blob (the form the engine loads).
+        let (masked, expected_pub_der) = data
+            .with_session(|session| {
+                let priv_props = HsmKeyPropsBuilder::default()
+                    .class(HsmKeyClass::Private)
+                    .key_kind(HsmKeyKind::Ecc)
+                    .ecc_curve(HsmEccCurve::P384)
+                    .is_session(false)
+                    .can_sign(true)
+                    .build()
+                    .unwrap();
+                let pub_props = HsmKeyPropsBuilder::default()
+                    .class(HsmKeyClass::Public)
+                    .key_kind(HsmKeyKind::Ecc)
+                    .ecc_curve(HsmEccCurve::P384)
+                    .is_session(false)
+                    .can_verify(true)
+                    .build()
+                    .unwrap();
+                let mut algo = HsmEccKeyGenAlgo::default();
+                let (priv_key, _pub) =
+                    HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+                        .unwrap();
+                Ok((
+                    priv_key.masked_key_vec().unwrap(),
+                    priv_key.pub_key_der_vec().unwrap(),
+                ))
+            })
+            .unwrap();
+
+        let blob_path = scratch.0.join("ec_key.bin");
+        write_key_material(&blob_path, &masked).unwrap();
+
+        let (engine, engine_raw) = new_test_engine();
+        let uri = format!("azihsm://{};type=ec", blob_path.display());
+        let raw = crate::keyload::load_key(&engine, &data, &uri).unwrap();
+        assert!(!raw.is_null());
+
+        // Take ownership of the returned EVP_PKEY, confirm its public key, then
+        // drop it. The EC_KEY ex_data slot has no free callback, so this frees
+        // only the OpenSSL objects; the HSM key is deleted when `data` drops.
+        // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
+        let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        assert_eq!(loaded.public_key_to_der().unwrap(), expected_pub_der);
+        drop(loaded);
+
+        // Release the test engine's structural ref; the loaded key already
+        // released its functional ref when dropped above.
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { azihsm_ossl_engine_core::ffi::ENGINE_free(engine_raw) };
     }
 
     #[test]
@@ -571,6 +775,17 @@ mod tests {
 /// ```
 #[cfg(all(test, not(feature = "mock")))]
 mod hw_tests {
+    use azihsm_api::HsmEccCurve;
+    use azihsm_api::HsmEccKeyGenAlgo;
+    use azihsm_api::HsmKeyClass;
+    use azihsm_api::HsmKeyCommonProps;
+    use azihsm_api::HsmKeyKind;
+    use azihsm_api::HsmKeyManager;
+    use azihsm_api::HsmKeyPropsBuilder;
+    use foreign_types::ForeignType;
+    use openssl::pkey::PKey;
+    use openssl::pkey::Public;
+
     use super::*;
 
     #[test]
@@ -582,6 +797,93 @@ mod hw_tests {
             data.is_hsm_open(),
             "HSM should be open after open_hsm_from_env"
         );
+        Ok(())
+    }
+
+    /// Hardware key-loading round trip. Generates a persistent EC P-384 key on
+    /// the device, exports its masked blob, loads it back through the engine's
+    /// `load_private_key` path, and verifies the returned EVP_PKEY's public key
+    /// matches. Dropping the EVP_PKEY, then the EngineData (which deletes the
+    /// loaded key from the HSM), must not crash.
+    /// `tests::load_ec_key_round_trips_through_engine` covers this against the
+    /// mock; this runs the same cycle on a real device.
+    ///
+    /// Same env setup as `open_from_env_smoke` (configure `AZIHSM_*` first):
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine load_ec_key_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    #[allow(unsafe_code)]
+    fn load_ec_key_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+
+        // Generate a persistent EC P-384 key on the device and export the masked
+        // blob (the form the engine loads).
+        let (masked, expected_pub_der) = data.with_session(|session| {
+            let priv_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Private)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(HsmEccCurve::P384)
+                .is_session(false)
+                .can_sign(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build private key props", e))?;
+            let pub_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Public)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(HsmEccCurve::P384)
+                .is_session(false)
+                .can_verify(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build public key props", e))?;
+            let mut algo = HsmEccKeyGenAlgo::default();
+            let (priv_key, _pub) =
+                HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+                    .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
+            Ok((
+                priv_key
+                    .masked_key_vec()
+                    .map_err(|e| EngineError::wrap("export masked key", e))?,
+                priv_key
+                    .pub_key_der_vec()
+                    .map_err(|e| EngineError::wrap("read public key DER", e))?,
+            ))
+        })?;
+
+        let blob_path =
+            std::env::temp_dir().join(format!("engine-hw-ec-{}.bin", std::process::id()));
+        // Clear any leftover from a prior crashed run so the O_EXCL create in
+        // write_key_material succeeds.
+        let _ = std::fs::remove_file(&blob_path);
+        write_key_material(&blob_path, &masked).map_err(|e| {
+            EngineError::wrap(format!("write masked blob {}", blob_path.display()), e)
+        })?;
+
+        let (engine, engine_raw) = new_test_engine();
+        let uri = format!("azihsm://{};type=ec", blob_path.display());
+        let raw = crate::keyload::load_key(&engine, &data, &uri)?;
+        assert!(!raw.is_null(), "load_key returned a NULL EVP_PKEY");
+
+        // Take ownership of the returned key, confirm its public half, then drop
+        // it. The ex_data slot has no free callback; the HSM key is deleted when
+        // `data` drops at the end of the test.
+        // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
+        let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        let loaded_der = loaded
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode loaded public key", e))?;
+        assert_eq!(loaded_der, expected_pub_der, "loaded public key mismatch");
+        drop(loaded);
+
+        // Release the test engine's structural ref (the loaded key released its
+        // functional ref when dropped above).
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { azihsm_ossl_engine_core::ffi::ENGINE_free(engine_raw) };
+
+        let _ = std::fs::remove_file(&blob_path);
         Ok(())
     }
 }

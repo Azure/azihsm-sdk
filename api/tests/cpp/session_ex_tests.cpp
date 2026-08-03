@@ -19,8 +19,8 @@ class azihsm_sess_ex : public ::testing::Test
     // two-phase TBOR HPKE handshake against the partition's *default*
     // PSK and identity key, so it does NOT require MBOR credential
     // establishment (`azihsm_part_init`). A freshly reset partition is
-    // all it needs — matching the Rust emu `fresh_emu_partition()`
-    // helper. The returned handle must be closed by the caller.
+    // all it needs — matching the Rust `new_partition()` helper. The
+    // returned handle must be closed by the caller.
     //
     // On any failure a gtest failure is recorded and 0 is returned so the
     // caller can early-return instead of operating on an invalid handle;
@@ -74,10 +74,10 @@ class azihsm_sess_ex : public ::testing::Test
 };
 
 // Happy-path session open requires the two-phase TBOR HPKE handshake, which is
-// only implemented by the emu (in-process firmware) backend; the mock backend
-// returns `UnsupportedEncoding` for TBOR ops. Gate this test on the emu backend
-// so it is excluded from the mock lane (see `AZIHSM_FEATURE_EMU` in CMakeLists).
-#ifdef AZIHSM_FEATURE_EMU
+// implemented by a real backend (emu or hardware), not mock; the mock backend
+// returns `UnsupportedEncoding` for TBOR ops. Exclude these tests from the mock
+// lane (see `AZIHSM_FEATURE_MOCK` in CMakeLists).
+#if !defined(AZIHSM_FEATURE_MOCK)
 TEST_F(azihsm_sess_ex, open_and_close)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
@@ -106,7 +106,7 @@ TEST_F(azihsm_sess_ex, open_and_close)
         });
     });
 }
-#endif // AZIHSM_FEATURE_EMU
+#endif // !defined(AZIHSM_FEATURE_MOCK)
 
 TEST_F(azihsm_sess_ex, open_null_sess_handle)
 {
@@ -242,7 +242,7 @@ TEST_F(azihsm_sess_ex, psk_change_invalid_session_handle)
 // the emu (in-process firmware) backend. They exercise the ABI-boundary
 // validation and buffer-probe contract that runs *before* the partition is
 // provisioned, so they do not require valid provisioning inputs.
-#ifdef AZIHSM_FEATURE_EMU
+#if !defined(AZIHSM_FEATURE_MOCK)
 namespace
 {
 // Well-formed (non-empty, non-null) provisioning inputs. The byte contents and
@@ -528,4 +528,4 @@ TEST_F(azihsm_sess_ex, psk_change_rotates_co_psk)
         }
     });
 }
-#endif // AZIHSM_FEATURE_EMU
+#endif // !defined(AZIHSM_FEATURE_MOCK)

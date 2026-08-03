@@ -6,19 +6,19 @@
 //!
 //! These go through the *public* `azihsm_api` surface — the two-phase
 //! HPKE handshake plus the resulting `HsmSession` (V2) handle — against
-//! the FW emulator, exactly as an external caller (and the native FFI)
-//! would.
+//! the emulator or hardware backend, exactly as an external caller (and
+//! the native FFI) would.
 
 use azihsm_api::*;
 
-use crate::emu_helpers::*;
+use crate::utils::partition_ex_helpers::*;
 
 /// Happy path: CO pairs with an Authenticated session and returns a
 /// live `HsmSession` over the public API.
 #[test]
 fn open_session_ex_co_authenticated() {
-    let _guard = EMU_LOCK.lock();
-    let (part, rev) = fresh_emu_partition();
+    let _guard = PARTITION_LOCK.lock();
+    let (part, rev) = new_partition();
 
     let session = part
         .open_session_ex(
@@ -40,8 +40,8 @@ fn open_session_ex_co_authenticated() {
 /// Happy path: CU pairs with a PlainText session.
 #[test]
 fn open_session_ex_cu_plaintext() {
-    let _guard = EMU_LOCK.lock();
-    let (part, rev) = fresh_emu_partition();
+    let _guard = PARTITION_LOCK.lock();
+    let (part, rev) = new_partition();
 
     let session = part
         .open_session_ex(
@@ -64,8 +64,8 @@ fn open_session_ex_cu_plaintext() {
 /// full `change_psk` + optional-PSK-`open_session_ex` flow end to end.
 #[test]
 fn change_psk_rotates_co_psk() {
-    let _guard = EMU_LOCK.lock();
-    let (part, rev) = fresh_emu_partition();
+    let _guard = PARTITION_LOCK.lock();
+    let (part, rev) = new_partition();
 
     // A non-default replacement CO PSK.
     let new_psk = [0x5Au8; PSK_LEN];

@@ -39,6 +39,55 @@ pub struct HsmPartFinalExResult {
     pub local_mk_backup: Vec<u8>,
 }
 
+/// Borrowed attestation evidence for one party in a security-domain
+/// backup: the three DER certificate chains and the COSE_Sign1 report.
+///
+/// The DER bytes travel out of band; the SDK builds the wire descriptors
+/// internally.
+#[derive(Debug, Clone, Copy)]
+pub struct HsmSdEvidence<'a> {
+    /// Manufacturer certificate chain.
+    pub mfgr_cert_chain: &'a [HsmCert<'a>],
+    /// Owner certificate chain.
+    pub owner_cert_chain: &'a [HsmCert<'a>],
+    /// Partition-owner certificate chain.
+    pub part_owner_cert_chain: &'a [HsmCert<'a>],
+    /// COSE_Sign1 attestation report (DER/COSE bytes).
+    pub report: &'a [u8],
+}
+
+/// Result of `sd_create_remote_backup`: the three backups the device
+/// returns after creating a security domain.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborSdCreateRemoteBackupResp`) is converted into it inside the DDI
+/// layer, so the wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmSdRemoteBackupResult {
+    /// Remote partition-owner-key backup (HPKE-Auth seal of BKS3).
+    pub pok_remote_backup: Vec<u8>,
+    /// Local partition-owner-key backup (BKS3 masked under the
+    /// partition-local masking key).
+    pub pok_local_backup: Vec<u8>,
+    /// Security-domain masking-key backup envelope.
+    pub sd_mk_backup: Vec<u8>,
+}
+
+/// Result of `sd_restore_remote_backup`: the refreshed device-local backups
+/// returned after restoring a security domain from a remote backup.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborSdRestoreRemoteBackupResp`) is converted into it inside the DDI
+/// layer, so the wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmSdRestoreResult {
+    /// Local partition-owner-key backup (BKS3 re-masked under the
+    /// partition-local masking key).
+    pub pok_local_backup: Vec<u8>,
+    /// Refreshed security-domain masking-key backup envelope.
+    pub sd_mk_backup: Vec<u8>,
+}
+
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.

@@ -6,6 +6,7 @@
 use std::ffi::CStr;
 use std::ffi::c_char;
 use std::ffi::c_int;
+use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::ptr::null_mut;
 
@@ -17,6 +18,7 @@ use crate::error::RetCode;
 use crate::error::catch_panic;
 use crate::error::ossl_check;
 use crate::error::result_to_int;
+use crate::error::result_to_ptr;
 
 pub struct Engine {
     ptr: *mut ffi::ENGINE,
@@ -120,6 +122,53 @@ impl Engine {
             EngineError::SetDestroyFailed,
         )
     }
+
+    /// Register the private-key loader OpenSSL invokes for
+    /// `ENGINE_load_private_key` (e.g. `openssl … -keyform engine -inform engine
+    /// -in <key_id>`). Like [`set_destroy`](Self::set_destroy), each `H`
+    /// monomorphizes a distinct C trampoline.
+    #[allow(unsafe_code)]
+    pub fn set_load_privkey<H: LoadPrivKeyHandler>(&self) -> EngineResult<()> {
+        // SAFETY: self.ptr is valid (from NonNull); c_load_privkey::<H> has the
+        // correct ENGINE_LOAD_KEY_PTR signature and is a 'static fn item.
+        ossl_check(
+            unsafe { ffi::ENGINE_set_load_privkey_function(self.ptr, Some(c_load_privkey::<H>)) },
+            EngineError::SetLoadPrivKeyFailed,
+        )
+    }
+
+    /// Point the engine's `EC_KEY_METHOD` at OpenSSL's built-in default. This
+    /// is required before [`new_ec_key`](Self::new_ec_key): `EC_KEY_new_method`
+    /// fails unless the engine advertises an EC method. The default method keeps
+    /// EC operations in software; a later change overrides `sign` to route
+    /// signing through the HSM.
+    #[allow(unsafe_code)]
+    pub fn set_default_ec_method(&self) -> EngineResult<()> {
+        // SAFETY: EC_KEY_OpenSSL returns the built-in const EC_KEY_METHOD;
+        // ENGINE_set_EC just records that pointer on the engine.
+        ossl_check(
+            unsafe { ffi::ENGINE_set_EC(self.ptr, ffi::EC_KEY_OpenSSL()) },
+            EngineError::Other("ENGINE_set_EC failed".into()),
+        )
+    }
+
+    /// Create an `EC_KEY` bound to this engine via `EC_KEY_new_method`, which
+    /// takes a functional reference on the engine (released on `EC_KEY_free`).
+    /// OpenSSL therefore keeps the engine — and any state its destroy handler
+    /// owns — alive for as long as the returned key (and any `EVP_PKEY` built
+    /// from it) lives. Requires an EC method on the engine (see
+    /// [`set_default_ec_method`](Self::set_default_ec_method)). The returned key
+    /// has no group or public key set yet.
+    #[allow(unsafe_code)]
+    pub fn new_ec_key(&self) -> EngineResult<*mut ffi::EC_KEY> {
+        // SAFETY: self.ptr is a valid ENGINE; EC_KEY_new_method up-refs it and
+        // returns a fresh owned EC_KEY (NULL on allocation failure).
+        let ec = unsafe { ffi::EC_KEY_new_method(self.ptr) };
+        if ec.is_null() {
+            return Err(EngineError::Other("EC_KEY_new_method failed".into()));
+        }
+        Ok(ec)
+    }
 }
 
 /// Caller-supplied destroy logic, invoked by OpenSSL when an `ENGINE` is
@@ -159,6 +208,59 @@ unsafe fn destroy_inner<H: DestroyHandler>(e: *mut ffi::ENGINE) -> EngineResult<
     // SAFETY: `e` is the ENGINE OpenSSL is destroying; valid for this call.
     let mut engine = unsafe { Engine::from_ptr(nn) };
     H::destroy(&mut engine)
+}
+
+/// Caller-supplied private-key loader, invoked by OpenSSL for
+/// `ENGINE_load_private_key`. Implement on a marker type and pass it as the
+/// type parameter to [`Engine::set_load_privkey`].
+pub trait LoadPrivKeyHandler {
+    /// Load the key named `key_id` and return an owning `*mut EVP_PKEY`
+    /// (ownership transfers to OpenSSL). Return an error to surface a NULL
+    /// result plus an ERR-queue entry to the caller.
+    fn load(engine: &Engine, key_id: &CStr) -> EngineResult<*mut ffi::EVP_PKEY>;
+}
+
+/// C trampoline for `ENGINE_set_load_privkey_function` (`ENGINE_LOAD_KEY_PTR`).
+/// Catches panics and dispatches to `H::load`, returning NULL on panic/error.
+/// The `UI_METHOD`/`cb_data` params are unused: keys are named by id, no prompt.
+///
+/// # Safety
+/// Called only by OpenSSL. `e` is the loading ENGINE and `key_id` the key
+/// identifier string, per the callback contract.
+#[allow(unsafe_code)]
+unsafe extern "C" fn c_load_privkey<H: LoadPrivKeyHandler>(
+    e: *mut ffi::ENGINE,
+    key_id: *const c_char,
+    _ui: *mut ffi::UI_METHOD,
+    _cb_data: *mut c_void,
+) -> *mut ffi::EVP_PKEY {
+    catch_panic(
+        // SAFETY: `e` and `key_id` are the pointers OpenSSL passes to the
+        // load_privkey callback per ENGINE_set_load_privkey_function.
+        || result_to_ptr(unsafe { load_privkey_inner::<H>(e, key_id) }),
+        null_mut(),
+    )
+}
+
+/// Inner body of [`c_load_privkey`]: validate the raw pointers, rebuild a safe
+/// [`Engine`], and dispatch to `H::load`.
+///
+/// # Safety
+/// `e` must be the loading `ENGINE` and `key_id` a valid C string (or NULL).
+#[allow(unsafe_code)]
+unsafe fn load_privkey_inner<H: LoadPrivKeyHandler>(
+    e: *mut ffi::ENGINE,
+    key_id: *const c_char,
+) -> EngineResult<*mut ffi::EVP_PKEY> {
+    let nn = NonNull::new(e).ok_or(EngineError::NullParam("engine"))?;
+    if key_id.is_null() {
+        return Err(EngineError::NullParam("key_id"));
+    }
+    // SAFETY: `e` is non-null (checked) and the ENGINE OpenSSL is loading from.
+    let engine = unsafe { Engine::from_ptr(nn) };
+    // SAFETY: `key_id` is non-null (checked) and a valid C string per contract.
+    let key_id = unsafe { CStr::from_ptr(key_id) };
+    H::load(&engine, key_id)
 }
 
 #[cfg(test)]
@@ -201,5 +303,30 @@ mod tests {
             before + 1,
             "destroy callback should run exactly once on ENGINE_free"
         );
+    }
+
+    struct NullLoader;
+    impl LoadPrivKeyHandler for NullLoader {
+        fn load(_: &Engine, _: &CStr) -> EngineResult<*mut ffi::EVP_PKEY> {
+            Ok(null_mut())
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn set_load_privkey_registers_the_hook() {
+        // SAFETY: ENGINE_new / ENGINE_free are standard OpenSSL entry points.
+        let raw = unsafe { ffi::ENGINE_new() };
+        let nn = NonNull::new(raw).expect("ENGINE_new returned NULL");
+        // SAFETY: nn is non-null and owned until ENGINE_free below.
+        let e = unsafe { Engine::from_ptr(nn) };
+
+        e.set_load_privkey::<NullLoader>().unwrap();
+        // SAFETY: e.as_ptr() is a valid ENGINE.
+        let f = unsafe { ffi::ENGINE_get_load_privkey_function(e.as_ptr()) };
+        assert!(f.is_some(), "load_privkey hook should be registered");
+
+        // SAFETY: same as above.
+        unsafe { ffi::ENGINE_free(e.as_ptr()) };
     }
 }

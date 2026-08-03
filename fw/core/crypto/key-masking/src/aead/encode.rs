@@ -11,9 +11,8 @@
 //!
 //! Mirrors the call shape of `build_bmk_session` in the TBOR session
 //! handler — the canonical AEAD-seal pattern in this firmware — by
-//! taking a scoped allocator for the small IV / AAD / target-key-copy
-//! `DmaBuf`s that [`aead_envelope::seal`] requires as separate
-//! inputs.
+//! taking a scoped allocator for the small IV / AAD `DmaBuf`s that
+//! [`aead_envelope::seal`] requires as separate inputs.
 
 use azihsm_fw_core_crypto_aead_envelope::seal as aead_seal;
 use azihsm_fw_core_crypto_aead_envelope::AeadAlg;
@@ -80,10 +79,8 @@ pub struct MaskParams<'a> {
 /// * `crypto`        — PAL providing AES and RNG (any [`HsmCrypto`]).
 /// * `io`         — caller's I/O context.
 /// * `alloc`      — scoped allocator. Used internally to stage the
-///   IV (12 B), AAD copy (96 B), and a target-key copy
-///   (`target_key.len()` B). Mirrors the staging pattern used by
-///   every other AEAD seal call site in the firmware (e.g.
-///   `build_bmk_session`). All three buffers are freed when the
+///   IV (12 B) and AAD copy (96 B); the plaintext is sealed **directly**
+///   from `target_key` (no copy). Both buffers are freed when the
 ///   enclosing scope exits.
 /// * `alg`        — AEAD algorithm for this blob (e.g.
 ///   [`AeadAlg::AesGcm256`]). Determines the required `key` length
@@ -145,21 +142,24 @@ pub async fn mask(
         params.key_label,
     )?;
 
-    // Stage IV, AAD, and a target-key copy in scoped DMA buffers,
-    // mirroring `build_bmk_session` in the TBOR session code path.
-    // IV size is alg-dependent (alg.iv_len()).
+    // Stage IV and AAD in scoped DMA buffers (the plaintext is sealed
+    // directly from `target_key`, no copy).  IV size is alg-dependent
+    // (alg.iv_len()).
     let iv = alloc.dma_alloc(alg.iv_len())?;
     crypto.rng_fill_bytes(io, &mut iv[..])?;
 
     let aad = alloc.dma_alloc(META_LEN)?;
     aad.copy_from_slice(metadata.as_bytes());
 
-    let pt = alloc.dma_alloc(target_key.len())?;
-    pt.copy_from_slice(target_key);
-
-    // Seal into `out`. `aead_envelope::seal` writes exactly `total`
-    // bytes and returns that count.
-    let result = aead_seal(crypto, io, alg, key, iv, aad, pt, Some(out)).await;
+    // Seal directly from `target_key` into `out`.  `aead_seal` / `seal_gcm`
+    // only *reads* `pt` (it copies the plaintext into `out`'s data region
+    // and encrypts in place there), so staging a separate `pt` copy of
+    // `target_key` would be a redundant second copy — wasteful of the
+    // scarce per-IO DMA budget for large keys (e.g. an RSA-4096 private
+    // key).  `target_key` and `out` are disjoint buffers, so passing it
+    // through directly is sound.  Mirrors `cbc::mask`, which likewise
+    // writes the plaintext straight into `out`.
+    let result = aead_seal(crypto, io, alg, key, iv, aad, target_key, Some(out)).await;
     match result {
         Ok(n) => {
             debug_assert_eq!(n, total);

@@ -12,10 +12,14 @@ mod shared_types;
 pub mod traits;
 
 pub use algo::*;
+pub use ddi::EVIDENCE_CHAIN_MAX_CERTS;
 pub use ddi::LOCAL_MK_BACKUP_LEN;
+pub use ddi::MASKED_SD_LEN;
 pub use ddi::MAX_CERTS;
+pub use ddi::POK_REMOTE_BACKUP_LEN;
 pub use ddi::PTA_CSR_MAX_LEN;
 pub use ddi::PTA_REPORT_MAX_LEN;
+pub use ddi::SD_MK_BACKUP_LEN;
 pub use error::*;
 pub use op::*;
 pub use partition::*;

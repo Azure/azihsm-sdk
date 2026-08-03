@@ -162,3 +162,27 @@ jobs:
 
       - name: Load engine
         run: openssl engine -t "$(pwd)/target/debug/libazihsm_ossl_engine.so"
+
+      # The integration suites load a key through the engine end to end; they
+      # need a mock-backed .so, so (re)build it and the masked-key generator.
+      - name: Build engine (mock) + generator for integration tests
+        run: |
+          cargo build -p azihsm_ossl_engine --features engine,mock
+          cargo build -p azihsm-engine-masked-keygen --features integration
+
+      - name: Integration tests — CLI (openssl -engine)
+        run: |
+          export OPENSSL_BIN=/usr/bin/openssl
+          export ENGINE_SO="$(pwd)/target/debug/libazihsm_ossl_engine.so"
+          export MASKED_KEYGEN="$(pwd)/target/debug/masked-keygen"
+          export AZIHSM_ENGINE_TEST_KEYDIR="$(pwd)/target/test-keymat/engine-cli"
+          rm -rf "$AZIHSM_ENGINE_TEST_KEYDIR"
+          cargo nextest run -p engine-integration-tests-cli --features integration --no-fail-fast
+
+      # !cancelled(): run even if the CLI step failed, so the two are independent checks.
+      - name: Integration tests — ABI (ENGINE C API)
+        if: ${{ !cancelled() }}
+        run: |
+          export ENGINE_SO="$(pwd)/target/debug/libazihsm_ossl_engine.so"
+          export MASKED_KEYGEN="$(pwd)/target/debug/masked-keygen"
+          cargo nextest run -p engine-integration-tests-capi --features integration --no-fail-fast

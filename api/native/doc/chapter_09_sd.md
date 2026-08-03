@@ -143,7 +143,7 @@ Finalize a partition's security domain over a security-domain session.
 
 Completes provisioning started by
 [`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init): re-supplies the
-unified partition policy and the PTA certificate chain (leaf to root),
+unified partition policy and the PTA certificate chain (root to leaf),
 optionally restoring a prior `local_mk` backup, and returns the current
 `local_mk` backup envelope the firmware produced.
 
@@ -182,7 +182,7 @@ azihsm_status azihsm_sess_ex_part_final(
 Finalization input buffers for
 [`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final). `pta_cert_chain`
 points to an array of `pta_cert_chain_len` [azihsm_buffer](#azihsm_buffer)s,
-each holding one DER-encoded PTA certificate (leaf to root; at most
+each holding one DER-encoded PTA certificate (root to leaf; at most
 `MAX_CERTS`). `prev_local_mk_backup` is optional and may be NULL to omit it.
 
 ```cpp
@@ -197,7 +197,7 @@ struct azihsm_sess_ex_part_final_params {
  | Field                | Name                             | Description                                     |
  | -------------------- | -------------------------------- | ----------------------------------------------- |
  | part_policy          | [azihsm_buffer*](#azihsm_buffer) | unified partition policy (must match part_init) |
- | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (leaf to root)    |
+ | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (root to leaf)    |
  | pta_cert_chain_len   | uint32_t                         | number of certificates in the chain             |
  | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL)    |
 
@@ -228,3 +228,168 @@ azihsm_status azihsm_sess_ex_psk_change(
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+## azihsm_sess_ex_sd_create_remote_backup
+
+Create a new security domain and its remote backup over a security-domain
+session.
+
+Creates a security domain under the calling session's partition from the
+unified partition policy, using the sender's masked SD-sealing key (from
+`azihsm_key_gen`) and the receiver's attestation evidence, and returns the
+three backups the firmware produces: the remote partition-owner-key backup
+(an HPKE-Auth seal of BKS3, 161 bytes), the local partition-owner-key backup
+(180 bytes), and the security-domain masking-key backup (164 bytes).
+
+The inputs are grouped into an
+[`azihsm_sess_ex_sd_create_remote_backup_params`](#azihsm_sess_ex_sd_create_remote_backup_params)
+structure. All three output buffers follow the two-call size-probe contract:
+an undersized buffer (or a NULL `ptr` with `len == 0`) is rejected with
+`AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size, and
+every output buffer is validated **before** the one-shot domain-creation
+command is issued, so a too-small buffer never consumes it. A NULL `params`
+pointer is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. Creating a domain
+is a once-per-partition operation; a second create on an initialized
+partition returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
+
+```cpp
+azihsm_status azihsm_sess_ex_sd_create_remote_backup(
+    azihsm_handle sess_handle,
+    const struct azihsm_sess_ex_sd_create_remote_backup_params *params,
+    struct azihsm_buffer *pok_remote_backup,
+    struct azihsm_buffer *pok_local_backup,
+    struct azihsm_buffer *sd_mk_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                   | Name                                                                                                     | Description                                       |
+ | --------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+ | [in] sess_handle            | [azihsm_handle](#azihsm_handle)                                                                          | security-domain session handle                    |
+ | [in] params                 | [azihsm_sess_ex_sd_create_remote_backup_params*](#azihsm_sess_ex_sd_create_remote_backup_params)         | create-backup input buffers                       |
+ | [in, out] pok_remote_backup | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the remote pok backup (161 B)   |
+ | [in, out] pok_local_backup  | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the local pok backup (180 B)    |
+ | [in, out] sd_mk_backup      | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the sd masking-key backup (164 B) &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sess_ex_sd_create_remote_backup_params
+
+Input buffers for
+[`azihsm_sess_ex_sd_create_remote_backup`](#azihsm_sess_ex_sd_create_remote_backup).
+
+```cpp
+struct azihsm_sess_ex_sd_create_remote_backup_params {
+    const struct azihsm_buffer *masked_sealing_key;
+    const struct azihsm_sd_evidence *receiver_evidence;
+    const struct azihsm_buffer *policy;
+};
+```
+
+ | Field              | Name                                       | Description                                        |
+ | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (180 B)             |
+ | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
+ | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
+
+## azihsm_sess_ex_sd_reseal_remote_backup
+
+Reseal an existing remote backup to a new recipient over a security-domain
+session.
+
+HPKE-opens the source remote backup with the receiver's masked SD-sealing
+key (authenticated by the source sender in `src_evidence`) and reseals the
+recovered backup to the destination receiver (`dest_evidence`), returning the
+resealed remote backup (161 bytes).
+
+The inputs are grouped into an
+[`azihsm_sess_ex_sd_reseal_remote_backup_params`](#azihsm_sess_ex_sd_reseal_remote_backup_params)
+structure. `dst_remote_backup` follows the same two-call size-probe contract
+as the create outputs and is validated **before** the reseal is performed. A
+NULL `params` pointer is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`.
+
+```cpp
+azihsm_status azihsm_sess_ex_sd_reseal_remote_backup(
+    azihsm_handle sess_handle,
+    const struct azihsm_sess_ex_sd_reseal_remote_backup_params *params,
+    struct azihsm_buffer *dst_remote_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                   | Name                                                                                                     | Description                                       |
+ | --------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+ | [in] sess_handle            | [azihsm_handle](#azihsm_handle)                                                                          | security-domain session handle                    |
+ | [in] params                 | [azihsm_sess_ex_sd_reseal_remote_backup_params*](#azihsm_sess_ex_sd_reseal_remote_backup_params)         | reseal-backup input buffers                       |
+ | [in, out] dst_remote_backup | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the resealed remote backup (161 B) &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sess_ex_sd_reseal_remote_backup_params
+
+Input buffers for
+[`azihsm_sess_ex_sd_reseal_remote_backup`](#azihsm_sess_ex_sd_reseal_remote_backup).
+
+```cpp
+struct azihsm_sess_ex_sd_reseal_remote_backup_params {
+    const struct azihsm_buffer *masked_sealing_key;
+    const struct azihsm_sd_evidence *src_evidence;
+    const struct azihsm_sd_evidence *dest_evidence;
+    const struct azihsm_buffer *policy;
+    const struct azihsm_buffer *src_remote_backup;
+};
+```
+
+ | Field              | Name                                       | Description                                        |
+ | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (180 B)           |
+ | src_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | source (sender) attestation evidence               |
+ | dest_evidence      | [azihsm_sd_evidence*](#azihsm_sd_evidence) | destination (receiver) attestation evidence        |
+ | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
+ | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | source remote backup to reseal (161 B)             |
+
+### azihsm_sd_evidence
+
+Attestation evidence for one security-domain-backup party: three certificate
+chains (manufacturer, owner, partition-owner) and a COSE_Sign1 attestation
+report. The DER bytes are borrowed, not copied, and must outlive the call.
+
+```cpp
+struct azihsm_sd_evidence {
+    struct azihsm_sd_cert_chain mfgr_cert_chain;
+    struct azihsm_sd_cert_chain owner_cert_chain;
+    struct azihsm_sd_cert_chain part_owner_cert_chain;
+    const struct azihsm_buffer *report;
+};
+```
+
+ | Field                 | Name                                         | Description                                  |
+ | --------------------- | -------------------------------------------- | -------------------------------------------- |
+ | mfgr_cert_chain       | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | manufacturer certificate chain               |
+ | owner_cert_chain      | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | owner certificate chain                      |
+ | part_owner_cert_chain | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | partition-owner certificate chain            |
+ | report                | [azihsm_buffer*](#azihsm_buffer)             | COSE_Sign1 attestation report                |
+
+### azihsm_sd_cert_chain
+
+One certificate chain in an SD attestation-evidence party: an array of `len`
+[azihsm_buffer](#azihsm_buffer)s, each holding one DER-encoded certificate
+ordered root to leaf (at most `EVIDENCE_CHAIN_MAX_CERTS`).
+
+```cpp
+struct azihsm_sd_cert_chain {
+    const struct azihsm_buffer *certs;
+    uint32_t len;
+};
+```
+
+ | Field | Name                             | Description                                   |
+ | ----- | -------------------------------- | --------------------------------------------- |
+ | certs | [azihsm_buffer*](#azihsm_buffer) | array of DER certificates (root to leaf)      |
+ | len   | uint32_t                         | number of certificates in the chain           |
