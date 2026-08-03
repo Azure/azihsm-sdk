@@ -16,4 +16,4 @@ jobs:
     runs-on: [self-hosted, azihsm-arm64-gh-pool-westus2-New]
     steps:
       - name: echo
-        run: echo "Hello world, built"
+        run: echo "Hello world, Updated change to kick off build"
