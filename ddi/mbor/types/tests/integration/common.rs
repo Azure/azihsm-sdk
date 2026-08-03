@@ -217,32 +217,32 @@ pub fn helper_verify_cert_chain(collaterals: &[Vec<u8>]) -> Result<bool, X509Cer
  /// Retrieves a certificate by ID with retry logic to handle transient
  /// `InvalidCertificate` errors during concurrent iDFU (softreset) operations.
  /// Retries every 50ms until success or `retry_secs` elapses.
- fn helper_get_cert_by_id_with_retry(
-     dev: &<DdiTest as Ddi>::Dev,
-     cert_id: u8,
-     retry_secs: u64,
- ) -> Result<DdiGetCertificateCmdResp, DdiError> {
-     let start = std::time::Instant::now();
-     let retry_window = std::time::Duration::from_secs(retry_secs);
-     let mut result;
+//  fn helper_get_cert_by_id_with_retry(
+//      dev: &<DdiTest as Ddi>::Dev,
+//      cert_id: u8,
+//      retry_secs: u64,
+//  ) -> Result<DdiGetCertificateCmdResp, DdiError> {
+//      let start = std::time::Instant::now();
+//      let retry_window = std::time::Duration::from_secs(retry_secs);
+//      let mut result;
  
-     loop {
-         tracing::debug!("Get Certificate id={}", cert_id);
+//      loop {
+//          tracing::debug!("Get Certificate id={}", cert_id);
  
-         result = helper_get_certificate(dev, cert_id);
+//          result = helper_get_certificate(dev, cert_id);
  
-         if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
-             if start.elapsed() > retry_window {
-                 break;
-             }
-             println!("Retrying the get_cert operation for cert_id {}", cert_id);
-             std::thread::sleep(std::time::Duration::from_millis(50));
-         } else {
-             break;
-         }
-     }
-     result
- }
+//          if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
+//              if start.elapsed() > retry_window {
+//                  break;
+//              }
+//              println!("Retrying the get_cert operation for cert_id {}", cert_id);
+//              std::thread::sleep(std::time::Duration::from_millis(50));
+//          } else {
+//              break;
+//          }
+//      }
+//      result
+//  }
 
 #[allow(dead_code)]
 pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u8> {
@@ -382,7 +382,7 @@ pub fn helper_verify_leaf_cert(
 pub fn helper_get_pota_endorsement(dev: &<DdiTest as Ddi>::Dev) -> (Vec<u8>, Vec<u8>) {
     let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
     let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
-    let leaf_cert_id = get_cert_chain_info.data.num_certs - 1;
+    // let leaf_cert_id = get_cert_chain_info.data.num_certs - 1;
     let cert_resp = if idfu_enabled {
          tracing::debug!("Device is in IDfu mode");
          helper_get_cert_with_retry(dev, 15).unwrap()
