@@ -19,9 +19,9 @@ jobs:
   coverage_ubuntu:
 
     env:
-      JOB_ID: coverage_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+      JOB_ID: coverage_ubuntu-azihsm-x64-gh-westus2-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: [azihsm-x64-gh-westus2-pool]
 
     defaults:
       run:
@@ -71,7 +71,10 @@ jobs:
 
   coverage_windows:
 
-    runs-on: windows-2025-vs2026
+    env:
+      JOB_ID: coverage_windows-azihsm-x64-gh-westus2-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on: [azihsm-x64-gh-westus2-pool]
 
     defaults:
       run:
