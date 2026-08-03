@@ -73,6 +73,21 @@ pub struct HsmSdRemoteBackupResult {
     pub sd_mk_backup: Vec<u8>,
 }
 
+/// Result of `sd_restore_remote_backup`: the refreshed device-local backups
+/// returned after restoring a security domain from a remote backup.
+///
+/// API-layer type with owned bytes. The DDI/wire response type
+/// (`TborSdRestoreRemoteBackupResp`) is converted into it inside the DDI
+/// layer, so the wire type never surfaces to public callers.
+#[derive(Debug, Clone, Default)]
+pub struct HsmSdRestoreResult {
+    /// Local partition-owner-key backup (BKS3 re-masked under the
+    /// partition-local masking key).
+    pub pok_local_backup: Vec<u8>,
+    /// Refreshed security-domain masking-key backup envelope.
+    pub sd_mk_backup: Vec<u8>,
+}
+
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.

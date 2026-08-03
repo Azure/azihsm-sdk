@@ -3,7 +3,7 @@
 
 //! Integration tests for the security-domain sealing-key generation API
 //! ([`HsmSealingKeyGenAlgo`] via [`HsmKeyManager::generate_key`]) against
-//! the FW emulator.
+//! the emulator or hardware backend.
 //!
 //! Property-validation guards run before the device round-trip, so they are
 //! deterministic. The `roundtrip_*` tests provision the partition to
@@ -14,7 +14,7 @@
 use azihsm_api::*;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 
-use crate::utils::emu_helpers::*;
+use crate::utils::partition_ex_helpers::*;
 
 /// Well-formed sealing key props: a `Sealing`-kind P-384 secret key
 /// permitted for derivation only, matching the wire contract.
@@ -33,8 +33,8 @@ fn sealing_props() -> HsmKeyProps {
 /// scalar.
 #[test]
 fn sealing_key_gen_rejects_wrong_bits() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -53,8 +53,8 @@ fn sealing_key_gen_rejects_wrong_bits() {
 /// only permitted usage for a sealing key.
 #[test]
 fn sealing_key_gen_rejects_missing_derive() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -72,8 +72,8 @@ fn sealing_key_gen_rejects_missing_derive() {
 /// secret derive key.
 #[test]
 fn sealing_key_gen_rejects_wrong_kind() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -91,8 +91,8 @@ fn sealing_key_gen_rejects_wrong_kind() {
 /// A `Sealing` derive key that is not a `Secret` is rejected.
 #[test]
 fn sealing_key_gen_rejects_wrong_class() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
@@ -111,8 +111,8 @@ fn sealing_key_gen_rejects_wrong_class() {
 /// `sign`) fails the supported-flags check.
 #[test]
 fn sealing_key_gen_rejects_extra_capability() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -134,8 +134,8 @@ fn sealing_key_gen_rejects_extra_capability() {
 /// unprovisioned partition).
 #[test]
 fn sealing_key_gen_valid_props_pass_host_guards() {
-    let _guard = EMU_LOCK.lock();
-    let session = fresh_co_session();
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
 
     let mut algo = HsmSealingKeyGenAlgo::default();
     let res = HsmKeyManager::generate_key(&session, &mut algo, sealing_props());
@@ -156,7 +156,7 @@ fn sealing_key_gen_valid_props_pass_host_guards() {
 /// plus a P-384 public key — with the expected typed properties.
 #[test]
 fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let session = crate::utils::sd_provision::finalized_co_session();
 
     let mut algo = HsmSealingKeyGenAlgo::default();
@@ -187,7 +187,7 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
 /// and distinct public keys.
 #[test]
 fn sealing_key_gen_roundtrip_yields_distinct_keys() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let session = crate::utils::sd_provision::finalized_co_session();
 
     let generate = || {

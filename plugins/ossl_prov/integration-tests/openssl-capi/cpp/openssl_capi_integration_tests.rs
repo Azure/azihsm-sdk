@@ -299,6 +299,13 @@ mod integration {
         let provider_so = provider_path.join("azihsm_provider.so");
         let conf_path = keymat_dir.join("openssl.cnf");
 
+        // TPM sources when AZIHSM_USE_TPM is set, caller sources otherwise.
+        let (obk_source, pota_source) = if env::var("AZIHSM_USE_TPM").is_ok() {
+            ("tpm", "tpm")
+        } else {
+            ("caller", "caller")
+        };
+
         let content = format!(
             "\
 openssl_conf = openssl_init
@@ -320,8 +327,8 @@ azihsm-bmk-path = {dir}/bmk.bin
 azihsm-muk-path = {dir}/muk.bin
 azihsm-obk-path = {dir}/obk.bin
 azihsm-mobk-path = {dir}/mobk.bin
-azihsm-obk-source = caller
-azihsm-pota-source = caller
+azihsm-obk-source = {obk_source}
+azihsm-pota-source = {pota_source}
 azihsm-pota-private-key-path = {dir}/pota_private_key.der
 azihsm-pota-public-key-path = {dir}/pota_public_key.der
 azihsm-api-revision = 1.0

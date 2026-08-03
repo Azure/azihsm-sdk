@@ -20,6 +20,8 @@
 //! and returns the resulting `&DmaBuf` slice (lifetime tied to the
 //! per-IO allocator scope).
 
+pub(crate) mod aes_encrypt_decrypt;
+pub(crate) mod aes_generate_key;
 pub(crate) mod api_rev;
 pub(crate) mod concat_kdf_derive;
 pub(crate) mod ecc_generate_key;
@@ -200,6 +202,17 @@ pub(crate) mod opcode {
     /// return it masked under the requested scope's masking key (plus the
     /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
     pub(crate) const UNWRAP_KEY: u8 = 0x14;
+
+    /// `AesGenerateKey` — generate a fresh random AES key (128 / 192 /
+    /// 256) under the active session's partition; return it **masked**
+    /// under the requested scope's masking key (nothing is persisted
+    /// on-device).  See [`super::aes_generate_key`].
+    pub(crate) const AES_GENERATE_KEY: u8 = 0x15;
+
+    /// `AesEncryptDecrypt` — AES-CBC encrypt or decrypt a host-supplied
+    /// message using a caller-held masked AES key (unmasked on-device for
+    /// the operation, then discarded).  See [`super::aes_encrypt_decrypt`].
+    pub(crate) const AES_ENCRYPT_DECRYPT: u8 = 0x16;
 
     /// `EccGenerateKey` — generate a fresh ECC keypair on the requested
     /// NIST curve and return the private key masked under the requested
@@ -457,6 +470,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::AES_GENERATE_KEY => aes_generate_key::handle(pal, io, req_buf).await,
+        opcode::AES_ENCRYPT_DECRYPT => aes_encrypt_decrypt::handle(pal, io, req_buf).await,
         opcode::ECC_GENERATE_KEY => ecc_generate_key::handle(pal, io, req_buf).await,
         opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
         opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
@@ -494,6 +509,8 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::AES_GENERATE_KEY
+            | opcode::AES_ENCRYPT_DECRYPT
             | opcode::ECC_GENERATE_KEY
             | opcode::ECC_SIGN
             | opcode::ECDH_DERIVE
@@ -538,6 +555,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
+        | opcode::AES_GENERATE_KEY
+        | opcode::AES_ENCRYPT_DECRYPT
         | opcode::ECC_GENERATE_KEY
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE
@@ -590,6 +609,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
+        | opcode::AES_GENERATE_KEY
+        | opcode::AES_ENCRYPT_DECRYPT
         | opcode::ECC_GENERATE_KEY
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE

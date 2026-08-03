@@ -78,6 +78,8 @@ impl From<SessionControlKind> for u8 {
     }
 }
 
+mod aes_encrypt_decrypt;
+mod aes_generate_key;
 mod api_rev;
 mod concat_kdf_derive;
 mod ecc_generate_key;
@@ -108,6 +110,8 @@ mod session_open_init;
 mod status;
 mod unwrap_key;
 
+pub use aes_encrypt_decrypt::*;
+pub use aes_generate_key::*;
 pub use api_rev::*;
 pub use concat_kdf_derive::*;
 pub use ecc_generate_key::*;

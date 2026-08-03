@@ -257,7 +257,9 @@ fn key_report_rejected_on_cu_session_emu() {
     // Rotate the CU PSK out of the default so the dispatcher's default-PSK
     // gate does not fire first; then reopen a CU session under it.  CU
     // sessions are pinned to `SessionType::PlainText`.
-    let bootstrap = ctx.open_session(CU, SessionType::PlainText);
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
         .expect("rotate CU PSK");
     bootstrap.close().expect("close bootstrap CU session");
@@ -286,7 +288,9 @@ fn key_report_rejected_on_default_psk_emu() {
     // Open a CO session WITHOUT rotating the PSK (still the public
     // default) — the dispatcher's default-PSK gate must reject the command
     // before the handler runs.
-    let session = ctx.open_session(CO_DEFAULT, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO_DEFAULT, SessionType::Authenticated)
+        .expect("open_session must succeed");
 
     let req = TborKeyReportReq {
         session_id: session.session_id(),

@@ -5,17 +5,17 @@
 //!
 //! Backend selection is feature-gated; the same tests run across every
 //! transport. Run with `--features emu` (in-process firmware),
-//! `--features sock` (firmware behind a socket server), or
-//! `--features mock` (transport-contract probes).
+//! `--features sock` (firmware behind a socket server), or with
+//! **no** feature (native OS backend — `nix` on Linux / `win` on
+//! Windows — for on-silicon test runs).
 //!
-//! With **no** feature enabled the crate falls through to the native
-//! OS backend (`nix` on Linux / `win` on Windows), which drives real
-//! silicon. Hardware-only smoke tests live under [`hw`].
+//! `mock` disables the whole harness + `commands` tree: mock rejects
+//! TBOR at the transport layer, so command-level integration tests
+//! are meaningless there. Under `--features mock` this binary
+//! compiles the crate only and runs zero tests.
 
-#[cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
+#[cfg(not(feature = "mock"))]
 pub mod harness;
 
+#[cfg(not(feature = "mock"))]
 pub mod commands;
-
-#[cfg(feature = "hw-tests")]
-pub mod hw;

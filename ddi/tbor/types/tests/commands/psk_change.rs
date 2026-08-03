@@ -3,30 +3,30 @@
 
 //! Integration tests for the TBOR `PskChange` command.
 //!
-//! Cross-test isolation comes from `open_dev`'s factory-reset; no
-//! per-test cleanup is required (see
-//! [`crate::harness::fixture`]). Live sessions are owned by a
-//! [`SessionGuard`] that closes on `Drop`, including during panic
-//! unwind.
+//! Backend is selected at compile time by
+//! [`azihsm_ddi::AzihsmDdi::default`]; cross-test isolation comes
+//! from the factory-reset performed by [`TestCtx::new`], and live
+//! sessions close on `Drop` via [`SessionGuard`].
 //!
 //! Coverage:
-//! * Happy paths (CO + CU), with explicit reopen using the rotated
-//!   PSK to prove the rotation took effect.
+//! * Happy paths (CO + CU), with an explicit reopen under the
+//!   rotated PSK to prove the rotation took effect.
 //! * Reopen with the old (default) PSK fails after rotation.
-//! * One-shot enforcement: second `PskChange` on the same session
+//! * One-shot enforcement: a second `PskChange` on the same session
 //!   surfaces `TborStatus::InvalidPermissions`.
-//! * Envelope-tampering negatives: ciphertext bit-flip and AAD
-//!   bit-flip both surface `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Empty / wrong-length envelope → `TborStatus::TborInvalidFixedLength`
-//!   (the schema pins `psk_envelope` to `PSK_CHANGE_ENVELOPE_LEN`).
-//! * AAD that encodes a session id other than the request's
-//!   session id → `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Envelope encrypted under a *different* session's `param_key`
-//!   shipped through this session → `TborStatus::AeadEnvelopeAuthFailed`.
-//! * Plaintext not exactly `PSK_LEN` (→ wrong envelope length) →
-//!   `TborStatus::TborInvalidFixedLength`.
-
-#![cfg(feature = "emu")]
+//! * Envelope tampering (ciphertext bit-flip, AAD bit-flip) →
+//!   `TborStatus::AeadEnvelopeAuthFailed`.
+//! * AAD that encodes a different session id → same auth failure.
+//! * Envelope encrypted under a different session's `param_key` →
+//!   same auth failure.
+//! * Wrong envelope length (empty, wrong plaintext length, wrong
+//!   AAD length) → `TborStatus::TborInvalidFixedLength`. The
+//!   derive-generated schema decoder in `azihsm_fw_ddi_tbor_types`
+//!   trips the `#[tbor(buffer, len = 100)]` check on both emu and
+//!   hw; the FW response preserves the exact structural fault via
+//!   the `HsmError::Tbor*` → `HsmErr::Tbor*` mapping.
+//! * Hw-only: rotation to a well-known default PSK is rejected with
+//!   `TborStatus::InvalidArg`.
 
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
@@ -34,9 +34,13 @@ use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
+#[cfg(not(feature = "emu"))]
+use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
+#[cfg(not(feature = "emu"))]
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_psk_change_aad;
 use crate::harness::encrypt_psk_envelope;
 use crate::harness::SessionOpenInitOptions;
@@ -84,7 +88,9 @@ fn build_envelope(param_key: &AesKey, aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
 /// bytes.
 fn run_psk_change_happy(role: u8, sty: SessionType) {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(role, sty);
+    let session = ctx
+        .open_session(role, sty)
+        .expect("open_session must succeed");
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("rotate to ROTATED_PSK");
     session.close().expect("close rotating session");
@@ -101,12 +107,12 @@ fn run_psk_change_happy(role: u8, sty: SessionType) {
 }
 
 #[test]
-fn psk_change_happy_cu_emu() {
+fn psk_change_happy_cu() {
     run_psk_change_happy(CU, SessionType::PlainText);
 }
 
 #[test]
-fn psk_change_happy_co_emu() {
+fn psk_change_happy_co() {
     run_psk_change_happy(CO, SessionType::Authenticated);
 }
 
@@ -115,9 +121,11 @@ fn psk_change_happy_co_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_reopen_with_old_psk_fails_emu() {
+fn psk_change_reopen_with_old_psk_fails() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("rotate");
     session.close().expect("close rotating session");
@@ -126,7 +134,7 @@ fn psk_change_reopen_with_old_psk_fails_emu() {
     // `exported` diverges from FW's, so Phase-1 MAC verification
     // (or HPKE auth) fails. Either a host-side or FW-side
     // rejection is acceptable; we only need "must err".
-    let result = ctx.open_session_raw(CU, SessionType::PlainText);
+    let result = ctx.open_session(CU, SessionType::PlainText);
     assert!(
         result.is_err(),
         "reopen with old default PSK must fail after rotation",
@@ -138,9 +146,11 @@ fn psk_change_reopen_with_old_psk_fails_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_second_attempt_same_session_fails_emu() {
+fn psk_change_second_attempt_same_session_fails() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     ctx.psk_change(session.handshake(), &ROTATED_PSK)
         .expect("first rotate");
 
@@ -163,7 +173,7 @@ fn psk_change_second_attempt_same_session_fails_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_envelope_tampered_emu() {
+fn psk_change_envelope_tampered() {
     let ctx = TestCtx::new();
 
     for (label, mutate) in [
@@ -181,7 +191,9 @@ fn psk_change_envelope_tampered_emu() {
             }) as fn(&mut Vec<u8>),
         ),
     ] {
-        let session = ctx.open_session(CU, SessionType::PlainText);
+        let session = ctx
+            .open_session(CU, SessionType::PlainText)
+            .expect("open_session must succeed");
         let mut envelope =
             encrypt_psk_envelope(session.handshake(), &ROTATED_PSK).expect("encrypt envelope");
         mutate(&mut envelope);
@@ -201,15 +213,18 @@ fn psk_change_envelope_tampered_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_empty_envelope_emu() {
+fn psk_change_empty_envelope() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     let req = TborPskChangeReq {
         session_id: session.session_id(),
         psk_envelope: Vec::new(),
     };
-    // The FW schema pins `psk_envelope` to PSK_CHANGE_ENVELOPE_LEN
-    // (100 B), so an empty envelope is rejected at decode.
+    // FW schema pins `psk_envelope` to PSK_CHANGE_ENVELOPE_LEN (100 B);
+    // the derive-generated decoder rejects a wrong length with
+    // `TborInvalidFixedLength` before the handler runs.
     ctx.expect_fw_reject(&req, TborStatus::TborInvalidFixedLength);
 }
 
@@ -218,9 +233,11 @@ fn psk_change_empty_envelope_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_wrong_session_id_in_aad_emu() {
+fn psk_change_wrong_session_id_in_aad() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     // Build an envelope whose AAD encodes a different (bogus)
     // session id. AEAD-GCM tag verifies (the FW recomputes the tag
     // over *these* bytes), but the FW then constant-compares the AAD
@@ -235,24 +252,40 @@ fn psk_change_wrong_session_id_in_aad_emu() {
 }
 
 // ===========================================================================
-// Envelope built under a *different* session's param_key
+// Envelope built under a different session's param_key
+//
+// Encrypt under session A's param_key but ship the request through
+// session B (with B's id in both header and AAD). FW verifies with
+// B's key and the tag fails. Session B is opened on a **second ctx**
+// (via `TestCtx::new_with_path(ctx.path())`) so on hw the crafted
+// request lands on B's fd — `AZIHSM_MAX_SESSIONS_PER_FD = 1` requires
+// the second concurrent session to live on its own fd.
 // ===========================================================================
 
 #[test]
-fn psk_change_envelope_from_other_session_emu() {
-    let ctx = TestCtx::new();
-    let session_a = ctx.open_session(CU, SessionType::PlainText);
-    let session_b = ctx.open_session(CU, SessionType::PlainText);
-    // Encrypt under A's param_key but ship through B (with B's
-    // session id in the request). FW uses B's param_key to verify
-    // the AEAD-GCM tag → mismatch.
+fn psk_change_envelope_from_other_session() {
+    let ctx_a = TestCtx::new();
+    let session_a = ctx_a
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
+
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+    let session_b = ctx_b
+        .open_session(CU, SessionType::PlainText)
+        .expect("open session B on extra dev");
+
     let aad_for_b = build_psk_change_aad(session_b.session_id());
     let envelope = build_envelope(&session_a.handshake().param_key, &aad_for_b, &ROTATED_PSK);
     let req = TborPskChangeReq {
         session_id: session_b.session_id(),
         psk_envelope: envelope,
     };
-    ctx.expect_fw_reject(&req, TborStatus::AeadEnvelopeAuthFailed);
+    let err = ctx_b
+        .tbor(&req)
+        .expect_err("PskChange envelope from session A must be rejected on session B");
+    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+
+    // Both sessions close on drop via their SessionGuards.
 }
 
 // ===========================================================================
@@ -260,14 +293,17 @@ fn psk_change_envelope_from_other_session_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_wrong_plaintext_length_emu() {
+fn psk_change_wrong_plaintext_length() {
     let ctx = TestCtx::new();
     // PSK_LEN ± 1: shortest excursions either side of the canonical
     // length. A wrong plaintext length yields a wrong *envelope* length
     // (ciphertext tracks plaintext for GCM), so the FW schema's fixed
-    // PSK_CHANGE_ENVELOPE_LEN (100 B) rejects both at decode.
+    // PSK_CHANGE_ENVELOPE_LEN (100 B) rejects both with
+    // `TborInvalidFixedLength` in the derive-generated decoder.
     for len in [PSK_LEN - 1, PSK_LEN + 1] {
-        let session = ctx.open_session(CU, SessionType::PlainText);
+        let session = ctx
+            .open_session(CU, SessionType::PlainText)
+            .expect("open_session must succeed");
         let bogus_psk = vec![0xCDu8; len];
         let aad = build_psk_change_aad(session.session_id());
         let envelope = build_envelope(&session.handshake().param_key, &aad, &bogus_psk);
@@ -288,12 +324,14 @@ fn psk_change_wrong_plaintext_length_emu() {
 // ===========================================================================
 
 #[test]
-fn psk_change_wrong_aad_length_emu() {
+fn psk_change_wrong_aad_length() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText);
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     // 64 bytes of arbitrary AAD (valid AEAD granularity) inflates the
-    // envelope past PSK_CHANGE_ENVELOPE_LEN (100 B), so the FW schema's
-    // fixed-length check rejects it at decode.
+    // envelope past PSK_CHANGE_ENVELOPE_LEN (100 B); the derive-
+    // generated decoder rejects with `TborInvalidFixedLength`.
     let long_aad = vec![0u8; 64];
     let envelope = build_envelope(&session.handshake().param_key, &long_aad, &ROTATED_PSK);
     let req = TborPskChangeReq {
@@ -301,4 +339,54 @@ fn psk_change_wrong_aad_length_emu() {
         psk_envelope: envelope,
     };
     ctx.expect_fw_reject(&req, TborStatus::TborInvalidFixedLength);
+}
+
+// ===========================================================================
+// Hardware-only: rotation to a default PSK must be rejected
+//
+// Rotating a partition's PSK back to `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`
+// would let anyone with default-PSK knowledge re-establish a session,
+// defeating the point of rotation. FW must reject with
+// `TborStatus::InvalidArg` regardless of which role requests it and
+// which default value is targeted (a CU must not be able to push the
+// CO PSK back to default either).
+//
+// Hw-only: the reject lives in the silicon firmware, not in the
+// in-tree Rust FW that emu runs. Emu accepts the rotation.
+// ===========================================================================
+
+#[cfg(not(feature = "emu"))]
+fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {
+    let ctx = TestCtx::new();
+    let session = ctx
+        .open_session(role, sty)
+        .expect("open_session must succeed");
+    let err = ctx
+        .psk_change(session.handshake(), new_psk)
+        .expect_err("psk_change to a default PSK must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+#[cfg(not(feature = "emu"))]
+#[test]
+fn psk_change_cu_to_default_cu_rejected() {
+    run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CU);
+}
+
+#[cfg(not(feature = "emu"))]
+#[test]
+fn psk_change_cu_to_default_co_rejected() {
+    run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
+}
+
+#[cfg(not(feature = "emu"))]
+#[test]
+fn psk_change_co_to_default_co_rejected() {
+    run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
+}
+
+#[cfg(not(feature = "emu"))]
+#[test]
+fn psk_change_co_to_default_cu_rejected() {
+    run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CU);
 }
