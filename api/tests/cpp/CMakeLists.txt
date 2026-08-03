@@ -99,6 +99,7 @@ set(SOURCE
     algo/sealing/keygen_tests.cpp
     sd/create_backup_tests.cpp
     sd/reseal_tests.cpp
+    sd/restore_tests.cpp
     resiliency/init_stress_tests.cpp
     resiliency/aes_stress_tests.cpp
     resiliency/ecc_stress_tests.cpp
