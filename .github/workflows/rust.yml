@@ -1,0 +1,421 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main, dev, fw-main ]
+  pull_request:
+    branches: [ main, dev, fw-main ]
+  merge_group:
+    branches: [ main, dev, fw-main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
+env:
+  CARGO_TERM_COLOR: always
+  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+
+jobs:
+  build_ubuntu:
+
+    name: build_ubuntu (${{ matrix.image }})
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=build_ubuntu-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+      id: ubuntu-setup
+    - name: Install nightly rustfmt
+      if: steps.ubuntu-setup.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+    - name: Install clippy
+      if: steps.ubuntu-setup.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component clippy
+    - name: Run Copyright
+      run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
+    - name: Cargo format
+      run: cargo xtask precheck --fmt
+    - name: Cargo Clippy
+      run: cargo xtask precheck --clippy
+
+  test_ubuntu_mock:
+
+    name: test_ubuntu_mock (${{ matrix.image }})
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_mock-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_mock-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_api:
+
+    name: test_ubuntu_api (${{ matrix.image }})
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_api-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_api-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-api.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_misc:
+
+    name: test_ubuntu_misc (${{ matrix.image }})
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_misc-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_misc-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: SDK Run all mock tests table-4
+      id: test-mock-table-4
+      run: cargo xtask precheck --nextest -p azihsm_ddi_mbor_types -F mock,table-4 --profile ci-mock-table-4
+      continue-on-error: true
+    - name: SDK Run all mock tests table-64
+      id: test-mock-table-64
+      run: cargo xtask precheck --nextest -p azihsm_ddi_mbor_types -F mock,table-64 --profile ci-mock-table-64
+      continue-on-error: true
+    - name: SDK Run TBOR types tests against emu backend
+      id: test-tbor-emu
+      run: cargo xtask precheck --nextest -p azihsm_ddi_tbor_types -F emu --profile ci-tbor-emu
+      continue-on-error: true
+    - name: Run resiliency fault injection tests
+      id: test-res-fault
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' || steps.test-tbor-emu.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_smoke:
+
+    name: test_ubuntu_smoke (${{ matrix.image }})
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_smoke-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_smoke-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run emu smoke tests
+      id: test-emu-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-emu-smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_emu_ddi:
+
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     image: [azihsm-arm64-ubuntu2404-image]
+
+    # runs-on:
+    # - self-hosted
+    # - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    # - 1ES.ImageOverride=${{ matrix.image }}
+    # - JobId=test_ubuntu_emu_ddi-${{ matrix.image }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=azihsm-arm64-gh-westus2-pool
+    - 1ES.ImageOverride=azihsm-arm64-ubuntu2404-image
+    - JobId=test_ubuntu_emu_ddi-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run emu DDI tests
+      id: test-emu-ddi
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --profile ci-emu-ddi
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-ddi.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  build_windows:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+      id: windows-setup
+    - name: Install nightly rustfmt
+      if: steps.windows-setup.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+    - name: Install clippy
+      if: steps.windows-setup.outputs.cache-hit == 'true'
+      run: cargo xtask rustup-component-add --component clippy
+    - name: Run Copyright
+      run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
+    - name: Cargo format
+      run: cargo xtask precheck --fmt
+    - name: Cargo Clippy
+      run: cargo xtask precheck --clippy
+
+  test_windows_mock:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run all mock tests (except azihsm_api_tests)
+      id: test-mock
+      run: cargo xtask precheck --nextest --exclude azihsm_api_tests --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_api:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run azihsm_api_tests
+      id: test-api
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-api.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_misc:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run resiliency fault injection tests
+      id: test-res-fault
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_smoke:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run emu smoke tests
+      id: test-emu-smoke
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --filter smoke --profile ci-emu-smoke
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-smoke.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_windows_emu_ddi:
+
+    runs-on: windows-2025-vs2026
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/windows-setup
+    - name: Run emu DDI tests
+      id: test-emu-ddi
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --profile ci-emu-ddi
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-ddi.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
