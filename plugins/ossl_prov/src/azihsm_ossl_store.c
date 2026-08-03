@@ -406,6 +406,21 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
             ctx->is_session_key = (is_session != 0);
         }
     }
+    /* Any other kind leaves the context's key properties unpopulated, so
+     * fail here rather than handing back a half-initialized context. */
+    else
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_KEY,
+            "masked key has unsupported key kind %u",
+            (unsigned int)actual_kind
+        );
+        store_ctx_delete_key_handles(ctx);
+        OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
+        OPENSSL_free(masked_buf.ptr);
+        return OSSL_FAILURE;
+    }
 
     OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
     OPENSSL_free(masked_buf.ptr);
