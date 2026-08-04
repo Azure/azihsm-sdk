@@ -380,10 +380,9 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
         sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
         info: [0xAB; POLICY_INFO_LEN],
-        // Enable peer cloning so this one backing policy also drives the
-        // `SdCreatePeerBackup` / `SdRestorePeerBackup` tests; the flag is
-        // inert for the remote/reseal/restore commands, which don't gate on
-        // it.
+        // Enable peer cloning so this backing policy drives the
+        // `SdCreatePeerBackup` tests; the flag is inert for the
+        // remote/reseal/restore commands, which don't gate on it.
         flags: PolicyFlags::new().with_allow_peer_cloning(true),
         ..PartPolicy::zeroed()
     }
