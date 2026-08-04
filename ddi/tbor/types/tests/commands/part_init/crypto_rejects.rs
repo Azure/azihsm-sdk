@@ -666,24 +666,29 @@ fn part_init_valid_envelope_cannot_be_replayed_emu() {
     ctx.expect_fw_reject(&req, TborStatus::PtaKeyAlreadySet);
 }
 
-/// Build a valid `mach_seed_envelope` for session A, close session A, open
-/// session B, and submit A's stale envelope through session B.
+/// Build a `mach_seed_envelope` using session A's parameter key, close
+/// session A, open session B, and submit the envelope through session B.
 ///
-/// Even if firmware reuses an internal session slot or session identifier,
-/// session B must receive fresh cryptographic state. The stale envelope must
-/// therefore fail authentication under B's `param_key`.
+/// The envelope uses session B's id in its authenticated AAD, preventing an
+/// AAD-versus-request mismatch from causing the rejection. Therefore, an
+/// authentication failure demonstrates that session B received fresh
+/// cryptographic key material rather than session A's parameter key.
 #[test]
 fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
     let ctx = TestCtx::new();
 
     let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let stale_envelope =
-        encrypt_mach_seed_envelope(&session_a, &mach_seed()).expect("seal envelope for session A");
+    let param_key_a = session_a.param_key.clone();
 
     ctx.session_close(session_a.session_id)
         .expect("close session A");
 
     let session_b = super::open_co_with(&ctx, &ROTATED_CO_PSK);
+
+    // Use session B's id in the AAD so the explicit AAD/session-id check
+    // cannot be the reason for rejection, but seal with session A's key.
+    let aad_for_b = build_part_init_mach_seed_aad(session_b.session_id);
+    let stale_envelope = build_envelope(&param_key_a, &aad_for_b, &mach_seed());
 
     let req = make_part_init_req(session_b.session_id, stale_envelope);
 
