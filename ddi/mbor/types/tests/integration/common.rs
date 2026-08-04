@@ -182,7 +182,7 @@ pub fn helper_verify_cert_chain(collaterals: &[Vec<u8>]) -> Result<bool, X509Cer
 /// `InvalidCertificate` errors that occur during concurrent iDFU (softreset) operations.
 /// Retries the `get_cert` call every 50ms until it succeeds or the specified
 /// `retry_secs` window elapses. Returns the last result (success or error).
- fn helper_get_cert_with_retry(
+pub fn helper_get_cert_with_retry(
      dev: &<AzihsmDdi as Ddi>::Dev,
      retry_secs: u64,
  ) -> Result<DdiGetCertificateCmdResp, DdiError> {
