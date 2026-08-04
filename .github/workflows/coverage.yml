@@ -74,7 +74,7 @@ jobs:
     env:
       JOB_ID: coverage_windows-azihsm-x64-gh-westus2-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
-    runs-on: [azihsm-x64-gh-westus2-pool]
+    runs-on: [azihsm-x64-gh-westus2-pool, 1ES.ImageOverride=azihsm-x64-MMSWindows2022-image]
 
     defaults:
       run:
