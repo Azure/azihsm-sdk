@@ -152,6 +152,66 @@ fn test_sha_digest_kat_smoke() {
 }
 
 #[test]
+fn test_sha_digest_multiblock_smoke() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Each message is longer than one hash block (SHA-256 block = 64
+            // bytes, SHA-384/512 block = 128 bytes), so the engine runs
+            // several compression rounds and the digest is emitted in NIST
+            // big-endian byte order. A matching known-answer digest confirms
+            // both the multi-block path and the per-word byte-swap of the
+            // output.
+
+            // SHA-256 over a 56-byte message (spans two 64-byte blocks).
+            check_digest(
+                dev,
+                session_id,
+                DdiHashAlgorithm::Sha256,
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                &[
+                    0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c,
+                    0x3e, 0x60, 0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec,
+                    0xed, 0xd4, 0x19, 0xdb, 0x06, 0xc1,
+                ],
+            );
+
+            // SHA-384 over a 112-byte message (spans two 128-byte blocks).
+            check_digest(
+                dev,
+                session_id,
+                DdiHashAlgorithm::Sha384,
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn\
+                  hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+                &[
+                    0x09, 0x33, 0x0c, 0x33, 0xf7, 0x11, 0x47, 0xe8, 0x3d, 0x19, 0x2f, 0xc7, 0x82,
+                    0xcd, 0x1b, 0x47, 0x53, 0x11, 0x1b, 0x17, 0x3b, 0x3b, 0x05, 0xd2, 0x2f, 0xa0,
+                    0x80, 0x86, 0xe3, 0xb0, 0xf7, 0x12, 0xfc, 0xc7, 0xc7, 0x1a, 0x55, 0x7e, 0x2d,
+                    0xb9, 0x66, 0xc3, 0xe9, 0xfa, 0x91, 0x74, 0x60, 0x39,
+                ],
+            );
+
+            // SHA-512 over the same 112-byte message (spans two 128-byte blocks).
+            check_digest(
+                dev,
+                session_id,
+                DdiHashAlgorithm::Sha512,
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn\
+                  hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+                &[
+                    0x8e, 0x95, 0x9b, 0x75, 0xda, 0xe3, 0x13, 0xda, 0x8c, 0xf4, 0xf7, 0x28, 0x14,
+                    0xfc, 0x14, 0x3f, 0x8f, 0x77, 0x79, 0xc6, 0xeb, 0x9f, 0x7f, 0xa1, 0x72, 0x99,
+                    0xae, 0xad, 0xb6, 0x88, 0x90, 0x18, 0x50, 0x1d, 0x28, 0x9e, 0x49, 0x00, 0xf7,
+                    0xe4, 0x33, 0x1b, 0x99, 0xde, 0xc4, 0xb5, 0x43, 0x3a, 0xc7, 0xd3, 0x29, 0xee,
+                    0xb6, 0xdd, 0x26, 0x54, 0x5e, 0x96, 0xe5, 0x5b, 0x87, 0x4b, 0xe9, 0x09,
+                ],
+            );
+        },
+    );
+}
+
+#[test]
 fn test_sha_digest_no_session_smoke() {
     ddi_dev_test(
         common_setup,
