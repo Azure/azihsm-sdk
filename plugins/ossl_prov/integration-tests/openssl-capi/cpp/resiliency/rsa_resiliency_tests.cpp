@@ -19,6 +19,10 @@ class rsa_resiliency : public resiliency_base
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+//
+// These run on the default key form (RSA-CRT).  Surviving a reset is a
+// property of key restoration rather than of the stored form, so they are not
+// parameterised over azihsm.key_kind; see algo/rsa for that coverage.
 
 /// RSA PKCS#1 sign/verify round-trips survive concurrent partition resets.
 TEST_F(rsa_resiliency, rsa_sign_verify_survives_resets)

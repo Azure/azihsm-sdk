@@ -40,6 +40,7 @@ typedef struct
     char masked_key_file[AZIHSM_MAX_FILE_PATH];
     char input_key_file[AZIHSM_MAX_FILE_PATH];
     char wrapped_key_file[AZIHSM_MAX_FILE_PATH];
+    azihsm_key_kind key_kind; /* private key form: AZIHSM_KEY_KIND_RSA{,_CRT} */
 } AZIHSM_RSA_GEN_CTX;
 
 typedef struct

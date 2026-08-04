@@ -39,7 +39,7 @@ impl HsmRsaPrivateKey {
     ///
     /// This is a fail-fast validation used by operations like unwrapping/import.
     /// It enforces:
-    /// - `kind` must be [`HsmKeyKind::Rsa`]
+    /// - `kind` must be [`HsmKeyKind::Rsa`] or [`HsmKeyKind::RsaCrt`]
     /// - `class` must be [`HsmKeyClass::Private`]
     /// - key size must be supported (see [`validate_key_size`])
     /// - `ecc_curve` must be unset (RSA keys must not specify an ECC curve)
@@ -53,8 +53,8 @@ impl HsmRsaPrivateKey {
         //RSA private key supported flags are DECRYPT, UNWRAP, SIGN
         let supported_flags = HsmKeyFlags::DECRYPT | HsmKeyFlags::SIGN | HsmKeyFlags::UNWRAP;
 
-        // Kind/class: ensure we're validating an AES *secret* key.
-        if props.kind() != HsmKeyKind::Rsa {
+        // Kind/class: ensure we're validating an RSA *private* key.
+        if props.kind() != HsmKeyKind::Rsa && props.kind() != HsmKeyKind::RsaCrt {
             Err(HsmError::InvalidKeyProps)?;
         }
 
