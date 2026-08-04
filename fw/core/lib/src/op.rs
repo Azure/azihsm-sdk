@@ -279,6 +279,7 @@ impl SessionCtrl {
             | opcode::ECC_SIGN
             | opcode::ECDH_DERIVE
             | opcode::RSA_MOD_EXP
+            | opcode::HASH
             | opcode::HKDF_DERIVE
             | opcode::CONCAT_KDF_DERIVE => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,

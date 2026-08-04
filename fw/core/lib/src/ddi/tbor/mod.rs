@@ -29,6 +29,7 @@ pub(crate) mod ecc_sign;
 pub(crate) mod ecdh_derive;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
+pub(crate) mod hash;
 pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod hmac_generate_key;
@@ -237,14 +238,15 @@ pub(crate) mod opcode {
     /// underlying RSA decrypt / sign.  See [`super::rsa_mod_exp`].
     pub(crate) const RSA_MOD_EXP: u8 = 0x1A;
 
+    /// `Hash` — compute a SHA-256 / 384 / 512 digest of a
+    /// host-supplied message.  A pure hashing utility with no key or
+    /// partition state.  See [`super::hash`].
+    pub(crate) const HASH: u8 = 0x1B;
+
     /// `HkdfDerive` — derive key material (AES / HMAC) from a caller-held
     /// masked ECDH shared secret via HKDF (RFC 5869), and return the
     /// derived key masked under the requested scope's masking key.  See
     /// [`super::hkdf_derive`].
-    ///
-    /// `0x1A` / `0x1B` are reserved by the sibling RSA / Hash crypto
-    /// commands (separate branches), so `HkdfDerive` takes the next free
-    /// opcode, `0x1C`.
     pub(crate) const HKDF_DERIVE: u8 = 0x1C;
 
     /// `ConcatKdfDerive` — derive key material (AES / HMAC) from a
@@ -476,6 +478,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
         opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
         opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
+        opcode::HASH => hash::handle(pal, io, req_buf).await,
         opcode::HKDF_DERIVE => hkdf_derive::handle(pal, io, req_buf).await,
         opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
@@ -515,6 +518,7 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::ECC_SIGN
             | opcode::ECDH_DERIVE
             | opcode::RSA_MOD_EXP
+            | opcode::HASH
             | opcode::HKDF_DERIVE
             | opcode::CONCAT_KDF_DERIVE
     )
@@ -561,6 +565,7 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE
         | opcode::RSA_MOD_EXP
+        | opcode::HASH
         | opcode::HKDF_DERIVE
         | opcode::CONCAT_KDF_DERIVE => true,
         // Default-deny: any future opcode is treated as in-session
@@ -615,6 +620,7 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE
         | opcode::RSA_MOD_EXP
+        | opcode::HASH
         | opcode::HKDF_DERIVE
         | opcode::CONCAT_KDF_DERIVE => true,
         _ => true,
