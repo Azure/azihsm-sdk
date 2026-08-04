@@ -106,5 +106,5 @@ jobs:
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
       run: |
-        echo "One or more tests failed."
+        echo "One or more tests failed in this job."
         exit 1
