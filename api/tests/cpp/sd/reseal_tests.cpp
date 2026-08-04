@@ -12,9 +12,10 @@
 // and the attested sender key match those that sealed the source.
 //
 // Like the create-backup tests, this needs the two-phase TBOR HPKE
-// handshake and a fully provisioned partition, which only the emu backend
-// provides, so it is gated to `AZIHSM_FEATURE_EMU`.
-#if defined(AZIHSM_FEATURE_EMU)
+// handshake and a fully provisioned partition, which the mock backend does
+// not implement, so it is excluded from the mock lane and runs on the emu
+// and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <azihsm_api.h>
@@ -313,4 +314,4 @@ TEST_F(azihsm_sd_reseal_backup, reseal_backup_null_params)
     });
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)

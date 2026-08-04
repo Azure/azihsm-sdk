@@ -4,7 +4,7 @@
 //! RAII guard for a live TBOR session.
 //!
 //! A [`SessionGuard`] owns the handshake carrier produced by
-//! [`TestCtx::open_session_raw`](crate::harness::TestCtx::open_session_raw)
+//! [`TestCtx::open_session`](crate::harness::TestCtx::open_session)
 //! and closes the session when dropped — including when the test is
 //! unwinding from a failed assertion. The emulator's session table
 //! is process-global and the per-test serialisation provided by
@@ -21,6 +21,8 @@
 //! [`TestCtx::session_close`](crate::harness::TestCtx::session_close)
 //! directly. The guard exists for the well-behaved 90% case, not for
 //! those intentional misuses.
+
+use core::fmt;
 
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_types::SessionType;
@@ -73,6 +75,15 @@ impl<'ctx> SessionGuard<'ctx> {
     }
 }
 
+impl fmt::Debug for SessionGuard<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionGuard")
+            .field("session_id", &self.handshake.session_id)
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
 impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
         if self.closed {
@@ -95,13 +106,16 @@ impl TestCtx {
     /// Open a session via the happy-path two-phase handshake and
     /// return a [`SessionGuard`] that will close it on `Drop`.
     ///
-    /// Panics on any FW or transport error; negative-path tests must
-    /// call [`TestCtx::session_open_init`] (etc.) directly so they
-    /// can inspect the failure mode.
-    pub fn open_session(&self, psk_id: u8, session_type: SessionType) -> SessionGuard<'_> {
-        let handshake = self
-            .open_session_raw(psk_id, session_type)
-            .expect("TestCtx::open_session: handshake must succeed on the happy path");
-        SessionGuard::new(self, handshake)
+    /// Fallible: propagates any FW or transport error from the
+    /// underlying [`Self::open_session_raw`]. Happy-path callers
+    /// typically `.expect(...)` the returned `Result`; negative-path
+    /// tests inspect the `Err` directly.
+    pub fn open_session(
+        &self,
+        psk_id: u8,
+        session_type: SessionType,
+    ) -> DdiResult<SessionGuard<'_>> {
+        let handshake = self.open_session_raw(psk_id, session_type)?;
+        Ok(SessionGuard::new(self, handshake))
     }
 }

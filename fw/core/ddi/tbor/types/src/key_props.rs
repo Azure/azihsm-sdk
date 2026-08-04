@@ -156,3 +156,39 @@ impl KeyUsage {
         self.has(Self::UNWRAP)
     }
 }
+
+/// Derived-key type selector for the KDF commands (`HkdfDerive`,
+/// `ConcatKdfDerive`) on the TBOR wire.
+///
+/// The 1-byte discriminants mirror the KDF-eligible subset of the MBOR
+/// `DdiKeyType` values (`Aes128 = 10` … `VarHmac512 = 32`) so the two
+/// convert losslessly.  Kept as an [`open_enum`] so an unrecognized
+/// discriminant round-trips as `KdfKeyType(x)` and is rejected on-device
+/// rather than failing to decode.  Only symmetric outputs are derivable:
+/// the fixed-length `HmacSha*` outputs derive the hash's natural key
+/// length, while the `VarHmac*` outputs take an explicit `key_length`.
+#[repr(u8)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KdfKeyType {
+    /// AES-128 (16-byte key).
+    Aes128 = 10,
+    /// AES-192 (24-byte key).
+    Aes192 = 11,
+    /// AES-256 (32-byte key).
+    Aes256 = 12,
+
+    /// HMAC-SHA-256 key, fixed 32-byte length.
+    HmacSha256 = 25,
+    /// HMAC-SHA-384 key, fixed 48-byte length.
+    HmacSha384 = 26,
+    /// HMAC-SHA-512 key, fixed 64-byte length.
+    HmacSha512 = 27,
+
+    /// Variable-length HMAC-SHA-256 key (`key_length` in 32..=64).
+    VarHmac256 = 30,
+    /// Variable-length HMAC-SHA-384 key (`key_length` in 48..=128).
+    VarHmac384 = 31,
+    /// Variable-length HMAC-SHA-512 key (`key_length` in 64..=128).
+    VarHmac512 = 32,
+}

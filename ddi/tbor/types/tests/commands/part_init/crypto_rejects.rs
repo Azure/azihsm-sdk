@@ -27,7 +27,7 @@ use crate::harness::TestCtx;
 /// tag verification must fail before any plaintext is exposed, and
 /// the handler surfaces [`TborStatus::AeadEnvelopeAuthFailed`].
 #[test]
-fn part_init_envelope_tampered_emu() {
+fn part_init_envelope_tampered() {
     use crate::harness::encrypt_mach_seed_envelope;
 
     let ctx = TestCtx::new();
@@ -62,7 +62,7 @@ fn part_init_envelope_tampered_emu() {
 /// [`TborStatus::AeadEnvelopeAuthFailed`]. Mirrors the equivalent
 /// `psk_change_envelope_from_other_session_emu` test.
 #[test]
-fn part_init_envelope_from_other_session_emu() {
+fn part_init_envelope_from_other_session() {
     let ctx = TestCtx::new();
 
     // Session A: rotated CO (clears default-PSK gate). Close it
@@ -108,7 +108,7 @@ fn part_init_envelope_from_other_session_emu() {
 /// check rejects it at decode with
 /// [`TborStatus::TborInvalidFixedLength`] before any AEAD work.
 #[test]
-fn part_init_wrong_aad_length_emu() {
+fn part_init_wrong_aad_length() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let long_aad = vec![0u8; 64];
@@ -135,7 +135,7 @@ fn part_init_wrong_aad_length_emu() {
 /// of the canonical length. Mirrors
 /// `psk_change_wrong_plaintext_length_emu`.
 #[test]
-fn part_init_wrong_mach_seed_length_emu() {
+fn part_init_wrong_mach_seed_length() {
     let ctx = TestCtx::new();
     // Hoist bootstrap out of the loop: PartInit's length check rejects
     // before any partition-state mutation, so the same rotated-CO
@@ -171,7 +171,7 @@ fn part_init_wrong_mach_seed_length_emu() {
 /// `build_part_init_mach_seed_aad(req.session_id)` and rejects with
 /// [`TborStatus::AeadEnvelopeAuthFailed`].
 #[test]
-fn part_init_wrong_session_id_in_aad_emu() {
+fn part_init_wrong_session_id_in_aad() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! InitBk3 smoke tests for the emu backend.
+//! InitBk3 smoke tests for the emu/mock backend.
 //!
 //! Exercises:
 //! - Successful one-shot init returns a `masked_bk3` envelope (the
@@ -21,6 +21,7 @@
 //!   called again — the new `BK_BOOT` produces a different
 //!   `masked_bk3`.
 
+#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
 use azihsm_ddi::*;
