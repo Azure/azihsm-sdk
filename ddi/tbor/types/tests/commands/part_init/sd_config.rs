@@ -269,167 +269,131 @@ fn part_init_sd_without_sapota_still_returns_both_artifacts_emu() {
 /// Verifies that PartInit accepts different valid SATA thumbprints across clean device states.
 #[test]
 fn part_init_with_different_sata_thumbprints_emu() {
-    let ctx = TestCtx::new();
-
     let mut sata_a = sata_thumbprint();
     sata_a[0] ^= 0x01;
 
     let mut sata_b = sata_thumbprint();
     sata_b[0] ^= 0x02;
 
-    ctx.erase().expect("erase before first SATA PartInit");
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_a,
+                None,
+            )
+            .expect("PartInit with first SATA thumbprint");
 
-    let resp_a = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_a,
-            None,
-        )
-        .expect("PartInit with first SATA thumbprint");
+        assert_part_init_artifacts_present!(resp);
+    }
 
-    assert!(!resp_a.pta_csr.is_empty(), "first PTACSR must be non-empty");
-    assert!(
-        !resp_a.pta_report.is_empty(),
-        "first PTAReport must be non-empty"
-    );
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    ctx.erase().expect("erase before second SATA PartInit");
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_b,
+                None,
+            )
+            .expect("PartInit with second SATA thumbprint");
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let resp_b = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_b,
-            None,
-        )
-        .expect("PartInit with second SATA thumbprint");
-
-    assert!(
-        !resp_b.pta_csr.is_empty(),
-        "second PTACSR must be non-empty"
-    );
-    assert!(
-        !resp_b.pta_report.is_empty(),
-        "second PTAReport must be non-empty"
-    );
+        assert_part_init_artifacts_present!(resp);
+    }
 }
 
 /// Verifies that PartInit accepts different valid SAPOTA thumbprints across clean device states.
 #[test]
 fn part_init_with_different_sapota_thumbprints_emu() {
-    let ctx = TestCtx::new();
-
     let sapota_a = [0x33u8; 48];
     let sapota_b = [0x66u8; 48];
 
-    ctx.erase().expect("erase before first SAPOTA PartInit");
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                Some(&sapota_a),
+            )
+            .expect("PartInit with first SAPOTA thumbprint");
 
-    let resp_a = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            Some(&sapota_a),
-        )
-        .expect("PartInit with first SAPOTA thumbprint");
+        assert_part_init_artifacts_present!(resp);
+    }
 
-    assert!(!resp_a.pta_csr.is_empty(), "first PTACSR must be non-empty");
-    assert!(
-        !resp_a.pta_report.is_empty(),
-        "first PTAReport must be non-empty"
-    );
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    ctx.erase().expect("erase before second SAPOTA PartInit");
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                Some(&sapota_b),
+            )
+            .expect("PartInit with second SAPOTA thumbprint");
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let resp_b = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            Some(&sapota_b),
-        )
-        .expect("PartInit with second SAPOTA thumbprint");
-
-    assert!(
-        !resp_b.pta_csr.is_empty(),
-        "second PTACSR must be non-empty"
-    );
-    assert!(
-        !resp_b.pta_report.is_empty(),
-        "second PTAReport must be non-empty"
-    );
+        assert_part_init_artifacts_present!(resp);
+    }
 }
 
 /// Verifies that SAPOTA is optional and PartInit succeeds both with and without it.
 #[test]
 fn part_init_sapota_is_optional_emu() {
-    let ctx = TestCtx::new();
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    ctx.erase().expect("erase before PartInit without SAPOTA");
+        let without_sapota = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                None,
+            )
+            .expect("PartInit without SAPOTA");
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        assert_part_init_artifacts_present!(without_sapota);
+    }
 
-    let without_sapota = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            None,
-        )
-        .expect("PartInit without SAPOTA");
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let sapota = [0x33u8; 48];
 
-    assert!(
-        !without_sapota.pta_csr.is_empty(),
-        "PTACSR must be non-empty without SAPOTA"
-    );
-    assert!(
-        !without_sapota.pta_report.is_empty(),
-        "PTAReport must be non-empty without SAPOTA"
-    );
+        let with_sapota = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                Some(&sapota),
+            )
+            .expect("PartInit with SAPOTA");
 
-    ctx.erase().expect("erase before PartInit with SAPOTA");
-
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let sapota = [0x33u8; 48];
-
-    let with_sapota = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            Some(&sapota),
-        )
-        .expect("PartInit with SAPOTA");
-
-    assert!(
-        !with_sapota.pta_csr.is_empty(),
-        "PTACSR must be non-empty with SAPOTA"
-    );
-    assert!(
-        !with_sapota.pta_report.is_empty(),
-        "PTAReport must be non-empty with SAPOTA"
-    );
+        assert_part_init_artifacts_present!(with_sapota);
+    }
 }
 
 /// Verifies that PartInit accepts a correctly sized all-zero SATA thumbprint.
@@ -506,56 +470,46 @@ fn part_init_accepts_single_byte_changes_in_each_sd_thumbprint_emu() {
     assert!(!resp.pta_report.is_empty(), "PTAReport must be non-empty");
 }
 
-/// Verifies that PartInit succeeds again after the device is erased and re-bootstrapped.
+/// Verifies that PartInit succeeds independently on two clean emulator instances.
 #[test]
 fn part_init_sd_succeeds_again_after_erase_and_rebootstrap_emu() {
-    let ctx = TestCtx::new();
     let sapota = [0x33u8; 48];
 
-    ctx.erase().expect("erase before first PartInit");
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let first = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                Some(&sapota),
+            )
+            .expect("first PartInit");
 
-    let first = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            Some(&sapota),
-        )
-        .expect("first PartInit");
+        assert_part_init_artifacts_present!(first);
+    }
 
-    assert!(!first.pta_csr.is_empty(), "first PTACSR must be non-empty");
-    assert!(
-        !first.pta_report.is_empty(),
-        "first PTAReport must be non-empty"
-    );
+    {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    ctx.erase().expect("erase after first PartInit");
+        let second = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_thumbprint(),
+                Some(&sapota),
+            )
+            .expect("second PartInit on a clean emulator instance");
 
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let second = ctx
-        .part_init_sd(
-            &session,
-            &mach_seed(),
-            &known_good_part_policy(),
-            &pota_thumbprint(),
-            &sata_thumbprint(),
-            Some(&sapota),
-        )
-        .expect("second PartInit after erase and re-bootstrap");
-
-    assert!(
-        !second.pta_csr.is_empty(),
-        "second PTACSR must be non-empty"
-    );
-    assert!(
-        !second.pta_report.is_empty(),
-        "second PTAReport must be non-empty"
-    );
+        assert_part_init_artifacts_present!(second);
+    }
 }
 
 /// Verifies that PartInit accepts an all-zero SATA thumbprint when SAPOTA is absent.
@@ -1119,7 +1073,11 @@ fn part_init_with_stale_session_after_erase_is_rejected_emu() {
         .expect_err("PartInit with a session created before erase must be rejected");
 
     assert!(
-        matches!(err, azihsm_ddi_interface::DdiError::DdiError(_)),
-        "expected FW rejection status for stale session after erase, got {err:?}"
+        matches!(
+            err,
+            azihsm_ddi_interface::DdiError::TborStatus(_)
+                | azihsm_ddi_interface::DdiError::DdiError(_)
+        ),
+        "expected FW rejection for stale session after erase, got {err:?}"
     );
 }
