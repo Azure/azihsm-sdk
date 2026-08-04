@@ -12,7 +12,6 @@
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
 
-use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -24,7 +23,6 @@ use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
-use super::part_policy_with_flags;
 use super::pota_thumbprint;
 use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
