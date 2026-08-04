@@ -14,6 +14,10 @@ const ENVELOPE_IV_LEN: usize = 12;
 const PART_INIT_AAD_LEN: usize = 32;
 const ENVELOPE_CIPHERTEXT_LEN: usize = MACH_SEED_LEN;
 const ENVELOPE_TAG_LEN: usize = 16;
+const ENVELOPE_MAGIC_OFFSET: usize = 0;
+const ENVELOPE_MAGIC_LEN: usize = 4;
+const ENVELOPE_ALG_OFFSET: usize = 4;
+const ENVELOPE_RESERVED_OFFSET: usize = 5;
 
 const MACH_SEED_ENVELOPE_LEN: usize = ENVELOPE_HEADER_LEN
     + ENVELOPE_IV_LEN
@@ -33,6 +37,7 @@ use super::mach_seed;
 use super::pota_thumbprint;
 use super::ROTATED_CO_PSK;
 use crate::harness::build_part_init_mach_seed_aad;
+use crate::harness::encrypt_mach_seed_envelope;
 use crate::harness::TestCtx;
 
 fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
@@ -56,9 +61,7 @@ fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartI
 /// tag verification must fail before any plaintext is exposed, and
 /// the handler surfaces [`TborStatus::AeadEnvelopeAuthFailed`].
 #[test]
-fn part_init_envelope_tampered() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
+fn part_init_envelope_tampered_emu() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -192,8 +195,6 @@ fn part_init_wrong_session_id_in_aad() {
 /// `mach_seed` plaintext is accepted.
 #[test]
 fn part_init_envelope_iv_tampered_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -223,8 +224,6 @@ fn part_init_envelope_iv_tampered_emu() {
 /// comparison.
 #[test]
 fn part_init_envelope_aad_tampered_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -252,8 +251,6 @@ fn part_init_envelope_aad_tampered_emu() {
 /// IV, AAD, and ciphertext corruption.
 #[test]
 fn part_init_envelope_tag_tampered_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -277,8 +274,6 @@ fn part_init_envelope_tag_tampered_emu() {
 /// validation before AEAD parsing or partition-state mutation.
 #[test]
 fn part_init_envelope_wrong_fixed_length_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -318,8 +313,6 @@ fn part_init_envelope_wrong_fixed_length_emu() {
 /// partially initialized or disabled the partition.
 #[test]
 fn part_init_envelope_rejection_is_repeatable_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -354,8 +347,6 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
 /// `AeadEnvelopeAuthFailed`.
 #[test]
 fn part_init_every_authenticated_envelope_byte_tampered_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -393,8 +384,6 @@ fn part_init_every_authenticated_envelope_byte_tampered_emu() {
 /// one-byte-long, and substantially oversized envelopes.
 #[test]
 fn part_init_envelope_invalid_length_matrix_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -445,8 +434,6 @@ fn part_init_envelope_invalid_length_matrix_emu() {
 /// bit positions in a tag byte.
 #[test]
 fn part_init_envelope_each_tag_bit_tampered_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -480,8 +467,6 @@ fn part_init_envelope_each_tag_bit_tampered_emu() {
 /// next independently malformed request.
 #[test]
 fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -528,8 +513,6 @@ fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
 /// request must complete the normal PartInit path successfully.
 #[test]
 fn part_init_valid_request_succeeds_after_envelope_rejection_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let seed = mach_seed();
@@ -567,8 +550,6 @@ fn part_init_valid_request_succeeds_after_envelope_rejection_emu() {
 /// the partition.
 #[test]
 fn part_init_recovers_after_each_envelope_rejection_stage_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     enum RejectionCase {
         InvalidFixedLength,
         InvalidAuthentication,
@@ -620,8 +601,6 @@ fn part_init_recovers_after_each_envelope_rejection_stage_emu() {
 /// envelope associated with a closed session.
 #[test]
 fn part_init_envelope_rejected_after_session_closed_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -646,8 +625,6 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
 /// cannot make the test pass.
 #[test]
 fn part_init_alternate_session_requires_psk_rotation_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -655,11 +632,10 @@ fn part_init_alternate_session_requires_psk_rotation_emu() {
         encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
 
     // `session_id` is a u16. Select a different in-range session id.
-    let alternate_session_id = session.session_id.wrapping_add(1);
-    assert_ne!(
-        alternate_session_id, session.session_id,
-        "alternate session id must differ from the rotated CO session"
-    );
+    let alternate_session_id = session
+        .session_id
+        .checked_add(1)
+        .expect("test requires session_id to be less than u16::MAX");
 
     let req = make_part_init_req(alternate_session_id, envelope);
 
@@ -677,8 +653,6 @@ fn part_init_alternate_session_requires_psk_rotation_emu() {
 /// successful partition initialization.
 #[test]
 fn part_init_valid_envelope_cannot_be_replayed_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -700,8 +674,6 @@ fn part_init_valid_envelope_cannot_be_replayed_emu() {
 /// therefore fail authentication under B's `param_key`.
 #[test]
 fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
 
     let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -750,8 +722,6 @@ fn part_init_all_zero_mach_seed_emu() {
 /// valid request.
 #[test]
 fn part_init_accepts_nondefault_pota_thumbprint_emu() {
-    use crate::harness::encrypt_mach_seed_envelope;
-
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -766,4 +736,105 @@ fn part_init_accepts_nondefault_pota_thumbprint_emu() {
 
     ctx.tbor(&req)
         .expect("PartInit accepts a caller-supplied POTA thumbprint");
+}
+
+/// Reject an envelope whose four-byte format magic does not match
+/// [`azihsm_crypto::aead_envelope::FORMAT_TAG`].
+#[test]
+fn part_init_envelope_wrong_magic_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let mut envelope =
+        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
+
+    assert_eq!(
+        &envelope[ENVELOPE_MAGIC_OFFSET..ENVELOPE_MAGIC_OFFSET + ENVELOPE_MAGIC_LEN],
+        azihsm_crypto::aead_envelope::FORMAT_TAG,
+        "unexpected envelope format tag"
+    );
+
+    envelope[ENVELOPE_MAGIC_OFFSET] ^= 0x01;
+
+    let req = make_part_init_req(session.session_id, envelope);
+
+    ctx.tbor(&req)
+        .expect_err("envelope with wrong magic must be rejected");
+}
+
+/// Reject an envelope advertising an unsupported format version.
+///
+/// AEAD envelope v1 does not have a separate version byte. The version is
+/// encoded by the four-byte `FORMAT_TAG`, so changing the tag represents an
+/// unsupported envelope version.
+#[test]
+fn part_init_envelope_unsupported_version_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let mut envelope =
+        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
+
+    assert_eq!(
+        &envelope[ENVELOPE_MAGIC_OFFSET..ENVELOPE_MAGIC_OFFSET + ENVELOPE_MAGIC_LEN],
+        azihsm_crypto::aead_envelope::FORMAT_TAG,
+        "unexpected envelope format tag"
+    );
+
+    // Replace the final byte of the v1 format tag with a hypothetical
+    // version-2 marker while preserving the four-byte header field.
+    envelope[ENVELOPE_MAGIC_OFFSET + ENVELOPE_MAGIC_LEN - 1] = b'2';
+
+    let req = make_part_init_req(session.session_id, envelope);
+
+    ctx.tbor(&req)
+        .expect_err("envelope with unsupported format version must be rejected");
+}
+
+/// Reject an envelope whose algorithm discriminant is unsupported.
+///
+/// Version 1 supports only AES-256-GCM (`AeadAlg` discriminant `0x03`).
+#[test]
+fn part_init_envelope_unsupported_algorithm_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let mut envelope =
+        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
+
+    assert_eq!(
+        envelope[ENVELOPE_ALG_OFFSET], 0x03,
+        "unexpected algorithm in valid AES-256-GCM envelope"
+    );
+
+    envelope[ENVELOPE_ALG_OFFSET] = 0xFF;
+
+    let req = make_part_init_req(session.session_id, envelope);
+
+    ctx.tbor(&req)
+        .expect_err("envelope with unsupported algorithm must be rejected");
+}
+
+/// Reject an envelope whose reserved header byte is nonzero.
+///
+/// The v1 envelope format requires the reserved byte to remain zero.
+#[test]
+fn part_init_envelope_nonzero_reserved_byte_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let mut envelope =
+        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
+
+    assert_eq!(
+        envelope[ENVELOPE_RESERVED_OFFSET], 0,
+        "valid v1 envelope must have a zero reserved byte"
+    );
+
+    envelope[ENVELOPE_RESERVED_OFFSET] = 0x01;
+
+    let req = make_part_init_req(session.session_id, envelope);
+
+    ctx.tbor(&req)
+        .expect_err("envelope with nonzero reserved byte must be rejected");
 }
