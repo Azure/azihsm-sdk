@@ -3,6 +3,7 @@
 
 #![allow(clippy::unwrap_used)]
 
+mod concat_tests;
 mod hkdf_tests;
 mod kbkdf_tests;
 

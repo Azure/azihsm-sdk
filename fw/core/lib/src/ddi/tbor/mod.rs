@@ -23,11 +23,13 @@
 pub(crate) mod aes_encrypt_decrypt;
 pub(crate) mod aes_generate_key;
 pub(crate) mod api_rev;
+pub(crate) mod concat_kdf_derive;
 pub(crate) mod ecc_generate_key;
 pub(crate) mod ecc_sign;
 pub(crate) mod ecdh_derive;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
+pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod hmac_generate_key;
 pub(crate) mod key_report;
@@ -234,6 +236,23 @@ pub(crate) mod opcode {
     /// `UnwrapKey`; unmasked on-device).  The raw modular exponentiation
     /// underlying RSA decrypt / sign.  See [`super::rsa_mod_exp`].
     pub(crate) const RSA_MOD_EXP: u8 = 0x1A;
+
+    /// `HkdfDerive` — derive key material (AES / HMAC) from a caller-held
+    /// masked ECDH shared secret via HKDF (RFC 5869), and return the
+    /// derived key masked under the requested scope's masking key.  See
+    /// [`super::hkdf_derive`].
+    ///
+    /// `0x1A` / `0x1B` are reserved by the sibling RSA / Hash crypto
+    /// commands (separate branches), so `HkdfDerive` takes the next free
+    /// opcode, `0x1C`.
+    pub(crate) const HKDF_DERIVE: u8 = 0x1C;
+
+    /// `ConcatKdfDerive` — derive key material (AES / HMAC) from a
+    /// caller-held masked ECDH shared secret via a single-step
+    /// concatenation KDF (ANSI X9.63 or NIST SP 800-56A one-step), and
+    /// return the derived key masked under the requested scope's masking
+    /// key.  See [`super::concat_kdf_derive`].
+    pub(crate) const CONCAT_KDF_DERIVE: u8 = 0x1D;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -457,6 +476,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
         opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
         opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
+        opcode::HKDF_DERIVE => hkdf_derive::handle(pal, io, req_buf).await,
+        opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
@@ -494,6 +515,8 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::ECC_SIGN
             | opcode::ECDH_DERIVE
             | opcode::RSA_MOD_EXP
+            | opcode::HKDF_DERIVE
+            | opcode::CONCAT_KDF_DERIVE
     )
 }
 
@@ -537,7 +560,9 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::ECC_GENERATE_KEY
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE
-        | opcode::RSA_MOD_EXP => true,
+        | opcode::RSA_MOD_EXP
+        | opcode::HKDF_DERIVE
+        | opcode::CONCAT_KDF_DERIVE => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -589,7 +614,9 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::ECC_GENERATE_KEY
         | opcode::ECC_SIGN
         | opcode::ECDH_DERIVE
-        | opcode::RSA_MOD_EXP => true,
+        | opcode::RSA_MOD_EXP
+        | opcode::HKDF_DERIVE
+        | opcode::CONCAT_KDF_DERIVE => true,
         _ => true,
     }
 }
