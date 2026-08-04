@@ -103,13 +103,13 @@ fn unsupported_on_mock() {
     assert_unsupported_encoding(&err);
 }
 
+/// Asserts the general `ApiRev` protocol-range invariants and then
+/// verifies the exact bootstrap response expected by these tests.
+///
+/// Checking the range invariants first provides more specific failure
+/// diagnostics when firmware advertises an invalid or unexpected range.
 #[cfg(any(feature = "emu", feature = "sock"))]
 fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context: &str) {
-    assert_eq!(
-        resp, &EXPECTED,
-        "{context}: firmware should report min=max=1 for the bootstrap TBOR protocol version",
-    );
-
     assert!(
         resp.min_ver <= resp.max_ver,
         "{context}: minimum supported version {} must not exceed maximum supported version {}",
@@ -122,6 +122,11 @@ fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context
         "{context}: bootstrap TBOR version 1 must be inside the advertised range {}..={}",
         resp.min_ver,
         resp.max_ver,
+    );
+
+    assert_eq!(
+        resp, &EXPECTED,
+        "{context}: firmware should report min=max=1 for the bootstrap TBOR protocol version",
     );
 }
 
@@ -228,7 +233,7 @@ fn api_rev_stable_across_repeated_session_lifecycles_emu() {
     }
 }
 
-/// A7: Creating a fresh request value for every invocation must
+/// A5: Creating a fresh request value for every invocation must
 /// produce the same response.
 ///
 /// This guards against request-instance identity or mutation leaking
@@ -256,7 +261,7 @@ fn api_rev_fresh_request_each_call_emu() {
     }
 }
 
-/// A8: The socket transport must also remain stable across repeated
+/// A6: The socket transport must also remain stable across repeated
 /// requests.
 ///
 /// Session-state manipulation is intentionally restricted to the
