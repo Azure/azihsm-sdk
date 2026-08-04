@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Shared types and helpers for TBOR encoder fuzz targets.
+//! Shared types and helpers for TBOR fuzz targets.
 
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::header::Header;
@@ -53,4 +53,28 @@ pub fn run_encoder<H: Header>(mut encoder: Encoder<'_, H>, ops: &[EncoderTOCBuil
 
     // Attempt to finalize — errors are expected and fine.
     let _ = encoder.finish();
+}
+
+use azihsm_ddi_emu::DdiEmu;
+use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_interface::DdiDev;
+use std::sync::LazyLock;
+
+/// Lazily-initialized emulator DDI and device for fuzz targets that
+/// exercise TBOR command round-trips.
+static EMU: LazyLock<DdiEmu> = LazyLock::new(DdiEmu::default);
+
+/// Open (or reuse) the emulator device for fuzz targets.
+pub fn open_emu_dev() -> <DdiEmu as Ddi>::Dev {
+    let devs = EMU.dev_info_list();
+    EMU.open_dev(&devs[0].path).expect("open emu device")
+}
+
+/// Issue a TBOR request against the emulator, discarding the result.
+pub fn fuzz_exec_op_tbor<R: azihsm_ddi_tbor_types::TborOpReq>(
+    dev: &<DdiEmu as Ddi>::Dev,
+    req: &R,
+) {
+    let mut cookie = None;
+    let _: Result<R::OpResp, _> = dev.exec_op_tbor(req, None, &mut cookie);
 }
