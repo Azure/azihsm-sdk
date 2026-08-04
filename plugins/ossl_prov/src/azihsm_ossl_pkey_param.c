@@ -181,12 +181,14 @@ int azihsm_ossl_get_str_param(
     /*
      * data_size carries the value length, but the OSSL_PARAM_utf8_string()
      * initializer macro leaves it zero for a C string, unlike
-     * OSSL_PARAM_construct_utf8_string(), which fills in strlen().  Bound the
-     * scan by the declared length when there is one and by the destination
-     * otherwise, so a value that is not NUL-terminated is never read past.
+     * OSSL_PARAM_construct_utf8_string(), which fills in strlen().  When
+     * data_size is set it may still be the full backing buffer rather than the
+     * string length, so bound the scan by the destination as well: anything at
+     * least out_size long is rejected below regardless.  This never reads past
+     * the value while avoiding scanning arbitrarily large buffers.
      */
-    len = (p->data_size != 0) ? OPENSSL_strnlen(p->data, p->data_size)
-                              : OPENSSL_strnlen(p->data, out_size);
+    size_t scan = (p->data_size != 0 && p->data_size < out_size) ? p->data_size : out_size;
+    len = OPENSSL_strnlen(p->data, scan);
 
     if (len >= out_size)
     {
