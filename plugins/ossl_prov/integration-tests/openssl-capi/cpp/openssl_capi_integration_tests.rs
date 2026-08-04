@@ -472,8 +472,11 @@ azihsm-api-revision = 1.0
                     // Each test gets its own resiliency directory to avoid
                     // contention on the lock file and stale BMK/MUK state
                     // when tests run in parallel.
+                    // '/' appears in value-parameterised gtest names
+                    // (suite/fixture.case/param) and would otherwise be taken
+                    // as a path separator into a directory that does not exist.
                     let test_resil_dir =
-                        resil_base.join(test_name.replace("::", "_").replace('.', "_"));
+                        resil_base.join(test_name.replace("::", "_").replace(['.', '/'], "_"));
                     let _ = fs::remove_dir_all(&test_resil_dir);
                     {
                         use std::os::unix::fs::DirBuilderExt;

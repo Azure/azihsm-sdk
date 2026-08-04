@@ -32,16 +32,34 @@ class rsa_enc_dec : public ::testing::Test
     ProviderCtx prov_;
 };
 
+/// Fixture for tests that must run against each selectable RSA key form.
+/// The parameter is the azihsm.key_kind value ("RSA" or "RSA-CRT").
+class rsa_enc_dec_kind : public ::testing::TestWithParam<const char *>
+{
+  protected:
+    ProviderCtx prov_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    key_kinds,
+    rsa_enc_dec_kind,
+    ::testing::Values("RSA", "RSA-CRT"),
+    [](const ::testing::TestParamInfo<const char *> &info) {
+        return std::string(info.param) == "RSA-CRT" ? "rsa_crt" : "rsa";
+    }
+);
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 /// Round-trip: encrypt with public key, decrypt with private key, compare.
 /// Explicitly sets OAEP padding mode; the OAEP digest and MGF1 digest are
-/// left at their OpenSSL defaults.
-TEST_F(rsa_enc_dec, encrypt_decrypt_oaep)
+/// left at their OpenSSL defaults.  Runs against both the plain and the CRT
+/// stored key form.
+TEST_P(rsa_enc_dec_kind, encrypt_decrypt_oaep)
 {
-    auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");
+    auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment", GetParam());
     ASSERT_NE(pkey, nullptr) << "RSA encryption session key generation failed";
 
     const std::string plaintext = "RSA-OAEP round-trip test payload";
@@ -119,7 +137,8 @@ TEST_F(rsa_enc_dec, encrypt_decrypt_oaep)
         << "Decrypted data does not match original plaintext";
 }
 
-/// Encrypting with key_a and decrypting with key_b must fail.
+/// Encrypting with key_a and decrypting with key_b must fail.  Runs on the
+/// default key form (RSA-CRT); the stored form is not what is under test here.
 TEST_F(rsa_enc_dec, decrypt_fails_with_wrong_key)
 {
     auto key_a = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");

@@ -330,9 +330,16 @@ impl HsmMaskedKey {
         }
         flags |= HsmKeyFlags::EXTRACTABLE;
 
+        let kind = match (class, metadata.kind) {
+            // Only the private half of an RSA pair carries the CRT form; the
+            // public key of a CRT pair is a plain RSA public key.
+            (HsmKeyClass::Public, HsmKeyKind::RsaCrt) => HsmKeyKind::Rsa,
+            (_, kind) => kind,
+        };
+
         Ok(HsmKeyProps::new(
             class,
-            metadata.kind,
+            kind,
             metadata.bits as u32,
             metadata.curve,
             flags,
