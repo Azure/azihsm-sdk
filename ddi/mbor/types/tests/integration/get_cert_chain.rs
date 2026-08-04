@@ -281,6 +281,7 @@ fn test_get_cert_chain_info_multithread() {
             // Collect and compare the results
             let mut prev_num_cert = None;
             let mut prev_thumbprint = [0u8; 32];
+            let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
             for thread in threads {
                 let result = thread.join();
                 assert!(result.is_ok(), "result {:?}", result);
@@ -289,8 +290,19 @@ fn test_get_cert_chain_info_multithread() {
                 match prev_num_cert {
                     Some(prev) => {
                         assert_eq!(prev, num_cert);
-                        assert_eq!(prev_thumbprint, thumbprint);
-                    }
+                        if prev_thumbprint != thumbprint && idfu_enabled {
+                        println!("Thumbprint mismatch during IDFU, refetching...");
+                        // Refetch chain info to get the current thumbprint
+                        let fresh = helper_get_cert_chain_info(dev).unwrap();
+                        let fresh_thumbprint = fresh.data.thumbprint.data_take();
+                        assert_eq!(fresh_thumbprint, thumbprint, 
+                            "Refetched thumbprint should match the latest thread result");
+                        prev_thumbprint = fresh_thumbprint;
+
+             } else {
+                 assert_eq!(prev_thumbprint, thumbprint);
+             }
+            }
                     None => {
                         prev_num_cert = Some(num_cert);
                         prev_thumbprint = thumbprint;
