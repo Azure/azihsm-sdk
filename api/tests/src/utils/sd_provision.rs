@@ -33,13 +33,14 @@ use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
+use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use zerocopy::IntoBytes;
 
-use crate::utils::emu_helpers::fresh_emu_partition;
+use crate::utils::partition_ex_helpers::new_partition;
 
 const SEC1_PUB_LEN: usize = 97;
 pub(crate) const RAW_PUB_LEN: usize = 96;
@@ -379,6 +380,10 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
         sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
         info: [0xAB; POLICY_INFO_LEN],
+        // Enable peer cloning so this backing policy drives the
+        // `SdCreatePeerBackup` tests; the flag is inert for the
+        // remote/reseal/restore commands, which don't gate on it.
+        flags: PolicyFlags::new().with_allow_peer_cloning(true),
         ..PartPolicy::zeroed()
     }
 }
@@ -417,7 +422,7 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
 /// `part_final_ex`.
 pub(crate) fn finalized_co_session() -> HsmSession {
-    let (part, rev) = fresh_emu_partition();
+    let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
     // bootstrap session closes on drop at the end of this block.
@@ -589,16 +594,26 @@ pub(crate) fn build_receiver_evidence(
     }
 }
 
-/// Provision a fresh partition with a **backing-partition policy** — one
-/// that names this partition (via `PartInfo`) as the backup backing
-/// partition and anchors the security domain to `sata_key` — and return
-/// the live CO session, the exact policy image (needed verbatim by
-/// `sd_create_remote_backup`), and the partition-identity public key that
-/// every evidence leaf certificate must carry.
-pub(crate) fn finalized_backing_session(
+/// Provision a factory-reset backing partition anchored to the shared
+/// `sata_key`/`pota`. When `policy_in` is `None` the policy is built from
+/// this partition's `PartInfo` identity; on the restore path the caller
+/// reuses the first incarnation's policy so both agree on the domain image.
+/// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
+/// recovery step that lets a captured masked sealing key unmask. Returns the
+/// CO session, the policy image, the PID public key, and the
+/// `local_mk_backup` that finalize produced.
+pub(crate) fn provision_backing(
     sata_key: &CaKey,
-) -> (HsmSession, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
-    let (part, rev) = fresh_emu_partition();
+    pota: &CaKey,
+    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    prev_local_mk: Option<&[u8]>,
+) -> (
+    HsmSession,
+    [u8; PART_POLICY_LEN],
+    [u8; RAW_PUB_LEN],
+    Vec<u8>,
+) {
+    let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
     // bootstrap session closes on drop at the end of this block.
@@ -639,9 +654,9 @@ pub(crate) fn finalized_backing_session(
     let mut pid_pub = [0u8; RAW_PUB_LEN];
     pid_pub.copy_from_slice(&pid_pub_vec);
 
-    // POTA anchor for the PTA certificate chain part_final_ex validates.
-    let pota = CaKey::generate();
-    let policy = backing_part_policy(&pid, &pid_pub_vec, &sata_key.raw_pub(), &pota.raw_pub());
+    let policy = policy_in.unwrap_or_else(|| {
+        backing_part_policy(&pid, &pid_pub_vec, &sata_key.raw_pub(), &pota.raw_pub())
+    });
 
     let init = session
         .part_init_ex(
@@ -653,7 +668,7 @@ pub(crate) fn finalized_backing_session(
         )
         .expect("part_init_ex");
 
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
     let certs = [
         HsmCert {
             cert: &chain.root_der,
@@ -662,10 +677,24 @@ pub(crate) fn finalized_backing_session(
             cert: &chain.pta_der,
         },
     ];
-    session
-        .part_final_ex(&policy, &certs, None)
+    let result = session
+        .part_final_ex(&policy, &certs, prev_local_mk)
         .expect("part_final_ex");
 
+    (session, policy, pid_pub, result.local_mk_backup)
+}
+
+/// Provision a fresh partition with a **backing-partition policy** — one
+/// that names this partition (via `PartInfo`) as the backup backing
+/// partition and anchors the security domain to `sata_key` — and return
+/// the live CO session, the exact policy image (needed verbatim by
+/// `sd_create_remote_backup`), and the partition-identity public key that
+/// every evidence leaf certificate must carry.
+pub(crate) fn finalized_backing_session(
+    sata_key: &CaKey,
+) -> (HsmSession, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
+    let pota = CaKey::generate();
+    let (session, policy, pid_pub, _local_mk) = provision_backing(sata_key, &pota, None, None);
     (session, policy, pid_pub)
 }
 

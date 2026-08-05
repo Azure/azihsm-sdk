@@ -29,6 +29,8 @@
 //! OpenSSL KDF operation on the tokio worker pool, then write results
 //! directly into the caller's `&mut [u8]` output buffers.
 
+use azihsm_crypto::ConcatKdfAlgo;
+use azihsm_crypto::ConcatKdfMode;
 use azihsm_crypto::DeriveOp;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::GenericSecretKey;
@@ -154,6 +156,54 @@ impl StdKdf {
                     .derive(&input_key, derive_len)
                     .map_err(|_| HsmError::KbkdfError)?;
                 let bytes: Vec<u8> = derived.to_vec().map_err(|_| HsmError::KbkdfError)?;
+                Ok::<Vec<u8>, HsmError>(bytes)
+            })
+            .await?;
+
+        output.copy_from_slice(&result);
+        Ok(())
+    }
+
+    /// Derive key material using a single-step concatenation KDF
+    /// asynchronously — ANSI X9.63 or NIST SP 800-56A r3 one-step.
+    ///
+    /// # Parameters
+    /// - `z` — The shared secret (`Z`), typically an ECDH output.
+    /// - `hash_algo` — The hash algorithm (e.g. `HashAlgo::sha256()`).
+    /// - `mode` — Which concatenation variant to run (X9.63 vs SP 800-56A).
+    /// - `info` — Optional `SharedInfo` / `OtherInfo` octet string. A
+    ///   present-but-empty slice is treated as absent.
+    /// - `output` — Buffer for the derived key material. The buffer length
+    ///   determines how many bytes are derived.
+    ///
+    /// # Errors
+    /// Returns [`HsmError::ConcatKdfError`] if the derivation fails.
+    pub async fn concat_kdf(
+        &self,
+        z: &[u8],
+        hash_algo: HashAlgo,
+        mode: ConcatKdfMode,
+        info: Option<&[u8]>,
+        output: &mut [u8],
+    ) -> HsmResult<()> {
+        // Match the Uno PAL: an empty output is a no-op success.
+        if output.is_empty() {
+            return Ok(());
+        }
+        let z_owned = z.to_vec();
+        let info_owned = owned_nonempty(info);
+        let derive_len = output.len();
+
+        let result = self
+            .pool
+            .submit_with_result(async move {
+                let input_key =
+                    GenericSecretKey::from_bytes(&z_owned).map_err(|_| HsmError::ConcatKdfError)?;
+                let algo = ConcatKdfAlgo::new(hash_algo, mode, info_owned);
+                let derived = algo
+                    .derive(&input_key, derive_len)
+                    .map_err(|_| HsmError::ConcatKdfError)?;
+                let bytes: Vec<u8> = derived.to_vec().map_err(|_| HsmError::ConcatKdfError)?;
                 Ok::<Vec<u8>, HsmError>(bytes)
             })
             .await?;

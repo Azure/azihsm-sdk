@@ -55,10 +55,12 @@ fn open_role_with(
 /// runs.  Independent of partition state: the rejection lives in the
 /// dispatcher gate, not in any setter.
 #[test]
-fn part_init_reject_default_psk_co_emu() {
+fn part_init_reject_default_psk_co() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     let policy = known_good_part_policy();
     let seed = mach_seed();
     let thumb = pota_thumbprint();
@@ -74,13 +76,15 @@ fn part_init_reject_default_psk_co_emu() {
 /// rotated up-front so the dispatcher's default-PSK gate does not
 /// fire first.
 #[test]
-fn part_init_reject_cu_session_emu() {
+fn part_init_reject_cu_session() {
     let ctx = TestCtx::new();
 
     // Rotate CU PSK out of the default so we exercise the role gate,
     // not the default-PSK gate.  CU sessions are pinned to
     // `SessionType::PlainText` (CO-only is `Authenticated`).
-    let bootstrap = ctx.open_session(CU, SessionType::PlainText);
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
         .expect("rotate CU PSK");
     bootstrap.close().expect("close bootstrap CU session");
@@ -102,7 +106,7 @@ fn part_init_reject_cu_session_emu() {
 /// [`TborStatus::InvalidArg`] **before** any setter runs, leaving
 /// partition state untouched.
 #[test]
-fn part_init_reject_bad_policy_emu() {
+fn part_init_reject_bad_policy() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);

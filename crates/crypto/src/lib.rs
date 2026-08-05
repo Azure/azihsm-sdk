@@ -383,6 +383,18 @@ pub enum CryptoError {
     #[error("KBKDF invalid prk length")]
     KbkdfInvalidKdkLength,
 
+    /// Single-step concatenation KDF (X9.63 / SP 800-56A): the shared
+    /// secret `Z` was empty.
+    #[error("concat KDF invalid shared-secret length")]
+    ConcatKdfInvalidSecretLength,
+    /// Single-step concatenation KDF: the requested derived-key length was
+    /// zero or exceeds the `Hash` output-length cap.
+    #[error("concat KDF invalid derived key length")]
+    ConcatKdfInvalidDerivedKeyLength,
+    /// Single-step concatenation KDF: the underlying hash operation failed.
+    #[error("concat KDF derive operation failed")]
+    ConcatKdfDeriveError,
+
     /// AES-GCM related errors
 
     /// AES-GCM invalid IV length.

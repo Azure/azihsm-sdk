@@ -15,6 +15,7 @@ cfg_if::cfg_if! {
 
     }
 }
+mod concat;
 mod kbkdf;
 
 use super::*;
@@ -59,6 +60,8 @@ pub enum HkdfMode {
 
 define_type!(pub HkdfAlgo<'a>, hkdf_ossl::OsslHkdfAlgo<'a>, hkdf_cng::CngHkdfAlgo<'a>);
 define_type!(pub KbkdfAlgo, kbkdf::KbkdfAlgo, kbkdf::KbkdfAlgo);
+define_type!(pub ConcatKdfAlgo, concat::ConcatKdfAlgo, concat::ConcatKdfAlgo);
+pub use concat::ConcatKdfMode;
 
 #[cfg(test)]
 mod tests;

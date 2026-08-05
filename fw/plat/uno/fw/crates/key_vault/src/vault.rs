@@ -80,13 +80,76 @@ impl<S: TableStorage> KeyVault<S> {
         session: Option<u16>,
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId> {
+        let (table, slot, start) = self.stage_key_slot(app_id, kind, session, attrs, key.len())?;
+
+        // Write key material. On failure, use evict to clean up the staged
+        // region (scrub + free the run).
+        if let Err(e) = self.write_key(gdma, io, table, start, key).await {
+            let entry = *self.storage.entry(table, slot)?;
+            self.evict(gdma, io, table, slot, entry).await?;
+            return Err(e);
+        }
+
+        Ok(make_key_id(table, slot))
+    }
+
+    /// Synchronously stores a new key by CPU copy, returning its
+    /// [`HsmKeyId`].
+    ///
+    /// Identical to [`create`](Self::create) but copies the key material with
+    /// the CPU (`copy_from_slice`) instead of routing large keys through the
+    /// GDMA engine, so it needs no [`HsmGdmaController`] and — crucially — has
+    /// no `.await`. This lets a synchronous, non-yielding caller (e.g. lazy
+    /// materialisation inside a `part_prop_get`) create a key atomically with
+    /// respect to the cooperative scheduler. The vault blob is CPU-writable
+    /// (the attribute blob is always CPU-copied), so the only cost versus
+    /// `create` is a slower copy for large keys; intended for small, fixed-size
+    /// internal keys such as the RSA-2048 unwrapping key. Because a
+    /// `copy_from_slice` cannot fail after staging, there is no key-write
+    /// rollback path.
+    ///
+    /// # Errors
+    ///
+    /// Same size/space errors as [`create`](Self::create).
+    pub fn create_sync(
+        &mut self,
+        app_id: u8,
+        key: &DmaBuf,
+        kind: HsmVaultKeyKind,
+        session: Option<u16>,
+        attrs: HsmVaultKeyAttrs,
+    ) -> HsmResult<HsmKeyId> {
+        let (table, slot, start) = self.stage_key_slot(app_id, kind, session, attrs, key.len())?;
+
+        // Synchronous CPU copy of the key material (no GDMA, no `.await`).
+        let len = key.len();
+        let key_off = usize::from(start) * BLOCK_ALIGNMENT + ATTRIBUTES_BLOB_SIZE;
+        self.storage.blob_mut(table)?[key_off..key_off + len].copy_from_slice(key);
+
+        Ok(make_key_id(table, slot))
+    }
+
+    /// Finds a table the partition owns with a free entry slot and block run,
+    /// stages the entry metadata and attribute blob for a key of `key_bytes`
+    /// bytes, and returns `(table, slot, block_start)`. The caller writes the
+    /// key material (and, on the fallible GDMA path, rolls back via `evict`).
+    ///
+    /// The block run is reserved directly in the table's bitmap (in place — no
+    /// working copy). The entry is not live for lookups until the key write
+    /// completes.
+    fn stage_key_slot(
+        &mut self,
+        app_id: u8,
+        kind: HsmVaultKeyKind,
+        session: Option<u16>,
+        attrs: HsmVaultKeyAttrs,
+        key_bytes: usize,
+    ) -> HsmResult<(usize, usize, u16)> {
         let spec = key_len(kind)?;
-        let persisted_len = spec.check(key.len())?;
+        let persisted_len = spec.check(key_bytes)?;
         let total = storage_bytes(persisted_len);
         let need = blocks_for(total);
 
-        // Find a table the partition owns with both a free entry slot and
-        // a free block run.
         let mut saw_defrag = false;
         for table in 0..self.storage.table_count() {
             if !self.storage.is_valid_table(table) {
@@ -97,11 +160,6 @@ impl<S: TableStorage> KeyVault<S> {
                 continue;
             };
 
-            // Reserve the run directly in the table's bitmap (in place — no
-            // working copy is materialized). The reservation is committed
-            // before the `.await` so nothing bitmap-sized crosses it; on a
-            // failed key write we roll back: scrub the staged region and
-            // free the run.
             let start = match crate::block::alloc(self.storage.bitmap_mut(table)?, need) {
                 Ok(s) => s,
                 Err(HsmError::DefragmentationNeeded) => {
@@ -112,9 +170,7 @@ impl<S: TableStorage> KeyVault<S> {
                 Err(e) => return Err(e),
             };
 
-            // Stage the entry's fields directly in storage. The slot is
-            // not yet live for lookups until the key write succeeds (a
-            // failed write rolls it back via `evict`).
+            // Stage the entry's fields directly in storage.
             {
                 let entry = self.storage.entry_mut(table, slot)?;
                 entry.set_block_offset(start);
@@ -133,14 +189,7 @@ impl<S: TableStorage> KeyVault<S> {
             }
             self.write_attrs(table, start, attrs_blob)?;
 
-            // Write key material. On failure, use evict to clean up the staged region.
-            if let Err(e) = self.write_key(gdma, io, table, start, key).await {
-                let entry = *self.storage.entry(table, slot)?;
-                self.evict(gdma, io, table, slot, entry).await?;
-                return Err(e);
-            }
-
-            return Ok(make_key_id(table, slot));
+            return Ok((table, slot, start));
         }
 
         Err(if saw_defrag {

@@ -78,9 +78,17 @@ impl From<SessionControlKind> for u8 {
     }
 }
 
+mod aes_encrypt_decrypt;
+mod aes_generate_key;
 mod api_rev;
+mod concat_kdf_derive;
+mod ecc_generate_key;
+mod ecc_sign;
+mod ecdh_derive;
 mod evidence;
 mod get_unwrapping_key;
+mod hash;
+mod hkdf_derive;
 mod hmac;
 mod hmac_generate_key;
 mod key_report;
@@ -89,6 +97,7 @@ mod part_info;
 mod part_init;
 mod policy;
 mod psk_change;
+mod rsa_mod_exp;
 mod sd_create_peer_backup;
 mod sd_create_remote_backup;
 mod sd_reseal_remote_backup;
@@ -102,9 +111,17 @@ mod session_open_init;
 mod status;
 mod unwrap_key;
 
+pub use aes_encrypt_decrypt::*;
+pub use aes_generate_key::*;
 pub use api_rev::*;
+pub use concat_kdf_derive::*;
+pub use ecc_generate_key::*;
+pub use ecc_sign::*;
+pub use ecdh_derive::*;
 pub use evidence::*;
 pub use get_unwrapping_key::*;
+pub use hash::*;
+pub use hkdf_derive::*;
 pub use hmac::*;
 pub use hmac_generate_key::*;
 pub use key_report::*;
@@ -113,6 +130,7 @@ pub use part_info::*;
 pub use part_init::*;
 pub use policy::*;
 pub use psk_change::*;
+pub use rsa_mod_exp::*;
 pub use sd_create_peer_backup::*;
 pub use sd_create_remote_backup::*;
 pub use sd_reseal_remote_backup::*;

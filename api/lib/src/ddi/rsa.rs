@@ -305,6 +305,7 @@ impl TryFrom<HsmKeyKind> for DdiKeyClass {
             HsmKeyKind::AesGcm => Ok(DdiKeyClass::AesGcmBulkUnapproved),
             HsmKeyKind::AesXts => Ok(DdiKeyClass::AesXtsBulk),
             HsmKeyKind::Rsa => Ok(DdiKeyClass::Rsa),
+            HsmKeyKind::RsaCrt => Ok(DdiKeyClass::RsaCrt),
             HsmKeyKind::Ecc => Ok(DdiKeyClass::Ecc),
             _ => Err(HsmError::UnsupportedKeyKind),
         }

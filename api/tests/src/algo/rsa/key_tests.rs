@@ -843,6 +843,139 @@ fn test_rsa_4096_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, 4096, 512, 16);
 }
 
+/// Helper to import an RSA key in CRT form for the given modulus size.
+/// The CRT form applies to the private key only; the public half stays plain RSA.
+fn unwrap_rsa_crt_key(
+    session: &HsmSession,
+    bits: u32,
+    is_session: bool,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+    // Standard RSA key generation always produces the CRT components.
+    let crypto_priv_key =
+        crypto::RsaPrivateKey::generate((bits / 8) as usize).expect("Failed to generate RSA Key");
+    let der = crypto_priv_key.to_vec().expect("Failed to export RSA Key");
+
+    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &der)
+        .expect("Failed to wrap RSA Key");
+
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::RsaCrt)
+        .bits(bits)
+        .can_decrypt(true)
+        .is_session(is_session)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_encrypt(true)
+        .is_session(is_session)
+        .build()
+        .expect("Failed to build public key props");
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+    HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_key_props,
+        pub_key_props,
+    )
+    .expect("Failed to unwrap RSA CRT Key")
+}
+
+/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
+fn test_unwrap_rsa_crt_key_for_bits(session: &HsmSession, bits: u32) {
+    let (priv_key, pub_key) = unwrap_rsa_crt_key(session, bits, false);
+
+    assert_eq!(
+        priv_key.kind(),
+        HsmKeyKind::RsaCrt,
+        "Private key kind mismatch"
+    );
+    assert_eq!(priv_key.bits(), bits, "Private key bits mismatch");
+    assert_eq!(pub_key.kind(), HsmKeyKind::Rsa, "Public key kind mismatch");
+    assert_eq!(pub_key.bits(), bits, "Public key bits mismatch");
+
+    HsmKeyManager::delete_key(priv_key).expect("Failed to delete RSA private key");
+    HsmKeyManager::delete_key(pub_key).expect("Failed to delete RSA public key");
+}
+
+/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
+#[session_test]
+fn test_unwrap_rsa_crt_2048_key(session: HsmSession) {
+    test_unwrap_rsa_crt_key_for_bits(&session, 2048);
+}
+
+/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
+#[session_test]
+fn test_unwrap_rsa_crt_3072_key(session: HsmSession) {
+    test_unwrap_rsa_crt_key_for_bits(&session, 3072);
+}
+
+/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
+#[session_test]
+fn test_unwrap_rsa_crt_4096_key(session: HsmSession) {
+    test_unwrap_rsa_crt_key_for_bits(&session, 4096);
+}
+
+/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
+fn test_rsa_crt_key_unmask_for_bits(session: &HsmSession, bits: u32) {
+    let (original_priv_key, original_pub_key) = unwrap_rsa_crt_key(session, bits, true);
+
+    let masked_key_pair = original_priv_key
+        .masked_key_vec()
+        .expect("Failed to get masked private key");
+
+    let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
+    let (unmasked_priv_key, unmasked_pub_key) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, &masked_key_pair)
+            .expect("Failed to unmask RSA CRT key pair");
+
+    assert_eq!(
+        unmasked_priv_key.kind(),
+        HsmKeyKind::RsaCrt,
+        "Unmasked private key kind mismatch"
+    );
+    assert_eq!(
+        unmasked_pub_key.kind(),
+        HsmKeyKind::Rsa,
+        "Unmasked public key kind mismatch"
+    );
+
+    compare_rsa_private_key_properties(&original_priv_key, &unmasked_priv_key);
+    compare_rsa_public_key_properties(&original_pub_key, &unmasked_pub_key);
+
+    HsmKeyManager::delete_key(original_priv_key).expect("Failed to delete original private key");
+    HsmKeyManager::delete_key(original_pub_key).expect("Failed to delete original public key");
+    HsmKeyManager::delete_key(unmasked_priv_key).expect("Failed to delete unmasked private key");
+    HsmKeyManager::delete_key(unmasked_pub_key).expect("Failed to delete unmasked public key");
+}
+
+/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
+#[session_test]
+fn test_rsa_crt_2048_key_unmask(session: HsmSession) {
+    test_rsa_crt_key_unmask_for_bits(&session, 2048);
+}
+
+/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
+#[session_test]
+fn test_rsa_crt_3072_key_unmask(session: HsmSession) {
+    test_rsa_crt_key_unmask_for_bits(&session, 3072);
+}
+
+/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
+#[session_test]
+fn test_rsa_crt_4096_key_unmask(session: HsmSession) {
+    test_rsa_crt_key_unmask_for_bits(&session, 4096);
+}
+
 /// Ensure key report generation works for imported RSA key
 #[session_test]
 fn test_rsa_2048_imported_key_report(session: HsmSession) {

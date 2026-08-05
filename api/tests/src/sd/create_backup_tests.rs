@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! api-level `SdCreateRemoteBackup` round trip against the emulator.
+//! api-level `SdCreateRemoteBackup` round trip against the emulator or
+//! hardware backend.
 //!
 //! Drives the full public-surface flow: provision a partition whose policy
 //! names itself as the backup backing partition
@@ -17,7 +18,7 @@ use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 
-use crate::utils::emu_helpers::EMU_LOCK;
+use crate::utils::partition_ex_helpers::PARTITION_LOCK;
 use crate::utils::sd_provision::CaKey;
 use crate::utils::sd_provision::build_receiver_evidence;
 use crate::utils::sd_provision::finalized_backing_session;
@@ -28,7 +29,7 @@ use crate::utils::sd_provision::masked_key_and_report;
 /// pinned wire lengths.
 #[test]
 fn sd_create_remote_backup_roundtrip() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
@@ -67,7 +68,7 @@ fn sd_create_remote_backup_roundtrip() {
 /// partition is rejected by the firmware.
 #[test]
 fn sd_create_remote_backup_is_one_shot() {
-    let _guard = EMU_LOCK.lock();
+    let _guard = PARTITION_LOCK.lock();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 

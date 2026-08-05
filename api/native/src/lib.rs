@@ -139,6 +139,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             9 => Ok(AzihsmKeyKind::HmacSha512),
             10 => Ok(AzihsmKeyKind::AesGcm),
             11 => Ok(AzihsmKeyKind::Sealing),
+            12 => Ok(AzihsmKeyKind::RsaCrt),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }

@@ -98,7 +98,9 @@ set(SOURCE
     algo/kdf/kbkdf_tests.cpp
     algo/sealing/keygen_tests.cpp
     sd/create_backup_tests.cpp
+    sd/create_peer_tests.cpp
     sd/reseal_tests.cpp
+    sd/restore_tests.cpp
     resiliency/init_stress_tests.cpp
     resiliency/aes_stress_tests.cpp
     resiliency/ecc_stress_tests.cpp
@@ -109,12 +111,13 @@ target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_D
 
 # Expose the selected DDI backend to the C++ sources as a compile definition.
 # `CARGO_FEATURE_*` env vars only exist during the Rust build script, not during
-# C++ compilation, so tests that require a specific backend gate on these macros.
-# `AZIHSM_FEATURE_EMU` is defined only when the emu (in-process firmware) backend
-# is built; happy-path tests that exercise the TBOR transport are gated on it so
-# they are excluded from the mock lane (mock does not implement `exec_op_tbor`).
-if(TEST_FEATURES MATCHES "(^| )emu($| )")
-    target_compile_definitions(azihsm_api_cpp_tests PRIVATE AZIHSM_FEATURE_EMU)
+# C++ compilation, so tests that require a specific backend gate on this macro.
+# `AZIHSM_FEATURE_MOCK` is defined only when the mock backend is built; tests
+# that exercise the TBOR transport gate on `#if !defined(AZIHSM_FEATURE_MOCK)` so
+# they run on the emu and hardware backends but are excluded from the mock lane
+# (mock does not implement `exec_op_tbor`).
+if(TEST_FEATURES MATCHES "(^| )mock($| )")
+    target_compile_definitions(azihsm_api_cpp_tests PRIVATE AZIHSM_FEATURE_MOCK)
 endif()
 
 if(UNIX)
