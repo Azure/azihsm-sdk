@@ -100,6 +100,13 @@ pub struct CredentialEncryptionKey {
     hmac_key: [u8; 48],
 }
 
+impl Drop for CredentialEncryptionKey {
+    fn drop(&mut self) {
+        self.aes_key.zeroize();
+        self.hmac_key.zeroize();
+    }
+}
+
 impl CredentialEncryptionKey {
     fn create(
         device_credential_key: &EccPublicKey,
@@ -117,7 +124,8 @@ impl CredentialEncryptionKey {
         let output = hkdf
             .derive(&ecdh, 80)
             .map_err(|_| CredEncErr::HkdfDeriveError)?;
-        let derived_bytes = output.to_vec().map_err(|_| CredEncErr::SecretExportError)?;
+        let derived_bytes =
+            Zeroizing::new(output.to_vec().map_err(|_| CredEncErr::SecretExportError)?);
 
         let mut aes_key = [0u8; 32];
         aes_key.copy_from_slice(&derived_bytes[..32]);
@@ -247,6 +255,12 @@ pub struct Bk3EncryptionKey {
     secret: [u8; 48],
 }
 
+impl Drop for Bk3EncryptionKey {
+    fn drop(&mut self) {
+        self.secret.zeroize();
+    }
+}
+
 impl Bk3EncryptionKey {
     fn create(
         device_credential_key: &EccPublicKey,
@@ -264,15 +278,18 @@ impl Bk3EncryptionKey {
         Ok(Self { secret })
     }
 
-    fn hkdf_sha384(&self, info: &[u8], out_len: usize) -> Result<Vec<u8>, CredEncErr> {
-        let ikm =
-            GenericSecretKey::from_bytes(&self.secret).map_err(|_| CredEncErr::SecretExportError)?;
+    fn hkdf_sha384(&self, info: &[u8], out_len: usize) -> Result<Zeroizing<Vec<u8>>, CredEncErr> {
+        let ikm = GenericSecretKey::from_bytes(&self.secret)
+            .map_err(|_| CredEncErr::SecretExportError)?;
         let hash = HashAlgo::sha384();
         let hkdf = HkdfAlgo::new(HkdfMode::ExtractAndExpand, &hash, None, Some(info));
         let output = hkdf
             .derive(&ikm, out_len)
             .map_err(|_| CredEncErr::HkdfDeriveError)?;
-        output.to_vec().map_err(|_| CredEncErr::SecretExportError)
+        output
+            .to_vec()
+            .map(Zeroizing::new)
+            .map_err(|_| CredEncErr::SecretExportError)
     }
 
     fn derive_transport_keys(&self) -> Result<([u8; 32], [u8; 48]), CredEncErr> {
@@ -316,7 +333,8 @@ impl Bk3EncryptionKey {
         let hash = HashAlgo::sha384();
         let mut hmac = HmacAlgo::new(hash);
         let key = HmacKey::from_bytes(hmac_key).map_err(|_| CredEncErr::HmacKeyImportError)?;
-        Signer::sign(&mut hmac, &key, data, Some(&mut tag)).map_err(|_| CredEncErr::HmacSignError)?;
+        Signer::sign(&mut hmac, &key, data, Some(&mut tag))
+            .map_err(|_| CredEncErr::HmacSignError)?;
         Ok(tag)
     }
 
@@ -330,7 +348,9 @@ impl Bk3EncryptionKey {
         let iv = Rng::rand_vec(16).map_err(|_| CredEncErr::RngError)?;
 
         let (aes_key, transport_hmac_key) = self.derive_transport_keys()?;
-        let k_pin = self.derive_k_pin(id, pin)?;
+        let aes_key = Zeroizing::new(aes_key);
+        let transport_hmac_key = Zeroizing::new(transport_hmac_key);
+        let k_pin = Zeroizing::new(self.derive_k_pin(id, pin)?);
 
         let ct_bk3 = Self::aes_cbc_encrypt(&aes_key, &iv, bk3)?;
 
@@ -339,8 +359,8 @@ impl Bk3EncryptionKey {
         message[16..64].copy_from_slice(&ct_bk3);
         message[64..96].copy_from_slice(&nonce);
 
-        let tag_transport = Self::hmac_sha_384(&transport_hmac_key, &message)?;
-        let tag_pin = Self::hmac_sha_384(&k_pin, &message)?;
+        let tag_transport = Self::hmac_sha_384(&transport_hmac_key[..], &message)?;
+        let tag_pin = Self::hmac_sha_384(&k_pin[..], &message)?;
 
         Ok(DdiEncryptedBk3 {
             encrypted_bk3: MborByteArray::from_slice(&ct_bk3)

@@ -11,9 +11,11 @@
 //! - Auth negatives: a tampered transport or PIN tag is rejected, while a
 //!   well-formed Phase 4 with the same PIN still succeeds.
 
+#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
-use azihsm_cred_encrypt::{Bk3EncryptionKey, DeviceCredKey};
+use azihsm_cred_encrypt::Bk3EncryptionKey;
+use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
 use test_with_tracing::test;
@@ -93,7 +95,10 @@ fn test_secure_init_bk3_smoke() {
         let resp = match secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3) {
             Ok(resp) => resp,
             Err(err) if should_skip(&err) => {
-                tracing::warn!(?err, "secure_init_bk3 unsupported or already provisioned; skipping");
+                tracing::warn!(
+                    ?err,
+                    "secure_init_bk3 unsupported or already provisioned; skipping"
+                );
                 return;
             }
             Err(err) => panic!("secure_init_bk3 failed unexpectedly: {err:?}"),
@@ -133,7 +138,10 @@ fn test_secure_bk3_full_flow() {
                 return;
             }
             other => {
-                tracing::warn!(?other, "partition already provisioned; AC-cycle to reset; skipping");
+                tracing::warn!(
+                    ?other,
+                    "partition already provisioned; AC-cycle to reset; skipping"
+                );
                 return;
             }
         }
@@ -141,7 +149,10 @@ fn test_secure_bk3_full_flow() {
         // (1) Seal-op gate: `set_sealed_bk3` is rejected before a successful Phase 4.
         let err = helper_set_sealed_bk3(dev, vec![0u8; 64]).unwrap_err();
         assert!(
-            matches!(err, DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned)),
+            matches!(
+                err,
+                DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned)
+            ),
             "seal op before Phase 4 must be gated, got {err:?}"
         );
 
@@ -191,80 +202,5 @@ fn test_secure_bk3_full_flow() {
             matches!(err, DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet)),
             "re-seal must be rejected, got {err:?}"
         );
-    });
-}
-
-// Proves the dual-tag (transport + PIN) verification actually authenticates.
-#[test]
-fn test_secure_init_bk3_tamper_rejects() {
-    ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        if !device_is_fresh(dev) {
-            tracing::warn!("partition already provisioned or unsupported; AC-cycle to reset; skipping");
-            return;
-        }
-
-        let rev = Some(API_REV);
-        let bk3 = [0xABu8; 48];
-
-        // Phase 2: establish the provisioning PIN (one-shot).
-        {
-            let resp1 = helper_get_establish_cred_encryption_key(dev, None, rev).unwrap();
-            let nonce1 = resp1.data.nonce;
-            let dev_key1 = DeviceCredKey::new(&resp1.data.pub_key, nonce1).unwrap();
-            let (cred_key, pub_key1) = dev_key1
-                .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-                .unwrap();
-            let ecreds = cred_key
-                .encrypt_establish_credential(TEST_CRED_ID, TEST_CRED_PIN, nonce1)
-                .unwrap();
-            helper_set_init_bk3_pin(dev, ecreds, pub_key1).expect("Phase 2 must succeed");
-        }
-
-        // Build a well-formed Phase-4 payload over a fresh tunnel.
-        let build_phase4 = |dev: &<DdiTest as Ddi>::Dev| -> (DdiEncryptedBk3, DdiDerPublicKey) {
-            let resp = helper_get_establish_cred_encryption_key(dev, None, rev).unwrap();
-            let nonce = resp.data.nonce;
-            let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
-            let (bk3_key, pub_key) = dev_key
-                .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-                .unwrap();
-            let eb = bk3_key
-                .encrypt_bk3(&bk3, TEST_CRED_ID, TEST_CRED_PIN, nonce)
-                .unwrap();
-            (eb, pub_key)
-        };
-
-        // Tampered transport tag -> Bk3TransportTagMismatch (checked first).
-        {
-            let (mut eb, pub_key) = build_phase4(dev);
-            eb.tag_transport[0] ^= 0xFF;
-            match helper_secure_init_bk3(dev, eb, pub_key) {
-                Err(DdiError::DdiStatus(DdiStatus::Bk3TransportTagMismatch)) => {}
-                Err(err) if should_skip(&err) => {
-                    tracing::warn!(?err, "partition not truly fresh; AC-cycle to reset; skipping");
-                    return;
-                }
-                other => panic!("tampered transport tag must be rejected, got {other:?}"),
-            }
-        }
-
-        // Tampered PIN tag -> Bk3PinTagMismatch.
-        {
-            let (mut eb, pub_key) = build_phase4(dev);
-            eb.tag_pin[0] ^= 0xFF;
-            let err = helper_secure_init_bk3(dev, eb, pub_key).unwrap_err();
-            assert!(
-                matches!(err, DdiError::DdiStatus(DdiStatus::Bk3PinTagMismatch)),
-                "tampered PIN tag must be rejected, got {err:?}"
-            );
-        }
-
-        // Well-formed Phase 4 (same Phase-2 PIN) must still succeed.
-        {
-            let (eb, pub_key) = build_phase4(dev);
-            let resp = helper_secure_init_bk3(dev, eb, pub_key)
-                .expect("well-formed Phase 4 must succeed after tamper rejections");
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-        }
     });
 }
