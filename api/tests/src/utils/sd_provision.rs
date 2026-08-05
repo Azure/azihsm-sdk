@@ -26,6 +26,9 @@ use azihsm_crypto::x509_builder::cert_builder::KeyUsage;
 use azihsm_crypto::x509_builder::cert_builder::LeafCertParams;
 use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
 use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
+use azihsm_crypto::x509_builder::intermediate_cert;
+use azihsm_crypto::x509_builder::leaf_cert;
+use azihsm_crypto::x509_builder::root_cert;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -269,23 +272,28 @@ fn make_chain(ca: &CaKey, leaf_pub_raw: &[u8; RAW_PUB_LEN]) -> GeneratedChain {
 
 /// Patch a leaf-cert TBS template with the variable field values.
 fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
-    use azihsm_crypto::x509_builder::leaf_cert::*;
     let s_cn = pad_cn(params.subject_cn);
     let i_cn = pad_cn(params.issuer_cn);
     let s_sn = pad_sn(params.subject_sn);
     let i_sn = pad_sn(params.issuer_sn);
-    tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
-    tbs[SERIAL_NUMBER_OFFSET..SERIAL_NUMBER_OFFSET + 20].copy_from_slice(params.serial_number);
-    tbs[NOT_BEFORE_OFFSET..NOT_BEFORE_OFFSET + 15].copy_from_slice(params.not_before);
-    tbs[NOT_AFTER_OFFSET..NOT_AFTER_OFFSET + 15].copy_from_slice(params.not_after);
-    tbs[ISSUER_CN_OFFSET..ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&i_cn);
-    tbs[SUBJECT_CN_OFFSET..SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&s_cn);
-    tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&i_sn);
-    tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&s_sn);
-    tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
-    tbs[AUTHORITY_KEY_ID_OFFSET..AUTHORITY_KEY_ID_OFFSET + 20]
+    tbs[leaf_cert::PUBLIC_KEY_OFFSET..leaf_cert::PUBLIC_KEY_OFFSET + 97]
+        .copy_from_slice(params.public_key);
+    tbs[leaf_cert::SERIAL_NUMBER_OFFSET..leaf_cert::SERIAL_NUMBER_OFFSET + 20]
+        .copy_from_slice(params.serial_number);
+    tbs[leaf_cert::NOT_BEFORE_OFFSET..leaf_cert::NOT_BEFORE_OFFSET + 15]
+        .copy_from_slice(params.not_before);
+    tbs[leaf_cert::NOT_AFTER_OFFSET..leaf_cert::NOT_AFTER_OFFSET + 15]
+        .copy_from_slice(params.not_after);
+    tbs[leaf_cert::ISSUER_CN_OFFSET..leaf_cert::ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&i_cn);
+    tbs[leaf_cert::SUBJECT_CN_OFFSET..leaf_cert::SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&s_cn);
+    tbs[leaf_cert::ISSUER_SN_OFFSET..leaf_cert::ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&i_sn);
+    tbs[leaf_cert::SUBJECT_SN_OFFSET..leaf_cert::SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&s_sn);
+    tbs[leaf_cert::SUBJECT_KEY_ID_OFFSET..leaf_cert::SUBJECT_KEY_ID_OFFSET + 20]
+        .copy_from_slice(params.subject_key_id);
+    tbs[leaf_cert::AUTHORITY_KEY_ID_OFFSET..leaf_cert::AUTHORITY_KEY_ID_OFFSET + 20]
         .copy_from_slice(params.authority_key_id);
-    tbs[KEY_USAGE_OFFSET..KEY_USAGE_OFFSET + 2].copy_from_slice(&params.key_usage.to_bytes());
+    tbs[leaf_cert::KEY_USAGE_OFFSET..leaf_cert::KEY_USAGE_OFFSET + 2]
+        .copy_from_slice(&params.key_usage.to_bytes());
 }
 
 /// Extract the SEC1 uncompressed public key (`0x04 ‖ X ‖ Y`) from a DER
@@ -332,39 +340,52 @@ fn der_tlv(der: &[u8]) -> (u8, &[u8], &[u8]) {
 
 /// Patch a root-cert TBS template with the variable field values.
 fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
-    use azihsm_crypto::x509_builder::root_cert::*;
     let cn = pad_cn(params.subject_cn);
     let sn = pad_sn(params.subject_sn);
-    tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
-    tbs[SERIAL_NUMBER_OFFSET..SERIAL_NUMBER_OFFSET + 20].copy_from_slice(params.serial_number);
-    tbs[NOT_BEFORE_OFFSET..NOT_BEFORE_OFFSET + 15].copy_from_slice(params.not_before);
-    tbs[NOT_AFTER_OFFSET..NOT_AFTER_OFFSET + 15].copy_from_slice(params.not_after);
-    tbs[ISSUER_CN_OFFSET..ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&cn);
-    tbs[SUBJECT_CN_OFFSET..SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&cn);
-    tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
-    tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
-    tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
+    tbs[root_cert::PUBLIC_KEY_OFFSET..root_cert::PUBLIC_KEY_OFFSET + 97]
+        .copy_from_slice(params.public_key);
+    tbs[root_cert::SERIAL_NUMBER_OFFSET..root_cert::SERIAL_NUMBER_OFFSET + 20]
+        .copy_from_slice(params.serial_number);
+    tbs[root_cert::NOT_BEFORE_OFFSET..root_cert::NOT_BEFORE_OFFSET + 15]
+        .copy_from_slice(params.not_before);
+    tbs[root_cert::NOT_AFTER_OFFSET..root_cert::NOT_AFTER_OFFSET + 15]
+        .copy_from_slice(params.not_after);
+    tbs[root_cert::ISSUER_CN_OFFSET..root_cert::ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&cn);
+    tbs[root_cert::SUBJECT_CN_OFFSET..root_cert::SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&cn);
+    tbs[root_cert::ISSUER_SN_OFFSET..root_cert::ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
+    tbs[root_cert::SUBJECT_SN_OFFSET..root_cert::SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
+    tbs[root_cert::SUBJECT_KEY_ID_OFFSET..root_cert::SUBJECT_KEY_ID_OFFSET + 20]
+        .copy_from_slice(params.subject_key_id);
 }
 
 /// Patch an intermediate-cert TBS template with the variable field values.
 fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    use azihsm_crypto::x509_builder::intermediate_cert::*;
     let s_cn = pad_cn(params.subject_cn);
     let i_cn = pad_cn(params.issuer_cn);
     let s_sn = pad_sn(params.subject_sn);
     let i_sn = pad_sn(params.issuer_sn);
-    tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
-    tbs[SERIAL_NUMBER_OFFSET..SERIAL_NUMBER_OFFSET + 20].copy_from_slice(params.serial_number);
-    tbs[NOT_BEFORE_OFFSET..NOT_BEFORE_OFFSET + 15].copy_from_slice(params.not_before);
-    tbs[NOT_AFTER_OFFSET..NOT_AFTER_OFFSET + 15].copy_from_slice(params.not_after);
-    tbs[ISSUER_CN_OFFSET..ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&i_cn);
-    tbs[SUBJECT_CN_OFFSET..SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&s_cn);
-    tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&i_sn);
-    tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&s_sn);
-    tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
-    tbs[AUTHORITY_KEY_ID_OFFSET..AUTHORITY_KEY_ID_OFFSET + 20]
+    tbs[intermediate_cert::PUBLIC_KEY_OFFSET..intermediate_cert::PUBLIC_KEY_OFFSET + 97]
+        .copy_from_slice(params.public_key);
+    tbs[intermediate_cert::SERIAL_NUMBER_OFFSET..intermediate_cert::SERIAL_NUMBER_OFFSET + 20]
+        .copy_from_slice(params.serial_number);
+    tbs[intermediate_cert::NOT_BEFORE_OFFSET..intermediate_cert::NOT_BEFORE_OFFSET + 15]
+        .copy_from_slice(params.not_before);
+    tbs[intermediate_cert::NOT_AFTER_OFFSET..intermediate_cert::NOT_AFTER_OFFSET + 15]
+        .copy_from_slice(params.not_after);
+    tbs[intermediate_cert::ISSUER_CN_OFFSET..intermediate_cert::ISSUER_CN_OFFSET + CN_LEN]
+        .copy_from_slice(&i_cn);
+    tbs[intermediate_cert::SUBJECT_CN_OFFSET..intermediate_cert::SUBJECT_CN_OFFSET + CN_LEN]
+        .copy_from_slice(&s_cn);
+    tbs[intermediate_cert::ISSUER_SN_OFFSET..intermediate_cert::ISSUER_SN_OFFSET + SN_LEN]
+        .copy_from_slice(&i_sn);
+    tbs[intermediate_cert::SUBJECT_SN_OFFSET..intermediate_cert::SUBJECT_SN_OFFSET + SN_LEN]
+        .copy_from_slice(&s_sn);
+    tbs[intermediate_cert::SUBJECT_KEY_ID_OFFSET..intermediate_cert::SUBJECT_KEY_ID_OFFSET + 20]
+        .copy_from_slice(params.subject_key_id);
+    tbs[intermediate_cert::AUTHORITY_KEY_ID_OFFSET
+        ..intermediate_cert::AUTHORITY_KEY_ID_OFFSET + 20]
         .copy_from_slice(params.authority_key_id);
-    tbs[PATH_LEN_OFFSET] = params.path_len;
+    tbs[intermediate_cert::PATH_LEN_OFFSET] = params.path_len;
 }
 
 /// Build a unified `PartPolicy` binding the real POTA public key, so
@@ -381,8 +402,9 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
         info: [0xAB; POLICY_INFO_LEN],
         // Enable peer cloning so this backing policy drives the
-        // `SdCreatePeerBackup` tests; the flag is inert for the
-        // remote/reseal/restore commands, which don't gate on it.
+        // `SdCreatePeerBackup` / `SdRestorePeerBackup` tests; the flag is
+        // inert for the remote/reseal/restore commands, which don't gate on
+        // it.
         flags: PolicyFlags::new().with_allow_peer_cloning(true),
         ..PartPolicy::zeroed()
     }
