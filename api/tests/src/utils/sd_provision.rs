@@ -403,8 +403,9 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         info: [0xAB; POLICY_INFO_LEN],
         // Enable peer cloning so this backing policy drives the
         // `SdCreatePeerBackup` / `SdRestorePeerBackup` tests; the flag is
-        // inert for the remote/reseal/restore commands, which don't gate on
-        // it.
+        // inert for the non-peer commands (`SdCreateRemoteBackup`,
+        // `SdResealRemoteBackup`, `SdRestoreRemoteBackup`,
+        // `SdRestoreLocalBackup`), which don't gate on it.
         flags: PolicyFlags::new().with_allow_peer_cloning(true),
         ..PartPolicy::zeroed()
     }
