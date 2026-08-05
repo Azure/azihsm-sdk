@@ -525,19 +525,17 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_create_remote_backup(
         let receiver = SdEvidence::try_from(receiver)?;
         let receiver = api::HsmSdEvidence::from(&receiver);
 
-        // Reject null/misaligned or aliasing output pointers before taking a
-        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
-        // would be undefined behavior.
+        // Validate all outputs up-front (aliasing on raw pointers, then
+        // sizes) so one probe advertises every length before the backup runs.
         validate_distinct_output_buffers(&[pok_remote_backup, pok_local_backup, sd_mk_backup])?;
-
         let pok_remote_backup = deref_mut_ptr(pok_remote_backup)?;
-        validate_output_buffer(pok_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
-
         let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
-        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
-
         let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
-        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+        validate_output_sizes(&mut [
+            (&mut *pok_remote_backup, api::POK_REMOTE_BACKUP_LEN),
+            (&mut *pok_local_backup, api::MASKED_SD_LEN),
+            (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
+        ])?;
 
         let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
 
@@ -695,16 +693,15 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_remote_backup(
         let sender = SdEvidence::try_from(sender)?;
         let sender = api::HsmSdEvidence::from(&sender);
 
-        // Reject null/misaligned or aliasing output pointers before taking a
-        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
-        // would be undefined behavior.
+        // Validate all outputs up-front (aliasing on raw pointers, then
+        // sizes) so one probe advertises every length before the restore runs.
         validate_distinct_output_buffers(&[pok_local_backup, sd_mk_backup])?;
-
         let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
-        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
-
         let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
-        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+        validate_output_sizes(&mut [
+            (&mut *pok_local_backup, api::MASKED_SD_LEN),
+            (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
+        ])?;
 
         let result = session.sd_restore_remote_backup(
             masked_sealing_key,
@@ -857,16 +854,15 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_peer_backup(
         let src = SdEvidence::try_from(src)?;
         let src = api::HsmSdEvidence::from(&src);
 
-        // Reject null/misaligned or aliasing output pointers before taking a
-        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
-        // would be undefined behavior.
+        // Validate all outputs up-front (aliasing on raw pointers, then
+        // sizes) so one probe advertises every length before the restore runs.
         validate_distinct_output_buffers(&[pok_local_backup, sd_mk_backup])?;
-
         let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
-        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
-
         let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
-        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+        validate_output_sizes(&mut [
+            (&mut *pok_local_backup, api::MASKED_SD_LEN),
+            (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
+        ])?;
 
         let result = session.sd_restore_peer_backup(
             masked_sealing_key,
