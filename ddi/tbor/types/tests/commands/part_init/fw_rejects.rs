@@ -26,6 +26,56 @@ use crate::harness::session_guard::SessionGuard;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
+// Replace these with the canonical offsets/constants from the PartPolicy
+// encoder or firmware policy structure.
+const POLICY_PUB_KEY_KIND_OFFSET: usize = 2;
+const POLICY_PUB_KEY_LEN_OFFSET: usize = 4;
+
+const PART_POLICY_FLAGS_OFFSET: usize = 418;
+
+const RESERVED_POLICY_FLAG_BITS: [u8; 5] = [1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7];
+
+const BACKUP_PART_PUB_KEY_KIND_OFFSET: usize = 318;
+const BACKUP_PART_PUB_KEY_LEN_OFFSET: usize = 320;
+const BACKUP_PART_PUB_KEY_DATA_OFFSET: usize = 322;
+
+const EXPECTED_BACKUP_PUB_KEY_LEN: u16 = 96;
+const ECC384_POLICY_KEY_KIND: u16 = 0;
+
+fn set_u16_le(buf: &mut [u8], offset: usize, value: u16) {
+    buf[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn set_backup_part_pub_key_present(policy: &mut [u8; PART_POLICY_LEN]) {
+    set_u16_le(
+        policy,
+        BACKUP_PART_PUB_KEY_KIND_OFFSET,
+        ECC384_POLICY_KEY_KIND,
+    );
+    set_u16_le(
+        policy,
+        BACKUP_PART_PUB_KEY_LEN_OFFSET,
+        EXPECTED_BACKUP_PUB_KEY_LEN,
+    );
+
+    // Supply deterministic nonzero P-384-sized key bytes.
+    policy[BACKUP_PART_PUB_KEY_DATA_OFFSET
+        ..BACKUP_PART_PUB_KEY_DATA_OFFSET + EXPECTED_BACKUP_PUB_KEY_LEN as usize]
+        .fill(0xA5);
+}
+
+fn set_backup_part_pub_key_kind(policy: &mut [u8; PART_POLICY_LEN], kind: u16) {
+    set_u16_le(policy, BACKUP_PART_PUB_KEY_KIND_OFFSET, kind);
+}
+
+fn set_backup_part_pub_key_len(policy: &mut [u8; PART_POLICY_LEN], len: u16) {
+    set_u16_le(policy, BACKUP_PART_PUB_KEY_LEN_OFFSET, len);
+}
+
+fn set_valid_backup_part_pub_key(policy: &mut [u8; PART_POLICY_LEN]) {
+    set_backup_part_pub_key_present(policy);
+}
+
 /// Opens a session for the supplied role and session type using a custom
 /// PSK.
 ///
@@ -645,4 +695,158 @@ fn part_init_co_plaintext_session_rejected_emu() {
         .expect_err("CO PlainText session must be rejected");
 
     assert_fw_rejects(&err, TborStatus::InvalidSessionType);
+}
+
+/// A valid-version policy must reject an unsupported POTA public-key kind.
+#[test]
+fn part_init_rejects_invalid_pub_key_kind_with_valid_version_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut bad_policy = known_good_part_policy();
+
+    bad_policy[POLICY_PUB_KEY_KIND_OFFSET..POLICY_PUB_KEY_KIND_OFFSET + 2]
+        .copy_from_slice(&u16::MAX.to_le_bytes());
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(&session, &seed, &bad_policy, &thumb)
+        .expect_err("unsupported public-key kind must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+/// A valid-version policy must reject an invalid POTA public-key length.
+#[test]
+fn part_init_rejects_invalid_pub_key_len_with_valid_version_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut bad_policy = known_good_part_policy();
+
+    bad_policy[POLICY_PUB_KEY_LEN_OFFSET..POLICY_PUB_KEY_LEN_OFFSET + 2]
+        .copy_from_slice(&95u16.to_le_bytes());
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(&session, &seed, &bad_policy, &thumb)
+        .expect_err("invalid public-key length must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+/// A correctly encoded optional backup partition public key must be
+/// accepted as part of an otherwise valid policy.
+#[test]
+fn part_init_accepts_valid_backup_pub_key_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut policy = known_good_part_policy();
+
+    set_valid_backup_part_pub_key(&mut policy);
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    ctx.part_init(&session, &seed, &policy, &thumb)
+        .expect("valid optional backup public key must be accepted");
+}
+
+/// Every reserved policy-flag bit must be rejected independently.
+#[test]
+fn part_init_rejects_each_reserved_policy_flag_bit_emu() {
+    for reserved_bit in RESERVED_POLICY_FLAG_BITS {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let mut bad_policy = known_good_part_policy();
+
+        bad_policy[PART_POLICY_FLAGS_OFFSET] |= reserved_bit;
+
+        let seed = mach_seed();
+        let thumb = pota_thumbprint();
+
+        let err = ctx
+            .part_init(&session, &seed, &bad_policy, &thumb)
+            .expect_err("reserved policy flag bit must be rejected");
+
+        assert_fw_rejects(&err, TborStatus::InvalidArg);
+    }
+}
+
+/// A present backup partition public key with an unsupported key kind
+/// must be rejected.
+#[test]
+fn part_init_rejects_backup_pub_key_with_invalid_kind_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut bad_policy = known_good_part_policy();
+
+    set_backup_part_pub_key_present(&mut bad_policy);
+    set_backup_part_pub_key_kind(&mut bad_policy, u16::MAX);
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(&session, &seed, &bad_policy, &thumb)
+        .expect_err("backup public key with invalid kind must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+/// A present backup partition public key with a nonzero length other
+/// than the required P-384 length must be rejected.
+///
+/// A zero length is intentionally not tested here because `len == 0`
+/// represents an absent optional backup key and is valid.
+#[test]
+fn part_init_rejects_backup_pub_key_with_wrong_length_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut bad_policy = known_good_part_policy();
+
+    set_backup_part_pub_key_present(&mut bad_policy);
+    set_backup_part_pub_key_len(&mut bad_policy, EXPECTED_BACKUP_PUB_KEY_LEN - 1);
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(&session, &seed, &bad_policy, &thumb)
+        .expect_err("backup public key with invalid nonzero length must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+/// Backup partition public-key lengths immediately below and above the
+/// required P-384 length must be rejected.
+#[test]
+fn part_init_rejects_backup_pub_key_boundary_lengths_emu() {
+    for bad_len in [
+        EXPECTED_BACKUP_PUB_KEY_LEN - 1,
+        EXPECTED_BACKUP_PUB_KEY_LEN + 1,
+    ] {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let mut bad_policy = known_good_part_policy();
+
+        set_backup_part_pub_key_present(&mut bad_policy);
+        set_backup_part_pub_key_len(&mut bad_policy, bad_len);
+
+        let seed = mach_seed();
+        let thumb = pota_thumbprint();
+
+        let err = ctx
+            .part_init(&session, &seed, &bad_policy, &thumb)
+            .expect_err("backup public key with invalid length must be rejected");
+
+        assert_fw_rejects(&err, TborStatus::InvalidArg);
+    }
 }
