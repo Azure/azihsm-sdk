@@ -196,8 +196,7 @@ jobs:
             | sh -s -- -y --default-toolchain none --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION); the
-      # binary persists in the ~/.cargo/bin cache above.
+      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION).
       - name: Install cargo-nextest
         run: cargo xtask setup --skip-taplo --skip-audit
 
