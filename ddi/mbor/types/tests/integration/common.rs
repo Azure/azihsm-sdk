@@ -194,7 +194,6 @@ pub fn helper_get_cert_with_retry(
         tracing::debug!("Get Certificate");
 
         let cert_info = helper_get_cert_chain_info(dev);
-        assert!(cert_info.is_ok(), "cert_info {:?}", cert_info);
         let resp = cert_info.unwrap();
         let num_certs = resp.data.num_certs;
 
@@ -362,10 +361,6 @@ pub fn helper_verify_leaf_cert(
              result.unwrap()
          };
 
-        // let result: Result<DdiGetCertificateCmdResp, DdiError> = helper_get_certificate(dev, i);
-        // assert!(result.is_ok(), "result {:?}", result);
-
-        // let resp = result.unwrap();
         let der = &resp.data.certificate.as_slice();
         print!("cert DER {:?}", der);
 
