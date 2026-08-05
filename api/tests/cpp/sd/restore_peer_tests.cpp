@@ -361,4 +361,118 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_null_params)
     });
 }
 
+// One-shot: an incarnation that just created its security domain is already
+// SD-initialized, so a peer restore on that same incarnation is rejected by
+// the firmware's one-shot gate.
+TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_is_one_shot)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        SdBackingContext ctx = provision_sd_backing_co_session(part_handle);
+        if (ctx.session == 0)
+        {
+            return;
+        }
+        auto sess_guard = scope_guard::make_scope_exit([&ctx] { azihsm_sess_close(ctx.session); });
+
+        SealingKeyMaterial key = sealing_key_and_report(ctx.session);
+        ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
+        ASSERT_FALSE(key.report.empty());
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+
+        // Create the SD (initializing this incarnation) and a peer backup of
+        // it, sealed to our own attested identity.
+        std::vector<uint8_t> local_backup;
+        std::vector<uint8_t> prev_sd_mk;
+        ASSERT_TRUE(create_sd_capture(
+            ctx.session,
+            key.masked,
+            evidence.get(),
+            ctx.policy,
+            local_backup,
+            prev_sd_mk
+        ));
+        azihsm_buffer masked_buf{ key.masked.data(), static_cast<uint32_t>(key.masked.size()) };
+        azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
+        azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
+        azihsm_sess_ex_sd_create_peer_backup_params create_params{
+            &masked_buf,
+            &evidence.get(),
+            &policy_buf,
+            &local_buf,
+        };
+        std::vector<uint8_t> peer_backup;
+        ASSERT_EQ(
+            create_peer_fill(ctx.session, &create_params, peer_backup),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        // Restore on the same already-initialized incarnation is rejected.
+        azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
+        azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
+        azihsm_sess_ex_sd_restore_peer_backup_params restore_params{
+            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+        };
+        std::vector<uint8_t> pok_local;
+        std::vector<uint8_t> sd_mk;
+        ASSERT_EQ(
+            restore_peer_fill(ctx.session, &restore_params, pok_local, sd_mk),
+            AZIHSM_STATUS_SD_ALREADY_INITIALIZED
+        );
+    });
+}
+
+// Not permitted: a partition finalized with `allow_peer_cloning` cleared
+// rejects the peer restore at the policy gate, which fires before any HPKE
+// work — so a real sealing key and evidence reach the gate but the backup
+// blobs can be zero-filled placeholders.
+TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_rejects_without_peer_cloning)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        SdBackingContext ctx =
+            provision_sd_backing_co_session(part_handle, /*allow_peer_cloning=*/false);
+        if (ctx.session == 0)
+        {
+            return;
+        }
+        auto sess_guard = scope_guard::make_scope_exit([&ctx] { azihsm_sess_close(ctx.session); });
+
+        SealingKeyMaterial key = sealing_key_and_report(ctx.session);
+        ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
+        ASSERT_FALSE(key.report.empty());
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+
+        std::vector<uint8_t> peer_backup(kPokRemoteBackupLen, 0);
+        std::vector<uint8_t> prev_sd_mk(kSdMkBackupLen, 0);
+        azihsm_buffer masked_buf{ key.masked.data(), static_cast<uint32_t>(key.masked.size()) };
+        azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
+        azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
+        azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
+        azihsm_sess_ex_sd_restore_peer_backup_params restore_params{
+            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+        };
+        std::vector<uint8_t> pok_local;
+        std::vector<uint8_t> sd_mk;
+        ASSERT_EQ(
+            restore_peer_fill(ctx.session, &restore_params, pok_local, sd_mk),
+            AZIHSM_STATUS_SD_PEER_CLONING_NOT_ALLOWED
+        );
+    });
+}
+
 #endif // !defined(AZIHSM_FEATURE_MOCK)
