@@ -28,6 +28,7 @@ mod access {
 pub use access::*;
 pub mod aes;
 pub mod dual_cp_m7;
+pub mod dummy_mem;
 pub mod gdma;
 pub mod hsm_dtcm;
 pub mod iic;

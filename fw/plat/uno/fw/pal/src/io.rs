@@ -18,7 +18,7 @@
 //! | `IO_CQ[index]`  | 16B CQE           | Completion queue entry (write)       |
 //! | `IO_META[index]` | 8B metadata      | Controller/queue IDs from IIC recv   |
 //! | `DTCM_IO_BUF[index]` | 1.5KB fmem   | Fast DTCM workspace buffer           |
-//! | `SRAM_IO_BUF[index]` | 8KB smem     | Large SRAM workspace buffer          |
+//! | `SRAM_IO_BUF[index]` | 18KB smem    | Large SRAM workspace buffer          |
 //!
 //! The IIC controller DMAs incoming SQE data directly into `IO_SQ[index]`
 //! (configured via `io_pool_base`). The firmware reads the SQE in-place
@@ -166,10 +166,19 @@ impl HsmIoController for UnoHsmPal {
     }
 
     /// Drops an IO without sending a completion (e.g. for disabled
-    /// partitions). Returns the IO_SQ slot to the ISQ.
-    #[allow(clippy::unused_async)]
+    /// partitions). Scrubs the slot's scratch buffers, then returns the
+    /// IO_SQ slot to the ISQ.
+    ///
+    /// This is the universal IO teardown point (the core dispatch loop
+    /// calls it on both the completed and the dropped paths), so the
+    /// per-IO buffer scrub lives here. See
+    /// [`scrub_io_slot`](UnoHsmPal::scrub_io_slot).
     async fn drop_io(&self, io: Self::Io) -> HsmResult<()> {
         let queue_id = io.queue_id();
+        // Scrub both per-IO scratch buffers *before* returning the slot to
+        // the ISQ, so no key material from this IO can be observed by the
+        // next IO that reuses the slot.
+        self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
         Ok(())
     }

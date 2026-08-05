@@ -35,6 +35,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
+use azihsm_fw_uno_reg_soc::dummy_mem::DUMMY_MEM_BASE;
+use azihsm_fw_uno_reg_soc::dummy_mem::DUMMY_MEM_SIZE;
+use azihsm_fw_uno_trace::tracing::*;
 
 use crate::UnoHsmPal;
 
@@ -217,4 +220,105 @@ impl HsmGdmaController for UnoHsmPal {
             )?
             .await
     }
+}
+
+impl UnoHsmPal {
+    /// GDMA-zero a GDMA-reachable device region `[dst_ptr, dst_ptr + len)`.
+    ///
+    /// Copies zeros from the [`DUMMY_MEM_BASE`] window, chunked to its
+    /// [`DUMMY_MEM_SIZE`] so an arbitrarily large region can be wiped
+    /// with a fixed 16 KiB zero source. Both operands use the device
+    /// interface. Only valid for GDMA-reachable memory (GSRAM); the M7 TCM
+    /// is not on the GDMA fabric and must be wiped by the CPU.
+    async fn gdma_zero_region(&self, dst_ptr: *mut u8, len: usize) -> HsmResult<()> {
+        let mut off = 0usize;
+        while off < len {
+            let chunk = core::cmp::min(len - off, DUMMY_MEM_SIZE as usize);
+            let src = device_dma_buf(DUMMY_MEM_BASE as *const u8, chunk as u32);
+            // SAFETY: `off < len`, so `dst_ptr + off` stays within the
+            // caller-provided `[dst_ptr, dst_ptr + len)` region.
+            let dst = device_dma_buf(unsafe { dst_ptr.add(off) }, chunk as u32);
+            self.gdma
+                .copy_mem(
+                    src,
+                    MemInterface::Device,
+                    chunk as u32,
+                    dst,
+                    MemInterface::Device,
+                    chunk as u32,
+                )?
+                .await?;
+            off += chunk;
+        }
+        Ok(())
+    }
+
+    /// Securely scrub both per-IO scratch buffers for `io_index`.
+    ///
+    /// Called on IO teardown so no key material from one IO survives into
+    /// the next IO that reuses the slot. On Uno every crypto operand lives
+    /// in these bump-allocated buffers (no heap), so wiping the full slot is
+    /// what protects private keys / plaintext — the CPU-visible arena is the
+    /// only place they exist.
+    ///
+    /// The SRAM (DMA) buffer is wiped off-CPU with the GDMA engine; the DTCM
+    /// (NonDma) buffer sits in the M7 TCM, which GDMA cannot reach, so it is
+    /// wiped by the CPU. If the GDMA wipe fails (e.g. no free tags under
+    /// heavy concurrency), the SRAM buffer is scrubbed by the CPU as a
+    /// fallback so secrets are never left resident.
+    pub(crate) async fn scrub_io_slot(&self, io_index: u16) {
+        let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_region(io_index);
+        if self.gdma_zero_region(dma_ptr, dma_len).await.is_err() {
+            // Surface the fallback: a persistent GDMA fault would otherwise
+            // silently degrade every wipe into a byte-wise CPU loop with no
+            // signal. Logged via the trace facade (as the iic/oic drivers do
+            // for unexpected conditions); compiled out when no trace backend
+            // is selected. Correctness is unaffected — the CPU wipe below
+            // still fully scrubs the buffer.
+            warn!(
+                "gdma",
+                "SRAM scrub for slot {} fell back to CPU (GDMA wipe failed)", io_index
+            );
+            // SAFETY: `(dma_ptr, dma_len)` describes the slot's SRAM buffer,
+            // valid for writes over its whole capacity.
+            unsafe { cpu_zeroize(dma_ptr, dma_len) };
+        }
+        // DTCM (NonDma) heap — not GDMA-reachable, so wipe with the CPU.
+        let (nd_ptr, nd_len) = crate::alloc::io_slot_nondma_region(io_index);
+        // SAFETY: `(nd_ptr, nd_len)` describes the slot's DTCM buffer, valid
+        // for writes over its whole capacity.
+        unsafe { cpu_zeroize(nd_ptr, nd_len) };
+    }
+}
+
+/// Volatile CPU zeroization of `[ptr, ptr + len)` that the optimizer cannot
+/// elide, mirroring [`DmaBuf::zeroize`]. Used for the M7 TCM (which GDMA
+/// cannot reach) and as the GDMA-failure fallback for SRAM.
+///
+/// Writes 32-bit words when the region is word-aligned, and byte-wise
+/// otherwise (or for a sub-word tail). Both per-IO regions are word-aligned
+/// with word-multiple sizes (`DTCM_IO_BUF` 0x600, `SRAM_IO_BUF` 0x4800), so
+/// in practice this is a pure word loop — 4x fewer stores than a byte-wise
+/// wipe on the IO teardown path.
+///
+/// # Safety
+///
+/// `ptr` must be valid for writes of `len` bytes.
+#[inline]
+unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
+    let mut i = 0usize;
+    // Word body: 4 bytes per store (both per-IO regions hit this path).
+    while i + 4 <= len && (ptr as usize + i) % 4 == 0 {
+        // SAFETY: `i + 4 <= len` and the address is 4-byte aligned, so this
+        // writes wholly within the caller's region at a valid alignment.
+        unsafe { core::ptr::write_volatile(ptr.add(i) as *mut u32, 0) };
+        i += 4;
+    }
+    // Misaligned region or sub-word tail.
+    while i < len {
+        // SAFETY: `i < len`, so `ptr + i` is within the caller's region.
+        unsafe { core::ptr::write_volatile(ptr.add(i), 0) };
+        i += 1;
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }

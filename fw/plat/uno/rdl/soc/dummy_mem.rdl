@@ -1,0 +1,41 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// Dummy Memory address map (dummy_mem).
+//
+// A passive, register-less AXI target at 0xA0B0_0000 (16 KiB). Reads
+// return zero, so it is used as the constant zero source for GDMA-based
+// buffer wiping: the GDMA engine has no native fill/memset — an SQ entry's
+// OP_CODE only encodes read-src / write-dst copy — so scrubbing a buffer
+// means DMA-copying zeros out of this region. Per the LionMS SoC memory
+// map ("Dummy Memory", 16 KiB @ 0xA0B0_0000), the region is reserved for
+// exactly this purpose.
+
+
+// ══════════════════════════════════════════════════════════════
+// Read-as-zero window
+// ══════════════════════════════════════════════════════════════
+
+mem dummy_mem_t {
+    desc = "16KB read-as-zero AXI target. The constant zero source for GDMA
+            buffer zeroization; GDMA has no fill/memset opcode, so a wipe is
+            a DMA copy whose source is this region.";
+    mementries = 4096;  // 4096 × 32 bits = 16384 B = 16 KB
+    memwidth   = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
+// ══════════════════════════════════════════════════════════════
+
+addrmap dummy_mem {
+    name = "Dummy Memory";
+    desc = "Passive read-as-zero region (16 KB at 0xA0B0_0000), used as the
+             constant zero source for GDMA-based buffer wiping.";
+
+    default hw = na;
+    default sw = r;
+
+    dummy_mem_t DUMMY_MEM @ 0x0;
+};

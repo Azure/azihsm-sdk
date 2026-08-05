@@ -159,6 +159,24 @@ fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     }
 }
 
+/// Per-IO SRAM (DMA heap) buffer region as `(base_ptr, capacity)`.
+///
+/// Returns the whole slot-local `SRAM_IO_BUF[io_index]` region (not just
+/// the used watermark) so it can be scrubbed in full on IO teardown; see
+/// [`UnoHsmPal::scrub_io_slot`](crate::UnoHsmPal::scrub_io_slot).
+#[inline(always)]
+pub(crate) fn io_slot_dma_region(io_index: u16) -> (*mut u8, usize) {
+    heap_base_cap(io_index, DMA)
+}
+
+/// Per-IO DTCM (NonDma heap) buffer region as `(base_ptr, capacity)`.
+///
+/// Companion to [`io_slot_dma_region`] for the fast/NonDma scratch heap.
+#[inline(always)]
+pub(crate) fn io_slot_nondma_region(io_index: u16) -> (*mut u8, usize) {
+    heap_base_cap(io_index, NONDMA)
+}
+
 /// Access the watermark cell for one `(io_index, heap)` pair.
 ///
 /// # Parameters

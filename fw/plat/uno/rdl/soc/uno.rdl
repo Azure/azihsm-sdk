@@ -13,6 +13,7 @@
 //   0xA020_0000  AES               4 KB
 //   0xA030_0000  RNG               4 KB
 //   0xA040_0000  SHA               4 KB
+//   0xA0B0_0000  DummyMemory      16 KB  (read-as-zero; GDMA zero source)
 //   0xA128_0000  IIC              16 KB  (controller 0)
 //   0xA12C_0000  OIC              16 KB  (controller 0)
 //   0xB000_6000  INTC            272 B   (IPC interrupt controller)
@@ -27,6 +28,7 @@
 `include "gdma.rdl"
 `include "aes.rdl"
 `include "sha.rdl"
+`include "dummy_mem.rdl"
 `include "upka.rdl"
 `include "rng.rdl"
 `include "intc.rdl"
@@ -51,6 +53,7 @@ addrmap uno {
     aes    AES             @ 0xA020_0000;
     rng    RNG             @ 0xA030_0000;
     sha    SHA             @ 0xA040_0000;
+    dummy_mem DUMMY_MEM    @ 0xA0B0_0000;
     iic    IIC             @ 0xA128_0000;
     oic    OIC             @ 0xA12C_0000;
     intc   INTC            @ 0xB000_6000;
