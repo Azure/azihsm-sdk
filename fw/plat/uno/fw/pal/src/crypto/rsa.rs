@@ -24,6 +24,7 @@ use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
 
+use super::reverse_copy;
 use crate::UnoHsmPal;
 use crate::asn1::parse_rsa_private_key;
 
@@ -117,9 +118,7 @@ fn rsa_operand_layout(buf: &[u8]) -> Option<RsaOperandLayout> {
     // DER `e` is big-endian and minimally encoded; the operand slot is a fixed
     // little-endian `EXP_WIRE_LEN` field, so reverse into a zeroed array.
     let mut e_le = [0u8; EXP_WIRE_LEN];
-    for (dst, &src) in e_le.iter_mut().zip(e.iter().rev()) {
-        *dst = src;
-    }
+    reverse_copy(&mut e_le, e);
     Some(RsaOperandLayout {
         modulus_len,
         n_off: offset_in(buf, n),
@@ -134,10 +133,12 @@ fn rsa_operand_layout(buf: &[u8]) -> Option<RsaOperandLayout> {
 ///
 /// The operand overlaps the DER field offsets it reads from (`d` and `n` mutually
 /// clobber each other's source), so `d` is first staged into `buf`'s tail scratch
-/// (`[vault_len..]`) via `copy_within` (memmove — safe on overlap); `n` is then
-/// moved and reversed big-endian→little-endian into place, followed by the staged
-/// `d` and the saved `e`. Requires `buf.len() >= vault_len + d_len` (checked by
-/// the caller). The tail is left dirty; the per-IO teardown scrub wipes it.
+/// (`[vault_len..]`) via `copy_within` (memmove — safe on overlap). `n`'s source
+/// may overlap its destination too, so it is moved with `copy_within` and then
+/// reversed in place; `d`'s staged copy is disjoint from the front of the buffer,
+/// so it is folded into a single [`reverse_copy`]. Requires
+/// `buf.len() >= vault_len + d_len` (checked by the caller). The tail is left
+/// dirty; the per-IO teardown scrub wipes it.
 fn assemble_rsa_operand_in_place(buf: &mut [u8], layout: &RsaOperandLayout) {
     let k = layout.modulus_len;
     let vault_len = 2 * k + EXP_WIRE_LEN;
@@ -146,17 +147,21 @@ fn assemble_rsa_operand_in_place(buf: &mut [u8], layout: &RsaOperandLayout) {
     //    clobbered by the `n` move below.
     buf.copy_within(layout.d_off..layout.d_off + d_len, vault_len);
     // 2. vault `n` at [k, 2k): move DER `n` (big-endian, exactly k bytes) into
-    //    place, then reverse to little-endian.
+    //    place, then reverse to little-endian. Source and destination can
+    //    overlap, so this stays a memmove plus an in-place reverse.
     buf.copy_within(layout.n_off..layout.n_off + k, k);
     buf[k..2 * k].reverse();
-    // 3. vault `d` at [0, k): move the staged big-endian `d` to the front,
-    //    reverse to little-endian, and zero-pad the high bytes.
-    buf.copy_within(vault_len..vault_len + d_len, 0);
-    buf[0..d_len].reverse();
-    buf[d_len..k].fill(0);
+    // 3. vault `d` at [0, k): the staged copy at `vault_len` is disjoint from
+    //    `[0, d_len)`, so split the buffer and reverse-copy it to the front in
+    //    one pass. `d` may be shorter than the modulus (DER strips leading
+    //    zeros), and the bytes above it still hold DER, so zero the high end —
+    //    the vault field is a fixed k bytes.
+    let (front, staged) = buf.split_at_mut(vault_len);
+    reverse_copy(&mut front[..d_len], &staged[..d_len]);
+    front[d_len..k].fill(0);
     // 4. vault `e` at [2k, 2k+EXP_WIRE_LEN): already little-endian and
     //    zero-padded, so a single copy fills the fixed slot.
-    buf[2 * k..vault_len].copy_from_slice(&layout.e);
+    front[2 * k..vault_len].copy_from_slice(&layout.e);
 }
 
 // =============================================================================
