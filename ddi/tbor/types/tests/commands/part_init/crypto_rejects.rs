@@ -49,7 +49,6 @@ fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartI
 
     req.part_policy =
         <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&known_good_part_policy())
-            .ok()
             .expect("known-good policy parses");
 
     req.pota_thumbprint.copy_from_slice(&pota_thumbprint());
