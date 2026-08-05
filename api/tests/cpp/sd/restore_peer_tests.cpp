@@ -16,9 +16,10 @@
 // and the attested source-peer key match those that sealed the backup.
 //
 // Like the create/reseal/restore tests this needs the two-phase TBOR HPKE
-// handshake and a fully provisioned partition, which only the emu backend
-// provides, so it is gated to `AZIHSM_FEATURE_EMU`.
-#if defined(AZIHSM_FEATURE_EMU)
+// handshake and a fully provisioned partition, which the mock backend does
+// not implement, so it is excluded from the mock lane and runs on the emu
+// and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <azihsm_api.h>
@@ -41,18 +42,6 @@ constexpr uint32_t kMaskedSealingKeyLen = 180;
 constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kMaskedSdLen = 180;
 constexpr uint32_t kSdMkBackupLen = 164;
-
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 // Create the security domain, capturing both the 180-byte device-local
 // backup (the input CreatePeerBackup recovers BKS3 from) and the 164-byte
@@ -372,4 +361,4 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_null_params)
     });
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)
