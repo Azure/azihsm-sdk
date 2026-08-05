@@ -18,6 +18,7 @@ mod sd_create_peer_backup;
 mod sd_create_remote_backup;
 mod sd_evidence;
 mod sd_reseal_remote_backup;
+mod sd_restore_peer_backup;
 mod sd_restore_remote_backup;
 mod sd_sealing_key_gen;
 mod session;
@@ -61,6 +62,7 @@ pub(crate) use sd_create_peer_backup::*;
 pub(crate) use sd_create_remote_backup::*;
 pub(crate) use sd_evidence::*;
 pub(crate) use sd_reseal_remote_backup::*;
+pub(crate) use sd_restore_peer_backup::*;
 pub(crate) use sd_restore_remote_backup::*;
 pub(crate) use sd_sealing_key_gen::*;
 pub(crate) use session::*;
@@ -126,6 +128,9 @@ impl From<DdiError> for HsmError {
             }
             DdiError::TborStatus(TborStatus::SdAlreadyInitialized) => {
                 HsmError::SdAlreadyInitialized
+            }
+            DdiError::TborStatus(TborStatus::SdPeerCloningNotAllowed) => {
+                HsmError::SdPeerCloningNotAllowed
             }
             // Map the firmware's contract-level `InvalidArg` to the same
             // `InvalidArgument` the host guards return, so callers see a
