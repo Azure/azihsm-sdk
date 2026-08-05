@@ -42,18 +42,6 @@ constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kMaskedSdLen = 180;
 constexpr uint32_t kSdMkBackupLen = 164;
 
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Create a real remote backup sealed to `receiver`'s attested key by
 // `masked`, capturing both the 161-byte remote backup and the 164-byte
 // masking-key backup needed to drive a later restore. Sizes the three output

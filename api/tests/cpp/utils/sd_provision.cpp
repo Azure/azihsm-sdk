@@ -776,7 +776,11 @@ std::vector<uint8_t> build_part_policy(const uint8_t pota_raw[kRawPubLen])
     }
     write_key_slot(policy, kOffSata, sata_fill);
 
-    policy[kOffFlags] = 0;
+    // Enable allow_peer_cloning (bit 2) so this one backing policy also
+    // drives the SdCreatePeerBackup / SdRestorePeerBackup tests; the flag is
+    // inert for the remote/reseal/restore commands, which don't gate on it.
+    constexpr uint8_t kAllowPeerCloning = 1 << 2;
+    policy[kOffFlags] = kAllowPeerCloning;
     for (size_t i = 0; i < 64; ++i)
     {
         policy[kOffInfo + i] = 0xAB;
