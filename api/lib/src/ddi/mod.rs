@@ -129,6 +129,9 @@ impl From<DdiError> for HsmError {
             DdiError::TborStatus(TborStatus::SdAlreadyInitialized) => {
                 HsmError::SdAlreadyInitialized
             }
+            DdiError::TborStatus(TborStatus::SdPeerCloningNotAllowed) => {
+                HsmError::SdPeerCloningNotAllowed
+            }
             // Map the firmware's contract-level `InvalidArg` to the same
             // `InvalidArgument` the host guards return, so callers see a
             // consistent argument-rejection error across transports.

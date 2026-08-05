@@ -391,7 +391,7 @@ fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
 /// Build a unified `PartPolicy` binding the real POTA public key, so
 /// `part_final_ex` can validate a chain anchored to it. SATA carries a
 /// filler key (not chain-validated in this flow).
-fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
+fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN], allow_peer_cloning: bool) -> PartPolicy {
     let mut sata = [0u8; POLICY_MAX_KEY_LEN];
     for (i, b) in sata.iter_mut().enumerate() {
         *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
@@ -401,12 +401,12 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN]) -> PartPolicy {
         pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
         sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
         info: [0xAB; POLICY_INFO_LEN],
-        // Enable peer cloning so this backing policy drives the
-        // `SdCreatePeerBackup` / `SdRestorePeerBackup` tests; the flag is
-        // inert for the non-peer commands (`SdCreateRemoteBackup`,
+        // `allow_peer_cloning` gates the peer commands
+        // (`SdCreatePeerBackup` / `SdRestorePeerBackup`); it is inert for
+        // the non-peer commands (`SdCreateRemoteBackup`,
         // `SdResealRemoteBackup`, `SdRestoreRemoteBackup`,
         // `SdRestoreLocalBackup`), which don't gate on it.
-        flags: PolicyFlags::new().with_allow_peer_cloning(true),
+        flags: PolicyFlags::new().with_allow_peer_cloning(allow_peer_cloning),
         ..PartPolicy::zeroed()
     }
 }
@@ -471,7 +471,7 @@ pub(crate) fn finalized_co_session() -> HsmSession {
         .expect("open rotated CO session");
 
     let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
+    let policy = part_policy_with_pota(&pota.raw_pub(), true);
     let policy_bytes = policy.as_bytes();
     let init = session
         .part_init_ex(
@@ -511,10 +511,11 @@ fn backing_part_policy(
     pid_pub: &[u8],
     sata_pub: &[u8; RAW_PUB_LEN],
     pota_pub: &[u8; RAW_PUB_LEN],
+    allow_peer_cloning: bool,
 ) -> [u8; PART_POLICY_LEN] {
     // Anchor the policy to a real POTA key so `part_final_ex` can validate
     // a PTA certificate chain against it.
-    let policy = part_policy_with_pota(pota_pub);
+    let policy = part_policy_with_pota(pota_pub, allow_peer_cloning);
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());
 
@@ -622,14 +623,16 @@ pub(crate) fn build_receiver_evidence(
 /// this partition's `PartInfo` identity; on the restore path the caller
 /// reuses the first incarnation's policy so both agree on the domain image.
 /// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
-/// recovery step that lets a captured masked sealing key unmask. Returns the
-/// CO session, the policy image, the PID public key, and the
-/// `local_mk_backup` that finalize produced.
-pub(crate) fn provision_backing(
+/// recovery step that lets a captured masked sealing key unmask.
+/// `allow_peer_cloning` sets that flag in the built policy (ignored when
+/// `policy_in` is supplied). Returns the CO session, the policy image, the
+/// PID public key, and the `local_mk_backup` that finalize produced.
+pub(crate) fn provision_backing_ex(
     sata_key: &CaKey,
     pota: &CaKey,
     policy_in: Option<[u8; PART_POLICY_LEN]>,
     prev_local_mk: Option<&[u8]>,
+    allow_peer_cloning: bool,
 ) -> (
     HsmSession,
     [u8; PART_POLICY_LEN],
@@ -678,7 +681,13 @@ pub(crate) fn provision_backing(
     pid_pub.copy_from_slice(&pid_pub_vec);
 
     let policy = policy_in.unwrap_or_else(|| {
-        backing_part_policy(&pid, &pid_pub_vec, &sata_key.raw_pub(), &pota.raw_pub())
+        backing_part_policy(
+            &pid,
+            &pid_pub_vec,
+            &sata_key.raw_pub(),
+            &pota.raw_pub(),
+            allow_peer_cloning,
+        )
     });
 
     let init = session
@@ -705,6 +714,23 @@ pub(crate) fn provision_backing(
         .expect("part_final_ex");
 
     (session, policy, pid_pub, result.local_mk_backup)
+}
+
+/// Provision a backing partition with peer cloning enabled — the common
+/// case for the backup tests. See [`provision_backing_ex`] to control the
+/// `allow_peer_cloning` flag.
+pub(crate) fn provision_backing(
+    sata_key: &CaKey,
+    pota: &CaKey,
+    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    prev_local_mk: Option<&[u8]>,
+) -> (
+    HsmSession,
+    [u8; PART_POLICY_LEN],
+    [u8; RAW_PUB_LEN],
+    Vec<u8>,
+) {
+    provision_backing_ex(sata_key, pota, policy_in, prev_local_mk, true)
 }
 
 /// Provision a fresh partition with a **backing-partition policy** — one

@@ -17,6 +17,7 @@
 
 use azihsm_api::*;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 
 use crate::utils::partition_ex_helpers::PARTITION_LOCK;
@@ -24,6 +25,7 @@ use crate::utils::sd_provision::CaKey;
 use crate::utils::sd_provision::build_receiver_evidence;
 use crate::utils::sd_provision::masked_key_and_report;
 use crate::utils::sd_provision::provision_backing;
+use crate::utils::sd_provision::provision_backing_ex;
 
 /// Happy path: create a peer backup on one incarnation, then restore it on
 /// a rebooted (factory-reset, same-seed) incarnation; the restore returns
@@ -115,5 +117,32 @@ fn sd_restore_peer_backup_is_one_shot() {
         matches!(restored, Err(HsmError::SdAlreadyInitialized)),
         "restore on an already-initialized SD must be rejected with \
          SdAlreadyInitialized, got {restored:?}",
+    );
+}
+
+/// Not permitted: a partition finalized with `allow_peer_cloning` cleared
+/// rejects `SdRestorePeerBackup` at the policy gate, which fires before any
+/// HPKE work — so a real sealing key and evidence reach the gate but the
+/// backup blobs can be zero-filled placeholders.
+#[test]
+fn sd_restore_peer_backup_rejects_without_peer_cloning() {
+    let _guard = PARTITION_LOCK.lock();
+    let sata = CaKey::generate();
+    let pota = CaKey::generate();
+
+    let (session, policy, pid_pub, _local_mk) =
+        provision_backing_ex(&sata, &pota, None, None, false);
+    let (masked, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+
+    let pok_peer_backup = [0u8; POK_REMOTE_BACKUP_LEN];
+    let prev_sd_mk_backup = [0u8; SD_MK_BACKUP_LEN];
+    let restored = evidence.with_hsm_evidence(|src| {
+        session.sd_restore_peer_backup(&masked, src, &policy, &pok_peer_backup, &prev_sd_mk_backup)
+    });
+    assert!(
+        matches!(restored, Err(HsmError::SdPeerCloningNotAllowed)),
+        "restore with allow_peer_cloning cleared must be rejected with \
+         SdPeerCloningNotAllowed, got {restored:?}",
     );
 }
