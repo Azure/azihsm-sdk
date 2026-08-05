@@ -576,6 +576,12 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
+        // Raw admin IO rather than a `with_admin_io` session: this path is
+        // synchronous (it must not yield, so it cannot await a scrub) and it
+        // allocates no scratch — `create_sync` copies straight from the
+        // `&'static` GSRAM slot into vault storage, so the admin slot is never
+        // dirtied and there is nothing to wipe. The handle is only used to
+        // select the partition's vault.
         let admin_io = UnoHsmIo::admin(pid);
         let kid = crate::vault::vault(&admin_io).create_sync(
             u8::from(pid),

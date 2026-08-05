@@ -215,10 +215,15 @@ impl UnoHsmPal {
     ///   scoped allocator.
     ///
     /// # Returns
-    /// Whatever `f` returned. `R` cannot borrow from the session (enforced
-    /// by the higher-ranked bound), so no scratch outlives the scrub.
+    /// Whatever `f` returned. `R` cannot borrow anything the scrub will wipe:
+    /// the higher-ranked bound stops it borrowing from the session's scoped
+    /// allocator, and `R: 'static` additionally stops it returning a buffer
+    /// obtained from the PAL-level allocator, whose lifetime is tied to the
+    /// PAL and so outlives the session. Every current caller returns an owned
+    /// value, so the bound costs nothing.
     pub(crate) async fn with_admin_io<R, F>(&self, pid: HsmPartId, f: F) -> R
     where
+        R: 'static,
         F: for<'a> AsyncFnOnce(&'a UnoHsmIo, &'a UnoScopedAlloc<'a>) -> R,
     {
         let io = UnoHsmIo::admin(pid);
