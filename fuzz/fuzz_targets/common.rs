@@ -6,6 +6,10 @@
 #![allow(dead_code)]
 
 use azihsm_ddi_tbor_codec::Encoder;
+use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
+use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
+use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
+use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RequestView;
 use azihsm_ddi_tbor_codec::ResponseView;
 use azihsm_ddi_tbor_codec::header::Header;
@@ -29,8 +33,18 @@ pub enum EncoderTOCBuilders {
     Padding(u16),
 }
 
-/// Buffer size used by encoder fuzz targets.
-pub const FUZZ_BUF_SIZE: usize = 8192;
+/// Buffer size used by request encoder fuzz targets.
+///
+/// Sized to hold the worst-case request: a full header, the maximum number
+/// of TOC entries (each a 4-byte / `u32` wire word), and the maximum data
+/// section. `TOC_ENTRY_LEN` is `pub(crate)` in the codec, so we use
+/// `size_of::<u32>()` as an equivalent.
+pub const FUZZ_REQ_BUF_SIZE: usize =
+    REQ_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
+
+/// Buffer size used by response encoder fuzz targets.
+pub const FUZZ_RESP_BUF_SIZE: usize =
+    RESP_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
 
 /// Apply a sequence of TOC builder operations to an encoder, returning
 /// the encoded bytes on success or `None` if any step (including
