@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
-use azihsm_cred_encrypt::{Bk3EncryptionKey, DeviceCredKey};
+use azihsm_cred_encrypt::Bk3EncryptionKey;
+use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
 use test_with_tracing::test;
@@ -50,7 +52,9 @@ fn set_pin_phase2(
     let (cred_key, pub_key) = dev_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
-    let ecred = cred_key.encrypt_establish_credential(id, pin, nonce).unwrap();
+    let ecred = cred_key
+        .encrypt_establish_credential(id, pin, nonce)
+        .unwrap();
     helper_set_init_bk3_pin(dev, ecred, pub_key)?;
     Ok(())
 }
@@ -113,7 +117,10 @@ fn test_secure_provision_lm_midflow_restart() {
                 return;
             }
             other => {
-                tracing::warn!(?other, "partition already provisioned; AC-cycle to reset; skipping");
+                tracing::warn!(
+                    ?other,
+                    "partition already provisioned; AC-cycle to reset; skipping"
+                );
                 return;
             }
         }
@@ -131,7 +138,10 @@ fn test_secure_provision_lm_midflow_restart() {
         match helper_secure_init_bk3(dev, eb, pk) {
             Err(DdiError::DdiStatus(DdiStatus::Bk3PinNotSet)) => {}
             Err(err) if not_truly_fresh(&err) => {
-                tracing::warn!(?err, "device not truly fresh (legacy/persistent BK3); skipping");
+                tracing::warn!(
+                    ?err,
+                    "device not truly fresh (legacy/persistent BK3); skipping"
+                );
                 return;
             }
             other => panic!("A1: cold Phase 4 (no PIN) must be Bk3PinNotSet, got {other:?}"),

@@ -18,3 +18,5 @@ use azihsm_ddi_mbor_codec::MborByteArray;
 use azihsm_ddi_mbor_types::*;
 pub use cred_encrypt::*;
 pub use error::*;
+use zeroize::Zeroize;
+use zeroize::Zeroizing;
