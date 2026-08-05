@@ -39,18 +39,6 @@ constexpr uint32_t kPokLocalBackupLen = 180;
 constexpr uint32_t kSdMkBackupLen = 164;
 constexpr uint32_t kMaskedSealingKeyLen = 180;
 
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Run the create-backup call, sizing the three output buffers via the
 // probe/fill convention. The FFI validates each output buffer in sequence
 // and reports the first that is too small, so a single len=0 probe only

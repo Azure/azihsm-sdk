@@ -37,18 +37,6 @@ constexpr uint32_t kMaskedSealingKeyLen = 180;
 constexpr uint32_t kMaskedSdLen = 180;
 constexpr uint32_t kPokRemoteBackupLen = 161;
 
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Create the security domain and capture the 180-byte device-local backup
 // that CreatePeerBackup recovers BKS3 from. Sizes the three output buffers
 // via the probe/fill convention. Records a gtest failure and returns false
