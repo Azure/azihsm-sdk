@@ -66,7 +66,17 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
+          # Use the Azure mirror: archive.ubuntu.com is round-robin DNS where
+          # one dead IP fails the job.  No-op on Debian (deb.debian.org).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] && sed -i \
+              -e 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \
+              -e 's|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' "$f"
+          done
+          echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+          # Fail on an unreachable mirror here instead of as a misleading
+          # "no installation candidate" at install time.
+          apt-get update --error-on=any
           apt-get install -y --no-install-recommends \
             ca-certificates curl git gnupg \
             build-essential pkg-config clang libclang-dev \
@@ -75,7 +85,7 @@ jobs:
             | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
           echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
             > /etc/apt/sources.list.d/nodesource.list
-          apt-get update
+          apt-get update --error-on=any
           apt-get install -y --no-install-recommends nodejs
 
       # clang + clang-devel provide libclang for bindgen (build.rs).  el8's

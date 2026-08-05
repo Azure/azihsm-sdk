@@ -138,7 +138,17 @@ jobs:
       - name: Bootstrap (debian)
         if: matrix.family == 'debian'
         run: |
-          apt-get update
+          # Use the Azure mirror: archive.ubuntu.com is round-robin DNS where
+          # one dead IP fails the job.  No-op on Debian (deb.debian.org).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] && sed -i \
+              -e 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \
+              -e 's|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' "$f"
+          done
+          echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+          # Fail on an unreachable mirror here instead of as a misleading
+          # "no installation candidate" at install time.
+          apt-get update --error-on=any
           # nodejs is for JS-based actions (rust-cache, checkout, etc.) —
           # GHA auto-injects node in container jobs but `act` does not.
           # xxd (used by the import_wrapped_key cli test scripts) lives in
@@ -236,7 +246,7 @@ jobs:
       - name: Install nginx 1.29.8 (OpenSSL 3.5)
         if: ${{ matrix.nginx && matrix.openssl_minor == '3.5' }}
         run: |
-          apt-get update
+          apt-get update --error-on=any
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           host=$(. /etc/os-release && echo "$ID")
           curl -fsSL -o /tmp/nginx.deb \
