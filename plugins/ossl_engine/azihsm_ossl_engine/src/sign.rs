@@ -3,13 +3,22 @@
 
 //! ECDSA signing for engine-loaded EC keys.
 //!
-//! A loaded key gets a custom `EC_KEY_METHOD` (see [`attach_ecdsa_method`])
-//! whose `sign_sig` hook recovers the HSM key the loader stashed in the
-//! `EC_KEY` ex_data and signs the caller's digest on the HSM. OpenSSL's default
-//! `sign` DER-wraps the returned `ECDSA_SIG`, so both the EVP/ABI path
-//! (`EVP_DigestSign`, `EVP_PKEY_sign`) and the CLI (`openssl dgst -sign`,
-//! `openssl pkeyutl -sign`) route through here. Verification stays in software,
-//! using the public key already on the `EVP_PKEY`.
+//! The engine registers a custom `EC_KEY_METHOD` (see [`ecdsa_method`]) at bind
+//! time via `ENGINE_set_EC`, so every key the loader creates with
+//! `EC_KEY_new_method` adopts it. Its `sign_sig` hook recovers the HSM key the
+//! loader stashed in the `EC_KEY` ex_data and signs the caller's digest on the
+//! HSM. OpenSSL's default `sign` DER-wraps the returned `ECDSA_SIG`, so both
+//! the EVP/ABI path (`EVP_DigestSign`, `EVP_PKEY_sign`) and the CLI
+//! (`openssl dgst -sign`, `openssl pkeyutl -sign`) route through here.
+//! Verification stays in software, using the public key already on the
+//! `EVP_PKEY`.
+//!
+//! The method is deliberately **not** attached per key with `EC_KEY_set_method`:
+//! that call drops the key's engine reference (`ENGINE_finish` +
+//! `key->engine = NULL`), which would let the engine — and the `EngineData`
+//! owning the loaded HSM keys — be destroyed while the key is still alive.
+//! Registering it engine-wide preserves the reference `EC_KEY_new_method`
+//! takes. Software EC keys (created without the engine) are unaffected.
 
 use std::ffi::c_int;
 use std::ptr::null_mut;
@@ -28,6 +37,13 @@ use parking_lot::Mutex;
 struct AzihsmEcdsaSign;
 
 impl EcdsaSignHandler for AzihsmEcdsaSign {
+    /// A key is ours iff the loader stashed an HSM key in its ex_data. Software
+    /// EC keys that merely adopted the engine's method (e.g. via an application
+    /// calling `ENGINE_set_default`) are signed by OpenSSL's software fallback.
+    fn owns(ec_key: *mut ffi::EC_KEY) -> bool {
+        !crate::keyload::ec_key_hsm_key(ec_key).is_null()
+    }
+
     #[allow(unsafe_code)]
     fn sign(ec_key: *mut ffi::EC_KEY, digest: &[u8]) -> EngineResult<*mut ffi::ECDSA_SIG> {
         let key_ptr = crate::keyload::ec_key_hsm_key(ec_key);
@@ -99,24 +115,11 @@ fn raw_to_ecdsa_sig(raw: &[u8]) -> EngineResult<*mut ffi::ECDSA_SIG> {
     Ok(sig)
 }
 
-/// Attach the process-global ECDSA `EC_KEY_METHOD` to `ec_key` so its signing
-/// routes through the HSM.
-#[allow(unsafe_code)]
-pub(crate) fn attach_ecdsa_method(ec_key: *mut ffi::EC_KEY) -> EngineResult<()> {
-    let method = ecdsa_method()?;
-    // SAFETY: ec_key is the loaded EVP_PKEY's EC_KEY; method is our process-
-    // global EC_KEY_METHOD, valid for the process lifetime.
-    if unsafe { ffi::EC_KEY_set_method(ec_key, method) } != 1 {
-        return Err(EngineError::Other("EC_KEY_set_method failed".into()));
-    }
-    Ok(())
-}
-
 /// Process-global ECDSA `EC_KEY_METHOD`, built once and kept for the process
-/// lifetime (one method shared by all loaded keys; never freed, so no
-/// libcrypto-held pointer dangles at teardown). Stored as `usize` because a raw
-/// pointer is not `Sync`.
-fn ecdsa_method() -> EngineResult<*const ffi::EC_KEY_METHOD> {
+/// lifetime (one method registered on the engine and shared by all loaded keys;
+/// never freed, so no libcrypto-held pointer dangles at teardown). Stored as
+/// `usize` because a raw pointer is not `Sync`.
+pub(crate) fn ecdsa_method() -> EngineResult<*const ffi::EC_KEY_METHOD> {
     static METHOD: OnceLock<usize> = OnceLock::new();
     static INIT: Mutex<()> = Mutex::new(());
 

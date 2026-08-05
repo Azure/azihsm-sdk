@@ -43,8 +43,13 @@ fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
         assert!(!raw.is_null(), "ENGINE_new");
         let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
         // The loader binds keys via EC_KEY_new_method, which needs an EC method
-        // on the engine (bind_helper does this in production).
-        engine.set_default_ec_method().unwrap();
+        // on the engine and adopts it — register the engine's ECDSA method,
+        // exactly as bind_helper does in production.
+        // SAFETY: ecdsa_method() is process-global and never freed, so it
+        // outlives the engine.
+        engine
+            .set_ec_method(crate::sign::ecdsa_method().unwrap())
+            .unwrap();
         (engine, raw)
     }
 }

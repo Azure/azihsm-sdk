@@ -253,14 +253,10 @@ fn attach_ec(data: &EngineData, ec: *mut ffi::EC_KEY, key: HsmEccPrivateKey) -> 
         return Err(EngineError::Other("EC_KEY_set_ex_data failed".into()));
     }
 
-    // Route signing on this key through the HSM: give it our EC_KEY_METHOD
-    // whose sign_sig recovers the stashed key and signs via the HSM. Verify
-    // stays software (the public key is on the EVP_PKEY). On failure roll the
-    // retain back; the about-to-be-freed EC_KEY's ex_data is never read.
-    if let Err(e) = crate::sign::attach_ecdsa_method(ec) {
-        data.release_loaded_key(key_ptr);
-        return Err(e);
-    }
+    // Signing on this key already routes through the HSM: the EC_KEY adopted
+    // the engine's ECDSA EC_KEY_METHOD at creation (EC_KEY_new_method; see
+    // crate::sign). It is not attached per key — EC_KEY_set_method would drop
+    // the engine reference that keeps EngineData (and this HSM key) alive.
     Ok(())
 }
 
