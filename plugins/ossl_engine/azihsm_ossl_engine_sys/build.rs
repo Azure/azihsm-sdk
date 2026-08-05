@@ -82,8 +82,6 @@ fn main() {
         .allowlist_function("EC_KEY_.*")
         .allowlist_function("EC_POINT_.*")
         .allowlist_function("EC_GROUP_.*")
-        // ECDSA signature marshaling for the EC_KEY_METHOD sign path: build an
-        // ECDSA_SIG from the HSM's raw r||s (BN_bin2bn), BN_free on the error path.
         .allowlist_function("ECDSA_SIG_.*")
         .allowlist_function("BN_bin2bn")
         .allowlist_function("BN_free")
