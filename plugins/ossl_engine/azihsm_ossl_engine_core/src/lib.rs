@@ -12,6 +12,8 @@
 //! No HSM-specific logic. Linux only.
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod ec_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod engine;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod error;

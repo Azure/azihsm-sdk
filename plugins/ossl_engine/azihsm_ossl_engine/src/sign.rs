@@ -17,8 +17,8 @@ use std::sync::OnceLock;
 
 use azihsm_api::HsmEccSignAlgo;
 use azihsm_api::HsmSigner;
-use azihsm_ossl_engine_core::engine::EcdsaSignHandler;
-use azihsm_ossl_engine_core::engine::new_ecdsa_method;
+use azihsm_ossl_engine_core::ec_method::EcdsaSignHandler;
+use azihsm_ossl_engine_core::ec_method::new_ecdsa_method;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
 use azihsm_ossl_engine_core::ffi;
