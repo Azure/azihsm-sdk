@@ -8,7 +8,7 @@ mod common;
 
 use azihsm_ddi_tbor_codec::ResponseEncoder;
 use common::EncoderTOCBuilders;
-use common::FUZZ_BUF_SIZE;
+use common::FUZZ_RESP_BUF_SIZE;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -22,7 +22,7 @@ struct FuzzInput {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let mut buf = [0u8; FUZZ_BUF_SIZE];
+    let mut buf = [0u8; FUZZ_RESP_BUF_SIZE];
     let encoder = ResponseEncoder::new(&mut buf, input.version, input.status, input.fips_approved);
     if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
         common::run_response_view(encoded);
