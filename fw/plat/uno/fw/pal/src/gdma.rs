@@ -308,7 +308,7 @@ impl UnoHsmPal {
 unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
     let mut i = 0usize;
     // Word body: 4 bytes per store (both per-IO regions hit this path).
-    while i + 4 <= len && (ptr as usize + i) % 4 == 0 {
+    while i + 4 <= len && (ptr as usize + i).is_multiple_of(4) {
         // SAFETY: `i + 4 <= len` and the address is 4-byte aligned, so this
         // writes wholly within the caller's region at a valid alignment.
         unsafe { core::ptr::write_volatile(ptr.add(i) as *mut u32, 0) };

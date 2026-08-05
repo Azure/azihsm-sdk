@@ -25,6 +25,7 @@
 //! and writes the CQE into `IO_CQ[index]` for OIC to transmit.
 
 use core::mem;
+use core::ops::AsyncFnOnce;
 
 use azihsm_fw_hsm_pal_traits::HsmCqe;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -45,6 +46,7 @@ use tock_registers::interfaces::Writeable;
 
 use crate::UnoHsmPal;
 use crate::alloc::ADMIN_IO_INDEX;
+use crate::alloc::UnoScopedAlloc;
 use crate::alloc::reset_io_alloc;
 
 /// Typed overlay of the IO GSRAM region.
@@ -181,5 +183,50 @@ impl HsmIoController for UnoHsmPal {
         self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
         Ok(())
+    }
+}
+
+impl UnoHsmPal {
+    /// Runs `f` as an *admin session* over the dedicated admin IO slot
+    /// ([`ADMIN_IO_INDEX`]), scrubbing that slot when `f` completes.
+    ///
+    /// This is the admin-side counterpart of
+    /// [`drop_io`](HsmIoController::drop_io): internal provisioning
+    /// (partition identity, enable-time keygen, boot-key masking, vault
+    /// teardown) runs without a host IO, so it never reaches `drop_io` and
+    /// its scratch would otherwise only be watermark-rewound, never wiped —
+    /// leaving raw private-key material (e.g. the P-384 identity scalar)
+    /// resident in the admin slot indefinitely.
+    ///
+    /// Binding the scrub to the session rather than to each caller means no
+    /// admin path can forget it: obtaining an admin [`UnoHsmIo`] *is*
+    /// entering a scrubbed scope. `f` also receives a
+    /// [`UnoScopedAlloc`] rewound to the slot's base, so every admin
+    /// sequence starts from a clean bump heap.
+    ///
+    /// Sessions must not nest — [`UnoScopedAlloc::for_admin`] rewinds the
+    /// slot's watermarks, so an inner session would alias an outer one's
+    /// live buffers. All current callers are strictly sequential.
+    ///
+    /// # Parameters
+    /// - `pid`: partition the session targets; written into the admin
+    ///   slot's `IO_META` so [`pid`](HsmIo::pid) resolves correctly.
+    /// - `f`: async closure run with the admin IO handle and a rewound
+    ///   scoped allocator.
+    ///
+    /// # Returns
+    /// Whatever `f` returned. `R` cannot borrow from the session (enforced
+    /// by the higher-ranked bound), so no scratch outlives the scrub.
+    pub(crate) async fn with_admin_io<R, F>(&self, pid: HsmPartId, f: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(&'a UnoHsmIo, &'a UnoScopedAlloc<'a>) -> R,
+    {
+        let io = UnoHsmIo::admin(pid);
+        let result = {
+            let alloc = UnoScopedAlloc::for_admin(self);
+            f(&io, &alloc).await
+        };
+        self.scrub_io_slot(ADMIN_IO_INDEX).await;
+        result
     }
 }
