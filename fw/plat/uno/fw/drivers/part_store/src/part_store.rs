@@ -12,6 +12,8 @@ use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CO;
+use azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CU;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 use azihsm_fw_uno_reg_soc::part_store_t::PART_STORE_T_BASE;
 
@@ -507,6 +509,28 @@ impl Partition {
             slot.psk_cu = [0u8; PSK_LEN];
             slot.vm_launch_guid = [0u8; GUID_LEN];
         }
+    }
+
+    /// Bakes the default pre-shared keys into the slot.
+    ///
+    /// `part_psk` is contractually `RequiredPresent` — "default-baked at
+    /// allocation time" from [`DEFAULT_PSK_CO`] / [`DEFAULT_PSK_CU`] — so a
+    /// freshly allocated partition must present the defaults rather than the
+    /// all-zero GSRAM pattern. Without this the FW runs the TBOR session
+    /// handshake's HPKE `auth_psk` schedule with a zero PSK while the host
+    /// uses the default, so the derived export secrets diverge and the
+    /// Phase-1 confirm MAC fails.
+    ///
+    /// Called from `part_alloc`. The reset paths seed their own slots:
+    /// `clear_state([`PartResetKind::Migrate`])` re-bakes these same
+    /// defaults on an NSSR (so a rotated PSK does not survive the reset),
+    /// and [`PartResetKind::Disable`] zeroes them because the slot is being
+    /// deallocated.
+    #[inline(never)]
+    pub fn bake_default_psks(mut self) {
+        let slot = self.slot_mut();
+        slot.psk_co = DEFAULT_PSK_CO;
+        slot.psk_cu = DEFAULT_PSK_CU;
     }
 
     /// Borrows the partition's 16-byte identity.
