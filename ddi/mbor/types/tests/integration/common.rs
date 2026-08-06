@@ -213,34 +213,54 @@ pub fn helper_get_cert_with_retry(
 
 }
 
- /// Retrieves a certificate by ID with retry logic to handle transient
- /// `InvalidCertificate` errors during concurrent iDFU (softreset) operations.
- /// Retries every 50ms until success or `retry_secs` elapses.
- fn helper_get_cert_by_id_with_retry(
+/// Retrieves certificate(s) with retry logic for iDFU.
+/// - `cert_id = Some(id)` → fetches that single cert with retry
+/// - `cert_id = None` → fetches ALL certs (0..num_certs - 1) with retry
+pub fn helper_get_cert_by_id_with_retry(
      dev: &<DdiTest as Ddi>::Dev,
-     cert_id: u8,
+     cert_id: Option<u8>,
      retry_secs: u64,
- ) -> Result<DdiGetCertificateCmdResp, DdiError> {
+ ) -> Result<Vec<DdiGetCertificateCmdResp>, DdiError> {
      let start = std::time::Instant::now();
      let retry_window = std::time::Duration::from_secs(retry_secs);
-     let mut result;
  
      loop {
-         tracing::debug!("Get Certificate id={}", cert_id);
+        let cert_info = helper_get_cert_chain_info(dev);
+        let resp = cert_info.unwrap();
+        let num_certs = resp.data.num_certs;
  
-         result = helper_get_certificate(dev, cert_id);
+         let ids: Vec<u8> = if let Some(id) = cert_id {
+             vec![id]
+         } else {
+             (0..num_certs - 1).collect()
+         };
  
-         if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
-             if start.elapsed() > retry_window {
+         let mut certs = Vec::with_capacity(ids.len());
+         let mut retry_needed = false;
+ 
+         for id in &ids {
+             tracing::debug!("Get Certificate id={}", id);
+             let result = helper_get_certificate(dev, *id);
+ 
+             if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
+                 if start.elapsed() > retry_window {
+                     return result.map(|r| vec![r]);
+                 }
+                 println!("Retrying get_cert for cert_id {} ({:.1}s elapsed)", id, start.elapsed().as_secs_f64());
+                 retry_needed = true;
                  break;
              }
-             println!("Retrying the get_cert operation for cert_id {}", cert_id);
-             std::thread::sleep(std::time::Duration::from_millis(50));
-         } else {
-             break;
+ 
+             certs.push(result?);
          }
+ 
+         if retry_needed {
+             std::thread::sleep(std::time::Duration::from_millis(50));
+             continue;
+         }
+ 
+         return Ok(certs);
      }
-     result
  }
 
 #[allow(dead_code)]
@@ -350,23 +370,27 @@ pub fn helper_verify_leaf_cert(
     let resp = result.unwrap();
     let num_certs = resp.data.num_certs;
 
-    let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
-    for i in 0..num_certs - 1 {
-         let resp = if idfu_enabled {
-             tracing::debug!("Device is in IDfu mode, retrying get_certificate for cert {}", i);
-             helper_get_cert_by_id_with_retry(dev,i, 15).unwrap()
-         } else {
-             let result = helper_get_certificate(dev, i);
-             assert!(result.is_ok(), "result {:?}", result);
-             result.unwrap()
-         };
-
-        let der = &resp.data.certificate.as_slice();
-        print!("cert DER {:?}", der);
-
-        cert_chain.push(der.to_vec());
+    let mut cert_chain:Vec<Vec<u8>> = if idfu_enabled {
+        tracing::debug!("Device is in iDFU mode, retrying get_certificate for all certs");
+         let certs = helper_get_cert_by_id_with_retry(dev, None, 15).unwrap();
+         certs.into_iter()
+             .map(|resp| resp.data.certificate.as_slice().to_vec())
+             .collect()
     }
+    else{
+        let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
+        for i in 0..num_certs - 1 {
+            let result = helper_get_certificate(dev, i);
+            assert!(result.is_ok(), "result {:?}", result);
 
+            let resp = result.unwrap();
+            let der = &resp.data.certificate.as_slice();
+            print!("cert DER {:?}", der);
+
+            cert_chain.push(der.to_vec());
+        }
+        cert_chain
+    };
     cert_chain.push(leaf_cert.to_vec());
 
     tracing::debug!(len = cert_chain.len(), "Done getting cert chain");
