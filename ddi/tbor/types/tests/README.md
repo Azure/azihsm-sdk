@@ -24,12 +24,20 @@ table.
 
 * `--features emu` — canonical configuration, runs the full suite.
 * `--features mock` — transport-contract probes only.
-* No backend feature — pure host-side codec tests only.
+* No backend feature — native OS backend (`nix` on Linux / `win` on
+  Windows); hardware-eligible command tests run against real silicon.
 
 The canonical command is:
 
 ```bash
 cargo test -p azihsm_ddi_tbor_types --tests --features emu
+```
+
+The focused Linux hardware command for `PartFinal` is:
+
+```bash
+cargo test -p azihsm_ddi_tbor_types --test azihsm_ddi_tbor_tests \
+  part_final::hw:: -- --test-threads=1
 ```
 
 ## Spec coverage matrix
