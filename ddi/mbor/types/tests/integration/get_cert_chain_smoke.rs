@@ -76,6 +76,15 @@ fn test_get_cert_chain_fetch_and_stability_smoke() {
         // rotation / live migration mid-fetch would move it).
         let (num_certs_after, thumbprint_after) = helper_get_cert_chain_info_data(dev);
         assert_eq!(num_certs, num_certs_after, "cert count must be stable");
-        assert_eq!(thumbprint, thumbprint_after, "thumbprint must be stable");
+        if idfu_enabled {
+            if thumbprint != thumbprint_after {
+                tracing::debug!("Thumbprint changed during iDFU, refetching cert chain info");
+                let (_, thumbprint_retry) = helper_get_cert_chain_info_data(dev);
+                assert_eq!(thumbprint_after, thumbprint_retry, "thumbprint must stabilize after retry");
+            }
+        } else {
+            assert_eq!(thumbprint, thumbprint_after, "thumbprint must be stable");
+        }
+
     });
 }
