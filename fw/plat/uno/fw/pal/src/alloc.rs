@@ -159,22 +159,27 @@ fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     }
 }
 
-/// Per-IO SRAM (DMA heap) buffer region as `(base_ptr, capacity)`.
+/// Per-IO SRAM (DMA heap) region that may hold IO data, as
+/// `(base_ptr, dirty_len)`.
 ///
-/// Returns the whole slot-local `SRAM_IO_BUF[io_index]` region (not just
-/// the used watermark) so it can be scrubbed in full on IO teardown; see
-/// [`UnoHsmPal::scrub_io_slot`](crate::UnoHsmPal::scrub_io_slot).
+/// `dirty_len` is the slot's peak watermark (see [`pk`]) — every byte
+/// written since the last scrub, and nothing beyond it. Used by
+/// [`UnoHsmPal::scrub_io_slot`](crate::UnoHsmPal::scrub_io_slot) so a
+/// command that touches a few hundred bytes does not pay an 18 KiB wipe.
 #[inline(always)]
-pub(crate) fn io_slot_dma_region(io_index: u16) -> (*mut u8, usize) {
-    heap_base_cap(io_index, DMA)
+pub(crate) fn io_slot_dma_dirty(pal: &UnoHsmPal, io_index: u16) -> (*mut u8, usize) {
+    let (base, cap) = heap_base_cap(io_index, DMA);
+    (base, pk(pal, io_index, DMA).with(|v| *v).min(cap))
 }
 
-/// Per-IO DTCM (NonDma heap) buffer region as `(base_ptr, capacity)`.
+/// Per-IO DTCM (NonDma heap) region that may hold IO data, as
+/// `(base_ptr, dirty_len)`.
 ///
-/// Companion to [`io_slot_dma_region`] for the fast/NonDma scratch heap.
+/// Companion to [`io_slot_dma_dirty`] for the fast/NonDma scratch heap.
 #[inline(always)]
-pub(crate) fn io_slot_nondma_region(io_index: u16) -> (*mut u8, usize) {
-    heap_base_cap(io_index, NONDMA)
+pub(crate) fn io_slot_nondma_dirty(pal: &UnoHsmPal, io_index: u16) -> (*mut u8, usize) {
+    let (base, cap) = heap_base_cap(io_index, NONDMA);
+    (base, pk(pal, io_index, NONDMA).with(|v| *v).min(cap))
 }
 
 /// Access the watermark cell for one `(io_index, heap)` pair.
@@ -189,6 +194,43 @@ pub(crate) fn io_slot_nondma_region(io_index: u16) -> (*mut u8, usize) {
 #[inline(always)]
 fn wm(pal: &UnoHsmPal, io_index: u16, heap: usize) -> &SingleCell<usize> {
     &pal.io_alloc[io_index as usize][heap]
+}
+
+/// Access the *peak* (high-water) watermark cell for one
+/// `(io_index, heap)` pair.
+///
+/// [`wm`] rewinds whenever a scope drops, so by IO teardown it says nothing
+/// about how much of the slot was written. This cell only ever grows until
+/// the slot is scrubbed, so it bounds the region that may still hold key
+/// material — it is what the teardown wipe is sized from.
+///
+/// # Parameters
+/// - `pal`: PAL instance owning the peak table.
+/// - `io_index`: IO slot index.
+/// - `heap`: Heap selector (`NONDMA` or `DMA`).
+///
+/// # Returns
+/// Shared reference to the corresponding [`SingleCell`] peak watermark.
+#[inline(always)]
+fn pk(pal: &UnoHsmPal, io_index: u16, heap: usize) -> &SingleCell<usize> {
+    &pal.io_peak[io_index as usize][heap]
+}
+
+/// Clear both peak watermarks for `io_index`, marking the slot as scrubbed.
+///
+/// Called by [`UnoHsmPal::scrub_io_slot`](crate::UnoHsmPal::scrub_io_slot)
+/// *after* the wipe, so a peak always means "bytes written since the last
+/// scrub" — independent of where IOs happen to reset their watermarks. That
+/// keeps allocations made outside a [`reset_io_alloc`] / scrub pair covered
+/// by the next wipe.
+///
+/// # Parameters
+/// - `pal`: PAL instance owning the peak table.
+/// - `io_index`: IO slot index whose peaks are cleared.
+pub(crate) fn clear_io_peak(pal: &UnoHsmPal, io_index: u16) {
+    for cell in &pal.io_peak[io_index as usize] {
+        cell.with(|v| *v = 0);
+    }
 }
 
 /// Bump-allocate `size` bytes with given alignment, return (start_offset, slice).
@@ -228,6 +270,11 @@ fn bump(
     }
 
     w.with(|v| *v = end);
+    // Raise the slot's high-water mark. Unlike `w` this never rewinds, so it
+    // still bounds the written region once every scope has dropped — that is
+    // what the teardown scrub wipes. `dma_alloc_var*` reserve the whole
+    // remaining heap here and correct this back down to the trimmed length.
+    pk(pal, io_index, heap).with(|v| *v = (*v).max(end));
     // SAFETY: start..end is within bounds and does not overlap any prior
     // live allocation (the watermark only advances within a scope).
     Ok((start, unsafe {
@@ -418,6 +465,22 @@ impl HsmAlloc for UnoHsmPal {
     ///   DMA capacity from current aligned watermark. It returns the number of
     ///   bytes logically consumed.
     ///
+    /// # Contract
+    ///
+    /// **`f` must not write past the `len` it returns.** The teardown scrub is
+    /// sized from the slot's high-water mark, and this method reports only
+    /// `start + len` as its contribution — anything written beyond `len` would
+    /// be left unwiped and could survive into the next IO on this slot. `f`
+    /// receives the whole remaining heap purely so the encoded length need not
+    /// be known up front.
+    ///
+    /// Callers encode through either `MborEncoder` or a TBOR response frame
+    /// builder (`Tbor*Resp::encode(...).finish()`); both append sequentially
+    /// and report their final position, so both write a strict prefix. This
+    /// was checked on hardware: instrumenting the teardown scrub to scan each
+    /// slot's whole capacity found no non-zero byte past the recorded peak
+    /// over ~1.7k IOs.
+    ///
     /// # Returns
     /// Mutable [`DmaBuf`] of length selected by `f`, or error from `f`/allocator.
     fn dma_alloc_var<F>(&self, io: &impl HsmIo, f: F) -> HsmResult<&mut DmaBuf>
@@ -432,15 +495,27 @@ impl HsmAlloc for UnoHsmPal {
         if aligned >= cap {
             return Err(HsmError::NotEnoughSpace);
         }
+        // Snapshot the peak *before* `bump`, which is about to inflate it to
+        // full capacity because this reserves the whole remaining heap. The
+        // trim below restores it to what `f` actually wrote (see `# Contract`);
+        // without this the scrub would wipe the whole slot on every IO.
+        let peak_before = pk(self, io_index, DMA).with(|v| *v);
         let (start, buf) = bump(self, io_index, DMA, cap - aligned, 4)?;
         match f(buf) {
             Ok(len) => {
-                w.with(|v| *v = start + len.min(buf.len()));
+                let end = start + len.min(buf.len());
+                w.with(|v| *v = end);
+                pk(self, io_index, DMA).with(|v| *v = peak_before.max(end));
                 // SAFETY: `buf` came from the SRAM Dma pool.
                 Ok(unsafe { DmaBuf::from_raw_mut(&mut buf[..len]) })
             }
             Err(e) => {
                 w.with(|v| *v = start);
+                // Leave the peak at the full reservation `bump` just set. `f`
+                // may have written a partial encoding before failing and there
+                // is no `len` to bound it by, so the whole reserved span must
+                // be treated as dirty. This costs one full-slot wipe on a
+                // rejected request — rare, and the safe direction.
                 Err(e)
             }
         }
@@ -452,6 +527,11 @@ impl HsmAlloc for UnoHsmPal {
     /// - `io`: IO token whose slot selects allocator state.
     /// - `f`: Callback receiving temporary writable remaining DMA span and
     ///   returning `(len, extra)` where `len` is consumed bytes.
+    ///
+    /// # Contract
+    ///
+    /// Same as [`Self::dma_alloc_var`]: **`f` must not write past `len`**, or
+    /// the teardown scrub will miss those bytes.
     ///
     /// # Returns
     /// Tuple `(&mut DmaBuf, T)` on success, or error from `f`/allocator.
@@ -467,15 +547,21 @@ impl HsmAlloc for UnoHsmPal {
         if aligned >= cap {
             return Err(HsmError::NotEnoughSpace);
         }
+        // See `dma_alloc_var`: snapshot before `bump` inflates the peak to cap.
+        let peak_before = pk(self, io_index, DMA).with(|v| *v);
         let (start, buf) = bump(self, io_index, DMA, cap - aligned, 4)?;
         match f(buf) {
             Ok((len, extra)) => {
-                w.with(|v| *v = start + len.min(buf.len()));
+                let end = start + len.min(buf.len());
+                w.with(|v| *v = end);
+                pk(self, io_index, DMA).with(|v| *v = peak_before.max(end));
                 // SAFETY: `buf` came from the SRAM Dma pool.
                 Ok((unsafe { DmaBuf::from_raw_mut(&mut buf[..len]) }, extra))
             }
             Err(e) => {
                 w.with(|v| *v = start);
+                // See `dma_alloc_var`: leave the peak at the full reservation,
+                // since a partial write before the failure is unbounded.
                 Err(e)
             }
         }

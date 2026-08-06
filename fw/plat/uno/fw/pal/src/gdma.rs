@@ -135,12 +135,25 @@ impl HsmGdmaController for UnoHsmPal {
 
     /// Zero an HSM-local buffer.
     ///
-    /// Software volatile wipe for now; a hardware GDMA memset will replace
-    /// this on uno later (the async signature is kept so callers are
-    /// unaffected). [`DmaBuf::zeroize`] guarantees the writes are not
-    /// elided so key material is actually scrubbed.
+    /// Wipes off-CPU with the GDMA engine via
+    /// [`gdma_zero_region`](UnoHsmPal::gdma_zero_region), which copies from
+    /// the read-as-zero `DUMMY_MEM` window — GDMA has no fill/memset opcode,
+    /// so a wipe is a device-to-device copy out of that region. Every
+    /// [`DmaBuf`] is GSRAM-backed by construction (the DTCM heap hands out
+    /// plain `&mut [u8]`, never a `DmaBuf`), so the destination is always
+    /// GDMA-reachable.
+    ///
+    /// Falls back to [`DmaBuf::zeroize`] if the engine has no free tag or the
+    /// transfer fails, so the buffer is scrubbed either way; both paths use
+    /// writes that cannot be optimized away.
     async fn zeroize_mem(&self, _io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()> {
-        dst.zeroize();
+        let len = dst.len();
+        if len == 0 {
+            return Ok(());
+        }
+        if self.gdma_zero_region(dst.as_mut_ptr(), len).await.is_err() {
+            dst.zeroize();
+        }
         Ok(())
     }
 
@@ -257,8 +270,8 @@ impl UnoHsmPal {
     ///
     /// Called on IO teardown so no key material from one IO survives into
     /// the next IO that reuses the slot. On Uno every crypto operand lives
-    /// in these bump-allocated buffers (no heap), so wiping the full slot is
-    /// what protects private keys / plaintext — the CPU-visible arena is the
+    /// in these bump-allocated buffers (no heap), so wiping them is what
+    /// protects private keys / plaintext — the CPU-visible arena is the
     /// only place they exist.
     ///
     /// The SRAM (DMA) buffer is wiped off-CPU with the GDMA engine; the DTCM
@@ -266,28 +279,40 @@ impl UnoHsmPal {
     /// wiped by the CPU. If the GDMA wipe fails (e.g. no free tags under
     /// heavy concurrency), the SRAM buffer is scrubbed by the CPU as a
     /// fallback so secrets are never left resident.
+    ///
+    /// Only each heap's *high-water* region is wiped, not its full capacity.
+    /// The bump watermark rewinds on every scope exit, but the peak bounds
+    /// every byte written since the previous scrub, and everything past it is
+    /// already zero from that scrub. Measured over ~1.7k host IOs the DMA peak
+    /// averaged ~933 B of the 18 KiB slot (max ~3.3 KiB), so this also keeps
+    /// the wipe inside a single `DUMMY_MEM`-sized GDMA transfer instead of two.
+    /// A heap that was never touched is skipped entirely.
     pub(crate) async fn scrub_io_slot(&self, io_index: u16) {
-        let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_region(io_index);
-        if self.gdma_zero_region(dma_ptr, dma_len).await.is_err() {
+        let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_dirty(self, io_index);
+        if dma_len != 0 && self.gdma_zero_region(dma_ptr, dma_len).await.is_err() {
             // Surface the fallback: a persistent GDMA fault would otherwise
-            // silently degrade every wipe into a byte-wise CPU loop with no
-            // signal. Logged via the trace facade (as the iic/oic drivers do
-            // for unexpected conditions); compiled out when no trace backend
-            // is selected. Correctness is unaffected — the CPU wipe below
-            // still fully scrubs the buffer.
+            // silently degrade every wipe into a CPU loop with no signal.
+            // Logged via the trace facade (as the iic/oic drivers do for
+            // unexpected conditions); compiled out when no trace backend is
+            // selected. Correctness is unaffected — the CPU wipe below still
+            // fully scrubs the buffer.
             warn!(
                 "gdma",
                 "SRAM scrub for slot {} fell back to CPU (GDMA wipe failed)", io_index
             );
-            // SAFETY: `(dma_ptr, dma_len)` describes the slot's SRAM buffer,
-            // valid for writes over its whole capacity.
+            // SAFETY: `(dma_ptr, dma_len)` is a prefix of the slot's SRAM
+            // buffer, valid for writes over its whole length.
             unsafe { cpu_zeroize(dma_ptr, dma_len) };
         }
         // DTCM (NonDma) heap — not GDMA-reachable, so wipe with the CPU.
-        let (nd_ptr, nd_len) = crate::alloc::io_slot_nondma_region(io_index);
-        // SAFETY: `(nd_ptr, nd_len)` describes the slot's DTCM buffer, valid
-        // for writes over its whole capacity.
+        let (nd_ptr, nd_len) = crate::alloc::io_slot_nondma_dirty(self, io_index);
+        // SAFETY: `(nd_ptr, nd_len)` is a prefix of the slot's DTCM buffer,
+        // valid for writes over its whole length.
         unsafe { cpu_zeroize(nd_ptr, nd_len) };
+
+        // Both heaps are now zero up to their peaks; drop the high-water marks
+        // so the next scrub covers only writes made after this point.
+        crate::alloc::clear_io_peak(self, io_index);
     }
 }
 

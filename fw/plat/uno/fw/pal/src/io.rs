@@ -67,8 +67,8 @@ pub struct UnoHsmIo {
 }
 
 impl UnoHsmIo {
-    /// Constructs an IO handle over the dedicated admin slot
-    /// ([`ADMIN_IO_INDEX`]), targeting partition `pid`.
+    /// Constructs a **bare, unscrubbed** IO handle over the dedicated admin
+    /// slot ([`ADMIN_IO_INDEX`]), targeting partition `pid`.
     ///
     /// Internal provisioning (partition identity and enable-time keygen)
     /// runs without a host IO. Reusing the concrete [`UnoHsmIo`] /
@@ -77,9 +77,21 @@ impl UnoHsmIo {
     /// The target `pid` is written into the admin slot's `IO_META` so
     /// [`pid`](HsmIo::pid) resolves correctly.
     ///
+    /// # Prefer [`with_admin_io`](UnoHsmPal::with_admin_io)
+    ///
+    /// This constructor performs **no scrub**: anything the caller writes to
+    /// the admin slot's bump heaps stays resident until some later scrub.
+    /// Use it only on a path that provably dirties neither heap — today just
+    /// the synchronous unwrapping-key import, which cannot `await` a scrub
+    /// and copies straight from `&'static` GSRAM into vault storage. Every
+    /// other admin path must go through
+    /// [`with_admin_io`](UnoHsmPal::with_admin_io), which wipes the slot on
+    /// completion. The name is deliberately blunt so a new call site has to
+    /// opt into the hazard explicitly.
+    ///
     /// [`ADMIN_IO_INDEX`]: crate::alloc::ADMIN_IO_INDEX
     /// [`UnoScopedAlloc`]: crate::alloc::UnoScopedAlloc
-    pub(crate) fn admin(pid: HsmPartId) -> Self {
+    pub(crate) fn admin_no_scrub(pid: HsmPartId) -> Self {
         let io = Self {
             index: ADMIN_IO_INDEX,
         };
@@ -199,10 +211,12 @@ impl UnoHsmPal {
     /// resident in the admin slot indefinitely.
     ///
     /// Binding the scrub to the session rather than to each caller means no
-    /// admin path can forget it: obtaining an admin [`UnoHsmIo`] *is*
-    /// entering a scrubbed scope. `f` also receives a
-    /// [`UnoScopedAlloc`] rewound to the slot's base, so every admin
-    /// sequence starts from a clean bump heap.
+    /// admin path that dirties the slot can forget it. The one deliberate
+    /// exception is [`UnoHsmIo::admin_no_scrub`], whose name states that it
+    /// opts out; it is reserved for paths that provably write nothing to
+    /// either bump heap. `f` also receives a [`UnoScopedAlloc`] rewound to
+    /// the slot's base, so every admin sequence starts from a clean bump
+    /// heap.
     ///
     /// Sessions must not nest — [`UnoScopedAlloc::for_admin`] rewinds the
     /// slot's watermarks, so an inner session would alias an outer one's
@@ -226,7 +240,7 @@ impl UnoHsmPal {
         R: 'static,
         F: for<'a> AsyncFnOnce(&'a UnoHsmIo, &'a UnoScopedAlloc<'a>) -> R,
     {
-        let io = UnoHsmIo::admin(pid);
+        let io = UnoHsmIo::admin_no_scrub(pid);
         let result = {
             let alloc = UnoScopedAlloc::for_admin(self);
             f(&io, &alloc).await

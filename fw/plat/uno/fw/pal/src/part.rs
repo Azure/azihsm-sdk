@@ -148,7 +148,10 @@ impl UnoHsmPal {
             return;
         };
         if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
+            self.with_admin_io(pid, async |admin_io, _alloc| {
+                self.delete_key(admin_io, key_id).await;
+            })
+            .await;
         }
         part.clear_identity();
         part.clear_masked_bk_boot();
@@ -191,13 +194,17 @@ impl UnoHsmPal {
             return Ok(());
         }
 
-        // Disable: clear enable-time keys/state (no-op if not enabled).
-        self.clear_enabled_state(pid).await;
+        // Disable: clear enable-time keys/state (no-op if not enabled), then
+        // delete the identity key. One admin session covers every vault
+        // delete below, so the slot is scrubbed once instead of once per key.
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            self.clear_enabled_state(admin_io, pid).await;
+            if let Some(key_id) = part.id_key_id() {
+                self.delete_key(admin_io, key_id).await;
+            }
+        })
+        .await;
 
-        // Dealloc: delete the identity key and zeroize identity material.
-        if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
-        }
         part.clear_identity();
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
@@ -364,21 +371,29 @@ impl UnoHsmPal {
             }
             Err(e) => {
                 // Roll back the establish-credential key.
-                self.delete_key(pid, ec_id).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| {
+                    self.delete_key(admin_io, ec_id).await;
+                })
+                .await;
                 part.clear_enabled_keys();
                 Err(e)
             }
         }
     }
 
-    /// Best-effort deletion of one vault key for partition `pid`.
-    async fn delete_key(&self, pid: HsmPartId, key_id: HsmKeyId) {
-        self.with_admin_io(pid, async |admin_io, _alloc| {
-            let _ = crate::vault::vault(admin_io)
-                .delete(self, admin_io, key_id)
-                .await;
-        })
-        .await;
+    /// Best-effort deletion of one vault key, on the caller's admin session.
+    ///
+    /// Takes the caller's `admin_io` instead of opening its own session:
+    /// [`KeyVault::delete`](azihsm_fw_uno_key_vault::KeyVault::delete) takes
+    /// only a GDMA controller and an IO — no allocator — so it writes nothing
+    /// to the admin slot's bump heaps. A session per key would scrub the full
+    /// 18 KiB slot once per deletion for no benefit, and
+    /// [`clear_enabled_state`](Self::clear_enabled_state) deletes one key per
+    /// provisioning slot *and* per live session.
+    async fn delete_key(&self, admin_io: &UnoHsmIo, key_id: HsmKeyId) {
+        let _ = crate::vault::vault(admin_io)
+            .delete(self, admin_io, key_id)
+            .await;
     }
 
     /// Clears partition `pid`'s per-tenant state — deletes every
@@ -392,7 +407,7 @@ impl UnoHsmPal {
     /// are torn down only on free. Best-effort and idempotent: keys are
     /// deleted only if present, so it is safe to call regardless of the
     /// current lifecycle state.
-    async fn clear_enabled_state(&self, pid: HsmPartId) {
+    async fn clear_enabled_state(&self, admin_io: &UnoHsmIo, pid: HsmPartId) {
         let Ok(part) = PartStore::partition(pid) else {
             return;
         };
@@ -411,14 +426,14 @@ impl UnoHsmPal {
         .into_iter()
         .flatten()
         {
-            self.delete_key(pid, key_id).await;
+            self.delete_key(admin_io, key_id).await;
         }
         // Delete every session-blob vault key (Active, NeedsRenegotiation,
         // or Pending) mapped by the session table, so none are orphaned in
         // the vault when the table is zeroized below.
         if let Ok(sessions) = SessionStore::partition(pid) {
             for key_id in sessions.occupied_physical_ids().into_iter().flatten() {
-                self.delete_key(pid, key_id).await;
+                self.delete_key(admin_io, key_id).await;
             }
         }
         part.clear_state(PartResetKind::Disable);
@@ -474,7 +489,10 @@ impl UnoHsmPal {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Enabled => {
-                self.clear_enabled_state(pid).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| {
+                    self.clear_enabled_state(admin_io, pid).await;
+                })
+                .await;
                 part.set_state(PartState::Disabled);
                 Ok(())
             }
@@ -582,7 +600,7 @@ impl UnoHsmPal {
         // `&'static` GSRAM slot into vault storage, so the admin slot is never
         // dirtied and there is nothing to wipe. The handle is only used to
         // select the partition's vault.
-        let admin_io = UnoHsmIo::admin(pid);
+        let admin_io = UnoHsmIo::admin_no_scrub(pid);
         let kid = crate::vault::vault(&admin_io).create_sync(
             u8::from(pid),
             bk,
