@@ -42,6 +42,9 @@ const BACKUP_PART_PUB_KEY_DATA_OFFSET: usize = 322;
 const EXPECTED_BACKUP_PUB_KEY_LEN: u16 = 96;
 const ECC384_POLICY_KEY_KIND: u16 = 0;
 
+const SATA_PUB_KEY_KIND_OFFSET: usize = 102;
+const SATA_PUB_KEY_LEN_OFFSET: usize = 104;
+
 fn set_u16_le(buf: &mut [u8], offset: usize, value: u16) {
     buf[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -846,6 +849,56 @@ fn part_init_rejects_backup_pub_key_boundary_lengths_emu() {
         let err = ctx
             .part_init(&session, &seed, &bad_policy, &thumb)
             .expect_err("backup public key with invalid length must be rejected");
+
+        assert_fw_rejects(&err, TborStatus::InvalidArg);
+    }
+}
+
+/// An otherwise valid policy with an unsupported SATA public-key kind
+/// must be rejected.
+///
+/// Starting from the known-good policy keeps the version, POTA key,
+/// SATA length, and all unrelated fields valid, so the rejection
+/// directly exercises SATA key-kind validation.
+#[test]
+fn part_init_rejects_invalid_sata_pub_key_kind_emu() {
+    let ctx = TestCtx::new();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let mut bad_policy = known_good_part_policy();
+
+    bad_policy[SATA_PUB_KEY_KIND_OFFSET..SATA_PUB_KEY_KIND_OFFSET + 2]
+        .copy_from_slice(&u16::MAX.to_le_bytes());
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let err = ctx
+        .part_init(&session, &seed, &bad_policy, &thumb)
+        .expect_err("unsupported SATA public-key kind must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
+
+/// SATA public-key lengths immediately below and above the required
+/// P-384 length must both be rejected.
+#[test]
+fn part_init_rejects_invalid_sata_pub_key_boundary_lengths_emu() {
+    for bad_len in [95u16, 97u16] {
+        let ctx = TestCtx::new();
+
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let mut bad_policy = known_good_part_policy();
+
+        bad_policy[SATA_PUB_KEY_LEN_OFFSET..SATA_PUB_KEY_LEN_OFFSET + 2]
+            .copy_from_slice(&bad_len.to_le_bytes());
+
+        let seed = mach_seed();
+        let thumb = pota_thumbprint();
+
+        let err = ctx
+            .part_init(&session, &seed, &bad_policy, &thumb)
+            .expect_err("invalid SATA public-key length must be rejected");
 
         assert_fw_rejects(&err, TborStatus::InvalidArg);
     }
