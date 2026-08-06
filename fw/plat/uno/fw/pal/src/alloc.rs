@@ -475,9 +475,9 @@ impl HsmAlloc for UnoHsmPal {
     /// be known up front.
     ///
     /// A `len` larger than the buffer is rejected with
-    /// [`HsmError::InvalidArg`] rather than panicking on the slice, matching
-    /// the std PAL; the peak is left at the full reservation in that case,
-    /// since such a callback wrote an unknown amount.
+    /// [`HsmError::DmaAllocLenOverrun`] rather than panicking on the slice,
+    /// matching the std PAL; the peak is left at the full reservation in that
+    /// case, since such a callback wrote an unknown amount.
     ///
     /// Callers encode through either `MborEncoder` or a TBOR response frame
     /// builder (`Tbor*Resp::encode(...).finish()`); both append sequentially
@@ -515,7 +515,7 @@ impl HsmAlloc for UnoHsmPal {
                     // watermark but leave the peak at the full reservation:
                     // the callback wrote an unknown amount.
                     w.with(|v| *v = start);
-                    return Err(HsmError::InvalidArg);
+                    return Err(HsmError::DmaAllocLenOverrun);
                 }
                 let end = start + len;
                 w.with(|v| *v = end);
@@ -570,7 +570,7 @@ impl HsmAlloc for UnoHsmPal {
                     // See `dma_alloc_var`: refuse the over-report instead of
                     // panicking, and leave the peak at the full reservation.
                     w.with(|v| *v = start);
-                    return Err(HsmError::InvalidArg);
+                    return Err(HsmError::DmaAllocLenOverrun);
                 }
                 let end = start + len;
                 w.with(|v| *v = end);
