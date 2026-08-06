@@ -4,18 +4,18 @@
 //! SecureInitBk3 / SetInitBk3Pin smoke tests for the emu/mock backend.
 //!
 //! Exercises:
-//! - Happy path: Phases 2 + 4 succeed, returning a masked BK3 (MOBK) and a
-//!   16-byte VM launch GUID, then Phase 5 seals the MOBK.
-//! - Full flow on a fresh partition: seal-op gate before Phase 4, provisioning,
-//!   seal round-trip, and one-shot rejection of re-provision / re-seal.
+//! - Happy path: set_init_bk3_pin + secure_init_bk3 succeed, returning a masked
+//!   BK3 (MOBK) and a 16-byte VM launch GUID, then set_sealed_bk3 seals the MOBK.
+//! - Full flow on a fresh partition: seal-op gate before secure_init_bk3,
+//!   provisioning, seal round-trip, and one-shot rejection of re-provision / re-seal.
 //! - Auth negatives: a tampered transport or PIN tag is rejected, while a
-//!   well-formed Phase 4 with the same PIN still succeeds.
+//!   well-formed secure_init_bk3 with the same PIN still succeeds.
 
-#![cfg(any(feature = "emu", feature = "mock"))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
 use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_crypto::Rng;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
 use test_with_tracing::test;
@@ -36,7 +36,8 @@ pub fn cleanup(
 
 const API_REV: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 
-/// Full secure provisioning (Phases 1-4), each phase over its own fresh ECDH tunnel.
+/// Full secure provisioning (set_init_bk3_pin + secure_init_bk3), each over its
+/// own fresh ECDH tunnel.
 fn secure_provision_bk3(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
@@ -45,7 +46,7 @@ fn secure_provision_bk3(
 ) -> Result<DdiSecureInitBk3CmdResp, DdiError> {
     let rev = Some(API_REV);
 
-    // --- Phase 1 + 2: set_init_bk3_pin ---
+    // set_init_bk3_pin
     let resp1 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
     let nonce1 = resp1.data.nonce;
     let dev_key1 = DeviceCredKey::new(&resp1.data.pub_key, nonce1).unwrap();
@@ -57,7 +58,7 @@ fn secure_provision_bk3(
         .unwrap();
     helper_set_init_bk3_pin(dev, encrypted_credential, pub_key1)?;
 
-    // --- Phase 3 + 4: secure_init_bk3 ---
+    // secure_init_bk3
     let resp2 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
     let nonce2 = resp2.data.nonce;
     let dev_key2 = DeviceCredKey::new(&resp2.data.pub_key, nonce2).unwrap();
@@ -78,51 +79,48 @@ fn should_skip(err: &DdiError) -> bool {
         )
 }
 
-/// True if the partition has never been securely provisioned (seal-op gate open).
-fn device_is_fresh(dev: &<DdiTest as Ddi>::Dev) -> bool {
-    matches!(
-        helper_get_sealed_bk3(dev),
-        Err(DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned))
-    )
-}
-
-// Happy path: Phases 2 + 4 succeed, then Phase 5 seals the MOBK.
+// Happy path: set_init_bk3_pin + secure_init_bk3 succeed, then set_sealed_bk3 seals the MOBK.
 #[test]
 fn test_secure_init_bk3_smoke() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        let bk3 = [0xABu8; 48];
+        let mut bk3 = [0u8; 48];
+        Rng::rand_bytes(&mut bk3).unwrap();
 
-        let resp = match secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3) {
-            Ok(resp) => resp,
-            Err(err) if should_skip(&err) => {
+        let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        if let Err(err) = &result {
+            if should_skip(err) {
                 tracing::warn!(
                     ?err,
                     "secure_init_bk3 unsupported or already provisioned; skipping"
                 );
                 return;
             }
-            Err(err) => panic!("secure_init_bk3 failed unexpectedly: {err:?}"),
-        };
+        }
+        assert!(result.is_ok(), "resp {:?}", result);
+        let resp = result.unwrap();
 
         assert_eq!(resp.hdr.op, DdiOp::SecureInitBk3);
         assert_eq!(resp.hdr.status, DdiStatus::Success);
         let masked_len = resp.data.masked_bk3.len();
-        assert!(
-            (200..=300).contains(&masked_len),
-            "masked_bk3 length {masked_len} is outside the expected range"
+        assert_eq!(
+            masked_len, EXPECTED_MASKED_BK3_LEN,
+            "unexpected masked_bk3 length"
         );
         assert_eq!(resp.data.vm_launch_guid.len(), 16);
 
-        // Phase 5: seal the MOBK so later tests re-hydrate via `get_sealed_bk3`.
+        // Seal the MOBK so later tests re-hydrate via `get_sealed_bk3`.
         let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
-        let set_resp = helper_set_sealed_bk3(dev, masked_bk3.clone())
-            .expect("set_sealed_bk3 must succeed after Phase 4");
-        assert_eq!(set_resp.hdr.status, DdiStatus::Success);
+        let set_resp = helper_set_sealed_bk3(dev, masked_bk3.clone());
+        assert!(set_resp.is_ok(), "resp {:?}", set_resp);
+        assert_eq!(set_resp.unwrap().hdr.status, DdiStatus::Success);
 
         // Confirm the seal round-trips: get_sealed_bk3 now returns the MOBK.
-        let get_resp =
-            helper_get_sealed_bk3(dev).expect("get_sealed_bk3 must succeed after sealing");
-        assert_eq!(get_resp.data.sealed_bk3.as_slice(), masked_bk3.as_slice());
+        let get_resp = helper_get_sealed_bk3(dev);
+        assert!(get_resp.is_ok(), "resp {:?}", get_resp);
+        assert_eq!(
+            get_resp.unwrap().data.sealed_bk3.as_slice(),
+            masked_bk3.as_slice()
+        );
     });
 }
 
@@ -146,21 +144,22 @@ fn test_secure_bk3_full_flow() {
             }
         }
 
-        // (1) Seal-op gate: `set_sealed_bk3` is rejected before a successful Phase 4.
+        // (1) Seal-op gate: `set_sealed_bk3` is rejected before a successful secure_init_bk3.
         let err = helper_set_sealed_bk3(dev, vec![0u8; 64]).unwrap_err();
         assert!(
             matches!(
                 err,
                 DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned)
             ),
-            "seal op before Phase 4 must be gated, got {err:?}"
+            "seal op before secure_init_bk3 must be gated, got {err:?}"
         );
 
-        // (2) Full provisioning (Phases 1-4).
-        let bk3 = [0xABu8; 48];
-        let resp = match secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3) {
-            Ok(resp) => resp,
-            Err(err) if should_skip(&err) => {
+        // (2) Full provisioning (set_init_bk3_pin + secure_init_bk3).
+        let mut bk3 = [0u8; 48];
+        Rng::rand_bytes(&mut bk3).unwrap();
+        let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        if let Err(err) = &result {
+            if should_skip(err) {
                 tracing::warn!(
                     ?err,
                     "partition not truly fresh (masked_bk_boot set / already provisioned); \
@@ -168,18 +167,19 @@ fn test_secure_bk3_full_flow() {
                 );
                 return;
             }
-            Err(err) => panic!("secure provisioning failed unexpectedly: {err:?}"),
-        };
+        }
+        assert!(result.is_ok(), "resp {:?}", result);
+        let resp = result.unwrap();
         assert_eq!(resp.hdr.status, DdiStatus::Success);
         let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
-        assert!(
-            (200..=300).contains(&masked_bk3.len()),
-            "masked_bk3 length {} out of range",
-            masked_bk3.len()
+        assert_eq!(
+            masked_bk3.len(),
+            EXPECTED_MASKED_BK3_LEN,
+            "unexpected masked_bk3 length"
         );
         assert_eq!(resp.data.vm_launch_guid.len(), 16);
 
-        // (3) Phase 5: seal round-trip.
+        // (3) Seal round-trip.
         let set_resp = helper_set_sealed_bk3(dev, masked_bk3.clone()).unwrap();
         assert_eq!(set_resp.hdr.status, DdiStatus::Success);
         let get_resp = helper_get_sealed_bk3(dev).unwrap();
