@@ -19,5 +19,9 @@ runs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
-      shell: pwsh
-      run: cargo xtask precheck --setup
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 20
+        max_attempts: 3
+        shell: pwsh
+        command: cargo xtask precheck --setup

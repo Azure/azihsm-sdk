@@ -137,50 +137,60 @@ jobs:
       # before cargo can compile.  Both go in a single bootstrap step.
       - name: Bootstrap (debian)
         if: matrix.family == 'debian'
-        run: |
-          apt-get update
-          # nodejs is for JS-based actions (rust-cache, checkout, etc.) —
-          # GHA auto-injects node in container jobs but `act` does not.
-          # xxd (used by the import_wrapped_key cli test scripts) lives in
-          # its own package on Debian/Ubuntu.
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git nodejs \
-            build-essential cmake pkg-config perl \
-            openssl libssl-dev libbsd-dev xxd
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          shell: bash
+          command: |
+            apt-get update
+            # nodejs is for JS-based actions (rust-cache, checkout, etc.) —
+            # GHA auto-injects node in container jobs but `act` does not.
+            # xxd (used by the import_wrapped_key cli test scripts) lives in
+            # its own package on Debian/Ubuntu.
+            apt-get install -y --no-install-recommends \
+              ca-certificates curl git nodejs \
+              build-essential cmake pkg-config perl \
+              openssl libssl-dev libbsd-dev xxd
 
       - name: Bootstrap (rhel)
         if: matrix.family == 'rhel'
-        run: |
-          # The 9.2 vault preserves openssl-devel-3.0.7; the rolling el9
-          # repos have been bumped to 3.5.5.
-          sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
-          # Vault packages are signed with the distro key the image ships in
-          # /etc/pki/rpm-gpg/, so signature verification stays on.
-          cat > /etc/yum.repos.d/vault.repo <<EOF
-          [vault-baseos]
-          name=9.2 vault BaseOS
-          baseurl=${{ matrix.vault }}/BaseOS/x86_64/os/
-          enabled=1
-          gpgcheck=1
-          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
-          [vault-appstream]
-          name=9.2 vault AppStream
-          baseurl=${{ matrix.vault }}/AppStream/x86_64/os/
-          enabled=1
-          gpgcheck=1
-          gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
-          EOF
-          dnf clean all
-          # nodejs is for JS-based actions (see debian bootstrap).
-          # vim-common provides /usr/bin/xxd (used by the import_wrapped_key
-          # cli test scripts); el9 has no standalone xxd package.
-          dnf install -y --setopt=install_weak_deps=False \
-            gcc gcc-c++ make perl perl-core git nodejs \
-            pkgconf openssl openssl-devel \
-            findutils diffutils python3-pip vim-common
-          # Vault's cmake is 3.20.2; corrosion needs >= 3.22.
-          pip3 install --no-warn-script-location cmake
-          echo /usr/local/bin >> "$GITHUB_PATH"
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          shell: bash
+          command: |
+            # The 9.2 vault preserves openssl-devel-3.0.7; the rolling el9
+            # repos have been bumped to 3.5.5.
+            sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+            # Vault packages are signed with the distro key the image ships in
+            # /etc/pki/rpm-gpg/, so signature verification stays on.
+            cat > /etc/yum.repos.d/vault.repo <<EOF
+            [vault-baseos]
+            name=9.2 vault BaseOS
+            baseurl=${{ matrix.vault }}/BaseOS/x86_64/os/
+            enabled=1
+            gpgcheck=1
+            gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
+            [vault-appstream]
+            name=9.2 vault AppStream
+            baseurl=${{ matrix.vault }}/AppStream/x86_64/os/
+            enabled=1
+            gpgcheck=1
+            gpgkey=file:///etc/pki/rpm-gpg/${{ matrix.gpgkey }}
+            EOF
+            dnf clean all
+            # nodejs is for JS-based actions (see debian bootstrap).
+            # vim-common provides /usr/bin/xxd (used by the import_wrapped_key
+            # cli test scripts); el9 has no standalone xxd package.
+            dnf install -y --setopt=install_weak_deps=False \
+              gcc gcc-c++ make perl perl-core git nodejs \
+              pkgconf openssl openssl-devel \
+              findutils diffutils python3-pip vim-common
+            # Vault's cmake is 3.20.2; corrosion needs >= 3.22.
+            pip3 install --no-warn-script-location cmake
+            echo /usr/local/bin >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v6
 

@@ -43,29 +43,59 @@ jobs:
 
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
-      run: cargo xtask precheck --setup
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 20
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask precheck --setup
 
     - name: Add required cross-compilation targets
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      run: |
-        rustup target add thumbv7em-none-eabi
-        rustup +nightly target add thumbv7em-none-eabi
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: |
+          rustup target add thumbv7em-none-eabi
+          rustup +nightly target add thumbv7em-none-eabi
 
     - name: Install nightly rustfmt
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
 
     - name: Install clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      run: cargo xtask rustup-component-add --component clippy
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask rustup-component-add --component clippy
 
     - name: Install nightly clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      run: cargo xtask rustup-component-add --component clippy --toolchain nightly
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask rustup-component-add --component clippy --toolchain nightly
 
     - name: Install nightly rust-src
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      run: cargo xtask rustup-component-add --component rust-src --toolchain nightly
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask rustup-component-add --component rust-src --toolchain nightly
 
     - name: Run reggen check
       run: cargo xtask precheck --reggen

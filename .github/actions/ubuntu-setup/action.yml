@@ -8,10 +8,14 @@ runs:
   using: composite
   steps:
     - name: Install apt packages
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        shell: bash
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libbsd-dev
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -24,5 +28,9 @@ runs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: cargo xtask precheck --setup
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 20
+        max_attempts: 3
+        shell: bash
+        command: cargo xtask precheck --setup

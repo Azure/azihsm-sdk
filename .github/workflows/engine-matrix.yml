@@ -65,18 +65,23 @@ jobs:
         if: matrix.family == 'debian'
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git gnupg \
-            build-essential pkg-config clang libclang-dev \
-            openssl libssl-dev
-          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
-          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-            > /etc/apt/sources.list.d/nodesource.list
-          apt-get update
-          apt-get install -y --no-install-recommends nodejs
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          shell: bash
+          command: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates curl git gnupg \
+              build-essential pkg-config clang libclang-dev \
+              openssl libssl-dev
+            curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+              | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+            echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+              > /etc/apt/sources.list.d/nodesource.list
+            apt-get update
+            apt-get install -y --no-install-recommends nodejs
 
       # clang + clang-devel provide libclang for bindgen (build.rs).  el8's
       # default nodejs module is Node 10, too old for the JS actions under
@@ -84,13 +89,18 @@ jobs:
       # its lifetime, so no repo pinning (unlike the provider's el9 cells).
       - name: Bootstrap (rhel)
         if: matrix.family == 'rhel'
-        run: |
-          dnf module reset -y nodejs
-          dnf module enable -y nodejs:20
-          dnf install -y --setopt=install_weak_deps=False \
-            ca-certificates curl git \
-            gcc gcc-c++ make pkgconf-pkg-config clang clang-devel \
-            openssl openssl-devel nodejs
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          shell: bash
+          command: |
+            dnf module reset -y nodejs
+            dnf module enable -y nodejs:20
+            dnf install -y --setopt=install_weak_deps=False \
+              ca-certificates curl git \
+              gcc gcc-c++ make pkgconf-pkg-config clang clang-devel \
+              openssl openssl-devel nodejs
 
       - uses: actions/checkout@v6
 
