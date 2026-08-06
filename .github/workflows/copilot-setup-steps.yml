@@ -17,7 +17,7 @@ on:
     paths:
       - .github/workflows/copilot-setup-steps.yml
 env:
-  CACHE_KEY_ID: 91ebd2b73151d521610f8cd4f61d94d7ab867468
+  CACHE_KEY_ID: 3d29b17e91a184bef820d26f09f8cf519d8daced
 
 jobs:
   # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
