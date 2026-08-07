@@ -9,9 +9,27 @@ use super::*;
 // Helper functions
 // ================================
 
+// Private RSA representation requested for the imported key.
+// The public half of both key-pair forms remains `HsmKeyKind::Rsa`.
+#[derive(Clone, Copy, Debug)]
+enum RsaPrivateKeyKind {
+    Rsa,
+    RsaCrt,
+}
+
+impl RsaPrivateKeyKind {
+    fn hsm_kind(self) -> HsmKeyKind {
+        match self {
+            Self::Rsa => HsmKeyKind::Rsa,
+            Self::RsaCrt => HsmKeyKind::RsaCrt,
+        }
+    }
+}
+
 /// Helper to unwrap RSA key and validate properties for a given key size
 fn test_unwrap_rsa_key_for_bits(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -32,7 +50,7 @@ fn test_unwrap_rsa_key_for_bits(
     // Define properties for the unwrapped key
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .build()
@@ -55,7 +73,7 @@ fn test_unwrap_rsa_key_for_bits(
         priv_key_props,
         pub_key_props,
     )
-    .expect("Failed to unwrap RSA Key");
+    .expect("Failed to unwrap requested RSA key form");
 
     // Verify private key properties
     assert_eq!(
@@ -65,7 +83,7 @@ fn test_unwrap_rsa_key_for_bits(
     );
     assert_eq!(
         priv_key.kind(),
-        HsmKeyKind::Rsa,
+        private_kind.hsm_kind(),
         "Private key kind mismatch"
     );
     assert_eq!(priv_key.bits(), bits, "Private key bits mismatch");
@@ -292,6 +310,7 @@ fn compare_rsa_public_key_properties(original: &HsmRsaPublicKey, unmasked: &HsmR
 /// 4. Verifies all properties match between the unwrapped and unmasked keys
 fn test_rsa_key_unmask_for_bits(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -312,7 +331,7 @@ fn test_rsa_key_unmask_for_bits(
     // Define properties for the unwrapped key
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .is_session(true)
@@ -337,7 +356,7 @@ fn test_rsa_key_unmask_for_bits(
         priv_key_props,
         pub_key_props,
     )
-    .expect("Failed to unwrap RSA Key");
+    .expect("Failed to unwrap requested RSA key form");
 
     // Get the masked key from the unwrapped private key
     let masked_key_pair = original_priv_key
@@ -363,6 +382,7 @@ fn test_rsa_key_unmask_for_bits(
 /// Helper to validate RSA unwrap functional correctness via encrypt/decrypt roundtrip
 fn run_rsa_functional_test(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -377,7 +397,7 @@ fn run_rsa_functional_test(
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .build()
@@ -417,6 +437,7 @@ fn run_rsa_functional_test(
 /// Helper to verify repeated unwrap produces usable (not necessarily identical) keys
 fn run_rsa_repeatability_test(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -431,7 +452,7 @@ fn run_rsa_repeatability_test(
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .build()
@@ -487,6 +508,7 @@ fn run_rsa_repeatability_test(
 /// Helper to verify truncated wrapped key fails during unwrap
 fn run_rsa_truncated_ciphertext_test(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -503,7 +525,7 @@ fn run_rsa_truncated_ciphertext_test(
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .build()
@@ -551,7 +573,10 @@ fn wrap_rsa_key(session: &HsmSession, der: &[u8], salt_len: usize) -> (HsmRsaPri
 }
 
 /// Generate an RSA key, wrap/unwrap it into the HSM, and return its masked private key blob
-fn get_rsa_masked_blob(session: &HsmSession) -> (Vec<u8>, HsmRsaPrivateKey) {
+fn get_rsa_masked_blob(
+    session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
+) -> (Vec<u8>, HsmRsaPrivateKey) {
     // Step 1: generate external RSA key
     let crypto_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
     let der = crypto_priv_key.to_vec().expect("Failed to export RSA key");
@@ -567,7 +592,7 @@ fn get_rsa_masked_blob(session: &HsmSession) -> (Vec<u8>, HsmRsaPrivateKey) {
     // Step 4: session key props (important!)
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .is_session(true)
@@ -603,6 +628,7 @@ fn get_rsa_masked_blob(session: &HsmSession) -> (Vec<u8>, HsmRsaPrivateKey) {
 /// Verify roundtrip works between original and unmasked key pair
 fn run_rsa_unmask_roundtrip_test(
     session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
     bits: u32,
     key_size_bytes: usize,
     salt_len: usize,
@@ -618,7 +644,7 @@ fn run_rsa_unmask_roundtrip_test(
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_decrypt(true)
         .is_session(true)
@@ -678,12 +704,13 @@ fn try_import_rsa_key(
     session: &HsmSession,
     der: &[u8],
     bits: u32,
+    private_kind: RsaPrivateKeyKind,
 ) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
 
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(bits)
         .can_sign(true)
         .build()
@@ -715,6 +742,181 @@ fn try_import_rsa_key(
         }
         Err(err) => Err(err),
     }
+}
+
+/// Returns the signing hash used for the requested RSA modulus size.
+fn rsa_sign_hash_for_bits(bits: u32) -> HsmHashAlgo {
+    match bits {
+        2048 => HsmHashAlgo::Sha256,
+        3072 => HsmHashAlgo::Sha384,
+        4096 => HsmHashAlgo::Sha512,
+        _ => panic!("Unsupported RSA key size: {bits}"),
+    }
+}
+
+/// Imports an RSA/RSA-CRT key pair configured for signing and verification.
+fn import_rsa_signing_key(
+    session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
+    bits: u32,
+    key_size_bytes: usize,
+    is_session: bool,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+    let crypto_priv_key =
+        crypto::RsaPrivateKey::generate(key_size_bytes).expect("Failed to generate RSA key");
+    let der = crypto_priv_key.to_vec().expect("Failed to export RSA key");
+
+    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
+
+    let hash_algo = HsmHashAlgo::Sha256;
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, 32);
+
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &der)
+        .expect("Failed to wrap RSA key");
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(private_kind.hsm_kind())
+        .bits(bits)
+        .can_sign(true)
+        .is_session(is_session)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_verify(true)
+        .is_session(is_session)
+        .build()
+        .expect("Failed to build public key props");
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+
+    HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_props,
+        pub_props,
+    )
+    .expect("Failed to import RSA signing key")
+}
+
+/// Verifies an imported RSA/RSA-CRT private key can sign and its public key can verify.
+fn run_rsa_sign_verify_test(
+    session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
+    bits: u32,
+    key_size_bytes: usize,
+) {
+    let (priv_key, pub_key) =
+        import_rsa_signing_key(session, private_kind, bits, key_size_bytes, false);
+
+    assert_eq!(
+        priv_key.kind(),
+        private_kind.hsm_kind(),
+        "Private key kind mismatch"
+    );
+    assert_eq!(pub_key.kind(), HsmKeyKind::Rsa, "Public key kind mismatch");
+    assert!(priv_key.can_sign(), "Private key should support signing");
+    assert!(
+        pub_key.can_verify(),
+        "Public key should support verification"
+    );
+
+    let message = b"rsa crt sign verify";
+    let hash_algo = rsa_sign_hash_for_bits(bits);
+
+    let mut algo = HsmRsaHashSignAlgo::with_pss_padding(hash_algo, 32);
+
+    let signature =
+        HsmSigner::sign_vec(&mut algo, &priv_key, message).expect("Failed to sign with RSA key");
+
+    let valid = HsmVerifier::verify(&mut algo, &pub_key, message, &signature)
+        .expect("Failed to verify RSA signature");
+
+    assert!(valid, "RSA signature verification failed");
+
+    HsmKeyManager::delete_key(priv_key).expect("Failed to delete private key");
+    HsmKeyManager::delete_key(pub_key).expect("Failed to delete public key");
+}
+
+/// Verifies an RSA/RSA-CRT signing key remains usable after mask/unmask.
+fn run_rsa_unmask_sign_verify_test(
+    session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
+    bits: u32,
+    key_size_bytes: usize,
+) {
+    let (original_priv, original_pub) =
+        import_rsa_signing_key(session, private_kind, bits, key_size_bytes, true);
+
+    let masked = original_priv
+        .masked_key_vec()
+        .expect("Failed to get masked private key");
+
+    let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
+
+    let (unmasked_priv, unmasked_pub) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, &masked)
+            .expect("Failed to unmask RSA key pair");
+
+    assert_eq!(
+        unmasked_priv.kind(),
+        private_kind.hsm_kind(),
+        "Private key kind changed after unmask"
+    );
+    assert_eq!(
+        unmasked_pub.kind(),
+        HsmKeyKind::Rsa,
+        "Public key kind changed after unmask"
+    );
+
+    assert!(
+        unmasked_priv.can_sign(),
+        "Unmasked private key lost signing capability"
+    );
+    assert!(
+        unmasked_pub.can_verify(),
+        "Unmasked public key lost verification capability"
+    );
+
+    let message = b"rsa crt unmask sign verify";
+    let hash_algo = rsa_sign_hash_for_bits(bits);
+
+    let mut algo = HsmRsaHashSignAlgo::with_pss_padding(hash_algo, 32);
+
+    // Sign using the UNMASKED CRT private key.
+    let signature = HsmSigner::sign_vec(&mut algo, &unmasked_priv, message)
+        .expect("Failed to sign with unmasked RSA key");
+
+    // Verify using the ORIGINAL public key.
+    let valid = HsmVerifier::verify(&mut algo, &original_pub, message, &signature)
+        .expect("Failed to verify signature");
+
+    assert!(
+        valid,
+        "Signature from unmasked private key should verify with original public key"
+    );
+
+    // Also sign with original private key and verify with unmasked public key.
+    let signature = HsmSigner::sign_vec(&mut algo, &original_priv, message)
+        .expect("Failed to sign with original RSA key");
+
+    let valid = HsmVerifier::verify(&mut algo, &unmasked_pub, message, &signature)
+        .expect("Failed to verify signature");
+
+    assert!(
+        valid,
+        "Signature from original private key should verify with unmasked public key"
+    );
+
+    HsmKeyManager::delete_key(original_priv).expect("Failed to delete original private key");
+    HsmKeyManager::delete_key(original_pub).expect("Failed to delete original public key");
+    HsmKeyManager::delete_key(unmasked_priv).expect("Failed to delete unmasked private key");
+    HsmKeyManager::delete_key(unmasked_pub).expect("Failed to delete unmasked public key");
 }
 
 // ============================================================
@@ -810,50 +1012,151 @@ fn test_generate_unwrapping_key(session: HsmSession) {
 /// Ensure RSA unwrap succeeds for 2048-bit key
 #[session_test]
 fn test_unwrap_rsa_2048_key(session: HsmSession) {
-    test_unwrap_rsa_key_for_bits(&session, 2048, 256, 32);
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
 }
 
 /// Ensure RSA unwrap succeeds for 3072-bit key
 #[session_test]
 fn test_unwrap_rsa_3072_key(session: HsmSession) {
-    test_unwrap_rsa_key_for_bits(&session, 3072, 384, 24);
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
 }
 
 /// Ensure RSA unwrap succeeds for 4096-bit key
 #[session_test]
 fn test_unwrap_rsa_4096_key(session: HsmSession) {
-    test_unwrap_rsa_key_for_bits(&session, 4096, 512, 16);
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
 }
 
 /// Ensure RSA unmask works correctly for 2048-bit key
 #[session_test]
 fn test_rsa_2048_key_unmask(session: HsmSession) {
-    test_rsa_key_unmask_for_bits(&session, 2048, 256, 32);
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
 }
 
 /// Ensure RSA unmask works correctly for 3072-bit key
 #[session_test]
 fn test_rsa_3072_key_unmask(session: HsmSession) {
-    test_rsa_key_unmask_for_bits(&session, 3072, 384, 24);
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
 }
 
 /// Ensure RSA unmask works correctly for 4096-bit key
 #[session_test]
 fn test_rsa_4096_key_unmask(session: HsmSession) {
-    test_rsa_key_unmask_for_bits(&session, 4096, 512, 16);
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
 }
 
-/// Helper to import an RSA key in CRT form for the given modulus size.
-/// The CRT form applies to the private key only; the public half stays plain RSA.
-fn unwrap_rsa_crt_key(
-    session: &HsmSession,
-    bits: u32,
-    is_session: bool,
-) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    // Standard RSA key generation always produces the CRT components.
-    let crypto_priv_key =
-        crypto::RsaPrivateKey::generate((bits / 8) as usize).expect("Failed to generate RSA Key");
-    let der = crypto_priv_key.to_vec().expect("Failed to export RSA Key");
+/// Ensure RSA CRT unwrap succeeds for 2048-bit key.
+#[session_test]
+fn test_unwrap_rsa_crt_2048_key(session: HsmSession) {
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure RSA CRT unwrap succeeds for 3072-bit key.
+#[session_test]
+fn test_unwrap_rsa_crt_3072_key(session: HsmSession) {
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure RSA CRT unwrap succeeds for 4096-bit key.
+#[session_test]
+fn test_unwrap_rsa_crt_4096_key(session: HsmSession) {
+    test_unwrap_rsa_key_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Ensure RSA CRT unmask preserves the private key kind for 2048-bit key.
+#[session_test]
+fn test_rsa_crt_2048_key_unmask(session: HsmSession) {
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure RSA CRT unmask preserves the private key kind for 3072-bit key.
+#[session_test]
+fn test_rsa_crt_3072_key_unmask(session: HsmSession) {
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure RSA CRT unmask preserves the private key kind for 4096-bit key.
+#[session_test]
+fn test_rsa_crt_4096_key_unmask(session: HsmSession) {
+    test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Ensure imported 2048-bit RSA CRT keys support encrypt/decrypt roundtrip.
+#[session_test]
+fn test_rsa_crt_functional_2048(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure imported 3072-bit RSA CRT keys support encrypt/decrypt roundtrip.
+#[session_test]
+fn test_rsa_crt_functional_3072(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure imported 4096-bit RSA CRT keys support encrypt/decrypt roundtrip.
+#[session_test]
+fn test_rsa_crt_functional_4096(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Ensure the same wrapped 2048-bit key can be imported repeatedly as RSA CRT.
+#[session_test]
+fn test_rsa_crt_repeatability_2048(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure the same wrapped 3072-bit key can be imported repeatedly as RSA CRT.
+#[session_test]
+fn test_rsa_crt_repeatability_3072(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure the same wrapped 4096-bit key can be imported repeatedly as RSA CRT.
+#[session_test]
+fn test_rsa_crt_repeatability_4096(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Ensure truncated wrapped input fails RSA CRT unwrap for a 2048-bit key.
+#[session_test]
+fn test_rsa_crt_truncated_2048(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure truncated wrapped input fails RSA CRT unwrap for a 3072-bit key.
+#[session_test]
+fn test_rsa_crt_truncated_3072(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure truncated wrapped input fails RSA CRT unwrap for a 4096-bit key.
+#[session_test]
+fn test_rsa_crt_truncated_4096(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Ensure RSA CRT masking/unmasking preserves interoperability for 2048-bit keys.
+#[session_test]
+fn test_rsa_crt_unmask_roundtrip_2048(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
+}
+
+/// Ensure RSA CRT masking/unmasking preserves interoperability for 3072-bit keys.
+#[session_test]
+fn test_rsa_crt_unmask_roundtrip_3072(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
+}
+
+/// Ensure RSA CRT masking/unmasking preserves interoperability for 4096-bit keys.
+#[session_test]
+fn test_rsa_crt_unmask_roundtrip_4096(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
+}
+
+/// Helper to verify key report generation for an imported RSA private-key representation.
+fn run_rsa_imported_key_report_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
+    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
 
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
 
@@ -863,154 +1166,22 @@ fn unwrap_rsa_crt_key(
 
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::RsaCrt)
-        .bits(bits)
+        .key_kind(private_kind.hsm_kind())
+        .bits(2048)
         .can_decrypt(true)
-        .is_session(is_session)
+        .is_session(true)
         .build()
         .expect("Failed to build private key props");
 
     let pub_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_encrypt(true)
-        .is_session(is_session)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-    HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrapping_priv_key,
-        &wrapped_key,
-        priv_key_props,
-        pub_key_props,
-    )
-    .expect("Failed to unwrap RSA CRT Key")
-}
-
-/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
-fn test_unwrap_rsa_crt_key_for_bits(session: &HsmSession, bits: u32) {
-    let (priv_key, pub_key) = unwrap_rsa_crt_key(session, bits, false);
-
-    assert_eq!(
-        priv_key.kind(),
-        HsmKeyKind::RsaCrt,
-        "Private key kind mismatch"
-    );
-    assert_eq!(priv_key.bits(), bits, "Private key bits mismatch");
-    assert_eq!(pub_key.kind(), HsmKeyKind::Rsa, "Public key kind mismatch");
-    assert_eq!(pub_key.bits(), bits, "Public key bits mismatch");
-
-    HsmKeyManager::delete_key(priv_key).expect("Failed to delete RSA private key");
-    HsmKeyManager::delete_key(pub_key).expect("Failed to delete RSA public key");
-}
-
-/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
-#[session_test]
-fn test_unwrap_rsa_crt_2048_key(session: HsmSession) {
-    test_unwrap_rsa_crt_key_for_bits(&session, 2048);
-}
-
-/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
-#[session_test]
-fn test_unwrap_rsa_crt_3072_key(session: HsmSession) {
-    test_unwrap_rsa_crt_key_for_bits(&session, 3072);
-}
-
-/// Ensure RSA unwrap in CRT form yields an RsaCrt private key and a plain RSA public key
-#[session_test]
-fn test_unwrap_rsa_crt_4096_key(session: HsmSession) {
-    test_unwrap_rsa_crt_key_for_bits(&session, 4096);
-}
-
-/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
-fn test_rsa_crt_key_unmask_for_bits(session: &HsmSession, bits: u32) {
-    let (original_priv_key, original_pub_key) = unwrap_rsa_crt_key(session, bits, true);
-
-    let masked_key_pair = original_priv_key
-        .masked_key_vec()
-        .expect("Failed to get masked private key");
-
-    let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
-    let (unmasked_priv_key, unmasked_pub_key) =
-        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, &masked_key_pair)
-            .expect("Failed to unmask RSA CRT key pair");
-
-    assert_eq!(
-        unmasked_priv_key.kind(),
-        HsmKeyKind::RsaCrt,
-        "Unmasked private key kind mismatch"
-    );
-    assert_eq!(
-        unmasked_pub_key.kind(),
-        HsmKeyKind::Rsa,
-        "Unmasked public key kind mismatch"
-    );
-
-    compare_rsa_private_key_properties(&original_priv_key, &unmasked_priv_key);
-    compare_rsa_public_key_properties(&original_pub_key, &unmasked_pub_key);
-
-    HsmKeyManager::delete_key(original_priv_key).expect("Failed to delete original private key");
-    HsmKeyManager::delete_key(original_pub_key).expect("Failed to delete original public key");
-    HsmKeyManager::delete_key(unmasked_priv_key).expect("Failed to delete unmasked private key");
-    HsmKeyManager::delete_key(unmasked_pub_key).expect("Failed to delete unmasked public key");
-}
-
-/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
-#[session_test]
-fn test_rsa_crt_2048_key_unmask(session: HsmSession) {
-    test_rsa_crt_key_unmask_for_bits(&session, 2048);
-}
-
-/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
-#[session_test]
-fn test_rsa_crt_3072_key_unmask(session: HsmSession) {
-    test_rsa_crt_key_unmask_for_bits(&session, 3072);
-}
-
-/// Ensure a masked RSA CRT key unmasks with the CRT kind preserved
-#[session_test]
-fn test_rsa_crt_4096_key_unmask(session: HsmSession) {
-    test_rsa_crt_key_unmask_for_bits(&session, 4096);
-}
-
-/// Ensure key report generation works for imported RSA key
-#[session_test]
-fn test_rsa_2048_imported_key_report(session: HsmSession) {
-    // Generate RSA key using azihsm_crypto
-    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-    let der = priv_key.to_vec().expect("Failed to export RSA Key");
-
-    // Get unwrapping key pair
-    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(&session);
-
-    // Wrap the generated key
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &der)
-        .expect("Failed to wrap RSA Key");
-
-    // Define properties for the unwrapped key
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_decrypt(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build unwrapping key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
         .bits(2048)
         .can_encrypt(true)
         .is_session(true)
         .build()
         .expect("Failed to build public key props");
 
-    // Unwrap the key pair (this is the "imported" key)
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
     let (priv_key, pub_key) = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
@@ -1019,48 +1190,43 @@ fn test_rsa_2048_imported_key_report(session: HsmSession) {
         priv_key_props,
         pub_key_props,
     )
-    .expect("Failed to unwrap RSA Key");
+    .expect("Failed to unwrap requested RSA key form");
 
-    // Custom report data (128 bytes is the max)
+    assert_eq!(priv_key.kind(), private_kind.hsm_kind());
+    assert_eq!(pub_key.kind(), HsmKeyKind::Rsa);
+
     let report_data = [0x42u8; 128];
-
-    // First call: get the required buffer size
     let report_size = HsmKeyManager::generate_key_report(&priv_key, &report_data, None)
         .expect("Failed to get key report size");
-
     assert!(report_size > 0, "Report size should be greater than 0");
 
-    // Second call: generate the actual report
     let mut report_buffer = vec![0u8; report_size];
     let actual_size =
         HsmKeyManager::generate_key_report(&priv_key, &report_data, Some(&mut report_buffer))
             .expect("Failed to generate key report");
     report_buffer.truncate(actual_size);
 
-    // Verify the report buffer was populated (not all zeros)
-    let non_zero_bytes = report_buffer.iter().filter(|&&b| b != 0).count();
-    assert!(non_zero_bytes > 0, "Report should contain non-zero data");
+    assert!(
+        report_buffer.iter().any(|&b| b != 0),
+        "Report should contain non-zero data"
+    );
 
-    // Clean up: delete the keys
     HsmKeyManager::delete_key(priv_key).expect("Failed to delete RSA private key");
     HsmKeyManager::delete_key(pub_key).expect("Failed to delete RSA public key");
 }
 
-/// Ensure unwrap fails when bits do not match actual key size
-#[session_test]
-fn test_unwrap_rsa_wrong_bits_fails(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).unwrap(); // 2048
+/// Helper to verify unwrap rejects key material whose size does not match the requested properties.
+fn run_rsa_wrong_bits_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
     let der = priv_key.to_vec().unwrap();
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
 
-    // wrong bits (expect 2048 but give 3072)
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(3072)
         .can_decrypt(true)
         .build()
@@ -1075,7 +1241,6 @@ fn test_unwrap_rsa_wrong_bits_fails(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1090,23 +1255,19 @@ fn test_unwrap_rsa_wrong_bits_fails(session: HsmSession) {
     );
 }
 
-/// Ensure unwrap fails when wrapped key is corrupted
-#[session_test]
-fn test_unwrap_rsa_tampered_ciphertext(session: HsmSession) {
+/// Helper to verify unwrap rejects tampered wrapped key data.
+fn run_rsa_tampered_ciphertext_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
     let der = priv_key.to_vec().unwrap();
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let mut wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
-
-    // corrupt ciphertext
     wrapped[0] ^= 0xFF;
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
@@ -1121,7 +1282,6 @@ fn test_unwrap_rsa_tampered_ciphertext(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1136,21 +1296,18 @@ fn test_unwrap_rsa_tampered_ciphertext(session: HsmSession) {
     );
 }
 
-/// Ensure unwrap fails if required capability missing
-#[session_test]
-fn test_unwrap_rsa_missing_capability(session: HsmSession) {
+/// Helper to verify unwrap rejects a private key without the required capability.
+fn run_rsa_missing_private_capability_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
     let der = priv_key.to_vec().unwrap();
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
 
-    //  missing can_decrypt
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .build()
         .unwrap();
@@ -1164,7 +1321,6 @@ fn test_unwrap_rsa_missing_capability(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1175,20 +1331,17 @@ fn test_unwrap_rsa_missing_capability(session: HsmSession) {
 
     assert!(
         matches!(result, Err(HsmError::InvalidKeyProps)),
-        "Unwrap should fail during key property validation with InvalidKeyProps when required capability is missing"
+        "Unwrap should fail with InvalidKeyProps when private capability is missing"
     );
 }
 
-/// Ensure unwrap fails when input ciphertext is empty (runtime/DDI error)
-#[session_test]
-fn test_unwrap_rsa_empty_input_fails(session: HsmSession) {
-    let (unwrap_priv, _) = get_rsa_unwrapping_key_pair(&session);
-
-    let wrapped = vec![];
+/// Helper to verify unwrap rejects empty wrapped input.
+fn run_rsa_empty_input_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
+    let (unwrap_priv, _) = get_rsa_unwrapping_key_pair(session);
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
@@ -1203,14 +1356,8 @@ fn test_unwrap_rsa_empty_input_fails(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
-    let result = HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrap_priv,
-        &wrapped,
-        priv_props,
-        pub_props,
-    );
+    let result =
+        HsmKeyManager::unwrap_key_pair(&mut unwrap_algo, &unwrap_priv, &[], priv_props, pub_props);
 
     assert!(
         matches!(result, Err(HsmError::DdiCmdFailure)),
@@ -1218,126 +1365,25 @@ fn test_unwrap_rsa_empty_input_fails(session: HsmSession) {
     );
 }
 
-/// Ensure functional RSA unwrap works for 2048-bit key
-#[session_test]
-fn test_rsa_functional_2048(session: HsmSession) {
-    run_rsa_functional_test(&session, 2048, 256, 32);
-}
-
-/// Ensure functional RSA unwrap works for 3072-bit key
-#[session_test]
-fn test_rsa_functional_3072(session: HsmSession) {
-    run_rsa_functional_test(&session, 3072, 384, 24);
-}
-
-/// Ensure functional RSA unwrap works for 4096-bit key
-#[session_test]
-fn test_rsa_functional_4096(session: HsmSession) {
-    run_rsa_functional_test(&session, 4096, 512, 16);
-}
-
-/// Ensure unwrap repeatability for 2048-bit RSA
-#[session_test]
-fn test_rsa_repeatability_2048(session: HsmSession) {
-    run_rsa_repeatability_test(&session, 2048, 256, 32);
-}
-
-/// Ensure unwrap repeatability for 3072-bit RSA
-#[session_test]
-fn test_rsa_repeatability_3072(session: HsmSession) {
-    run_rsa_repeatability_test(&session, 3072, 384, 24);
-}
-
-/// Ensure unwrap repeatability for 4096-bit RSA
-#[session_test]
-fn test_rsa_repeatability_4096(session: HsmSession) {
-    run_rsa_repeatability_test(&session, 4096, 512, 16);
-}
-
-/// Ensure truncated ciphertext fails unwrap for 2048-bit RSA
-#[session_test]
-fn test_rsa_truncated_2048(session: HsmSession) {
-    run_rsa_truncated_ciphertext_test(&session, 2048, 256, 32);
-}
-
-/// Ensure truncated ciphertext fails unwrap for 3072-bit RSA
-#[session_test]
-fn test_rsa_truncated_3072(session: HsmSession) {
-    run_rsa_truncated_ciphertext_test(&session, 3072, 384, 24);
-}
-
-/// Ensure truncated ciphertext fails unwrap for 4096-bit RSA
-#[session_test]
-fn test_rsa_truncated_4096(session: HsmSession) {
-    run_rsa_truncated_ciphertext_test(&session, 4096, 512, 16);
-}
-
-/// Ensure unwrap fails when key kind is incorrect
-#[session_test]
-fn test_unwrap_rsa_wrong_key_kind_fails(session: HsmSession) {
+/// Helper to verify unwrap rejects an invalid public-key class combination.
+fn run_rsa_wrong_class_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
     let der = priv_key.to_vec().unwrap();
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
 
-    //  wrong key kind
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Aes)
-        .bits(256)
-        .can_decrypt(true)
-        .build()
-        .unwrap();
-
-    let pub_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Aes)
-        .bits(256)
-        .can_encrypt(true)
-        .build()
-        .unwrap();
-
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
-    let result = HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrap_priv,
-        &wrapped,
-        priv_props,
-        pub_props,
-    );
-
-    assert!(
-        matches!(result, Err(HsmError::InvalidKeyProps)),
-        "Unwrap should fail with InvalidKeyProps for wrong key kind"
-    );
-}
-
-/// Ensure unwrap fails when key class combination is invalid
-#[session_test]
-fn test_unwrap_rsa_wrong_class_fails(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let der = priv_key.to_vec().unwrap();
-
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
-    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
-
-    //  wrong: both private
-    let priv_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
         .unwrap();
 
     let pub_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private) //  should be Public
+        .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)
         .bits(2048)
         .can_encrypt(true)
@@ -1345,7 +1391,6 @@ fn test_unwrap_rsa_wrong_class_fails(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1360,25 +1405,23 @@ fn test_unwrap_rsa_wrong_class_fails(session: HsmSession) {
     );
 }
 
-#[session_test]
-fn test_unwrap_rsa_missing_pub_capability(session: HsmSession) {
+/// Helper to verify unwrap rejects a public key without the required capability.
+fn run_rsa_missing_public_capability_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
     let der = priv_key.to_vec().unwrap();
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
         .unwrap();
 
-    // missing can_encrypt
     let pub_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
@@ -1387,7 +1430,6 @@ fn test_unwrap_rsa_missing_pub_capability(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1399,17 +1441,14 @@ fn test_unwrap_rsa_missing_pub_capability(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
-/// Ensures unwrap fails when hash algorithm differs from wrap.
-#[session_test]
-fn test_unwrap_rsa_wrong_hash_algo_fails(session: HsmSession) {
+/// Helper to verify unwrap rejects a wrap/unwrap hash mismatch.
+fn run_rsa_wrong_hash_algo_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let der = generate_rsa_der(256);
-
-    // Wrap with SHA256
-    let (unwrap_priv, wrapped) = wrap_rsa_key(&session, &der, 32);
+    let (unwrap_priv, wrapped) = wrap_rsa_key(session, &der, 32);
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
@@ -1423,9 +1462,7 @@ fn test_unwrap_rsa_wrong_hash_algo_fails(session: HsmSession) {
         .build()
         .unwrap();
 
-    // Unwrap with WRONG hash algo
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1437,22 +1474,18 @@ fn test_unwrap_rsa_wrong_hash_algo_fails(session: HsmSession) {
     assert!(result.is_err());
 }
 
-/// Ensures unwrap fails with invalid DER structure.
-#[session_test]
-fn test_unwrap_rsa_invalid_der_fails(session: HsmSession) {
+/// Helper to verify unwrap rejects malformed RSA DER.
+fn run_rsa_invalid_der_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
     let mut der = generate_rsa_der(256);
-
-    // Corrupt DER structure (not just ciphertext)
     der[10] ^= 0xFF;
 
-    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
-
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(private_kind.hsm_kind())
         .bits(2048)
         .can_decrypt(true)
         .build()
@@ -1467,7 +1500,6 @@ fn test_unwrap_rsa_invalid_der_fails(session: HsmSession) {
         .unwrap();
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
     let result = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrap_priv,
@@ -1479,10 +1511,213 @@ fn test_unwrap_rsa_invalid_der_fails(session: HsmSession) {
     assert!(result.is_err());
 }
 
+/// Ensure key report generation works for imported RSA key.
+#[session_test]
+fn test_rsa_2048_imported_key_report(session: HsmSession) {
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure key report generation works for imported RSA CRT key.
+#[session_test]
+fn test_rsa_crt_2048_imported_key_report(session: HsmSession) {
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure RSA unwrap fails when bits do not match actual key size.
+#[session_test]
+fn test_unwrap_rsa_wrong_bits_fails(session: HsmSession) {
+    run_rsa_wrong_bits_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails when bits do not match actual key size.
+#[session_test]
+fn test_unwrap_rsa_crt_wrong_bits_fails(session: HsmSession) {
+    run_rsa_wrong_bits_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure RSA unwrap fails when wrapped key is corrupted.
+#[session_test]
+fn test_unwrap_rsa_tampered_ciphertext(session: HsmSession) {
+    run_rsa_tampered_ciphertext_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails when wrapped key is corrupted.
+#[session_test]
+fn test_unwrap_rsa_crt_tampered_ciphertext(session: HsmSession) {
+    run_rsa_tampered_ciphertext_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure RSA unwrap fails if the private decrypt capability is missing.
+#[session_test]
+fn test_unwrap_rsa_missing_capability(session: HsmSession) {
+    run_rsa_missing_private_capability_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails if the private decrypt capability is missing.
+#[session_test]
+fn test_unwrap_rsa_crt_missing_capability(session: HsmSession) {
+    run_rsa_missing_private_capability_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure RSA unwrap fails when input ciphertext is empty.
+#[session_test]
+fn test_unwrap_rsa_empty_input_fails(session: HsmSession) {
+    run_rsa_empty_input_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails when input ciphertext is empty.
+#[session_test]
+fn test_unwrap_rsa_crt_empty_input_fails(session: HsmSession) {
+    run_rsa_empty_input_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure functional RSA unwrap works for 2048-bit key
+#[session_test]
+fn test_rsa_functional_2048(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
+}
+
+/// Ensure functional RSA unwrap works for 3072-bit key
+#[session_test]
+fn test_rsa_functional_3072(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
+}
+
+/// Ensure functional RSA unwrap works for 4096-bit key
+#[session_test]
+fn test_rsa_functional_4096(session: HsmSession) {
+    run_rsa_functional_test(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
+}
+
+/// Ensure unwrap repeatability for 2048-bit RSA
+#[session_test]
+fn test_rsa_repeatability_2048(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
+}
+
+/// Ensure unwrap repeatability for 3072-bit RSA
+#[session_test]
+fn test_rsa_repeatability_3072(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
+}
+
+/// Ensure unwrap repeatability for 4096-bit RSA
+#[session_test]
+fn test_rsa_repeatability_4096(session: HsmSession) {
+    run_rsa_repeatability_test(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
+}
+
+/// Ensure truncated ciphertext fails unwrap for 2048-bit RSA
+#[session_test]
+fn test_rsa_truncated_2048(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
+}
+
+/// Ensure truncated ciphertext fails unwrap for 3072-bit RSA
+#[session_test]
+fn test_rsa_truncated_3072(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
+}
+
+/// Ensure truncated ciphertext fails unwrap for 4096-bit RSA
+#[session_test]
+fn test_rsa_truncated_4096(session: HsmSession) {
+    run_rsa_truncated_ciphertext_test(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
+}
+
+/// Ensure unwrap fails when key kind is incorrect.
+#[session_test]
+fn test_unwrap_rsa_wrong_key_kind_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let der = priv_key.to_vec().unwrap();
+
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+    let result = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrap_priv,
+        &wrapped,
+        priv_props,
+        pub_props,
+    );
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "Unwrap should fail with InvalidKeyProps for wrong key kind"
+    );
+}
+
+/// Ensure RSA unwrap fails when key class combination is invalid.
+#[session_test]
+fn test_unwrap_rsa_wrong_class_fails(session: HsmSession) {
+    run_rsa_wrong_class_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails when key class combination is invalid.
+#[session_test]
+fn test_unwrap_rsa_crt_wrong_class_fails(session: HsmSession) {
+    run_rsa_wrong_class_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensure RSA unwrap fails when the public encrypt capability is missing.
+#[session_test]
+fn test_unwrap_rsa_missing_pub_capability(session: HsmSession) {
+    run_rsa_missing_public_capability_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensure RSA CRT unwrap fails when the public encrypt capability is missing.
+#[session_test]
+fn test_unwrap_rsa_crt_missing_pub_capability(session: HsmSession) {
+    run_rsa_missing_public_capability_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensures RSA unwrap fails when hash algorithm differs from wrap.
+#[session_test]
+fn test_unwrap_rsa_wrong_hash_algo_fails(session: HsmSession) {
+    run_rsa_wrong_hash_algo_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensures RSA CRT unwrap fails when hash algorithm differs from wrap.
+#[session_test]
+fn test_unwrap_rsa_crt_wrong_hash_algo_fails(session: HsmSession) {
+    run_rsa_wrong_hash_algo_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
+/// Ensures RSA unwrap fails with invalid DER structure.
+#[session_test]
+fn test_unwrap_rsa_invalid_der_fails(session: HsmSession) {
+    run_rsa_invalid_der_test(&session, RsaPrivateKeyKind::Rsa);
+}
+
+/// Ensures RSA CRT unwrap fails with invalid DER structure.
+#[session_test]
+fn test_unwrap_rsa_crt_invalid_der_fails(session: HsmSession) {
+    run_rsa_invalid_der_test(&session, RsaPrivateKeyKind::RsaCrt);
+}
+
 /// Ensure unmask fails when masked blob is truncated
 #[session_test]
 fn test_rsa_unmask_truncated_blob_fails(session: HsmSession) {
-    let (mut masked, priv_key) = get_rsa_masked_blob(&session);
+    let (mut masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::Rsa);
 
     masked.truncate(masked.len() / 2);
 
@@ -1497,7 +1732,7 @@ fn test_rsa_unmask_truncated_blob_fails(session: HsmSession) {
 /// Ensure unmask fails when masked blob is corrupted
 #[session_test]
 fn test_rsa_unmask_corrupted_blob_fails(session: HsmSession) {
-    let (mut masked, priv_key) = get_rsa_masked_blob(&session);
+    let (mut masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::Rsa);
 
     masked[0] ^= 0xFF;
 
@@ -1523,7 +1758,7 @@ fn test_rsa_unmask_empty_blob_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_unmask_wrong_key_kind_fails(session: HsmSession) {
     // Step 1: valid RSA masked blob
-    let (masked, priv_key) = get_rsa_masked_blob(&session);
+    let (masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::Rsa);
 
     // Step 2: use WRONG key-pair algo (ECC instead of RSA)
     let mut algo = HsmEccKeyUnmaskAlgo::default();
@@ -1538,19 +1773,114 @@ fn test_rsa_unmask_wrong_key_kind_fails(session: HsmSession) {
     HsmKeyManager::delete_key(priv_key).unwrap();
 }
 
+/// Ensure RSA CRT unmask fails when using the ECC key-pair algorithm.
+#[session_test]
+fn test_rsa_crt_unmask_wrong_key_kind_fails(session: HsmSession) {
+    let (masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::RsaCrt);
+
+    let mut algo = HsmEccKeyUnmaskAlgo::default();
+    let result = HsmKeyManager::unmask_key_pair(&session, &mut algo, &masked);
+
+    assert!(
+        result.is_err(),
+        "RSA CRT unmask should fail when using the ECC key-pair algorithm"
+    );
+
+    HsmKeyManager::delete_key(priv_key).unwrap();
+}
+
 #[session_test]
 fn test_rsa_unmask_roundtrip_2048(session: HsmSession) {
-    run_rsa_unmask_roundtrip_test(&session, 2048, 256, 32);
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
 }
 
 #[session_test]
 fn test_rsa_unmask_roundtrip_3072(session: HsmSession) {
-    run_rsa_unmask_roundtrip_test(&session, 3072, 384, 24);
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
 }
 
 #[session_test]
 fn test_rsa_unmask_roundtrip_4096(session: HsmSession) {
-    run_rsa_unmask_roundtrip_test(&session, 4096, 512, 16);
+    run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
+}
+
+/// Ensure RSA CRT unmask fails when its masked blob is truncated.
+#[session_test]
+fn test_rsa_crt_unmask_truncated_blob_fails(session: HsmSession) {
+    let (mut masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::RsaCrt);
+
+    masked.truncate(masked.len() / 2);
+
+    let mut algo = HsmRsaKeyUnmaskAlgo::default();
+    let result = HsmKeyManager::unmask_key_pair(&session, &mut algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(priv_key).unwrap();
+}
+
+/// Ensure RSA CRT unmask fails when its masked blob is corrupted.
+#[session_test]
+fn test_rsa_crt_unmask_corrupted_blob_fails(session: HsmSession) {
+    let (mut masked, priv_key) = get_rsa_masked_blob(&session, RsaPrivateKeyKind::RsaCrt);
+
+    masked[0] ^= 0xFF;
+
+    let mut algo = HsmRsaKeyUnmaskAlgo::default();
+    let result = HsmKeyManager::unmask_key_pair(&session, &mut algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(priv_key).unwrap();
+}
+
+/// Verifies RSA CRT import rejects invalid DER input.
+#[session_test]
+fn test_import_rsa_crt_invalid_der_fails(session: HsmSession) {
+    let bad_der = [0x00, 0x01, 0x02];
+
+    let result = try_import_rsa_key(&session, &bad_der, 2048, RsaPrivateKeyKind::RsaCrt);
+
+    let unexpected_error = match result {
+        Err(HsmError::DdiCmdFailure) => None,
+        Err(err) => Some(format!("{err:?}")),
+        Ok((priv_key, pub_key)) => {
+            let _ = HsmKeyManager::delete_key(priv_key);
+            let _ = HsmKeyManager::delete_key(pub_key);
+            Some("Ok((priv_key, pub_key))".to_string())
+        }
+    };
+
+    assert!(
+        unexpected_error.is_none(),
+        "Expected RSA CRT import with invalid DER to fail with DdiCmdFailure, got {:?}",
+        unexpected_error
+    );
+}
+
+/// Verifies RSA CRT import rejects key material whose size mismatches the properties.
+#[session_test]
+fn test_import_rsa_crt_mismatched_bits_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let der = priv_key.to_vec().expect("Failed to export RSA key");
+
+    let result = try_import_rsa_key(&session, &der, 3072, RsaPrivateKeyKind::RsaCrt);
+
+    let unexpected_result = match result {
+        Err(HsmError::InvalidKeyProps) => None,
+        Err(err) => Some(format!("{err:?}")),
+        Ok((priv_key, pub_key)) => {
+            let _ = HsmKeyManager::delete_key(priv_key);
+            let _ = HsmKeyManager::delete_key(pub_key);
+            Some("Ok((priv_key, pub_key))".to_string())
+        }
+    };
+
+    assert!(
+        unexpected_result.is_none(),
+        "Expected RSA CRT import with mismatched bits to fail with InvalidKeyProps, got {:?}",
+        unexpected_result
+    );
 }
 
 /// Verifies RSA import fails when the DER input is invalid.
@@ -1558,7 +1888,7 @@ fn test_rsa_unmask_roundtrip_4096(session: HsmSession) {
 fn test_import_rsa_invalid_der_fails(session: HsmSession) {
     let bad_der = [0x00, 0x01, 0x02];
 
-    let result = try_import_rsa_key(&session, &bad_der, 2048);
+    let result = try_import_rsa_key(&session, &bad_der, 2048, RsaPrivateKeyKind::Rsa);
 
     let unexpected_error = match result {
         Err(HsmError::DdiCmdFailure) => None,
@@ -1583,7 +1913,7 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
     let der = priv_key.to_vec().expect("Failed to export RSA key");
 
-    let result = try_import_rsa_key(&session, &der, 3072);
+    let result = try_import_rsa_key(&session, &der, 3072, RsaPrivateKeyKind::Rsa);
 
     let unexpected_result = match result {
         Err(HsmError::InvalidKeyProps) => None,
@@ -1601,4 +1931,40 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
         "Expected RSA import with mismatched bits to fail with InvalidKeyProps, got {:?}",
         unexpected_result
     );
+}
+
+/// Ensure 2048-bit RSA CRT supports PSS signing and verification.
+#[session_test]
+fn test_rsa_crt_sign_verify_2048(session: HsmSession) {
+    run_rsa_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256);
+}
+
+/// Ensure 3072-bit RSA CRT supports PSS signing and verification.
+#[session_test]
+fn test_rsa_crt_sign_verify_3072(session: HsmSession) {
+    run_rsa_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384);
+}
+
+/// Ensure 4096-bit RSA CRT supports PSS signing and verification.
+#[session_test]
+fn test_rsa_crt_sign_verify_4096(session: HsmSession) {
+    run_rsa_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512);
+}
+
+/// Ensure 2048-bit RSA CRT remains usable for signing after mask/unmask.
+#[session_test]
+fn test_rsa_crt_unmask_sign_verify_2048(session: HsmSession) {
+    run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256);
+}
+
+/// Ensure 3072-bit RSA CRT remains usable for signing after mask/unmask.
+#[session_test]
+fn test_rsa_crt_unmask_sign_verify_3072(session: HsmSession) {
+    run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384);
+}
+
+/// Ensure 4096-bit RSA CRT remains usable for signing after mask/unmask.
+#[session_test]
+fn test_rsa_crt_unmask_sign_verify_4096(session: HsmSession) {
+    run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512);
 }
