@@ -17,10 +17,7 @@ env:
 jobs:
   build_ubuntu:
 
-    env:
-      JOB_ID: build_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -47,12 +44,7 @@ jobs:
 
   test_ubuntu_mock:
 
-    name: test_ubuntu_mock
-
-    env:
-      JOB_ID: test_ubuntu_mock-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -76,10 +68,7 @@ jobs:
 
   test_ubuntu_api:
 
-    env:
-      JOB_ID: test_ubuntu_api-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -103,10 +92,7 @@ jobs:
 
   test_ubuntu_misc:
 
-    env:
-      JOB_ID: test_ubuntu_misc-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -142,10 +128,7 @@ jobs:
 
   test_ubuntu_smoke:
 
-    env:
-      JOB_ID: test_ubuntu_smoke-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -169,10 +152,7 @@ jobs:
 
   test_ubuntu_emu_ddi:
 
-    env:
-      JOB_ID: test_ubuntu_emu_ddi-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     defaults:
       run:

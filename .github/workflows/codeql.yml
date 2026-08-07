@@ -23,12 +23,7 @@ env:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-
-    env:
-      JOB_ID: analyze-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
-
+    runs-on: ubuntu-24.04
     permissions:
       security-events: write
       packages: read
@@ -51,14 +46,7 @@ jobs:
     - name: Install apt packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-
-    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
-      id: cache-openssl
-      uses: actions/cache@v5
-      with:
-        path: ${{ env.OPENSSL_INSTALL }}
-        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
+        sudo apt-get install -y pkg-config libbsd-dev libssl-dev
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -72,7 +60,7 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
 
     - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' || steps.cache-openssl.outputs.cache-hit != 'true'
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask setup
 
     - name: Initialize CodeQL
@@ -89,8 +77,6 @@ jobs:
     - name: Run manual build steps
       if: matrix.build-mode == 'manual'
       shell: bash
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: |
         cargo xtask build --release --package azihsm_ossl_provider
 

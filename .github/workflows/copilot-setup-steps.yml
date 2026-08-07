@@ -22,10 +22,7 @@ env:
 jobs:
   # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
   copilot-setup-steps:
-    env:
-      JOB_ID: copilot-setup-steps-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
 
     # Set the permissions to the lowest permissions possible needed for your steps.
     # Copilot will be given its own token for its operations.

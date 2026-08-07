@@ -45,10 +45,9 @@ defaults:
 jobs:
   matrix:
     name: ${{ matrix.label }}
-    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+    runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     env:
-      JOB_ID: ${{ matrix.label }}-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
       OPENSSL_LIB_DIR: ${{ matrix.lib_dir }}
       # Exported so the suites' version-gating primitives can skip tests that
       # require a newer OpenSSL than this cell provides.
