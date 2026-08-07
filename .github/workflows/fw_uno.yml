@@ -48,7 +48,9 @@ jobs:
         timeout_minutes: 20
         max_attempts: 3
         shell: bash
-        command: cargo xtask precheck --setup
+        command: |
+          cd fw/plat/uno
+          cargo xtask precheck --setup
 
     - name: Add required cross-compilation targets
       if: steps.cargo-cache.outputs.cache-hit == 'true'
@@ -68,7 +70,9 @@ jobs:
         timeout_minutes: 5
         max_attempts: 3
         shell: bash
-        command: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+        command: |
+          cd fw/plat/uno
+          cargo xtask rustup-component-add --component rustfmt --toolchain nightly
 
     - name: Install clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
@@ -77,7 +81,9 @@ jobs:
         timeout_minutes: 5
         max_attempts: 3
         shell: bash
-        command: cargo xtask rustup-component-add --component clippy
+        command: |
+          cd fw/plat/uno
+          cargo xtask rustup-component-add --component clippy
 
     - name: Install nightly clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
@@ -86,7 +92,9 @@ jobs:
         timeout_minutes: 5
         max_attempts: 3
         shell: bash
-        command: cargo xtask rustup-component-add --component clippy --toolchain nightly
+        command: |
+          cd fw/plat/uno
+          cargo xtask rustup-component-add --component clippy --toolchain nightly
 
     - name: Install nightly rust-src
       if: steps.cargo-cache.outputs.cache-hit == 'true'
@@ -95,7 +103,9 @@ jobs:
         timeout_minutes: 5
         max_attempts: 3
         shell: bash
-        command: cargo xtask rustup-component-add --component rust-src --toolchain nightly
+        command: |
+          cd fw/plat/uno
+          cargo xtask rustup-component-add --component rust-src --toolchain nightly
 
     - name: Run reggen check
       run: cargo xtask precheck --reggen
