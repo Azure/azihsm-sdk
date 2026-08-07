@@ -80,7 +80,7 @@ impl KeyLen {
 ///
 /// Mirrors the reference firmware's `raw_key_blob_size()` (fixed kinds)
 /// and var-HMAC min/max. `SessionEx` is length-discriminated by session
-/// type (PlainText=120, Authenticated=216) and modelled as variable;
+/// type (PlainText=72, Authenticated=168) and modelled as variable;
 /// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
 static KIND_LEN: [KeyLen; 44] = [
     /* 0  Free                         */ KeyLen::Invalid,
@@ -119,7 +119,7 @@ static KIND_LEN: [KeyLen; 44] = [
     /* 33 VarLenHmacSha384             */ KeyLen::Variable { min: 48, max: 128 },
     /* 34 VarLenHmacSha512             */ KeyLen::Variable { min: 64, max: 128 },
     /* 35 SessionExPending           */ KeyLen::Variable { min: 32, max: 256 },
-    /* 36 SessionEx                    */ KeyLen::Variable { min: 120, max: 216 },
+    /* 36 SessionEx                    */ KeyLen::Variable { min: 72, max: 168 },
     /* 37 PartitionTrustAnchor         */ KeyLen::Fixed(48),
     /* 38 UniquePartitionSecret */ KeyLen::Fixed(48),
     /* 39 PartitionLocalMaskingKey     */ KeyLen::Fixed(32),
@@ -251,7 +251,7 @@ mod tests {
         );
         assert_eq!(
             key_len(HsmVaultKeyKind::SessionEx),
-            Ok(KeyLen::Variable { min: 120, max: 216 })
+            Ok(KeyLen::Variable { min: 72, max: 168 })
         );
         assert_eq!(
             key_len(HsmVaultKeyKind::SessionExPending),
