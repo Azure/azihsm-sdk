@@ -12,9 +12,13 @@ on:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
   CARGO_TERM_COLOR: always
-  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
-  OPENSSL_VERSION: "3.0.3"
-  OPENSSL_INSTALL: target/openssl-3.0.3
+  CACHE_KEY_ID: 3d29b17e91a184bef820d26f09f8cf519d8daced
+  # Use the runner's system OpenSSL (ubuntu-24.04 ships OpenSSL 3.0.x), the
+  # same pattern as provider-matrix.yml. openssl-sys / the provider build
+  # resolve headers and libs from these system paths.
+  OPENSSL_DIR: /usr
+  OPENSSL_INCLUDE_DIR: /usr/include
+  OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
 
 jobs:
   analyze:
@@ -42,14 +46,7 @@ jobs:
     - name: Install apt packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libbsd-dev
-
-    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
-      id: cache-openssl
-      uses: actions/cache@v5
-      with:
-        path: ${{ env.OPENSSL_INSTALL }}
-        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
+        sudo apt-get install -y pkg-config libbsd-dev libssl-dev
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -63,7 +60,7 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
 
     - name: Setup
-      if: steps.cargo-cache.outputs.cache-hit != 'true' || steps.cache-openssl.outputs.cache-hit != 'true'
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
       run: cargo xtask setup
 
     - name: Initialize CodeQL
@@ -80,8 +77,6 @@ jobs:
     - name: Run manual build steps
       if: matrix.build-mode == 'manual'
       shell: bash
-      env:
-        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: |
         cargo xtask build --release --package azihsm_ossl_provider
 

@@ -12,6 +12,7 @@
 #include <openssl/params.h>
 #include <openssl/pem.h>
 #include <openssl/proverr.h>
+#include <string.h>
 
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_pkey_param.h"
@@ -147,6 +148,57 @@ int azihsm_ossl_masked_key_filepath_validate(const char *filepath)
     }
 
     return 0;
+}
+
+int azihsm_ossl_get_str_param(
+    const OSSL_PARAM params[],
+    const char *key,
+    char *out,
+    size_t out_size
+)
+{
+    const OSSL_PARAM *p;
+    size_t len;
+
+    if (params == NULL || key == NULL || out == NULL || out_size == 0)
+    {
+        return -1;
+    }
+
+    /* Leave out untouched when absent: callers accumulate into context fields
+     * across the repeated set_params calls one per -pkeyopt produces, so an
+     * absent parameter must not clear a value an earlier call stored. */
+    if ((p = OSSL_PARAM_locate_const(params, key)) == NULL)
+    {
+        return 0;
+    }
+
+    if (p->data_type != OSSL_PARAM_UTF8_STRING || p->data == NULL)
+    {
+        return -1;
+    }
+
+    /*
+     * data_size carries the value length, but the OSSL_PARAM_utf8_string()
+     * initializer macro leaves it zero for a C string, unlike
+     * OSSL_PARAM_construct_utf8_string(), which fills in strlen().  When
+     * data_size is set it may still be the full backing buffer rather than the
+     * string length, so bound the scan by the destination as well: anything at
+     * least out_size long is rejected below regardless.  This never reads past
+     * the value while avoiding scanning arbitrarily large buffers.
+     */
+    size_t scan = (p->data_size != 0 && p->data_size < out_size) ? p->data_size : out_size;
+    len = OPENSSL_strnlen(p->data, scan);
+
+    if (len >= out_size)
+    {
+        return -1;
+    }
+
+    memcpy(out, p->data, len);
+    out[len] = '\0';
+
+    return 1;
 }
 
 int azihsm_ossl_input_key_filepath_validate(const char *filepath)

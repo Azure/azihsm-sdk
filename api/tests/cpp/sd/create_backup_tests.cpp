@@ -12,9 +12,9 @@
 // to its own attested identity key.
 //
 // The whole file needs the two-phase TBOR HPKE handshake and a fully
-// provisioned partition, which only the emu (in-process firmware) backend
-// provides, so it is gated to `AZIHSM_FEATURE_EMU`.
-#if defined(AZIHSM_FEATURE_EMU)
+// provisioned partition, which the mock backend does not implement, so it is
+// excluded from the mock lane and runs on the emu and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <azihsm_api.h>
@@ -38,18 +38,6 @@ constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kPokLocalBackupLen = 180;
 constexpr uint32_t kSdMkBackupLen = 164;
 constexpr uint32_t kMaskedSealingKeyLen = 180;
-
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 // Run the create-backup call, sizing the three output buffers via the
 // probe/fill convention. The FFI validates each output buffer in sequence
@@ -366,4 +354,4 @@ TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
     });
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)

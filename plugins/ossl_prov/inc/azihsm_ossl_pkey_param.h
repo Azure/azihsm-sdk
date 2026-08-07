@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+#include <openssl/params.h>
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -20,7 +22,11 @@ extern "C"
 #define AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY "azihsm.input_key"
 #define AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY "azihsm.wrapped_key"
 
-/* Opaque AES key kind for SKEYMGMT import/generate: "AES" (default), "AES-GCM", or "AES-XTS". */
+/*
+ * Key kind selector.
+ * SKEYMGMT (AES): "AES" (default), "AES-GCM", or "AES-XTS".
+ * KEYMGMT (RSA import): "RSA" or "RSA-CRT" (default).
+ */
 #define AZIHSM_OSSL_PKEY_PARAM_KEY_KIND "azihsm.key_kind"
 
 /* Key usage types - single usage for the entire key pair */
@@ -87,6 +93,29 @@ uint32_t azihsm_ossl_get_priv_key_property(AZIHSM_KEY_USAGE_TYPE usage_type);
  * @returns the public key property ID (VERIFY, DERIVE, or ENCRYPT)
  * */
 uint32_t azihsm_ossl_get_pub_key_property(AZIHSM_KEY_USAGE_TYPE usage_type);
+
+/*
+ * Read a UTF-8 string parameter into a fixed-size buffer.
+ *
+ * OSSL_PARAM_UTF8_STRING data carries an explicit length and is not required
+ * to be NUL-terminated, so a value must be copied out before it can be used
+ * as a C string.  The copy is always NUL-terminated; out is left untouched
+ * when the parameter is absent.
+ *
+ * @params    parameter array to search
+ * @key       parameter name
+ * @out       destination buffer, written only when the parameter is present
+ * @out_size  size of out in bytes
+ *
+ * @returns 1 when present and copied, 0 when absent, -1 when present but not
+ * a UTF-8 string or too long for out
+ * */
+int azihsm_ossl_get_str_param(
+    const OSSL_PARAM params[],
+    const char *key,
+    char *out,
+    size_t out_size
+);
 
 #ifdef __cplusplus
 }

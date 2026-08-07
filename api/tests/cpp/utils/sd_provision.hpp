@@ -18,8 +18,9 @@
 // a real C consumer performs, except the consumer brings its own PKI chain.
 //
 // The chain is built with the platform host crypto (OpenSSL on Linux,
-// BCrypt on Windows), no HSM session. Gated to the emu backend.
-#if defined(AZIHSM_FEATURE_EMU)
+// BCrypt on Windows), no HSM session. Excluded from the mock backend; runs
+// on the emu and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 /// Provision a freshly-reset partition's security domain and return a live,
 /// provisioned Crypto-Officer session handle (`Initialized` state):
@@ -51,6 +52,11 @@ struct SdBackingContext
     std::vector<uint8_t> pid_pub;
     /// SATA anchor key that roots the partition-owner evidence chain.
     std::shared_ptr<CaKey> sata_key;
+    /// POTA anchor key that roots the CSR -> PTA chain. Retained so a
+    /// restore target can re-provision under the same policy.
+    std::shared_ptr<CaKey> pota_key;
+    /// Device-local master-key (`local_mk`) backup emitted by `PartFinal`.
+    std::vector<uint8_t> local_mk_backup;
 };
 
 /// Provision `part_handle` with a backing-partition policy that names this
@@ -59,8 +65,27 @@ struct SdBackingContext
 ///
 /// Records a gtest failure and returns a default `SdBackingContext`
 /// (`session == 0`) on error. The caller owns `session` and must close it
+/// with `azihsm_sess_close`. `allow_peer_cloning` sets that policy flag
+/// (default `true`); clear it to exercise the peer-cloning policy gate.
+SdBackingContext provision_sd_backing_co_session(
+    azihsm_handle part_handle,
+    bool allow_peer_cloning = true
+);
+
+/// Re-provision `part_handle` — the same physical backing partition after a
+/// simulated reboot (`azihsm_part_reset`) — as a restore target, reusing
+/// `prev`'s policy and SATA/POTA anchors and supplying
+/// `prev.local_mk_backup` to `PartFinal` for device-local master-key
+/// continuity. This reproduces the receiver (device-2) side of a restore
+/// round trip.
+///
+/// Records a gtest failure and returns a default `SdBackingContext`
+/// (`session == 0`) on error. The caller owns `session` and must close it
 /// with `azihsm_sess_close`.
-SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle);
+SdBackingContext provision_sd_restore_target(
+    azihsm_handle part_handle,
+    const SdBackingContext &prev
+);
 
 /// A minted SD sealing key: its masked private-key blob and a COSE_Sign1
 /// `KeyReport` attesting it.
@@ -148,4 +173,4 @@ SdEvidenceHolder build_receiver_evidence(
     const std::vector<uint8_t> &report
 );
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)
