@@ -769,7 +769,13 @@ fn import_rsa_signing_key(
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
 
     let hash_algo = HsmHashAlgo::Sha256;
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, 32);
+    let salt_len = match bits {
+        2048 => 32,
+        3072 => 24,
+        4096 => 16,
+        _ => panic!("Unsupported RSA key size: {bits}"),
+    };
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_len);
 
     let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &der)
         .expect("Failed to wrap RSA key");
