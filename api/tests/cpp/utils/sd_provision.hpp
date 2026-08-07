@@ -65,8 +65,12 @@ struct SdBackingContext
 ///
 /// Records a gtest failure and returns a default `SdBackingContext`
 /// (`session == 0`) on error. The caller owns `session` and must close it
-/// with `azihsm_sess_close`.
-SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle);
+/// with `azihsm_sess_close`. `allow_peer_cloning` sets that policy flag
+/// (default `true`); clear it to exercise the peer-cloning policy gate.
+SdBackingContext provision_sd_backing_co_session(
+    azihsm_handle part_handle,
+    bool allow_peer_cloning = true
+);
 
 /// Re-provision `part_handle` — the same physical backing partition after a
 /// simulated reboot (`azihsm_part_reset`) — as a restore target, reusing

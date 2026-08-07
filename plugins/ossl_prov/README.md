@@ -326,6 +326,7 @@ openssl genpkey ${PROV} \
 | `azihsm.wrapped_key` | Yes* | Path to a pre-wrapped key blob (from `wrap_key` tool) |
 | `azihsm.masked_key` | Yes | Output path for masked key blob |
 | `azihsm.key_usage` | No | `digitalSignature` (default) or `keyEncipherment` |
+| `azihsm.key_kind` | No | Key form: `RSA` or `RSA-CRT` (default). CRT keeps the CRT components in the HSM for faster private-key operations; select `RSA` for keys that carry no CRT components |
 
 > \* Exactly one of `azihsm.input_key` or `azihsm.wrapped_key` must be provided. Setting both is an error.
 

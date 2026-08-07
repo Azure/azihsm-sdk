@@ -214,7 +214,7 @@ pub(crate) fn rsa_unwrap_key_pair(
     let key_kind = priv_key_props.kind();
 
     let (priv_handle, pub_handle) = match key_kind {
-        HsmKeyKind::Rsa => {
+        HsmKeyKind::Rsa | HsmKeyKind::RsaCrt => {
             let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
             // Unwrap RSA key pair

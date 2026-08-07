@@ -4,8 +4,10 @@
 #pragma once
 
 #include <azihsm_api.h>
+#include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <vector>
 
 /// Returns the standard test API revision (1.0) used across all C++ tests.
 inline azihsm_api_rev test_api_rev()
@@ -25,4 +27,17 @@ inline std::filesystem::path get_test_tmp_dir()
         return {};
     }
     return dir;
+}
+
+/// Returns true if any byte in `bytes` is non-zero (i.e. not all-zero).
+inline bool any_nonzero(const std::vector<uint8_t> &bytes)
+{
+    for (uint8_t b : bytes)
+    {
+        if (b != 0)
+        {
+            return true;
+        }
+    }
+    return false;
 }

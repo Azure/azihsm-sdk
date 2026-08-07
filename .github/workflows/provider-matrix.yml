@@ -197,20 +197,7 @@ jobs:
             | sh -s -- -y --default-toolchain none --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Cache cargo + target
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: matrix-${{ matrix.distro }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: matrix-${{ matrix.distro }}-
-
-      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION); the
-      # binary persists in the ~/.cargo/bin cache above.
+      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION).
       - name: Install cargo-nextest
         run: cargo xtask setup --skip-taplo --skip-audit
 

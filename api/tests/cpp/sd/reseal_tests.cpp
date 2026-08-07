@@ -37,18 +37,6 @@ namespace
 constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kMaskedSealingKeyLen = 180;
 
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Create a real source backup: a fresh BKS3 sealed to the receiver's
 // attested public key (`receiver_report`) by `masked_sender`. Returns the
 // 161-byte remote backup, or an empty vector on failure (recording a gtest
