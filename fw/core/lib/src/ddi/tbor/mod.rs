@@ -391,6 +391,23 @@ fn resolve_masking_key<'p, P: HsmPal>(
 /// (`ApiRev`, `SessionOpenInit`, `SessionOpenFinish`) are never
 /// gated — the client must always be able to bring up a session in
 /// order to issue [`psk_change`] in the first place.
+/// Outcome of dispatching a single TBOR command.
+///
+/// Mirrors the MBOR [`DispatchResult`](crate::ddi::mbor::DispatchResult):
+/// carries the encoded response plus, for the session-lifecycle opcodes,
+/// the slot id the IO layer places in the CQE. Only `SessionOpenInit`
+/// needs it: the slot is allocated inside the handler, so the IO layer
+/// has no other way to learn it. `SessionClose` is not threaded here —
+/// the dispatcher cross-checks the body `session_id` against the SQE
+/// one for every close/in-session opcode, so the IO layer can just use
+/// the SQE value (exactly as `handle_mbor_op` uses `hdr.sess_id`).
+pub(crate) struct DispatchResult<'p> {
+    /// Encoded response slice (borrows `pal`'s per-IO allocator).
+    pub(crate) resp: &'p DmaBuf,
+    /// Slot id for the CQE; set only by `SessionOpenInit`.
+    pub(crate) session_id: Option<u16>,
+}
+
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -399,7 +416,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     sqe_session_id: u16,
     oob: Option<OobPtr>,
     undo: &mut UndoLog<'p>,
-) -> HsmResult<&'p DmaBuf> {
+) -> HsmResult<DispatchResult<'p>> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
     // unsupported opcodes through a different error code.
@@ -441,9 +458,15 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         }
     }
 
-    match opcode {
+    // `SessionOpenInit` reports its freshly allocated slot here; the other
+    // arms are untouched so the response type stays `&DmaBuf`.
+    let mut session_id: Option<u16> = None;
+
+    let resp = match opcode {
         opcode::API_REV => api_rev::handle(pal, io, req_buf),
-        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf, undo).await,
+        opcode::SESSION_OPEN_INIT => {
+            session_open_init::handle(pal, io, req_buf, undo, &mut session_id).await
+        }
         opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf, undo).await,
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
         opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf, undo).await,
@@ -482,7 +505,9 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HKDF_DERIVE => hkdf_derive::handle(pal, io, req_buf).await,
         opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
-    }
+    }?;
+
+    Ok(DispatchResult { resp, session_id })
 }
 
 /// Returns `true` iff `opcode` is one of the opcodes wired into
