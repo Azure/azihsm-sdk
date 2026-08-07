@@ -5,6 +5,10 @@ edition = "2021"
 name = "azihsm_fw_hsm_std"
 version = "0.1.0"
 
+[features]
+fips_validation_hooks = ["azihsm_fw_hsm_core/fips_validation_hooks"]
+mcr_test_hooks = ["azihsm_fw_hsm_core/mcr_test_hooks"]
+
 [dependencies]
 async-channel.workspace = true
 azihsm_fw_ddi_mbor_types.workspace = true
