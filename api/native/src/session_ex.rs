@@ -404,9 +404,9 @@ pub struct AzihsmSdEvidence {
     pub report: *const AzihsmBuffer,
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_create_remote_backup`].
+/// Input buffers for [`azihsm_sd_create_remote_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdCreateRemoteBackupParams {
+pub struct AzihsmSdCreateRemoteBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -507,9 +507,9 @@ impl<'a: 'b, 'b> From<&'b SdEvidence<'a>> for api::HsmSdEvidence<'b> {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_create_remote_backup(
+pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdCreateRemoteBackupParams,
+    params: *const AzihsmSdCreateRemoteBackupParams,
     pok_remote_backup: *mut AzihsmBuffer,
     pok_local_backup: *mut AzihsmBuffer,
     sd_mk_backup: *mut AzihsmBuffer,
@@ -547,9 +547,9 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_create_remote_backup(
     })
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_reseal_remote_backup`].
+/// Input buffers for [`azihsm_sd_reseal_remote_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdResealRemoteBackupParams {
+pub struct AzihsmSdResealRemoteBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -590,9 +590,9 @@ pub struct AzihsmSessExSdResealRemoteBackupParams {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_reseal_remote_backup(
+pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdResealRemoteBackupParams,
+    params: *const AzihsmSdResealRemoteBackupParams,
     dst_remote_backup: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
     abi_boundary(|| {
@@ -629,9 +629,9 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_reseal_remote_backup(
     })
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_restore_remote_backup`].
+/// Input buffers for [`azihsm_sd_restore_remote_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdRestoreRemoteBackupParams {
+pub struct AzihsmSdRestoreRemoteBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -674,9 +674,9 @@ pub struct AzihsmSessExSdRestoreRemoteBackupParams {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_remote_backup(
+pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdRestoreRemoteBackupParams,
+    params: *const AzihsmSdRestoreRemoteBackupParams,
     pok_local_backup: *mut AzihsmBuffer,
     sd_mk_backup: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -718,9 +718,9 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_remote_backup(
     })
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_create_peer_backup`].
+/// Input buffers for [`azihsm_sd_create_peer_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdCreatePeerBackupParams {
+pub struct AzihsmSdCreatePeerBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -759,9 +759,9 @@ pub struct AzihsmSessExSdCreatePeerBackupParams {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_create_peer_backup(
+pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdCreatePeerBackupParams,
+    params: *const AzihsmSdCreatePeerBackupParams,
     pok_peer_backup: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
     abi_boundary(|| {
@@ -790,9 +790,9 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_create_peer_backup(
     })
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_restore_peer_backup`].
+/// Input buffers for [`azihsm_sd_restore_peer_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdRestorePeerBackupParams {
+pub struct AzihsmSdRestorePeerBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -835,9 +835,9 @@ pub struct AzihsmSessExSdRestorePeerBackupParams {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_peer_backup(
+pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdRestorePeerBackupParams,
+    params: *const AzihsmSdRestorePeerBackupParams,
     pok_local_backup: *mut AzihsmBuffer,
     sd_mk_backup: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -879,9 +879,9 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_peer_backup(
     })
 }
 
-/// Input buffers for [`azihsm_sess_ex_sd_restore_local_backup`].
+/// Input buffers for [`azihsm_sd_restore_local_backup`].
 #[repr(C)]
-pub struct AzihsmSessExSdRestoreLocalBackupParams {
+pub struct AzihsmSdRestoreLocalBackupParams {
     /// Device-local partition-owner-key backup to restore, exactly
     /// `MASKED_SD_LEN` (180 B).
     pub pok_local_backup: *const AzihsmBuffer,
@@ -916,9 +916,9 @@ pub struct AzihsmSessExSdRestoreLocalBackupParams {
 ///   backing storage of the advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_local_backup(
+pub unsafe extern "C" fn azihsm_sd_restore_local_backup(
     sess_handle: AzihsmHandle,
-    params: *const AzihsmSessExSdRestoreLocalBackupParams,
+    params: *const AzihsmSdRestoreLocalBackupParams,
     pok_local_backup: *mut AzihsmBuffer,
     sd_mk_backup: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -929,16 +929,15 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_local_backup(
         let pok_local_backup_in: &[u8] = deref_ptr(params.pok_local_backup)?.try_into()?;
         let sd_mk_backup_in: &[u8] = deref_ptr(params.sd_mk_backup)?.try_into()?;
 
-        // Reject null/misaligned or aliasing output pointers before taking a
-        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
-        // would be undefined behavior.
+        // Validate all outputs up-front (aliasing on raw pointers, then
+        // sizes) so one probe advertises every length before the restore runs.
         validate_distinct_output_buffers(&[pok_local_backup, sd_mk_backup])?;
-
         let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
-        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
-
         let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
-        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+        validate_output_sizes(&mut [
+            (&mut *pok_local_backup, api::MASKED_SD_LEN),
+            (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
+        ])?;
 
         let result = session.sd_restore_local_backup(pok_local_backup_in, sd_mk_backup_in)?;
 
