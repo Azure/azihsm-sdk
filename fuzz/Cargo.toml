@@ -66,3 +66,10 @@ doc = false
 name = "fuzz_tbor_session_open_init"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_init.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_open_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_round_trip.rs"
+test = false
