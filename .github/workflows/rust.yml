@@ -178,6 +178,7 @@ jobs:
 
     env:
       JOB_ID: test_ubuntu_emu_ddi_arm64-azihsm-arm64-gh-ubuntu2404-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+      CACHE_KEY_ID: dummy # force cache miss for this job only
 
     runs-on: [azihsm-arm64-gh-ubuntu2404-pool]
 
