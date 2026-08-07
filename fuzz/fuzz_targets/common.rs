@@ -3,7 +3,15 @@
 
 //! Shared types and helpers for TBOR fuzz targets.
 
+#![allow(dead_code)]
+
 use azihsm_ddi_tbor_codec::Encoder;
+use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
+use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
+use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
+use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
+use azihsm_ddi_tbor_codec::RequestView;
+use azihsm_ddi_tbor_codec::ResponseView;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -25,12 +33,26 @@ pub enum EncoderTOCBuilders {
     Padding(u16),
 }
 
-/// Buffer size used by encoder fuzz targets.
-pub const FUZZ_BUF_SIZE: usize = 8192;
+/// Buffer size used by request encoder fuzz targets.
+///
+/// Sized to hold the worst-case request: a full header, the maximum number
+/// of TOC entries (each a 4-byte / `u32` wire word), and the maximum data
+/// section. `TOC_ENTRY_LEN` is `pub(crate)` in the codec, so we use
+/// `size_of::<u32>()` as an equivalent.
+pub const FUZZ_REQ_BUF_SIZE: usize =
+    REQ_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
+
+/// Buffer size used by response encoder fuzz targets.
+pub const FUZZ_RESP_BUF_SIZE: usize =
+    RESP_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
 
 /// Apply a sequence of TOC builder operations to an encoder, returning
-/// early on error. Calls `finish` at the end.
-pub fn run_encoder<H: Header>(mut encoder: Encoder<'_, H>, ops: &[EncoderTOCBuilders]) {
+/// the encoded bytes on success or `None` if any step (including
+/// [`Encoder::finish`]) fails.
+pub fn run_encoder<'a, H: Header>(
+    mut encoder: Encoder<'a, H>,
+    ops: &[EncoderTOCBuilders],
+) -> Option<&'a [u8]> {
     for op in ops {
         let result = match op {
             EncoderTOCBuilders::SessionId(id) => encoder.session_id(*id),
@@ -47,12 +69,56 @@ pub fn run_encoder<H: Header>(mut encoder: Encoder<'_, H>, ops: &[EncoderTOCBuil
         };
         match result {
             Ok(enc) => encoder = enc,
-            Err(_) => return,
+            Err(_) => return None,
         }
     }
 
-    // Attempt to finalize — errors are expected and fine.
-    let _ = encoder.finish();
+    encoder.finish().ok()
+}
+
+/// Parse and exercise every accessor on a serialised TBOR request.
+///
+/// A parse failure is treated as expected (the bytes may be invalid).
+pub fn run_request_view(data: &[u8]) {
+    if let Ok(view) = RequestView::parse(data) {
+        let _ = view.version();
+        let _ = view.opcode();
+        let _ = view.toc_count();
+        let _ = view.data_start();
+        let _ = view.data_size();
+        let _ = view.len();
+        let _ = view.is_empty();
+        let _ = view.as_bytes();
+        let _ = view.data_section();
+        for (i, entry) in view.toc_iter().enumerate() {
+            let _ = entry;
+            let _ = view.toc_entry_type(i);
+            let _ = view.toc_entry(i);
+        }
+    }
+}
+
+/// Parse and exercise every accessor on a serialised TBOR response.
+///
+/// A parse failure is treated as expected (the bytes may be invalid).
+pub fn run_response_view(data: &[u8]) {
+    if let Ok(view) = ResponseView::parse(data) {
+        let _ = view.version();
+        let _ = view.status();
+        let _ = view.fips_approved();
+        let _ = view.toc_count();
+        let _ = view.data_start();
+        let _ = view.data_size();
+        let _ = view.len();
+        let _ = view.is_empty();
+        let _ = view.as_bytes();
+        let _ = view.data_section();
+        for (i, entry) in view.toc_iter().enumerate() {
+            let _ = entry;
+            let _ = view.toc_entry_type(i);
+            let _ = view.toc_entry(i);
+        }
+    }
 }
 
 use azihsm_ddi_emu::DdiEmu;

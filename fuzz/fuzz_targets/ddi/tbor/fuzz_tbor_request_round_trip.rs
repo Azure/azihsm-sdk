@@ -23,5 +23,7 @@ struct FuzzInput {
 fuzz_target!(|input: FuzzInput| {
     let mut buf = [0u8; FUZZ_REQ_BUF_SIZE];
     let encoder = RequestEncoder::new(&mut buf, input.version, input.opcode);
-    common::run_encoder(encoder, &input.ops);
+    if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
+        common::run_request_view(encoded);
+    }
 });

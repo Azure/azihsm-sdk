@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 [package]
 edition = "2024"
-name = "azihsm_api-fuzz"
+name = "azihsm_sdk_fuzz"
 publish = false
 version = "0.0.0"
 
@@ -28,8 +28,8 @@ test = false
 [[bin]]
 bench = false
 doc = false
-name = "fuzz_tbor_response_encoder"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_encoder.rs"
+name = "fuzz_tbor_request_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_round_trip.rs"
 test = false
 
 [[bin]]
@@ -37,6 +37,20 @@ bench = false
 doc = false
 name = "fuzz_tbor_request_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_view.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_response_encoder"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_encoder.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_response_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_round_trip.rs"
 test = false
 
 [[bin]]
