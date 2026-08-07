@@ -50,24 +50,44 @@ fn secure_provision_bk3(
     // set_init_bk3_pin
     let resp1 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
     let nonce1 = resp1.data.nonce;
-    let dev_key1 = DeviceCredKey::new(&resp1.data.pub_key, nonce1).unwrap();
-    let (cred_key, pub_key1) = dev_key1
-        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-        .unwrap();
-    let encrypted_credential = cred_key
-        .encrypt_establish_credential(id, pin, nonce1)
-        .unwrap();
-    helper_set_init_bk3_pin(dev, encrypted_credential, pub_key1)?;
+    let dev_key1 = DeviceCredKey::new(&resp1.data.pub_key, nonce1);
+    assert!(dev_key1.is_ok(), "DeviceCredKey::new failed: {dev_key1:?}");
+    let cred = dev_key1
+        .unwrap()
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        cred.is_ok(),
+        "create_credential_key_from_der failed: {:?}",
+        cred.as_ref().err()
+    );
+    let (cred_key, pub_key1) = cred.unwrap();
+    let encrypted_credential = cred_key.encrypt_establish_credential(id, pin, nonce1);
+    assert!(
+        encrypted_credential.is_ok(),
+        "encrypt_establish_credential failed: {encrypted_credential:?}"
+    );
+    helper_set_init_bk3_pin(dev, encrypted_credential.unwrap(), pub_key1)?;
 
     // secure_init_bk3
     let resp2 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
     let nonce2 = resp2.data.nonce;
-    let dev_key2 = DeviceCredKey::new(&resp2.data.pub_key, nonce2).unwrap();
-    let (bk3_key, pub_key2): (Bk3EncryptionKey, DdiDerPublicKey) = dev_key2
-        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-        .unwrap();
-    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce2).unwrap();
-    helper_secure_init_bk3(dev, encrypted_bk3, pub_key2)
+    let dev_key2 = DeviceCredKey::new(&resp2.data.pub_key, nonce2);
+    assert!(dev_key2.is_ok(), "DeviceCredKey::new failed: {dev_key2:?}");
+    let bk3_res = dev_key2
+        .unwrap()
+        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        bk3_res.is_ok(),
+        "create_bk3_key_from_der failed: {:?}",
+        bk3_res.as_ref().err()
+    );
+    let (bk3_key, pub_key2): (Bk3EncryptionKey, DdiDerPublicKey) = bk3_res.unwrap();
+    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce2);
+    assert!(
+        encrypted_bk3.is_ok(),
+        "encrypt_bk3 failed: {encrypted_bk3:?}"
+    );
+    helper_secure_init_bk3(dev, encrypted_bk3.unwrap(), pub_key2)
 }
 
 /// Error means skip: op unsupported (emu) or partition already provisioned.
@@ -85,7 +105,8 @@ fn should_skip(err: &DdiError) -> bool {
 fn test_secure_init_bk3_smoke() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
         let mut bk3 = [0u8; 48];
-        Rng::rand_bytes(&mut bk3).unwrap();
+        let rng = Rng::rand_bytes(&mut bk3);
+        assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
 
         let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
         if let Err(err) = &result {
@@ -157,7 +178,8 @@ fn test_secure_bk3_full_flow() {
 
         // (2) Full provisioning (set_init_bk3_pin + secure_init_bk3).
         let mut bk3 = [0u8; 48];
-        Rng::rand_bytes(&mut bk3).unwrap();
+        let rng = Rng::rand_bytes(&mut bk3);
+        assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
         let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
         if let Err(err) = &result {
             if should_skip(err) {
