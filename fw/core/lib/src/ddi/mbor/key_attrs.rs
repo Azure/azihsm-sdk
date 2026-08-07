@@ -249,6 +249,47 @@ pub(crate) fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaul
     Ok(attrs)
 }
 
+/// Build vault attrs for a raw-imported RSA-2048 **unwrapping** key.
+///
+/// Parity with the legacy `import_raw_key` / `import_unwrapping_key`:
+/// the partition unwrapping key is a device-internal, device-owned,
+/// unwrap-only key.  The only permitted usage is `Unwrap`; any other
+/// usage (or none) is rejected with [`HsmError::InvalidPermissions`],
+/// matching the legacy `if key_usage != Unwrap => InvalidPermissions`
+/// guard.
+///
+/// The returned attrs are identical to the ones the refactor's own
+/// generated unwrapping key carries (`internal + local + unwrap`, see
+/// the std PAL `provision_unwrapping_key`), so a raw-imported key is
+/// indistinguishable from a generated one on read-back.  Unlike the
+/// session-scoped raw imports, this path is *not* run through
+/// `raw_import_attrs`' blanket `with_local(false)` — `local` is
+/// intentionally left set.
+#[cfg(feature = "fips_validation_hooks")]
+pub(crate) fn for_rsa_unwrap(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
+
+    let sign_verify = metadata.sign() && metadata.verify();
+    let encrypt_decrypt = metadata.encrypt() && metadata.decrypt();
+    let derive = metadata.derive();
+    let wrap = metadata.wrap();
+    let unwrap = metadata.unwrap();
+
+    let usage_count = (sign_verify as u8)
+        + (encrypt_decrypt as u8)
+        + (derive as u8)
+        + (wrap as u8)
+        + (unwrap as u8);
+    if usage_count != 1 || !unwrap {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    Ok(HsmVaultKeyAttrs::new()
+        .with_internal(true)
+        .with_local(true)
+        .with_unwrap(true))
+}
+
 /// Reject metadata where one half of a paired usage flag is set
 /// without the other (`sign` without `verify`, or `encrypt`
 /// without `decrypt`).  The host is supposed to encode these as
