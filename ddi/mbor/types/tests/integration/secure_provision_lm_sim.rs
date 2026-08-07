@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(not(any(feature = "emu", feature = "mock")))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
@@ -28,16 +29,18 @@ const API_REV: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 
 /// Simulate a live migration onto a fresh target
 fn migrate_sim(dev: &<DdiTest as Ddi>::Dev) {
-    dev.erase()
-        .expect("live-migration simulation (NSSR) must succeed");
+    let resp = dev.erase();
+    assert!(
+        resp.is_ok(),
+        "live-migration simulation (NSSR) must succeed, resp {resp:?}"
+    );
 }
 
 /// Reads the module FIPS-approval status the host observes via `GetDeviceInfo`.
 fn fips_approved(dev: &<DdiTest as Ddi>::Dev) -> bool {
-    helper_get_device_info(dev, None, Some(API_REV))
-        .expect("GetDeviceInfo must succeed")
-        .data
-        .fips_approved
+    let resp = helper_get_device_info(dev, None, Some(API_REV));
+    assert!(resp.is_ok(), "GetDeviceInfo must succeed, resp {resp:?}");
+    resp.unwrap().data.fips_approved
 }
 
 /// `SetInitBk3Pin`: store the encrypted `(id, pin)` provisioning credential.
@@ -131,54 +134,81 @@ fn test_secure_provision_lm_midflow_restart() {
         // A1: migrate after minting the establish key (no PIN set). With the
         // volatile prov-cred empty, secure_init_bk3 must fail Bk3PinNotSet; a
         // legacy persistent BK3 means the device isn't truly fresh, so skip.
-        helper_get_establish_cred_encryption_key(dev, None, Some(API_REV))
-            .expect("minting the establish key must succeed");
+        let resp = helper_get_establish_cred_encryption_key(dev, None, Some(API_REV));
+        assert!(
+            resp.is_ok(),
+            "minting the establish key must succeed, resp {resp:?}"
+        );
         migrate_sim(dev);
-        let (eb, pk) = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
-            .expect("encrypted-BK3 payload build (fresh tunnel) must succeed");
-        match helper_secure_init_bk3(dev, eb, pk) {
-            Err(DdiError::DdiStatus(DdiStatus::Bk3PinNotSet)) => {}
-            Err(err) if not_truly_fresh(&err) => {
+        let payload = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(
+            payload.is_ok(),
+            "encrypted-BK3 payload build (fresh tunnel) must succeed, resp {payload:?}"
+        );
+        let (eb, pk) = payload.unwrap();
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        if let Err(err) = &result {
+            if not_truly_fresh(err) {
                 tracing::warn!(
                     ?err,
                     "device not truly fresh (legacy/persistent BK3); skipping"
                 );
                 return;
             }
-            other => {
-                panic!("A1: cold secure_init_bk3 (no PIN) must be Bk3PinNotSet, got {other:?}")
-            }
         }
+        assert!(
+            matches!(result, Err(DdiError::DdiStatus(DdiStatus::Bk3PinNotSet))),
+            "A1: cold secure_init_bk3 (no PIN) must be Bk3PinNotSet, got {result:?}"
+        );
 
         // A2: set the PIN, migrate (volatile prov-cred lost), then secure_init_bk3
         // over a fresh tunnel is rejected as if landing on a fresh target.
-        set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN)
-            .expect("set_init_bk3_pin must succeed on a fresh partition");
+        let pin_resp = set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        assert!(
+            pin_resp.is_ok(),
+            "set_init_bk3_pin must succeed on a fresh partition, resp {pin_resp:?}"
+        );
         migrate_sim(dev);
-        let (eb, pk) = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
-            .expect("encrypted-BK3 payload build must succeed after migration");
-        match helper_secure_init_bk3(dev, eb, pk) {
-            Err(err) => assert_pin_not_set(&err, "A2: migrate after set_init_bk3_pin"),
-            Ok(_) => panic!("A2: secure_init_bk3 after mid-flow migration must be rejected"),
-        }
+        let payload = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(
+            payload.is_ok(),
+            "encrypted-BK3 payload build must succeed after migration, resp {payload:?}"
+        );
+        let (eb, pk) = payload.unwrap();
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        assert!(
+            result.is_err(),
+            "A2: secure_init_bk3 after mid-flow migration must be rejected, got {result:?}"
+        );
+        assert_pin_not_set(&result.unwrap_err(), "A2: migrate after set_init_bk3_pin");
 
         // A3: re-set the volatile PIN, pre-build an encrypted-BK3 payload over a
         // second tunnel, THEN migrate so both the tunnel key and PIN are lost;
         // secure_init_bk3 must not decrypt-succeed against the stale state.
-        set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN)
-            .expect("set_init_bk3_pin must succeed again after migration (PIN was volatile)");
-        let (eb, pk) = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
-            .expect("encrypted-BK3 payload over the second tunnel must build");
+        let pin_resp = set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        assert!(
+            pin_resp.is_ok(),
+            "set_init_bk3_pin must succeed again after migration (PIN was volatile), resp {pin_resp:?}"
+        );
+        let payload = build_encrypted_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(
+            payload.is_ok(),
+            "encrypted-BK3 payload over the second tunnel must build, resp {payload:?}"
+        );
+        let (eb, pk) = payload.unwrap();
         migrate_sim(dev);
-        match helper_secure_init_bk3(dev, eb, pk) {
-            Ok(_) => panic!("A3: secure_init_bk3 after migration must not tag-decrypt-succeed"),
-            Err(DdiError::DdiStatus(
-                DdiStatus::Bk3PinNotSet
-                | DdiStatus::NonceMismatch
-                | DdiStatus::Bk3TransportTagMismatch,
-            )) => {}
-            Err(err) => panic!("A3: expected a volatile-loss status, got {err:?}"),
-        }
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        assert!(
+            matches!(
+                result,
+                Err(DdiError::DdiStatus(
+                    DdiStatus::Bk3PinNotSet
+                        | DdiStatus::NonceMismatch
+                        | DdiStatus::Bk3TransportTagMismatch,
+                ))
+            ),
+            "A3: secure_init_bk3 after migration must fail with a volatile-loss status, got {result:?}"
+        );
 
         // A4: no partial persistent state landed on the target.
         assert!(
@@ -194,8 +224,12 @@ fn test_secure_provision_lm_midflow_restart() {
         );
 
         // Recovery: a clean full flow provisions end to end.
-        let resp = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
-            .expect("full provisioning after a clean restart must succeed");
+        let resp = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(
+            resp.is_ok(),
+            "full provisioning after a clean restart must succeed, resp {resp:?}"
+        );
+        let resp = resp.unwrap();
         assert_eq!(resp.hdr.status, DdiStatus::Success);
         let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
         assert_eq!(
@@ -212,22 +246,26 @@ fn test_secure_provision_lm_midflow_restart() {
         let image_is_fips = fips_approved(dev);
 
         // Seal the MOBK.
-        helper_set_sealed_bk3(dev, masked_bk3.clone()).expect("set_sealed_bk3 seal must succeed");
+        let seal_resp = helper_set_sealed_bk3(dev, masked_bk3.clone());
+        assert!(
+            seal_resp.is_ok(),
+            "set_sealed_bk3 seal must succeed, resp {seal_resp:?}"
+        );
 
         // B5/B6: the completed provisioning migrates intact.
-        let sealed_before = helper_get_sealed_bk3(dev)
-            .expect("get_sealed_bk3 must succeed after sealing")
-            .data
-            .sealed_bk3
-            .as_slice()
-            .to_vec();
+        let sealed_before = helper_get_sealed_bk3(dev);
+        assert!(
+            sealed_before.is_ok(),
+            "get_sealed_bk3 must succeed after sealing, resp {sealed_before:?}"
+        );
+        let sealed_before = sealed_before.unwrap().data.sealed_bk3.as_slice().to_vec();
         migrate_sim(dev);
-        let sealed_after = helper_get_sealed_bk3(dev)
-            .expect("get_sealed_bk3 must succeed after a completed-provisioning migration")
-            .data
-            .sealed_bk3
-            .as_slice()
-            .to_vec();
+        let sealed_after = helper_get_sealed_bk3(dev);
+        assert!(
+            sealed_after.is_ok(),
+            "get_sealed_bk3 must succeed after a completed-provisioning migration, resp {sealed_after:?}"
+        );
+        let sealed_after = sealed_after.unwrap().data.sealed_bk3.as_slice().to_vec();
         assert_eq!(
             sealed_after, sealed_before,
             "C7: sealed_bk3 must be byte-identical across migration"
@@ -243,10 +281,14 @@ fn test_secure_provision_lm_midflow_restart() {
         );
 
         // One-shot: re-sealing the migrated partition is rejected.
-        match helper_set_sealed_bk3(dev, sealed_after.clone()) {
-            Err(DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet)) => {}
-            other => panic!("re-seal after migration must be rejected, got {other:?}"),
-        }
+        let reseal = helper_set_sealed_bk3(dev, sealed_after.clone());
+        assert!(
+            matches!(
+                reseal,
+                Err(DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet))
+            ),
+            "re-seal after migration must be rejected with SealedBk3AlreadySet, got {reseal:?}"
+        );
     });
 }
 
@@ -256,60 +298,77 @@ fn test_secure_provision_lm_completed_survives() {
         // Obtain a securely-provisioned + sealed partition. If the device is
         // currently fresh, complete a full secure provisioning + seal here so
         // the test does not depend on prior firmware/test state.
-        let sealed_before = match helper_get_sealed_bk3(dev) {
-            Ok(resp) => resp.data.sealed_bk3.as_slice().to_vec(),
-            Err(err) if is_unsupported_cmd(&err) => {
+        let initial = helper_get_sealed_bk3(dev);
+        // Skip on backends that don't implement the sealed-BK3 ops.
+        if let Err(err) = &initial {
+            if is_unsupported_cmd(err) {
                 tracing::warn!("ops unsupported (emu backend); skipping");
                 return;
             }
+        }
+        let needs_provision = matches!(
+            &initial,
             Err(DdiError::DdiStatus(
                 DdiStatus::Bk3NotSecurelyProvisioned | DdiStatus::SealedBk3NotPresent,
-            )) => {
-                let mut bk3 = [0u8; 48];
-                Rng::rand_bytes(&mut bk3).unwrap();
-                let resp = match secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3) {
-                    Ok(resp) => resp,
-                    Err(err) if is_unsupported_cmd(&err) => {
-                        tracing::warn!("ops unsupported (emu backend); skipping");
-                        return;
-                    }
-                    Err(err) if not_truly_fresh(&err) => {
-                        tracing::warn!(
-                            ?err,
-                            "device not truly fresh (legacy/persistent BK3); skipping"
-                        );
-                        return;
-                    }
-                    Err(err) => panic!("in-test secure provisioning must succeed, got {err:?}"),
-                };
-                assert_eq!(resp.hdr.status, DdiStatus::Success);
-                let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
-                assert_eq!(
-                    masked_bk3.len(),
-                    EXPECTED_MASKED_BK3_LEN,
-                    "unexpected masked_bk3 length"
-                );
-                helper_set_sealed_bk3(dev, masked_bk3).expect("in-test seal must succeed");
-                helper_get_sealed_bk3(dev)
-                    .expect("get_sealed_bk3 must succeed after in-test sealing")
-                    .data
-                    .sealed_bk3
-                    .as_slice()
-                    .to_vec()
+            ))
+        );
+        assert!(
+            initial.is_ok() || needs_provision,
+            "unexpected get_sealed_bk3 error: {initial:?}"
+        );
+        let sealed_before = if let Ok(resp) = initial {
+            resp.data.sealed_bk3.as_slice().to_vec()
+        } else {
+            // Fresh partition: complete a full secure provisioning + seal here so
+            // the test does not depend on prior firmware/test state.
+            let mut bk3 = [0u8; 48];
+            Rng::rand_bytes(&mut bk3).unwrap();
+            let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+            if let Err(err) = &result {
+                if is_unsupported_cmd(err) {
+                    tracing::warn!("ops unsupported (emu backend); skipping");
+                    return;
+                }
+                if not_truly_fresh(err) {
+                    tracing::warn!(
+                        ?err,
+                        "device not truly fresh (legacy/persistent BK3); skipping"
+                    );
+                    return;
+                }
             }
-            Err(err) => panic!("unexpected get_sealed_bk3 error: {err:?}"),
+            assert!(result.is_ok(), "resp {:?}", result);
+            let resp = result.unwrap();
+            assert_eq!(resp.hdr.status, DdiStatus::Success);
+            let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
+            assert_eq!(
+                masked_bk3.len(),
+                EXPECTED_MASKED_BK3_LEN,
+                "unexpected masked_bk3 length"
+            );
+            let seal_resp = helper_set_sealed_bk3(dev, masked_bk3);
+            assert!(
+                seal_resp.is_ok(),
+                "in-test seal must succeed, resp {seal_resp:?}"
+            );
+            let get_resp = helper_get_sealed_bk3(dev);
+            assert!(
+                get_resp.is_ok(),
+                "get_sealed_bk3 must succeed after in-test sealing, resp {get_resp:?}"
+            );
+            get_resp.unwrap().data.sealed_bk3.as_slice().to_vec()
         };
         let fips_before = fips_approved(dev);
 
         migrate_sim(dev);
 
         // C7: the persistent store survives the migration byte-identical.
-        let sealed_after = helper_get_sealed_bk3(dev)
-            .expect("get_sealed_bk3 must succeed after migration")
-            .data
-            .sealed_bk3
-            .as_slice()
-            .to_vec();
+        let sealed_after = helper_get_sealed_bk3(dev);
+        assert!(
+            sealed_after.is_ok(),
+            "get_sealed_bk3 must succeed after migration, resp {sealed_after:?}"
+        );
+        let sealed_after = sealed_after.unwrap().data.sealed_bk3.as_slice().to_vec();
         assert_eq!(
             sealed_after, sealed_before,
             "C7: sealed_bk3 must be identical before/after migration"
@@ -321,10 +380,14 @@ fn test_secure_provision_lm_completed_survives() {
         );
 
         // One-shot: re-sealing the migrated partition is rejected.
-        match helper_set_sealed_bk3(dev, sealed_after.clone()) {
-            Err(DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet)) => {}
-            other => panic!("re-seal after migration must be rejected, got {other:?}"),
-        }
+        let reseal = helper_set_sealed_bk3(dev, sealed_after.clone());
+        assert!(
+            matches!(
+                reseal,
+                Err(DdiError::DdiStatus(DdiStatus::SealedBk3AlreadySet))
+            ),
+            "re-seal after migration must be rejected with SealedBk3AlreadySet, got {reseal:?}"
+        );
 
         // C9 invariant: FIPS-approved implies a non-empty sealed BK3.
         if fips_approved(dev) {

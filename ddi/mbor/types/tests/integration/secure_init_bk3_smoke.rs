@@ -11,6 +11,7 @@
 //! - Auth negatives: a tampered transport or PIN tag is rejected, while a
 //!   well-formed secure_init_bk3 with the same PIN still succeeds.
 
+#![cfg(not(any(feature = "emu", feature = "mock")))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
@@ -180,10 +181,15 @@ fn test_secure_bk3_full_flow() {
         assert_eq!(resp.data.vm_launch_guid.len(), 16);
 
         // (3) Seal round-trip.
-        let set_resp = helper_set_sealed_bk3(dev, masked_bk3.clone()).unwrap();
-        assert_eq!(set_resp.hdr.status, DdiStatus::Success);
-        let get_resp = helper_get_sealed_bk3(dev).unwrap();
-        assert_eq!(get_resp.data.sealed_bk3.as_slice(), masked_bk3.as_slice());
+        let set_resp = helper_set_sealed_bk3(dev, masked_bk3.clone());
+        assert!(set_resp.is_ok(), "resp {:?}", set_resp);
+        assert_eq!(set_resp.unwrap().hdr.status, DdiStatus::Success);
+        let get_resp = helper_get_sealed_bk3(dev);
+        assert!(get_resp.is_ok(), "resp {:?}", get_resp);
+        assert_eq!(
+            get_resp.unwrap().data.sealed_bk3.as_slice(),
+            masked_bk3.as_slice()
+        );
 
         // (4) Re-provision must be rejected (one-shot + persistent).
         let err = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3).unwrap_err();
