@@ -51,14 +51,23 @@ fn set_init_bk3_pin(
 ) -> Result<(), DdiError> {
     let resp = helper_get_establish_cred_encryption_key(dev, None, Some(API_REV))?;
     let nonce = resp.data.nonce;
-    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
-    let (cred_key, pub_key) = dev_key
-        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-        .unwrap();
-    let ecred = cred_key
-        .encrypt_establish_credential(id, pin, nonce)
-        .unwrap();
-    helper_set_init_bk3_pin(dev, ecred, pub_key)?;
+    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
+    assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");
+    let cred = dev_key
+        .unwrap()
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        cred.is_ok(),
+        "create_credential_key_from_der failed: {:?}",
+        cred.as_ref().err()
+    );
+    let (cred_key, pub_key) = cred.unwrap();
+    let ecred = cred_key.encrypt_establish_credential(id, pin, nonce);
+    assert!(
+        ecred.is_ok(),
+        "encrypt_establish_credential failed: {ecred:?}"
+    );
+    helper_set_init_bk3_pin(dev, ecred.unwrap(), pub_key)?;
     Ok(())
 }
 
@@ -71,12 +80,23 @@ fn build_encrypted_bk3(
 ) -> Result<(DdiEncryptedBk3, DdiDerPublicKey), DdiError> {
     let resp = helper_get_establish_cred_encryption_key(dev, None, Some(API_REV))?;
     let nonce = resp.data.nonce;
-    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
-    let (bk3_key, pub_key): (Bk3EncryptionKey, DdiDerPublicKey) = dev_key
-        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
-        .unwrap();
-    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce).unwrap();
-    Ok((encrypted_bk3, pub_key))
+    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
+    assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");
+    let bk3_res = dev_key
+        .unwrap()
+        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        bk3_res.is_ok(),
+        "create_bk3_key_from_der failed: {:?}",
+        bk3_res.as_ref().err()
+    );
+    let (bk3_key, pub_key): (Bk3EncryptionKey, DdiDerPublicKey) = bk3_res.unwrap();
+    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce);
+    assert!(
+        encrypted_bk3.is_ok(),
+        "encrypt_bk3 failed: {encrypted_bk3:?}"
+    );
+    Ok((encrypted_bk3.unwrap(), pub_key))
 }
 
 /// Full secure provisioning: set PIN, then inject BK3.
@@ -129,7 +149,8 @@ fn test_secure_provision_lm_midflow_restart() {
         }
 
         let mut bk3 = [0u8; 48];
-        Rng::rand_bytes(&mut bk3).unwrap();
+        let rng = Rng::rand_bytes(&mut bk3);
+        assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
 
         // A1: migrate after minting the establish key (no PIN set). With the
         // volatile prov-cred empty, secure_init_bk3 must fail Bk3PinNotSet; a
@@ -322,7 +343,8 @@ fn test_secure_provision_lm_completed_survives() {
             // Fresh partition: complete a full secure provisioning + seal here so
             // the test does not depend on prior firmware/test state.
             let mut bk3 = [0u8; 48];
-            Rng::rand_bytes(&mut bk3).unwrap();
+            let rng = Rng::rand_bytes(&mut bk3);
+            assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
             let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
             if let Err(err) = &result {
                 if is_unsupported_cmd(err) {
