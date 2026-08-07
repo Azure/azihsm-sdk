@@ -1,0 +1,62 @@
+name: Create New Cache
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/create_new_cache.yml
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create_new_cache_ubuntu:
+
+    env:
+      JOB_ID: create_new_cache_ubuntu-azihsm-arm64-ubuntu2404-image-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    runs-on: [azihsm-arm64-gh-pool-westus2-New]
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Save Cargo cache
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
+
+  create_new_cache_windows:
+
+    runs-on:
+    - self-hosted
+    - 1ES.Pool=dummy-pool # TODO: Update this to a real pool once it's available
+    - 1ES.ImageOverride=dummy-windows-image # TODO: Update this to a real image once it's available
+    - JobId=create_new_cache_windows-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Save Cargo cache
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
