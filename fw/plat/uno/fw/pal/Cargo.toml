@@ -48,6 +48,7 @@ tock-registers = { workspace = true }
 bitfield-struct = { workspace = true }
 open-enum = { workspace = true }
 zerocopy = { workspace = true }
+zeroize = { workspace = true }
 
 [features]
 default = []

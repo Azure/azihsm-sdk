@@ -38,6 +38,7 @@ use azihsm_fw_uno_drivers_gdma::MemInterface;
 use azihsm_fw_uno_reg_soc::dummy_mem::DUMMY_MEM_BASE;
 use azihsm_fw_uno_reg_soc::dummy_mem::DUMMY_MEM_SIZE;
 use azihsm_fw_uno_trace::tracing::*;
+use zeroize::Zeroize;
 
 use crate::UnoHsmPal;
 
@@ -317,33 +318,45 @@ impl UnoHsmPal {
 }
 
 /// Volatile CPU zeroization of `[ptr, ptr + len)` that the optimizer cannot
-/// elide, mirroring [`DmaBuf::zeroize`]. Used for the M7 TCM (which GDMA
+/// elide, via the vetted [`zeroize`] crate. Used for the M7 TCM (which GDMA
 /// cannot reach) and as the GDMA-failure fallback for SRAM.
 ///
-/// Writes 32-bit words when the region is word-aligned, and byte-wise
-/// otherwise (or for a sub-word tail). Both per-IO regions are word-aligned
-/// with word-multiple sizes (`DTCM_IO_BUF` 0x600, `SRAM_IO_BUF` 0x4800), so
-/// in practice this is a pure word loop — 4x fewer stores than a byte-wise
-/// wipe on the IO teardown path.
+/// Zeroes the widest naturally-aligned element the region supports: an
+/// 8-byte-aligned `u64` (QWORD) body, framed by a byte-wise head/tail for
+/// any unaligned edges. `[u64]::zeroize()` lowers to 64-bit volatile stores
+/// (a single `STRD`/64-bit AXI transfer on Cortex-M7), so it issues half as
+/// many stores as a 32-bit wipe and a quarter of a byte-wise one. Both
+/// per-IO regions are 8-byte aligned with 8-multiple sizes (`DTCM_IO_BUF`
+/// 0x600, `SRAM_IO_BUF` 0x4800), so in practice this is a pure `u64` body
+/// with no head or tail. `zeroize` emits the volatile writes plus a
+/// compiler+atomic fence, so the wipe cannot be elided.
 ///
 /// # Safety
 ///
 /// `ptr` must be valid for writes of `len` bytes.
 #[inline]
 unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
-    let mut i = 0usize;
-    // Word body: 4 bytes per store (both per-IO regions hit this path).
-    while i + 4 <= len && (ptr as usize + i).is_multiple_of(4) {
-        // SAFETY: `i + 4 <= len` and the address is 4-byte aligned, so this
-        // writes wholly within the caller's region at a valid alignment.
-        unsafe { core::ptr::write_volatile(ptr.add(i) as *mut u32, 0) };
-        i += 4;
+    // Byte-wise head up to the first 8-byte boundary (empty for the aligned
+    // per-IO regions).
+    let head = ((8 - (ptr as usize & 7)) & 7).min(len);
+    if head != 0 {
+        // SAFETY: `head <= len`, so this stays within the caller's region.
+        unsafe { core::slice::from_raw_parts_mut(ptr, head) }.zeroize();
     }
-    // Misaligned region or sub-word tail.
-    while i < len {
-        // SAFETY: `i < len`, so `ptr + i` is within the caller's region.
-        unsafe { core::ptr::write_volatile(ptr.add(i), 0) };
-        i += 1;
+    // QWORD body: a whole number of `u64`s at an 8-byte-aligned address.
+    let body_len = (len - head) & !7usize;
+    if body_len != 0 {
+        // SAFETY: `ptr + head` is 8-byte aligned by construction and
+        // `body_len` is a `u64` multiple within the region, so the cast and
+        // slice are valid for writes.
+        let body_ptr = unsafe { ptr.add(head) } as *mut u64;
+        let body = unsafe { core::slice::from_raw_parts_mut(body_ptr, body_len / 8) };
+        body.zeroize();
     }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    // Byte-wise tail (sub-`u64` remainder; empty for the per-IO regions).
+    let tail_off = head + body_len;
+    if tail_off < len {
+        // SAFETY: `tail_off < len`, so `ptr + tail_off` is within the region.
+        unsafe { core::slice::from_raw_parts_mut(ptr.add(tail_off), len - tail_off) }.zeroize();
+    }
 }
