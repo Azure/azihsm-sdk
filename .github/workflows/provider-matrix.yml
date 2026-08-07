@@ -137,7 +137,7 @@ jobs:
       # before cargo can compile.  Both go in a single bootstrap step.
       - name: Bootstrap (debian)
         if: matrix.family == 'debian'
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -155,7 +155,7 @@ jobs:
 
       - name: Bootstrap (rhel)
         if: matrix.family == 'rhel'
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3

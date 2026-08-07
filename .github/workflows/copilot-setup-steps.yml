@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Linux packages
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -56,14 +56,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
           fail-on-cache-miss: false # If the cache is missing, we can still proceed as copilot can always do cargo xtask precheck --setup.
       - name: Install nightly rustfmt
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
           shell: bash
           command: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
       - name: Install clippy
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3

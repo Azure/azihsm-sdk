@@ -65,7 +65,7 @@ jobs:
         if: matrix.family == 'debian'
         env:
           DEBIAN_FRONTEND: noninteractive
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -89,7 +89,7 @@ jobs:
       # its lifetime, so no repo pinning (unlike the provider's el9 cells).
       - name: Bootstrap (rhel)
         if: matrix.family == 'rhel'
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3

@@ -19,7 +19,7 @@ runs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 20
         max_attempts: 3

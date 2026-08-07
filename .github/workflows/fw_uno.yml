@@ -43,7 +43,7 @@ jobs:
 
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true' 
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 20
         max_attempts: 3
@@ -54,7 +54,7 @@ jobs:
 
     - name: Add required cross-compilation targets
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -65,7 +65,7 @@ jobs:
 
     - name: Install nightly rustfmt
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -76,7 +76,7 @@ jobs:
 
     - name: Install clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -87,7 +87,7 @@ jobs:
 
     - name: Install nightly clippy
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -98,7 +98,7 @@ jobs:
 
     - name: Install nightly rust-src
       if: steps.cargo-cache.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3

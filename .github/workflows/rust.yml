@@ -29,7 +29,7 @@ jobs:
       id: ubuntu-setup
     - name: Install nightly rustfmt
       if: steps.ubuntu-setup.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -37,7 +37,7 @@ jobs:
         command: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
       if: steps.ubuntu-setup.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -198,7 +198,7 @@ jobs:
       id: windows-setup
     - name: Install nightly rustfmt
       if: steps.windows-setup.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
@@ -206,7 +206,7 @@ jobs:
         command: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
       if: steps.windows-setup.outputs.cache-hit == 'true'
-      uses: nick-fields/retry@v3
+      uses: nick-fields/retry@v4
       with:
         timeout_minutes: 5
         max_attempts: 3
