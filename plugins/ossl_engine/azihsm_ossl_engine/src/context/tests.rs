@@ -54,17 +54,17 @@ fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
     }
 }
 
-/// Sign `msg` (SHA-384) through `pkey` via OpenSSL's EVP interface — the same
-/// path the ABI and `openssl dgst -sign` take. Exercises the loaded key's
-/// `EC_KEY_METHOD` `sign_sig` (→ HSM). Shared by the mock and hardware sign tests.
+/// Sign `msg` (hashed with `md`) through `pkey` via OpenSSL's EVP interface —
+/// the same path the ABI and `openssl dgst -sign` take. Exercises the loaded
+/// key's `EC_KEY_METHOD` `sign_sig` (→ HSM). Shared by the mock and hardware
+/// sign tests.
 #[allow(unsafe_code)]
-fn evp_digest_sign_sha384(pkey: *mut ffi::EVP_PKEY, msg: &[u8]) -> Vec<u8> {
-    // SAFETY: pkey is a valid EVP_PKEY; the calls follow the EVP_DigestSign
-    // contract and every return code is checked.
+fn evp_digest_sign(pkey: *mut ffi::EVP_PKEY, msg: &[u8], md: *const ffi::EVP_MD) -> Vec<u8> {
+    // SAFETY: pkey is a valid EVP_PKEY and md a process-lifetime EVP_MD; the
+    // calls follow the EVP_DigestSign contract and every return code is checked.
     unsafe {
         let ctx = ffi::EVP_MD_CTX_new();
         assert!(!ctx.is_null());
-        let md = ffi::EVP_sha384();
         assert_eq!(
             ffi::EVP_DigestSignInit(ctx, std::ptr::null_mut(), md, std::ptr::null_mut(), pkey),
             1,
@@ -112,14 +112,42 @@ mod round_trips {
 
     use super::*;
 
-    /// Generate a persistent EC P-384 key pair on the open HSM and return its
-    /// masked blob plus the public-key DER.
-    fn generate_masked_p384(data: &EngineData) -> EngineResult<(Vec<u8>, Vec<u8>)> {
+    /// All curves the SDK supports; the round trips below run once per curve.
+    pub(super) const CURVES: [HsmEccCurve; 3] =
+        [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521];
+
+    /// Short tag for file names and messages.
+    fn curve_tag(curve: HsmEccCurve) -> &'static str {
+        match curve {
+            HsmEccCurve::P256 => "p256",
+            HsmEccCurve::P384 => "p384",
+            HsmEccCurve::P521 => "p521",
+        }
+    }
+
+    /// The conventional digest pairing for `curve`, as the raw `EVP_MD` (for
+    /// `EVP_DigestSign*`) and the `openssl` crate's `MessageDigest` (for the
+    /// software `Verifier`).
+    #[allow(unsafe_code)]
+    fn curve_md(curve: HsmEccCurve) -> (*const ffi::EVP_MD, MessageDigest) {
+        // SAFETY: the EVP_sha* accessors return process-lifetime constants.
+        unsafe {
+            match curve {
+                HsmEccCurve::P256 => (ffi::EVP_sha256(), MessageDigest::sha256()),
+                HsmEccCurve::P384 => (ffi::EVP_sha384(), MessageDigest::sha384()),
+                HsmEccCurve::P521 => (ffi::EVP_sha512(), MessageDigest::sha512()),
+            }
+        }
+    }
+
+    /// Generate a persistent EC key pair on `curve` on the open HSM and return
+    /// its masked blob plus the public-key DER.
+    fn generate_masked(data: &EngineData, curve: HsmEccCurve) -> EngineResult<(Vec<u8>, Vec<u8>)> {
         data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Private)
                 .key_kind(HsmKeyKind::Ecc)
-                .ecc_curve(HsmEccCurve::P384)
+                .ecc_curve(curve)
                 .is_session(false)
                 .can_sign(true)
                 .build()
@@ -127,7 +155,7 @@ mod round_trips {
             let pub_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Public)
                 .key_kind(HsmKeyKind::Ecc)
-                .ecc_curve(HsmEccCurve::P384)
+                .ecc_curve(curve)
                 .is_session(false)
                 .can_verify(true)
                 .build()
@@ -152,13 +180,13 @@ mod round_trips {
         std::env::temp_dir().join(format!("engine-roundtrip-{tag}-{}.bin", std::process::id()))
     }
 
-    /// Generate a key on `data`'s HSM, load it back through the engine, and
-    /// verify the returned public key matches. Backend-agnostic: the caller
-    /// opens `data` against the mock or a real device.
+    /// Generate a key on `curve` on `data`'s HSM, load it back through the
+    /// engine, and verify the returned public key matches. Backend-agnostic:
+    /// the caller opens `data` against the mock or a real device.
     #[allow(unsafe_code)]
-    pub(super) fn run_load(data: &EngineData) -> EngineResult<()> {
-        let (masked, expected_pub_der) = generate_masked_p384(data)?;
-        let path = blob_path("load");
+    pub(super) fn run_load(data: &EngineData, curve: HsmEccCurve) -> EngineResult<()> {
+        let (masked, expected_pub_der) = generate_masked(data, curve)?;
+        let path = blob_path(&format!("load-{}", curve_tag(curve)));
         let _ = std::fs::remove_file(&path);
         write_key_material(&path, &masked)
             .map_err(|e| EngineError::wrap(format!("write masked blob {}", path.display()), e))?;
@@ -182,13 +210,26 @@ mod round_trips {
         Ok(())
     }
 
-    /// Generate a key on `data`'s HSM, load it back through the engine, sign a
-    /// digest through it (HSM `sign_sig` via `EVP_DigestSign*`), and verify the
-    /// signature against the public half in software. Backend-agnostic.
+    /// Generate a key on `curve` on `data`'s HSM, load it back through the
+    /// engine, sign a digest through it (HSM `sign_sig` via `EVP_DigestSign*`,
+    /// using the curve's conventional digest), and verify the signature against
+    /// the public half in software. Backend-agnostic.
+    pub(super) fn run_sign(data: &EngineData, curve: HsmEccCurve) -> EngineResult<()> {
+        let (evp_md, verifier_md) = curve_md(curve);
+        run_sign_with_md(data, curve, evp_md, verifier_md)
+    }
+
+    /// [`run_sign`] with an explicit digest, so a digest/curve mismatch (e.g. a
+    /// digest longer than the curve order) can be exercised deliberately.
     #[allow(unsafe_code)]
-    pub(super) fn run_sign(data: &EngineData) -> EngineResult<()> {
-        let (masked, expected_pub_der) = generate_masked_p384(data)?;
-        let path = blob_path("sign");
+    pub(super) fn run_sign_with_md(
+        data: &EngineData,
+        curve: HsmEccCurve,
+        evp_md: *const ffi::EVP_MD,
+        verifier_md: MessageDigest,
+    ) -> EngineResult<()> {
+        let (masked, expected_pub_der) = generate_masked(data, curve)?;
+        let path = blob_path(&format!("sign-{}", curve_tag(curve)));
         let _ = std::fs::remove_file(&path);
         write_key_material(&path, &masked)
             .map_err(|e| EngineError::wrap(format!("write masked blob {}", path.display()), e))?;
@@ -199,14 +240,14 @@ mod round_trips {
         assert!(!raw.is_null(), "load_key returned a NULL EVP_PKEY");
 
         let msg = b"engine ecdsa signing over the EVP/ABI path";
-        let sig = evp_digest_sign_sha384(raw, msg);
+        let sig = evp_digest_sign(raw, msg, evp_md);
         assert!(!sig.is_empty(), "engine produced an empty signature");
         // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
         let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
 
         let pubkey = PKey::public_key_from_der(&expected_pub_der)
             .map_err(|e| EngineError::wrap("parse public key", e))?;
-        let mut verifier = Verifier::new(MessageDigest::sha384(), &pubkey)
+        let mut verifier = Verifier::new(verifier_md, &pubkey)
             .map_err(|e| EngineError::wrap("init verifier", e))?;
         verifier
             .update(msg)
@@ -235,8 +276,10 @@ mod mock {
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
+    use azihsm_api::HsmEccCurve;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
+    use openssl::hash::MessageDigest;
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
     use serial_test::serial;
@@ -335,7 +378,9 @@ mod mock {
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        round_trips::run_load(&data).unwrap();
+        for curve in round_trips::CURVES {
+            round_trips::run_load(&data, curve).unwrap();
+        }
     }
 
     // A signature produced through a loaded key (HSM sign via our EC_KEY_METHOD,
@@ -351,7 +396,31 @@ mod mock {
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        round_trips::run_sign(&data).unwrap();
+        for curve in round_trips::CURVES {
+            round_trips::run_sign(&data, curve).unwrap();
+        }
+    }
+
+    // A digest longer than the curve order (SHA-512 over P-384, 64 > 48
+    // bytes): software OpenSSL truncates the digest per the ECDSA spec, and the
+    // HSM must agree — the signature it produces must verify in software with
+    // the same digest. Pins the behavior so a firmware change breaking the
+    // truncation convention is caught.
+    #[test]
+    #[serial]
+    #[allow(unsafe_code)]
+    fn sign_with_digest_longer_than_curve_order_verifies() {
+        let scratch = Scratch::new("digestlen");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        // SAFETY: EVP_sha512 returns a process-lifetime constant.
+        let md = unsafe { ffi::EVP_sha512() };
+        round_trips::run_sign_with_md(&data, HsmEccCurve::P384, md, MessageDigest::sha512())
+            .unwrap();
     }
 
     #[test]
@@ -445,7 +514,8 @@ mod hw_tests {
         Ok(())
     }
 
-    /// Hardware key-loading round trip against a real device — the same flow
+    /// Hardware key-loading round trips against a real device, one per
+    /// supported curve — the same flow
     /// `mock::load_ec_key_round_trips_through_engine` runs on the mock (see
     /// [`super::round_trips::run_load`]).
     ///
@@ -459,10 +529,14 @@ mod hw_tests {
     fn load_ec_key_from_env_smoke() -> EngineResult<()> {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
-        round_trips::run_load(&data)
+        for curve in round_trips::CURVES {
+            round_trips::run_load(&data, curve)?;
+        }
+        Ok(())
     }
 
-    /// Hardware ECDSA signing round trip against a real device — the same flow
+    /// Hardware ECDSA signing round trips against a real device, one per
+    /// supported curve — the same flow
     /// `mock::sign_through_loaded_key_verifies` runs on the mock (see
     /// [`super::round_trips::run_sign`]). Proves the device produces a valid
     /// ECDSA signature.
@@ -477,6 +551,9 @@ mod hw_tests {
     fn sign_ec_key_from_env_smoke() -> EngineResult<()> {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
-        round_trips::run_sign(&data)
+        for curve in round_trips::CURVES {
+            round_trips::run_sign(&data, curve)?;
+        }
+        Ok(())
     }
 }
