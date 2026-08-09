@@ -19,8 +19,9 @@
 //! key is alive, and the stashed HSM-key pointer can never dangle even if an
 //! `EVP_PKEY` outlives the caller's `ENGINE` handle.
 //!
-//! The sign/derive methods themselves are not wired yet (a later change), so a
-//! loaded key is currently usable for public-key operations (e.g. `-pubout`).
+//! ECDSA signing on a loaded key routes through the HSM (see [`crate::sign`]);
+//! `-pubout` and other public-key operations use the public key on the
+//! `EVP_PKEY`. Key derivation is not wired yet.
 //!
 //! Only EC keys are supported here; RSA loading (an HSM import + unmask path)
 //! lands in a follow-up together with its test coverage.
@@ -251,7 +252,25 @@ fn attach_ec(data: &EngineData, ec: *mut ffi::EC_KEY, key: HsmEccPrivateKey) -> 
         data.release_loaded_key(key_ptr);
         return Err(EngineError::Other("EC_KEY_set_ex_data failed".into()));
     }
+
+    // Signing on this key already routes through the HSM: the EC_KEY adopted
+    // the engine's ECDSA EC_KEY_METHOD at creation (EC_KEY_new_method; see
+    // crate::sign). It is not attached per key — EC_KEY_set_method would drop
+    // the engine reference that keeps EngineData (and this HSM key) alive.
     Ok(())
+}
+
+/// Recover the `HsmEccPrivateKey` [`attach_ec`] stashed in `ec_key`'s ex_data,
+/// or null if none is set. The pointer is owned by `EngineData` and valid for
+/// the engine's lifetime; the sign path dereferences it while the key is live.
+#[allow(unsafe_code)]
+pub(crate) fn ec_key_hsm_key(ec_key: *mut ffi::EC_KEY) -> *const HsmEccPrivateKey {
+    let Ok(idx) = ec_key_ex_index() else {
+        return std::ptr::null();
+    };
+    // SAFETY: ec_key is the EC_KEY OpenSSL passed to the sign callback; idx is
+    // our registered slot (returns NULL if nothing was stored).
+    unsafe { ffi::EC_KEY_get_ex_data(ec_key, idx) }.cast::<HsmEccPrivateKey>()
 }
 
 /// Process-global EC_KEY ex_data slot index, registered once **without** a free

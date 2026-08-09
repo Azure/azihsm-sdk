@@ -5,7 +5,8 @@
 //!
 //! Each `.sh` script loads a key through the real `ENGINE_load_private_key`
 //! path — `openssl … -engine azihsm -inform engine -in azihsm://…` — the load
-//! path the in-crate unit tests (which call `keyload::load_key` directly) bypass.
+//! path the in-crate unit tests (which call `keyload::load_key` directly)
+//! bypass, and drives crypto through the loaded key (e.g. `dgst -sign`).
 //!
 //! Requires (set by `xtask integration-tests` / the engine matrix):
 //! - `OPENSSL_BIN`     — the OpenSSL 1.1.x `openssl` binary
@@ -35,6 +36,19 @@ fn search_path(relative: &str) -> String {
 fn load_ec_key_via_engine() {
     lit::run::tests(lit::event_handler::Default::default(), |config| {
         config.add_search_path(search_path("testfiles/load"));
+        config.add_extension("sh");
+        config
+            .constants
+            .insert("bash".to_owned(), "/bin/bash".to_string());
+    })
+    .expect("lit CLI test failed");
+}
+
+#[test]
+#[serial]
+fn sign_ec_key_via_engine() {
+    lit::run::tests(lit::event_handler::Default::default(), |config| {
+        config.add_search_path(search_path("testfiles/sign"));
         config.add_extension("sh");
         config
             .constants
