@@ -331,7 +331,8 @@ fn every_uint8_first_field_value_is_truncated_when_second_is_missing() {
             .finish()
             .expect("finish response");
 
-        let err = TborApiRevResp::decode_response(bytes).unwrap_err();
+        let err = TborApiRevResp::decode_response(bytes)
+            .expect_err("missing second field must produce MessageTruncated");
 
         assert_eq!(
             err,
