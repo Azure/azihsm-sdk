@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - .github/workflows/create_new_cache.yml
+  pull_request:
+    branches: [ main, dev, fw-main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,7 +14,7 @@ env:
 jobs:
   create_new_cache_ubuntu:
 
-    runs-on: ubuntu-24.04
+    runs-on: [azihsm-x64-gh-ubuntu2404-pool]
 
     defaults:
       run:
@@ -34,7 +36,7 @@ jobs:
 
   create_new_cache_windows:
 
-    runs-on: windows-2025-vs2026
+    runs-on: [azihsm-x64-gh-winserver22-pool]
 
     defaults:
       run:
