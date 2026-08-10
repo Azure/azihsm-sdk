@@ -130,7 +130,7 @@ use std::sync::LazyLock;
 /// exercise TBOR command round-trips.
 static EMU: LazyLock<DdiEmu> = LazyLock::new(DdiEmu::default);
 
-/// Open (or reuse) the emulator device for fuzz targets.
+/// Open a fresh emulator device handle for fuzz targets.
 pub fn open_emu_dev() -> <DdiEmu as Ddi>::Dev {
     let devs = EMU.dev_info_list();
     EMU.open_dev(&devs[0].path).expect("open emu device")
