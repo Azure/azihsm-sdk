@@ -56,6 +56,7 @@ include = [
   "AzihsmSessExSdCreatePeerBackupParams",
   "AzihsmSessExSdCreateRemoteBackupParams",
   "AzihsmSessExSdResealRemoteBackupParams",
+  "AzihsmSessExSdRestoreLocalBackupParams",
   "AzihsmSessExSdRestorePeerBackupParams",
   "AzihsmSessExSdRestoreRemoteBackupParams",
   "AzihsmSessionPsk",
@@ -116,6 +117,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmSessExSdCreatePeerBackupParams" = "azihsm_sess_ex_sd_create_peer_backup_params"
 "AzihsmSessExSdCreateRemoteBackupParams" = "azihsm_sess_ex_sd_create_remote_backup_params"
 "AzihsmSessExSdResealRemoteBackupParams" = "azihsm_sess_ex_sd_reseal_remote_backup_params"
+"AzihsmSessExSdRestoreLocalBackupParams" = "azihsm_sess_ex_sd_restore_local_backup_params"
 "AzihsmSessExSdRestorePeerBackupParams" = "azihsm_sess_ex_sd_restore_peer_backup_params"
 "AzihsmSessExSdRestoreRemoteBackupParams" = "azihsm_sess_ex_sd_restore_remote_backup_params"
 "AzihsmSessionExType" = "azihsm_session_ex_type"

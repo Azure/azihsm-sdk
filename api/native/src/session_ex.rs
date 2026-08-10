@@ -882,3 +882,73 @@ pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_peer_backup(
         Ok(())
     })
 }
+
+/// Input buffers for [`azihsm_sess_ex_sd_restore_local_backup`].
+#[repr(C)]
+pub struct AzihsmSessExSdRestoreLocalBackupParams {
+    /// Device-local partition-owner-key backup to restore, exactly
+    /// `MASKED_SD_LEN` (180 B).
+    pub pok_local_backup: *const AzihsmBuffer,
+    /// Security-domain masking-key backup, exactly `SD_MK_BACKUP_LEN`
+    /// (164 B).
+    pub sd_mk_backup: *const AzihsmBuffer,
+}
+
+/// @brief Restore a security domain from its device-local backups
+///
+/// Restores the security domain from the device-local
+/// `params.pok_local_backup` and `params.sd_mk_backup`, returning the
+/// refreshed device-local backups. No attestation evidence is involved.
+///
+/// @param[in] sess_handle Handle to the security-domain session
+/// @param[in] params Restore-backup input buffers
+/// @param[in,out] pok_local_backup Output buffer for the refreshed local
+///                partition-owner-key backup (180 B).
+/// @param[in,out] sd_mk_backup Output buffer for the refreshed
+///                security-domain masking-key backup (164 B).
+///
+/// Both output buffers follow the probe/fill convention and are validated
+/// **before** the restore is performed.
+///
+/// @return `AzihsmStatus` indicating the result of the operation
+///
+/// # Safety
+///
+/// - `sess_handle` must be a valid security-domain session handle.
+/// - `params` and each of its buffer pointers must be valid.
+/// - Each output buffer must be a valid `azihsm_buffer` with writable
+///   backing storage of the advertised length.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_sess_ex_sd_restore_local_backup(
+    sess_handle: AzihsmHandle,
+    params: *const AzihsmSessExSdRestoreLocalBackupParams,
+    pok_local_backup: *mut AzihsmBuffer,
+    sd_mk_backup: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let session = api::HsmSession::try_from(sess_handle)?;
+        let params = deref_ptr(params)?;
+
+        let pok_local_backup_in: &[u8] = deref_ptr(params.pok_local_backup)?.try_into()?;
+        let sd_mk_backup_in: &[u8] = deref_ptr(params.sd_mk_backup)?.try_into()?;
+
+        // Reject null/misaligned or aliasing output pointers before taking a
+        // `&mut` to each: two `&mut` references to the same `azihsm_buffer`
+        // would be undefined behavior.
+        validate_distinct_output_buffers(&[pok_local_backup, sd_mk_backup])?;
+
+        let pok_local_backup = deref_mut_ptr(pok_local_backup)?;
+        validate_output_buffer(pok_local_backup, api::MASKED_SD_LEN)?;
+
+        let sd_mk_backup = deref_mut_ptr(sd_mk_backup)?;
+        validate_output_buffer(sd_mk_backup, api::SD_MK_BACKUP_LEN)?;
+
+        let result = session.sd_restore_local_backup(pok_local_backup_in, sd_mk_backup_in)?;
+
+        copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;
+        copy_to_buffer(sd_mk_backup, &result.sd_mk_backup)?;
+
+        Ok(())
+    })
+}
