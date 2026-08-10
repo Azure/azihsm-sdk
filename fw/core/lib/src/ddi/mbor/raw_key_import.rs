@@ -70,6 +70,11 @@ pub(crate) async fn raw_key_import<'p, P: HsmPal>(
         .await?;
     let key_id: u16 = key_handle.into();
 
+    // Scrub the plaintext scratch now that the key is committed to the
+    // vault — per-IO DMA is not implicitly wiped on reuse. `DmaBuf::zeroize`
+    // is a volatile, un-elidable wipe.
+    key_buf.zeroize();
+
     // Build the host's opaque re-import blob from the committed key so the
     // masked bytes match exactly what the host will later re-import.
     let plaintext = pal.vault_key(io, key_handle)?;
@@ -107,10 +112,11 @@ pub(crate) async fn raw_key_import<'p, P: HsmPal>(
 /// `import_raw_key` `Rsa2kPrivate` arm + `import_unwrapping_key`).
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects
-/// anything else with `InvalidPermissions`.  Any existing unwrapping
-/// key is deleted first, then the new key is committed to the vault and
-/// recorded as the partition unwrapping key id.  The response carries a
-/// masked envelope tagged [`DdiKeyType::RsaUnwrap`] — matching how
+/// anything else with `InvalidPermissions`.  The import runs under the
+/// partition lock; the new key is committed and recorded as the
+/// partition unwrapping key id before any existing key is reclaimed, so
+/// a failure leaves the partition on the still-valid previous key.  The
+/// response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`] — matching how
 /// [`get_unwrapping_key`](super::get_unwrapping_key) masks it — so the
 /// host's unmask path treats it as the partition unwrapping key rather
 /// than a general RSA private key.
@@ -126,11 +132,15 @@ async fn raw_import_unwrapping_key<'p, P: HsmPal>(
     // Unwrap-only; SignVerify / EncryptDecrypt -> InvalidPermissions.
     let attrs = super::key_attrs::for_rsa_unwrap(&body.key_properties.key_metadata)?;
 
-    // Replace any existing partition unwrapping key before importing the
-    // new one (parity with the legacy delete-then-import sequence).
-    if let Ok(old_id) = crate::part_state::part_unwrapping_key_id(pal, io) {
-        pal.vault_key_delete(io, old_id).await?;
-    }
+    // Serialise the read-modify-write of the partition-global unwrapping
+    // key against concurrent handlers (same lock `establish_credential`
+    // takes for its re-import).
+    let _lock = pal.partition_lock(io).await?;
+
+    // Note the current unwrapping key (if any) but do not delete it yet —
+    // it is reclaimed only after the new key id is committed, so a failure
+    // leaves the partition on the still-valid previous key.
+    let old_id = crate::part_state::part_unwrapping_key_id(pal, io).ok();
 
     // Copy the raw plaintext into a vault-import scratch buffer and
     // commit it as the partition-internal unwrapping key.
@@ -141,6 +151,13 @@ async fn raw_import_unwrapping_key<'p, P: HsmPal>(
         .vault_key_create(io, key_buf, HsmVaultKeyKind::Rsa2kPrivate, None, attrs)
         .await?;
     crate::part_state::part_set_unwrapping_key_id(pal, io, key_id)?;
+
+    // New id committed — now scrub the plaintext scratch and reclaim the
+    // old vault entry. `DmaBuf::zeroize` is a volatile, un-elidable wipe.
+    key_buf.zeroize();
+    if let Some(old_id) = old_id {
+        pal.vault_key_delete(io, old_id).await?;
+    }
 
     // Build the host's opaque re-import blob from the committed key,
     // tagged as the partition unwrapping key.

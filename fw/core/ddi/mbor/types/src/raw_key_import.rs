@@ -10,9 +10,15 @@ use crate::*;
 /// Injects host-supplied *plaintext* key material into the partition
 /// vault, bypassing the wrap / unwrap path — a validation-only hook used
 /// to load Known-Answer-Test vectors.  Parity with the legacy firmware
-/// restricts the accepted `key_kind` to ECDH shared secrets
-/// (`Secret256/384/521`) and variable-length HMAC keys
-/// (`VarHmac256/384/512`); every other kind is rejected by the handler.
+/// restricts the accepted `key_kind` to:
+///
+/// * ECDH shared secrets (`Secret256/384/521`), fixed-length HMAC keys
+///   (`HmacSha256/384/512`) and variable-length HMAC keys
+///   (`VarHmac256/384/512`) — imported as session-scoped keys; and
+/// * `Rsa2kPrivate` — imported unwrap-only as the partition unwrapping
+///   key (handled by the dedicated unwrapping-key path).
+///
+/// Every other kind is rejected by the handler.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 pub struct DdiRawKeyImportReq<'a> {
