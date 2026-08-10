@@ -8,6 +8,8 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ec.h>
+#include <openssl/ecdsa.h>
+#include <openssl/bn.h>
 #include <openssl/rsa.h>
 
 /* Constants defined as macros that bindgen cannot discover automatically. */

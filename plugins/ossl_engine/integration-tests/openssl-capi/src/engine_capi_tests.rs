@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! ABI integration test for the OpenSSL 1.1.x engine.
+//! ABI integration tests for the OpenSSL 1.1.x engine.
 //!
-//! Drives the real C API: `ENGINE_by_id("dynamic")` + `SO_PATH`/`ID`/`LOAD`,
-//! `ENGINE_init`, then `ENGINE_load_private_key` on an `azihsm://` URI, and
-//! confirms a usable EC public key comes back — the load path the in-crate unit
-//! tests (which call `keyload::load_key` directly) bypass.
+//! Drive the real C API: `ENGINE_by_id("dynamic")` + `SO_PATH`/`ID`/`LOAD`,
+//! `ENGINE_init`, then `ENGINE_load_private_key` on an `azihsm://` URI — the
+//! load path the in-crate unit tests (which call `keyload::load_key` directly)
+//! bypass — and sign through the loaded key via `EVP_DigestSign*` (verifying in
+//! software with the public half on the same `EVP_PKEY`).
 //!
 //! Requires `ENGINE_SO` (the engine `.so`) and `MASKED_KEYGEN` (the helper that
 //! stages the blob), set by `xtask integration-tests` / the engine matrix. The
@@ -147,6 +148,15 @@ fn load_via_engine(engine_so: &str, key_id: &str) -> *mut ffi::EVP_PKEY {
     }
 }
 
+/// Stage a masked EC blob out-of-process (sharing the keymat set up by
+/// [`setup_keymat`]) and return its `azihsm://` URI.
+fn stage_masked_blob(keygen: &str, dir: &std::path::Path, name: &str) -> String {
+    let blob = dir.join(name);
+    let status = Command::new(keygen).arg(&blob).status().unwrap();
+    assert!(status.success(), "masked-keygen failed: {status}");
+    format!("azihsm://{};type=ec", blob.display())
+}
+
 #[test]
 #[serial]
 #[allow(unsafe_code)]
@@ -155,13 +165,7 @@ fn load_ec_key_via_engine_capi() {
     let keygen = std::env::var("MASKED_KEYGEN").expect("MASKED_KEYGEN must point to the helper");
 
     let dir = setup_keymat();
-    let blob = dir.join("ec_key.bin");
-
-    // Stage the masked blob out-of-process (shares the keymat set above).
-    let status = Command::new(&keygen).arg(&blob).status().unwrap();
-    assert!(status.success(), "masked-keygen failed: {status}");
-
-    let uri = format!("azihsm://{};type=ec", blob.display());
+    let uri = stage_masked_blob(&keygen, &dir, "ec_key.bin");
     let raw = load_via_engine(&engine_so, &uri);
     assert!(!raw.is_null(), "ENGINE_load_private_key returned NULL");
 
@@ -177,6 +181,129 @@ fn load_ec_key_via_engine_capi() {
         );
         ffi::EVP_PKEY_free(raw);
     }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Sign `msg` (SHA-384) through `pkey` via `EVP_DigestSign*` — the ABI path an
+/// application takes — exercising the loaded key's `sign_sig` (→ HSM).
+#[allow(unsafe_code)]
+fn evp_digest_sign_sha384(pkey: *mut ffi::EVP_PKEY, msg: &[u8]) -> Vec<u8> {
+    // SAFETY: pkey is a valid EVP_PKEY; the calls follow the EVP_DigestSign
+    // contract and every return code is checked.
+    unsafe {
+        let ctx = ffi::EVP_MD_CTX_new();
+        assert!(!ctx.is_null());
+        assert_eq!(
+            ffi::EVP_DigestSignInit(
+                ctx,
+                std::ptr::null_mut(),
+                ffi::EVP_sha384(),
+                std::ptr::null_mut(),
+                pkey,
+            ),
+            1,
+            "EVP_DigestSignInit"
+        );
+        assert_eq!(
+            ffi::EVP_DigestUpdate(ctx, msg.as_ptr().cast(), msg.len()),
+            1,
+            "EVP_DigestUpdate"
+        );
+        let mut siglen: usize = 0;
+        assert_eq!(
+            ffi::EVP_DigestSignFinal(ctx, std::ptr::null_mut(), &mut siglen),
+            1,
+            "EVP_DigestSignFinal (size query)"
+        );
+        let mut sig = vec![0u8; siglen];
+        let rc = ffi::EVP_DigestSignFinal(ctx, sig.as_mut_ptr(), &mut siglen);
+        assert_eq!(
+            rc,
+            1,
+            "EVP_DigestSignFinal: {}",
+            openssl::error::ErrorStack::get()
+        );
+        sig.truncate(siglen);
+        ffi::EVP_MD_CTX_free(ctx);
+        sig
+    }
+}
+
+/// Verify `sig` over `msg` (SHA-384) with `pkey` via `EVP_DigestVerify*`.
+/// Software verify: the loaded key's method keeps OpenSSL's default verify and
+/// uses the public half on the `EVP_PKEY`. Returns the final return code.
+#[allow(unsafe_code)]
+fn evp_digest_verify_sha384(pkey: *mut ffi::EVP_PKEY, msg: &[u8], sig: &[u8]) -> i32 {
+    // SAFETY: pkey is a valid EVP_PKEY and sig a valid buffer; the calls follow
+    // the EVP_DigestVerify contract and setup return codes are checked.
+    unsafe {
+        let ctx = ffi::EVP_MD_CTX_new();
+        assert!(!ctx.is_null());
+        assert_eq!(
+            ffi::EVP_DigestVerifyInit(
+                ctx,
+                std::ptr::null_mut(),
+                ffi::EVP_sha384(),
+                std::ptr::null_mut(),
+                pkey,
+            ),
+            1,
+            "EVP_DigestVerifyInit"
+        );
+        assert_eq!(
+            ffi::EVP_DigestUpdate(ctx, msg.as_ptr().cast(), msg.len()),
+            1,
+            "EVP_DigestUpdate"
+        );
+        let rc = ffi::EVP_DigestVerifyFinal(ctx, sig.as_ptr(), sig.len());
+        ffi::EVP_MD_CTX_free(ctx);
+        // A failed verify pushes to the error queue; clear it so it can't leak
+        // into a later assertion's context.
+        ffi::ERR_clear_error();
+        rc
+    }
+}
+
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn sign_ec_key_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let keygen = std::env::var("MASKED_KEYGEN").expect("MASKED_KEYGEN must point to the helper");
+
+    let dir = setup_keymat();
+    let uri = stage_masked_blob(&keygen, &dir, "ec_sign_key.bin");
+    let raw = load_via_engine(&engine_so, &uri);
+    assert!(!raw.is_null(), "ENGINE_load_private_key returned NULL");
+
+    // Sign through the loaded key. Our own ENGINE handle was already released
+    // by load_via_engine (ENGINE_finish + ENGINE_free), so this also proves the
+    // key's engine reference — taken by EC_KEY_new_method and preserved by the
+    // engine-wide EC method — keeps the engine and the HSM key alive: a per-key
+    // EC_KEY_set_method would drop that reference and this sign would fail.
+    let msg = b"engine ecdsa signing over the capi path";
+    let sig = evp_digest_sign_sha384(raw, msg);
+    assert!(!sig.is_empty(), "engine produced an empty signature");
+
+    // Verify in software with the public half on the same EVP_PKEY: proves the
+    // HSM signed the right digest with the matching private key.
+    assert_eq!(
+        evp_digest_verify_sha384(raw, msg, &sig),
+        1,
+        "engine ECDSA signature must verify against the public key"
+    );
+
+    // A tampered message must not verify.
+    let tampered = b"engine ecdsa signing over the capi path?";
+    assert_eq!(
+        evp_digest_verify_sha384(raw, tampered, &sig),
+        0,
+        "tampered message unexpectedly verified"
+    );
+
+    // SAFETY: raw is the owning EVP_PKEY from ENGINE_load_private_key.
+    unsafe { ffi::EVP_PKEY_free(raw) };
 
     let _ = std::fs::remove_dir_all(&dir);
 }

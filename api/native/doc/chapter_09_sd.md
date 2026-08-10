@@ -540,6 +540,65 @@ struct azihsm_sess_ex_sd_restore_peer_backup_params {
  | pok_peer_backup    | [azihsm_buffer*](#azihsm_buffer)           | peer backup to restore (161 B)                     |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (164 B)|
 
+## azihsm_sess_ex_sd_restore_local_backup
+
+Restore a security domain from its device-local backups over a
+security-domain session.
+
+Restores the security domain from the device-local partition-owner-key
+backup and security-domain masking-key backup, returning the refreshed
+device-local backups: the local partition-owner-key backup (180 bytes) and
+the security-domain masking-key backup (164 bytes). Unlike the remote/peer
+restores, this carries no attestation evidence — the backups are masked
+under the device-local key.
+
+The inputs are grouped into an
+[`azihsm_sess_ex_sd_restore_local_backup_params`](#azihsm_sess_ex_sd_restore_local_backup_params)
+structure. Both output buffers follow the two-call size-probe contract and
+are validated **before** the restore is performed. A NULL `params` pointer
+is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. Restore is a
+once-per-partition operation; a restore on an already-initialized partition
+returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
+
+```cpp
+azihsm_status azihsm_sess_ex_sd_restore_local_backup(
+    azihsm_handle sess_handle,
+    const struct azihsm_sess_ex_sd_restore_local_backup_params *params,
+    struct azihsm_buffer *pok_local_backup,
+    struct azihsm_buffer *sd_mk_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                  | Name                                                                                                    | Description                                       |
+ | -------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+ | [in] sess_handle           | [azihsm_handle](#azihsm_handle)                                                                         | security-domain session handle                    |
+ | [in] params                | [azihsm_sess_ex_sd_restore_local_backup_params*](#azihsm_sess_ex_sd_restore_local_backup_params)        | restore-backup input buffers                      |
+ | [in, out] pok_local_backup | [azihsm_buffer *](#azihsm_buffer)                                                                       | output buffer for the local pok backup (180 B)    |
+ | [in, out] sd_mk_backup     | [azihsm_buffer *](#azihsm_buffer)                                                                       | output buffer for the sd masking-key backup (164 B) &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sess_ex_sd_restore_local_backup_params
+
+Input buffers for
+[`azihsm_sess_ex_sd_restore_local_backup`](#azihsm_sess_ex_sd_restore_local_backup).
+
+```cpp
+struct azihsm_sess_ex_sd_restore_local_backup_params {
+    const struct azihsm_buffer *pok_local_backup;
+    const struct azihsm_buffer *sd_mk_backup;
+};
+```
+
+ | Field             | Name                             | Description                                        |
+ | ----------------- | -------------------------------- | -------------------------------------------------- |
+ | pok_local_backup  | [azihsm_buffer*](#azihsm_buffer) | device-local partition-owner-key backup (180 B)    |
+ | sd_mk_backup      | [azihsm_buffer*](#azihsm_buffer) | security-domain masking-key backup (164 B)         |
+
 ### azihsm_sd_evidence
 
 Attestation evidence for one security-domain-backup party: three certificate
