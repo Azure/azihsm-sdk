@@ -11,7 +11,6 @@ use azihsm_ddi_tbor_types::MAC_FIN_LEN;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::TborSessionCloseReq;
-use azihsm_ddi_tbor_types::TborSessionCloseResp;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
 use libfuzzer_sys::arbitrary;
@@ -56,7 +55,6 @@ fuzz_target!(|input: FuzzInput| {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let _: Result<TborSessionCloseResp, _> =
-            dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
     }
 });
