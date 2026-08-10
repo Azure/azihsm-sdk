@@ -11,7 +11,6 @@ use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::TborSessionCloseReq;
 use azihsm_ddi_tbor_types::TborSessionCloseResp;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
-use azihsm_ddi_tbor_types::TborSessionOpenInitResp;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
