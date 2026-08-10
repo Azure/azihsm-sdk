@@ -72,9 +72,9 @@ jobs:
   coverage_windows:
 
     env:
-      JOB_ID: coverage_windows-azihsm-x64-gh-winserver2022-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
+      JOB_ID: coverage_windows-azihsm-x64-gh-winserver22-pool-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
-    runs-on: [azihsm-x64-gh-westus2-pool]
+    runs-on: [azihsm-x64-gh-winserver22-pool]
 
     defaults:
       run:
