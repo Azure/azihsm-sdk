@@ -144,11 +144,17 @@ inline EvpPkeyPtr generate_ec_default_key(OSSL_LIB_CTX *libctx, const char *curv
 // 2. Exports the private key to DER.
 // 3. Writes DER to a temporary file.
 // 4. Imports into the azihsm provider with azihsm.session=true.
+//
+// key_kind selects the stored private key form ("RSA" or "RSA-CRT").  Leaving
+// it null omits azihsm.key_kind, so the import takes the provider default,
+// which is the CRT form — every caller that does not pass it therefore
+// exercises RSA-CRT.
 
 inline EvpPkeyPtr generate_rsa_session_key(
     OSSL_LIB_CTX *libctx,
     int bits = 2048,
-    const char *key_usage = "digitalSignature"
+    const char *key_usage = "digitalSignature",
+    const char *key_kind = nullptr
 )
 {
     // 1. Generate RSA key via default provider
@@ -224,12 +230,24 @@ inline EvpPkeyPtr generate_rsa_session_key(
     std::strncpy(usage_buf, key_usage, sizeof(usage_buf) - 1);
     usage_buf[sizeof(usage_buf) - 1] = '\0';
 
+    char kind_buf[32];
+    std::strncpy(kind_buf, key_kind != nullptr ? key_kind : "", sizeof(kind_buf) - 1);
+    kind_buf[sizeof(kind_buf) - 1] = '\0';
+
+    // The kind entry is only appended when a form was requested, so the
+    // default path sends exactly the parameters it did before.
     OSSL_PARAM params[] = {
         OSSL_PARAM_utf8_string("azihsm.session", session_val, 0),
         OSSL_PARAM_utf8_string("azihsm.key_usage", usage_buf, 0),
         OSSL_PARAM_utf8_string("azihsm.input_key", guard.path, 0),
+        OSSL_PARAM_END, /* replaced by azihsm.key_kind when key_kind is set */
         OSSL_PARAM_END,
     };
+
+    if (key_kind != nullptr)
+    {
+        params[3] = OSSL_PARAM_construct_utf8_string("azihsm.key_kind", kind_buf, 0);
+    }
 
     if (EVP_PKEY_CTX_set_params(import_ctx.get(), params) <= 0)
     {

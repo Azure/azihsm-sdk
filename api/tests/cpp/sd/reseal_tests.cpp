@@ -12,9 +12,10 @@
 // and the attested sender key match those that sealed the source.
 //
 // Like the create-backup tests, this needs the two-phase TBOR HPKE
-// handshake and a fully provisioned partition, which only the emu backend
-// provides, so it is gated to `AZIHSM_FEATURE_EMU`.
-#if defined(AZIHSM_FEATURE_EMU)
+// handshake and a fully provisioned partition, which the mock backend does
+// not implement, so it is excluded from the mock lane and runs on the emu
+// and hardware backends.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 #include <array>
 #include <azihsm_api.h>
@@ -35,18 +36,6 @@ namespace
 // exposed in the C header.
 constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kMaskedSealingKeyLen = 180;
-
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 // Create a real source backup: a fresh BKS3 sealed to the receiver's
 // attested public key (`receiver_report`) by `masked_sender`. Returns the
@@ -313,4 +302,4 @@ TEST_F(azihsm_sd_reseal_backup, reseal_backup_null_params)
     });
 }
 
-#endif // defined(AZIHSM_FEATURE_EMU)
+#endif // !defined(AZIHSM_FEATURE_MOCK)

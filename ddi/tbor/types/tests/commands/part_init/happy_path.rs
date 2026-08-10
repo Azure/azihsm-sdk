@@ -12,7 +12,7 @@
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
 
-use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -24,14 +24,14 @@ use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
+use super::part_policy_with_flags;
 use super::pota_thumbprint;
-use super::CO;
 use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
 
 #[test]
-fn part_init_smoke_roundtrip_emu() {
+fn part_init_smoke_roundtrip() {
     let ctx = TestCtx::new();
 
     // 1. Bootstrap: rotate CO PSK so PartInit clears the
@@ -244,14 +244,7 @@ fn run_part_init_capture_pta_pub(
     use x509::X509Csr;
     use x509::X509CsrOp;
 
-    let bootstrap = ctx
-        .open_session_raw(CO, SessionType::Authenticated)
-        .expect("open CO default");
-    ctx.psk_change(&bootstrap, &ROTATED_CO_PSK)
-        .expect("rotate CO PSK");
-    let _ = ctx.session_close(bootstrap.session_id);
-
-    let session = open_co_with(ctx, &ROTATED_CO_PSK);
+    let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let resp = ctx
         .part_init(&session, seed, policy, thumb)
         .expect("PartInit roundtrip");
@@ -281,12 +274,8 @@ fn run_part_init_capture_pta_pub(
 /// non-deterministic ECDSA nonces, but the PTA public key is the
 /// canonical determinism invariant under test.
 #[test]
-fn part_init_determinism_emu() {
+fn part_init_determinism() {
     let ctx = TestCtx::new();
-
-    // `TestCtx::new` already left the partition factory-reset; this
-    // first `erase` is redundant but documents the run-1 precondition.
-    ctx.erase().expect("erase to pristine Enabled before run 1");
 
     let seed = mach_seed();
     let policy = known_good_part_policy();
@@ -305,5 +294,43 @@ fn part_init_determinism_emu() {
         pta_pub_run1, pta_pub_run2,
         "PTA pubkey must be byte-identical across cold restarts with the \
          same (UDS, MachineSeed, Policy, POTA thumb) inputs",
+    );
+}
+
+/// Toggling `PolicyFlags::INCLUDE_FMC_CDI` must change the PTA
+/// pubkey. Two runs with byte-identical `(UDS, MachineSeed, POTA
+/// thumbprint)` are performed against the same `TestCtx` (with an
+/// `erase()` between them to reset partition state), differing only
+/// in the `flags` byte of the `PartPolicy` blob. Because the PTA
+/// keypair is derived from `KBKDF(PartRoot, ctx)` and
+/// `include_fmc_cdi` gates whether `fmc_cdi` is mixed into that
+/// context — and, independently, the flag byte is part of the
+/// `PartPolicy` blob whose hash is bound into the derivation — the
+/// two PTA pubkeys must not collide. A byte-identical result would
+/// mean either the flag is a stealth no-op in the KBKDF chain or
+/// the `PartPolicy` hash isn't being bound at all.
+#[test]
+fn part_init_pta_pub_differs_when_include_fmc_cdi_flag_toggled() {
+    let ctx = TestCtx::new();
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let default_policy = part_policy_with_flags(0);
+    let fmc_cdi_policy = part_policy_with_flags(PolicyFlags::INCLUDE_FMC_CDI);
+
+    let pta_pub_default = run_part_init_capture_pta_pub(&ctx, &seed, &default_policy, &thumb);
+
+    // Cold restart between runs so PartInit derives fresh PTA key
+    // material against the second policy under an otherwise
+    // pristine partition (same deterministic UDS).
+    ctx.erase().expect("erase between runs");
+
+    let pta_pub_fmc_cdi = run_part_init_capture_pta_pub(&ctx, &seed, &fmc_cdi_policy, &thumb);
+
+    assert_ne!(
+        pta_pub_default, pta_pub_fmc_cdi,
+        "PTA pubkey must differ when `PolicyFlags::INCLUDE_FMC_CDI` \
+         is the only input that changes between the two runs",
     );
 }

@@ -13,9 +13,9 @@
 //!
 //! RSA key generation is expensive, so each PAL materialises the key
 //! behind the property read: the std (emulator) PAL generates it lazily on
-//! first read, while hardware PALs generate it in the background from
-//! partition init and leave the property unset until ready.  An absent id
-//! therefore means generation is still pending, surfaced as
+//! first read, while hardware PALs import it (staged in GSRAM by the HSP)
+//! on first read and leave the property unset until it is available.  An
+//! absent id therefore means the key is not yet available, surfaced as
 //! `PendingKeyGeneration` so the host retries.  Available to both
 //! Crypto-Officer and Crypto-User sessions.
 

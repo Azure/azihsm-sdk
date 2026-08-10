@@ -73,6 +73,7 @@ impl DestroyHandler for AzihsmDestroy {
         // slot: if it was never registered there is nothing to clear, and
         // registering one here would just leak an index.
         if let Some(slot) = ENGINE_DATA_SLOT.get() {
+            tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
             slot.take(engine)?;
         }
         Ok(())
@@ -153,10 +154,16 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     engine.set_name(ENGINE_NAME)?;
     engine.set_destroy::<AzihsmDestroy>()?;
     engine.set_load_privkey::<AzihsmLoadPrivKey>()?;
-    // Advertise an EC method so the loader can bind returned keys to the
-    // engine (EC_KEY_new_method), which keeps the engine alive while any
-    // loaded key lives. Software EC ops for now; signing is wired later.
-    engine.set_default_ec_method()?;
+    // Advertise the engine's EC method — OpenSSL defaults with sign_sig routed
+    // to the HSM — so keys the loader creates with EC_KEY_new_method adopt it
+    // at creation and keep their engine reference (see crate::sign for why it
+    // must not be attached per key with EC_KEY_set_method).
+    // SAFETY: ecdsa_method() is process-global and never freed, so it outlives
+    // the engine.
+    #[allow(unsafe_code)]
+    unsafe {
+        engine.set_ec_method(crate::sign::ecdsa_method()?)?;
+    }
 
     // Park an empty EngineData. Its HSM session is opened on demand via
     // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and

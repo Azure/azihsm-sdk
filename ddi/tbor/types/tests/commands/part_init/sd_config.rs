@@ -24,7 +24,7 @@ use super::ROTATED_CO_PSK;
 use crate::harness::TestCtx;
 
 #[test]
-fn part_init_with_sata_emu() {
+fn part_init_with_sata() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -44,7 +44,7 @@ fn part_init_with_sata_emu() {
 }
 
 #[test]
-fn part_init_with_sapota_emu() {
+fn part_init_with_sapota() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 

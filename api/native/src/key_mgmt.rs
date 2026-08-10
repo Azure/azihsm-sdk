@@ -430,7 +430,9 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
 
         // Dispatch based on key kind
         let (priv_handle, pub_handle) = match key_kind {
-            AzihsmKeyKind::Rsa => rsa_unmask_key_pair(&session, masked_key_buf)?,
+            AzihsmKeyKind::Rsa | AzihsmKeyKind::RsaCrt => {
+                rsa_unmask_key_pair(&session, masked_key_buf)?
+            }
             AzihsmKeyKind::Ecc => ecc_unmask_key_pair(&session, masked_key_buf)?,
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };

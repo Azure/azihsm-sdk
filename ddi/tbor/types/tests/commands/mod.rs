@@ -5,11 +5,19 @@
 //! backend feature(s) that can satisfy it (e.g., TBOR commands require
 //! `emu` for a real round-trip).
 
+pub mod aes_encrypt_decrypt;
+pub mod aes_generate_key;
 pub mod api_rev;
+pub mod concat_kdf_derive;
 pub mod default_psk_gate;
+pub mod ecc_generate_key;
+pub mod ecc_sign;
+pub mod ecdh_derive;
 pub mod forward_compat;
 pub mod fw_error_decode;
 pub mod get_unwrapping_key;
+pub mod hash;
+pub mod hkdf_derive;
 pub mod hmac;
 pub mod hmac_generate_key;
 pub mod key_report;
@@ -18,6 +26,7 @@ pub mod part_final;
 pub mod part_info;
 pub mod part_init;
 pub mod psk_change;
+pub mod rsa_mod_exp;
 pub mod sd_create_peer_backup;
 pub mod sd_create_remote_backup;
 pub mod sd_reseal_remote_backup;

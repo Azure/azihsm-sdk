@@ -17,7 +17,7 @@
 ///
 /// Sealing key generation is only valid on a V2 (security-domain)
 /// session, which requires the two-phase TBOR HPKE handshake implemented
-/// only by the emu (in-process firmware) backend. A *complete* end-to-end
+/// by a real backend (emu or hardware), not mock. A *complete* end-to-end
 /// generation additionally needs a fully provisioned partition (the FW
 /// handler requires the `Initialized` lifecycle state and a
 /// Crypto-Officer session), which no test harness sets up. These tests
@@ -165,12 +165,12 @@ TEST_F(azihsm_sealing_keygen, key_gen_null_prop_list)
     ASSERT_EQ(key_handle, 0u);
 }
 
-// ── Host-side dispatch + property validation (emu only) ──────────────────────
+// ── Host-side dispatch + property validation (not mock) ─────────────────────
 // The checks below run inside the sealing key-gen dispatch, which needs a
-// live security-domain (V2) session — implemented only by the emu backend.
-// They complete *before* the device produces a key, so they are
-// deterministic on an unprovisioned partition.
-#ifdef AZIHSM_FEATURE_EMU
+// live security-domain (V2) session — provided by a real backend (emu or
+// hardware), not mock. They complete *before* the device produces a key, so
+// they are deterministic on an unprovisioned partition.
+#if !defined(AZIHSM_FEATURE_MOCK)
 
 // Sealing key generation takes no algorithm-specific parameters; a
 // non-NULL `params` (with non-zero `len`) is rejected up front.
@@ -355,14 +355,11 @@ TEST_F(azihsm_sealing_keygen, key_gen_valid_props_pass_host_guards)
         }
     });
 }
-#endif // AZIHSM_FEATURE_EMU
-
-// Full provisioning round trip (emu + platform cert building).
+// Full provisioning round trip (real backend + platform cert building).
 // Unlike the host-guard tests above, this provisions the partition end to end
 // (rotate CO PSK -> PartInit -> POTA-anchored PTA chain -> PartFinal) so the
 // device is `Initialized` and actually generates a sealing key. The PTA chain
 // is built with the platform host crypto (OpenSSL on Linux, BCrypt on Windows).
-#ifdef AZIHSM_FEATURE_EMU
 TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_generates_usable_sealing_key)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
@@ -531,4 +528,4 @@ TEST_F(azihsm_sealing_keygen, key_gen_roundtrip_yields_distinct_keys)
         ASSERT_NE(pub1, pub2);
     });
 }
-#endif // AZIHSM_FEATURE_EMU
+#endif // !defined(AZIHSM_FEATURE_MOCK)
