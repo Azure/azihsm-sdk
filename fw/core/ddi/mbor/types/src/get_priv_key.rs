@@ -22,8 +22,9 @@ pub struct DdiGetPrivKeyReq {
 /// DDI `GetPrivKey` response.
 ///
 /// Returns the key's on-wire kind and its raw plaintext bytes.  The
-/// `key_data` capacity (2564 bytes) is sized for the largest exportable
-/// kind (an RSA-CRT private key); HMAC / secret keys occupy far less.
+/// `key_data` capacity (3072 bytes) matches the repo-wide key-material
+/// bound (`RawKeyImport.raw`, unwrap blobs, etc.); the largest exportable
+/// kind is an RSA-CRT private key, and HMAC / secret keys occupy far less.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 pub struct DdiGetPrivKeyResp<'a> {
@@ -31,7 +32,7 @@ pub struct DdiGetPrivKeyResp<'a> {
     #[ddi(id = 1)]
     pub key_kind: DdiKeyType,
     /// Raw plaintext key material.
-    #[ddi(id = 2, max_len = 2564)]
+    #[ddi(id = 2, max_len = 3072)]
     pub key_data: &'a [u8],
 }
 
