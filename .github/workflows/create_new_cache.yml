@@ -29,6 +29,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+    - name: Install rustup
+      if: ${{ matrix.runner == 'azihsm-arm64-gh-ubuntu2404-pool' }}
+      shell: bash
+      run: |
+        curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+          | sh -s -- -y --default-toolchain none --profile minimal
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
