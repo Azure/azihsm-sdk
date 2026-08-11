@@ -184,8 +184,8 @@ impl HsmHash for UnoHsmPal {
     /// - `digest` — output buffer (must be at least
     ///   [`HsmHashAlgo::digest_len`] bytes).
     /// - `big_endian` — if `true`, the digest is written in big-endian (NIST
-    ///   standard) byte order.  If `false`, the output is byte-swapped to
-    ///   little-endian.
+    ///   standard) byte order.  If `false`, the whole digest is reversed to
+    ///   little-endian byte order.
     ///
     /// # Returns
     ///
@@ -200,7 +200,14 @@ impl HsmHash for UnoHsmPal {
         big_endian: bool,
     ) -> HsmResult<()> {
         let _ = io;
-        self.sha_oneshot(algo, data, digest, !big_endian).await
+        self.sha_oneshot(algo, data, digest, false).await?;
+        if !big_endian {
+            let digest_len = algo.digest_len();
+            if let Some(bytes) = digest.get_mut(..digest_len) {
+                bytes.reverse();
+            }
+        }
+        Ok(())
     }
 
     /// Begins a multi-step hash computation.
@@ -273,8 +280,8 @@ impl HsmHash for UnoHsmPal {
     /// - `digest` — output buffer for the final digest. Must be at least
     ///   [`HsmHashAlgo::digest_len`] bytes.
     /// - `big_endian` — if `true`, the digest is written in big-endian (NIST
-    ///   standard) byte order. If `false`, the output is byte-swapped to
-    ///   little-endian.
+    ///   standard) byte order. If `false`, the whole digest is reversed to
+    ///   little-endian byte order.
     ///
     /// # Returns
     ///
@@ -295,9 +302,12 @@ impl HsmHash for UnoHsmPal {
         }
 
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(&mut ctx, None, len, true, !big_endian)
+        self.sha_digest_block(&mut ctx, None, len, true, false)
             .await?;
         digest[..digest_len].copy_from_slice(&ctx.buf[..digest_len]);
+        if !big_endian {
+            digest[..digest_len].reverse();
+        }
         Ok(())
     }
 }
