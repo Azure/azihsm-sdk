@@ -184,8 +184,10 @@ impl HsmHash for UnoHsmPal {
     /// - `digest` — output buffer (must be at least
     ///   [`HsmHashAlgo::digest_len`] bytes).
     /// - `big_endian` — if `true`, the digest is written in big-endian (NIST
-    ///   standard) byte order.  If `false`, the output is byte-swapped to
-    ///   little-endian.
+    ///   standard) byte order.  If `false`, the digest is *fully* byte-reversed
+    ///   into the little-endian integer form the PKA consumes (the `ecc_sign`
+    ///   digest contract) — a full reversal, **not** the SHA engine's
+    ///   per-64-bit-word `digest_byte_swap`.
     ///
     /// # Returns
     ///
@@ -200,7 +202,20 @@ impl HsmHash for UnoHsmPal {
         big_endian: bool,
     ) -> HsmResult<()> {
         let _ = io;
-        self.sha_oneshot(algo, data, digest, !big_endian).await
+        // The SHA engine emits a natural big-endian digest. The PKA's
+        // little-endian operand contract (`big_endian == false`, used for the
+        // `ecc_sign` digest) requires the FULL byte reversal — the LE integer
+        // the PKA consumes — not the engine's per-64-bit-word `digest_byte_swap`
+        // (SHA-384's native word size), which is NOT a full reversal (confirmed
+        // by a hardware KAT). So take the natural digest, then reverse the whole
+        // digest in software when LE is requested (matching the std PAL's
+        // `digest.reverse()`).
+        self.sha_oneshot(algo, data, digest).await?;
+        if !big_endian {
+            let len = algo.digest_len();
+            digest[..len].reverse();
+        }
+        Ok(())
     }
 
     /// Begins a multi-step hash computation.
@@ -273,8 +288,9 @@ impl HsmHash for UnoHsmPal {
     /// - `digest` — output buffer for the final digest. Must be at least
     ///   [`HsmHashAlgo::digest_len`] bytes.
     /// - `big_endian` — if `true`, the digest is written in big-endian (NIST
-    ///   standard) byte order. If `false`, the output is byte-swapped to
-    ///   little-endian.
+    ///   standard) byte order. If `false`, the digest is fully byte-reversed
+    ///   to the little-endian integer the PKA consumes (done in software,
+    ///   mirroring the one-shot `hash` path).
     ///
     /// # Returns
     ///
@@ -295,9 +311,14 @@ impl HsmHash for UnoHsmPal {
         }
 
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(&mut ctx, None, len, true, !big_endian)
-            .await?;
+        self.sha_digest_block(&mut ctx, None, len, true).await?;
         digest[..digest_len].copy_from_slice(&ctx.buf[..digest_len]);
+        // The engine emits the digest natural (big-endian); reverse to the
+        // full little-endian integer in software when LE is requested
+        // (mirrors the one-shot `hash` path and the std PAL).
+        if !big_endian {
+            digest[..digest_len].reverse();
+        }
         Ok(())
     }
 }
@@ -346,9 +367,8 @@ impl UnoHsmPal {
     ///
     /// - `mode` — SHA hardware algorithm selector.
     /// - `message` — complete input message.
-    /// - `digest` — output buffer for the final hash.
-    /// - `byte_swap` — if `true`, the digest is byte-swapped
-    ///   (little-endian output).
+    /// - `digest` — output buffer for the final hash, emitted natural
+    ///   (big-endian); the PAL layer applies any LE conversion in software.
     ///
     /// # Returns
     ///
@@ -360,13 +380,9 @@ impl UnoHsmPal {
         algo: HsmHashAlgo,
         message: &DmaBuf,
         digest: &mut DmaBuf,
-        byte_swap: bool,
     ) -> HsmResult<()> {
         let byte_count = u32::try_from(message.len()).map_err(|_| HsmError::InvalidArg)?;
-        let mut req = ShaRequest::new(algo.into(), message, digest).with_auto_pad(byte_count);
-        if byte_swap {
-            req = req.with_byte_swap();
-        }
+        let req = ShaRequest::new(algo.into(), message, digest).with_auto_pad(byte_count);
         self.sha.digest(req).await
     }
 
@@ -392,8 +408,7 @@ impl UnoHsmPal {
         finalize: bool,
     ) -> HsmResult<()> {
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(ctx, None, len, finalize, false)
-            .await?;
+        self.sha_digest_block(ctx, None, len, finalize).await?;
         ctx.pending_len = 0;
         Ok(())
     }
@@ -422,7 +437,7 @@ impl UnoHsmPal {
         // hmac_continue, so `blocks` is always a sub-slice of a
         // DMA-accessible caller buffer.
         let blocks = unsafe { DmaBuf::from_raw(blocks) };
-        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false, false)
+        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false)
             .await
     }
 
@@ -444,11 +459,11 @@ impl UnoHsmPal {
     ///   instead.
     /// - `msg_len` — number of message bytes to process.
     /// - `finalize` — if `true`, automatic SHA padding is applied and the
-    ///   engine writes the truncated NIST digest.  If `false`, the engine
-    ///   writes the full working-variable state for chaining.
-    /// - `byte_swap` — if `true`, the digest output is byte-swapped
-    ///   (little-endian).  Only meaningful when `finalize` is `true`;
-    ///   intermediate blocks always use byte-swap for state continuity.
+    ///   engine writes the truncated NIST digest, natural (big-endian) — the
+    ///   PAL applies any LE conversion in software.  If `false`, the engine
+    ///   writes the full working-variable state for chaining (which is always
+    ///   byte-swapped for state continuity, a hardware requirement unrelated
+    ///   to the final digest byte order).
     ///
     /// # Returns
     ///
@@ -461,7 +476,6 @@ impl UnoHsmPal {
         external_msg: Option<&DmaBuf>,
         msg_len: usize,
         finalize: bool,
-        byte_swap: bool,
     ) -> HsmResult<()>
     where
         C: ShaDigestContext,
@@ -481,11 +495,15 @@ impl UnoHsmPal {
 
         let mut req = ShaRequest::new(algo.into(), message, digest);
         if finalize {
+            // The final digest is always emitted natural (big-endian); the PAL
+            // layer applies any little-endian conversion in software (the
+            // engine's `byte_swap` only does a per-64-bit-word swap, which is
+            // not the full-LE integer the PKA consumes).
             req = req.with_auto_pad(total);
-            if byte_swap {
-                req = req.with_byte_swap();
-            }
         } else {
+            // Intermediate blocks emit the full working state byte-swapped so
+            // the engine can reload it for the next block — a hardware chaining
+            // requirement, unrelated to the final digest's byte order.
             req.byte_count = total;
             req = req.with_full_state().with_byte_swap();
         }
