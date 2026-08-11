@@ -36,7 +36,7 @@ zerocopy.workspace = true
 
 [features]
 default = ["std"]
-fips_validation_hooks = []
+fips_validation_hooks = ["azihsm_fw_ddi_mbor_types/fips_validation_hooks"]
 mcr_test_hooks = []
 std = []
 tracing = []
