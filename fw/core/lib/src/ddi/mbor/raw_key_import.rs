@@ -67,13 +67,15 @@ pub(crate) async fn raw_key_import<'p, P: HsmPal>(
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
     let key_handle = pal
         .vault_key_create(io, key_buf, vault_kind, session_binding, attrs)
-        .await?;
-    let key_id: u16 = key_handle.into();
+        .await;
 
-    // Scrub the plaintext scratch now that the key is committed to the
-    // vault — per-IO DMA is not implicitly wiped on reuse. `DmaBuf::zeroize`
-    // is a volatile, un-elidable wipe.
+    // Scrub the plaintext scratch before propagating a create failure —
+    // per-IO DMA is not implicitly wiped on reuse. `DmaBuf::zeroize` is
+    // a volatile, un-elidable wipe.
     key_buf.zeroize();
+
+    let key_handle = key_handle?;
+    let key_id: u16 = key_handle.into();
 
     // Build the host's opaque re-import blob from the committed key so the
     // masked bytes match exactly what the host will later re-import.
@@ -149,12 +151,17 @@ async fn raw_import_unwrapping_key<'p, P: HsmPal>(
 
     let key_id = pal
         .vault_key_create(io, key_buf, HsmVaultKeyKind::Rsa2kPrivate, None, attrs)
-        .await?;
+        .await;
+
+    // Scrub the plaintext scratch before propagating a create failure or
+    // updating partition state. `DmaBuf::zeroize` is a volatile,
+    // un-elidable wipe.
+    key_buf.zeroize();
+
+    let key_id = key_id?;
     crate::part_state::part_set_unwrapping_key_id(pal, io, key_id)?;
 
-    // New id committed — now scrub the plaintext scratch and reclaim the
-    // old vault entry. `DmaBuf::zeroize` is a volatile, un-elidable wipe.
-    key_buf.zeroize();
+    // New id committed — now reclaim the old vault entry.
     if let Some(old_id) = old_id {
         pal.vault_key_delete(io, old_id).await?;
     }
