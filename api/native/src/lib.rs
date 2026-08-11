@@ -29,6 +29,7 @@ mod key_props;
 mod partition;
 mod partition_props;
 mod resiliency;
+mod sd;
 mod session;
 mod session_ex;
 mod session_props;
