@@ -29,6 +29,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+    - name: Install arm64 build dependencies
+      if: ${{ matrix.runner == 'azihsm-arm64-gh-ubuntu2404-pool' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
     - name: Install rustup
       if: ${{ matrix.runner == 'azihsm-arm64-gh-ubuntu2404-pool' }}
       shell: bash

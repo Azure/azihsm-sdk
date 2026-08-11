@@ -12,7 +12,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Install amd64 build dependencies
+    - name: Install arm64 build dependencies
       if: ${{ inputs.arch == 'arm64' }}
       shell: bash
       run: |
