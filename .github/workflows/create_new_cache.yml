@@ -34,7 +34,7 @@ jobs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential
+        sudo apt-get install -y build-essential libssl-dev
     - name: Install rustup
       if: ${{ matrix.runner == 'azihsm-arm64-gh-ubuntu2404-pool' }}
       shell: bash
