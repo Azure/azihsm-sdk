@@ -12,12 +12,24 @@
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
 
+use azihsm_crypto::DerEccPublicKey;
+use azihsm_ddi_mbor_sim::attestation::KeyAttester;
+use azihsm_ddi_mbor_sim::crypto::ecc::EccOp;
+use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
+use azihsm_ddi_mbor_sim::report::CoseSign1Object;
+use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
+use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+use minicbor::data::Type as CborType;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
+use x509::X509Csr;
+use x509::X509CsrOp;
 
 use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
@@ -82,8 +94,7 @@ fn part_init_smoke_roundtrip() {
     // Confirms the FW's CSR builder produced a syntactically valid,
     // self-consistent CertificationRequest signed by the embedded
     // PTA pubkey.
-    use x509::X509Csr;
-    use x509::X509CsrOp;
+
     let csr = X509Csr::from_der(&resp.pta_csr).unwrap_or_else(|e| {
         panic!(
             "PTACSR parses as PKCS#10: {e:?}\nlen={} first16={:02x?}",
@@ -165,16 +176,6 @@ fn part_init_smoke_roundtrip() {
 ///    actually attests the same key the CSR is requesting a cert
 ///    for.
 fn verify_pta_report(ctx: &TestCtx, pta_report: &[u8], pta_spki_der: &[u8]) {
-    use azihsm_crypto::DerEccPublicKey;
-    use azihsm_ddi_mbor_sim::attestation::KeyAttester;
-    use azihsm_ddi_mbor_sim::crypto::ecc::EccOp;
-    use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
-    use azihsm_ddi_mbor_sim::report::CoseSign1Object;
-    use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
-    use minicbor::data::Type as CborType;
-    use x509::X509Certificate;
-    use x509::X509CertificateOp;
-
     // 1. PID pubkey from the slot-0 chain leaf.
     let info = ctx.cert_chain_info().expect("GetCertChainInfo");
     let n = info.data.num_certs;
@@ -261,9 +262,6 @@ fn run_part_init_capture_pta_pub(
     policy: &[u8; PART_POLICY_LEN],
     thumb: &[u8; POTA_THUMBPRINT_LEN],
 ) -> Vec<u8> {
-    use x509::X509Csr;
-    use x509::X509CsrOp;
-
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let resp = ctx
         .part_init(&session, seed, policy, thumb)
@@ -272,6 +270,38 @@ fn run_part_init_capture_pta_pub(
 
     let csr = X509Csr::from_der(&resp.pta_csr).expect("PTACSR parses");
     csr.get_public_key_der().expect("CSR SPKI extracts")
+}
+
+/// Changing only `PolicyFlags::INCLUDE_FMC_CDI` must produce a different PTA public key.
+#[test]
+fn part_init_pta_pub_differs_when_include_fmc_cdi_flag_toggled() {
+    let ctx = TestCtx::new();
+
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let default_policy = known_good_part_policy();
+
+    let mut fmc_cdi_policy = default_policy;
+
+    // PartPolicy wire layout:
+    // flags is byte 418.
+    const PART_POLICY_FLAGS_OFFSET: usize = 418;
+
+    fmc_cdi_policy[PART_POLICY_FLAGS_OFFSET] |= PolicyFlags::INCLUDE_FMC_CDI;
+
+    let pta_pub_default = run_part_init_capture_pta_pub(&ctx, &seed, &default_policy, &thumb);
+
+    // Reset partition state before running PartInit with the modified policy.
+    ctx.erase().expect("erase between policy runs");
+
+    let pta_pub_fmc_cdi = run_part_init_capture_pta_pub(&ctx, &seed, &fmc_cdi_policy, &thumb);
+
+    assert_ne!(
+        pta_pub_default, pta_pub_fmc_cdi,
+        "PTA pubkey must differ when PolicyFlags::INCLUDE_FMC_CDI \
+         is the only changed input",
+    );
 }
 
 /// Cold-start determinism: derive the PTA keypair twice with the
@@ -320,7 +350,7 @@ fn part_init_determinism() {
 /// Input binding: changing only the machine seed must produce a different
 /// PTA public key while the complete PartInit flow still succeeds.
 #[test]
-fn part_init_machine_seed_changes_pta_key_emu() {
+fn part_init_machine_seed_changes_pta_key() {
     let ctx = TestCtx::new();
     let policy = known_good_part_policy();
     let thumb = pota_thumbprint();
@@ -344,7 +374,7 @@ fn part_init_machine_seed_changes_pta_key_emu() {
 /// Input binding: changing only the POTA thumbprint must produce a different
 /// PTA public key while the complete PartInit flow still succeeds.
 #[test]
-fn part_init_pota_thumbprint_changes_pta_key_emu() {
+fn part_init_pota_thumbprint_changes_pta_key() {
     let ctx = TestCtx::new();
     let seed = mach_seed();
     let policy = known_good_part_policy();
@@ -369,7 +399,7 @@ fn part_init_pota_thumbprint_changes_pta_key_emu() {
 /// still well-formed seed/thumb pair must derive the same PTA public key on
 /// independent cold starts.
 #[test]
-fn part_init_changed_inputs_are_still_deterministic_emu() {
+fn part_init_changed_inputs_are_still_deterministic() {
     let ctx = TestCtx::new();
     let policy = known_good_part_policy();
 
@@ -397,7 +427,7 @@ fn part_init_changed_inputs_are_still_deterministic_emu() {
 /// the partition to a state where the normal bootstrap → PSK rotation →
 /// PartInit flow can complete again.
 #[test]
-fn part_init_succeeds_again_after_erase_emu() {
+fn part_init_succeeds_again_after_erase() {
     let ctx = TestCtx::new();
     let seed = mach_seed();
     let policy = known_good_part_policy();
@@ -424,7 +454,7 @@ fn part_init_succeeds_again_after_erase_emu() {
 /// POTA-thumbprint buffers, helping detect ignored bytes, partial hashing,
 /// or accidental truncation.
 #[test]
-fn part_init_distinct_valid_input_combinations_produce_unique_keys_emu() {
+fn part_init_distinct_valid_input_combinations_produce_unique_keys() {
     let ctx = TestCtx::new();
     let policy = known_good_part_policy();
 
@@ -486,7 +516,7 @@ fn part_init_distinct_valid_input_combinations_produce_unique_keys_emu() {
 /// The existing test changes byte zero. This additionally verifies that the
 /// final byte is not ignored due to an off-by-one or shortened hash input.
 #[test]
-fn part_init_last_machine_seed_byte_changes_pta_key_emu() {
+fn part_init_last_machine_seed_byte_changes_pta_key() {
     let ctx = TestCtx::new();
     let policy = known_good_part_policy();
     let thumb = pota_thumbprint();
@@ -513,7 +543,7 @@ fn part_init_last_machine_seed_byte_changes_pta_key_emu() {
 /// The existing test changes the final byte. This additionally verifies that
 /// the first byte is included in the derivation.
 #[test]
-fn part_init_first_pota_thumbprint_byte_changes_pta_key_emu() {
+fn part_init_first_pota_thumbprint_byte_changes_pta_key() {
     let ctx = TestCtx::new();
     let seed = mach_seed();
     let policy = known_good_part_policy();
@@ -540,9 +570,8 @@ fn part_init_first_pota_thumbprint_byte_changes_pta_key_emu() {
 /// This verifies the CSR self-signature, the COSE_Sign1 signature, and the
 /// cross-binding between the CSR public key and the PTAReport public key.
 #[test]
-fn part_init_modified_inputs_return_fully_valid_artifacts_emu() {
+fn part_init_modified_inputs_return_fully_valid_artifacts() {
     use x509::X509Csr;
-    use x509::X509CsrOp;
 
     let ctx = TestCtx::new();
 
