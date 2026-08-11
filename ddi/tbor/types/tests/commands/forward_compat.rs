@@ -20,6 +20,7 @@
 //! 2. `max_ver`
 
 use azihsm_ddi_tbor_codec::EncodeError;
+use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
 use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
@@ -55,10 +56,10 @@ fn encode_api_rev_with_trailing<'a>(
         .uint8(max_ver)
         .expect("encode max_ver");
 
-    for (index, value) in trailing.iter().copied().enumerate() {
+    for value in trailing.iter().copied() {
         encoder = encoder.uint8(value).unwrap_or_else(|err| {
             panic!(
-                "encode trailing future field {index} \
+                "encode trailing future field \
                      with value {value:#04x}: {err:?}"
             )
         });
@@ -401,10 +402,9 @@ fn forward_compatibility_preserves_representative_known_values() {
 /// Verifies that the maximum supported TOC count still decodes the known prefix.
 #[test]
 fn maximum_supported_toc_count_decodes_known_prefix() {
-    // ResponseEncoder supports at most 32 total TOC entries.
-    // TborApiRevResp uses two known entries, leaving room for 30
-    // trailing future entries.
-    const TRAILING_COUNT: usize = 30;
+    // TborApiRevResp uses two known TOC entries; fill the remaining
+    // encoder capacity with trailing future entries.
+    const TRAILING_COUNT: usize = MAX_TOC_ENTRIES - 2;
 
     let trailing: [u8; TRAILING_COUNT] = core::array::from_fn(|index| index as u8);
 
@@ -412,7 +412,7 @@ fn maximum_supported_toc_count_decodes_known_prefix() {
     let bytes = encode_api_rev_with_trailing(&mut buf, u8::MIN, u8::MAX, &trailing);
 
     let resp = TborApiRevResp::decode_response(bytes)
-        .expect("32-entry response must preserve the known prefix");
+        .expect("maximum-entry response must preserve the known prefix");
 
     assert_eq!(resp.min_ver, u8::MIN);
     assert_eq!(resp.max_ver, u8::MAX);
