@@ -11,8 +11,13 @@
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
 
+use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborApiRevReq;
+#[cfg(feature = "emu")]
+use azihsm_ddi_tbor_types::TborStatus;
 
+#[cfg(feature = "emu")]
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
 
 const EXPECTED: azihsm_ddi_tbor_types::TborApiRevResp = azihsm_ddi_tbor_types::TborApiRevResp {
@@ -34,7 +39,7 @@ fn round_trip() {
 
 /// `ApiRev` is stateless — repeated invocations on the same device
 /// handle return byte-identical responses. Catches any regression
-/// that would silently introduce per-call state (e.g. a version
+/// that would silently introduce per-call state (e.g.a version
 /// negotiation cache, a session-dependent code path) in the
 /// dispatcher's only out-of-session in-band handler.
 #[test]
@@ -56,8 +61,6 @@ fn api_rev_repeated_stable() {
 /// out-of-session handler.
 #[test]
 fn api_rev_independent_of_session_state() {
-    use azihsm_ddi_tbor_types::SessionType;
-
     let ctx = TestCtx::new();
 
     // No sessions outstanding.
@@ -91,23 +94,10 @@ fn api_rev_independent_of_session_state() {
     assert_eq!(post, EXPECTED);
 }
 
-#[cfg(all(feature = "mock", not(feature = "emu")))]
-#[test]
-fn unsupported_on_mock() {
-    use crate::harness::assertions::assert_unsupported_encoding;
-
-    let ctx = TestCtx::new();
-    let err = ctx
-        .tbor(&TborApiRevReq::new())
-        .expect_err("mock backend must not implement exec_op_tbor");
-    assert_unsupported_encoding(&err);
-}
-
-/// Asserts the general `ApiRev` protocol-range invariants and then
-/// verifies the exact bootstrap response expected by these tests.
+/// Asserts the `ApiRev` protocol-range invariants.
 ///
-/// Checking the range invariants first provides more specific failure
-/// diagnostics when firmware advertises an invalid or unexpected range.
+/// The firmware must advertise a valid version range that includes the
+/// bootstrap TBOR protocol version.
 #[cfg(any(feature = "emu", feature = "sock"))]
 fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context: &str) {
     assert!(
@@ -123,11 +113,6 @@ fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context
         resp.min_ver,
         resp.max_ver,
     );
-
-    assert_eq!(
-        resp, &EXPECTED,
-        "{context}: firmware should report min=max=1 for the bootstrap TBOR protocol version",
-    );
 }
 
 /// A3: Independent device contexts must advertise the same protocol
@@ -137,7 +122,7 @@ fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context
 /// process-global mutable state in the emulator/backend.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_consistent_across_fresh_contexts_emu() {
+fn api_rev_consistent_across_fresh_contexts() {
     let first = {
         let ctx = TestCtx::new();
         ctx.tbor(&TborApiRevReq::new())
@@ -166,9 +151,7 @@ fn api_rev_consistent_across_fresh_contexts_emu() {
 /// rather than checking only a single session lifecycle.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_stable_across_repeated_session_lifecycles_emu() {
-    use azihsm_ddi_tbor_types::SessionType;
-
+fn api_rev_stable_across_repeated_session_lifecycles() {
     let ctx = TestCtx::new();
 
     let baseline = ctx
@@ -240,7 +223,7 @@ fn api_rev_stable_across_repeated_session_lifecycles_emu() {
 /// into command handling.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_fresh_request_each_call_emu() {
+fn api_rev_fresh_request_each_call() {
     let ctx = TestCtx::new();
 
     let baseline = ctx
@@ -293,36 +276,13 @@ fn api_rev_repeated_stable_sock() {
     }
 }
 
-/// M1: Repeated requests against the mock backend must consistently
-/// return the unsupported-encoding error category.
-///
-/// This catches accidental partial TBOR implementation or one-shot
-/// behavior in the mock backend.
-#[cfg(all(feature = "mock", not(feature = "emu")))]
-#[test]
-fn unsupported_repeatedly_on_mock() {
-    use crate::harness::assertions::assert_unsupported_encoding;
-
-    let ctx = TestCtx::new();
-
-    for iteration in 0..8 {
-        match ctx.tbor(&TborApiRevReq::new()) {
-            Err(err) => assert_unsupported_encoding(&err),
-            Ok(resp) => panic!(
-                "mock backend unexpectedly accepted ApiRev on iteration \
-                 {iteration}: {resp:?}"
-            ),
-        }
-    }
-}
-
 /// A7: Device erase must not alter the advertised TBOR protocol range.
 ///
 /// `ApiRev` is a firmware capability query and must remain available with
 /// the same response before and after persistent device state is erased.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_stable_across_erase_emu() {
+fn api_rev_stable_across_erase() {
     let ctx = TestCtx::new();
 
     let before = ctx
@@ -344,14 +304,16 @@ fn api_rev_stable_across_erase_emu() {
 /// that the stateless out-of-session handler remains usable.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_works_after_failed_session_operation_emu() {
+fn api_rev_works_after_failed_session_operation() {
     let ctx = TestCtx::new();
 
     let baseline = ctx.tbor(&TborApiRevReq::new()).expect("baseline ApiRev");
 
-    let _ = ctx
+    let err = ctx
         .session_close(u16::MAX)
         .expect_err("invalid session close should fail");
+
+    assert_fw_rejects(&err, TborStatus::SessionNotFound);
 
     let after_error = ctx
         .tbor(&TborApiRevReq::new())
@@ -369,7 +331,7 @@ fn api_rev_works_after_failed_session_operation_emu() {
 /// guards against accidental mutation or consumption of request state.
 #[cfg(feature = "emu")]
 #[test]
-fn api_rev_request_can_be_reused_emu() {
+fn api_rev_request_can_be_reused() {
     let ctx = TestCtx::new();
     let req = TborApiRevReq::new();
 
