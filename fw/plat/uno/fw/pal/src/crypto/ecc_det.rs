@@ -823,7 +823,6 @@ impl UnoHsmPal {
     /// * [`HsmError::EccGenerateError`] — the A.2.2 derivation exhausted its
     ///   retries (see [`derive_pta_scalar_be`](Self::derive_pta_scalar_be)).
     /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
-    #[allow(dead_code)] // consumed by PTA/alias keygen + boot KAT
     pub(crate) async fn ecc_gen_keypair_deterministic(
         &self,
         io: &impl HsmIo,

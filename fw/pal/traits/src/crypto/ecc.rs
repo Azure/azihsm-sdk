@@ -252,16 +252,23 @@ pub trait HsmEcc {
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
 
-    /// Derive an ECC keypair deterministically from `okm` (output
-    /// keying material from a KDF), per FIPS 186-5 §A.2.1 / SP
-    /// 800-133r2 §6.2.3. `okm.len()` must be
-    /// `curve.wire_coord_len() + 8` bytes.
-    async fn ecc_gen_keypair_from_okm(
+    /// Derive an ECC keypair deterministically from a KDF-derived
+    /// `root` secret (the caller's `PartRoot`).
+    ///
+    /// The PAL owns the entire derivation from `root`: it applies its
+    /// platform-appropriate FIPS 186-5 §A.2 method — a hardware PAL
+    /// whose modular unit cannot reduce by the even value `n − 1` uses
+    /// §A.2.2 rejection sampling, while a software PAL may use §A.2.1
+    /// extra-random-bits. `root` is the per-partition secret; PALs
+    /// fan the per-key material out of it via a domain-separated
+    /// HKDF-Expand internally, so the same `root` regenerates the same
+    /// keypair on every call.
+    async fn ecc_gen_keypair_from_root(
         &self,
         io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
-        okm: &DmaBuf,
+        root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;

@@ -44,6 +44,16 @@ use azihsm_crypto::PrivateKey;
 
 use super::*;
 
+/// Domain-separation label for the PTA keypair HKDF-Expand.
+///
+/// Kept byte-identical to the uno PAL's private copy
+/// (`fw/plat/uno/fw/pal/src/crypto/ecc_det.rs`) and to the shared
+/// `KEYPAIR_LABEL_PTA` in the `part_init` DDI handler, so every
+/// platform fans the PTA keypair out of `PartRoot` under the same
+/// domain separation; the derivations differ only by FIPS 186-5
+/// §A.2 method (§A.2.1 here vs §A.2.2 on uno).
+const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
+
 /// Map the PAL-level [`HsmEccCurve`] to the crypto library's
 /// [`azihsm_crypto::EccCurve`].
 fn to_ecc_curve(curve: HsmEccCurve) -> EccCurve {
@@ -126,22 +136,26 @@ impl HsmEcc for StdHsmPal {
         Ok((priv_len, wire_pub_len))
     }
 
-    /// Deterministically derive an ECC keypair from KDF output.
-    async fn ecc_gen_keypair_from_okm(
+    /// Deterministically derive an ECC keypair from the `PartRoot`.
+    ///
+    /// Software (§A.2.1) counterpart to the uno PAL: HKDF-Expand-SHA384
+    /// the `PartRoot` into `a2_1_okm_len` bytes of OKM (info =
+    /// `KEYPAIR_LABEL_PTA ‖ u16_be(okm_len)`), then apply FIPS 186-5
+    /// §A.2.1 extra-random-bits reduction. The label matches the uno
+    /// PAL so both platforms fan the keypair out of the same
+    /// `PartRoot`; the derivations differ only by A.2.x method (the uno
+    /// PKA cannot reduce by the even `n − 1`, so it uses §A.2.2).
+    async fn ecc_gen_keypair_from_root(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
-        okm: &DmaBuf,
+        root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         _pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
         let priv_len = curve.wire_coord_len();
         let wire_pub_len = curve.wire_pub_key_len();
-
-        if okm.len() != curve.a2_1_okm_len() {
-            return Err(HsmError::InvalidArg);
-        }
 
         let Some((priv_out, pub_out)) = out else {
             return Ok((priv_len, wire_pub_len));
@@ -151,11 +165,26 @@ impl HsmEcc for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
+        // Derive the §A.2.1 OKM from PartRoot: HKDF-Expand-SHA384 with
+        // info = KEYPAIR_LABEL_PTA ‖ u16_be(okm_len). Mirrors the uno
+        // PAL's domain separation so both platforms fan out of the same
+        // PartRoot.
+        let okm_len = curve.a2_1_okm_len();
+        let info = alloc.dma_alloc(KEYPAIR_LABEL_PTA.len() + 2)?;
+        info[..KEYPAIR_LABEL_PTA.len()].copy_from_slice(KEYPAIR_LABEL_PTA);
+        info[KEYPAIR_LABEL_PTA.len()..].copy_from_slice(&(okm_len as u16).to_be_bytes());
+        let okm = alloc.dma_alloc(okm_len)?;
+        self.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(&*info), &mut *okm)
+            .await?;
+
         let scratch = alloc.dma_alloc(priv_len + wire_pub_len)?;
         let (scratch_priv, scratch_pub) = scratch.split_at_mut(priv_len);
 
-        let pk = EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), okm)
+        let pk = EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), &*okm)
             .map_err(|_| HsmError::EccGenerateError)?;
+        // The OKM is spent — scrub it before the scoped buffer returns
+        // to the pool (scope rewind does not clear DMA memory).
+        okm[..].zeroize();
 
         // Serialize the scalar into `scratch_priv`, derive the public
         // coordinates, and copy both out.  Once the scalar is in DMA
@@ -322,7 +351,7 @@ impl HsmEcc for StdHsmPal {
         // Parse the vault-format (raw HSM scalar) private key and report
         // the wire public-key length; in use mode derive the public key
         // and serialize it (`x || y`, wire-LE) via the shared driver
-        // helper (same chain as `ecc_gen_keypair_from_okm`).
+        // helper (same chain as `ecc_gen_keypair_from_root`).
         let pk = EccPrivateKey::from_hsm_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
         let wire_pub_len = from_ecc_curve(pk.curve()).wire_pub_key_len();
         if let Some(out) = pub_out {

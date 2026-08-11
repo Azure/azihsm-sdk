@@ -261,18 +261,66 @@ impl HsmEcc for UnoHsmPal {
         Ok((priv_len, pub_len))
     }
 
-    /// Deterministic ECC key generation from caller-supplied OKM is not
-    /// yet implemented on this PAL.
-    async fn ecc_gen_keypair_from_okm(
+    /// Deterministic ECC key generation from a caller-supplied
+    /// key-derivation root (the partition `PartRoot`).
+    ///
+    /// Routes to [`UnoHsmPal::ecc_gen_keypair_deterministic`], which
+    /// HKDF-expands `root` and applies FIPS 186-5 §A.2.2 rejection
+    /// sampling to obtain the private scalar, then computes the public
+    /// point `Q = d·G` on the PKA. §A.2.2 (not §A.2.1) is used because
+    /// the UPKA Montgomery modular unit cannot reduce by the even
+    /// value `n − 1`; rejection sampling needs only a range check.
+    /// Only P-384 — the PTA / alias identity curve — is supported;
+    /// other curves surface as [`HsmError::UnsupportedCmd`] from the
+    /// inner primitive.
+    ///
+    /// The private scalar and both public coordinates are returned in
+    /// PKA-native little-endian wire form, identical to
+    /// [`Self::ecc_gen_keypair`]; byte-order canonicalisation is the
+    /// DDI handler's responsibility.
+    ///
+    /// # Parameters
+    /// * `curve` — must be [`HsmEccCurve::P384`].
+    /// * `root` — the 48-byte partition `PartRoot`, used as the HKDF
+    ///   PRK for the per-attempt candidate derivation.
+    /// * `out` — `None` to query the required `(priv_len, pub_len)`, or
+    ///   `Some((priv_key, pub_key))` to derive into caller buffers.
+    /// * `_pct` — accepted for trait parity; no pairwise-consistency
+    ///   self-test is currently executed.
+    ///
+    /// # Returns
+    /// * `Ok((priv_len, pub_len))` — the private and public key lengths.
+    ///
+    /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] if `curve` is not P-384.
+    /// * [`HsmError::InvalidArg`] if `out` is `Some` and either output
+    ///   buffer is shorter than required, or `root` is not 48 bytes.
+    /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
+    async fn ecc_gen_keypair_from_root(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         _alloc: &impl HsmScopedAlloc,
-        _curve: HsmEccCurve,
-        _okm: &DmaBuf,
-        _out: Option<(&mut DmaBuf, &mut DmaBuf)>,
+        curve: HsmEccCurve,
+        root: &DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         _pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
-        Err(HsmError::UnsupportedCmd)
+        let pka_curve = map_ecc_curve(curve)?;
+        let priv_len = hsm_point_size(pka_curve);
+        let pub_len = hsm_point_size(pka_curve) * 2;
+
+        let Some((priv_out, pub_out)) = out else {
+            return Ok((priv_len, pub_len));
+        };
+
+        if priv_out.len() < priv_len || pub_out.len() < pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        self.ecc_gen_keypair_deterministic(io, pka_curve, root, priv_out, pub_out)
+            .await?;
+
+        Ok((priv_len, pub_len))
     }
 
     /// Raw EC sign over a pre-computed hash digest.

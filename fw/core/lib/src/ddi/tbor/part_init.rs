@@ -403,7 +403,7 @@ async fn derive_pta_keypair_buf<'a, P: HsmPal>(
     pub_sec1[0] = 0x04;
     let pub_xy = pub_sec1.split_at_mut(1).1;
     let _ = kdf::derive_pta_keypair(pal, io, alloc, root, Some((priv_scalar, pub_xy))).await?;
-    // `ecc_gen_keypair_from_okm` returns each coordinate in PAL-LE
+    // `ecc_gen_keypair_from_root` returns each coordinate in PAL-LE
     // wire form, but every downstream consumer here (CSR SPKI,
     // PTAID hash, KeyReport `pk_x`/`pk_y`) expects standard SEC1
     // big-endian. Reverse each coordinate in place so `pub_sec1`
@@ -818,10 +818,12 @@ pub(crate) mod kdf {
     //!   root via a distinct domain-separation label, without re-running
     //!   the expensive UDS-touching KBKDF.  (Future part-final local
     //!   keys will fan out from `PartRoot` the same way.)
-    //! - The third stage delegates to
-    //!   [`azihsm_crypto::EccPrivateKey::from_okm_a2_1`] via the
-    //!   PAL trait
-    //!   [`HsmEcc::ecc_gen_keypair_from_okm`](azihsm_fw_hsm_pal_traits::HsmEcc::ecc_gen_keypair_from_okm).
+    //! - The third stage delegates to the PAL trait
+    //!   [`HsmEcc::ecc_gen_keypair_from_root`](azihsm_fw_hsm_pal_traits::HsmEcc::ecc_gen_keypair_from_root),
+    //!   which owns the HKDF-Expand + FIPS 186-5 §A.2 scalar
+    //!   generation for its platform (§A.2.1 on the software PAL via
+    //!   [`azihsm_crypto::EccPrivateKey::from_okm_a2_1`], §A.2.2 on the
+    //!   uno hardware PAL).
     //!
     //! # Public surface
     //!
@@ -1003,33 +1005,35 @@ pub(crate) mod kdf {
     pub const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
 
     /// Derive the deterministic per-partition PTA key pair (P-384) from
-    /// a `PartRoot` produced by [`derive_part_root`], composing RFC 5869
-    /// HKDF-Expand-SHA384 with FIPS 186-5 §A.2.1 (Extra Random Bits)
-    /// keypair generation.
+    /// a `PartRoot` produced by [`derive_part_root`].
     ///
-    /// The HKDF info input is `KEYPAIR_LABEL_PTA ‖ u16_be(okm_len)` so
-    /// that two different curves (or two different labels of the same
-    /// length) can never share an OKM, and so that increasing `okm_len`
-    /// in a future protocol revision is a domain-separating change.
+    /// The `PartRoot` is handed directly to the PAL, which owns the
+    /// full FIPS 186-5 §A.2 derivation: a domain-separated
+    /// HKDF-Expand-SHA384 (info built from `KEYPAIR_LABEL_PTA`)
+    /// followed by the platform's §A.2 scalar generation — §A.2.1
+    /// (extra random bits) on a software PAL, or §A.2.2 (rejection
+    /// sampling) on a hardware PAL whose modular unit cannot reduce by
+    /// the even value `n − 1`.  Each fans out of the same `PartRoot`,
+    /// so the keypair regenerates byte-identically per platform.
     ///
-    /// Same query/copy convention as [`derive_part_root`] and as the
-    /// underlying PAL primitives
-    /// ([`HsmEcc::ecc_gen_keypair_from_okm`]):
+    /// Same query/copy convention as [`derive_part_root`] and the
+    /// underlying PAL primitive
+    /// ([`HsmEcc::ecc_gen_keypair_from_root`]):
     ///
     /// 1. **Query** — call with `out = None`.  No derivation happens;
     ///    returns the per-curve `(priv_len, pub_len)` byte counts the
     ///    caller must allocate.  `root` is still validated.
     /// 2. **Alloc** — caller allocates two DMA buffers of those sizes.
     /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.  The
-    ///    method runs HKDF-Expand to produce 56 B OKM, then dispatches
-    ///    to the PAL §A.2.1 derive primitive.
+    ///    `PartRoot` is dispatched to the PAL derive primitive.
     ///
     /// # Parameters
     ///
-    /// - `pal` — PAL providing [`HsmKdf::hkdf_expand`] and
-    ///   [`HsmEcc::ecc_gen_keypair_from_okm`].
+    /// - `pal` — PAL providing
+    ///   [`HsmEcc::ecc_gen_keypair_from_root`].
     /// - `io` — caller's I/O context (per-IO scope).
-    /// - `alloc` — scoped allocator for HKDF info and OKM scratch.
+    /// - `alloc` — scoped allocator forwarded to the PAL derive
+    ///   primitive.
     /// - `root` — `PartRoot` from [`derive_part_root`].  Length
     ///   must equal [`PART_ROOT_LEN`].
     /// - `out` — `None` to query buffer sizes; `Some((priv_out,
@@ -1055,7 +1059,6 @@ pub(crate) mod kdf {
         let curve = HsmEccCurve::P384;
         let priv_len = curve.wire_coord_len();
         let pub_len = curve.wire_pub_key_len();
-        let okm_len = curve.a2_1_okm_len();
 
         if root.len() != PART_ROOT_LEN {
             return Err(HsmError::InvalidArg);
@@ -1068,22 +1071,14 @@ pub(crate) mod kdf {
             return Err(HsmError::InvalidArg);
         }
 
-        // ── HKDF-Expand info: KEYPAIR_LABEL_PTA ‖ u16_be(okm_len) ──
-        let info = alloc.dma_alloc(KEYPAIR_LABEL_PTA.len() + 2)?;
-        info[..KEYPAIR_LABEL_PTA.len()].copy_from_slice(KEYPAIR_LABEL_PTA);
-        info[KEYPAIR_LABEL_PTA.len()..].copy_from_slice(&(okm_len as u16).to_be_bytes());
-
-        // ── HKDF-Expand → OKM (curve-specific length) ─────────────
-        let okm = alloc.dma_alloc(okm_len)?;
-        pal.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(info), okm)
-            .await?;
-
-        // ── §A.2.1 keypair derivation via PAL primitive ────────────
-        pal.ecc_gen_keypair_from_okm(
+        // Hand the raw PartRoot to the PAL; each platform owns its
+        // FIPS 186-5 §A.2 derivation (a domain-separated HKDF-Expand
+        // followed by its A.2.x scalar generation) from it.
+        pal.ecc_gen_keypair_from_root(
             io,
             alloc,
             curve,
-            okm,
+            root,
             Some((priv_out, pub_out)),
             HsmEccPct::None,
         )
