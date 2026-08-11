@@ -10,9 +10,9 @@
 //! POTA-endorsed PTA cert chain).  These tests therefore only assert
 //! that PartInit accepts the merged SD params end-to-end.
 //!
-//! * [`part_init_with_sata_emu`] — PartInit with an explicit SATA
+//! * [`part_init_with_sata`] — PartInit with an explicit SATA
 //!   thumbprint (no SAPOTA) succeeds.
-//! * [`part_init_with_sapota_emu`] — PartInit additionally carrying a
+//! * [`part_init_with_sapota`] — PartInit additionally carrying a
 //!   SAPOTA thumbprint succeeds.
 
 use super::bootstrap_rotated_co;
@@ -39,6 +39,7 @@ macro_rules! assert_part_init_artifacts_present {
     }};
 }
 
+/// Verifies that PartInit succeeds with a SATA thumbprint and no SAPOTA thumbprint.
 #[test]
 fn part_init_with_sata() {
     let ctx = TestCtx::new();
@@ -58,6 +59,7 @@ fn part_init_with_sata() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit succeeds with both SATA and SAPOTA thumbprints.
 #[test]
 fn part_init_with_sapota() {
     let ctx = TestCtx::new();
@@ -80,8 +82,9 @@ fn part_init_with_sapota() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts a valid modified SATA thumbprint.
 #[test]
-fn part_init_with_modified_sata_thumbprint_emu() {
+fn part_init_with_modified_sata_thumbprint() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -106,8 +109,9 @@ fn part_init_with_modified_sata_thumbprint_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts a valid modified SAPOTA thumbprint.
 #[test]
-fn part_init_with_modified_sapota_thumbprint_emu() {
+fn part_init_with_modified_sapota_thumbprint() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -133,8 +137,9 @@ fn part_init_with_modified_sapota_thumbprint_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts distinct SATA and SAPOTA thumbprints.
 #[test]
-fn part_init_with_distinct_sata_and_sapota_thumbprints_emu() {
+fn part_init_with_distinct_sata_and_sapota_thumbprints() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -160,8 +165,9 @@ fn part_init_with_distinct_sata_and_sapota_thumbprints_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts matching SATA and SAPOTA thumbprint values.
 #[test]
-fn part_init_with_matching_sata_and_sapota_thumbprints_emu() {
+fn part_init_with_matching_sata_and_sapota_thumbprints() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -184,8 +190,9 @@ fn part_init_with_matching_sata_and_sapota_thumbprints_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts boundary-pattern SATA and SAPOTA thumbprints.
 #[test]
-fn part_init_with_boundary_pattern_sd_thumbprints_emu() {
+fn part_init_with_boundary_pattern_sd_thumbprints() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -208,8 +215,9 @@ fn part_init_with_boundary_pattern_sd_thumbprints_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit accepts independently modified merged security-domain inputs.
 #[test]
-fn part_init_with_modified_merged_sd_inputs_emu() {
+fn part_init_with_modified_merged_sd_inputs() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -238,8 +246,9 @@ fn part_init_with_modified_merged_sd_inputs_emu() {
     assert_part_init_artifacts_present!(resp);
 }
 
+/// Verifies that PartInit without SAPOTA still returns both PTA artifacts.
 #[test]
-fn part_init_sd_without_sapota_still_returns_both_artifacts_emu() {
+fn part_init_sd_without_sapota_still_returns_both_artifacts() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -268,7 +277,7 @@ fn part_init_sd_without_sapota_still_returns_both_artifacts_emu() {
 
 /// Verifies that PartInit accepts different valid SATA thumbprints across clean device states.
 #[test]
-fn part_init_with_different_sata_thumbprints_emu() {
+fn part_init_with_different_sata_thumbprints() {
     let mut sata_a = sata_thumbprint();
     sata_a[0] ^= 0x01;
 
@@ -314,7 +323,7 @@ fn part_init_with_different_sata_thumbprints_emu() {
 
 /// Verifies that PartInit accepts different valid SAPOTA thumbprints across clean device states.
 #[test]
-fn part_init_with_different_sapota_thumbprints_emu() {
+fn part_init_with_different_sapota_thumbprints() {
     let sapota_a = [0x33u8; 48];
     let sapota_b = [0x66u8; 48];
 
@@ -357,7 +366,7 @@ fn part_init_with_different_sapota_thumbprints_emu() {
 
 /// Verifies that SAPOTA is optional and PartInit succeeds both with and without it.
 #[test]
-fn part_init_sapota_is_optional_emu() {
+fn part_init_sapota_is_optional() {
     {
         let ctx = TestCtx::new();
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -398,7 +407,7 @@ fn part_init_sapota_is_optional_emu() {
 
 /// Verifies that PartInit accepts a correctly sized all-zero SATA thumbprint.
 #[test]
-fn part_init_with_all_zero_sata_thumbprint_emu() {
+fn part_init_with_all_zero_sata_thumbprint() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -421,7 +430,7 @@ fn part_init_with_all_zero_sata_thumbprint_emu() {
 
 /// Verifies that PartInit accepts correctly sized all-0xFF SATA and SAPOTA thumbprints.
 #[test]
-fn part_init_with_all_ff_sata_and_sapota_thumbprints_emu() {
+fn part_init_with_all_ff_sata_and_sapota_thumbprints() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -445,7 +454,7 @@ fn part_init_with_all_ff_sata_and_sapota_thumbprints_emu() {
 
 /// Verifies that independent single-byte changes to SATA and SAPOTA thumbprints are accepted.
 #[test]
-fn part_init_accepts_single_byte_changes_in_each_sd_thumbprint_emu() {
+fn part_init_accepts_single_byte_changes_in_each_sd_thumbprint() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -472,7 +481,7 @@ fn part_init_accepts_single_byte_changes_in_each_sd_thumbprint_emu() {
 
 /// Verifies that PartInit succeeds independently on two clean emulator instances.
 #[test]
-fn part_init_sd_succeeds_again_after_erase_and_rebootstrap_emu() {
+fn part_init_sd_succeeds_again_after_erase_and_rebootstrap() {
     let sapota = [0x33u8; 48];
 
     {
@@ -514,7 +523,7 @@ fn part_init_sd_succeeds_again_after_erase_and_rebootstrap_emu() {
 
 /// Verifies that PartInit accepts an all-zero SATA thumbprint when SAPOTA is absent.
 #[test]
-fn sd_config_all_zero_sata_without_sapota_emu() {
+fn sd_config_all_zero_sata_without_sapota() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -537,7 +546,7 @@ fn sd_config_all_zero_sata_without_sapota_emu() {
 
 /// Verifies that PartInit accepts an all-0xFF SATA thumbprint when SAPOTA is absent.
 #[test]
-fn sd_config_all_ff_sata_without_sapota_emu() {
+fn sd_config_all_ff_sata_without_sapota() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -560,7 +569,7 @@ fn sd_config_all_ff_sata_without_sapota_emu() {
 
 /// Verifies that PartInit accepts all-zero SATA and SAPOTA thumbprints together.
 #[test]
-fn sd_config_all_zero_sata_and_sapota_emu() {
+fn sd_config_all_zero_sata_and_sapota() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -584,7 +593,7 @@ fn sd_config_all_zero_sata_and_sapota_emu() {
 
 /// Verifies that PartInit accepts all-0xFF SATA and SAPOTA thumbprints together.
 #[test]
-fn sd_config_all_ff_sata_and_sapota_emu() {
+fn sd_config_all_ff_sata_and_sapota() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -608,7 +617,7 @@ fn sd_config_all_ff_sata_and_sapota_emu() {
 
 /// Verifies that distinct SATA and SAPOTA values are accepted independently.
 #[test]
-fn sd_config_distinct_sata_and_sapota_values_emu() {
+fn sd_config_distinct_sata_and_sapota_values() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -637,7 +646,7 @@ fn sd_config_distinct_sata_and_sapota_values_emu() {
 
 /// Verifies that alternating-byte SATA and SAPOTA thumbprints are accepted.
 #[test]
-fn sd_config_alternating_sata_and_sapota_patterns_emu() {
+fn sd_config_alternating_sata_and_sapota_patterns() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -666,7 +675,7 @@ fn sd_config_alternating_sata_and_sapota_patterns_emu() {
 
 /// Verifies that ascending and descending SD thumbprint byte sequences are accepted.
 #[test]
-fn sd_config_sequential_sata_and_sapota_patterns_emu() {
+fn sd_config_sequential_sata_and_sapota_patterns() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -695,7 +704,7 @@ fn sd_config_sequential_sata_and_sapota_patterns_emu() {
 
 /// Verifies that a SATA thumbprint differing only in its first byte is accepted.
 #[test]
-fn sd_config_sata_first_byte_modified_emu() {
+fn sd_config_sata_first_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -719,7 +728,7 @@ fn sd_config_sata_first_byte_modified_emu() {
 
 /// Verifies that a SATA thumbprint differing only in its middle byte is accepted.
 #[test]
-fn sd_config_sata_middle_byte_modified_emu() {
+fn sd_config_sata_middle_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -744,7 +753,7 @@ fn sd_config_sata_middle_byte_modified_emu() {
 
 /// Verifies that a SATA thumbprint differing only in its final byte is accepted.
 #[test]
-fn sd_config_sata_last_byte_modified_emu() {
+fn sd_config_sata_last_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -769,7 +778,7 @@ fn sd_config_sata_last_byte_modified_emu() {
 
 /// Verifies that a SAPOTA thumbprint differing only in its first byte is accepted.
 #[test]
-fn sd_config_sapota_first_byte_modified_emu() {
+fn sd_config_sapota_first_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -793,7 +802,7 @@ fn sd_config_sapota_first_byte_modified_emu() {
 
 /// Verifies that a SAPOTA thumbprint differing only in its middle byte is accepted.
 #[test]
-fn sd_config_sapota_middle_byte_modified_emu() {
+fn sd_config_sapota_middle_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -818,7 +827,7 @@ fn sd_config_sapota_middle_byte_modified_emu() {
 
 /// Verifies that a SAPOTA thumbprint differing only in its final byte is accepted.
 #[test]
-fn sd_config_sapota_last_byte_modified_emu() {
+fn sd_config_sapota_last_byte_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -843,7 +852,7 @@ fn sd_config_sapota_last_byte_modified_emu() {
 
 /// Verifies that changing both ends of both SD thumbprints is accepted.
 #[test]
-fn sd_config_sata_and_sapota_endpoint_changes_emu() {
+fn sd_config_sata_and_sapota_endpoint_changes() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -874,7 +883,7 @@ fn sd_config_sata_and_sapota_endpoint_changes_emu() {
 
 /// Verifies that independently modified POTA, SATA, and SAPOTA values are accepted together.
 #[test]
-fn sd_config_all_thumbprints_independently_modified_emu() {
+fn sd_config_all_thumbprints_independently_modified() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -910,7 +919,7 @@ fn sd_config_all_thumbprints_independently_modified_emu() {
 
 /// Verifies that the returned CSR and report contain more than placeholder bytes.
 #[test]
-fn sd_config_response_artifacts_have_encoded_content_emu() {
+fn sd_config_response_artifacts_have_encoded_content() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -939,7 +948,7 @@ fn sd_config_response_artifacts_have_encoded_content_emu() {
 
 /// Verifies that the CSR begins with a DER SEQUENCE tag.
 #[test]
-fn sd_config_pta_csr_has_der_sequence_prefix_emu() {
+fn sd_config_pta_csr_has_der_sequence_prefix() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -966,7 +975,7 @@ fn sd_config_pta_csr_has_der_sequence_prefix_emu() {
 
 /// Verifies that omitting SAPOTA still returns both required PTA artifacts.
 #[test]
-fn sd_config_without_sapota_returns_complete_response_emu() {
+fn sd_config_without_sapota_returns_complete_response() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -993,7 +1002,7 @@ fn sd_config_without_sapota_returns_complete_response_emu() {
 
 /// Verifies that supplying SAPOTA returns both required PTA artifacts.
 #[test]
-fn sd_config_with_sapota_returns_complete_response_emu() {
+fn sd_config_with_sapota_returns_complete_response() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -1022,7 +1031,7 @@ fn sd_config_with_sapota_returns_complete_response_emu() {
 
 /// Verifies that PartInit cannot be executed twice without resetting the device state.
 #[test]
-fn second_part_init_without_erase_is_rejected_emu() {
+fn second_part_init_without_erase_is_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -1055,7 +1064,7 @@ fn second_part_init_without_erase_is_rejected_emu() {
 
 /// Verifies that a session created before erase cannot be reused for PartInit.
 #[test]
-fn part_init_with_stale_session_after_erase_is_rejected_emu() {
+fn part_init_with_stale_session_after_erase_is_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -1072,12 +1081,88 @@ fn part_init_with_stale_session_after_erase_is_rejected_emu() {
         )
         .expect_err("PartInit with a session created before erase must be rejected");
 
+    crate::harness::assertions::assert_fw_rejects(
+        &err,
+        azihsm_ddi_tbor_types::TborStatus::DefaultPskMustRotate,
+    );
+}
+
+/// Verifies that a non-empty SAPOTA thumbprint with an invalid length is rejected.
+#[test]
+fn part_init_rejects_invalid_sapota_thumbprint_length() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let invalid_sapota = [0x33u8; 47];
+
+    let err = ctx
+        .part_init_sd(
+            &session,
+            &mach_seed(),
+            &known_good_part_policy(),
+            &pota_thumbprint(),
+            &sata_thumbprint(),
+            Some(&invalid_sapota),
+        )
+        .expect_err("SAPOTA with length != 48 must be rejected");
+
     assert!(
-        matches!(
-            err,
-            azihsm_ddi_interface::DdiError::TborStatus(_)
-                | azihsm_ddi_interface::DdiError::DdiError(_)
-        ),
-        "expected FW rejection for stale session after erase, got {err:?}"
+        matches!(err, azihsm_ddi_interface::DdiError::InvalidParameter),
+        "expected InvalidParameter for SAPOTA length != 48, got {err:?}"
+    );
+}
+
+/// Verifies that different SATA thumbprints produce different PTA reports.
+#[test]
+fn different_sata_thumbprints_produce_different_pta_reports() {
+    let mut sata_a = sata_thumbprint();
+    sata_a[0] ^= 0x01;
+
+    let mut sata_b = sata_thumbprint();
+    sata_b[0] ^= 0x02;
+
+    let report_a = {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_a,
+                None,
+            )
+            .expect("PartInit with first SATA thumbprint");
+
+        assert_part_init_artifacts_present!(resp);
+
+        resp.pta_report.clone()
+    };
+
+    let report_b = {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+        let resp = ctx
+            .part_init_sd(
+                &session,
+                &mach_seed(),
+                &known_good_part_policy(),
+                &pota_thumbprint(),
+                &sata_b,
+                None,
+            )
+            .expect("PartInit with second SATA thumbprint");
+
+        assert_part_init_artifacts_present!(resp);
+
+        resp.pta_report.clone()
+    };
+
+    assert_ne!(
+        report_a, report_b,
+        "different SATA thumbprints must produce different PTA report data"
     );
 }
