@@ -200,12 +200,13 @@ impl HsmHash for UnoHsmPal {
         big_endian: bool,
     ) -> HsmResult<()> {
         let _ = io;
+        let digest_len = algo.digest_len();
+        if digest.len() < digest_len {
+            return Err(HsmError::InvalidArg);
+        }
         self.sha_oneshot(algo, data, digest, false).await?;
         if !big_endian {
-            let digest_len = algo.digest_len();
-            if let Some(bytes) = digest.get_mut(..digest_len) {
-                bytes.reverse();
-            }
+            digest[..digest_len].reverse();
         }
         Ok(())
     }

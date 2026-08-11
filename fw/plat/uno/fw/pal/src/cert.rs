@@ -268,7 +268,7 @@ impl UnoHsmPal {
             let outd = scope.dma_alloc(SHA256_LEN)?;
             // `big_endian = true`: emit the standard (natural byte order) SHA-256
             // digest. The host and SP compute cert thumbprints over natural
-            // SHA-256; `false` here would per-word byte-swap the digest (the PKA
+            // SHA-256; `false` here would fully byte-reverse the digest (the PKA
             // operand order) and the chain thumbprint would never match.
             self.hash(io, HsmHashAlgo::Sha256, inp, outd, true).await?;
             let mut out = [0u8; SHA256_LEN];

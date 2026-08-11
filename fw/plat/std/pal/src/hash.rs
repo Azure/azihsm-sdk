@@ -116,14 +116,13 @@ mod tests {
         let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
         let io = StdHsmIo::admin(HsmPartId::from(0u8), 0, reply_tx);
 
-        let msg_buf = msg.to_vec();
-        let data = unsafe { DmaBuf::from_raw(&msg_buf) };
         let digest_len = algo.digest_len();
-        let mut buf = [0u8; 64];
-        let digest = unsafe { DmaBuf::from_raw_mut(&mut buf[..digest_len]) };
+        let data = pal.dma_alloc(&io, msg.len()).unwrap();
+        data.copy_from_slice(msg);
+        let digest = pal.dma_alloc(&io, digest_len).unwrap();
 
         pal.hash(&io, algo, data, digest, big_endian).await.unwrap();
-        buf[..digest_len].to_vec()
+        digest[..digest_len].to_vec()
     }
 
     /// Reference big-endian digest computed by the OpenSSL-backed driver.
