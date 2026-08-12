@@ -88,12 +88,8 @@ fn default_psk_gate_api_rev_bypass() {
 fn default_psk_gate_session_open_init_bypass() {
     let ctx = TestCtx::new();
 
-    // Each role is probed sequentially on the same fd: hw enforces
-    // `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so the CO session must be
-    // closed before CU's `SessionOpenInit` is issued. The gate is a
-    // per-role property, so sequential probes prove it for both roles
-    // without needing overlapping sessions.
-
+    // Hardware permits only one active session per file descriptor,
+    // so probe CO and CU sequentially.
     let opts_co =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&DEFAULT_PSK_CO);
 
@@ -105,6 +101,9 @@ fn default_psk_gate_session_open_init_bypass() {
         .session_open_finish(pending_co)
         .expect("CO Authenticated finish under default CO PSK");
 
+    ctx.session_close(session_co.session_id)
+        .expect("close CO session before opening CU session");
+
     let opts_cu = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&DEFAULT_PSK_CU);
 
     let pending_cu = ctx
@@ -114,9 +113,6 @@ fn default_psk_gate_session_open_init_bypass() {
     let session_cu = ctx
         .session_open_finish(pending_cu)
         .expect("CU PlainText finish under default CU PSK");
-
-    ctx.session_close(session_co.session_id)
-        .expect("close CO session");
 
     ctx.session_close(session_cu.session_id)
         .expect("close CU session");
