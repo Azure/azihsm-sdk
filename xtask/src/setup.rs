@@ -16,7 +16,7 @@ use crate::Xtask;
 use crate::XtaskCtx;
 
 /// Version constants for installed dependencies
-const CARGO_NEXTEST_VERSION: &str = "0.9.132";
+const CARGO_NEXTEST_VERSION: &str = "0.9.143";
 const TAPLO_CLI_VERSION: &str = "0.10.0";
 #[cfg(not(target_os = "windows"))]
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
