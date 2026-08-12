@@ -303,8 +303,7 @@ impl HsmHash for UnoHsmPal {
         }
 
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(&mut ctx, None, len, true)
-            .await?;
+        self.sha_digest_block(&mut ctx, None, len, true).await?;
         digest[..digest_len].copy_from_slice(&ctx.buf[..digest_len]);
         if !big_endian {
             digest[..digest_len].reverse();
@@ -397,8 +396,7 @@ impl UnoHsmPal {
         finalize: bool,
     ) -> HsmResult<()> {
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(ctx, None, len, finalize)
-            .await?;
+        self.sha_digest_block(ctx, None, len, finalize).await?;
         ctx.pending_len = 0;
         Ok(())
     }

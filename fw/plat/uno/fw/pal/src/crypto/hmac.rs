@@ -541,8 +541,7 @@ impl UnoHsmPal {
     /// * Any [`HsmError`] surfaced by the SHA driver.
     async fn hmac_flush_pending(&self, ctx: &mut HmacContext<'_>, finalize: bool) -> HsmResult<()> {
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(ctx, None, len, finalize)
-            .await?;
+        self.sha_digest_block(ctx, None, len, finalize).await?;
         ctx.pending_len = 0;
         Ok(())
     }
