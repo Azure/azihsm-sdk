@@ -25,7 +25,7 @@ use azihsm_ddi_tbor_types::TborApiRevResp;
 use azihsm_ddi_tbor_types::TborResp;
 use azihsm_ddi_tbor_types::TborSessionCloseResp;
 
-/// Builds an FW error envelope containing one placeholder `None` TOC entry.
+/// Builds a response envelope with the given status containing one placeholder `None` TOC entry.
 fn encode_err_envelope(status: u32, out: &mut [u8]) -> usize {
     let bytes = ResponseEncoder::new(out, PROTOCOL_VERSION, status, false)
         .none()
@@ -231,7 +231,7 @@ fn fw_status_is_consistent_across_response_shapes() {
     );
 }
 
-/// Verifies that FW status takes precedence over an invalid TOC entry type.
+/// Verifies that FW status takes precedence over a schema shape mismatch.
 #[test]
 fn fw_status_precedes_invalid_schema_body() {
     let mut buf = [0u8; 64];
