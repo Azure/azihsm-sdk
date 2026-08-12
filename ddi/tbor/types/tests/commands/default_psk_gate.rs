@@ -42,9 +42,6 @@ use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
-use crate::commands::part_init::known_good_part_policy;
-use crate::commands::part_init::mach_seed;
-use crate::commands::part_init::pota_thumbprint;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
@@ -131,13 +128,17 @@ fn default_psk_gate_session_open_init_bypass() {
 fn default_psk_gate_session_close_bypass() {
     let ctx = TestCtx::new();
 
-    let session_co = ctx.open_session(CO, SessionType::Authenticated);
+    let session_co = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     session_co
         .close()
         .expect("SessionClose must bypass gate while CO PSK is default");
 
-    let session_cu = ctx.open_session(CU, SessionType::PlainText);
+    let session_cu = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open CU plaintext session");
 
     session_cu
         .close()
@@ -151,7 +152,11 @@ fn default_psk_gate_session_close_repeated_sessions_emu() {
     let ctx = TestCtx::new();
 
     for attempt in 1..=3 {
-        let session = ctx.open_session(CO, SessionType::Authenticated);
+        let session = ctx
+            .open_session(CO, SessionType::Authenticated)
+            .unwrap_or_else(|err| {
+                panic!("failed to open CO authenticated session on attempt {attempt}: {err:?}")
+            });
 
         session.close().unwrap_or_else(|err| {
             panic!(
@@ -162,7 +167,11 @@ fn default_psk_gate_session_close_repeated_sessions_emu() {
     }
 
     for attempt in 1..=3 {
-        let session = ctx.open_session(CU, SessionType::PlainText);
+        let session = ctx
+            .open_session(CU, SessionType::PlainText)
+            .unwrap_or_else(|err| {
+                panic!("failed to open CU plaintext session on attempt {attempt}: {err:?}")
+            });
 
         session.close().unwrap_or_else(|err| {
             panic!(
@@ -178,7 +187,9 @@ fn default_psk_gate_session_close_repeated_sessions_emu() {
 #[test]
 fn default_psk_gate_psk_change_bypass() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("PskChange must bypass gate while CO PSK is default");
@@ -187,10 +198,12 @@ fn default_psk_gate_psk_change_bypass() {
 /// Reopening with the rotated PSK proves that `PskChange` reached the
 /// actual handler and replaced the stored CO credential.
 #[test]
-fn default_psk_gate_psk_change_co_rotation_takes_effect_emu() {
+fn default_psk_gate_psk_change_co_rotation_takes_effect() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("rotate CO PSK from default");
@@ -217,10 +230,12 @@ fn default_psk_gate_psk_change_co_rotation_takes_effect_emu() {
 /// The original default CO PSK must stop authenticating after a
 /// successful rotation.
 #[test]
-fn default_psk_gate_old_co_psk_rejected_after_rotation_emu() {
+fn default_psk_gate_old_co_psk_rejected_after_rotation() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("rotate CO PSK from default");
@@ -258,10 +273,12 @@ fn default_psk_gate_old_co_psk_rejected_after_rotation_emu() {
 /// succeed, proving that the failed attempt did not corrupt stored PSK
 /// state.
 #[test]
-fn default_psk_gate_wrong_rotated_psk_rejected_emu() {
+fn default_psk_gate_wrong_rotated_psk_rejected() {
     let ctx = TestCtx::new();
 
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(bootstrap.handshake(), &GATE_ROTATED_PSK_A)
         .expect("rotate CO PSK");
@@ -294,10 +311,12 @@ fn default_psk_gate_wrong_rotated_psk_rejected_emu() {
 /// CO must support a second PSK rotation after already moving away
 /// from the compiled-in default.
 #[test]
-fn default_psk_gate_co_can_rotate_twice_emu() {
+fn default_psk_gate_co_can_rotate_twice() {
     let ctx = TestCtx::new();
 
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(bootstrap.handshake(), &GATE_ROTATED_PSK_A)
         .expect("first CO PSK rotation: default to A");
@@ -341,10 +360,12 @@ fn default_psk_gate_co_can_rotate_twice_emu() {
 /// After the second rotation, PSK A must be rejected and PSK B must
 /// authenticate successfully.
 #[test]
-fn default_psk_gate_previous_psk_rejected_after_second_rotation_emu() {
+fn default_psk_gate_previous_psk_rejected_after_second_rotation() {
     let ctx = TestCtx::new();
 
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(bootstrap.handshake(), &GATE_ROTATED_PSK_A)
         .expect("first CO PSK rotation: default to A");
@@ -395,10 +416,12 @@ fn default_psk_gate_previous_psk_rejected_after_second_rotation_emu() {
 
 /// Rotating the CO PSK must not alter the CU PSK slot.
 #[test]
-fn default_psk_gate_co_rotation_does_not_change_cu_default_emu() {
+fn default_psk_gate_co_rotation_does_not_change_cu_default() {
     let ctx = TestCtx::new();
 
-    let co_session = ctx.open_session(CO, SessionType::Authenticated);
+    let co_session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(co_session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("rotate only the CO PSK");
@@ -423,16 +446,20 @@ fn default_psk_gate_co_rotation_does_not_change_cu_default_emu() {
 
 /// Opening and closing a CU session must not alter the CO default PSK.
 #[test]
-fn default_psk_gate_cu_session_does_not_change_co_default_emu() {
+fn default_psk_gate_cu_session_does_not_change_co_default() {
     let ctx = TestCtx::new();
 
-    let cu_session = ctx.open_session(CU, SessionType::PlainText);
+    let cu_session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open CU PlainText session");
 
     cu_session
         .close()
         .expect("close CU session while CU PSK is default");
 
-    let co_session = ctx.open_session(CO, SessionType::Authenticated);
+    let co_session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(co_session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("CO default PSK must remain valid after CU session");
@@ -442,10 +469,12 @@ fn default_psk_gate_cu_session_does_not_change_co_default_emu() {
 
 /// `ApiRev` must remain available after CO PSK rotation.
 #[test]
-fn default_psk_gate_api_rev_bypass_after_co_rotation_emu() {
+fn default_psk_gate_api_rev_bypass_after_co_rotation() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     ctx.psk_change(session.handshake(), &GATE_ROTATED_PSK_A)
         .expect("rotate CO PSK before ApiRev probe");
@@ -462,9 +491,11 @@ fn default_psk_gate_api_rev_bypass_after_co_rotation_emu() {
 /// `ApiRev` is out-of-session and must remain callable while a
 /// default-PSK session is active.
 #[test]
-fn default_psk_gate_api_rev_bypass_while_session_active_emu() {
+fn default_psk_gate_api_rev_bypass_while_session_active() {
     let ctx = TestCtx::new();
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO authenticated session");
 
     let _ = ctx
         .api_rev()
@@ -478,20 +509,26 @@ fn default_psk_gate_api_rev_bypass_while_session_active_emu() {
 /// Closing the same session twice must reject the second close without
 /// affecting subsequently opened sessions.
 #[test]
-fn default_psk_gate_second_close_of_same_session_is_rejected_emu() {
+fn default_psk_gate_second_close_of_same_session_is_rejected() {
     let ctx = TestCtx::new();
 
-    let session = ctx.open_session(CO, SessionType::Authenticated);
-    let session_id = session.handshake().session_id;
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO session");
+
+    let session_id = session.session_id();
 
     session.close().expect("first SessionClose must succeed");
 
-    assert!(
-        ctx.session_close(session_id).is_err(),
-        "second SessionClose for the same session must be rejected"
-    );
+    let err = ctx
+        .session_close(session_id)
+        .expect_err("second SessionClose for the same session must be rejected");
 
-    let replacement = ctx.open_session(CO, SessionType::Authenticated);
+    assert_fw_rejects(&err, TborStatus::SessionNotFound);
+
+    let replacement = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open replacement CO session");
 
     replacement
         .close()
