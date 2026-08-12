@@ -2403,9 +2403,9 @@ impl Dispatcher {
 
         let user_session = self.function.get_user_session(session_id, false)?;
 
-        let blob = req.masked_key.as_slice();
+        let blob: MaskedKeyBlob = req.masked_key.as_slice().into();
 
-        let key_num = user_session.unmask_key(blob)?;
+        let key_num = user_session.unmask_key(&blob)?;
         let unmasked_entry = user_session.get_key_entry(key_num)?;
 
         let pub_key = self.extract_pub_key(&unmasked_entry)?;

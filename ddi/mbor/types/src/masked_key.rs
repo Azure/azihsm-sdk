@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+
+use azihsm_ddi_mbor_codec::MborDecode;
+use azihsm_ddi_mbor_codec::MborDecoder;
 use azihsm_ddi_mbor_derive::Ddi;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
@@ -379,6 +385,21 @@ impl From<&MaskedKeyAesHeader> for MaskedKeyAesLayout {
     }
 }
 
+impl From<&MaskedKeyLayout> for MaskedKeyAesHeader {
+    fn from(layout: &MaskedKeyLayout) -> Self {
+        Self {
+            iv_len: layout.iv_len() as u16,
+            post_iv_pad_len: layout.post_iv_pad_len() as u16,
+            metadata_len: layout.metadata_len() as u16,
+            post_metadata_pad_len: layout.post_metadata_pad_len() as u16,
+            encrypted_key_len: layout.encrypted_key_len() as u16,
+            post_encrypted_key_pad_len: layout.post_encrypted_key_pad_len() as u16,
+            tag_len: layout.tag_len() as u16,
+            reserved: [0u8; 34],
+        }
+    }
+}
+
 /// Pre-encoded masked key structure.
 /// This structure is used to prepare a masked key for encoding.
 /// Contains only methods that are common to all key types.
@@ -689,13 +710,7 @@ impl<'a> MaskedKey<'a> {
                     MaskedKeyAesHeader::try_mut_from_bytes(aes_payload)
                         .map_err(|_| MaskedKeyError::InvalidLength)?;
 
-                payload.iv_len = layout.iv_len() as u16;
-                payload.post_iv_pad_len = layout.post_iv_pad_len() as u16;
-                payload.metadata_len = layout.metadata_len() as u16;
-                payload.post_metadata_pad_len = layout.post_metadata_pad_len() as u16;
-                payload.encrypted_key_len = layout.encrypted_key_len() as u16;
-                payload.post_encrypted_key_pad_len = layout.post_encrypted_key_pad_len() as u16;
-                payload.tag_len = layout.tag_len() as u16;
+                *payload = (&layout).into();
             }
             _ => {
                 Err(MaskedKeyError::InvalidAlgorithm)?;
@@ -802,7 +817,7 @@ pub struct DdiMaskedKeyMetadata {
 
     /// Key BKS2 Number
     #[ddi(id = 4)]
-    /// The BKS2 index ndicating which BKS2 this key belongs to.
+    /// The BKS2 index indicating which BKS2 this key belongs to.
     pub bks2_index: Option<u16>,
 
     /// Key Name
@@ -826,4 +841,113 @@ pub struct DdiMaskedKeyAttributes {
     /// Key Attributes Blob
     #[ddi(id = 1)]
     pub blob: [u8; 32],
+}
+
+/// Alias for masked key blob
+/// that represents [`MaskedKey`]
+pub type MaskedKeyBlob = Vec<u8>;
+
+/// Decodes the fixed-size, algorithm-agnostic leading header from a raw
+/// masked-key blob.
+impl TryFrom<&[u8]> for MaskedKeyHeader {
+    type Error = MaskedKeyError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() < size_of::<MaskedKeyHeader>() {
+            return Err(MaskedKeyError::InvalidLength);
+        }
+
+        let (header, _) = MaskedKeyHeader::try_ref_from_prefix(bytes)
+            .map_err(|_| MaskedKeyError::HeaderDecodeError)?;
+
+        Ok(*header)
+    }
+}
+
+/// Decodes the cleartext [`DdiMaskedKeyMetadata`] embedded in a raw
+/// masked-key blob.
+impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
+    type Error = MaskedKeyError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        // Parse MaskedKeyHeader
+        let header = MaskedKeyHeader::try_from(bytes)?;
+
+        if !matches!(
+            header.algorithm,
+            MaskingKeyAlgorithm::AesCbc256Hmac384 | MaskingKeyAlgorithm::AesGcm256
+        ) {
+            return Err(MaskedKeyError::InvalidMaskingKeyAlgorithm);
+        }
+
+        // Parse MaskedKeyAesHeader
+        let rest = &bytes[size_of::<MaskedKeyHeader>()..];
+        if rest.len() < size_of::<MaskedKeyAesHeader>() {
+            return Err(MaskedKeyError::InvalidLength);
+        }
+
+        let (aes_header, _) = MaskedKeyAesHeader::try_ref_from_prefix(rest)
+            .map_err(|_| MaskedKeyError::HeaderDecodeError)?;
+
+        validate_aes_header(aes_header, header.algorithm)?;
+
+        if rest.len() < aes_metadata_section_len(aes_header) {
+            return Err(MaskedKeyError::InvalidLength);
+        }
+
+        // Parse MaskedKeyAes
+        let aes_masked_key = MaskedKeyAes::new(header, aes_header.into(), rest);
+
+        // Parse the metadata section
+        let mut decoder = MborDecoder::new(
+            aes_masked_key.metadata(),
+            #[cfg(feature = "post_decode")]
+            false,
+        );
+        DdiMaskedKeyMetadata::mbor_decode(&mut decoder)
+            .map_err(|_| MaskedKeyError::MetadataDecodeError)
+    }
+}
+
+/// Validates the AES-specific header invariants before any offsets derived
+/// from it are trusted (ported from the pre-existing hand-rolled
+/// validation in `azihsm-sdk`'s `api/lib`).
+fn validate_aes_header(
+    header: &MaskedKeyAesHeader,
+    algorithm: MaskingKeyAlgorithm,
+) -> Result<(), MaskedKeyError> {
+    if header.encrypted_key_len == 0 || header.metadata_len == 0 || header.tag_len == 0 {
+        return Err(MaskedKeyError::InvalidLength);
+    }
+
+    let expected_iv_len = match algorithm {
+        MaskingKeyAlgorithm::AesCbc256Hmac384 => AES_CBC_IV_SIZE as u16,
+        MaskingKeyAlgorithm::AesGcm256 => AES_GCM_IV_SIZE as u16,
+        _ => return Err(MaskedKeyError::InvalidMaskingKeyAlgorithm),
+    };
+    if header.iv_len != expected_iv_len {
+        return Err(MaskedKeyError::InvalidLength);
+    }
+
+    if !(header.iv_len + header.post_iv_pad_len).is_multiple_of(4)
+        || !(header.metadata_len + header.post_metadata_pad_len).is_multiple_of(4)
+        || !(header.encrypted_key_len + header.post_encrypted_key_pad_len).is_multiple_of(4)
+    {
+        return Err(MaskedKeyError::InvalidLength);
+    }
+
+    Ok(())
+}
+
+/// Total length, in bytes, of the AES-specific payload section (everything
+/// after `MaskedKeyAesHeader` through the trailing tag).
+fn aes_metadata_section_len(header: &MaskedKeyAesHeader) -> usize {
+    size_of::<MaskedKeyAesHeader>()
+        + header.iv_len as usize
+        + header.post_iv_pad_len as usize
+        + header.metadata_len as usize
+        + header.post_metadata_pad_len as usize
+        + header.encrypted_key_len as usize
+        + header.post_encrypted_key_pad_len as usize
+        + header.tag_len as usize
 }
