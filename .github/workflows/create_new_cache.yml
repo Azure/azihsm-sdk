@@ -52,7 +52,7 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
 
@@ -80,4 +80,4 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}

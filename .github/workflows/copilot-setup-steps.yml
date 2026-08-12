@@ -48,7 +48,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+          key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.CACHE_KEY_ID }}
           fail-on-cache-miss: false # If the cache is missing, we can still proceed as copilot can always do cargo xtask precheck --setup.
       - name: Install nightly rustfmt
         run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
