@@ -42,8 +42,8 @@ use crate::harness::TestCtx;
 
 mod crypto_rejects;
 mod fw_rejects;
-mod happy_path;
 mod sd_config;
+mod success_path;
 
 pub(crate) const CO: u8 = 0;
 
