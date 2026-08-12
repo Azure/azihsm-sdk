@@ -52,7 +52,7 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ github.sha }}
+        key: ${{ matrix.runner }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
 
@@ -80,4 +80,4 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ github.sha }}
+        key: ${{ matrix.runner }}-cargo-${{ github.sha }}
