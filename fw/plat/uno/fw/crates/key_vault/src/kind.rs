@@ -79,9 +79,35 @@ impl KeyLen {
 /// Per-kind length table, indexed by `HsmVaultKeyKind` discriminant.
 ///
 /// Mirrors the reference firmware's `raw_key_blob_size()` (fixed kinds)
-/// and var-HMAC min/max. `SessionEx` is length-discriminated by session
-/// type (PlainText=72, Authenticated=168) and modelled as variable;
-/// `SessionExPending` holds the in-flight TBOR Pending blob (up to 256).
+/// and var-HMAC min/max. `SessionExPending` holds the in-flight TBOR
+/// Pending blob (up to 256).
+///
+/// # `SessionEx`
+///
+/// Length-discriminated by session type, so it is modelled as variable.
+/// The two legal blobs are built by `session_blob` in
+/// `fw/plat/uno/fw/pal/src/session.rs`:
+///
+/// | Session type          | Layout                                             | Size |
+/// | --------------------- | ---------------------------------------------------| ---- |
+/// | `PlainText` (CU)      | `api_rev(8) ‖ param_key(32) ‖ masking_key(32)`     | 72   |
+/// | `Authenticated` (CO)  | the above `‖ mac_tx(48) ‖ mac_rx(48)`              | 168  |
+///
+/// so the range is exactly `[72, 168]` — `min` is the CU blob and `max`
+/// the CO blob; nothing legal lands in between.
+///
+/// **Do not derive these from `SESSION_MASKING_KEY_SIZE` (80).** That is
+/// the *legacy CBC* masking key used by the MBOR `Session` kind;
+/// `SessionEx` uses the 32-byte AES-256-GCM AEAD key
+/// ([`SESSION_MASKING_KEY_LEN`]). Using 80 yields the wrong range
+/// `[120, 216]`, which this table shipped with once. That failure was
+/// role-asymmetric and easy to misread: the CO blob (168) happens to sit
+/// inside `[120, 216]` so Crypto-Officer sessions worked, while every
+/// Crypto-User blob (72) fell under `min` and was rejected at
+/// `vault.create` with `InvalidArg` — surfacing only at
+/// `SessionOpenFinish` as `TborStatus::InvalidArg`, long after the
+/// handshake crypto had succeeded. `session_ex_range_is_derived_from_pal_layout`
+/// pins the range to the PAL constants so it cannot drift back.
 static KIND_LEN: [KeyLen; 44] = [
     /* 0  Free                         */ KeyLen::Invalid,
     /* 1  Rsa2kPublic                  */ KeyLen::Fixed(260),
@@ -257,6 +283,55 @@ mod tests {
             key_len(HsmVaultKeyKind::SessionExPending),
             Ok(KeyLen::Variable { min: 32, max: 256 })
         );
+    }
+
+    /// The `SessionEx` range is not an arbitrary pair of numbers — it is
+    /// the size of the two blobs the PAL actually writes. Derive both
+    /// from the same `pal_traits` constants `session_blob` uses, so if
+    /// any component key length changes this fails here rather than
+    /// silently rejecting real sessions on hardware.
+    #[test]
+    fn session_ex_range_is_derived_from_pal_layout() {
+        use azihsm_fw_hsm_pal_traits::SESSION_MAC_DIR_KEY_LEN;
+        use azihsm_fw_hsm_pal_traits::SESSION_MASKING_KEY_LEN;
+        use azihsm_fw_hsm_pal_traits::SESSION_PARAM_KEY_LEN;
+
+        // `api_rev` prefix on every SessionEx blob (mirrors the uno PAL's
+        // private `SESSION_API_REV_SIZE` in `session.rs`).
+        const API_REV: usize = 8;
+
+        // PlainText (CU): api_rev ‖ param_key ‖ masking_key
+        let cu = API_REV + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
+        // Authenticated (CO): the CU blob ‖ mac_tx ‖ mac_rx
+        let co = cu + 2 * SESSION_MAC_DIR_KEY_LEN;
+
+        assert_eq!(
+            key_len(HsmVaultKeyKind::SessionEx),
+            Ok(KeyLen::Variable {
+                min: cu as u16,
+                max: co as u16,
+            })
+        );
+    }
+
+    /// Both real blob sizes must be accepted and the bounds must be
+    /// tight. The 72-byte case is the regression guard: the legacy
+    /// CBC-derived `min: 120` rejected *every* Crypto-User session at
+    /// `vault.create`, which only surfaced at `SessionOpenFinish`.
+    #[test]
+    fn session_ex_accepts_both_blobs_and_rejects_out_of_range() {
+        let len = key_len(HsmVaultKeyKind::SessionEx).unwrap();
+
+        // CU (PlainText) — the size the legacy `min: 120` wrongly rejected.
+        assert_eq!(len.check(72), Ok(72));
+        // CO (Authenticated).
+        assert_eq!(len.check(168), Ok(168));
+
+        // Tight on both sides: nothing outside the two legal blobs.
+        assert!(len.check(71).is_err());
+        assert!(len.check(169).is_err());
+        // The legacy CBC-derived bounds must no longer be honoured.
+        assert!(len.check(216).is_err());
     }
 
     #[test]

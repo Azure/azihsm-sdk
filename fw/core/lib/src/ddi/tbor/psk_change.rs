@@ -38,8 +38,6 @@ use azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CU;
 use azihsm_fw_hsm_pal_traits::PSK_LEN;
 use azihsm_fw_hsm_undo::UndoLog;
 
-use crate::ct_eq;
-
 /// PSK slot id written when the active session is the Crypto Officer.
 const PSK_ID_CO: u8 = 0;
 /// PSK slot id written when the active session is a Crypto User.
@@ -142,15 +140,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 }
 
 /// Returns `true` if `candidate` equals either public default PSK
-/// ([`DEFAULT_PSK_CO`] or [`DEFAULT_PSK_CU`]).  Compared in constant
-/// time: `candidate` is a freshly-decrypted secret, so a data-dependent
-/// early-out could leak how it relates to the well-known constants.
+/// ([`DEFAULT_PSK_CO`] or [`DEFAULT_PSK_CU`]).
+///
+/// A plain comparison is fine here: both defaults are public constants
+/// and `candidate` is the value the caller itself just supplied, so a
+/// data-dependent early-out reveals nothing the caller does not already
+/// know — and a match is reported back explicitly as `InvalidArg`.
 fn is_default_psk(candidate: &[u8]) -> bool {
-    // Evaluate both branches (no `||` short-circuit) so the result does
-    // not reveal *which* default matched.
-    let is_co = ct_eq(candidate, DEFAULT_PSK_CO.as_slice());
-    let is_cu = ct_eq(candidate, DEFAULT_PSK_CU.as_slice());
-    is_co | is_cu
+    candidate == DEFAULT_PSK_CO.as_slice() || candidate == DEFAULT_PSK_CU.as_slice()
 }
 
 /// Maps the active session's role to the partition PSK slot it is

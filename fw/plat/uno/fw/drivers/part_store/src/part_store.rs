@@ -494,14 +494,13 @@ impl Partition {
         // state as far as the session PSKs are concerned: `part_psk` is
         // `RequiredPresent` and default-baked at allocation, so the slots
         // must read back as the defaults rather than keeping a rotated
-        // value. Mirrors the std PAL, whose migrated entry resets
-        // `psk_co`/`psk_cu` to `None` and therefore reads back as
+        // value. Re-uses [`bake_default_psks`] so allocation and NSSR can
+        // never drift apart. Mirrors the std PAL, whose migrated entry
+        // resets `psk_co`/`psk_cu` to `None` and therefore reads back as
         // `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`. `Disable` instead zeroes
         // them below, because the slot is being deallocated.
         if matches!(kind, PartResetKind::Migrate) {
-            let slot = self.slot_mut();
-            slot.psk_co = DEFAULT_PSK_CO;
-            slot.psk_cu = DEFAULT_PSK_CU;
+            self.bake_default_psks();
         }
 
         if matches!(kind, PartResetKind::Disable) {

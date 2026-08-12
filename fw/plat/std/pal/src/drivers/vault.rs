@@ -32,6 +32,9 @@
 
 use azihsm_fw_hsm_pal_traits::*;
 
+use crate::session::SESSION_CU_AUTH_BLOB_SIZE;
+use crate::session::SESSION_CU_BLOB_SIZE;
+
 // ---------------------------------------------------------------------------
 // Firmware-matching constants
 // ---------------------------------------------------------------------------
@@ -105,9 +108,9 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::SdSealing => 48,
         HsmVaultKeyKind::SdMasking => 32,
         HsmVaultKeyKind::SdPartitionOwnerSeed => 48,
-        // SessionEx is length-discriminated by session type
-        // (PlainText=120, Authenticated=216); reported as variable
-        // length, same handling as VarLenHmac*.
+        // `SessionEx` is length-discriminated by session type
+        // (PlainText=72, Authenticated=168 — see [`session_ex_len_valid`]);
+        // reported as variable length, same handling as VarLenHmac*.
         HsmVaultKeyKind::SessionEx => return None,
         // Variable-length HMAC — size depends on actual key.
         HsmVaultKeyKind::VarLenHmacSha256
@@ -116,6 +119,18 @@ pub fn fw_key_size(kind: HsmVaultKeyKind) -> Option<usize> {
         HsmVaultKeyKind::Free => return None,
         _ => return None,
     })
+}
+
+/// Whether `len` is a legal `SessionEx` blob length.
+///
+/// The kind is variable-length, but only two blobs are legal. Both
+/// bounds come from [`crate::session`], the module that actually builds
+/// the blob, so the check cannot drift from the writer:
+///
+/// * [`SESSION_CU_BLOB_SIZE`] — PlainText (CU): `api_rev ‖ param_key ‖ masking_key`
+/// * [`SESSION_CU_AUTH_BLOB_SIZE`] — Authenticated (CO): the above `‖ mac_tx ‖ mac_rx`
+fn session_ex_len_valid(len: usize) -> bool {
+    (SESSION_CU_BLOB_SIZE..=SESSION_CU_AUTH_BLOB_SIZE).contains(&len)
 }
 
 /// Compute the firmware-equivalent storage cost for a key.
@@ -218,6 +233,14 @@ impl KeyVault {
         session_key_id: Option<HsmKeyId>,
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId> {
+        // `SessionEx` is variable-length but not arbitrary: reject any blob
+        // that is not one of the two the session layer builds, so a
+        // malformed blob fails here rather than being stored and only
+        // failing later.
+        if kind == HsmVaultKeyKind::SessionEx && !session_ex_len_valid(key.len()) {
+            return Err(HsmError::InvalidArg);
+        }
+
         let cost = fw_storage_cost(kind, key.len()).ok_or(HsmError::InvalidKeyType)?;
 
         for (table_idx, table) in self.tables.iter_mut().enumerate() {
@@ -399,6 +422,44 @@ fn split_key_id(key_id: HsmKeyId) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `SessionEx` bounds must be the sizes the session layer
+    /// actually writes, and both must round-trip through `create`.
+    #[test]
+    fn session_ex_len_matches_session_blob_sizes() {
+        assert_eq!(SESSION_CU_BLOB_SIZE, 72);
+        assert_eq!(SESSION_CU_AUTH_BLOB_SIZE, 168);
+
+        // Both real blobs are accepted.
+        assert!(session_ex_len_valid(SESSION_CU_BLOB_SIZE));
+        assert!(session_ex_len_valid(SESSION_CU_AUTH_BLOB_SIZE));
+
+        // Tight on both sides.
+        assert!(!session_ex_len_valid(SESSION_CU_BLOB_SIZE - 1));
+        assert!(!session_ex_len_valid(SESSION_CU_AUTH_BLOB_SIZE + 1));
+        // The legacy CBC-derived bounds are no longer honoured.
+        assert!(!session_ex_len_valid(216));
+    }
+
+    /// A wrong-sized `SessionEx` blob must be rejected at `create`.
+    #[test]
+    fn create_rejects_wrong_sized_session_ex_blob() {
+        let mut v = KeyVault::new(1);
+        let attrs = HsmVaultKeyAttrs::new();
+
+        assert_eq!(
+            v.create(&[0u8; 64], HsmVaultKeyKind::SessionEx, None, attrs),
+            Err(HsmError::InvalidArg)
+        );
+        assert!(v
+            .create(
+                &[0u8; SESSION_CU_BLOB_SIZE],
+                HsmVaultKeyKind::SessionEx,
+                None,
+                attrs
+            )
+            .is_ok());
+    }
 
     fn aes256_attrs() -> HsmVaultKeyAttrs {
         HsmVaultKeyAttrs::new()
