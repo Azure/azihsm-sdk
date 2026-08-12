@@ -312,6 +312,90 @@ impl HsmSession {
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
     }
+
+    /// Issues TBOR `SdCreatePeerBackup` (opcode `0x0E`) on this CO session.
+    ///
+    /// Recovers BKS3 from `pok_local_backup` and HPKE-Auth-seals it to the
+    /// destination peer in `dst_evidence` (authenticated by the sender's
+    /// `masked_sealing_key`), returning the peer backup. Gated by the
+    /// security domain's `allow_peer_cloning` policy flag. Only valid on a
+    /// V2 session; a V1 session returns [`HsmError::InvalidSession`].
+    pub fn sd_create_peer_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        dst_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_local_backup: &[u8],
+    ) -> HsmResult<Vec<u8>> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_create_peer_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                dst_evidence,
+                policy,
+                pok_local_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdRestorePeerBackup` (opcode `0x0F`) on this CO
+    /// session.
+    ///
+    /// HPKE-opens `pok_peer_backup` with the receiver's `masked_sealing_key`
+    /// (authenticated by the source peer in `src_evidence`), recovers the
+    /// security-domain masking key from `prev_sd_mk_backup`, and returns the
+    /// refreshed device-local backups. Gated by the security domain's
+    /// `allow_peer_cloning` policy flag. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
+    pub fn sd_restore_peer_backup(
+        &self,
+        masked_sealing_key: &[u8],
+        src_evidence: &HsmSdEvidence<'_>,
+        policy: &[u8],
+        pok_peer_backup: &[u8],
+        prev_sd_mk_backup: &[u8],
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_restore_peer_backup_ex(
+                &inner.partition,
+                inner.id,
+                masked_sealing_key,
+                src_evidence,
+                policy,
+                pok_peer_backup,
+                prev_sd_mk_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
+
+    /// Issues TBOR `SdRestoreLocalBackup` (opcode `0x0D`) on this CO
+    /// session.
+    ///
+    /// Restores the security domain from the device-local `pok_local_backup`
+    /// and `sd_mk_backup` (no attestation evidence is involved), returning
+    /// the refreshed device-local backups. Only valid on a V2 session; a V1
+    /// session returns [`HsmError::InvalidSession`].
+    pub fn sd_restore_local_backup(
+        &self,
+        pok_local_backup: &[u8],
+        sd_mk_backup: &[u8],
+    ) -> HsmResult<HsmSdRestoreResult> {
+        let inner = self.inner.read();
+        match &inner.kind {
+            SessionKind::Ver2 { .. } => ddi::sd_restore_local_backup_ex(
+                &inner.partition,
+                inner.id,
+                pok_local_backup,
+                sd_mk_backup,
+            ),
+            SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
+        }
+    }
 }
 
 /// Transport-specific session state.

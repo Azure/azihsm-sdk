@@ -755,7 +755,10 @@ void write_key_slot(std::vector<uint8_t> &policy, size_t off, const uint8_t data
 /// Build a 484-byte unified `PartPolicy` image binding the real POTA public
 /// key, mirroring the Rust `part_policy_with_pota` fixture so `PartFinal` can
 /// validate a chain anchored to it.
-std::vector<uint8_t> build_part_policy(const uint8_t pota_raw[kRawPubLen])
+std::vector<uint8_t> build_part_policy(
+    const uint8_t pota_raw[kRawPubLen],
+    bool allow_peer_cloning = true
+)
 {
     constexpr size_t kOffPota = 2;
     constexpr size_t kOffSata = 102;
@@ -776,7 +779,12 @@ std::vector<uint8_t> build_part_policy(const uint8_t pota_raw[kRawPubLen])
     }
     write_key_slot(policy, kOffSata, sata_fill);
 
-    policy[kOffFlags] = 0;
+    // `allow_peer_cloning` (bit 2) gates the peer commands
+    // (SdCreatePeerBackup / SdRestorePeerBackup); it is inert for the
+    // non-peer commands (create/reseal/restore-remote and restore-local),
+    // which don't gate on it.
+    constexpr uint8_t kAllowPeerCloning = 1 << 2;
+    policy[kOffFlags] = allow_peer_cloning ? kAllowPeerCloning : 0;
     for (size_t i = 0; i < 64; ++i)
     {
         policy[kOffInfo + i] = 0xAB;
@@ -792,7 +800,8 @@ std::vector<uint8_t> build_backing_part_policy(
     const uint8_t pid[16],
     const uint8_t pid_pub[kRawPubLen],
     const uint8_t sata_raw[kRawPubLen],
-    const uint8_t pota_raw[kRawPubLen]
+    const uint8_t pota_raw[kRawPubLen],
+    bool allow_peer_cloning = true
 )
 {
     constexpr size_t kOffSata = 102;
@@ -800,7 +809,7 @@ std::vector<uint8_t> build_backing_part_policy(
     constexpr size_t kOffBackupPartPubKey = 318;
     constexpr size_t kBackupPartIdLen = 16;
 
-    std::vector<uint8_t> policy = build_part_policy(pota_raw);
+    std::vector<uint8_t> policy = build_part_policy(pota_raw, allow_peer_cloning);
 
     // Overwrite the placeholder SATA key with the anchor's real P-384 key.
     write_key_slot(policy, kOffSata, sata_raw);
@@ -960,7 +969,8 @@ azihsm_handle provision_sd_co_session(azihsm_handle part_handle)
 // restore target (the device-2 side).
 static SdBackingContext provision_backing_impl(
     azihsm_handle part_handle,
-    const SdBackingContext *reuse
+    const SdBackingContext *reuse,
+    bool allow_peer_cloning = true
 )
 {
     // 1. Bootstrap a CO session under the default PSK and rotate it.
@@ -1063,7 +1073,13 @@ static SdBackingContext provision_backing_impl(
         std::memcpy(pota_raw, pota_ca->sec1().data() + 1, kRawPubLen);
         uint8_t sata_raw[kRawPubLen];
         std::memcpy(sata_raw, sata_key->sec1().data() + 1, kRawPubLen);
-        policy = build_backing_part_policy(pid.data(), pid_pub.data(), sata_raw, pota_raw);
+        policy = build_backing_part_policy(
+            pid.data(),
+            pid_pub.data(),
+            sata_raw,
+            pota_raw,
+            allow_peer_cloning
+        );
     }
 
     // Deterministic provisioning fixtures (thumbprints are stored, not
@@ -1168,9 +1184,9 @@ static SdBackingContext provision_backing_impl(
     return ctx;
 }
 
-SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle)
+SdBackingContext provision_sd_backing_co_session(azihsm_handle part_handle, bool allow_peer_cloning)
 {
-    return provision_backing_impl(part_handle, nullptr);
+    return provision_backing_impl(part_handle, nullptr, allow_peer_cloning);
 }
 
 SdBackingContext provision_sd_restore_target(

@@ -90,5 +90,6 @@ mod integration {
     pub mod secret_kbkdf_derive;
     pub mod secure_init_bk3_smoke;
     pub mod secure_provision_lm_sim;
+    pub mod sha_digest_smoke;
     pub mod unmask_key_smoke;
 }

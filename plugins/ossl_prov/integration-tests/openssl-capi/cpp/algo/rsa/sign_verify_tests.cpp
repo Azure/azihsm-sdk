@@ -31,14 +31,32 @@ class rsa_sign_verify : public ::testing::Test
     ProviderCtx prov_;
 };
 
+/// Fixture for tests that must run against each selectable RSA key form.
+/// The parameter is the azihsm.key_kind value ("RSA" or "RSA-CRT").
+class rsa_sign_verify_kind : public ::testing::TestWithParam<const char *>
+{
+  protected:
+    ProviderCtx prov_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    key_kinds,
+    rsa_sign_verify_kind,
+    ::testing::Values("RSA", "RSA-CRT"),
+    [](const ::testing::TestParamInfo<const char *> &info) {
+        return std::string(info.param) == "RSA-CRT" ? "rsa_crt" : "rsa";
+    }
+);
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Round-trip sign / verify with PKCS#1 v1.5 padding (default).
-TEST_F(rsa_sign_verify, sign_verify_pkcs1)
+/// Round-trip sign / verify with PKCS#1 v1.5 padding (default), against both
+/// the plain and the CRT stored key form.
+TEST_P(rsa_sign_verify_kind, sign_verify_pkcs1)
 {
-    auto pkey = generate_rsa_session_key(prov_.libctx());
+    auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "digitalSignature", GetParam());
     ASSERT_NE(pkey, nullptr) << "RSA session key generation failed";
 
     const std::string message = "RSA PKCS#1 v1.5 round-trip test data";
@@ -94,7 +112,8 @@ TEST_F(rsa_sign_verify, sign_verify_pkcs1)
     ) << "DigestVerify failed — signature did not verify";
 }
 
-/// PKCS#1 v1.5: tampered data must NOT verify.
+/// PKCS#1 v1.5: tampered data must NOT verify.  Runs on the default key form
+/// (RSA-CRT); the stored form is not what is under test here.
 TEST_F(rsa_sign_verify, pkcs1_rejects_tampered_data)
 {
     auto pkey = generate_rsa_session_key(prov_.libctx());
@@ -159,10 +178,11 @@ TEST_F(rsa_sign_verify, pkcs1_rejects_tampered_data)
     ) << "DigestVerify should fail with tampered data";
 }
 
-/// Round-trip sign / verify with RSA-PSS padding.
-TEST_F(rsa_sign_verify, sign_verify_pss)
+/// Round-trip sign / verify with RSA-PSS padding, against both the plain and
+/// the CRT stored key form.
+TEST_P(rsa_sign_verify_kind, sign_verify_pss)
 {
-    auto pkey = generate_rsa_session_key(prov_.libctx());
+    auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "digitalSignature", GetParam());
     ASSERT_NE(pkey, nullptr) << "RSA session key generation failed";
 
     const std::string message = "RSA-PSS round-trip test data";
@@ -240,7 +260,8 @@ TEST_F(rsa_sign_verify, sign_verify_pss)
     ) << "DigestVerify with PSS failed — signature did not verify";
 }
 
-/// RSA-PSS: tampered data must NOT verify.
+/// RSA-PSS: tampered data must NOT verify.  Runs on the default key form
+/// (RSA-CRT); the stored form is not what is under test here.
 TEST_F(rsa_sign_verify, pss_rejects_tampered_data)
 {
     auto pkey = generate_rsa_session_key(prov_.libctx());
@@ -324,7 +345,8 @@ TEST_F(rsa_sign_verify, pss_rejects_tampered_data)
 }
 
 /// Signing with one RSA session key and verifying with a different RSA session
-/// key must fail.
+/// key must fail.  Runs on the default key form (RSA-CRT); the stored form is
+/// not what is under test here.
 TEST_F(rsa_sign_verify, verify_fails_with_wrong_key)
 {
     auto key_a = generate_rsa_session_key(prov_.libctx());

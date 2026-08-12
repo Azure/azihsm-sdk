@@ -29,6 +29,7 @@ mod key_props;
 mod partition;
 mod partition_props;
 mod resiliency;
+mod sd;
 mod session;
 mod session_ex;
 mod session_props;
@@ -139,6 +140,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             9 => Ok(AzihsmKeyKind::HmacSha512),
             10 => Ok(AzihsmKeyKind::AesGcm),
             11 => Ok(AzihsmKeyKind::Sealing),
+            12 => Ok(AzihsmKeyKind::RsaCrt),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }

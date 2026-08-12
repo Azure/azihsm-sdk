@@ -26,6 +26,7 @@ mod rsa;
 mod secure_init_bk3;
 mod session;
 mod set_sealed_bk3;
+mod sha;
 mod tpm_unseal;
 
 pub use aes::*;
@@ -54,4 +55,5 @@ pub use rsa::*;
 pub use secure_init_bk3::*;
 pub use session::*;
 pub use set_sealed_bk3::*;
+pub use sha::*;
 use tpm_unseal::*;
