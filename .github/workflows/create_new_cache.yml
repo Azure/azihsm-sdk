@@ -5,9 +5,6 @@ on:
   push:
     paths:
       - .github/workflows/create_new_cache.yml
-  pull_request:
-    paths:
-      - .github/workflows/create_new_cache.yml
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,7 +49,7 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ matrix.runner }}-cargo-${{ github.sha }}
+        key: ${{ runner.name }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
 
@@ -80,4 +77,4 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ matrix.runner }}-cargo-${{ github.sha }}
+        key: ${{ runner.name }}-cargo-${{ github.sha }}

@@ -42,7 +42,7 @@ runs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        key: ${{ runner.name }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       shell: bash
