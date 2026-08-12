@@ -749,13 +749,12 @@ pub fn part_verify_credential(
     if stored.len() != 32 {
         return Err(HsmError::InternalError);
     }
-    // Both halves are always compared — `&` rather than `&&` so the
-    // second `ct_eq` is not short-circuited away when the id differs,
-    // keeping the work (and the timing) independent of which half is
-    // wrong.
-    let id_ok = ct_eq(&stored[..16], id);
-    let pin_ok = ct_eq(&stored[16..], pin);
-    if id_ok & pin_ok {
+    let mut diff = 0u8;
+    for i in 0..16 {
+        diff |= stored[i] ^ id[i];
+        diff |= stored[16 + i] ^ pin[i];
+    }
+    if diff == 0 {
         Ok(())
     } else {
         Err(HsmError::InvalidAppCredentials)
@@ -815,7 +814,14 @@ pub fn part_verify_nonce(
     nonce: &[u8],
 ) -> HsmResult<()> {
     let stored = part_nonce(pal, io)?;
-    if ct_eq(stored, nonce) {
+    if stored.len() != nonce.len() {
+        return Err(HsmError::NonceMismatch);
+    }
+    let mut diff = 0u8;
+    for (a, b) in stored.iter().zip(nonce.iter()) {
+        diff |= a ^ b;
+    }
+    if diff == 0 {
         Ok(())
     } else {
         Err(HsmError::NonceMismatch)
@@ -1058,7 +1064,14 @@ pub fn part_psk_is_default(
         // depth so the match stays exhaustive.
         _ => return Err(HsmError::InvalidPskId),
     };
-    Ok(ct_eq(stored, default))
+    if stored.len() != default.len() {
+        return Ok(false);
+    }
+    let mut diff = 0u8;
+    for (a, b) in stored.iter().zip(default.iter()) {
+        diff |= a ^ b;
+    }
+    Ok(diff == 0)
 }
 
 /// Whether the partition's caller-presented credential blob has been
