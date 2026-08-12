@@ -37,12 +37,13 @@ const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE
 /// `api_rev(8) || param_key(32) || masking_key(32)` = 72 B.  The
 /// SessionEx masking key is the 32 B AES-256-GCM `key_masking::aead`
 /// key ([`SESSION_MASKING_KEY_LEN`]), not the legacy 80 B cbc key.
-const SESSION_CU_BLOB_SIZE: usize =
+pub(crate) const SESSION_CU_BLOB_SIZE: usize =
     SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
 /// `SessionEx`-kind blob size for **Authenticated (CO)** sessions:
 /// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 168 B.
-const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
+pub(crate) const SESSION_CU_AUTH_BLOB_SIZE: usize =
+    SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
 impl HsmSessionManager for StdHsmPal {
     /// Check whether the partition's session table is full.

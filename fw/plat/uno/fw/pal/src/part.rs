@@ -102,6 +102,13 @@ impl UnoHsmPal {
             part.set_unwrapping_key_required(true);
         }
 
+        // Bake the default PSKs. `part_psk` is `RequiredPresent`
+        // (default-baked at allocation time), but GSRAM boots zeroed, so a
+        // freshly allocated slot must be seeded here or it would keep an
+        // all-zero PSK. (An NSSR restores the defaults separately, in
+        // `clear_state(PartResetKind::Migrate)`.)
+        part.bake_default_psks();
+
         // Provision the identity then the masked boot key; on any failure
         // roll the whole allocation back so the slot is left fully
         // `Unallocated` — no leaked vault key, no stale resource mask. A
