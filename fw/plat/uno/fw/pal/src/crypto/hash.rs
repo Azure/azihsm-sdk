@@ -204,7 +204,7 @@ impl HsmHash for UnoHsmPal {
         if digest.len() < digest_len {
             return Err(HsmError::InvalidArg);
         }
-        self.sha_oneshot(algo, data, digest, false).await?;
+        self.sha_oneshot(algo, data, digest).await?;
         if !big_endian {
             digest[..digest_len].reverse();
         }
@@ -303,7 +303,7 @@ impl HsmHash for UnoHsmPal {
         }
 
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(&mut ctx, None, len, true, false)
+        self.sha_digest_block(&mut ctx, None, len, true)
             .await?;
         digest[..digest_len].copy_from_slice(&ctx.buf[..digest_len]);
         if !big_endian {
@@ -358,8 +358,6 @@ impl UnoHsmPal {
     /// - `mode` — SHA hardware algorithm selector.
     /// - `message` — complete input message.
     /// - `digest` — output buffer for the final hash.
-    /// - `byte_swap` — if `true`, the digest is byte-swapped
-    ///   (little-endian output).
     ///
     /// # Returns
     ///
@@ -371,13 +369,9 @@ impl UnoHsmPal {
         algo: HsmHashAlgo,
         message: &DmaBuf,
         digest: &mut DmaBuf,
-        byte_swap: bool,
     ) -> HsmResult<()> {
         let byte_count = u32::try_from(message.len()).map_err(|_| HsmError::InvalidArg)?;
-        let mut req = ShaRequest::new(algo.into(), message, digest).with_auto_pad(byte_count);
-        if byte_swap {
-            req = req.with_byte_swap();
-        }
+        let req = ShaRequest::new(algo.into(), message, digest).with_auto_pad(byte_count);
         self.sha.digest(req).await
     }
 
@@ -403,7 +397,7 @@ impl UnoHsmPal {
         finalize: bool,
     ) -> HsmResult<()> {
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(ctx, None, len, finalize, false)
+        self.sha_digest_block(ctx, None, len, finalize)
             .await?;
         ctx.pending_len = 0;
         Ok(())
@@ -433,7 +427,7 @@ impl UnoHsmPal {
         // hmac_continue, so `blocks` is always a sub-slice of a
         // DMA-accessible caller buffer.
         let blocks = unsafe { DmaBuf::from_raw(blocks) };
-        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false, false)
+        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false)
             .await
     }
 
@@ -457,9 +451,6 @@ impl UnoHsmPal {
     /// - `finalize` — if `true`, automatic SHA padding is applied and the
     ///   engine writes the truncated NIST digest.  If `false`, the engine
     ///   writes the full working-variable state for chaining.
-    /// - `byte_swap` — if `true`, the digest output is byte-swapped
-    ///   (little-endian).  Only meaningful when `finalize` is `true`;
-    ///   intermediate blocks always use byte-swap for state continuity.
     ///
     /// # Returns
     ///
@@ -472,7 +463,6 @@ impl UnoHsmPal {
         external_msg: Option<&DmaBuf>,
         msg_len: usize,
         finalize: bool,
-        byte_swap: bool,
     ) -> HsmResult<()>
     where
         C: ShaDigestContext,
@@ -493,9 +483,6 @@ impl UnoHsmPal {
         let mut req = ShaRequest::new(algo.into(), message, digest);
         if finalize {
             req = req.with_auto_pad(total);
-            if byte_swap {
-                req = req.with_byte_swap();
-            }
         } else {
             req.byte_count = total;
             req = req.with_full_state().with_byte_swap();

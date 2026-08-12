@@ -485,7 +485,7 @@ impl UnoHsmPal {
             let effective_key = scope.dma_alloc(MAX_BLOCK_LEN)?;
             effective_key.fill(0);
             if key.len() > block_len {
-                self.sha_oneshot(algo, key, &mut effective_key[..algo.digest_len()], false)
+                self.sha_oneshot(algo, key, &mut effective_key[..algo.digest_len()])
                     .await?;
             } else {
                 effective_key[..key.len()].copy_from_slice(key);
@@ -541,7 +541,7 @@ impl UnoHsmPal {
     /// * Any [`HsmError`] surfaced by the SHA driver.
     async fn hmac_flush_pending(&self, ctx: &mut HmacContext<'_>, finalize: bool) -> HsmResult<()> {
         let len = ctx.pending_len as usize;
-        self.sha_digest_block(ctx, None, len, finalize, false)
+        self.sha_digest_block(ctx, None, len, finalize)
             .await?;
         ctx.pending_len = 0;
         Ok(())
@@ -566,7 +566,7 @@ impl UnoHsmPal {
         ctx: &mut HmacContext<'_>,
         blocks: &DmaBuf,
     ) -> HsmResult<()> {
-        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false, false)
+        self.sha_digest_block(ctx, Some(blocks), blocks.len(), false)
             .await
     }
 

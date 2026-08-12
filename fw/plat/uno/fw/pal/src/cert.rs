@@ -107,10 +107,9 @@ impl TbsSigner for AliasSigner<'_> {
 
                 // `build_signed_from_template` hashes the TBS as a natural
                 // big-endian SHA-384 digest. `ecc_sign_deterministic` consumes
-                // the PKA little-endian message hash — the FULL byte reversal of
-                // the natural digest (not the per-word `big_endian = false`
-                // swap). This mirrors the est-cred POTA verify and matches the
-                // validated deterministic-sign KAT.
+                // the PKA little-endian message hash — the full byte reversal of
+                // the natural digest. This mirrors the est-cred POTA verify and
+                // matches the validated deterministic-sign KAT.
                 let e = scope.dma_alloc(P384_FIELD)?;
                 for i in 0..P384_FIELD {
                     e[i] = digest[P384_FIELD - 1 - i];
@@ -250,8 +249,8 @@ impl UnoHsmPal {
             inp.copy_from_slice(data);
             let outd = scope.dma_alloc(SKI_LEN)?;
             // `big_endian = true`: the SKI is the standard NIST byte-order SHA-1
-            // of the key (RFC 5280). `big_endian = false` would per-word swap the
-            // digest and encode an incorrect Subject Key Identifier.
+            // of the key (RFC 5280). `big_endian = false` would fully byte-reverse
+            // the digest and encode an incorrect Subject Key Identifier.
             self.hash(io, HsmHashAlgo::Sha1, inp, outd, true).await?;
             let mut out = [0u8; SKI_LEN];
             out.copy_from_slice(&outd[..SKI_LEN]);
