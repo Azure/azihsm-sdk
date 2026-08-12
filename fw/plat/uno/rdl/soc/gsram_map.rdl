@@ -569,9 +569,14 @@ addrmap io_gsram {
     upka_cmd_entry_t UPKA_ENGINE_CMD[16] @ 0x15364 += 0x14;
     sha_cmd_entry_t  SHA_CMD[32]         @ 0x154A4 += 0x20;
 
-    // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
+    // ─── Heap (per-IO buffers) — 34 SRAM slots: 0..31 host (IIC), 32 admin,
+    //     33 self-test (CAST). IO_META stays 33: only host+admin slots carry
+    //     per-IO metadata (controller/queue id); the self-test slot never uses
+    //     io_meta() (it does not ride the host IO path), so it needs no entry.
+    //     Keeping IO_META at 33 also preserves SRAM_IO_BUF's 32-byte alignment
+    //     at 0x20D60 (growing IO_META would shift SRAM_IO_BUF off alignment). ──
     io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
-    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4800;
+    sram_io_buf_t    SRAM_IO_BUF[34]     @ 0x20D60 += 0x4800;
 
     // ─── Partition persistent store (65 entries, 3072 B each) ───
     part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;

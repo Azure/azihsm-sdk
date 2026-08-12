@@ -66,7 +66,7 @@ pub const HSM_SEED_TABLE_COUNT: u32 = 2;
 pub const HSM_SEED_TABLE_STRIDE: u32 = 0x30;
 pub const HSM_SEED_TABLE_SIZE: u32 = 0x30;
 pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D60;
-pub const SRAM_IO_BUF_COUNT: u32 = 33;
+pub const SRAM_IO_BUF_COUNT: u32 = 34;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4800;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4800;
 
@@ -347,8 +347,8 @@ pub mod regs {
             (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
             (0x158a4 => _reserved6),
             (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
-            (0x20d60 => pub sram_io_buf: [u8; 608256]),
-            (0xb5560 => @END),
+            (0x20d60 => pub sram_io_buf: [u8; 626688]),
+            (0xb9d60 => @END),
         }
     }
 }

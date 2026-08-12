@@ -33,15 +33,23 @@ const HEAPS: usize = 2;
 
 pub(crate) const IO_SLOTS: usize = SRAM_IO_BUF_COUNT as usize;
 
-/// Dedicated admin/internal IO slot — the last of [`IO_SLOTS`].
+/// Dedicated admin/internal IO slot.
 ///
 /// IIC only hands out the host slots `0..ADMIN_IO_INDEX` (the first
-/// [`IO_SLOTS`]` - 1` slots); the PAL reserves this final slot for
-/// internal provisioning crypto (partition identity and enable-time
-/// keygen), so its bump heaps never collide with a concurrent host IO.
-/// It has full DMA (`SRAM_IO_BUF`) and NonDma (`DTCM_IO_BUF`) backing,
-/// like any host slot.
-pub(crate) const ADMIN_IO_INDEX: u16 = (IO_SLOTS - 1) as u16;
+/// 32 slots); the PAL reserves this slot for internal provisioning
+/// crypto (partition identity and enable-time keygen), so its bump
+/// heaps never collide with a concurrent host IO. It has full DMA
+/// (`SRAM_IO_BUF`) and NonDma (`DTCM_IO_BUF`) backing, like any host
+/// slot.
+pub(crate) const ADMIN_IO_INDEX: u16 = (IO_SLOTS - 2) as u16;
+
+/// Dedicated self-test (CAST) IO slot — the last of [`IO_SLOTS`].
+///
+/// Reserved for the pre-operational and periodic cryptographic
+/// algorithm self-tests, separate from [`ADMIN_IO_INDEX`] so the
+/// periodic self-test never races partition provisioning over a
+/// shared bump heap. Same DMA/NonDma backing as any host slot.
+pub(crate) const SELF_TEST_IO_INDEX: u16 = (IO_SLOTS - 1) as u16;
 
 // DTCM IO buffer region — per-IO NonDma scratch in upper DTCM.
 // See dtcm_map.rdl: DTCM_IO_BUF[33] @ offset 0x2EC00 from DTCM base.

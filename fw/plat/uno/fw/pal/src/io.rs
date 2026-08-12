@@ -45,6 +45,7 @@ use tock_registers::interfaces::Writeable;
 
 use crate::UnoHsmPal;
 use crate::alloc::ADMIN_IO_INDEX;
+use crate::alloc::SELF_TEST_IO_INDEX;
 use crate::alloc::reset_io_alloc;
 
 /// Typed overlay of the IO GSRAM region.
@@ -85,6 +86,22 @@ impl UnoHsmIo {
             .ctlr
             .write(IO_META_CTLR::CONTROLLER_ID.val(u8::from(pid) as u32));
         io
+    }
+
+    /// Constructs an IO handle over the dedicated self-test slot
+    /// ([`SELF_TEST_IO_INDEX`]).
+    ///
+    /// Used by the cryptographic algorithm self-tests (CAST), which run
+    /// without a host IO. KAT operands are allocated from this slot's
+    /// `SRAM_IO_BUF` via the bump allocator. No partition context applies,
+    /// so `IO_META` is left untouched ([`pid`](HsmIo::pid) is unused by the
+    /// self-test path).
+    ///
+    /// [`SELF_TEST_IO_INDEX`]: crate::alloc::SELF_TEST_IO_INDEX
+    pub(crate) fn self_test() -> Self {
+        Self {
+            index: SELF_TEST_IO_INDEX,
+        }
     }
 
     /// Returns a reference to the IO_META entry for this slot.

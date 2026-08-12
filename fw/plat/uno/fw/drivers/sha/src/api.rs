@@ -622,8 +622,8 @@ fn write_cmd(idx: usize, req: &ShaRequest<'_>, mode: u8) {
         0
     };
     let ref_digest_addr = req.ref_digest.map_or(0, |d| d.as_ptr() as u32);
-    // Plain pointer writes — SHA_CMD is in DTCM, not MMIO.
-    // The COMMAND register write (submit_cmd) is the barrier.
+    // Plain pointer writes — SHA_CMD is in DTCM, not MMIO. A `dmb()` in
+    // `submit_cmd` orders these writes before the doorbell.
     let entry_ptr = (&SHA_Q.sha_cmd[idx]) as *const ShaCmdEntry as *mut u32;
     unsafe {
         entry_ptr.add(0).write(cmd.into());

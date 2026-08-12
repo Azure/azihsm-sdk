@@ -531,6 +531,18 @@ impl UnoHsmPal {
                 WAKE_TABLE[irq as usize](self, irq);
             }
         }
+
+        // AES/SHA completion is detected by POLLING the engine STATUS, not by the
+        // `AES_DONE`/`SHA_DONE` edge interrupt. On this silicon the done IRQ does
+        // not reliably re-arm for back-to-back commands (the first op completes
+        // and raises the IRQ; the second completes in hardware but no second IRQ
+        // is delivered), which silently hangs any sequential AES/SHA sequence
+        // (pre-op self-tests, partition-provisioning HMAC-SHA384 KDF + AES-CBC
+        // key masking, …). The reference firmware polls BUSY for exactly this
+        // reason. `wake()` is a guarded no-op when no flag bit is set, so calling
+        // it every poll is cheap (one MMIO read) and idempotent with the IRQ path.
+        self.aes.wake();
+        self.sha.wake();
     }
 
     /// Handle an incoming IPC message.
@@ -563,6 +575,18 @@ impl UnoHsmPal {
                 if !self.try_ack_state_change(buf, IoProcessorState::Start, "WaitStart") {
                     return;
                 }
+                // Pre-operational self-test gate (FIPS): the in-scope algorithm
+                // KATs must pass before the HSM exposes any crypto. Crypto
+                // engines are construct-ready (AES/SHA/PKA need no boot-time
+                // init), so this runs before `on_boot_complete`. On failure we
+                // withhold the transition — the PAL never reaches `Running`,
+                // never publishes `BootStatus::Run`.
+                let io = crate::io::UnoHsmIo::self_test();
+                if let Err(_e) = crate::self_test::run_pre_op(self, &io).await {
+                    error!("selftest", _e, "pre-operational self-test FAILED");
+                    return;
+                }
+                info!("selftest", "pre-operational self-test PASSED");
                 self.on_boot_complete()
             }
             BootPhase::Running => {
