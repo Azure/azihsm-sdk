@@ -246,6 +246,64 @@ pub struct McrCpGenericIoctlOutData {
     hot_patch_reserved: [usize; 16],
 }
 
+const TBOR_OOB_METADATA_MAGIC: [u8; 4] = *b"OOB1";
+const TBOR_OOB_ENTRY_LEN: usize = 16;
+const TBOR_OOB_MAX_ITEMS: usize = 16;
+const TBOR_OOB_MAX_ITEM_LEN: usize = 2048;
+const TBOR_OOB_MAX_TOTAL_LEN: usize = TBOR_OOB_MAX_ITEMS * TBOR_OOB_MAX_ITEM_LEN;
+const TBOR_OOB_TABLE_CAPACITY: usize = TBOR_OOB_MAX_ITEMS * TBOR_OOB_ENTRY_LEN;
+
+struct TborOobTable {
+    bytes: Box<[u8; TBOR_OOB_TABLE_CAPACITY]>,
+    len: u32,
+}
+
+fn build_tbor_oob_table(items: &[&[u8]]) -> DdiResult<Option<TborOobTable>> {
+    if items.is_empty() {
+        return Ok(None);
+    }
+    if items.len() > TBOR_OOB_MAX_ITEMS {
+        return Err(DdiError::InvalidParameter);
+    }
+
+    let mut total_item_len = 0usize;
+    let mut bytes = Box::new([0u8; TBOR_OOB_TABLE_CAPACITY]);
+    for (index, item) in items.iter().enumerate() {
+        if item.is_empty() || item.len() > TBOR_OOB_MAX_ITEM_LEN {
+            return Err(DdiError::InvalidParameter);
+        }
+        total_item_len = total_item_len
+            .checked_add(item.len())
+            .filter(|len| *len <= TBOR_OOB_MAX_TOTAL_LEN)
+            .ok_or(DdiError::InvalidParameter)?;
+
+        let addr = item.as_ptr() as usize;
+        addr.checked_add(item.len())
+            .ok_or(DdiError::InvalidParameter)?;
+        let addr = u64::try_from(addr).map_err(|_| DdiError::InvalidParameter)?;
+        let len = u32::try_from(item.len()).map_err(|_| DdiError::InvalidParameter)?;
+        let offset = index * TBOR_OOB_ENTRY_LEN;
+
+        bytes[offset..offset + 8].copy_from_slice(&addr.to_le_bytes());
+        bytes[offset + 8..offset + 12].copy_from_slice(&len.to_le_bytes());
+        // Bytes 12..16 stay zero: reserved bytes plus Data Block type 0.
+    }
+
+    let len =
+        u32::try_from(items.len() * TBOR_OOB_ENTRY_LEN).map_err(|_| DdiError::InvalidParameter)?;
+    Ok(Some(TborOobTable { bytes, len }))
+}
+
+fn write_tbor_oob_metadata(metadata: &mut [u32; 32], table: &TborOobTable) -> DdiResult<()> {
+    let table_addr =
+        u64::try_from(table.bytes.as_ptr() as usize).map_err(|_| DdiError::InvalidParameter)?;
+    metadata[0] = u32::from_le_bytes(TBOR_OOB_METADATA_MAGIC);
+    metadata[1] = table_addr as u32;
+    metadata[2] = (table_addr >> 32) as u32;
+    metadata[3] = table.len;
+    Ok(())
+}
+
 ///McrFpIoctlErrorKind
 /// Enumeration values for ioctl error status
 /// in fast path
@@ -933,12 +991,11 @@ impl DdiDev for DdiWinDev {
         /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
         const OP_TBOR: u16 = 2;
 
-        // The Windows backend does not (yet) forward out-of-band
-        // items as SGL Data Block descriptors. Reject non-empty
-        // `oob_items` loudly rather than silently dropping payloads.
-        if oob_items.is_some_and(|items| !items.is_empty()) {
-            return Err(DdiError::InvalidParameter);
-        }
+        // Build the same user-space SGL Data Block descriptor table as
+        // the Linux backend. The Windows kernel driver copies each item
+        // into coherent DMA memory and replaces these virtual addresses
+        // with device-visible addresses before submitting the SQE.
+        let oob_table = build_tbor_oob_table(oob_items.unwrap_or_default())?;
 
         const REQ_BUF_LEN: usize = 8192;
         const RESP_BUF_LEN: usize = 8192;
@@ -987,6 +1044,9 @@ impl DdiDev for DdiWinDev {
             ioctl_in_buffer
                 .session_control
                 .set_session_id_is_valid(true);
+        }
+        if let Some(table) = oob_table.as_ref() {
+            write_tbor_oob_metadata(&mut ioctl_in_buffer.rsvd3, table)?;
         }
 
         // -- 3. Issue the ioctl (overlapped, same as MBOR) ----------------
@@ -1694,5 +1754,84 @@ impl DdiDev for DdiWinDev {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn tbor_oob_table_serializes_data_block_descriptors() {
+        let first = [0x11u8; 3];
+        let second = [0x22u8; 5];
+        let table = build_tbor_oob_table(&[&first, &second]).unwrap().unwrap();
+
+        assert_eq!(table.len, 2 * TBOR_OOB_ENTRY_LEN as u32);
+        assert_eq!(
+            u64::from_le_bytes(table.bytes[0..8].try_into().unwrap()),
+            first.as_ptr() as usize as u64
+        );
+        assert_eq!(
+            u32::from_le_bytes(table.bytes[8..12].try_into().unwrap()),
+            first.len() as u32
+        );
+        assert_eq!(&table.bytes[12..16], &[0; 4]);
+        assert_eq!(
+            u64::from_le_bytes(table.bytes[16..24].try_into().unwrap()),
+            second.as_ptr() as usize as u64
+        );
+        assert_eq!(
+            u32::from_le_bytes(table.bytes[24..28].try_into().unwrap()),
+            second.len() as u32
+        );
+        assert_eq!(&table.bytes[28..32], &[0; 4]);
+    }
+
+    #[test]
+    fn tbor_oob_metadata_has_stable_uapi_layout() {
+        let item = [0x33u8; 7];
+        let table = build_tbor_oob_table(&[&item]).unwrap().unwrap();
+        let mut metadata = [0u32; 32];
+        write_tbor_oob_metadata(&mut metadata, &table).unwrap();
+
+        assert_eq!(&metadata[0].to_le_bytes(), b"OOB1");
+        assert_eq!(
+            u64::from(metadata[1]) | (u64::from(metadata[2]) << 32),
+            table.bytes.as_ptr() as usize as u64
+        );
+        assert_eq!(metadata[3], TBOR_OOB_ENTRY_LEN as u32);
+        assert_eq!(mem::size_of::<McrCpGenericIoctlIndata>(), 344);
+        assert_eq!(mem::offset_of!(McrCpGenericIoctlIndata, rsvd3), 84);
+    }
+
+    #[test]
+    fn tbor_oob_empty_input_emits_no_metadata() {
+        assert!(build_tbor_oob_table(&[]).unwrap().is_none());
+        assert_eq!(&McrCpGenericIoctlIndata::default().rsvd3[..4], &[0; 4]);
+    }
+
+    #[test]
+    fn tbor_oob_rejects_invalid_limits() {
+        let empty: [u8; 0] = [];
+        assert!(matches!(
+            build_tbor_oob_table(&[&empty]),
+            Err(DdiError::InvalidParameter)
+        ));
+
+        let oversized = [0u8; TBOR_OOB_MAX_ITEM_LEN + 1];
+        assert!(matches!(
+            build_tbor_oob_table(&[&oversized]),
+            Err(DdiError::InvalidParameter)
+        ));
+
+        let item = [0x44u8; 1];
+        let too_many = vec![item.as_slice(); TBOR_OOB_MAX_ITEMS + 1];
+        assert!(matches!(
+            build_tbor_oob_table(&too_many),
+            Err(DdiError::InvalidParameter)
+        ));
     }
 }

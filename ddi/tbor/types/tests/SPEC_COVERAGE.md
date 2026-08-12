@@ -137,17 +137,17 @@ All test names below are relative to the
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| First instantiation returns a 164-byte `local_mk_backup` and transitions to `Initialized` | ✅ | `part_final::emu::part_final_smoke_roundtrip_emu`; `part_final::hw::part_final_full_flow_valid_chain_hw` | Hardware case also verifies identity stability and session reopen |
-| Restore a prior backup after reset with the same provisioning identity | ✅ | `part_final::emu::part_final_restore_prev_backup_emu`; `part_final::hw::part_final_accepts_prior_backup_across_nssr_hw` | Hardware coverage is an acceptance smoke test until a Local-scope artifact consumer exists |
-| Tampered prior backup is rejected without consuming the valid retry path | ✅ | `part_final::emu::part_final_reject_tampered_backup_emu`; `part_final::hw::part_final_rejects_tampered_backup_and_allows_retry_hw` | Hardware test verifies lifecycle and identity remain unchanged |
-| Command before `PartInit` is rejected | ✅ | `part_final::emu::part_final_reject_wrong_state_emu`; `part_final::hw::part_final_rejects_before_part_init_hw` | Hardware test then completes a valid retry |
-| Re-supplied policy must match the `PartInit` policy hash | ✅ | `part_final::emu::part_final_reject_policy_mismatch_emu`; `part_final::hw::part_final_rejects_policy_mismatch_and_allows_retry_hw` | Hardware test verifies rollback to `Initializing` |
-| PTA chain must anchor to policy POTA | ✅ (emu) | `part_final::emu::part_final_reject_unanchored_chain_emu` | M1 hardware uses the documented surrogate and intentionally does not assert this future chain-walk behavior |
-| PTA certificate key must match the partition PTA key | ✅ (emu) | `part_final::emu::part_final_reject_pta_mismatch_emu` | M1 hardware uses the documented surrogate |
-| `Initialized` partition continues serving host IO | ✅ | `part_final::emu::part_final_partition_serves_io_when_initialized_emu`; `part_final::hw::part_final_full_flow_valid_chain_hw` | Hardware case checks `PartInfo` before and after reopening CO |
-| CU session is rejected with `InvalidPermissions` and CO can retry | ✅ (hw) | `part_final::hw::part_final_rejects_cu_and_allows_co_retry_hw` | Rotates the CU PSK first so the role gate is reached |
-| Backup from a different machine-seed identity is rejected | ✅ (hw) | `part_final::hw::part_final_rejects_backup_from_different_mach_seed_hw` | Verifies identity/state remain stable and fresh finalization still succeeds |
-| Second `PartFinal` is rejected without leaving `Initialized` | ✅ (hw) | `part_final::hw::part_final_rejects_second_finalize_hw` | Also verifies a reopened CO session still works |
+| First instantiation returns a 164-byte `local_mk_backup` and transitions to `Initialized` | ✅ | `part_final::part_final_full_flow_valid_chain` | Also verifies identity stability and session reopen |
+| Restore a prior backup after reset with the same provisioning identity | ✅ | `part_final::part_final_accepts_prior_backup_across_reset` | Acceptance smoke test until a Local-scope artifact consumer exists |
+| Tampered prior backup is rejected without consuming the valid retry path | ✅ | `part_final::part_final_rejects_tampered_backup_and_allows_retry` | Verifies lifecycle and identity remain unchanged |
+| Command before `PartInit` is rejected | ✅ | `part_final::part_final_rejects_before_part_init` | Completes a valid retry afterward |
+| Re-supplied policy must match the `PartInit` policy hash | ✅ | `part_final::part_final_rejects_policy_mismatch_and_allows_retry` | Verifies rollback to `Initializing` |
+| PTA chain must anchor to policy POTA | ✅ (emu) | `part_final::part_final_rejects_unanchored_chain` | M1.0 hardware uses the documented surrogate; full chain validation is planned for M1.5 |
+| PTA certificate key must match the partition PTA key | ✅ (emu) | `part_final::part_final_rejects_pta_mismatch` | M1.0 hardware uses the documented surrogate |
+| `Initialized` partition continues serving host IO | ✅ | `part_final::part_final_full_flow_valid_chain` | Checks `PartInfo` before and after reopening CO |
+| CU session is rejected with `InvalidPermissions` and CO can retry | ✅ | `part_final::part_final_rejects_cu_and_allows_co_retry` | Rotates the CU PSK first so the role gate is reached |
+| Backup from a different machine-seed identity is rejected | ✅ | `part_final::part_final_rejects_backup_from_different_mach_seed` | Verifies identity/state remain stable and fresh finalization still succeeds |
+| Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
 
 ## Default-PSK dispatcher gate (cross-cutting)
 

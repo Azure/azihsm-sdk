@@ -33,13 +33,6 @@ The canonical command is:
 cargo test -p azihsm_ddi_tbor_types --tests --features emu
 ```
 
-The focused Linux hardware command for `PartFinal` is:
-
-```bash
-cargo test -p azihsm_ddi_tbor_types --test azihsm_ddi_tbor_tests \
-  part_final::hw:: -- --test-threads=1
-```
-
 ## Spec coverage matrix
 
 [`SPEC_COVERAGE.md`](SPEC_COVERAGE.md) maps each TBOR wire-protocol
