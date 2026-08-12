@@ -88,10 +88,10 @@ impl KeyLen {
 /// The two legal blobs are built by `session_blob` in
 /// `fw/plat/uno/fw/pal/src/session.rs`:
 ///
-/// | Session type          | Layout                                                          | Size |
-/// | --------------------- | --------------------------------------------------------------- | ---- |
-/// | `PlainText` (CU)      | `api_rev(8) ‖ param_key(32) ‖ masking_key(32)`                    | 72   |
-/// | `Authenticated` (CO)  | the above `‖ mac_tx(48) ‖ mac_rx(48)`                            | 168  |
+/// | Session type          | Layout                                             | Size |
+/// | --------------------- | ---------------------------------------------------| ---- |
+/// | `PlainText` (CU)      | `api_rev(8) ‖ param_key(32) ‖ masking_key(32)`     | 72   |
+/// | `Authenticated` (CO)  | the above `‖ mac_tx(48) ‖ mac_rx(48)`              | 168  |
 ///
 /// so the range is exactly `[72, 168]` — `min` is the CU blob and `max`
 /// the CO blob; nothing legal lands in between.
