@@ -13,10 +13,8 @@
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborApiRevReq;
-#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::TborStatus;
 
-#[cfg(feature = "emu")]
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
 
@@ -98,7 +96,6 @@ fn api_rev_independent_of_session_state() {
 ///
 /// The firmware must advertise a valid version range that includes the
 /// bootstrap TBOR protocol version.
-#[cfg(any(feature = "emu", feature = "sock"))]
 fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context: &str) {
     assert!(
         resp.min_ver <= resp.max_ver,
@@ -120,7 +117,6 @@ fn assert_expected_api_rev(resp: &azihsm_ddi_tbor_types::TborApiRevResp, context
 ///
 /// This catches accidental initialization-order dependencies or
 /// process-global mutable state in the emulator/backend.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_consistent_across_fresh_contexts() {
     let first = {
@@ -149,7 +145,6 @@ fn api_rev_consistent_across_fresh_contexts() {
 ///
 /// This exercises several allocations and releases of session slots
 /// rather than checking only a single session lifecycle.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_stable_across_repeated_session_lifecycles() {
     let ctx = TestCtx::new();
@@ -221,7 +216,6 @@ fn api_rev_stable_across_repeated_session_lifecycles() {
 ///
 /// This guards against request-instance identity or mutation leaking
 /// into command handling.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_fresh_request_each_call() {
     let ctx = TestCtx::new();
@@ -280,7 +274,6 @@ fn api_rev_repeated_stable_sock() {
 ///
 /// `ApiRev` is a firmware capability query and must remain available with
 /// the same response before and after persistent device state is erased.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_stable_across_erase() {
     let ctx = TestCtx::new();
@@ -302,7 +295,6 @@ fn api_rev_stable_across_erase() {
 ///
 /// Closing an impossible session ID exercises an error path before verifying
 /// that the stateless out-of-session handler remains usable.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_works_after_failed_session_operation() {
     let ctx = TestCtx::new();
@@ -329,7 +321,6 @@ fn api_rev_works_after_failed_session_operation() {
 ///
 /// This complements A5, which constructs a fresh request for each call, and
 /// guards against accidental mutation or consumption of request state.
-#[cfg(feature = "emu")]
 #[test]
 fn api_rev_request_can_be_reused() {
     let ctx = TestCtx::new();
