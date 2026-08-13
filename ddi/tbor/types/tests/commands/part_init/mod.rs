@@ -10,7 +10,7 @@
 //!
 //! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
 //! process-global lock held for the ctx's lifetime, see
-//! [`crate::harness::fixture`]) so each test starts from a pristine
+//! [`azihsm_ddi_tbor_test_harness::fixture`]) so each test starts from a pristine
 //! `Enabled` partition with the canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
@@ -36,9 +36,9 @@ use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
-use crate::harness::SessionHandshake;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 mod crypto_rejects;
 mod fw_rejects;

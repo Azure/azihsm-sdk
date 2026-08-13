@@ -49,7 +49,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// OAEP hash discriminant (SHA-256) used for wrapping.
 const OAEP_SHA256: u8 = 1;

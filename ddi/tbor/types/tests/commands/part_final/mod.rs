@@ -9,7 +9,7 @@
 //! and returns the current `local_mk` backup.  These tests drive the full
 //! `OpenSession → PskChange → PartInit → PartFinal` flow, generating a
 //! real POTA-anchored PTA chain on the host (see
-//! [`crate::harness::x509_fixture`]) and feeding its certificates out of
+//! [`azihsm_ddi_tbor_test_harness::x509_fixture`]) and feeding its certificates out of
 //! band so the firmware `x509-chain` validator runs for real.
 
 #![cfg(feature = "emu")]
@@ -22,12 +22,12 @@ use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::ROTATED_CO_PSK;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::PtaChain;
-use crate::harness::SessionHandshake;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
 /// the PTA public key from the returned CSR and certify it under `pota`

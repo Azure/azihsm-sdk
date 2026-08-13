@@ -36,9 +36,9 @@ use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
 use super::ROTATED_CO_PSK;
-use crate::harness::build_part_init_mach_seed_aad;
-use crate::harness::encrypt_mach_seed_envelope;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::build_part_init_mach_seed_aad;
+use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
     let mut req = TborPartInitReq {
@@ -164,7 +164,7 @@ fn part_init_wrong_mach_seed_length() {
         let err = ctx.tbor(&req).expect_err(&format!(
             "mach_seed length {len} (\u{2260} MACH_SEED_LEN={MACH_SEED_LEN}) must be rejected",
         ));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
     }
 }
 
@@ -300,7 +300,7 @@ fn part_init_envelope_wrong_fixed_length_emu() {
             "mach_seed envelope with invalid length {actual_len} must be rejected"
         ));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
     }
 }
 
@@ -332,7 +332,7 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
             "tampered envelope attempt {attempt} must be rejected"
         ));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
     }
 }
 
@@ -373,7 +373,7 @@ fn part_init_every_authenticated_envelope_byte_tampered_emu() {
             .tbor(&req)
             .expect_err(&format!("tampering envelope byte {index} must be rejected"));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
     }
 }
 
@@ -422,7 +422,7 @@ fn part_init_envelope_invalid_length_matrix_emu() {
             "mach_seed envelope length {invalid_len} must be rejected"
         ));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
     }
 }
 
@@ -454,7 +454,7 @@ fn part_init_envelope_each_tag_bit_tampered_emu() {
             .tbor(&req)
             .expect_err(&format!("tampering tag bit {bit} must be rejected"));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
     }
 }
 
@@ -501,7 +501,7 @@ fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
             .tbor(&req)
             .expect_err(&format!("tampered {component} must be rejected"));
 
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
     }
 }
 

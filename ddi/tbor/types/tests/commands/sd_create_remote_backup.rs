@@ -54,14 +54,14 @@ use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::x509_fixture::make_chain;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::GeneratedChain;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::SessionHandshake;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// `KeyScope::Local` discriminant (wire mirror of the firmware
 /// `HsmKeyScope`).

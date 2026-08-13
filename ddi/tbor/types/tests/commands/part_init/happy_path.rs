@@ -27,8 +27,8 @@ use super::open_co_with;
 use super::part_policy_with_flags;
 use super::pota_thumbprint;
 use super::ROTATED_CO_PSK;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn part_init_smoke_roundtrip() {

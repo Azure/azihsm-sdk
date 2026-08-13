@@ -21,10 +21,10 @@ use super::CO;
 use super::CU;
 use super::ROTATED_CO_PSK;
 use super::ROTATED_CU_PSK;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::session_guard::SessionGuard;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::session_guard::SessionGuard;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 // Replace these with the canonical offsets/constants from the PartPolicy
 // encoder or firmware policy structure.

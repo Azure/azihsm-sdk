@@ -32,9 +32,9 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;

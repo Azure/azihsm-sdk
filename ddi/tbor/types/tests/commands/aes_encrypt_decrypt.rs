@@ -48,7 +48,7 @@ use crate::commands::aes_generate_key::SCOPE_LOCAL;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 #[cfg(feature = "emu")]
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// AES block / IV length.
 const IV_LEN: usize = 16;

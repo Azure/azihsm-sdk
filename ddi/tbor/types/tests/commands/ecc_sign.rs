@@ -36,7 +36,7 @@ use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// `KeyScope::Local` discriminant.
 const SCOPE_LOCAL: u8 = 0b011;

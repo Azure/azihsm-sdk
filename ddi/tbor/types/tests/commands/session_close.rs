@@ -9,7 +9,7 @@
 //! It is valid for both `Active` and `Pending` slots; closing an
 //! unknown/already-closed slot is a logical error from the FW.
 //!
-//! Happy-path tests drive the [`SessionGuard`](crate::harness::SessionGuard)
+//! Happy-path tests drive the [`SessionGuard`](azihsm_ddi_tbor_test_harness::SessionGuard)
 //! RAII type: it opens, the test exercises, and either an explicit
 //! `.close()` returns the `DdiResult` or `Drop` performs panic-safe
 //! cleanup. Negative-path tests intentionally drive the low-level
@@ -24,7 +24,7 @@
 
 use azihsm_ddi_tbor_types::SessionType;
 
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;

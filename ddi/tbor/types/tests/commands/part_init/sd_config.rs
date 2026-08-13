@@ -21,7 +21,7 @@ use super::mach_seed;
 use super::pota_thumbprint;
 use super::sata_thumbprint;
 use super::ROTATED_CO_PSK;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn part_init_with_sata() {

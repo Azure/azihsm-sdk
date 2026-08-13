@@ -125,7 +125,7 @@ impl<'a> SessionOpenInitOptions<'a> {
 ///
 /// Equivalent to
 /// `session_open_init_with_options(dev, SessionOpenInitOptions::new(psk_id, session_type))`.
-pub(crate) fn session_open_init(
+pub fn session_open_init(
     dev: &<AzihsmDdi as Ddi>::Dev,
     psk_id: u8,
     session_type: SessionType,
@@ -135,7 +135,7 @@ pub(crate) fn session_open_init(
 
 /// Full-control entry point. Honours every override in `opts`;
 /// fills in happy-path defaults for the rest.
-pub(crate) fn session_open_init_with_options(
+pub fn session_open_init_with_options(
     dev: &<AzihsmDdi as Ddi>::Dev,
     opts: SessionOpenInitOptions<'_>,
 ) -> Result<PendingHandshake, DdiError> {

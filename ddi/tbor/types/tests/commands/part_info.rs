@@ -17,7 +17,7 @@
 
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
 const DEVICE_KIND_PHYSICAL: u8 = 2;

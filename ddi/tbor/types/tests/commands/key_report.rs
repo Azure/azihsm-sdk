@@ -31,8 +31,8 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_EPHEMERAL: u8 = 0b010;

@@ -42,11 +42,11 @@ use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::finalized_backing_session;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
-use crate::harness::x509_fixture::make_chain;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::GeneratedChain;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Both attestation evidences (source sender, destination receiver) laid
 /// out in a single OOB page, with descriptors indexing into it.

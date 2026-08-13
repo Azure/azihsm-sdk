@@ -19,7 +19,7 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Hash `msg` on-device with `algo`, returning the digest.
 fn device_digest(ctx: &TestCtx, session_id: u16, algo: u8, msg: Vec<u8>) -> Vec<u8> {

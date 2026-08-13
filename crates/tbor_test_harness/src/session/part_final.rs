@@ -32,7 +32,7 @@ use super::finish::SessionHandshake;
 /// (the schema still needs ≥1 descriptor, so a single placeholder with no
 /// OOB region is emitted).  `prev_local_mk_backup` is the optional prior
 /// backup to restore (empty = first instantiation).
-pub(crate) fn part_final(
+pub fn part_final(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
     part_policy: &[u8],

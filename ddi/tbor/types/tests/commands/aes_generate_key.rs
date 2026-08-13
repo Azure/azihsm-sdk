@@ -41,7 +41,7 @@ use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::ROTATED_CO_PSK;
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 pub(crate) const SCOPE_SESSION: u8 = 0b001;

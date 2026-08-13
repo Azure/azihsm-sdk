@@ -13,7 +13,7 @@
 
 use azihsm_ddi_tbor_types::TborApiRevReq;
 
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 const EXPECTED: azihsm_ddi_tbor_types::TborApiRevResp = azihsm_ddi_tbor_types::TborApiRevResp {
     min_ver: 1,

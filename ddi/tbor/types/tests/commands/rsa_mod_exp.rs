@@ -43,7 +43,7 @@ use azihsm_ddi_tbor_types::RSA_OP_SIGN;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Reverse `bytes` into a fresh vec (wire-LE ↔ OpenSSL-BE conversion).
 fn rev(bytes: &[u8]) -> Vec<u8> {

@@ -6,7 +6,7 @@
 //!
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`]. Happy-path sessions are owned
-//! by a [`SessionGuard`](crate::harness::SessionGuard) that closes on
+//! by a [`SessionGuard`](azihsm_ddi_tbor_test_harness::SessionGuard) that closes on
 //! `Drop`; negative paths drive `session_open_init` /
 //! `session_open_finish` on `TestCtx` directly.
 
@@ -18,9 +18,9 @@ use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::build_mac_fin;
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::build_mac_fin;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
