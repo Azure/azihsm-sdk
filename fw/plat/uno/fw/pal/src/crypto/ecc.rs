@@ -399,12 +399,11 @@ impl HsmEcc for UnoHsmPal {
         // validation) would otherwise accumulate this scratch and can
         // exhaust the DMA pool.
         self.alloc_scoped_async(io, async |scope| {
-            // The digest arrives PKA-native little-endian: the DDI handler
-            // hashes big-endian and then fully byte-reverses it (a full BE->LE
-            // reversal, not `hash(.., big_endian = false)`, which only swaps
-            // within each 32-bit word). pub_key and signature likewise arrive
-            // LE via the host DDI serde. No byte-order conversion is done below
-            // the PAL.
+            // The digest arrives PKA-native little-endian: it is a full BE->LE
+            // byte reversal of the big-endian hash, which is what
+            // `hash(.., big_endian = false)` produces. pub_key and signature
+            // likewise arrive LE via the host DDI serde. No byte-order
+            // conversion is done below the PAL.
 
             // Per-call Montgomery constant from the curve prime (like
             // ecdh_derive). `mont_result` is transient scratch consumed
