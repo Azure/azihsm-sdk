@@ -39,6 +39,7 @@ use azihsm_ddi_mbor_types::MborError;
 use azihsm_ddi_mbor_types::SessionControlKind;
 use azihsm_ddi_tbor_types::TborOpReq;
 use azihsm_ddi_tbor_types::TborResp;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_fw_hsm_io::CmdDword;
 use azihsm_fw_hsm_io::Cqe;
 use azihsm_fw_hsm_io::SessionFlags;
@@ -541,44 +542,32 @@ fn validate_tbor_session_request(
     req_session_id: Option<u16>,
     current_session_id: Option<u16>,
 ) -> Result<(), DdiError> {
+    // use local alias to avoid collision with the MBOR `SessionControlKind`.
+    use azihsm_ddi_tbor_types::SessionControlKind;
     match kind {
-        azihsm_ddi_tbor_types::SessionControlKind::NoSession => {
+        SessionControlKind::NoSession => {
             if req_session_id.is_some() {
-                Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::InvalidArg,
-                ))
+                Err(DdiError::TborStatus(TborStatus::InvalidArg))
             } else {
                 Ok(())
             }
         }
-        azihsm_ddi_tbor_types::SessionControlKind::Open => {
-            match (current_session_id, req_session_id) {
-                (None, None) => Ok(()),
-                (None, Some(_)) => Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::InvalidArg,
-                )),
-                (Some(_), _) => Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::FileHandleSessionLimitReached,
-                )),
-            }
-        }
-        azihsm_ddi_tbor_types::SessionControlKind::Close
-        | azihsm_ddi_tbor_types::SessionControlKind::InSession => {
-            if req_session_id.is_none() {
-                return Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::SessionNotFound,
-                ));
-            }
+        SessionControlKind::Open => match (current_session_id, req_session_id) {
+            (None, None) => Ok(()),
+            (None, Some(_)) => Err(DdiError::TborStatus(TborStatus::InvalidArg)),
+            (Some(_), _) => Err(DdiError::TborStatus(
+                TborStatus::FileHandleSessionLimitReached,
+            )),
+        },
+        SessionControlKind::Close | SessionControlKind::InSession => {
             let Some(current) = current_session_id else {
-                return Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::SessionNotFound,
-                ));
+                return Err(DdiError::TborStatus(TborStatus::SessionNotFound));
             };
             if Some(current) == req_session_id {
                 Ok(())
             } else {
                 Err(DdiError::TborStatus(
-                    azihsm_ddi_tbor_types::TborStatus::FileHandleSessionIdDoesNotMatch,
+                    TborStatus::FileHandleSessionIdDoesNotMatch,
                 ))
             }
         }
