@@ -66,13 +66,8 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Use the Azure mirror: archive.ubuntu.com is round-robin DNS where
-          # one dead IP fails the job.  No-op on Debian (deb.debian.org).
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
-            [ -f "$f" ] && sed -i \
-              -e 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \
-              -e 's|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' "$f"
-          done
+          # archive.ubuntu.com is round-robin DNS; retry so a single dead IP
+          # doesn't fail the job.
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
           # Fail on an unreachable mirror here instead of as a misleading
           # "no installation candidate" at install time.
