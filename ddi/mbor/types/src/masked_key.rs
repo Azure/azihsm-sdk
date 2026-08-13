@@ -865,6 +865,10 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
         // Parse MaskedKeyHeader
         let header = MaskedKeyHeader::try_from(bytes)?;
 
+        if header.version != 1 {
+            return Err(MaskedKeyError::HeaderDecodeError);
+        }
+
         if !matches!(
             header.algorithm,
             MaskingKeyAlgorithm::AesCbc256Hmac384 | MaskingKeyAlgorithm::AesGcm256
