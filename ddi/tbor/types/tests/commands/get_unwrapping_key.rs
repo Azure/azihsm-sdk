@@ -14,11 +14,11 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
 use azihsm_ddi_tbor_types::UNWRAPPING_PUB_KEY_LEN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn get_unwrapping_key_returns_rsa_pub_key_emu() {

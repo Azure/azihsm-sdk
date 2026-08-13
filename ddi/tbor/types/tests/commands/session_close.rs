@@ -22,9 +22,8 @@
 
 #![cfg(feature = "emu")]
 
-use azihsm_ddi_tbor_types::SessionType;
-
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::SessionType;
 
 const CO: u8 = 0;
 const CU: u8 = 1;

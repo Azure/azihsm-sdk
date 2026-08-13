@@ -32,13 +32,6 @@ use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
-use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborStatus;
-#[cfg(not(feature = "emu"))]
-use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
-use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
-use azihsm_ddi_tbor_types::PSK_LEN;
-
 #[cfg(not(feature = "emu"))]
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::build_psk_change_aad;
@@ -46,6 +39,12 @@ use azihsm_ddi_tbor_test_harness::encrypt_psk_envelope;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TborPskChangeReq;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborStatus;
+#[cfg(not(feature = "emu"))]
+use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
+use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
+use azihsm_ddi_tbor_types::PSK_LEN;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
@@ -160,7 +159,10 @@ fn psk_change_second_attempt_same_session_fails() {
     let err = ctx
         .psk_change(session.handshake(), &DEFAULT_PSK_CU)
         .expect_err("second psk_change on same session must fail");
-    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidPermissions);
+    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+        &err,
+        TborStatus::InvalidPermissions,
+    );
 }
 
 // ===========================================================================
@@ -204,7 +206,10 @@ fn psk_change_envelope_tampered() {
         let err = ctx
             .tbor(&req)
             .expect_err(&format!("tamper case must be rejected: {label}"));
-        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+            &err,
+            TborStatus::AeadEnvelopeAuthFailed,
+        );
     }
 }
 
@@ -283,7 +288,10 @@ fn psk_change_envelope_from_other_session() {
     let err = ctx_b
         .tbor(&req)
         .expect_err("PskChange envelope from session A must be rejected on session B");
-    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+        &err,
+        TborStatus::AeadEnvelopeAuthFailed,
+    );
 
     // Both sessions close on drop via their SessionGuards.
 }
@@ -314,7 +322,10 @@ fn psk_change_wrong_plaintext_length() {
         let err = ctx.tbor(&req).expect_err(&format!(
             "plaintext length {len} (≠ PSK_LEN={PSK_LEN}) must be rejected",
         ));
-        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+            &err,
+            TborStatus::TborInvalidFixedLength,
+        );
     }
 }
 

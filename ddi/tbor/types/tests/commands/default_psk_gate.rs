@@ -23,6 +23,9 @@
 //! Each test inherits a factory-reset device from `TestCtx::new`, so
 //! partition PSKs are at their canonical defaults on entry.
 
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
@@ -32,9 +35,6 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;

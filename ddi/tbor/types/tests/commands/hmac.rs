@@ -20,6 +20,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -32,7 +33,6 @@ use crate::commands::hmac_generate_key::SCOPE_EPHEMERAL;
 use crate::commands::hmac_generate_key::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Expected tag length (bytes) for a wire hash discriminant.
 fn tag_len_for_hash(hash: u8) -> usize {

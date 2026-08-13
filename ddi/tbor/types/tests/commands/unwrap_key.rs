@@ -32,6 +32,7 @@ use azihsm_crypto::KeyGenerationOp;
 use azihsm_crypto::RsaEncryptAlgo;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
@@ -49,7 +50,6 @@ use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// OAEP hash discriminant (SHA-256) used for wrapping.
 const OAEP_SHA256: u8 = 1;

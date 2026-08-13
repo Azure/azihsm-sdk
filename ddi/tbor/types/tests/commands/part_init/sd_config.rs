@@ -15,13 +15,14 @@
 //! * [`part_init_with_sapota_emu`] — PartInit additionally carrying a
 //!   SAPOTA thumbprint succeeds.
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
+
 use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
 use super::sata_thumbprint;
 use super::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn part_init_with_sata() {

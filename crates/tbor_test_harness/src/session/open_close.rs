@@ -44,10 +44,7 @@ pub fn session_open(
 }
 
 /// Issue `SessionClose(session_id)` and return on success.
-pub fn session_close(
-    dev: &<AzihsmDdi as Ddi>::Dev,
-    session_id: u16,
-) -> Result<(), DdiError> {
+pub fn session_close(dev: &<AzihsmDdi as Ddi>::Dev, session_id: u16) -> Result<(), DdiError> {
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
     let _resp: TborSessionCloseResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
