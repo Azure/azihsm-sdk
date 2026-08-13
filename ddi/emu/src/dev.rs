@@ -195,6 +195,7 @@ impl DdiDev for DdiEmuDev {
         let opcode = req.get_opcode();
         let req_session_id = req.get_session_id();
         let current_session_id = self.session.lock().session_id;
+        let session_ctrl: SessionControlKind = opcode.into();
         validate_session_request(opcode, req_session_id, current_session_id)?;
 
         // ── 2. Encode DDI request via host MBOR (wire-compat with fw) ─
@@ -212,7 +213,6 @@ impl DdiDev for DdiEmuDev {
 
         // ── 3. Build SQE and submit on the embedded tokio runtime ─────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let session_ctrl: SessionControlKind = opcode.into();
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(OP_MBOR).with_id(cmd_id))
             .buf_lens(req_len as u32, SCRATCH_LEN as u32)
@@ -290,6 +290,12 @@ impl DdiDev for DdiEmuDev {
         oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
+        // Match the native driver's per-file-descriptor session checks before
+        // dispatching to firmware, whose session table is global to the HSM.
+        let req_session_id = req.get_session_id();
+        let current_session_id = self.session.lock().session_id;
+        validate_tbor_session_request(req.session_ctrl(), req_session_id, current_session_id)?;
+
         // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
         let mut src = AlignedBuf::new(SCRATCH_LEN);
         let mut dst = AlignedBuf::new(SCRATCH_LEN);
@@ -336,7 +342,6 @@ impl DdiDev for DdiEmuDev {
 
         // ── 2. Build SQE with OP_TBOR ──────────────────────────────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let req_session_id = req.get_session_id();
         let session_ctrl = req.session_ctrl();
         let oob_prp = if oob_len != 0 {
             oob_page.as_slice().as_ptr() as u64
@@ -524,6 +529,47 @@ fn validate_session_request(
             } else {
                 Err(DdiError::DdiStatus(
                     DdiStatus::FileHandleSessionIdDoesNotMatch,
+                ))
+            }
+        }
+    }
+}
+
+/// TBOR equivalent of [`validate_session_request`].
+fn validate_tbor_session_request(
+    kind: azihsm_ddi_tbor_types::SessionControlKind,
+    req_session_id: Option<u16>,
+    current_session_id: Option<u16>,
+) -> Result<(), DdiError> {
+    match kind {
+        azihsm_ddi_tbor_types::SessionControlKind::NoSession => {
+            if req_session_id.is_some() {
+                Err(DdiError::DdiStatus(DdiStatus::InvalidArg))
+            } else {
+                Ok(())
+            }
+        }
+        azihsm_ddi_tbor_types::SessionControlKind::Open => {
+            match (current_session_id, req_session_id) {
+                (None, None) => Ok(()),
+                (None, Some(_)) => Err(DdiError::DdiStatus(DdiStatus::InvalidArg)),
+                (Some(_), _) => Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::FileHandleSessionLimitReached,
+                )),
+            }
+        }
+        azihsm_ddi_tbor_types::SessionControlKind::Close
+        | azihsm_ddi_tbor_types::SessionControlKind::InSession => {
+            let Some(current) = current_session_id else {
+                return Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::SessionNotFound,
+                ));
+            };
+            if Some(current) == req_session_id {
+                Ok(())
+            } else {
+                Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::FileHandleSessionIdDoesNotMatch,
                 ))
             }
         }
