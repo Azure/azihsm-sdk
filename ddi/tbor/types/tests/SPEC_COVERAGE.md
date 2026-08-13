@@ -135,6 +135,12 @@ All test names below are relative to the
 
 ## `PartFinal` (opcode in-session, gated)
 
+Backend note: emulator tests transport and validate the real PTA
+certificate chain through OOB descriptors. Native M1.0 tests send one
+schema-required placeholder descriptor with no OOB payload because the
+current hardware firmware intentionally ignores certificate descriptors;
+full native certificate-chain validation remains M1.5 work.
+
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 | First instantiation returns a 164-byte `local_mk_backup` and transitions to `Initialized` | ✅ | `part_final::part_final_full_flow_valid_chain` | Also verifies identity stability and session reopen |

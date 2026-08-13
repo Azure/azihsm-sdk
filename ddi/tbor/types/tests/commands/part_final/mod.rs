@@ -5,10 +5,12 @@
 //!
 //! The shared tests exercise `OpenSession -> PskChange -> PartInit ->
 //! PartFinal` on both the emulator and native hardware backends. Every shared
-//! case uses a syntactically valid POTA-to-PTA certificate chain so the
-//! assertions remain valid for both the M1.0 surrogate-chain implementation
-//! and the later full certificate verifier. The two tests that specifically
-//! validate certificate-chain integrity remain emulator-only until M1.5.
+//! case builds a syntactically valid POTA-to-PTA certificate chain. Emulator
+//! runs transfer and validate that chain; native M1.0 runs send the
+//! schema-required placeholder descriptor because the current firmware
+//! intentionally does not consume certificate OOB data. The two tests that
+//! specifically validate certificate-chain integrity remain emulator-only
+//! until M1.5.
 //!
 //! The prior-backup acceptance case is intentionally a smoke test. M1.0 has no
 //! public command that consumes a Local-scope masked artifact, so accepting the
