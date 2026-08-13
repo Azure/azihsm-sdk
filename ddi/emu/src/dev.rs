@@ -421,7 +421,9 @@ impl DdiDev for DdiEmuDev {
                     session.session_id = Some(id);
                 }
             }
-            azihsm_ddi_tbor_types::SessionControlKind::Close => session.session_id = None,
+            azihsm_ddi_tbor_types::SessionControlKind::Close => {
+                session.session_id = None
+            }
             azihsm_ddi_tbor_types::SessionControlKind::InSession
             | azihsm_ddi_tbor_types::SessionControlKind::NoSession => {}
         }
