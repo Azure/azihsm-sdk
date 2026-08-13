@@ -564,6 +564,11 @@ fn validate_tbor_session_request(
         }
         azihsm_ddi_tbor_types::SessionControlKind::Close
         | azihsm_ddi_tbor_types::SessionControlKind::InSession => {
+            if req_session_id.is_none() {
+                return Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::SessionNotFound,
+                ));
+            }
             let Some(current) = current_session_id else {
                 return Err(DdiError::TborStatus(
                     azihsm_ddi_tbor_types::TborStatus::SessionNotFound,
