@@ -194,8 +194,7 @@ impl DdiDev for DdiEmuDev {
         // ── 1. Validate against current session state ──────────────
         let opcode = req.get_opcode();
         let req_session_id = req.get_session_id();
-        let mut session = self.session.lock();
-        let current_session_id = session.session_id;
+        let current_session_id = self.session.lock().session_id;
         let session_ctrl: SessionControlKind = opcode.into();
         validate_session_request(opcode, req_session_id, current_session_id)?;
 
@@ -258,8 +257,8 @@ impl DdiDev for DdiEmuDev {
         // ── 6. Update session state on Open / Close success ────────
         let kind: SessionControlKind = opcode.into();
         match kind {
-            SessionControlKind::Open => session.session_id = hdr.sess_id,
-            SessionControlKind::Close => session.session_id = None,
+            SessionControlKind::Open => self.session.lock().session_id = hdr.sess_id,
+            SessionControlKind::Close => self.session.lock().session_id = None,
             SessionControlKind::NoSession | SessionControlKind::InSession => {}
         }
 
@@ -276,7 +275,7 @@ impl DdiDev for DdiEmuDev {
             let mut sniff_dec = MborDecoder::new(resp_buf, post_decode);
             let r = DdiOpenSessionCmdResp::mbor_decode(&mut sniff_dec)
                 .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
-            session.short_app_id = Some(r.data.short_app_id);
+            self.session.lock().short_app_id = Some(r.data.short_app_id);
         }
 
         Ok(resp)
@@ -294,8 +293,7 @@ impl DdiDev for DdiEmuDev {
         // Match the native driver's per-file-descriptor session checks before
         // dispatching to firmware, whose session table is global to the HSM.
         let req_session_id = req.get_session_id();
-        let mut session = self.session.lock();
-        let current_session_id = session.session_id;
+        let current_session_id = self.session.lock().session_id;
         validate_tbor_session_request(req.session_ctrl(), req_session_id, current_session_id)?;
 
         // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
@@ -418,11 +416,11 @@ impl DdiDev for DdiEmuDev {
                         })
                     })
                 {
-                    session.session_id = Some(id);
+                    self.session.lock().session_id = Some(id);
                 }
             }
             azihsm_ddi_tbor_types::SessionControlKind::Close => {
-                session.session_id = None
+                self.session.lock().session_id = None
             }
             azihsm_ddi_tbor_types::SessionControlKind::InSession
             | azihsm_ddi_tbor_types::SessionControlKind::NoSession => {}
