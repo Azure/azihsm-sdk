@@ -1,6 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! Secure-provisioning live-migration simulation tests for the emu backend.
+//!
+//! The emu `migrate_sim` (NSSR) reproduces what a live migration does to a
+//! partition: the volatile state (the ECDH tunnel key and the in-flight
+//! provisioning PIN) is dropped, while the sealed/persistent store is carried
+//! to the target. These tests confirm the two halves of that contract:
+//!
+//! 1. A migration in the MIDDLE of secure provisioning lands no partial
+//!    persistent state on the target, and a clean flow still provisions
+//!    afterwards (`test_secure_provision_lm_midflow_restart`).
+//! 2. A COMPLETED, sealed provisioning survives a migration byte-identical,
+//!    with FIPS status preserved and a re-seal rejected
+//!    (`test_secure_provision_lm_completed_survives`).
+
 #![cfg(not(any(feature = "emu", feature = "mock")))]
 #![cfg(test)]
 
@@ -128,6 +142,26 @@ fn not_truly_fresh(err: &DdiError) -> bool {
     )
 }
 
+/// A live migration in the MIDDLE of secure provisioning must leave no partial
+/// persistent state on the target, and a clean flow must still provision
+/// afterwards.
+///
+/// `migrate_sim` (NSSR) drops the volatile ECDH tunnel key and the in-flight
+/// provisioning PIN while carrying the persistent store across:
+///
+/// - A1: migrate right after minting the establish key (no PIN set) —
+///   `secure_init_bk3` must fail `Bk3PinNotSet`.
+/// - A2: migrate after `set_init_bk3_pin` (the volatile PIN is lost) —
+///   `secure_init_bk3` over a fresh tunnel is rejected as pin-not-set.
+/// - A3: pre-build the encrypted-BK3 payload, THEN migrate (both tunnel key and
+///   PIN lost) — `secure_init_bk3` must not decrypt-succeed against the stale
+///   state (`Bk3PinNotSet` / `NonceMismatch` / `Bk3TransportTagMismatch`).
+/// - A4: no partial persistent state landed — `get_sealed_bk3` stays gated and
+///   `is_fips_approved` stays false.
+///
+/// Recovery then runs a clean full flow (provision + seal) and confirms the
+/// completed provisioning migrates intact (B5/B6), with a one-shot re-seal
+/// rejected (`SealedBk3AlreadySet`).
 #[test]
 fn test_secure_provision_lm_midflow_restart() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
@@ -313,6 +347,18 @@ fn test_secure_provision_lm_midflow_restart() {
     });
 }
 
+/// A COMPLETED, sealed secure provisioning must survive a live migration
+/// byte-identical.
+///
+/// Starting from a securely-provisioned + sealed partition (provisioning it
+/// in-test if the device is fresh), `migrate_sim` (NSSR) is applied and the
+/// persistent contract is asserted on the target:
+///
+/// - C7: `get_sealed_bk3` returns the same bytes before and after migration,
+///   and the FIPS-approval status is preserved.
+/// - One-shot: re-sealing the migrated partition is rejected with
+///   `SealedBk3AlreadySet`.
+/// - C9: a FIPS-approved partition never carries an empty sealed BK3.
 #[test]
 fn test_secure_provision_lm_completed_survives() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
