@@ -856,7 +856,7 @@ impl TryFrom<&[u8]> for MaskedKeyHeader {
     }
 }
 
-/// Decodes the cleartext [`DdiMaskedKeyMetadata`] embedded in a raw
+/// Decodes the metadata embedded in a raw
 /// masked-key blob.
 impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
     type Error = MaskedKeyError;
@@ -901,9 +901,7 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
     }
 }
 
-/// Validates the AES-specific header invariants before any offsets derived
-/// from it are trusted (ported from the pre-existing hand-rolled
-/// validation in `azihsm-sdk`'s `api/lib`).
+/// Validates the AES-specific header invariants
 fn validate_aes_header(
     header: &MaskedKeyAesHeader,
     algorithm: MaskingKeyAlgorithm,
