@@ -18,7 +18,6 @@ use azihsm_ddi_mbor_types::DdiKeyType;
 use azihsm_ddi_mbor_types::DdiMaskedKeyAttributes;
 use azihsm_ddi_mbor_types::DdiMaskedKeyMetadata;
 use azihsm_ddi_mbor_types::MaskedKey;
-use azihsm_ddi_mbor_types::MaskedKeyBlob;
 use azihsm_ddi_mbor_types::MaskingKeyAlgorithm;
 use azihsm_ddi_mbor_types::DDI_MAX_KEY_LABEL_LENGTH;
 use parking_lot::RwLock;
@@ -84,12 +83,12 @@ pub(crate) const BKS2: [u8; BK_SEED_SIZE_BYTES] = [
 /// * `metadata` - The metadata for the masked key
 ///
 /// # Returns
-/// * `Result<MaskedKeyBlob, ManticoreError>` - The encoded masked key buffer
+/// * `Result<Vec<u8>, ManticoreError>` - The encoded masked key buffer
 fn encode_masked_key(
     key_data: &[u8],
     masking_key: &[u8],
     metadata: &DdiMaskedKeyMetadata,
-) -> Result<MaskedKeyBlob, ManticoreError> {
+) -> Result<Vec<u8>, ManticoreError> {
     let env = SimCryptEnv;
 
     // MBOR encode metadata
@@ -225,7 +224,7 @@ impl Function {
     }
 
     /// Init the BK3
-    pub(crate) fn init_bk3(&self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<MaskedKeyBlob, ManticoreError> {
+    pub(crate) fn init_bk3(&self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<Vec<u8>, ManticoreError> {
         self.inner.write().init_bk3(bk3)
     }
 
@@ -526,7 +525,7 @@ impl FunctionInner {
         Ok(key_id)
     }
 
-    fn init_bk3(&mut self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<MaskedKeyBlob, ManticoreError> {
+    fn init_bk3(&mut self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<Vec<u8>, ManticoreError> {
         tracing::debug!(bk3_len = bk3.len(), "Initializing BK3");
 
         if self.state.is_bk3_initialized() {
@@ -544,7 +543,7 @@ impl FunctionInner {
             key_length: BK3_SIZE_BYTES as u16,
         };
 
-        let masked: MaskedKeyBlob = encode_masked_key(&bk3, &BK_BOOT, &metadata)?;
+        let masked = encode_masked_key(&bk3, &BK_BOOT, &metadata)?;
         self.state.set_bk3_initialized()?;
         Ok(masked)
     }
@@ -957,13 +956,13 @@ impl FunctionState {
     /// * `session_masking_key` - If entry is a session key, will be used to mask the key
     ///
     /// # Returns
-    /// * `Result<MaskedKeyBlob, ManticoreError>` - The masked key buffer
+    /// * `Result<Vec<u8>, ManticoreError>` - The masked key buffer
     pub(crate) fn mask_vault_entry(
         &self,
         entry: &Entry,
         virtual_session_id: Option<u16>,
         session_masking_key: Option<&AesHmacKey>,
-    ) -> Result<MaskedKeyBlob, ManticoreError> {
+    ) -> Result<Vec<u8>, ManticoreError> {
         self.inner
             .read()
             .mask_vault_entry(entry, virtual_session_id, session_masking_key)
@@ -1233,7 +1232,7 @@ impl FunctionStateInner {
         entry: &Entry,
         virtual_session_id: Option<u16>,
         session_masking_key: Option<&AesHmacKey>,
-    ) -> Result<MaskedKeyBlob, ManticoreError> {
+    ) -> Result<Vec<u8>, ManticoreError> {
         const ERR: ManticoreError = ManticoreError::MaskedKeyPreEncodeFailed;
 
         // Get whether this is session only
@@ -2169,7 +2168,7 @@ mod tests {
             key_length: BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         };
 
-        let buffer: MaskedKeyBlob = encode_masked_key(&test_data, &masking_key, &metadata).unwrap();
+        let buffer = encode_masked_key(&test_data, &masking_key, &metadata).unwrap();
 
         let decoded = MaskedKey::decode(&env, &masking_key, &buffer, true).unwrap();
 

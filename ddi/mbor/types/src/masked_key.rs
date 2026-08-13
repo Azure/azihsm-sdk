@@ -1,10 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use azihsm_ddi_mbor_codec::MborDecode;
 use azihsm_ddi_mbor_codec::MborDecoder;
 use azihsm_ddi_mbor_derive::Ddi;
@@ -842,10 +838,6 @@ pub struct DdiMaskedKeyAttributes {
     #[ddi(id = 1)]
     pub blob: [u8; 32],
 }
-
-/// Alias for masked key blob
-/// that represents [`MaskedKey`]
-pub type MaskedKeyBlob = Vec<u8>;
 
 /// Decodes the fixed-size, algorithm-agnostic leading header from a raw
 /// masked-key blob.

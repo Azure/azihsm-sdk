@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use azihsm_ddi_mbor_types::MaskedKeyBlob;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use tracing::instrument;
@@ -192,12 +191,12 @@ impl UserSession {
     /// # Returns
     /// * [MaskedKeyIntermediate] - The masked key intermediate structure containing the masked key data.
     #[instrument(skip_all, fields(sess_id = self.id()))]
-    pub(crate) fn mask_key(&self, entry: &Entry) -> Result<MaskedKeyBlob, ManticoreError> {
+    pub(crate) fn mask_key(&self, entry: &Entry) -> Result<Vec<u8>, ManticoreError> {
         self.inner.read().mask_key(entry)
     }
 
     #[instrument(skip_all, fields(sess_id = self.id()))]
-    pub(crate) fn unmask_key(&self, masked_key: &MaskedKeyBlob) -> Result<u16, ManticoreError> {
+    pub(crate) fn unmask_key(&self, masked_key: &[u8]) -> Result<u16, ManticoreError> {
         self.inner.read().unmask_key(masked_key)
     }
 
@@ -654,13 +653,13 @@ impl UserSessionInner {
     }
 
     // Serialize Entry, encrypt the crypto key portion, and generate HMAC/Signature
-    fn mask_key(&self, entry: &Entry) -> Result<MaskedKeyBlob, ManticoreError> {
+    fn mask_key(&self, entry: &Entry) -> Result<Vec<u8>, ManticoreError> {
         let function_state = self.get_function_state()?;
 
         function_state.mask_vault_entry(entry, Some(self.id()), Some(&self.masking_key))
     }
 
-    fn unmask_key(&self, blob: &MaskedKeyBlob) -> Result<u16, ManticoreError> {
+    fn unmask_key(&self, blob: &[u8]) -> Result<u16, ManticoreError> {
         let function_state = self.get_function_state()?;
 
         function_state.unmask_and_import_key(blob, self.id(), self.app_id, Some(&self.masking_key))
