@@ -395,9 +395,11 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let co_ctx = TestCtx::new_with_path(ctx.path());
+    let co_session = bootstrap_rotated_co(&co_ctx, &ROTATED_CO_PSK);
 
-    ctx.part_init(&co_session, &seed, &policy, &thumb)
+    co_ctx
+        .part_init(&co_session, &seed, &policy, &thumb)
         .expect("valid CO PartInit must succeed after CU rejection");
 }
 
@@ -589,11 +591,13 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    // Open an authorized CO session for handler-level validation.
-    let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    // Open an authorized CO session on a separate handle: the CU session
+    // remains live, and each hardware handle permits only one session.
+    let co_ctx = TestCtx::new_with_path(ctx.path());
+    let co_session = bootstrap_rotated_co(&co_ctx, &ROTATED_CO_PSK);
 
     // Third rejection: malformed policy.
-    let err = ctx
+    let err = co_ctx
         .part_init(&co_session, &seed, &bad_policy, &thumb)
         .expect_err("malformed PartPolicy must be rejected");
 
@@ -601,7 +605,8 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
 
     // None of the preceding rejections may have initialized or otherwise
     // mutated the partition.
-    ctx.part_init(&co_session, &seed, &policy, &thumb)
+    co_ctx
+        .part_init(&co_session, &seed, &policy, &thumb)
         .expect("valid PartInit must succeed after multiple rejected requests");
 }
 
