@@ -5,12 +5,11 @@
 //!
 //! `TestAction` multiplexes a family of validation / fault-injection
 //! sub-actions selected by [`DdiTestAction`].  This refactor bring-up
-//! stands up the **framework**: the request mirrors the mainline host wire
-//! layout (`Martichoras/api/ddi/test_hooks/src/test_ops.rs`) up to the slot
-//! this firmware actually consumes (`force_pka_instance`, id 5), so the host
-//! ABI decodes correctly.  Only `ForcePkaInstance` is handled today; other
-//! action variants and their request sub-structs are ported incrementally as
-//! each action is brought up.
+//! stands up the **framework**: the request mirrors the host wire layout for
+//! the fields this firmware currently consumes. For the bring-up, the request
+//! is just the `action` selector (id 1) and only `Level1SkipIo` is supported.
+//! Other action variants and their parameter fields are ported incrementally
+//! as each action is brought up.
 //!
 //! ## Wire-layout invariant
 //! The `#[ddi(map)]` derive requires **contiguous** field ids and decodes
