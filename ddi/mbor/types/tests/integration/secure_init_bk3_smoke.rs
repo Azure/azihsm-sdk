@@ -90,7 +90,18 @@ fn secure_provision_bk3(
     helper_secure_init_bk3(dev, encrypted_bk3.unwrap(), pub_key2)
 }
 
-/// Error means skip: op unsupported (emu) or partition already provisioned.
+/// Returns `true` only for expected environmental states that make the secure
+/// provisioning flow non-runnable here, so the test skips rather than fails:
+///
+/// - `UnsupportedCmd` — the emu/mock backend (or firmware built without the BK3
+///   hooks) does not implement the op.
+/// - `Bk3AlreadyInitialized` / `Bk3PinAlreadySet` — the partition was already
+///   provisioned by a prior run; secure-init is one-shot + persistent and needs
+///   an AC power cycle to reset.
+///
+/// Every other error returns `false`, so a genuine backend failure falls through
+/// to the caller's `assert!(result.is_ok())` and fails the test loudly — it is
+/// never silently ignored.
 fn should_skip(err: &DdiError) -> bool {
     is_unsupported_cmd(err)
         || matches!(
