@@ -544,7 +544,9 @@ fn validate_tbor_session_request(
     match kind {
         azihsm_ddi_tbor_types::SessionControlKind::NoSession => {
             if req_session_id.is_some() {
-                Err(DdiError::DdiStatus(DdiStatus::InvalidArg))
+                Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::InvalidArg,
+                ))
             } else {
                 Ok(())
             }
@@ -552,7 +554,9 @@ fn validate_tbor_session_request(
         azihsm_ddi_tbor_types::SessionControlKind::Open => {
             match (current_session_id, req_session_id) {
                 (None, None) => Ok(()),
-                (None, Some(_)) => Err(DdiError::DdiStatus(DdiStatus::InvalidArg)),
+                (None, Some(_)) => Err(DdiError::TborStatus(
+                    azihsm_ddi_tbor_types::TborStatus::InvalidArg,
+                )),
                 (Some(_), _) => Err(DdiError::TborStatus(
                     azihsm_ddi_tbor_types::TborStatus::FileHandleSessionLimitReached,
                 )),
