@@ -47,14 +47,14 @@ const IV_LEN: usize = azihsm_ddi_tbor_types::AES_IV_LEN;
 
 /// Generates cryptographically random bytes from the operating system for test inputs.
 fn os_random_bytes<const N: usize>() -> [u8; N] {
-    let mut bytes = [0u8; N];
-
     File::open("/dev/urandom")
         .expect("open /dev/urandom")
-        .read_exact(&mut bytes)
-        .expect("read random bytes from /dev/urandom");
-
-    bytes
+        .bytes()
+        .take(N)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read random bytes from /dev/urandom")
+        .try_into()
+        .unwrap_or_else(|_| panic!("expected {N} random bytes"))
 }
 
 /// Generates a fresh AES-CBC IV for a test operation.
