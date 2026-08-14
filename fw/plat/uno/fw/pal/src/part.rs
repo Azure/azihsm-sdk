@@ -520,6 +520,19 @@ impl UnoHsmPal {
             return Ok(());
         }
 
+        // A PF enabled before `SetResource` assigned it any tables is
+        // `Enabled` with `res_mask == 0`, so `vault()` is built over empty
+        // storage (see `crate::vault::vault`) and its identity / enable-time
+        // keys are deliberately deferred. There is no key material to wipe
+        // and nowhere to provision a fresh identity into, so reset only the
+        // per-tenant state and leave provisioning to the later
+        // `SetResource` → `part_alloc` path.
+        if part.res_mask() == 0 {
+            part.clear_state(PartResetKind::Migrate);
+            part.clear_identity();
+            return Ok(());
+        }
+
         // Reap ALL per-tenant state regardless of the current lifecycle
         // state (Enabled / Allocated / Disabled), mirroring the reference
         // firmware's unconditional `state.migrate()`. uno previously
@@ -533,7 +546,9 @@ impl UnoHsmPal {
         // Wipe every vault key (app + session + internal) so no prior
         // tenant key material survives the reset.
         let admin_io = UnoHsmIo::admin(pid);
-        crate::vault::vault(&admin_io).clear(self, &admin_io).await?;
+        crate::vault::vault(&admin_io)
+            .clear(self, &admin_io)
+            .await?;
         // Clear the per-tenant persistent state (including the session
         // table), preserving the partition's provisioning material.
         part.clear_state(PartResetKind::Migrate);

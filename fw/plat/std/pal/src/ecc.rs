@@ -47,11 +47,10 @@ use super::*;
 /// Domain-separation label for the PTA keypair HKDF-Expand.
 ///
 /// Kept byte-identical to the uno PAL's private copy
-/// (`fw/plat/uno/fw/pal/src/crypto/ecc_det.rs`) and to the shared
-/// `KEYPAIR_LABEL_PTA` in the `part_init` DDI handler, so every
-/// platform fans the PTA keypair out of `PartRoot` under the same
-/// domain separation; the derivations differ only by FIPS 186-5
-/// §A.2 method (§A.2.1 here vs §A.2.2 on uno).
+/// (`fw/plat/uno/fw/pal/src/crypto/ecc_det.rs`), so every platform fans
+/// the PTA keypair out of `PartRoot` under the same domain separation;
+/// the derivations differ only by FIPS 186-5 §A.2 method (§A.2.1 here
+/// vs §A.2.2 on uno).
 const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
 
 /// Map the PAL-level [`HsmEccCurve`] to the crypto library's
@@ -184,7 +183,9 @@ impl HsmEcc for StdHsmPal {
             .map_err(|_| HsmError::EccGenerateError)?;
         // The OKM is spent — scrub it before the scoped buffer returns
         // to the pool (scope rewind does not clear DMA memory).
-        okm[..].zeroize();
+        // `DmaBuf::zeroize` (volatile writes + fence) rather than the
+        // slice `zeroize`, so the wipe cannot be optimized away.
+        okm.zeroize();
 
         // Serialize the scalar into `scratch_priv`, derive the public
         // coordinates, and copy both out.  Once the scalar is in DMA

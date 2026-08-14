@@ -306,8 +306,23 @@ impl HsmEcc for UnoHsmPal {
         _pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
         let pka_curve = map_ecc_curve(curve)?;
+        // Only P-384 (the PTA / alias identity curve) is supported. Reject
+        // other curves here rather than deep inside the derivation, so
+        // query mode agrees with use mode instead of handing back sizes
+        // for a curve that would later fail with `UnsupportedCmd`.
+        if pka_curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
+
         let priv_len = hsm_point_size(pka_curve);
         let pub_len = hsm_point_size(pka_curve) * 2;
+
+        // `root` is the derivation input in both modes, so validate its
+        // length before the query-mode return — the documented
+        // `InvalidArg` on a non-48-byte root must not depend on `out`.
+        if root.len() != priv_len {
+            return Err(HsmError::InvalidArg);
+        }
 
         let Some((priv_out, pub_out)) = out else {
             return Ok((priv_len, pub_len));
