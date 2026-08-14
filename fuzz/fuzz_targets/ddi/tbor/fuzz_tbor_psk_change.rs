@@ -12,6 +12,7 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 const CU: u8 = 1;
+static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
@@ -20,8 +21,12 @@ struct FuzzInput {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let ctx = TestCtx::new();
-    let session = ctx.open_session(CU, SessionType::PlainText).expect("session open should succeed");
+    let ctx = CTX.get_or_init(TestCtx::new);
+    ctx.erase().expect("erase should succeed");
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("session open should succeed");
 
     let psk_change_req = TborPskChangeReq {
         session_id: session.session_id(),
