@@ -706,7 +706,7 @@ impl<'a> MaskedKey<'a> {
                     MaskedKeyAesHeader::try_mut_from_bytes(aes_payload)
                         .map_err(|_| MaskedKeyError::InvalidLength)?;
 
-                *payload = (&layout).into();
+                *payload = MaskedKeyAesHeader::from(&layout);
             }
             _ => {
                 Err(MaskedKeyError::InvalidAlgorithm)?;
@@ -864,6 +864,7 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         // Parse MaskedKeyHeader
         let header = MaskedKeyHeader::try_from(bytes)?;
+        let rest = &bytes[size_of::<MaskedKeyHeader>()..];
 
         if header.version != 1 {
             return Err(MaskedKeyError::HeaderDecodeError);
@@ -877,7 +878,6 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
         }
 
         // Parse MaskedKeyAesHeader
-        let rest = &bytes[size_of::<MaskedKeyHeader>()..];
         if rest.len() < size_of::<MaskedKeyAesHeader>() {
             return Err(MaskedKeyError::InvalidLength);
         }
@@ -885,7 +885,7 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
         let (aes_header, _) = MaskedKeyAesHeader::try_ref_from_prefix(rest)
             .map_err(|_| MaskedKeyError::HeaderDecodeError)?;
 
-        validate_aes_header(aes_header, header.algorithm)?;
+        validate_aes_header(aes_header)?;
 
         if rest.len() < aes_metadata_section_len(aes_header) {
             return Err(MaskedKeyError::InvalidLength);
@@ -906,20 +906,12 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
 }
 
 /// Validates the AES-specific header invariants
-fn validate_aes_header(
-    header: &MaskedKeyAesHeader,
-    algorithm: MaskingKeyAlgorithm,
-) -> Result<(), MaskedKeyError> {
+fn validate_aes_header(header: &MaskedKeyAesHeader) -> Result<(), MaskedKeyError> {
     if header.encrypted_key_len == 0 || header.metadata_len == 0 || header.tag_len == 0 {
         return Err(MaskedKeyError::InvalidLength);
     }
 
-    let expected_iv_len = match algorithm {
-        MaskingKeyAlgorithm::AesCbc256Hmac384 => AES_CBC_IV_SIZE as u16,
-        MaskingKeyAlgorithm::AesGcm256 => AES_GCM_IV_SIZE as u16,
-        _ => return Err(MaskedKeyError::InvalidMaskingKeyAlgorithm),
-    };
-    if header.iv_len != expected_iv_len {
+    if header.iv_len != AES_CBC_IV_SIZE as u16 && header.iv_len != AES_GCM_IV_SIZE as u16 {
         return Err(MaskedKeyError::InvalidLength);
     }
 

@@ -109,29 +109,12 @@ impl HsmMaskedKey {
     ///
     /// Returns the parsed masked key metadata.
     fn parse_metadata(masked_key: &[u8]) -> HsmResult<HsmMaskedKeyMetadata> {
-        let header = MaskedKeyHeader::try_from(masked_key).map_err(Self::map_masked_key_error)?;
-
-        if header.version != 1 {
-            return Err(HsmError::InternalError);
-        }
-
-        if !matches!(header.algorithm, MaskingKeyAlgorithm::AesCbc256Hmac384) {
-            return Err(HsmError::UnsupportedAlgorithm);
-        }
-
-        let metadata =
-            DdiMaskedKeyMetadata::try_from(masked_key).map_err(Self::map_masked_key_error)?;
-
-        HsmMaskedKeyMetadata::try_from(metadata)
-    }
-
-    /// Maps a [`MaskedKeyError`] from the shared decode impls to this
-    /// crate's [`HsmError`]
-    fn map_masked_key_error(err: MaskedKeyError) -> HsmError {
-        match err {
+        let metadata = DdiMaskedKeyMetadata::try_from(masked_key).map_err(|e| match e {
             MaskedKeyError::InvalidLength => HsmError::IndexOutOfRange,
             _ => HsmError::InternalError,
-        }
+        })?;
+
+        HsmMaskedKeyMetadata::try_from(metadata)
     }
 
     fn key_props(metadata: &HsmMaskedKeyMetadata, class: HsmKeyClass) -> HsmResult<HsmKeyProps> {
