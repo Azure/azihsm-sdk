@@ -279,6 +279,11 @@ impl HsmEcc for UnoHsmPal {
     /// [`Self::ecc_gen_keypair`]; byte-order canonicalisation is the
     /// DDI handler's responsibility.
     ///
+    /// The std PAL derives from the same `root` with a different info
+    /// string, OKM length and §A.2 method, so it produces a
+    /// **different** keypair. Determinism holds per-platform only; see
+    /// the trait doc.
+    ///
     /// # Parameters
     /// * `curve` — must be [`HsmEccCurve::P384`].
     /// * `root` — the 48-byte partition `PartRoot`, used as the HKDF

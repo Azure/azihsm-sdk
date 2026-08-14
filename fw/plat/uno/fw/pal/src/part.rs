@@ -511,7 +511,28 @@ impl UnoHsmPal {
     /// impactless-update guarantee — unlike a full [`part_disable`], which
     /// additionally tears down the provisioning material.
     ///
+    /// # Accepted states
+    ///
+    /// Applies to a partition in **any** lifecycle state, mirroring the
+    /// reference firmware's unconditional `state.migrate()`; it does not
+    /// require `Enabled`. An earlier revision rejected every non-`Enabled`
+    /// state with [`HsmError::InvalidArg`], which left the session table
+    /// leaked whenever a partition was migrated while disabled.
+    ///
+    /// - `Unallocated` — no resources and no vault table: no-op, `Ok(())`.
+    /// - `res_mask == 0` (the PF enabled before `SetResource` assigned it
+    ///   any tables) — the vault is built over empty storage and the
+    ///   identity / enable-time keys are deliberately deferred, so only the
+    ///   per-tenant state and identity fields are cleared; provisioning is
+    ///   left to the later `SetResource` → [`part_alloc`] path.
+    /// - Anything else — full wipe, then re-provision and leave the
+    ///   partition `Enabled` and re-provisionable.
+    ///
+    /// Note the last case leaves a previously-`Disabled` partition
+    /// `Enabled`, so an NSSR is also an implicit re-enable.
+    ///
     /// [`part_disable`]: Self::part_disable
+    /// [`part_alloc`]: Self::part_alloc
     pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         // An unallocated partition has neither resources nor a vault table,
