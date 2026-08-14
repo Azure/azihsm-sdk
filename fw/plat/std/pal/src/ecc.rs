@@ -184,19 +184,28 @@ impl HsmEcc for StdHsmPal {
         info[..KEYPAIR_LABEL_PTA.len()].copy_from_slice(KEYPAIR_LABEL_PTA);
         info[KEYPAIR_LABEL_PTA.len()..].copy_from_slice(&(okm_len as u16).to_be_bytes());
         let okm = alloc.dma_alloc(okm_len)?;
-        self.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(&*info), &mut *okm)
-            .await?;
+
+        // `okm` is raw key material, so every step that touches it runs
+        // inside an inner block and the scrub happens unconditionally
+        // afterwards — mirroring the `scratch_priv` handling below. An
+        // early `?` (HKDF failure, or an A.2.1 reduction failure) must not
+        // return a written OKM to the scoped pool: scope rewind does not
+        // clear DMA memory, so the bytes would survive into whatever
+        // allocates that region next. `DmaBuf::zeroize` (volatile writes +
+        // fence) rather than the slice `zeroize`, so the wipe cannot be
+        // optimized away.
+        let derived = async {
+            self.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(&*info), &mut *okm)
+                .await?;
+            EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), &*okm)
+                .map_err(|_| HsmError::EccGenerateError)
+        }
+        .await;
+        okm.zeroize();
+        let pk = derived?;
 
         let scratch = alloc.dma_alloc(priv_len + wire_pub_len)?;
         let (scratch_priv, scratch_pub) = scratch.split_at_mut(priv_len);
-
-        let pk = EccPrivateKey::from_okm_a2_1(to_ecc_curve(curve), &*okm)
-            .map_err(|_| HsmError::EccGenerateError)?;
-        // The OKM is spent — scrub it before the scoped buffer returns
-        // to the pool (scope rewind does not clear DMA memory).
-        // `DmaBuf::zeroize` (volatile writes + fence) rather than the
-        // slice `zeroize`, so the wipe cannot be optimized away.
-        okm.zeroize();
 
         // Serialize the scalar into `scratch_priv`, derive the public
         // coordinates, and copy both out.  Once the scalar is in DMA
