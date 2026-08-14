@@ -997,19 +997,13 @@ pub(crate) mod kdf {
         Ok(PART_ROOT_LEN)
     }
 
-    /// Domain-separation label for the PartRoot → PTA keypair derivation
-    /// (HKDF-Expand info prefix).  Mirrors [`PART_ROOT_LABEL`]
-    /// versioning: rotating the suffix retires the associated key.
-    /// Exposed as a `pub` constant so integration tests can construct
-    /// alternate labels and assert domain separation.
-    pub const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
-
     /// Derive the deterministic per-partition PTA key pair (P-384) from
     /// a `PartRoot` produced by [`derive_part_root`].
     ///
     /// The `PartRoot` is handed directly to the PAL, which owns the
     /// full FIPS 186-5 §A.2 derivation: a domain-separated
-    /// HKDF-Expand-SHA384 (info built from `KEYPAIR_LABEL_PTA`)
+    /// HKDF-Expand-SHA384 (info built from the PAL's own
+    /// `KEYPAIR_LABEL_PTA`)
     /// followed by the platform's §A.2 scalar generation — §A.2.1
     /// (extra random bits) on a software PAL, or §A.2.2 (rejection
     /// sampling) on a hardware PAL whose modular unit cannot reduce by
