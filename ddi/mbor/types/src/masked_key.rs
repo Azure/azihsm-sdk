@@ -895,11 +895,11 @@ impl TryFrom<&[u8]> for DdiMaskedKeyMetadata {
         let aes_masked_key = MaskedKeyAes::new(header, aes_header.into(), rest);
 
         // Parse the metadata section
-        let mut decoder = MborDecoder::new(
-            aes_masked_key.metadata(),
-            #[cfg(feature = "post_decode")]
-            false,
-        );
+        #[cfg(feature = "post_decode")]
+        let mut decoder = MborDecoder::new(aes_masked_key.metadata(), false);
+        #[cfg(not(feature = "post_decode"))]
+        let mut decoder = MborDecoder::new(aes_masked_key.metadata());
+
         DdiMaskedKeyMetadata::mbor_decode(&mut decoder)
             .map_err(|_| MaskedKeyError::MetadataDecodeError)
     }
