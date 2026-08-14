@@ -37,7 +37,7 @@ fn round_trip() {
 
 /// `ApiRev` is stateless — repeated invocations on the same device
 /// handle return byte-identical responses. Catches any regression
-/// that would silently introduce per-call state (e.g.a version
+/// that would silently introduce per-call state (e.g. a version
 /// negotiation cache, a session-dependent code path) in the
 /// dispatcher's only out-of-session in-band handler.
 #[test]
