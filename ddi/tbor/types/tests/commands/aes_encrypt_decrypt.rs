@@ -23,18 +23,44 @@
 
 #![cfg(feature = "emu")]
 
-use azihsm_ddi_tbor_types::{
-    TborAesEncryptDecryptReq, TborAesEncryptDecryptResp, TborStatus, AES_KEY_SIZE_128,
-    AES_KEY_SIZE_192, AES_KEY_SIZE_256, AES_OP_DECRYPT, AES_OP_ENCRYPT, KEY_CLASS_AES,
-};
+use std::fs::File;
+use std::io::Read;
 
-use crate::commands::aes_generate_key::{generate_key, SCOPE_LOCAL};
+use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
+use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
+use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
+use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
+use azihsm_ddi_tbor_types::KEY_CLASS_AES;
+
+use crate::commands::aes_generate_key::generate_key;
+use crate::commands::aes_generate_key::SCOPE_LOCAL;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::harness::TestCtx;
 
 /// AES block / IV length.
-const IV_LEN: usize = 16;
+const IV_LEN: usize = azihsm_ddi_tbor_types::AES_IV_LEN;
+
+/// Generates cryptographically random bytes from the operating system for test inputs.
+fn os_random_bytes<const N: usize>() -> [u8; N] {
+    let mut bytes = [0u8; N];
+
+    File::open("/dev/urandom")
+        .expect("open /dev/urandom")
+        .read_exact(&mut bytes)
+        .expect("read random bytes from /dev/urandom");
+
+    bytes
+}
+
+/// Generates a fresh AES-CBC IV for a test operation.
+fn random_iv() -> [u8; IV_LEN] {
+    os_random_bytes::<IV_LEN>()
+}
 
 /// Performs an AES-CBC transform using the supplied masked key, operation, message, and IV.
 fn aes_op(
@@ -63,7 +89,7 @@ fn check_chaining_iv(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x5Au8; 48];
-    let iv = [0x22u8; IV_LEN];
+    let iv = random_iv();
 
     let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -81,7 +107,7 @@ fn check_single_block_roundtrip(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0xA5u8; IV_LEN];
-    let iv = [0x11u8; IV_LEN];
+    let iv = random_iv();
 
     let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -112,7 +138,7 @@ fn check_deterministic_output(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x3Cu8; 32];
-    let iv = [0x44u8; IV_LEN];
+    let iv = random_iv();
 
     let enc_a = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -122,6 +148,7 @@ fn check_deterministic_output(key_size: u8) {
         enc_a.msg, enc_b.msg,
         "identical inputs must produce identical ciphertext",
     );
+
     assert_eq!(
         enc_a.iv, enc_b.iv,
         "identical inputs must produce identical chaining IVs",
@@ -135,8 +162,13 @@ fn check_different_iv_changes_ciphertext(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x5Au8; 32];
-    let iv_a = [0x11u8; IV_LEN];
-    let iv_b = [0x22u8; IV_LEN];
+    let iv_a = random_iv();
+    let mut iv_b = random_iv();
+
+    // Guarantee distinct IVs even in the extremely unlikely event of a collision.
+    if iv_a == iv_b {
+        iv_b[0] ^= 0x01;
+    }
 
     let enc_a = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv_a);
 
@@ -157,7 +189,7 @@ fn check_different_keys_change_ciphertext(key_size: u8) {
     let key_b = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x5Au8; 32];
-    let iv = [0x22u8; IV_LEN];
+    let iv = random_iv();
 
     let enc_a = aes_op(&ctx, session.session_id, &key_a, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -176,8 +208,13 @@ fn check_wrong_iv_changes_plaintext(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x6Au8; 32];
-    let iv = [0x11u8; IV_LEN];
-    let wrong_iv = [0x22u8; IV_LEN];
+    let iv = random_iv();
+    let mut wrong_iv = random_iv();
+
+    // Guarantee the wrong IV differs from the encryption IV.
+    if iv == wrong_iv {
+        wrong_iv[0] ^= 0x01;
+    }
 
     let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -204,7 +241,7 @@ fn check_continued_encryption(key_size: u8) {
 
     let first = [0x11u8; IV_LEN];
     let second = [0x22u8; IV_LEN];
-    let iv = [0x33u8; IV_LEN];
+    let iv = random_iv();
 
     let mut combined = Vec::new();
     combined.extend_from_slice(&first);
@@ -238,6 +275,7 @@ fn check_continued_encryption(key_size: u8) {
         split_ciphertext, one_shot.msg,
         "split CBC encryption must match one-shot encryption",
     );
+
     assert_eq!(
         second_enc.iv, one_shot.iv,
         "final chaining IV must match one-shot encryption",
@@ -251,7 +289,7 @@ fn check_continued_decryption(key_size: u8) {
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
 
     let msg = [0x6Bu8; 32];
-    let iv = [0x77u8; IV_LEN];
+    let iv = random_iv();
 
     let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -284,10 +322,12 @@ fn check_continued_decryption(key_size: u8) {
         recovered, msg,
         "split CBC decryption must recover the original plaintext",
     );
+
     assert_eq!(
         first_dec.iv, first_ciphertext,
         "first decrypt IV must equal the ciphertext block just consumed",
     );
+
     assert_eq!(
         second_dec.iv, second_ciphertext,
         "final decrypt IV must equal the final ciphertext block",
@@ -299,6 +339,7 @@ fn check_tampered_key_rejected(key_size: u8) {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let mut key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, key_size);
+    let iv = random_iv();
 
     let last = key.len() - 1;
     key[last] ^= 0x01;
@@ -308,7 +349,7 @@ fn check_tampered_key_rejected(key_size: u8) {
         masked_key: key,
         op: AES_OP_ENCRYPT,
         msg: vec![0u8; IV_LEN],
-        iv: [0u8; IV_LEN],
+        iv,
     };
 
     ctx.expect_fw_reject(&req, TborStatus::AesGcmDecryptTagDoesNotMatch);
@@ -322,7 +363,7 @@ fn check_unwrapped_key_roundtrip(aes_key: &[u8]) {
     let masked = unwrap(&ctx, session.session_id, KEY_CLASS_AES, aes_key).masked_key;
 
     let msg = [0x37u8; IV_LEN];
-    let iv = [0x88u8; IV_LEN];
+    let iv = random_iv();
 
     let enc = aes_op(&ctx, session.session_id, &masked, AES_OP_ENCRYPT, &msg, &iv);
 
@@ -346,8 +387,9 @@ fn check_unwrapped_key_roundtrip(aes_key: &[u8]) {
 fn aes_encrypt_decrypt_roundtrip_all_sizes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
+
     let msg = [0xA5u8; 32];
-    let iv = [0x11u8; IV_LEN];
+    let iv = random_iv();
 
     for size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
         let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, size);
@@ -359,6 +401,7 @@ fn aes_encrypt_decrypt_roundtrip_all_sizes() {
             msg.len(),
             "ciphertext length must match plaintext length",
         );
+
         assert_ne!(enc.msg, msg, "ciphertext must differ from plaintext");
 
         let dec = aes_op(
@@ -539,19 +582,22 @@ fn aes_encrypt_decrypt_rejects_tampered_key_256() {
 /// Verifies an imported AES-128 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_128() {
-    check_unwrapped_key_roundtrip(&[0x42u8; 16]);
+    let aes_key = os_random_bytes::<16>();
+    check_unwrapped_key_roundtrip(&aes_key);
 }
 
 /// Verifies an imported AES-192 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_192() {
-    check_unwrapped_key_roundtrip(&[0x42u8; 24]);
+    let aes_key = os_random_bytes::<24>();
+    check_unwrapped_key_roundtrip(&aes_key);
 }
 
 /// Verifies an imported AES-256 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_256() {
-    check_unwrapped_key_roundtrip(&[0x42u8; 32]);
+    let aes_key = os_random_bytes::<32>();
+    check_unwrapped_key_roundtrip(&aes_key);
 }
 
 /// Verifies encryption rejects plaintext that is not an integral number of AES blocks.
@@ -560,13 +606,14 @@ fn aes_encrypt_decrypt_rejects_bad_msg_len() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+    let iv = random_iv();
 
     let req = TborAesEncryptDecryptReq {
         session_id: session.session_id,
         masked_key: key,
         op: AES_OP_ENCRYPT,
         msg: vec![0u8; 20],
-        iv: [0u8; IV_LEN],
+        iv,
     };
 
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
@@ -578,13 +625,14 @@ fn aes_encrypt_decrypt_rejects_bad_decrypt_msg_len() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+    let iv = random_iv();
 
     let req = TborAesEncryptDecryptReq {
         session_id: session.session_id,
         masked_key: key,
         op: AES_OP_DECRYPT,
         msg: vec![0u8; 31],
-        iv: [0u8; IV_LEN],
+        iv,
     };
 
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
