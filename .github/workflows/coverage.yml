@@ -77,9 +77,6 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
-    - name: Test failure
-      if: ${{ matrix.runner == 'azihsm-x64-gh-ubuntu2404-pool' }}
-      run: exit 1
 
   coverage_windows:
 
@@ -129,6 +126,3 @@ jobs:
       run: |
         echo "One or more tests failed in this job."
         exit 1
-    - name: Test failure
-      if: ${{ matrix.runner == 'azihsm-x64-gh-ubuntu2404-pool' }}
-      run: exit 1
