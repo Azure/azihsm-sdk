@@ -146,16 +146,17 @@ fn load_ec(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*m
     build_ec_pkey(engine, data, &der, priv_key)
 }
 
-/// Build the returned `EVP_PKEY`: an engine-bound `EC_KEY` (via
-/// [`Engine::new_ec_key`] — see the module docs for why the binding matters)
-/// carrying the public key from `der` plus the live HSM key.
+/// Build an engine-bound `EC_KEY` (via [`Engine::new_ec_key`] — see the module
+/// docs for why the binding matters) carrying the public key from `der`, with
+/// the live HSM key attached to its ex_data and retained by `data`. Returns an
+/// owning `*mut EC_KEY`. Shared by the loader and the keygen handler.
 #[allow(unsafe_code)]
-fn build_ec_pkey(
+pub(crate) fn build_bound_ec_key(
     engine: &Engine,
     data: &EngineData,
     der: &[u8],
     key: HsmEccPrivateKey,
-) -> EngineResult<*mut ffi::EVP_PKEY> {
+) -> EngineResult<*mut ffi::EC_KEY> {
     // Parse the SPKI DER into a temporary key just to recover the curve group
     // and public point.
     let parsed =
@@ -190,19 +191,41 @@ fn build_ec_pkey(
     // into `ec` above and are no longer needed.
     drop(parsed);
     if !set_ok {
-        // SAFETY: ec is ours and not yet handed to an EVP_PKEY.
+        // SAFETY: ec is ours and not yet handed out.
         unsafe { ffi::EC_KEY_free(ec) };
         return Err(EngineError::Other(
             "failed to set EC group/public key".into(),
         ));
     }
 
+    // Stash the HSM key in the ex_data (attach_ec rolls the retain back on
+    // failure).
+    if let Err(e) = attach_ec(data, ec, key) {
+        // SAFETY: ec is ours and not yet handed out.
+        unsafe { ffi::EC_KEY_free(ec) };
+        return Err(e);
+    }
+    Ok(ec)
+}
+
+/// Build the returned `EVP_PKEY` around an engine-bound `EC_KEY` from
+/// [`build_bound_ec_key`].
+#[allow(unsafe_code)]
+fn build_ec_pkey(
+    engine: &Engine,
+    data: &EngineData,
+    der: &[u8],
+    key: HsmEccPrivateKey,
+) -> EngineResult<*mut ffi::EVP_PKEY> {
+    let ec = build_bound_ec_key(engine, data, der, key)?;
+
     // Wrap the EC_KEY in an EVP_PKEY. EVP_PKEY_set1_EC_KEY up-refs `ec`, so drop
     // our own reference afterwards; the EVP_PKEY (and its engine ref) then owns
-    // the key.
+    // the key. On these OOM-only failure paths freeing `ec` leaves the retained
+    // HSM key to be deleted at engine teardown.
     // SAFETY: standard EVP_PKEY construction; every return code is checked and
-    // `ec` is freed on each failure path.
-    let pkey = unsafe {
+    // `ec` is freed on each path.
+    unsafe {
         let pkey = ffi::EVP_PKEY_new();
         if pkey.is_null() {
             ffi::EC_KEY_free(ec);
@@ -214,18 +237,8 @@ fn build_ec_pkey(
             return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
         }
         ffi::EC_KEY_free(ec);
-        pkey
-    };
-
-    // Stash the HSM key in the (engine-bound) EC_KEY as the last fallible step.
-    // SAFETY: pkey holds a valid EC_KEY built above.
-    let ec_ref = unsafe { ffi::EVP_PKEY_get0_EC_KEY(pkey) };
-    if let Err(e) = attach_ec(data, ec_ref, key) {
-        // SAFETY: pkey is ours and not yet handed to OpenSSL.
-        unsafe { ffi::EVP_PKEY_free(pkey) };
-        return Err(e);
+        Ok(pkey)
     }
-    Ok(pkey)
 }
 
 #[allow(unsafe_code)]
