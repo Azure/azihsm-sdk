@@ -193,11 +193,11 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // loader, then hand it to the caller's EVP_PKEY. set1 up-refs `ec`.
         let ec = crate::keyload::build_bound_ec_key(engine, data, &pub_der, priv_key)?;
         // SAFETY: pkey is the keygen out-key OpenSSL passed us; ec is our fresh
-        // engine-bound EC_KEY, freed after set1 takes its own reference (on the
-        // OOM failure path too, leaving the retained HSM key to engine teardown).
+        // engine-bound EC_KEY, freed after set1 takes its own reference (the
+        // OOM failure path also rolls back the HSM-key retain).
         unsafe {
             if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
-                ffi::EC_KEY_free(ec);
+                crate::keyload::free_bound_ec_key(data, ec);
                 return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
             }
             ffi::EC_KEY_free(ec);

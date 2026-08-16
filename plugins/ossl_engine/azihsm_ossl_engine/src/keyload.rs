@@ -208,6 +208,23 @@ pub(crate) fn build_bound_ec_key(
     Ok(ec)
 }
 
+/// Free a bound `EC_KEY` from [`build_bound_ec_key`] that could not be handed
+/// out, rolling back the HSM-key retain so the failed call does not leave the
+/// key parked in the HSM until engine teardown.
+///
+/// # Safety
+/// `ec` must be the caller's own never-handed-out `EC_KEY` from
+/// [`build_bound_ec_key`].
+#[allow(unsafe_code)]
+pub(crate) unsafe fn free_bound_ec_key(data: &EngineData, ec: *mut ffi::EC_KEY) {
+    let key_ptr = ec_key_hsm_key(ec);
+    if !key_ptr.is_null() {
+        data.release_loaded_key(key_ptr);
+    }
+    // SAFETY: ec is valid and owned by the caller per this function's contract.
+    unsafe { ffi::EC_KEY_free(ec) };
+}
+
 /// Build the returned `EVP_PKEY` around an engine-bound `EC_KEY` from
 /// [`build_bound_ec_key`].
 #[allow(unsafe_code)]
@@ -221,19 +238,19 @@ fn build_ec_pkey(
 
     // Wrap the EC_KEY in an EVP_PKEY. EVP_PKEY_set1_EC_KEY up-refs `ec`, so drop
     // our own reference afterwards; the EVP_PKEY (and its engine ref) then owns
-    // the key. On these OOM-only failure paths freeing `ec` leaves the retained
-    // HSM key to be deleted at engine teardown.
+    // the key. The OOM-only failure paths free the bound key with its HSM-key
+    // retain rolled back.
     // SAFETY: standard EVP_PKEY construction; every return code is checked and
     // `ec` is freed on each path.
     unsafe {
         let pkey = ffi::EVP_PKEY_new();
         if pkey.is_null() {
-            ffi::EC_KEY_free(ec);
+            free_bound_ec_key(data, ec);
             return Err(EngineError::Other("EVP_PKEY_new failed".into()));
         }
         if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
             ffi::EVP_PKEY_free(pkey);
-            ffi::EC_KEY_free(ec);
+            free_bound_ec_key(data, ec);
             return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
         }
         ffi::EC_KEY_free(ec);
