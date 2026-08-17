@@ -163,9 +163,6 @@ jobs:
 
     runs-on: ${{ matrix.runner }}
 
-    # check is optional for self-hosted runners
-    continue-on-error: ${{ matrix.runner == 'azihsm-arm64-gh-ubuntu2404-pool' }}
-
     defaults:
       run:
         working-directory: .
