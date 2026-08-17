@@ -67,6 +67,47 @@ pub enum HsmError {
     InvalidSession = -42,
     SdAlreadyInitialized = -43,
     SdPeerCloningNotAllowed = -44,
+
+    // -- Crypto Engine (CryptoController) host-facing errors ----------
+    // 1:1 mirror of the TborStatus/HsmError (FW) crypto engine range.
+
+    // Software validation / PAL / runtime errors.
+    CryptoNotInitialized = -45,
+    CryptoBufferTooSmall = -46,
+    CryptoInputTooLarge = -47,
+    CryptoInvalidAlg = -48,
+    CryptoTimeout = -49,
+    CryptoUnalignedCptr = -50,
+    CryptoInvalidArg = -51,
+    CryptoInvalidIvLength = -52,
+    CryptoInvalidKeyLength = -53,
+    CryptoInvalidDataLength = -54,
+    CryptoInvalidContextLength = -55,
+    CryptoInvalidPartialContext = -56,
+    CryptoUnsupportedMode = -57,
+    CryptoUnalignedBuffer = -58,
+    CryptoNotSupported = -59,
+    CryptoHardwareError = -60,
+
+    // Crypto Engine completion codes.
+    CryptoEngineRsaUcErrModLenInvalid = -61,
+    CryptoEngineRsaUcErrExpLenInvalid = -62,
+    CryptoEngineRsaUcErrDataLenInvalid = -63,
+    CryptoEngineGcUcErrDataLenInvalid = -64,
+    CryptoEngineGcUcErrCipherUnsupported = -65,
+    CryptoEngineGcUcErrAuthUnsupported = -66,
+    CryptoEngineGcUcErrHashModeUnsupported = -67,
+    CryptoEngineGcUcErrIcvMiscompare = -68,
+    CryptoEngineGcUcErrKeyLenInvalid = -69,
+    CryptoEngineRsaUcErrPkcsDecoding = -70,
+    CryptoEngineRsaUcErrPkcsSignatureInvalid = -71,
+
+    // Crypto Engine completion status errors.
+    CryptoEngineFault = -72,
+    CryptoEngineSwErr = -73,
+    CryptoEngineHwErr = -74,
+    CryptoEngineInstErr = -75,
+    CryptoEngineSwWarn = -76,
     Panic = i32::MIN,
 }
 
