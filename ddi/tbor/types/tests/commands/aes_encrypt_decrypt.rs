@@ -23,9 +23,6 @@
 
 #![cfg(feature = "emu")]
 
-use std::fs::File;
-use std::io::Read;
-
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -35,6 +32,7 @@ use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
 use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
+use rand::RngExt;
 
 use crate::commands::aes_generate_key::generate_key;
 use crate::commands::aes_generate_key::SCOPE_LOCAL;
@@ -45,21 +43,9 @@ use crate::harness::TestCtx;
 /// AES block / IV length.
 const IV_LEN: usize = azihsm_ddi_tbor_types::AES_IV_LEN;
 
-/// Generates cryptographically random bytes from the operating system for test inputs.
-fn os_random_bytes<const N: usize>() -> [u8; N] {
-    File::open("/dev/urandom")
-        .expect("open /dev/urandom")
-        .bytes()
-        .take(N)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read random bytes from /dev/urandom")
-        .try_into()
-        .unwrap_or_else(|_| panic!("expected {N} random bytes"))
-}
-
-/// Generates a fresh AES-CBC IV for a test operation.
+/// Generates a fresh random AES-CBC IV for test use.
 fn random_iv() -> [u8; IV_LEN] {
-    os_random_bytes::<IV_LEN>()
+    rand::rng().random::<[u8; IV_LEN]>()
 }
 
 /// Performs an AES-CBC transform using the supplied masked key, operation, message, and IV.
@@ -148,7 +134,6 @@ fn check_deterministic_output(key_size: u8) {
         enc_a.msg, enc_b.msg,
         "identical inputs must produce identical ciphertext",
     );
-
     assert_eq!(
         enc_a.iv, enc_b.iv,
         "identical inputs must produce identical chaining IVs",
@@ -211,7 +196,7 @@ fn check_wrong_iv_changes_plaintext(key_size: u8) {
     let iv = random_iv();
     let mut wrong_iv = random_iv();
 
-    // Guarantee the wrong IV differs from the encryption IV.
+    // Guarantee that the wrong IV differs from the encryption IV.
     if iv == wrong_iv {
         wrong_iv[0] ^= 0x01;
     }
@@ -275,7 +260,6 @@ fn check_continued_encryption(key_size: u8) {
         split_ciphertext, one_shot.msg,
         "split CBC encryption must match one-shot encryption",
     );
-
     assert_eq!(
         second_enc.iv, one_shot.iv,
         "final chaining IV must match one-shot encryption",
@@ -322,12 +306,10 @@ fn check_continued_decryption(key_size: u8) {
         recovered, msg,
         "split CBC decryption must recover the original plaintext",
     );
-
     assert_eq!(
         first_dec.iv, first_ciphertext,
         "first decrypt IV must equal the ciphertext block just consumed",
     );
-
     assert_eq!(
         second_dec.iv, second_ciphertext,
         "final decrypt IV must equal the final ciphertext block",
@@ -387,7 +369,6 @@ fn check_unwrapped_key_roundtrip(aes_key: &[u8]) {
 fn aes_encrypt_decrypt_roundtrip_all_sizes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-
     let msg = [0xA5u8; 32];
     let iv = random_iv();
 
@@ -401,7 +382,6 @@ fn aes_encrypt_decrypt_roundtrip_all_sizes() {
             msg.len(),
             "ciphertext length must match plaintext length",
         );
-
         assert_ne!(enc.msg, msg, "ciphertext must differ from plaintext");
 
         let dec = aes_op(
@@ -582,21 +562,21 @@ fn aes_encrypt_decrypt_rejects_tampered_key_256() {
 /// Verifies an imported AES-128 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_128() {
-    let aes_key = os_random_bytes::<16>();
+    let aes_key = rand::rng().random::<[u8; 16]>();
     check_unwrapped_key_roundtrip(&aes_key);
 }
 
 /// Verifies an imported AES-192 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_192() {
-    let aes_key = os_random_bytes::<24>();
+    let aes_key = rand::rng().random::<[u8; 24]>();
     check_unwrapped_key_roundtrip(&aes_key);
 }
 
 /// Verifies an imported AES-256 key encrypts and decrypts successfully.
 #[test]
 fn aes_encrypt_decrypt_unwrapped_key_roundtrip_256() {
-    let aes_key = os_random_bytes::<32>();
+    let aes_key = rand::rng().random::<[u8; 32]>();
     check_unwrapped_key_roundtrip(&aes_key);
 }
 
