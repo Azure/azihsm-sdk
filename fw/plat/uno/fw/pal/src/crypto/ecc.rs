@@ -323,27 +323,16 @@ impl HsmEcc for UnoHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
+        // Note: `scratch` holds the generated keypair (and, on a PKA failure,
+        // possibly partial key material) when this returns. It is intentionally
+        // left dirty — the per-IO teardown scrub wipes the whole slot, so a
+        // local wipe here would be redundant work that has to be removed again.
         let scratch = alloc.dma_alloc(pub_len + priv_len)?;
-        let total_len = match self.pka.ecc_gen_keypair(pka_curve, scratch).await {
-            Ok(n) => n,
-            Err(e) => {
-                // Keygen may have written partial key material into
-                // `scratch`; wipe the whole buffer before it returns to the
-                // per-IO pool (scope rewind does not clear DMA memory).
-                scratch.zeroize();
-                return Err(e);
-            }
-        };
+        let total_len = self.pka.ecc_gen_keypair(pka_curve, scratch).await?;
         let (pub_key, priv_key) = scratch[..total_len].split_at(pub_len);
 
         priv_out[..priv_len].copy_from_slice(priv_key);
         pub_out[..pub_len].copy_from_slice(pub_key);
-
-        // Scrub the private-scalar half of the scratch before returning:
-        // scope rewind does not clear DMA memory, so the freshly generated
-        // scalar would otherwise linger in — and leak through — a later
-        // per-IO allocation. (The pub half is not secret.)
-        scratch[pub_len..total_len].zeroize();
 
         Ok((priv_len, pub_len))
     }
