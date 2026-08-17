@@ -38,6 +38,7 @@ use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
 use super::ecc::PRIME384_LE;
+use super::reverse_copy;
 use crate::UnoHsmPal;
 
 // =============================================================================
@@ -481,8 +482,7 @@ impl UnoHsmPal {
                     let v_be: &[u8] = &drbg.v[..];
                     if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
-                        k[..field].copy_from_slice(&drbg.v[..field]);
-                        k[..field].reverse();
+                        reverse_copy(&mut k[..field], &drbg.v[..field]);
                         return Ok(());
                     }
                     self.rfc6979_reseed(io, &mut drbg).await?;
@@ -562,8 +562,7 @@ impl UnoHsmPal {
                     let v_be: &[u8] = &drbg.v[..];
                     if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate k in [1, n-1]; stage little-endian and sign.
-                        k[..field].copy_from_slice(&drbg.v[..field]);
-                        k[..field].reverse();
+                        reverse_copy(&mut k[..field], &drbg.v[..field]);
                         match self.ecc_sign_with_k(io, curve, k, digest, d, r, s).await {
                             Ok(()) => return Ok(()),
                             // Degenerate r/s — advance the DRBG and retry.
@@ -610,14 +609,12 @@ impl UnoHsmPal {
         // msg = V ‖ 0x00 ‖ int2octets(x) ‖ bits2octets(h1).
         drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
         drbg.msg[field] = 0x00;
-        drbg.msg[field + 1..field + 1 + field].copy_from_slice(&d[..field]);
-        drbg.msg[field + 1..field + 1 + field].reverse();
+        reverse_copy(&mut drbg.msg[field + 1..field + 1 + field], &d[..field]);
         {
             // h1 = bits2octets(digest): big-endian digest reduced mod n.
             let (_, tail) = drbg.msg.split_at_mut(field + 1 + field);
             let h1: &mut [u8] = &mut tail[..field];
-            h1.copy_from_slice(&digest[..field]);
-            h1.reverse();
+            reverse_copy(h1, &digest[..field]);
             if h1[..] >= drbg.n_be[..] {
                 be_sub_assign(h1, &drbg.n_be);
             }
