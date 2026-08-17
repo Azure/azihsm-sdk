@@ -36,6 +36,7 @@
 #![no_std]
 
 mod alloc;
+mod asn1;
 mod cert;
 mod crypto;
 mod dev_id_cblob;

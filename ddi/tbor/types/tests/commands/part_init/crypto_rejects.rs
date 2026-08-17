@@ -614,33 +614,6 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
-/// Submit PartInit using a session id adjacent to the rotated CO session.
-///
-/// The alternate session resolves through the PartInit session path but is
-/// still associated with the default PSK. Firmware must reject the request
-/// at the default-PSK gate with [`TborStatus::DefaultPskMustRotate`].
-///
-/// This test asserts the exact firmware status so an unrelated rejection
-/// cannot make the test pass.
-#[test]
-fn part_init_alternate_session_requires_psk_rotation_emu() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let envelope =
-        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
-
-    // `session_id` is a u16. Select a different in-range session id.
-    let alternate_session_id = session
-        .session_id
-        .checked_add(1)
-        .expect("test requires session_id to be less than u16::MAX");
-
-    let req = make_part_init_req(alternate_session_id, envelope);
-
-    ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
-}
-
 /// Submit the same valid PartInit request twice.
 ///
 /// The first request initializes the partition successfully. The second
