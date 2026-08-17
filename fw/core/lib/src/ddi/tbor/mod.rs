@@ -28,6 +28,8 @@ pub(crate) mod ecc_generate_key;
 pub(crate) mod ecc_sign;
 pub(crate) mod ecdh_derive;
 pub(crate) mod from_pal;
+pub(crate) mod get_cert;
+pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_unwrapping_key;
 pub(crate) mod hash;
 pub(crate) mod hkdf_derive;
@@ -255,6 +257,18 @@ pub(crate) mod opcode {
     /// return the derived key masked under the requested scope's masking
     /// key.  See [`super::concat_kdf_derive`].
     pub(crate) const CONCAT_KDF_DERIVE: u8 = 0x1D;
+
+    /// `GetCertChainInfo` — out-of-session info command reporting the
+    /// number of certificates and the leaf-certificate SHA-256 thumbprint
+    /// for the caller's partition at a chain slot.  TBOR analogue of MBOR
+    /// `GetCertChainInfo`.  See [`super::get_cert_chain_info`].
+    pub(crate) const GET_CERT_CHAIN_INFO: u8 = 0x1E;
+
+    /// `GetCertificate` — out-of-session command returning a single
+    /// DER-encoded X.509 certificate from the caller's partition at a
+    /// `(slot_id, cert_id)`.  TBOR analogue of MBOR `GetCertificate`.  See
+    /// [`super::get_cert`].
+    pub(crate) const GET_CERTIFICATE: u8 = 0x1F;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -504,6 +518,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HASH => hash::handle(pal, io, req_buf).await,
         opcode::HKDF_DERIVE => hkdf_derive::handle(pal, io, req_buf).await,
         opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
+        opcode::GET_CERT_CHAIN_INFO => get_cert_chain_info::handle(pal, io, req_buf).await,
+        opcode::GET_CERTIFICATE => get_cert::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }?;
 
@@ -546,6 +562,8 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::HASH
             | opcode::HKDF_DERIVE
             | opcode::CONCAT_KDF_DERIVE
+            | opcode::GET_CERT_CHAIN_INFO
+            | opcode::GET_CERTIFICATE
     )
 }
 
@@ -567,7 +585,9 @@ fn is_in_session(opcode: u8) -> bool {
         opcode::API_REV
         | opcode::SESSION_OPEN_INIT
         | opcode::SESSION_OPEN_FINISH
-        | opcode::PART_INFO => false,
+        | opcode::PART_INFO
+        | opcode::GET_CERT_CHAIN_INFO
+        | opcode::GET_CERTIFICATE => false,
         opcode::SESSION_CLOSE
         | opcode::PSK_CHANGE
         | opcode::PART_INIT
@@ -621,7 +641,11 @@ fn is_in_session(opcode: u8) -> bool {
 /// same change that wires it into `dispatch`.
 fn needs_session_id_cross_check(opcode: u8) -> bool {
     match opcode {
-        opcode::API_REV | opcode::SESSION_OPEN_INIT | opcode::PART_INFO => false,
+        opcode::API_REV
+        | opcode::SESSION_OPEN_INIT
+        | opcode::PART_INFO
+        | opcode::GET_CERT_CHAIN_INFO
+        | opcode::GET_CERTIFICATE => false,
         opcode::SESSION_OPEN_FINISH
         | opcode::SESSION_CLOSE
         | opcode::PSK_CHANGE
