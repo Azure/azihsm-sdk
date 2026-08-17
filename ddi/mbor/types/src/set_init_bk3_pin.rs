@@ -5,7 +5,7 @@ use azihsm_ddi_mbor_derive::Ddi;
 
 use crate::*;
 
-/// DDI Set Init BK3 PIN Request Structure (FIPS BK3 secure provisioning, Phase 2)
+/// DDI Set Init BK3 PIN Request Structure (FIPS BK3 secure provisioning, `SetInitBk3Pin`)
 ///
 /// Carries the encrypted (id, pin) credential and the host ephemeral public key.
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]

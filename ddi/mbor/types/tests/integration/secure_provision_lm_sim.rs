@@ -1,9 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Secure-provisioning live-migration simulation tests for the emu backend.
+//! Secure-provisioning live-migration simulation tests for the hardware backend.
 //!
-//! The emu `migrate_sim` (NSSR) reproduces what a live migration does to a
+//! Gated `#![cfg(not(any(feature = "emu", feature = "mock")))]`: these run only
+//! against a real device, not the emu or mock simulators (which do not
+//! implement the SetInitBk3Pin / SecureInitBk3 ops). Here "simulation" refers to
+//! simulating a *live migration* (via `erase()`/NSSR), not a simulator backend.
+//!
+//! `migrate_sim` (`erase()` / NSSR) reproduces what a live migration does to a
 //! partition: the volatile state (the ECDH tunnel key and the in-flight
 //! provisioning PIN) is dropped, while the sealed/persistent store is carried
 //! to the target. These tests confirm the two halves of that contract:

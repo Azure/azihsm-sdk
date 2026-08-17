@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SecureInitBk3 / SetInitBk3Pin smoke tests for the emu/mock backend.
+//! SecureInitBk3 / SetInitBk3Pin smoke tests for the hardware backend.
+//!
+//! Gated `#![cfg(not(any(feature = "emu", feature = "mock")))]`: these run only
+//! against a real device, not the emu or mock simulators (which do not
+//! implement the SetInitBk3Pin / SecureInitBk3 ops).
 //!
 //! Exercises:
 //! - Happy path: set_init_bk3_pin + secure_init_bk3 succeed, returning a masked

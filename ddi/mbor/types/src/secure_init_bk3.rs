@@ -5,16 +5,16 @@ use azihsm_ddi_mbor_derive::Ddi;
 
 use crate::*;
 
-/// DDI Encrypted BK3 payload (FIPS BK3 secure provisioning, Phase 4)
+/// DDI Encrypted BK3 payload (FIPS BK3 secure provisioning, `SecureInitBk3`)
 ///
 /// The 48-byte BK3 is encrypted with AES-CBC-256 under the transport key K2_aes
-/// (derived from the Phase-3 shared secret S2). Two independent HMAC-SHA384 tags
+/// (derived from the ECDH shared secret S2). Two independent HMAC-SHA384 tags
 /// are carried:
 ///   * `tag_transport` proves ciphertext/IV integrity in transit (key K2_hmac).
-///   * `tag_pin` proves the caller knows the PIN set in Phase 2 (key K_pin,
-///     derived from S2 and bound to the stored pin and id).
+///   * `tag_pin` proves the caller knows the PIN staged by `SetInitBk3Pin`
+///     (key K_pin, derived from S2 and bound to the stored pin and id).
 ///
-/// No id/pin are re-sent: the firmware uses the values stored during Phase 2.
+/// No id/pin are re-sent: the firmware uses the values stored by `SetInitBk3Pin`.
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi, Clone, PartialEq, Eq)]
 #[ddi(map)]
@@ -40,7 +40,7 @@ pub struct DdiEncryptedBk3 {
     pub tag_pin: [u8; 48],
 }
 
-/// DDI Secure Init BK3 Request Structure (FIPS BK3 secure provisioning, Phase 4)
+/// DDI Secure Init BK3 Request Structure (FIPS BK3 secure provisioning, `SecureInitBk3`)
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
 #[ddi(map)]
