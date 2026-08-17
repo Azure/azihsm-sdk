@@ -53,6 +53,7 @@ pub(crate) async fn raw_key_import<'p, P: HsmPal>(
     // (`Rsa2kPrivate` is handled by the unwrapping-key path above) and
     // any usage the kind may not carry.
     let attrs = raw_import_attrs(body.key_kind, &body.key_properties.key_metadata)?;
+    validate_raw_key_length(body.key_kind, body.raw.len())?;
     let vault_kind = super::from_ddi::vault_kind_from_ddi(body.key_kind)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
@@ -86,7 +87,7 @@ pub(crate) async fn raw_key_import<'p, P: HsmPal>(
         HsmSessId::from(sess_id),
         super::masking::MaskSpec {
             attrs,
-            key_type: super::from_pal::vault_kind_ddi(vault_kind)?,
+            key_type: body.key_kind,
             key_label: body.key_properties.key_label,
             key_length: plaintext.len() as u16,
         },
@@ -222,4 +223,17 @@ fn raw_import_attrs(
         _ => return Err(HsmError::InvalidKeyType),
     };
     Ok(attrs.with_local(false))
+}
+
+/// Enforce the canonical lengths carried by the fixed HMAC DDI types.
+///
+/// All HMAC keys use the variable-length vault kinds internally, so the
+/// fixed wire types need an explicit length check before vault creation.
+fn validate_raw_key_length(key_kind: DdiKeyType, key_len: usize) -> HsmResult<()> {
+    match key_kind {
+        DdiKeyType::HmacSha256 if key_len != 32 => Err(HsmError::InvalidKeyLength),
+        DdiKeyType::HmacSha384 if key_len != 48 => Err(HsmError::InvalidKeyLength),
+        DdiKeyType::HmacSha512 if key_len != 64 => Err(HsmError::InvalidKeyLength),
+        _ => Ok(()),
+    }
 }
