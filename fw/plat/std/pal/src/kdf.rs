@@ -8,8 +8,9 @@
 //! the [`StdKdf`](crate::drivers::kdf::StdKdf) driver.
 //!
 //! HKDF extract/expand and SP 800-108 counter-mode KDF are backed by
-//! OpenSSL. The remaining hash-based KDF helpers are currently left as
-//! `todo!()` stubs.
+//! OpenSSL. The X9.63 and SP 800-56A single-step concatenation KDFs are
+//! backed by the platform-agnostic `azihsm_crypto` implementation. MGF1
+//! remains a `todo!()` stub.
 
 use core::ops::Deref;
 
@@ -110,22 +111,38 @@ impl HsmKdf for StdHsmPal {
     async fn x963_kdf(
         &self,
         _io: &impl HsmIo,
-        _algo: HsmHashAlgo,
-        _z: &DmaBuf,
-        _shared_info: &DmaBuf,
-        _key: &mut DmaBuf,
+        algo: HsmHashAlgo,
+        z: &DmaBuf,
+        shared_info: &DmaBuf,
+        key: &mut DmaBuf,
     ) -> HsmResult<()> {
-        todo!()
+        self.kdf
+            .concat_kdf(
+                z,
+                to_hash_algo(algo),
+                azihsm_crypto::ConcatKdfMode::X963,
+                Some(shared_info.deref()),
+                key,
+            )
+            .await
     }
 
     async fn sp800_56a_kdf(
         &self,
         _io: &impl HsmIo,
-        _algo: HsmHashAlgo,
-        _z: &DmaBuf,
-        _other_info: &DmaBuf,
-        _key: &mut DmaBuf,
+        algo: HsmHashAlgo,
+        z: &DmaBuf,
+        other_info: &DmaBuf,
+        key: &mut DmaBuf,
     ) -> HsmResult<()> {
-        todo!()
+        self.kdf
+            .concat_kdf(
+                z,
+                to_hash_algo(algo),
+                azihsm_crypto::ConcatKdfMode::Sp800_56a,
+                Some(other_info.deref()),
+                key,
+            )
+            .await
     }
 }

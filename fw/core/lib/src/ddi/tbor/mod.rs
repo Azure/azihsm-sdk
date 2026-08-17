@@ -20,9 +20,17 @@
 //! and returns the resulting `&DmaBuf` slice (lifetime tied to the
 //! per-IO allocator scope).
 
+pub(crate) mod aes_encrypt_decrypt;
+pub(crate) mod aes_generate_key;
 pub(crate) mod api_rev;
+pub(crate) mod concat_kdf_derive;
+pub(crate) mod ecc_generate_key;
+pub(crate) mod ecc_sign;
+pub(crate) mod ecdh_derive;
 pub(crate) mod from_pal;
 pub(crate) mod get_unwrapping_key;
+pub(crate) mod hash;
+pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod hmac_generate_key;
 pub(crate) mod key_report;
@@ -196,11 +204,57 @@ pub(crate) mod opcode {
     /// re-derived public key for RSA / ECC).  See [`super::unwrap_key`].
     pub(crate) const UNWRAP_KEY: u8 = 0x14;
 
+    /// `AesGenerateKey` — generate a fresh random AES key (128 / 192 /
+    /// 256) under the active session's partition; return it **masked**
+    /// under the requested scope's masking key (nothing is persisted
+    /// on-device).  See [`super::aes_generate_key`].
+    pub(crate) const AES_GENERATE_KEY: u8 = 0x15;
+
+    /// `AesEncryptDecrypt` — AES-CBC encrypt or decrypt a host-supplied
+    /// message using a caller-held masked AES key (unmasked on-device for
+    /// the operation, then discarded).  See [`super::aes_encrypt_decrypt`].
+    pub(crate) const AES_ENCRYPT_DECRYPT: u8 = 0x16;
+
+    /// `EccGenerateKey` — generate a fresh ECC keypair on the requested
+    /// NIST curve and return the private key masked under the requested
+    /// scope's masking key plus the wire public key (nothing is persisted
+    /// on-device).  See [`super::ecc_generate_key`].
+    pub(crate) const ECC_GENERATE_KEY: u8 = 0x17;
+
+    /// `EccSign` — produce a raw ECDSA `r ‖ s` signature over a
+    /// host-supplied pre-computed digest using a caller-held masked ECC
+    /// private key (unmasked on-device).  See [`super::ecc_sign`].
+    pub(crate) const ECC_SIGN: u8 = 0x18;
+
+    /// `EcdhDerive` — derive an ECDH shared secret from a caller-held
+    /// masked local ECC private key and a host-supplied peer public key,
+    /// and return the secret masked under the requested scope's masking
+    /// key.  See [`super::ecdh_derive`].
+    pub(crate) const ECDH_DERIVE: u8 = 0x19;
+
     /// `RsaModExp` — perform the RSA private-key primitive `x = y^d mod n`
     /// using a caller-held masked RSA private key (imported via
     /// `UnwrapKey`; unmasked on-device).  The raw modular exponentiation
     /// underlying RSA decrypt / sign.  See [`super::rsa_mod_exp`].
     pub(crate) const RSA_MOD_EXP: u8 = 0x1A;
+
+    /// `Hash` — compute a SHA-256 / 384 / 512 digest of a
+    /// host-supplied message.  A pure hashing utility with no key or
+    /// partition state.  See [`super::hash`].
+    pub(crate) const HASH: u8 = 0x1B;
+
+    /// `HkdfDerive` — derive key material (AES / HMAC) from a caller-held
+    /// masked ECDH shared secret via HKDF (RFC 5869), and return the
+    /// derived key masked under the requested scope's masking key.  See
+    /// [`super::hkdf_derive`].
+    pub(crate) const HKDF_DERIVE: u8 = 0x1C;
+
+    /// `ConcatKdfDerive` — derive key material (AES / HMAC) from a
+    /// caller-held masked ECDH shared secret via a single-step
+    /// concatenation KDF (ANSI X9.63 or NIST SP 800-56A one-step), and
+    /// return the derived key masked under the requested scope's masking
+    /// key.  See [`super::concat_kdf_derive`].
+    pub(crate) const CONCAT_KDF_DERIVE: u8 = 0x1D;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -337,6 +391,23 @@ fn resolve_masking_key<'p, P: HsmPal>(
 /// (`ApiRev`, `SessionOpenInit`, `SessionOpenFinish`) are never
 /// gated — the client must always be able to bring up a session in
 /// order to issue [`psk_change`] in the first place.
+/// Outcome of dispatching a single TBOR command.
+///
+/// Mirrors the MBOR [`DispatchResult`](crate::ddi::mbor::DispatchResult):
+/// carries the encoded response plus, for the session-lifecycle opcodes,
+/// the slot id the IO layer places in the CQE. Only `SessionOpenInit`
+/// needs it: the slot is allocated inside the handler, so the IO layer
+/// has no other way to learn it. `SessionClose` is not threaded here —
+/// the dispatcher cross-checks the body `session_id` against the SQE
+/// one for every close/in-session opcode, so the IO layer can just use
+/// the SQE value (exactly as `handle_mbor_op` uses `hdr.sess_id`).
+pub(crate) struct DispatchResult<'p> {
+    /// Encoded response slice (borrows `pal`'s per-IO allocator).
+    pub(crate) resp: &'p DmaBuf,
+    /// Slot id for the CQE; set only by `SessionOpenInit`.
+    pub(crate) session_id: Option<u16>,
+}
+
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -345,7 +416,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     sqe_session_id: u16,
     oob: Option<OobPtr>,
     undo: &mut UndoLog<'p>,
-) -> HsmResult<&'p DmaBuf> {
+) -> HsmResult<DispatchResult<'p>> {
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
     // unsupported opcodes through a different error code.
@@ -387,9 +458,15 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         }
     }
 
-    match opcode {
+    // `SessionOpenInit` reports its freshly allocated slot here; the other
+    // arms are untouched so the response type stays `&DmaBuf`.
+    let mut session_id: Option<u16> = None;
+
+    let resp = match opcode {
         opcode::API_REV => api_rev::handle(pal, io, req_buf),
-        opcode::SESSION_OPEN_INIT => session_open_init::handle(pal, io, req_buf, undo).await,
+        opcode::SESSION_OPEN_INIT => {
+            session_open_init::handle(pal, io, req_buf, undo, &mut session_id).await
+        }
         opcode::SESSION_OPEN_FINISH => session_open_finish::handle(pal, io, req_buf, undo).await,
         opcode::SESSION_CLOSE => session_close::handle(pal, io, req_buf).await,
         opcode::PSK_CHANGE => psk_change::handle(pal, io, req_buf, undo).await,
@@ -418,9 +495,19 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
+        opcode::AES_GENERATE_KEY => aes_generate_key::handle(pal, io, req_buf).await,
+        opcode::AES_ENCRYPT_DECRYPT => aes_encrypt_decrypt::handle(pal, io, req_buf).await,
+        opcode::ECC_GENERATE_KEY => ecc_generate_key::handle(pal, io, req_buf).await,
+        opcode::ECC_SIGN => ecc_sign::handle(pal, io, req_buf).await,
+        opcode::ECDH_DERIVE => ecdh_derive::handle(pal, io, req_buf).await,
         opcode::RSA_MOD_EXP => rsa_mod_exp::handle(pal, io, req_buf).await,
+        opcode::HASH => hash::handle(pal, io, req_buf).await,
+        opcode::HKDF_DERIVE => hkdf_derive::handle(pal, io, req_buf).await,
+        opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
-    }
+    }?;
+
+    Ok(DispatchResult { resp, session_id })
 }
 
 /// Returns `true` iff `opcode` is one of the opcodes wired into
@@ -450,7 +537,15 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
+            | opcode::AES_GENERATE_KEY
+            | opcode::AES_ENCRYPT_DECRYPT
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
             | opcode::RSA_MOD_EXP
+            | opcode::HASH
+            | opcode::HKDF_DERIVE
+            | opcode::CONCAT_KDF_DERIVE
     )
 }
 
@@ -489,7 +584,15 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
-        | opcode::RSA_MOD_EXP => true,
+        | opcode::AES_GENERATE_KEY
+        | opcode::AES_ENCRYPT_DECRYPT
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
+        | opcode::RSA_MOD_EXP
+        | opcode::HASH
+        | opcode::HKDF_DERIVE
+        | opcode::CONCAT_KDF_DERIVE => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -536,7 +639,15 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::HMAC
         | opcode::GET_UNWRAPPING_KEY
         | opcode::UNWRAP_KEY
-        | opcode::RSA_MOD_EXP => true,
+        | opcode::AES_GENERATE_KEY
+        | opcode::AES_ENCRYPT_DECRYPT
+        | opcode::ECC_GENERATE_KEY
+        | opcode::ECC_SIGN
+        | opcode::ECDH_DERIVE
+        | opcode::RSA_MOD_EXP
+        | opcode::HASH
+        | opcode::HKDF_DERIVE
+        | opcode::CONCAT_KDF_DERIVE => true,
         _ => true,
     }
 }

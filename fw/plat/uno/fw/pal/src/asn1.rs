@@ -75,7 +75,7 @@ pub(crate) struct RsaPrivateKeyAsn1<'a> {
     pub(crate) coefficient: UintRef<'a>,
 }
 
-/// Decodes a recovered RSA private key — a PKCS#8 `PrivateKeyInfo` or a bare
+/// Decodes a recovered RSA private key — a PKCS#8 `PrivateKeyInfo` wrapping a
 /// PKCS#1 `RSAPrivateKey` — into the validated [`RsaPrivateKeyAsn1`].
 ///
 /// The `der` crate enforces canonical DER (definite minimal-length encodings,
@@ -85,17 +85,17 @@ pub(crate) struct RsaPrivateKeyAsn1<'a> {
 /// sizes (modulus width, exponent width) are a PKA concern and are checked by
 /// the caller during operand assembly.
 pub(crate) fn parse_rsa_private_key(der_bytes: &[u8]) -> Option<RsaPrivateKeyAsn1<'_>> {
-    let key = if let Ok(pki) = RsaPrivateKeyInfo::from_der(der_bytes) {
-        // RFC 5208 §5: PrivateKeyInfo `version` is v1 (= 0). RFC 5958 adds v2
-        // (= 1) with public-key / attributes, which this parser does not model
-        // — reject rather than silently drop the extra fields.
-        if pki.version != 0 || pki.algorithm.oid != RSA_ENCRYPTION {
-            return None;
-        }
-        RsaPrivateKeyAsn1::from_der(pki.private_key.as_bytes()).ok()?
-    } else {
-        RsaPrivateKeyAsn1::from_der(der_bytes).ok()?
-    };
+    // The recovered wire key is always a PKCS#8 PrivateKeyInfo (the format the
+    // RsaUnwrap collateral is generated in); a bare PKCS#1 RSAPrivateKey is not
+    // accepted.
+    let pki = RsaPrivateKeyInfo::from_der(der_bytes).ok()?;
+    // RFC 5208 §5: PrivateKeyInfo `version` is v1 (= 0). RFC 5958 adds v2
+    // (= 1) with public-key / attributes, which this parser does not model
+    // — reject rather than silently drop the extra fields.
+    if pki.version != 0 || pki.algorithm.oid != RSA_ENCRYPTION {
+        return None;
+    }
+    let key = RsaPrivateKeyAsn1::from_der(pki.private_key.as_bytes()).ok()?;
     // RFC 8017 §A.1.2: `version` is 0 for two-prime keys. Version 1 (multi-prime)
     // would require `otherPrimeInfos`, which our SEQUENCE does not declare.
     if key.version != 0 {

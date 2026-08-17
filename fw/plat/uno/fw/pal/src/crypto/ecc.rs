@@ -39,7 +39,7 @@ use azihsm_fw_uno_drivers_upka::mont_operand_size;
 use super::ecc_det::ORDER384_BE;
 use super::ecc_det::ct_in_range;
 use super::ecc_det::ct_in_range_le;
-use super::rsa::write_le;
+use super::reverse_copy;
 use crate::UnoHsmPal;
 use crate::asn1::parse_ec_private_key;
 
@@ -348,18 +348,86 @@ impl HsmEcc for UnoHsmPal {
         Ok((priv_len, pub_len))
     }
 
-    /// Deterministic ECC key generation from caller-supplied OKM is not
-    /// yet implemented on this PAL.
-    async fn ecc_gen_keypair_from_okm(
+    /// Deterministic ECC key generation from a caller-supplied
+    /// key-derivation root (the partition `PartRoot`).
+    ///
+    /// Routes to [`UnoHsmPal::ecc_gen_keypair_deterministic`], which
+    /// HKDF-expands `root` and applies FIPS 186-5 §A.2.2 rejection
+    /// sampling to obtain the private scalar, then computes the public
+    /// point `Q = d·G` on the PKA. §A.2.2 (not §A.2.1) is used because
+    /// the UPKA Montgomery modular unit cannot reduce by the even
+    /// value `n − 1`; rejection sampling needs only a range check.
+    /// Only P-384 — the PTA / alias identity curve — is supported;
+    /// other curves surface as [`HsmError::UnsupportedCmd`] from the
+    /// inner primitive.
+    ///
+    /// The private scalar and both public coordinates are returned in
+    /// PKA-native little-endian wire form, identical to
+    /// [`Self::ecc_gen_keypair`]; byte-order canonicalisation is the
+    /// DDI handler's responsibility.
+    ///
+    /// The std PAL derives from the same `root` with a different info
+    /// string, OKM length and §A.2 method, so it produces a
+    /// **different** keypair. Determinism holds per-platform only; see
+    /// the trait doc.
+    ///
+    /// # Parameters
+    /// * `curve` — must be [`HsmEccCurve::P384`].
+    /// * `root` — the 48-byte partition `PartRoot`, used as the HKDF
+    ///   PRK for the per-attempt candidate derivation.
+    /// * `out` — `None` to query the required `(priv_len, pub_len)`, or
+    ///   `Some((priv_key, pub_key))` to derive into caller buffers.
+    /// * `_pct` — accepted for trait parity; no pairwise-consistency
+    ///   self-test is currently executed.
+    ///
+    /// # Returns
+    /// * `Ok((priv_len, pub_len))` — the private and public key lengths.
+    ///
+    /// # Errors
+    /// * [`HsmError::UnsupportedCmd`] if `curve` is not P-384.
+    /// * [`HsmError::InvalidArg`] if `out` is `Some` and either output
+    ///   buffer is shorter than required, or `root` is not 48 bytes.
+    /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
+    async fn ecc_gen_keypair_from_root(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         _alloc: &impl HsmScopedAlloc,
-        _curve: HsmEccCurve,
-        _okm: &DmaBuf,
-        _out: Option<(&mut DmaBuf, &mut DmaBuf)>,
+        curve: HsmEccCurve,
+        root: &DmaBuf,
+        out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         _pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
-        Err(HsmError::UnsupportedCmd)
+        let pka_curve = map_ecc_curve(curve)?;
+        // Only P-384 (the PTA / alias identity curve) is supported. Reject
+        // other curves here rather than deep inside the derivation, so
+        // query mode agrees with use mode instead of handing back sizes
+        // for a curve that would later fail with `UnsupportedCmd`.
+        if pka_curve != UpkaEccCurve::P384 {
+            return Err(HsmError::UnsupportedCmd);
+        }
+
+        let priv_len = hsm_point_size(pka_curve);
+        let pub_len = hsm_point_size(pka_curve) * 2;
+
+        // `root` is the derivation input in both modes, so validate its
+        // length before the query-mode return — the documented
+        // `InvalidArg` on a non-48-byte root must not depend on `out`.
+        if root.len() != priv_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let Some((priv_out, pub_out)) = out else {
+            return Ok((priv_len, pub_len));
+        };
+
+        if priv_out.len() < priv_len || pub_out.len() < pub_len {
+            return Err(HsmError::InvalidArg);
+        }
+
+        self.ecc_gen_keypair_deterministic(io, pka_curve, root, priv_out, pub_out)
+            .await?;
+
+        Ok((priv_len, pub_len))
     }
 
     /// Raw EC sign over a pre-computed hash digest.
@@ -438,12 +506,11 @@ impl HsmEcc for UnoHsmPal {
         // validation) would otherwise accumulate this scratch and can
         // exhaust the DMA pool.
         self.alloc_scoped_async(io, async |scope| {
-            // The digest arrives PKA-native little-endian: the DDI handler
-            // hashes big-endian and then fully byte-reverses it (a full BE->LE
-            // reversal, not `hash(.., big_endian = false)`, which only swaps
-            // within each 32-bit word). pub_key and signature likewise arrive
-            // LE via the host DDI serde. No byte-order conversion is done below
-            // the PAL.
+            // The digest arrives PKA-native little-endian: it is a full BE->LE
+            // byte reversal of the big-endian hash, which is what
+            // `hash(.., big_endian = false)` produces. pub_key and signature
+            // likewise arrive LE via the host DDI serde. No byte-order
+            // conversion is done below the PAL.
 
             // Per-call Montgomery constant from the curve prime (like
             // ecdh_derive). `mont_result` is transient scratch consumed
@@ -583,8 +650,10 @@ impl HsmEcc for UnoHsmPal {
                 return Err(HsmError::InvalidArg);
             }
             // The vault stores the scalar little-endian (PKA-native),
-            // zero-padded to the wire coordinate length.
-            write_le(&mut out[..vault_len], scalar);
+            // zero-padded to the wire coordinate length. `reverse_copy` only
+            // writes `scalar.len()` bytes, so clear the high remainder.
+            reverse_copy(&mut out[..vault_len], scalar);
+            out[scalar.len()..vault_len].fill(0);
         }
         Ok((vault_len, curve))
     }

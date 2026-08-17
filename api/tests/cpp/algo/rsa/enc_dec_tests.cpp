@@ -506,7 +506,15 @@ TEST_F(azihsm_rsa_encrypt_decrypt, decrypt_rejects_corrupted_oaep_ciphertext)
         decrypted_buf.len = static_cast<uint32_t>(decrypted_data.size());
 
         auto decrypt_err = azihsm_crypt_decrypt(&algo, priv_key, &ciphertext_buf, &decrypted_buf);
-        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_INTERNAL_ERROR);
+        // Corrupting the most-significant ciphertext byte can push the integer past the
+        // modulus. OpenSSL surfaces this as an OAEP padding failure (INTERNAL_ERROR) while
+        // CNG rejects it at the RSA primitive (DDI_CMD_FAILURE); both mean the corruption
+        // was detected, so accept either rejection code.
+        ASSERT_TRUE(
+            decrypt_err == AZIHSM_STATUS_INTERNAL_ERROR ||
+            decrypt_err == AZIHSM_STATUS_DDI_CMD_FAILURE
+        ) << "expected corrupted ciphertext to be rejected, got "
+          << decrypt_err;
     });
 }
 

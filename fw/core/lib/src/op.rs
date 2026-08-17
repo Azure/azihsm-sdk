@@ -227,8 +227,7 @@ impl SessionCtrl {
             | DdiOp::GetSealedBk3
             | DdiOp::InitBk3
             | DdiOp::SetSealedBk3
-            | DdiOp::EstablishCredential
-            | DdiOp::ShaDigest => Self::NoSession,
+            | DdiOp::EstablishCredential => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,
             _ => Self::InSession,
@@ -273,7 +272,15 @@ impl SessionCtrl {
             | opcode::HMAC
             | opcode::GET_UNWRAPPING_KEY
             | opcode::UNWRAP_KEY
-            | opcode::RSA_MOD_EXP => Self::InSession,
+            | opcode::AES_GENERATE_KEY
+            | opcode::AES_ENCRYPT_DECRYPT
+            | opcode::ECC_GENERATE_KEY
+            | opcode::ECC_SIGN
+            | opcode::ECDH_DERIVE
+            | opcode::RSA_MOD_EXP
+            | opcode::HASH
+            | opcode::HKDF_DERIVE
+            | opcode::CONCAT_KDF_DERIVE => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }
