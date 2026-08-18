@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Secure-provisioning live-migration simulation tests for the mock backend.
+//! Secure-provisioning live-migration simulation tests for mock and hardware backends.
 //!
 //! `migrate_sim` (NSSR) reproduces what a live migration does to a
 //! partition: the volatile state (the ECDH tunnel key and the in-flight
@@ -15,6 +15,7 @@
 //!    with FIPS status preserved and a re-seal rejected
 //!    (`test_secure_provision_lm_completed_survives`).
 
+#![cfg(not(feature = "emu"))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;

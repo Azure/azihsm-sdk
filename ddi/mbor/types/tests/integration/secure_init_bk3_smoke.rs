@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SecureInitBk3 / SetInitBk3Pin integration smoke tests.
+//! SecureInitBk3 / SetInitBk3Pin smoke tests for mock and hardware backends.
 //!
 //! Exercises:
 //! - Happy path: set_init_bk3_pin + secure_init_bk3 succeed, returning a masked
@@ -11,6 +11,7 @@
 //! - Secure provisioning is one-shot and the resulting masked BK3 can be
 //!   sealed and read back.
 
+#![cfg(not(feature = "emu"))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
