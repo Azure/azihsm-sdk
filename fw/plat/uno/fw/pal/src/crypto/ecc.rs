@@ -325,8 +325,12 @@ impl HsmEcc for UnoHsmPal {
 
         // Note: `scratch` holds the generated keypair (and, on a PKA failure,
         // possibly partial key material) when this returns. It is intentionally
-        // left dirty — the per-IO teardown scrub wipes the whole slot, so a
-        // local wipe here would be redundant work that has to be removed again.
+        // left dirty: per the #602 review, the wipe belongs in the per-IO
+        // teardown scrub rather than here, so a local wipe would be redundant
+        // work that has to be removed again. That teardown scrub lands in #632
+        // (`drop_io` wipes the slot via the GDMA engine); until it merges this
+        // slot is not wiped, so #632 must land before — or together with — this
+        // change.
         let scratch = alloc.dma_alloc(pub_len + priv_len)?;
         let total_len = self.pka.ecc_gen_keypair(pka_curve, scratch).await?;
         let (pub_key, priv_key) = scratch[..total_len].split_at(pub_len);
