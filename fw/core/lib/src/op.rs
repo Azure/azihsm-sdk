@@ -254,7 +254,10 @@ impl SessionCtrl {
     pub fn from_tbor_opcode(opcode: u8) -> Self {
         use crate::ddi::tbor::opcode;
         match opcode {
-            opcode::API_REV => Self::NoSession,
+            opcode::API_REV
+            | opcode::PART_INFO
+            | opcode::GET_CERT_CHAIN_INFO
+            | opcode::GET_CERTIFICATE => Self::NoSession,
             opcode::SESSION_OPEN_INIT => Self::Open,
             opcode::SESSION_OPEN_FINISH
             | opcode::PSK_CHANGE
