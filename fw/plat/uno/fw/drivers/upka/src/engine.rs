@@ -9,13 +9,13 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_error::HsmResult;
 
+use crate::api::UpkaDriver;
+use crate::executor::EngineExecutor;
+use crate::opcode::*;
 use crate::UpkaEccCurve;
 use crate::UpkaError;
 use crate::UpkaModSize;
 use crate::UpkaRsaKeyType;
-use crate::api::UpkaDriver;
-use crate::executor::EngineExecutor;
-use crate::opcode::*;
 
 /// Exclusive handle to one PKA engine.
 ///
