@@ -345,6 +345,7 @@ pub enum HsmError {
     /// Distinct from [`HsmError::InvalidArg`], which signals a
     /// caller bug (unknown id, kind mismatch, etc.).
     PartPropNotFound = 0x087000FF,
+
     /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
     /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
     /// carries the requested selector (SVN / owner id).
@@ -435,6 +436,10 @@ pub enum HsmError {
     /// invalid, or the underlying hash operation failed.  Surfaced by
     /// `x963_kdf` / `sp800_56a_kdf`.
     ConcatKdfError = 0x0870010B,
+
+    /// A cryptographic algorithm self-test (CAST) produced output that
+    /// did not match its known-answer vector.
+    SelfTestKatMismatch = 0x0870010C,
 
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol

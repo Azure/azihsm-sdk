@@ -341,6 +341,23 @@ fn rsa_opcode_index(key_type: UpkaRsaKeyType) -> usize {
     }
 }
 
+/// Whether the selected RSA key type uses the CRT (Chinese Remainder Theorem)
+/// key format.
+///
+/// # Parameters
+///
+/// - `key_type`: RSA key type selector.
+///
+/// # Returns
+///
+/// - `true` for CRT key types, `false` for standard (non-CRT) key types.
+pub(crate) fn rsa_is_crt(key_type: UpkaRsaKeyType) -> bool {
+    matches!(
+        key_type,
+        UpkaRsaKeyType::Rsa2048Crt | UpkaRsaKeyType::Rsa3072Crt | UpkaRsaKeyType::Rsa4096Crt
+    )
+}
+
 /// Return the RSA private-key exponentiation opcode for the selected key type.
 ///
 /// # Parameters
@@ -352,15 +369,31 @@ fn rsa_opcode_index(key_type: UpkaRsaKeyType) -> usize {
 /// - Hardware opcode for RSA private exponentiation (CRT or standard).
 pub(crate) fn rsa_priv_opcode(key_type: UpkaRsaKeyType) -> u32 {
     let index = rsa_opcode_index(key_type);
-    let is_crt = matches!(
-        key_type,
-        UpkaRsaKeyType::Rsa2048Crt | UpkaRsaKeyType::Rsa3072Crt | UpkaRsaKeyType::Rsa4096Crt
-    );
-    if is_crt {
+    if rsa_is_crt(key_type) {
         RSA_OPCODES[index].2
     } else {
         RSA_OPCODES[index].0
     }
+}
+
+/// Return the length in bytes of a CRT private key's `param1` block
+/// (`p ‖ q ‖ dp ‖ dq`), which is four half-operands of `mod_size / 2` bytes,
+/// i.e. `2 * mod_size`.
+///
+/// The hardware reads a CRT private key as two sub-blocks: `param1` from the
+/// key (arg2) pointer and `param2` (`n ‖ n1q ‖ n2p`, `3 * mod_size` bytes) from
+/// the arg3 pointer. This helper gives the offset of `param2` within a
+/// contiguous `param1 ‖ param2` key blob.
+///
+/// # Parameters
+///
+/// - `key_type`: RSA key type selector.
+///
+/// # Returns
+///
+/// - `param1` length in bytes (`2 * mod_size`).
+pub(crate) fn rsa_crt_param1_len(key_type: UpkaRsaKeyType) -> usize {
+    2 * rsa_mod_size(key_type)
 }
 
 /// Return the RSA public-key exponentiation opcode for the selected key type.

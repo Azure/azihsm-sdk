@@ -563,6 +563,18 @@ impl UnoHsmPal {
                 if !self.try_ack_state_change(buf, IoProcessorState::Start, "WaitStart") {
                     return;
                 }
+                // Pre-operational self-test gate (FIPS): the in-scope algorithm
+                // KATs must pass before the HSM exposes any crypto. Crypto
+                // engines are construct-ready (AES/SHA/PKA need no boot-time
+                // init), so this runs before `on_boot_complete`. On failure we
+                // withhold the transition — the PAL never reaches `Running`,
+                // never publishes `BootStatus::Run`.
+                let io = crate::io::UnoHsmIo::self_test();
+                if let Err(_e) = crate::self_test::run_pre_op(self, &io).await {
+                    error!("selftest", _e, "pre-operational self-test FAILED");
+                    return;
+                }
+                info!("selftest", "pre-operational self-test PASSED");
                 self.on_boot_complete()
             }
             BootPhase::Running => {
