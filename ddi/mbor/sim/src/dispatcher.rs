@@ -835,6 +835,20 @@ impl Dispatcher {
                     )
                 }
 
+                DdiOp::SetInitBk3Pin => {
+                    dispatch_handler!(
+                        self.dispatch_set_init_bk3_pin(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::SecureInitBk3 => {
+                    dispatch_handler!(
+                        self.dispatch_secure_init_bk3(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
                 DdiOp::EstablishCredential => {
                     dispatch_handler!(
                         self.dispatch_establish_credential(&mut decoder, &hdr, out_data),
@@ -987,7 +1001,7 @@ impl Dispatcher {
         let resp = DdiGetDeviceInfoResp {
             kind: DdiDeviceKind::Virtual,
             tables: self.function.tables_max() as u8,
-            fips_approved: false,
+            fips_approved: self.function.get_function_state().fips_approved(),
         };
 
         self.send_response(resp_header, resp, None, out_data)
@@ -1972,6 +1986,8 @@ impl Dispatcher {
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
 
+        vault.regenerate_establish_cred_encryption_key()?;
+
         let nonce = vault.get_nonce();
 
         let key_id = vault.get_establish_cred_encryption_key_id()?;
@@ -1998,6 +2014,79 @@ impl Dispatcher {
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_set_init_bk3_pin(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+        let req = decoder
+            .decode_data::<DdiSetInitBk3PinReq>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        if req.encrypted_credential.encrypted_id.len() != 16
+            || req.encrypted_credential.encrypted_pin.len() != 16
+            || req.encrypted_credential.iv.len() != 16
+        {
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        let encrypted_credential = EncryptedCredential {
+            id: req.encrypted_credential.encrypted_id.data_take(),
+            pin: req.encrypted_credential.encrypted_pin.data_take(),
+            iv: req.encrypted_credential.iv.data_take(),
+            nonce: req.encrypted_credential.nonce,
+            tag: req.encrypted_credential.tag,
+        };
+        let pub_key = req.pub_key.der.data()[..req.pub_key.der.len()].to_vec();
+
+        self.function
+            .set_init_bk3_pin(encrypted_credential, &pub_key)?;
+
+        self.send_response(resp_header, DdiSetInitBk3PinResp {}, None, out_data)
+    }
+
+    fn dispatch_secure_init_bk3(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let req = decoder
+            .decode_data::<DdiSecureInitBk3Req>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+        if req.encrypted_bk3.encrypted_bk3.len() != BK3_SIZE_BYTES
+            || req.encrypted_bk3.iv.len() != 16
+        {
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        let pub_key = req.pub_key.der.data()[..req.pub_key.der.len()].to_vec();
+        let (masked_bk3, vm_launch_guid) = self
+            .function
+            .secure_init_bk3(&req.encrypted_bk3, &pub_key)?;
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: true,
+        };
+        let resp = DdiSecureInitBk3Resp {
+            masked_bk3: MborByteArray::from_slice(&masked_bk3)
+                .map_err(|_| ManticoreError::InternalError)?,
+            vm_launch_guid,
+        };
         self.send_response(resp_header, resp, None, out_data)
     }
 
@@ -2559,6 +2648,10 @@ impl Dispatcher {
             .decode_data::<DdiSetSealedBk3Req>()
             .map_err(|_| ManticoreError::CborDecodeError)?;
 
+        if !self.function.get_function_state().is_bk3_initialized() {
+            return Err(ManticoreError::Bk3NotSecurelyProvisioned);
+        }
+
         tracing::debug!(
             sealed_bk3_len = req.sealed_bk3.len(),
             "SetSealedBk3 request"
@@ -2592,6 +2685,10 @@ impl Dispatcher {
         let _req = decoder
             .decode_data::<DdiGetSealedBk3Req>()
             .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        if !self.function.get_function_state().is_bk3_initialized() {
+            return Err(ManticoreError::Bk3NotSecurelyProvisioned);
+        }
 
         let sealed_bk3_data = self.function.get_sealed_bk3()?;
 
@@ -3257,6 +3354,11 @@ mod tests {
 
             // Create a new dispatcher for each test size since sealed BK3 can only be set once
             let dispatcher = create_dispatcher(4);
+            dispatcher
+                .function
+                .get_function_state()
+                .set_bk3_initialized()
+                .unwrap();
 
             let mut sealed_bk3_data = vec![0xAAu8; size];
             for (i, byte) in sealed_bk3_data.iter_mut().enumerate() {
@@ -3291,6 +3393,11 @@ mod tests {
     #[test]
     fn test_dispatch_set_sealed_bk3_invalid_size() {
         let dispatcher = create_dispatcher(4);
+        dispatcher
+            .function
+            .get_function_state()
+            .set_bk3_initialized()
+            .unwrap();
 
         let sealed_bk3_data = [0x42u8; 1024]; // Too large - exceeds 512 byte limit
 
@@ -3316,6 +3423,11 @@ mod tests {
     #[test]
     fn test_dispatch_get_sealed_bk3() {
         let dispatcher = create_dispatcher(4);
+        dispatcher
+            .function
+            .get_function_state()
+            .set_bk3_initialized()
+            .unwrap();
 
         let sealed_bk3_data = [0x42u8; 256]; // 256 bytes of test data
 
@@ -3440,7 +3552,7 @@ mod tests {
 
         assert_eq!(
             resp_hdr.status,
-            DdiStatus::from(ManticoreError::SealedBk3NotPresent)
+            DdiStatus::from(ManticoreError::Bk3NotSecurelyProvisioned)
         );
     }
 }
