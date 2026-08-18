@@ -511,36 +511,84 @@ impl UnoHsmPal {
     /// impactless-update guarantee — unlike a full [`part_disable`], which
     /// additionally tears down the provisioning material.
     ///
+    /// # Accepted states
+    ///
+    /// Applies to a partition in **any** lifecycle state, mirroring the
+    /// reference firmware's unconditional `state.migrate()`; it does not
+    /// require `Enabled`. An earlier revision rejected every non-`Enabled`
+    /// state with [`HsmError::InvalidArg`], which left the session table
+    /// leaked whenever a partition was migrated while disabled.
+    ///
+    /// - `Unallocated` — no resources and no vault table: no-op, `Ok(())`.
+    /// - `res_mask == 0` (the PF enabled before `SetResource` assigned it
+    ///   any tables) — the vault is built over empty storage and the
+    ///   identity / enable-time keys are deliberately deferred, so only the
+    ///   per-tenant state and identity fields are cleared; provisioning is
+    ///   left to the later `SetResource` → [`part_alloc`] path.
+    /// - Anything else — full wipe, then re-provision and leave the
+    ///   partition `Enabled` and re-provisionable.
+    ///
+    /// Note the last case leaves a previously-`Disabled` partition
+    /// `Enabled`, so an NSSR is also an implicit re-enable.
+    ///
     /// [`part_disable`]: Self::part_disable
+    /// [`part_alloc`]: Self::part_alloc
     pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
-        match part.state()? {
-            PartState::Enabled => {
-                // Wipe every vault key (app + session + internal) so no prior
-                // tenant key material survives the reset.
-                let admin_io = UnoHsmIo::admin(pid);
-                crate::vault::vault(&admin_io)
-                    .clear(self, &admin_io)
-                    .await?;
-                // Clear per-tenant persistent state, preserving provisioning.
-                part.clear_state(PartResetKind::Migrate);
-                // The `vault.clear()` above also deleted the identity private
-                // key. Zero the identity fields (id, `id_key_id`, cached public
-                // key) *before* awaiting so no concurrent reader can observe
-                // `id_key_id` dangling at a deleted vault key while a fresh
-                // identity is being provisioned across the await points below.
-                part.clear_identity();
-                // Regenerate a fresh partition identity (new keypair + id blob).
-                // Matches the std reference firmware, which always provisions a
-                // fresh identity on NSSR (diverges from mcr-hsm, which preserves
-                // the PID keypair).
-                self.provision_identity(pid).await?;
-                // Regenerate the enable-time establish-credential and
-                // session-encryption keys (this PAL provisions them eagerly).
-                self.provision_enabled_keys(pid).await
-            }
-            _ => Err(HsmError::InvalidArg),
+        // An unallocated partition has neither resources nor a vault table,
+        // so there is nothing to reset.
+        if matches!(part.state()?, PartState::Unallocated) {
+            return Ok(());
         }
+
+        // A PF enabled before `SetResource` assigned it any tables is
+        // `Enabled` with `res_mask == 0`, so `vault()` is built over empty
+        // storage (see `crate::vault::vault`) and its identity / enable-time
+        // keys are deliberately deferred. There is no key material to wipe
+        // and nowhere to provision a fresh identity into, so reset only the
+        // per-tenant state and leave provisioning to the later
+        // `SetResource` → `part_alloc` path.
+        if part.res_mask() == 0 {
+            part.clear_state(PartResetKind::Migrate);
+            part.clear_identity();
+            return Ok(());
+        }
+
+        // Reap ALL per-tenant state regardless of the current lifecycle
+        // state (Enabled / Allocated / Disabled), mirroring the reference
+        // firmware's unconditional `state.migrate()`. uno previously
+        // guarded on `Enabled` and returned `InvalidArg` for every other
+        // state, which left a leaked session table intact whenever a
+        // partition was migrated while not Enabled (e.g. after the owning
+        // host fd closed and disabled it) — perpetuating
+        // `VaultSessionLimitReached` across the NSSR that `erase()` drives,
+        // because the session slots were never freed.
+
+        // Wipe every vault key (app + session + internal) so no prior
+        // tenant key material survives the reset.
+        let admin_io = UnoHsmIo::admin(pid);
+        crate::vault::vault(&admin_io)
+            .clear(self, &admin_io)
+            .await?;
+        // Clear the per-tenant persistent state (including the session
+        // table), preserving the partition's provisioning material.
+        part.clear_state(PartResetKind::Migrate);
+        // The `vault.clear()` above also deleted the identity private key.
+        // Zero the identity fields (id, `id_key_id`, cached public key)
+        // *before* awaiting so no concurrent reader can observe `id_key_id`
+        // dangling at a deleted vault key while a fresh identity is being
+        // provisioned across the await points below.
+        part.clear_identity();
+        // Regenerate a fresh partition identity (new keypair + id blob) and
+        // the enable-time establish-credential / session-encryption keys,
+        // then leave the partition Enabled and re-provisionable. Applying
+        // this uniformly (not just to the previously-Enabled case) means a
+        // migrate always yields a clean, usable partition. A subsequent
+        // `part_enable` is an idempotent no-op on an already-Enabled slot.
+        self.provision_identity(pid).await?;
+        self.provision_enabled_keys(pid).await?;
+        part.set_state(PartState::Enabled);
+        Ok(())
     }
 
     /// Materialise the partition's RSA-2048 unwrapping key into the vault on

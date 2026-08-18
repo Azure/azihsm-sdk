@@ -252,16 +252,51 @@ pub trait HsmEcc {
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
 
-    /// Derive an ECC keypair deterministically from `okm` (output
-    /// keying material from a KDF), per FIPS 186-5 §A.2.1 / SP
-    /// 800-133r2 §6.2.3. `okm.len()` must be
-    /// `curve.wire_coord_len() + 8` bytes.
-    async fn ecc_gen_keypair_from_okm(
+    /// Derive an ECC keypair deterministically from a KDF-derived
+    /// `root` secret (the caller's `PartRoot`).
+    ///
+    /// The PAL owns the entire derivation from `root`: it applies its
+    /// platform-appropriate FIPS 186-5 §A.2 method — a hardware PAL
+    /// whose modular unit cannot reduce by the even value `n − 1` uses
+    /// §A.2.2 rejection sampling, while a software PAL may use §A.2.1
+    /// extra-random-bits. `root` is the per-partition secret; PALs fan
+    /// the per-key material out of it via a domain-separated
+    /// HKDF-Expand internally.
+    ///
+    /// # Determinism is per-platform, not across platforms
+    ///
+    /// The same `root` regenerates the same keypair on **every call on
+    /// a given PAL**, which is what makes the partition identity stable
+    /// across resets. It does **not** produce the same keypair on two
+    /// different PALs: the HKDF info string, the OKM length and the
+    /// §A.2 method are all chosen per platform, so `std` and `uno`
+    /// derive different scalars from an identical `root` by
+    /// construction. Tests must therefore not assert a fixed public key
+    /// across backends, and an emulated key is not a prediction of the
+    /// on-silicon key.
+    ///
+    /// # Parameters
+    ///
+    /// - `root` — the key-derivation root. Must be `curve.wire_coord_len()`
+    ///   bytes (48 for P-384, the `PartRoot` size); any other length is
+    ///   [`HsmError::InvalidArg`]. Validated in **both** query and use
+    ///   mode, so the error does not depend on `out`.
+    /// - `out` — `None` to query the required `(priv_len, pub_len)`, or
+    ///   `Some((priv_out, pub_out))` to derive into caller buffers.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::InvalidArg`] — `root` is the wrong length, or `out`
+    ///   is `Some` and a buffer is too short.
+    /// - [`HsmError::UnsupportedCmd`] — the PAL does not implement the
+    ///   requested `curve`. Reported in query mode too, so query and use
+    ///   mode agree.
+    async fn ecc_gen_keypair_from_root(
         &self,
         io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
-        okm: &DmaBuf,
+        root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
