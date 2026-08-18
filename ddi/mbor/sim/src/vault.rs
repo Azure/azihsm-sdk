@@ -137,6 +137,11 @@ impl Vault {
         self.inner.read().user
     }
 
+    pub(crate) fn user_credentials_established(&self) -> bool {
+        let credentials = self.inner.read().user.credentials;
+        !credentials.id.is_nil() && credentials.pin != [0; 16]
+    }
+
     /// Add a new key to the vault.
     ///
     /// # Arguments
@@ -253,12 +258,10 @@ impl Vault {
         self.inner.read().get_establish_cred_encryption_key_id()
     }
 
-    /// Regenerate the one-shot establish-credential encryption key and nonce.
+    /// Create an establish-credential encryption key when no tunnel is active.
     #[instrument(skip(self), fields(id = ?self.id()))]
-    pub(crate) fn regenerate_establish_cred_encryption_key(&self) -> Result<(), ManticoreError> {
-        self.inner
-            .write()
-            .regenerate_establish_cred_encryption_key()
+    pub(crate) fn ensure_establish_cred_encryption_key(&self) -> Result<(), ManticoreError> {
+        self.inner.write().ensure_establish_cred_encryption_key()
     }
 
     pub(crate) fn decrypt_secure_bk3(
@@ -703,11 +706,11 @@ impl VaultInner {
         Ok(())
     }
 
-    fn regenerate_establish_cred_encryption_key(&mut self) -> Result<(), ManticoreError> {
-        if self.establish_cred_encryption_key_id.is_some() {
-            self.clear_establish_cred_encryption_key_id()?;
+    fn ensure_establish_cred_encryption_key(&mut self) -> Result<(), ManticoreError> {
+        if self.establish_cred_encryption_key_id.is_none() {
+            self.generate_establish_cred_encryption_key_id()?;
         }
-        self.generate_establish_cred_encryption_key_id()
+        Ok(())
     }
 
     fn generate_session_encryption_key_id(&mut self) -> Result<(), ManticoreError> {
@@ -757,8 +760,8 @@ impl VaultInner {
 
         let (decrypted_id, decrypted_pin) =
             self.decrypt_establish_credential(encrypted_credential, client_pub_key)?;
-        self.set_user_new_credential(&decrypted_id, &decrypted_pin)?;
         self.reset_nonce()?;
+        self.set_user_new_credential(&decrypted_id, &decrypted_pin)?;
         self.clear_establish_cred_encryption_key_id()?;
         Ok(())
     }

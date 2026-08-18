@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Secure-provisioning live-migration simulation tests for the emu backend.
+//! Secure-provisioning live-migration simulation tests for the hardware backend.
 //!
-//! The emu `migrate_sim` (NSSR) reproduces what a live migration does to a
+//! `migrate_sim` (NSSR) reproduces what a live migration does to a
 //! partition: the volatile state (the ECDH tunnel key and the in-flight
 //! provisioning PIN) is dropped, while the sealed/persistent store is carried
 //! to the target. These tests confirm the two halves of that contract:
