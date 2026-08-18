@@ -152,9 +152,6 @@ jobs:
 
   test_ubuntu_emu_ddi:
 
-    env:
-      JOB_ID: test_ubuntu_emu_ddi-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
     name: test_ubuntu_emu_ddi (${{ matrix.runner }})
 
     strategy:

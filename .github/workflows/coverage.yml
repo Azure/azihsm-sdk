@@ -18,9 +18,6 @@ jobs:
 
   coverage_ubuntu:
 
-    env:
-      JOB_ID: coverage_ubuntu-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-
     name: coverage_ubuntu (${{ matrix.runner }})
 
     strategy:
@@ -76,9 +73,6 @@ jobs:
         exit 1
 
   coverage_windows:
-
-    env:
-      JOB_ID: coverage_windows-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
 
     name: coverage_windows (${{ matrix.runner }})
 
