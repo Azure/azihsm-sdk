@@ -47,32 +47,29 @@ pub(crate) fn part_final(
         .map_err(|_| DdiError::InvalidParameter)?;
 
     #[cfg(feature = "emu")]
-    let (cert_descriptors, oob) = {
-        let descriptors = if certs.is_empty() {
-            vec![CertDescriptor::default()]
-        } else {
-            certs
-                .iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    // The wire format is `index: u8` + `length: u16`; reject
-                    // (rather than silently truncate) inputs that don't fit.
-                    let index = u8::try_from(i).map_err(|_| DdiError::InvalidParameter)?;
-                    let length = u16::try_from(c.len()).map_err(|_| DdiError::InvalidParameter)?;
-                    Ok(CertDescriptor {
-                        index,
-                        length: U16::new(length),
-                    })
+    let cert_descriptors: Vec<CertDescriptor> = if certs.is_empty() {
+        vec![CertDescriptor::default()]
+    } else {
+        certs
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                // The wire format is `index: u8` + `length: u16`; reject
+                // (rather than silently truncate) inputs that don't fit.
+                let index = u8::try_from(i).map_err(|_| DdiError::InvalidParameter)?;
+                let length = u16::try_from(c.len()).map_err(|_| DdiError::InvalidParameter)?;
+                Ok(CertDescriptor {
+                    index,
+                    length: U16::new(length),
                 })
-                .collect::<Result<Vec<_>, DdiError>>()?
-        };
-        (descriptors, (!certs.is_empty()).then_some(certs))
+            })
+            .collect::<Result<Vec<_>, DdiError>>()?
     };
 
     #[cfg(not(feature = "emu"))]
-    let (cert_descriptors, oob) = {
+    let cert_descriptors = {
         let _ = certs;
-        (vec![CertDescriptor::default()], None)
+        vec![CertDescriptor::default()]
     };
 
     let req = TborPartFinalReq {
@@ -81,6 +78,11 @@ pub(crate) fn part_final(
         cert_descriptors,
         prev_local_mk_backup: prev_local_mk_backup.to_vec(),
     };
+
+    #[cfg(feature = "emu")]
+    let oob = (!certs.is_empty()).then_some(certs);
+    #[cfg(not(feature = "emu"))]
+    let oob = None::<&[&[u8]]>;
 
     dev.exec_op_tbor(&req, oob, &mut None)
 }
