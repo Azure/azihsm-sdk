@@ -439,7 +439,7 @@ impl HsmRsa for UnoHsmPal {
             // prime-sized field fits the half width (a proper prime is exactly
             // `k/2` bytes, and dp/dq/qInv are `< p`).
             if !matches!(k, 256 | 384 | 512)
-                || e.len() > 4
+                || e.len() > EXP_WIRE_LEN
                 || p.len() > half
                 || q.len() > half
                 || dp.len() > half
@@ -449,15 +449,16 @@ impl HsmRsa for UnoHsmPal {
                 return Err(HsmError::InvalidArg);
             }
 
-            // The Uno CRT operand (`5k+4`) is larger than the source DER, so it
-            // cannot be built in place — allocate a right-sized buffer. Assemble
-            // the little-endian PKA operand
-            // `[ p(k/2) ‖ q(k/2) ‖ dp(k/2) ‖ dq(k/2) ‖ n(k) ‖ n1q(k) ‖ n2p(k) ‖ e(4) ]`
-            // into it (zeroed first so short fields are left-padded and the
-            // derived `n1q`/`n2p` regions start clean).
-            let vault_len = 5 * k + 4;
-            let out = self.dma_alloc(io, vault_len)?;
-            out.fill(0);
+            // The Uno CRT operand (`5k + EXP_WIRE_LEN`) is larger than the
+            // source DER, so it cannot be built in place — allocate a
+            // right-sized zeroed buffer. Assemble the little-endian PKA operand
+            // `[ p(k/2) ‖ q(k/2) ‖ dp(k/2) ‖ dq(k/2) ‖ n(k) ‖ n1q(k) ‖ n2p(k) ‖ e(EXP_WIRE_LEN) ]`
+            // into it. The zeroed allocation is what left-pads the short DER
+            // fields (`UintRef` strips leading zeros) and leaves the derived
+            // `n1q`/`n2p` regions clean, so `reverse_copy` only has to write the
+            // significant bytes.
+            let vault_len = 5 * k + EXP_WIRE_LEN;
+            let out = self.dma_alloc_zeroed(io, vault_len)?;
             reverse_copy(&mut out[0..half], p);
             reverse_copy(&mut out[half..k], q);
             reverse_copy(&mut out[k..k + half], dp);
