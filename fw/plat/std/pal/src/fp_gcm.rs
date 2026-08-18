@@ -9,9 +9,11 @@
 //! `exec_op_fp_gcm` device entry point rather than an MBOR/TBOR op.
 //!
 //! The emulator has no separate FP engine, so this module reproduces
-//! the FP GCM behavior against the same partition key vault the DDI
-//! handlers use: the `bulk_key_id` is the vault `key_id` of the bulk
-//! GCM key created by [`AesGenerateKey`], and the transform is performed
+//! the FP GCM behavior in software.  The bulk key material is held in a
+//! per-partition fast-path store (`fp_bulk`), keyed by the FP-assigned
+//! `bulk_key_id` returned from `fp_bulk_create` — a distinct id, not the
+//! vault `key_id` (the vault holds only the 2-byte handle).  Fast-path
+//! ops resolve the key by `bulk_key_id` and the transform is performed
 //! with the OpenSSL-backed AES driver.
 //!
 //! ## Approved vs unapproved

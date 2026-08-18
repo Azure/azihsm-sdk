@@ -86,6 +86,20 @@ impl HsmVault for StdHsmPal {
         _session_id: HsmSessId,
         _session_only: bool,
     ) -> HsmResult<u16> {
+        // Match the Uno PAL's parameter validation (same checks, order, and
+        // error variants) so the emulator catches misuse early: bulk keys are
+        // 32-byte AES-256 GCM/XTS kinds.
+        if key.len() != 32 {
+            return Err(HsmError::InvalidArg);
+        }
+        if !matches!(
+            kind,
+            HsmVaultKeyKind::AesGcmBulk256
+                | HsmVaultKeyKind::AesGcmBulk256Unapproved
+                | HsmVaultKeyKind::AesXtsBulk256
+        ) {
+            return Err(HsmError::InvalidKeyType);
+        }
         self.fp_bulk_create(u8::from(io.pid()), kind, key)
     }
 
@@ -96,6 +110,25 @@ impl HsmVault for StdHsmPal {
 
     /// Delete a key from the partition's vault.
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        // Mirror the Uno PAL: a bulk key lives in the (simulated) FP engine
+        // with only its 2-byte handle in the vault, so free the FP entry
+        // before dropping the vault handle. Best-effort — a missing / oddly
+        // sized entry simply skips the FP delete.
+        if matches!(
+            self.vault_key_kind(io, key_id),
+            Ok(HsmVaultKeyKind::AesGcmBulk256
+                | HsmVaultKeyKind::AesGcmBulk256Unapproved
+                | HsmVaultKeyKind::AesXtsBulk256)
+        ) {
+            let bulk_id = self.vault_key(io, key_id).ok().and_then(|b| {
+                let bytes: &[u8] = b;
+                (bytes.len() == core::mem::size_of::<u16>())
+                    .then(|| u16::from_le_bytes([bytes[0], bytes[1]]))
+            });
+            if let Some(bulk_id) = bulk_id {
+                let _ = self.fp_bulk_key_delete(io, bulk_id).await;
+            }
+        }
         let entry = self.active_part_mut(io.pid())?;
         entry.vault.delete(key_id)
     }

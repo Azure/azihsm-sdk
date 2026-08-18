@@ -13,8 +13,10 @@
 //! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)
 //! the response also carries a `bulk_key_id`.  The bulk key is the key
 //! consumed by the fast-path GCM encrypt/decrypt op; the host addresses
-//! it via this `bulk_key_id`.  On this platform the bulk key material is
-//! held in the vault and `bulk_key_id` aliases the vault `key_id`.
+//! it via this `bulk_key_id`.  Bulk key material is registered with the
+//! fast-path (FP) engine (see [`bulk::register_bulk_key`](super::bulk));
+//! the vault stores only the 2-byte FP handle, and `bulk_key_id` is the
+//! distinct FP-assigned id, not the vault `key_id`.
 //!
 //! Scope: 128/192/256-bit AES keys and AES-256-GCM bulk keys.  The
 //! AES-XTS bulk variant is rejected with `InvalidArg`.

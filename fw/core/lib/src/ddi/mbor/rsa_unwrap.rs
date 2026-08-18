@@ -115,21 +115,17 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
 
         // Push the recovered key to FP and vault only the 2-byte handle,
         // scoped to the creating session so later fast-path GCM ops match.
-        let bulk_id = pal
-            .fp_bulk_key_create(
-                io,
-                material,
-                bulk_kind,
-                HsmSessId::from(sess_id),
-                attrs.session(),
-            )
-            .await?;
-        let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
-        id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
-        let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-        let key_id = pal
-            .vault_key_create(io, id_bytes, bulk_kind, session_binding, attrs)
-            .await?;
+        // The shared helper frees the FP key if the vault write fails, so no
+        // FP slot leaks on a partial failure.
+        let (key_id, bulk_id) = super::bulk::register_bulk_key(
+            pal,
+            io,
+            material,
+            bulk_kind,
+            HsmSessId::from(sess_id),
+            attrs,
+        )
+        .await?;
 
         // Mask the raw key material directly (the vault holds only the
         // handle) so the host can re-import it on a later session.

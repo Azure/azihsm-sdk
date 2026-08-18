@@ -475,12 +475,16 @@ impl DdiDev for DdiEmuDev {
             return Err(DdiError::DdiStatus(DdiStatus::AesGcmInvalidBufferSize));
         }
 
+        // Bulk key handles are 16-bit; reject an out-of-range id instead of
+        // silently truncating it to a different (possibly valid) handle.
+        let key_id = u16::try_from(gcm_params.key_id).map_err(|_| DdiError::InvalidParameter)?;
+
         let out = self
             .handle
             .block_on(self.hsm.fp_gcm(
                 EMU_PID,
                 encrypt,
-                gcm_params.key_id as u16,
+                key_id,
                 gcm_params.iv,
                 gcm_params.aad.clone(),
                 gcm_params.tag,

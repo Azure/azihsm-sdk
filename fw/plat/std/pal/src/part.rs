@@ -450,7 +450,7 @@ pub enum PartCommand {
         pid: u8,
         /// `true` = encrypt, `false` = decrypt.
         encrypt: bool,
-        /// Bulk key id (aliases the vault `key_id`).
+        /// FP bulk key id (the FP-assigned handle, not the vault `key_id`).
         key_id: u16,
         /// Caller-supplied 96-bit IV (ignored on approved encrypt).
         iv: [u8; 12],

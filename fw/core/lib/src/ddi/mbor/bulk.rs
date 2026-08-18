@@ -43,11 +43,22 @@ pub(crate) async fn register_bulk_key<P: HsmPal>(
     let bulk_id = pal
         .fp_bulk_key_create(io, material, kind, sess_id, attrs.session())
         .await?;
-    let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
-    id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
-    let session_binding = attrs.session().then_some(sess_id);
-    let handle = pal
-        .vault_key_create(io, id_bytes, kind, session_binding, attrs)
-        .await?;
-    Ok((handle, bulk_id))
+
+    // The FP key is now allocated. Any failure while recording its 2-byte
+    // handle in the vault must free that FP key (best-effort), otherwise its
+    // slot leaks with no vault entry pointing at it.
+    let store = async {
+        let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
+        id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
+        let session_binding = attrs.session().then_some(sess_id);
+        pal.vault_key_create(io, id_bytes, kind, session_binding, attrs)
+            .await
+    };
+    match store.await {
+        Ok(handle) => Ok((handle, bulk_id)),
+        Err(e) => {
+            let _ = pal.fp_bulk_key_delete(io, bulk_id).await;
+            Err(e)
+        }
+    }
 }
