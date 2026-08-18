@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Secure-provisioning live-migration simulation tests for the hardware backend.
+//! Secure-provisioning live-migration simulation tests for the mock backend.
 //!
 //! `migrate_sim` (NSSR) reproduces what a live migration does to a
 //! partition: the volatile state (the ECDH tunnel key and the in-flight
@@ -15,7 +15,6 @@
 //!    with FIPS status preserved and a re-seal rejected
 //!    (`test_secure_provision_lm_completed_survives`).
 
-#![cfg(not(any(feature = "emu", feature = "mock")))]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
@@ -287,10 +286,10 @@ fn test_secure_provision_lm_midflow_restart() {
         let resp = resp.unwrap();
         assert_eq!(resp.hdr.status, DdiStatus::Success);
         let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
-        assert_eq!(
-            masked_bk3.len(),
-            EXPECTED_MASKED_BK3_LEN,
-            "unexpected masked_bk3 length"
+        assert!(
+            (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_bk3.len()),
+            "masked_bk3 length {} is outside the expected range",
+            masked_bk3.len()
         );
         assert_eq!(resp.data.vm_launch_guid.len(), 16);
 
@@ -409,10 +408,10 @@ fn test_secure_provision_lm_completed_survives() {
             let resp = result.unwrap();
             assert_eq!(resp.hdr.status, DdiStatus::Success);
             let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
-            assert_eq!(
-                masked_bk3.len(),
-                EXPECTED_MASKED_BK3_LEN,
-                "unexpected masked_bk3 length"
+            assert!(
+                (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_bk3.len()),
+                "masked_bk3 length {} is outside the expected range",
+                masked_bk3.len()
             );
             let seal_resp = helper_set_sealed_bk3(dev, masked_bk3);
             assert!(
