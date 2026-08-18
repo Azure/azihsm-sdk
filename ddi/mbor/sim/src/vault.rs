@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiEncryptedBk3;
 use azihsm_ddi_mbor_types::DdiKeyType;
 use azihsm_ddi_mbor_types::DdiMaskedKeyAttributes;
 use azihsm_ddi_mbor_types::MaskingKeyAlgorithm;
@@ -252,6 +253,26 @@ impl Vault {
         self.inner.read().get_establish_cred_encryption_key_id()
     }
 
+    /// Regenerate the one-shot establish-credential encryption key and nonce.
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn regenerate_establish_cred_encryption_key(&self) -> Result<(), ManticoreError> {
+        self.inner
+            .write()
+            .regenerate_establish_cred_encryption_key()
+    }
+
+    pub(crate) fn decrypt_secure_bk3(
+        &self,
+        encrypted_bk3: &DdiEncryptedBk3,
+        client_pub_key: &[u8],
+        id: &[u8; 16],
+        pin: &[u8; 16],
+    ) -> Result<[u8; 48], ManticoreError> {
+        self.inner
+            .read()
+            .decrypt_secure_bk3(encrypted_bk3, client_pub_key, id, pin)
+    }
+
     /// Get session encryption key id.
     ///
     /// # Returns
@@ -283,6 +304,25 @@ impl Vault {
         self.inner
             .write()
             .establish_credential(encrypted_credential, client_pub_key)
+    }
+
+    /// Decrypt and authenticate an establish-credential payload without
+    /// consuming the current tunnel.
+    pub(crate) fn decrypt_establish_credential(
+        &self,
+        encrypted_credential: EncryptedCredential,
+        client_pub_key: &[u8],
+    ) -> Result<([u8; 16], [u8; 16]), ManticoreError> {
+        self.inner
+            .read()
+            .decrypt_establish_credential(encrypted_credential, client_pub_key)
+    }
+
+    /// Consume a successfully used establish-credential tunnel.
+    pub(crate) fn complete_establish_credential(&self) -> Result<(), ManticoreError> {
+        let mut inner = self.inner.write();
+        inner.reset_nonce()?;
+        inner.clear_establish_cred_encryption_key_id()
     }
 
     /// Open Session.
@@ -663,6 +703,13 @@ impl VaultInner {
         Ok(())
     }
 
+    fn regenerate_establish_cred_encryption_key(&mut self) -> Result<(), ManticoreError> {
+        if self.establish_cred_encryption_key_id.is_some() {
+            self.clear_establish_cred_encryption_key_id()?;
+        }
+        self.generate_establish_cred_encryption_key_id()
+    }
+
     fn generate_session_encryption_key_id(&mut self) -> Result<(), ManticoreError> {
         // Generate the ECC 384 key
         let (ecc_key, _) = crate::crypto::ecc::generate_ecc(crate::crypto::ecc::EccCurve::P384)?;
@@ -704,70 +751,135 @@ impl VaultInner {
         encrypted_credential: EncryptedCredential,
         client_pub_key: &[u8],
     ) -> Result<(), ManticoreError> {
-        let key_id = self.get_establish_cred_encryption_key_id()?;
-        {
-            let entry = self.get_key_entry(key_id)?;
-
-            // Check if sent nonce is same
-            if encrypted_credential.nonce != self.get_nonce() {
-                Err(ManticoreError::NonceMismatch)?;
-            }
-
-            // Check if credentials are already set
-            if !self.user.credentials.id.is_nil() && !self.user.credentials.pin.eq(&[0; 16]) {
-                Err(ManticoreError::VaultAppLimitReached)?;
-            }
-
-            if let EccPrivate(private_key) = entry.key() {
-                let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
-                let secret_bytes = private_key.derive(&public_key)?;
-                let secret_key = SecretKey::from_bytes(&secret_bytes)?;
-                let current_nonce = self.get_nonce();
-                let keys = secret_key.hkdf_derive(
-                    HashAlgorithm::Sha384,
-                    None,
-                    Some(&current_nonce),
-                    80,
-                )?;
-
-                let hmac_key = &keys[32..];
-
-                let mut id_pin_iv_nonce = [0; 80];
-                id_pin_iv_nonce[..16].copy_from_slice(&encrypted_credential.id);
-                id_pin_iv_nonce[16..32].copy_from_slice(&encrypted_credential.pin);
-                id_pin_iv_nonce[32..48].copy_from_slice(&encrypted_credential.iv);
-                id_pin_iv_nonce[48..].copy_from_slice(&current_nonce);
-
-                let hmac_key = HmacKey::from_bytes(hmac_key)?;
-                let calculated_tag = hmac_key.hmac(&id_pin_iv_nonce, HashAlgorithm::Sha384)?;
-                if calculated_tag != encrypted_credential.tag {
-                    Err(ManticoreError::PinDecryptionFailed)?;
-                }
-
-                self.reset_nonce()?;
-
-                let aes_key = AesKey::from_bytes(&keys[..32])?;
-
-                let aes_result = aes_key.decrypt(
-                    &encrypted_credential.id,
-                    AesAlgo::Cbc,
-                    Some(&encrypted_credential.iv),
-                )?;
-                let decrypted_id = aes_result.plain_text;
-                let iv = aes_result.iv;
-
-                let aes_result =
-                    aes_key.decrypt(&encrypted_credential.pin, AesAlgo::Cbc, iv.as_deref())?;
-                let decrypted_pin = aes_result.plain_text;
-
-                self.set_user_new_credential(&decrypted_id, &decrypted_pin)?;
-            } else {
-                Err(ManticoreError::InternalError)?;
-            }
+        if !self.user.credentials.id.is_nil() && !self.user.credentials.pin.eq(&[0; 16]) {
+            Err(ManticoreError::VaultAppLimitReached)?;
         }
 
+        let (decrypted_id, decrypted_pin) =
+            self.decrypt_establish_credential(encrypted_credential, client_pub_key)?;
+        self.set_user_new_credential(&decrypted_id, &decrypted_pin)?;
+        self.reset_nonce()?;
         self.clear_establish_cred_encryption_key_id()?;
         Ok(())
+    }
+
+    fn decrypt_establish_credential(
+        &self,
+        encrypted_credential: EncryptedCredential,
+        client_pub_key: &[u8],
+    ) -> Result<([u8; 16], [u8; 16]), ManticoreError> {
+        let key_id = self.get_establish_cred_encryption_key_id()?;
+        let entry = self.get_key_entry(key_id)?;
+
+        if encrypted_credential.nonce != self.get_nonce() {
+            Err(ManticoreError::NonceMismatch)?;
+        }
+
+        let EccPrivate(private_key) = entry.key() else {
+            Err(ManticoreError::InternalError)?
+        };
+        let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
+        let secret_bytes = private_key.derive(&public_key)?;
+        let secret_key = SecretKey::from_bytes(&secret_bytes)?;
+        let current_nonce = self.get_nonce();
+        let keys = secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(&current_nonce), 80)?;
+
+        let mut id_pin_iv_nonce = [0; 80];
+        id_pin_iv_nonce[..16].copy_from_slice(&encrypted_credential.id);
+        id_pin_iv_nonce[16..32].copy_from_slice(&encrypted_credential.pin);
+        id_pin_iv_nonce[32..48].copy_from_slice(&encrypted_credential.iv);
+        id_pin_iv_nonce[48..].copy_from_slice(&current_nonce);
+
+        let hmac_key = HmacKey::from_bytes(&keys[32..])?;
+        let calculated_tag = hmac_key.hmac(&id_pin_iv_nonce, HashAlgorithm::Sha384)?;
+        if calculated_tag != encrypted_credential.tag {
+            Err(ManticoreError::PinDecryptionFailed)?;
+        }
+
+        let aes_key = AesKey::from_bytes(&keys[..32])?;
+        let aes_result = aes_key.decrypt(
+            &encrypted_credential.id,
+            AesAlgo::Cbc,
+            Some(&encrypted_credential.iv),
+        )?;
+        let decrypted_id = aes_result.plain_text;
+        let aes_result = aes_key.decrypt(
+            &encrypted_credential.pin,
+            AesAlgo::Cbc,
+            aes_result.iv.as_deref(),
+        )?;
+        let decrypted_pin = aes_result.plain_text;
+
+        if decrypted_id.len() != 16 || decrypted_pin.len() != 16 {
+            Err(ManticoreError::InvalidAppCredentials)?;
+        }
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&decrypted_id);
+        let mut pin = [0u8; 16];
+        pin.copy_from_slice(&decrypted_pin);
+        Ok((id, pin))
+    }
+
+    pub(crate) fn decrypt_secure_bk3(
+        &self,
+        encrypted_bk3: &DdiEncryptedBk3,
+        client_pub_key: &[u8],
+        id: &[u8; 16],
+        pin: &[u8; 16],
+    ) -> Result<[u8; 48], ManticoreError> {
+        if encrypted_bk3.nonce != self.get_nonce() {
+            return Err(ManticoreError::NonceMismatch);
+        }
+        if encrypted_bk3.encrypted_bk3.len() != 48 || encrypted_bk3.iv.len() != 16 {
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        let key_id = self.get_establish_cred_encryption_key_id()?;
+        let entry = self.get_key_entry(key_id)?;
+        let EccPrivate(private_key) = entry.key() else {
+            return Err(ManticoreError::InternalError);
+        };
+        let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
+        let secret_bytes = private_key.derive(&public_key)?;
+        let secret_key = SecretKey::from_bytes(&secret_bytes)?;
+        let transport_keys =
+            secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(b"BK3_TRANSPORT_ENC"), 80)?;
+
+        let mut pin_info = [0u8; 33];
+        pin_info[..16].copy_from_slice(pin);
+        pin_info[16..32].copy_from_slice(id);
+        pin_info[32] = 0x02;
+        let pin_key = secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(&pin_info), 48)?;
+
+        let mut message = [0u8; 96];
+        message[..16].copy_from_slice(encrypted_bk3.iv.as_slice());
+        message[16..64].copy_from_slice(encrypted_bk3.encrypted_bk3.as_slice());
+        message[64..].copy_from_slice(&encrypted_bk3.nonce);
+
+        let transport_tag =
+            HmacKey::from_bytes(&transport_keys[32..])?.hmac(&message, HashAlgorithm::Sha384)?;
+        if transport_tag != encrypted_bk3.tag_transport {
+            return Err(ManticoreError::Bk3TransportTagMismatch);
+        }
+
+        let pin_tag = HmacKey::from_bytes(&pin_key)?.hmac(&message, HashAlgorithm::Sha384)?;
+        if pin_tag != encrypted_bk3.tag_pin {
+            return Err(ManticoreError::Bk3PinTagMismatch);
+        }
+
+        let aes_key = AesKey::from_bytes(&transport_keys[..32])?;
+        let plaintext = aes_key.decrypt(
+            encrypted_bk3.encrypted_bk3.as_slice(),
+            AesAlgo::Cbc,
+            Some(encrypted_bk3.iv.as_slice()),
+        )?;
+        if plaintext.plain_text.len() != 48 {
+            return Err(ManticoreError::AesDecryptFailed);
+        }
+
+        let mut bk3 = [0u8; 48];
+        bk3.copy_from_slice(&plaintext.plain_text);
+        Ok(bk3)
     }
 
     fn verify_user_credential(&self, id: [u8; 16], pin: [u8; 16]) -> Result<(), ManticoreError> {
