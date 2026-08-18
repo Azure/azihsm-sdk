@@ -1986,7 +1986,9 @@ impl Dispatcher {
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
 
-        vault.regenerate_establish_cred_encryption_key()?;
+        if !vault.user_credentials_established() {
+            vault.ensure_establish_cred_encryption_key()?;
+        }
 
         let nonce = vault.get_nonce();
 
