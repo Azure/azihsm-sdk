@@ -275,7 +275,7 @@ fn open_rotated_cu(dev: &HwDevInner) -> SessionHandshake {
 }
 
 #[test]
-fn part_final_full_flow_valid_chain() {
+fn part_final_smoke_roundtrip() {
     hw_test_reset(|dev| {
         let before = read_part_info(dev);
         assert_part_state(&before, PART_STATE_ENABLED, "before PartInit");
