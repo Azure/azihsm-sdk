@@ -77,6 +77,23 @@ impl HsmVault for StdHsmPal {
         entry.vault.create(key, kind, session_key_id, attrs)
     }
 
+    /// Register a bulk AES key with the simulated fast-path engine.
+    async fn fp_bulk_key_create(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        kind: HsmVaultKeyKind,
+        _session_id: HsmSessId,
+        _session_only: bool,
+    ) -> HsmResult<u16> {
+        self.fp_bulk_create(u8::from(io.pid()), kind, key)
+    }
+
+    /// Delete a bulk AES key from the simulated fast-path engine.
+    async fn fp_bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
+        self.fp_bulk_delete(u8::from(io.pid()), bulk_key_id)
+    }
+
     /// Delete a key from the partition's vault.
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;

@@ -64,6 +64,10 @@ pub(crate) struct KdfTarget {
     pub out_len: usize,
     /// Attribute family for the created key.
     pub class: KdfClass,
+    /// True when the derived key is an AES-GCM bulk key: the material is
+    /// registered with the FP engine and the vault holds only the
+    /// returned `bulk_key_id` handle.
+    pub is_bulk: bool,
 }
 
 /// Reject an input key whose kind is not an ECDH shared secret.
@@ -85,7 +89,7 @@ pub(crate) fn validate_input_secret(kind: HsmVaultKeyKind) -> HsmResult<()> {
 /// into the vault kind, OKM length, and attribute family.
 ///
 /// See the [module docs](self) for the full mapping.  Unsupported
-/// output types (ECC / RSA / Secret / bulk AES) return
+/// output types (ECC / RSA / Secret / XTS bulk) return
 /// [`HsmError::InvalidKeyType`].
 pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmResult<KdfTarget> {
     let aes = |kind, out_len| {
@@ -93,6 +97,15 @@ pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmRe
             kind,
             out_len,
             class: KdfClass::Aes,
+            is_bulk: false,
+        })
+    };
+    let aes_bulk = |kind, out_len| {
+        Ok(KdfTarget {
+            kind,
+            out_len,
+            class: KdfClass::Aes,
+            is_bulk: true,
         })
     };
     let hmac = |kind, out_len| {
@@ -100,6 +113,7 @@ pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmRe
             kind,
             out_len,
             class: KdfClass::Hmac,
+            is_bulk: false,
         })
     };
 
@@ -107,6 +121,11 @@ pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmRe
         DdiKeyType::Aes128 => aes(HsmVaultKeyKind::Aes128, 16),
         DdiKeyType::Aes192 => aes(HsmVaultKeyKind::Aes192, 24),
         DdiKeyType::Aes256 => aes(HsmVaultKeyKind::Aes256, 32),
+
+        DdiKeyType::AesGcmBulk256 => aes_bulk(HsmVaultKeyKind::AesGcmBulk256, 32),
+        DdiKeyType::AesGcmBulk256Unapproved => {
+            aes_bulk(HsmVaultKeyKind::AesGcmBulk256Unapproved, 32)
+        }
 
         DdiKeyType::HmacSha256 => hmac(HsmVaultKeyKind::VarLenHmacSha256, 32),
         DdiKeyType::HmacSha384 => hmac(HsmVaultKeyKind::VarLenHmacSha384, 48),

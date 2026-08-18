@@ -26,7 +26,8 @@
 //! by the other key-producing handlers and the reference firmware.  This
 //! keeps the largest RSA-4096 keys within the fixed per-IO DMA budget.
 //! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES
-//! bulk variants are not yet supported.  RSA and ECC imports return the
+//! bulk variants recover the raw AES key, register it with the fast-path
+//! (FP) engine, and return its `bulk_key_id`.  RSA and ECC imports return
 //! imported key's wire public key, re-derived from the committed vault
 //! key.
 
@@ -86,11 +87,88 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     // separate property comparison.
     let unwrap_key_id = HsmKeyId::from(body.key_id);
 
+    // AES-256-GCM bulk keys follow a distinct import path: the recovered
+    // key is handed to the fast-path (FP) engine and only its 2-byte
+    // `bulk_key_id` handle is kept in the vault (mirroring
+    // [`aes_generate_key`](super::aes_generate_key)'s bulk path).  Handle
+    // and return here, before the asymmetric / AES import flow below.
+    if let Some(bulk_kind) = match body.wrapped_blob_key_class {
+        DdiKeyClass::AesGcmBulk => Some(HsmVaultKeyKind::AesGcmBulk256),
+        DdiKeyClass::AesGcmBulkUnapproved => Some(HsmVaultKeyKind::AesGcmBulk256Unapproved),
+        _ => None,
+    } {
+        let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?;
+        super::key_attrs::check_session_key_tag(attrs, body.key_tag)?;
+
+        // Recover the raw AES key from the wrapped blob (OAEP-decrypt the
+        // KEK, AES-KWP unwrap the payload).
+        let material = unwrap_key(
+            pal,
+            io,
+            UnwrapParams {
+                unwrap_key_id,
+                oaep_hash,
+                wrapped_blob: &*body.wrapped_blob,
+            },
+        )
+        .await?;
+
+        // Push the recovered key to FP and vault only the 2-byte handle,
+        // scoped to the creating session so later fast-path GCM ops match.
+        let bulk_id = pal
+            .fp_bulk_key_create(
+                io,
+                material,
+                bulk_kind,
+                HsmSessId::from(sess_id),
+                attrs.session(),
+            )
+            .await?;
+        let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
+        id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
+        let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
+        let key_id = pal
+            .vault_key_create(io, id_bytes, bulk_kind, session_binding, attrs)
+            .await?;
+
+        // Mask the raw key material directly (the vault holds only the
+        // handle) so the host can re-import it on a later session.
+        let masked_key = super::masking::mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            super::masking::MaskSpec {
+                attrs,
+                key_type: super::from_pal::vault_kind_ddi(bulk_kind)?,
+                key_label: body.key_properties.key_label,
+                key_length: material.len() as u16,
+            },
+            material,
+        )
+        .await?;
+
+        let key_id: u16 = key_id.into();
+        let resp = pal.dma_alloc_var(io, |buf| {
+            super::encode_resp(
+                &super::success_hdr_sess(hdr, DdiOp::RsaUnwrap, sess_id),
+                &DdiRsaUnwrapResp {
+                    key_id,
+                    pub_key: None,
+                    bulk_key_id: Some(bulk_id),
+                    kind: super::from_pal::vault_kind_ddi(bulk_kind)?,
+                    masked_key,
+                },
+                buf,
+            )
+        })?;
+        return Ok(resp);
+    }
+
     // Map the wire key class to the neutral import class and derive the
     // imported key's vault attributes.  These keys are imported, not
     // generated on-device, so the `for_*` builders are told `local = false`
     // (and, as always, never set `internal`).  AES, RSA (plain / CRT), and
-    // ECC are supported; the AES bulk variants are not yet wired.
+    // ECC are supported; the AES bulk variants are handled above.
     let (key_class, import_attrs) = match body.wrapped_blob_key_class {
         DdiKeyClass::Aes => {
             let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?;

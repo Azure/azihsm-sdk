@@ -22,6 +22,7 @@
 #![allow(unsafe_code)]
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -57,7 +58,107 @@ impl HsmVault for UnoHsmPal {
         v.create(self, io, app_id, key, kind, session, attrs).await
     }
 
+    async fn fp_bulk_key_create(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        kind: HsmVaultKeyKind,
+        session_id: HsmSessId,
+        session_only: bool,
+    ) -> HsmResult<u16> {
+        let key_bytes: &[u8] = key;
+        if key_bytes.len() != FP_BULK_KEY_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let key_type = match kind {
+            HsmVaultKeyKind::AesGcmBulk256 => AesBulkKeyType::Gcm,
+            HsmVaultKeyKind::AesGcmBulk256Unapproved => AesBulkKeyType::GcmUnapproved,
+            HsmVaultKeyKind::AesXtsBulk256 => AesBulkKeyType::Xts,
+            _ => return Err(HsmError::InvalidKeyType),
+        };
+
+        let part_id = u8::from(io.pid());
+        // FP scopes a bulk key by PCIe function.  `io.pid()` is the raw SoC
+        // partition/AXI id (a MemoryLocation id) used elsewhere in the HSM;
+        // the fast-path engine instead matches against the PCIe function
+        // number carried on the host's GCM SQE, so translate before sending.
+        let pcie_fn = part_id_to_pcie_fn(part_id)?;
+        // Place the key in a free slot of one of the partition's owned
+        // resource-group tables.  `vault_id` is that table id and
+        // `key_index` the 0..=6 slot; together they address the key in FP.
+        let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
+        let (vault_id, key_index) = fp_slot_alloc(res_mask)?;
+
+        let mut info = KeyUpdateInfo {
+            key_index,
+            resource_id: vault_id,
+            pfn: pcie_fn,
+            action: KeyUpdateAction::Create.0,
+            // Scope the FP key to the creating session so later
+            // fast-path GCM ops (which carry the session id) match.  The
+            // firmware currently reports `short_app_id = 0` to the host,
+            // so the FP `app_id` matches at 0.
+            session_id: u16::from(session_id),
+            app_id: 0,
+            flag: AesKeyFlag::new()
+                .with_session_only(session_only)
+                .with_key_type(key_type)
+                .into_bits(),
+            key_data: [0u8; FP_BULK_KEY_LEN],
+        };
+        info.key_data.copy_from_slice(key_bytes);
+
+        match fp_send_key_update(self, info).await {
+            Ok(()) => Ok(AesBulk256KeyId::new()
+                .with_key_index(key_index)
+                .with_vault_id(vault_id)
+                .into_bits()),
+            Err(e) => {
+                fp_slot_free(vault_id, key_index);
+                Err(e)
+            }
+        }
+    }
+
+    async fn fp_bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
+        let id = AesBulk256KeyId::from_bits(bulk_key_id);
+        let part_id = u8::from(io.pid());
+        let pcie_fn = part_id_to_pcie_fn(part_id)?;
+        let info = KeyUpdateInfo {
+            key_index: id.key_index(),
+            resource_id: id.vault_id(),
+            pfn: pcie_fn,
+            action: KeyUpdateAction::Delete.0,
+            session_id: 0,
+            app_id: 0,
+            flag: 0,
+            key_data: [0u8; FP_BULK_KEY_LEN],
+        };
+        fp_send_key_update(self, info).await?;
+        fp_slot_free(id.vault_id(), id.key_index());
+        Ok(())
+    }
+
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        // A bulk key lives in the FP engine with only its 2-byte handle in
+        // the vault; free the FP slot before dropping the vault entry so it
+        // can be reused.  Best-effort — a missing / oddly-sized entry simply
+        // skips the FP delete and proceeds to remove the vault entry.
+        if matches!(
+            self.vault_key_kind(io, key_id),
+            Ok(HsmVaultKeyKind::AesGcmBulk256
+                | HsmVaultKeyKind::AesGcmBulk256Unapproved
+                | HsmVaultKeyKind::AesXtsBulk256)
+        ) {
+            let bulk_id = self.vault_key(io, key_id).ok().and_then(|b| {
+                let bytes: &[u8] = b;
+                (bytes.len() == core::mem::size_of::<u16>())
+                    .then(|| u16::from_le_bytes([bytes[0], bytes[1]]))
+            });
+            if let Some(bulk_id) = bulk_id {
+                let _ = self.fp_bulk_key_delete(io, bulk_id).await;
+            }
+        }
         let mut v = vault(io);
         v.delete(self, io, key_id).await
     }
@@ -105,4 +206,129 @@ impl HsmVault for UnoHsmPal {
     fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         vault(io).key_attrs(key_id)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fast-path (FP) bulk-key IPC helpers
+// ---------------------------------------------------------------------------
+
+use azihsm_fw_single_cell::SingleCell;
+
+use crate::ipc::AesBulk256KeyId;
+use crate::ipc::AesBulkKeyType;
+use crate::ipc::AesKeyFlag;
+use crate::ipc::IPC_MESSAGE_LENGTH;
+use crate::ipc::IPC_MESSAGE_PAYLOAD_LEN;
+use crate::ipc::IpcMessage;
+use crate::ipc::IpcMessageDecoder;
+use crate::ipc::IpcMessageEncoderTrait;
+use crate::ipc::IpcMessageHeader;
+use crate::ipc::IpcMessageKeyUpdate;
+use crate::ipc::IpcMessageStatusCode;
+use crate::ipc::IpcMessageType;
+use crate::ipc::KeyUpdateAction;
+use crate::ipc::KeyUpdateInfo;
+use crate::pal::IpcChannel;
+
+/// AES-256 bulk key length in bytes.
+const FP_BULK_KEY_LEN: usize = 32;
+
+/// Maximum FP bulk-key slots per resource-group table (FP addresses a key
+/// within a table by a 0..=6 sub-index).
+const FP_MAX_SLOTS_PER_PART: u8 = 7;
+
+/// Number of global FP key-vault tables (resource groups), ids `0..=64`.
+const NUM_FP_TABLES: usize = 65;
+
+/// Per-table FP bulk-key slot occupancy bitmap (bit `i` set = slot `i` in
+/// use).  Tables are global and each is owned by at most one partition;
+/// a partition may own several (its `res_mask`), so a bulk key is placed
+/// in a free slot of one of the calling partition's owned tables — the
+/// same table-based scheme the HSM key vault uses, giving `7 × owned`
+/// capacity rather than a single table's 7 slots.  The FP engine
+/// addresses bulk keys by `(vault_id = table, key_index = slot)`.
+static FP_SLOTS: SingleCell<[u8; NUM_FP_TABLES]> = SingleCell::new([0u8; NUM_FP_TABLES]);
+
+/// Translate a raw partition id ([`HsmIo::pid`], a SoC MemoryLocation id)
+/// into the PCIe function number the fast-path engine matches against.
+///
+/// The FP engine scopes a bulk key by PCIe function; the host's GCM SQE
+/// carries that same PCIe function.  The PF's MemoryLocation id `0x10`
+/// maps to PCIe function `64`; VF MemoryLocation ids `0x20..=0x5F` map to
+/// VF functions `0..=63`.
+fn part_id_to_pcie_fn(part_id: u8) -> HsmResult<u8> {
+    const MEM_LOC_PF: u8 = 0x10;
+    const MEM_LOC_VF_START: u8 = 0x20;
+    const MEM_LOC_VF_END: u8 = 0x5F;
+    const PCIE_FN_PF: u8 = 64;
+    match part_id {
+        MEM_LOC_PF => Ok(PCIE_FN_PF),
+        MEM_LOC_VF_START..=MEM_LOC_VF_END => Ok(part_id - MEM_LOC_VF_START),
+        _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// Allocate a free FP bulk-key slot from one of the partition's owned
+/// resource-group tables (`res_mask` bit `t` set = table `t` is owned).
+///
+/// Returns `(vault_id, key_index)` — the owning table id and the assigned
+/// 0..=6 slot — mirroring the HSM key vault's table-based allocation so
+/// bulk-key capacity scales with the partition's owned tables.
+fn fp_slot_alloc(res_mask: u128) -> HsmResult<(u8, u8)> {
+    FP_SLOTS.with(|slots| {
+        for table in 0..NUM_FP_TABLES {
+            if res_mask & (1u128 << table) == 0 {
+                continue; // table not owned by this partition
+            }
+            let used = slots[table];
+            for bit in 0..FP_MAX_SLOTS_PER_PART {
+                if used & (1 << bit) == 0 {
+                    slots[table] = used | (1 << bit);
+                    return Ok((table as u8, bit));
+                }
+            }
+        }
+        Err(HsmError::NotEnoughSpace)
+    })
+}
+
+/// Release a previously allocated FP bulk-key slot in table `vault_id`.
+fn fp_slot_free(vault_id: u8, key_index: u8) {
+    FP_SLOTS.with(|slots| {
+        let idx = usize::from(vault_id);
+        if idx < slots.len() && key_index < FP_MAX_SLOTS_PER_PART {
+            slots[idx] &= !(1 << key_index);
+        }
+    });
+}
+
+/// Send an `AesKeyUpdate` message to FP over the HSM↔FP IPC channel and
+/// await the response, mapping a non-`Success` status to an error.
+async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<()> {
+    let msg = IpcMessageKeyUpdate {
+        header: IpcMessageHeader::new()
+            .with_msg_op(IpcMessageKeyUpdate::OP as u32)
+            .with_length(IpcMessageKeyUpdate::LEN as u32),
+        info,
+        _rsvd: [0u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
+    };
+    let request = msg.encode();
+
+    let mut resp = [0u32; IPC_MESSAGE_LENGTH];
+    pal.ipc
+        .send(IpcChannel::FpMessage as u8, &request.data, &mut resp)
+        .await;
+
+    let header = IpcMessageDecoder::decode_header(&IpcMessage { data: resp })
+        .map_err(|_| HsmError::InternalError)?;
+    // A genuine FP reply sets the response bit; a spurious wake that left
+    // the RX ring empty would leave `resp` zeroed (response=false), which
+    // must not be mistaken for a `Success` (0) status.
+    if !header.response() {
+        return Err(HsmError::InternalError);
+    }
+    if header.status() != IpcMessageStatusCode::Success as u32 {
+        return Err(HsmError::InternalError);
+    }
+    Ok(())
 }

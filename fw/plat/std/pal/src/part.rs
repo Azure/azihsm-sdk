@@ -171,6 +171,15 @@ pub(crate) struct PartitionEntry {
     /// `res_mask.count_ones()` at allocation time.
     pub(crate) vault: KeyVault,
 
+    /// Fast-path (FP) engine bulk-key simulation.  On hardware, AES bulk
+    /// GCM/XTS keys live in the FP engine; the std PAL has no FP, so the
+    /// raw key material and kind are held here, keyed by the
+    /// `bulk_key_id` handed back to the host.  Cleared on disable/free.
+    pub(crate) fp_bulk: Vec<crate::fp_gcm::FpBulkEntry>,
+
+    /// Monotonic allocator for `fp_bulk` `bulk_key_id`s (per incarnation).
+    pub(crate) fp_bulk_next_id: u16,
+
     /// Vault key ID for the establish-credential encryption ECC-384 key.
     /// `None` before enable or after one-time clear.
     establish_cred_key_id: Option<HsmKeyId>,
@@ -320,6 +329,8 @@ impl Default for PartitionEntry {
             leaf_cert_len: 0,
             session_table: SessionTable::new(),
             vault: KeyVault::new(0),
+            fp_bulk: Vec::new(),
+            fp_bulk_next_id: 0,
             establish_cred_key_id: None,
             establish_cred_pub_key: [0u8; P384_PUB_KEY_LEN],
             session_enc_key_id: None,
@@ -429,6 +440,28 @@ pub enum PartCommand {
     Disable {
         pid: u8,
         reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Fast-path AES-256-GCM encrypt/decrypt using a bulk key in the
+    /// partition vault.  Reproduces the hardware FP GCM engine, which
+    /// is addressed outside the DDI command pipeline.
+    FpGcm {
+        /// Partition index.
+        pid: u8,
+        /// `true` = encrypt, `false` = decrypt.
+        encrypt: bool,
+        /// Bulk key id (aliases the vault `key_id`).
+        key_id: u16,
+        /// Caller-supplied 96-bit IV (ignored on approved encrypt).
+        iv: [u8; 12],
+        /// Optional additional authenticated data.
+        aad: Option<Vec<u8>>,
+        /// Authentication tag — required on decrypt, ignored on encrypt.
+        tag: Option<[u8; 16]>,
+        /// Input data (plaintext on encrypt, ciphertext on decrypt).
+        input: Vec<u8>,
+        /// Oneshot channel for the operation result.
+        reply: tokio::sync::oneshot::Sender<HsmResult<crate::FpGcmOutput>>,
     },
 }
 
@@ -1094,6 +1127,10 @@ impl StdHsmPal {
         // Drop the vault and per-partition session table.
         entry.vault.clear();
         entry.session_table = SessionTable::new();
+
+        // Drop simulated fast-path bulk keys.
+        entry.fp_bulk.clear();
+        entry.fp_bulk_next_id = 0;
 
         // Variable-length opaque blobs — zeroize only the valid
         // prefix to keep `clear_enabled_state` proportional to

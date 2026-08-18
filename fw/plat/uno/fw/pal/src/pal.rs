@@ -107,7 +107,33 @@ pub enum BootPhase {
 const IO_QUEUE_DEPTH: usize = 32;
 
 /// Number of IPC pairs configured for the firmware.
-const IPC_PAIRS: usize = 2;
+const IPC_PAIRS: usize = 3;
+
+/// HSM↔FP IPC ring addresses in PSRAM.  These match the reference
+/// firmware's `hsm_to_fp_ipc_*` layout exactly, since the FP engine is
+/// unchanged and expects the rings at these fixed addresses.
+mod fp_ring {
+    /// HSM→FP TX ring base (16 × 64-byte slots).
+    pub const TX_RING: u32 = 0xA3E0_0980;
+    /// HSM←FP RX ring base (response slots).
+    pub const RX_RING: u32 = 0xA3E0_0D80;
+    /// HSM→FP TX producer index.
+    pub const TX_PI: u32 = 0xA3E0_3BD4;
+    /// HSM→FP TX consumer index.
+    pub const TX_CI: u32 = 0xA3E0_3BD8;
+    /// HSM←FP RX producer index.
+    pub const RX_PI: u32 = 0xA3E0_3BDC;
+    /// HSM←FP RX consumer index.
+    pub const RX_CI: u32 = 0xA3E0_3BE0;
+    /// Ring depth in slots.
+    pub const DEPTH: u16 = 16;
+    /// Slot size in DWORDs (64 bytes).
+    pub const MSG_DWORDS: u16 = 16;
+    /// Outbound descriptor (HSM rings FP).
+    pub const SEND_DESC: u8 = 15;
+    /// Inbound descriptor (FP rings HSM with the response).
+    pub const RECV_DESC: u8 = 16;
+}
 
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -117,6 +143,8 @@ pub enum IpcChannel {
     AdminMessage = 0,
     /// Admin → HSM event notifications.
     AdminEvent = 1,
+    /// HSM → FP bulk-key requests (with response).
+    FpMessage = 2,
 }
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
@@ -351,6 +379,21 @@ impl Default for UnoHsmPal {
                     rx_ci: 0,
                     depth: 0,
                     msg_len: 0,
+                },
+                // Pair 2: send bulk-key requests to FP and await the
+                // response (desc 15 out, 16 in) over the PSRAM FP rings.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: fp_ring::RECV_DESC,
+                    outbound_desc: fp_ring::SEND_DESC,
+                    tx_ring_base: fp_ring::TX_RING,
+                    tx_pi: fp_ring::TX_PI,
+                    tx_ci: fp_ring::TX_CI,
+                    rx_ring_base: fp_ring::RX_RING,
+                    rx_pi: fp_ring::RX_PI,
+                    rx_ci: fp_ring::RX_CI,
+                    depth: fp_ring::DEPTH,
+                    msg_len: fp_ring::MSG_DWORDS,
                 },
             ],
         };
@@ -734,6 +777,19 @@ impl HsmPal for UnoHsmPal {
         self.ipc.init();
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
+        self.ipc.enable(IpcChannel::FpMessage as u8);
+        // The HSM owns initialization of the HSM↔FP ring indices (the
+        // reference firmware zeroes them at channel setup).  Clear all
+        // four so the send/recv PI/CI comparisons start from a known
+        // state regardless of prior PSRAM contents.
+        // SAFETY: these are the fixed HSM↔FP PSRAM index words; writing
+        // 0 is the documented reset value and no aliasing borrow exists.
+        unsafe {
+            (fp_ring::TX_PI as *mut u32).write_volatile(0);
+            (fp_ring::TX_CI as *mut u32).write_volatile(0);
+            (fp_ring::RX_PI as *mut u32).write_volatile(0);
+            (fp_ring::RX_CI as *mut u32).write_volatile(0);
+        }
         azihsm_fw_uno_drivers_part_store::PartStore::init_default();
         boot_status::set(BootStatus::Done);
     }

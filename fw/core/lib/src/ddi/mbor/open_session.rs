@@ -54,6 +54,15 @@ const SESSION_BK_LABEL: &[u8] = b"SESSION_BK";
 /// the wrapped key as the session masking key.
 pub(super) const SMK_KEY_LABEL: &[u8] = b"SMK";
 
+/// Short app id reported for a session.  OpenSession does not model an
+/// app-vault concept, so a single fixed value is returned to the host —
+/// in both the encoded response body and the CQE session fields (where
+/// the host driver reads it as the fast-path `short_app_id`).  It is
+/// carried in the CQE `app_vault_id` field, which sets the CQE
+/// `short_app_id_is_valid` flag the driver requires before it will admit
+/// any fast-path (AES-GCM/XTS) op on the file handle.
+pub(super) const SESSION_SHORT_APP_ID: u8 = 0;
+
 /// Handle `DdiOpenSessionCmd`.
 ///
 /// Returns a DMA buffer holding the encoded response — including the
@@ -117,6 +126,7 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     Ok(DispatchResult {
         resp,
         session_id: Some(u16::from(sess_id)),
+        app_vault_id: Some(SESSION_SHORT_APP_ID),
     })
 }
 
@@ -431,11 +441,9 @@ async fn encode_response<'p, P: HsmPal>(
 
     let bmk_len = mask(pal, io, bk_session, mk_session, &bmk_metadata, None).await?;
 
-    // OpenSession does not model an app-vault concept; the reference
-    // firmware uses `short_app_id` as the user vault id.  Tests on the
-    // std PAL do not assert on the value, so we return 0 to mirror the
-    // sim's placeholder.
-    let short_app_id: u8 = 0;
+    // Reported as the session's `short_app_id` both here in the response
+    // body and in the CQE session fields (see `SESSION_SHORT_APP_ID`).
+    let short_app_id: u8 = SESSION_SHORT_APP_ID;
 
     let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
         let mut encoder = super::encode_resp_hdr(

@@ -441,6 +441,14 @@ impl HsmRsa for UnoHsmPal {
         self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
             .await?;
 
+        // The PKA modexp reads its input and writes its output in
+        // little-endian byte order (the vault key / wire ciphertext are LE),
+        // so `em` comes back little-endian.  The OAEP decoding below follows
+        // RFC 8017 and treats `em` as the big-endian encoded message
+        // (`em[0]` is the leading `0x00`); reverse the whole block once here
+        // so the unpadding sees the standard big-endian layout.
+        em[..k].reverse();
+
         if em[0] != 0x00 {
             return Err(HsmError::RsaDecryptFailed);
         }

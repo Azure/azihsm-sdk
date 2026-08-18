@@ -83,16 +83,32 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
         .await?;
 
     // Commit the derived key to the vault, session-scoped iff requested.
-    let key_id: u16 = pal
-        .vault_key_create(
+    // AES-GCM bulk keys are handed to the FP engine instead; the vault
+    // records only the returned `bulk_key_id` handle, which the response
+    // carries for later fast-path GCM ops.
+    let (key_id, bulk_key_id): (u16, Option<u16>) = if target.is_bulk {
+        let (handle, bulk_id) = super::bulk::register_bulk_key(
+            pal,
             io,
             out,
             target.kind,
-            attrs.session().then_some(HsmSessId::from(sess_id)),
+            HsmSessId::from(sess_id),
             attrs,
         )
-        .await?
-        .into();
+        .await?;
+        (handle.into(), Some(bulk_id))
+    } else {
+        let handle = pal
+            .vault_key_create(
+                io,
+                out,
+                target.kind,
+                attrs.session().then_some(HsmSessId::from(sess_id)),
+                attrs,
+            )
+            .await?;
+        (handle.into(), None)
+    };
 
     // Envelope the derived key into the host's opaque re-import blob.
     let masked_key = super::masking::mask_blob(
@@ -115,7 +131,7 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
             &DdiHkdfDeriveResp {
                 key_id,
                 masked_key,
-                bulk_key_id: None,
+                bulk_key_id,
             },
             buf,
         )

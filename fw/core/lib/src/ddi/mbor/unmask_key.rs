@@ -88,48 +88,82 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     };
 
     // Authenticate-then-decrypt in place, copy out the primary key
-    // material, and import it into the vault — all inside an allocation
+    // material, and import it — for AES-GCM bulk keys into the FP engine
+    // (the vault records only the returned `bulk_key_id` handle, and the
+    // 32-byte material is kept in the per-IO arena so it can be re-masked
+    // below); for every other kind into the vault inside an allocation
     // scope so the (multi-KB for RSA) import scratch is freed before the
-    // response frame is built.  Only the owned vault key id escapes; the
-    // committed key is read back from vault storage below.  The masking key
-    // is the per-session masking key for session-scoped keys, the partition
-    // masking key (MK) otherwise; a wrong key (tampered scope) or tampered
-    // blob fails the HMAC in `unmask` without leaking plaintext.
-    let key_id = pal
-        .alloc_scoped_async(io, async |_scope| -> HsmResult<HsmKeyId> {
-            let layout = if attrs.session() {
-                let session_mk = pal.session_masking_key(io, HsmSessId::from(sess_id))?;
-                unmask(pal, io, session_mk, body.masked_key).await?
-            } else {
-                let mk_id = crate::part_state::part_mk_key_id(pal, io)?;
-                let part_mk = pal.vault_key(io, mk_id)?;
-                unmask(pal, io, part_mk, body.masked_key).await?
-            };
+    // response frame is built.  The masking key is the per-session masking
+    // key for session-scoped keys, the partition masking key (MK)
+    // otherwise; a wrong key (tampered scope) or tampered blob fails the
+    // HMAC in `unmask` without leaking plaintext.
+    let is_bulk = super::bulk::is_gcm_bulk(kind);
 
-            // Guard the metadata length so an inconsistent `key_length`
-            // errors instead of panicking on the slice below.
-            if key_len > layout.plaintext_max_len {
-                return Err(HsmError::MaskedKeyDecodeFailed);
-            }
+    let (key_id, bulk_key_id, bulk_material): (HsmKeyId, Option<u16>, Option<&DmaBuf>) = if is_bulk
+    {
+        let key_buf = pal.dma_alloc(io, key_len)?;
+        let layout = if attrs.session() {
+            let session_mk = pal.session_masking_key(io, HsmSessId::from(sess_id))?;
+            unmask(pal, io, session_mk, body.masked_key).await?
+        } else {
+            let mk_id = crate::part_state::part_mk_key_id(pal, io)?;
+            let part_mk = pal.vault_key(io, mk_id)?;
+            unmask(pal, io, part_mk, body.masked_key).await?
+        };
 
-            // Copy the primary key material (plaintext prefix) into a fresh
-            // vault-import scratch buffer.  For ECC the trailing public
-            // point is ignored here; the private scalar re-derives it.
-            let key_buf = pal.dma_alloc(io, key_len)?;
-            key_buf.copy_from_slice(
-                &body.masked_key[layout.plaintext_offset..layout.plaintext_offset + key_len],
-            );
+        if key_len > layout.plaintext_max_len {
+            return Err(HsmError::MaskedKeyDecodeFailed);
+        }
+        key_buf.copy_from_slice(
+            &body.masked_key[layout.plaintext_offset..layout.plaintext_offset + key_len],
+        );
 
-            let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-            pal.vault_key_create(io, key_buf, kind, session_binding, attrs)
-                .await
-        })
-        .await?;
+        let (handle, bulk_id) =
+            super::bulk::register_bulk_key(pal, io, key_buf, kind, HsmSessId::from(sess_id), attrs)
+                .await?;
+        (handle, Some(bulk_id), Some(&*key_buf))
+    } else {
+        let key_id = pal
+            .alloc_scoped_async(io, async |_scope| -> HsmResult<HsmKeyId> {
+                let layout = if attrs.session() {
+                    let session_mk = pal.session_masking_key(io, HsmSessId::from(sess_id))?;
+                    unmask(pal, io, session_mk, body.masked_key).await?
+                } else {
+                    let mk_id = crate::part_state::part_mk_key_id(pal, io)?;
+                    let part_mk = pal.vault_key(io, mk_id)?;
+                    unmask(pal, io, part_mk, body.masked_key).await?
+                };
 
-    // The import scratch is freed.  Read the committed key back (from vault
-    // storage, not the per-IO arena) to drive both the public-key
-    // re-derivation and the fresh masked envelope.
-    let priv_blob = pal.vault_key(io, key_id)?;
+                // Guard the metadata length so an inconsistent `key_length`
+                // errors instead of panicking on the slice below.
+                if key_len > layout.plaintext_max_len {
+                    return Err(HsmError::MaskedKeyDecodeFailed);
+                }
+
+                // Copy the primary key material (plaintext prefix) into a fresh
+                // vault-import scratch buffer.  For ECC the trailing public
+                // point is ignored here; the private scalar re-derives it.
+                let key_buf = pal.dma_alloc(io, key_len)?;
+                key_buf.copy_from_slice(
+                    &body.masked_key[layout.plaintext_offset..layout.plaintext_offset + key_len],
+                );
+
+                let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
+                pal.vault_key_create(io, key_buf, kind, session_binding, attrs)
+                    .await
+            })
+            .await?;
+        (key_id, None, None)
+    };
+
+    // Read back the material to re-mask: for bulk keys the vault holds only
+    // the handle, so the FP-registered 32-byte material (kept alive above)
+    // is the source; other kinds read the committed key from vault storage,
+    // which also drives the public-key re-derivation.
+    let priv_blob = match bulk_material {
+        Some(mat) => mat,
+        None => pal.vault_key(io, key_id)?,
+    };
 
     // Asymmetric kinds return their public key, re-derived from the
     // committed private key so the host recovers the full keypair (this
@@ -197,7 +231,7 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
             &mut encoder,
             u16::from(key_id),
             pub_key,
-            None,
+            bulk_key_id,
             key_type,
             masked_len,
         )?;
