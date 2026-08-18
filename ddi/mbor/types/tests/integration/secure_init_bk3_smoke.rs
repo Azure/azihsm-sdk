@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SecureInitBk3 / SetInitBk3Pin smoke tests for the emu/mock backend.
+//! SecureInitBk3 / SetInitBk3Pin smoke tests for the mock backend.
 //!
 //! Exercises:
 //! - Happy path: set_init_bk3_pin + secure_init_bk3 succeed, returning a masked
