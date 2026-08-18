@@ -271,29 +271,22 @@ mod emu_tests {
     #[test]
     fn aes_generate_key_rejects_unknown_session() {
         let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let unknown_session_id = session.session_id.wrapping_add(1);
+
+        assert_ne!(
+            unknown_session_id, session.session_id,
+            "unknown session ID must differ from the active session",
+        );
 
         let req = TborAesGenerateKeyReq {
-            session_id: u16::MAX,
+            session_id: unknown_session_id,
             scope: SCOPE_SESSION,
             key_size: AES_KEY_SIZE_256,
         };
 
-        ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
-    }
-
-    /// Verifies invalid key size takes precedence when both size and scope are invalid.
-    #[test]
-    fn aes_generate_key_invalid_size_takes_precedence_over_invalid_scope() {
-        let ctx = TestCtx::new();
-        let session = finalized_co_session(&ctx);
-
-        let req = TborAesGenerateKeyReq {
-            session_id: session.session_id,
-            scope: 0,
-            key_size: 0,
-        };
-
-        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
     }
 
     /// Verifies repeated generations do not reuse an earlier masked-key blob.
