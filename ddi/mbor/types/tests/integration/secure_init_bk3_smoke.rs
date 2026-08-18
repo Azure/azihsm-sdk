@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SecureInitBk3 / SetInitBk3Pin smoke tests for the mock backend.
+//! SecureInitBk3 / SetInitBk3Pin integration smoke tests.
 //!
 //! Exercises:
 //! - Happy path: set_init_bk3_pin + secure_init_bk3 succeed, returning a masked
@@ -11,7 +11,6 @@
 //! - Secure provisioning is one-shot and the resulting masked BK3 can be
 //!   sealed and read back.
 
-#![cfg(feature = "mock")]
 #![cfg(test)]
 
 use azihsm_cred_encrypt::Bk3EncryptionKey;
@@ -106,7 +105,7 @@ fn test_secure_init_bk3_smoke() {
         assert!(resp.hdr.fips_approved);
         let masked_len = resp.data.masked_bk3.len();
         assert!(
-            (200..=300).contains(&masked_len),
+            (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_len),
             "masked_bk3 length {masked_len} is outside the expected range"
         );
         assert_eq!(resp.data.vm_launch_guid.len(), 16);
@@ -154,7 +153,7 @@ fn test_secure_bk3_full_flow() {
         assert!(resp.hdr.fips_approved);
         let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
         assert!(
-            (200..=300).contains(&masked_bk3.len()),
+            (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_bk3.len()),
             "masked_bk3 length {} is outside the expected range",
             masked_bk3.len()
         );
