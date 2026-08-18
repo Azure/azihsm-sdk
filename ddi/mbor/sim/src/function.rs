@@ -266,9 +266,6 @@ impl Function {
         let vault = state.get_vault(DEFAULT_VAULT_ID)?;
         let (id, pin) = vault.decrypt_establish_credential(encrypted_credential, client_pub_key)?;
 
-        if state.bk3_prov_cred_is_set() {
-            return Err(ManticoreError::Bk3PinAlreadySet);
-        }
         state.set_bk3_prov_cred(id, pin)?;
         vault.complete_establish_credential()?;
         Ok(())
@@ -968,7 +965,11 @@ impl FunctionState {
         if id == [0u8; 16] || pin == [0u8; 16] {
             return Err(ManticoreError::InvalidAppCredentials);
         }
-        self.inner.write().bk3_prov_cred = Some(Bk3ProvCred { id, pin });
+        let mut inner = self.inner.write();
+        if inner.bk3_prov_cred.is_some() {
+            return Err(ManticoreError::Bk3PinAlreadySet);
+        }
+        inner.bk3_prov_cred = Some(Bk3ProvCred { id, pin });
         Ok(())
     }
 
