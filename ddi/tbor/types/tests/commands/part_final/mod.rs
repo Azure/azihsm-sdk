@@ -55,11 +55,6 @@ const ROTATED_CU_PSK: [u8; PSK_LEN] = [
     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
 ];
 
-#[cfg(feature = "emu")]
-const BACKUP_AUTH_FAILURE: TborStatus = TborStatus::AesGcmDecryptTagDoesNotMatch;
-#[cfg(not(feature = "emu"))]
-const BACKUP_AUTH_FAILURE: TborStatus = TborStatus::AeadEnvelopeAuthFailed;
-
 const PART_STATE_ENABLED: u8 = 2;
 const PART_STATE_INITIALIZING: u8 = 4;
 const PART_STATE_INITIALIZED: u8 = 5;
@@ -318,7 +313,7 @@ fn part_final_rejects_tampered_backup_and_allows_retry() {
             &chain.der_items(),
         )
         .expect_err("tampered prior backup must be rejected");
-    assert_fw_rejects(&err, BACKUP_AUTH_FAILURE);
+    assert_fw_rejects(&err, TborStatus::AesGcmDecryptTagDoesNotMatch);
 
     let after_reject = read_part_info(&ctx);
     assert_part_state(
@@ -451,7 +446,7 @@ fn part_final_rejects_backup_from_different_mach_seed() {
             &chain_b.der_items(),
         )
         .expect_err("backup from another machine-seed identity must be rejected");
-    assert_fw_rejects(&err, BACKUP_AUTH_FAILURE);
+    assert_fw_rejects(&err, TborStatus::AesGcmDecryptTagDoesNotMatch);
 
     let after_reject = read_part_info(&ctx);
     assert_part_state(
