@@ -138,7 +138,12 @@ jobs:
       - name: Bootstrap (debian)
         if: matrix.family == 'debian'
         run: |
-          apt-get update
+          # archive.ubuntu.com is round-robin DNS; retry so a single dead IP
+          # doesn't fail the job.
+          echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+          # Fail on an unreachable mirror here instead of as a misleading
+          # "no installation candidate" at install time.
+          apt-get update --error-on=any
           # nodejs is for JS-based actions (rust-cache, checkout, etc.) —
           # GHA auto-injects node in container jobs but `act` does not.
           # xxd (used by the import_wrapped_key cli test scripts) lives in
@@ -196,20 +201,7 @@ jobs:
             | sh -s -- -y --default-toolchain none --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Cache cargo + target
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: matrix-${{ matrix.distro }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: matrix-${{ matrix.distro }}-
-
-      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION); the
-      # binary persists in the ~/.cargo/bin cache above.
+      # Installs the version pinned in xtask (CARGO_NEXTEST_VERSION).
       - name: Install cargo-nextest
         run: cargo xtask setup --skip-taplo --skip-audit
 
@@ -249,7 +241,7 @@ jobs:
       - name: Install nginx 1.29.8 (OpenSSL 3.5)
         if: ${{ matrix.nginx && matrix.openssl_minor == '3.5' }}
         run: |
-          apt-get update
+          apt-get update --error-on=any
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           host=$(. /etc/os-release && echo "$ID")
           curl -fsSL -o /tmp/nginx.deb \

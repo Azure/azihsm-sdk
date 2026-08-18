@@ -167,7 +167,9 @@ fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
     // gate does not fire first; then reopen a CU session under the rotated
     // PSK.  CU sessions are pinned to `SessionType::PlainText` (CO-only is
     // `Authenticated`).
-    let bootstrap = ctx.open_session(CU, SessionType::PlainText);
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
         .expect("rotate CU PSK");
     bootstrap.close().expect("close bootstrap CU session");
@@ -195,7 +197,9 @@ fn sd_sealing_key_gen_rejected_on_default_psk_emu() {
     // Open a CO session WITHOUT rotating the PSK (still the public
     // default) — the dispatcher's default-PSK gate must reject the command
     // before the handler runs.
-    let session = ctx.open_session(CO, SessionType::Authenticated);
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
 
     let req = TborSdSealingKeyGenReq {
         session_id: session.session_id(),

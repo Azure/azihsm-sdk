@@ -66,6 +66,7 @@ pub enum HsmError {
     Bk3AlreadyInitialized = -41,
     InvalidSession = -42,
     SdAlreadyInitialized = -43,
+    SdPeerCloningNotAllowed = -44,
     Panic = i32::MIN,
 }
 

@@ -3,11 +3,15 @@
 
 //! Integration tests for the TBOR `PartInit` command.
 //!
-//! Every test runs against the `emu` backend.  Cross-test isolation
-//! comes from [`TestCtx::new`] (factory-reset + process-global lock
-//! held for the ctx's lifetime, see [`crate::harness::fixture`]) so
-//! each test starts from a pristine `Enabled` partition with the
-//! canonical default PSKs.
+//! `PartInit` is mainline-supported on both `emu` and hardware. Tests
+//! run on both backends by default; only the sim-only
+//! `verify_pta_report` helper in [`happy_path`] (which uses the
+//! `azihsm_ddi_mbor_sim` COSE verifier) stays `#[cfg(feature = "emu")]`.
+//!
+//! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
+//! process-global lock held for the ctx's lifetime, see
+//! [`crate::harness::fixture`]) so each test starts from a pristine
+//! `Enabled` partition with the canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
 //! * [`happy_path`] — the full `OpenSession → PskChange → PartInit`
@@ -24,8 +28,6 @@
 //! live in this module and are `pub(super)` so each submodule can
 //! reach them via `super::*`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -40,8 +42,8 @@ use crate::harness::TestCtx;
 
 mod crypto_rejects;
 mod fw_rejects;
-mod happy_path;
 mod sd_config;
+mod success_path;
 
 pub(crate) const CO: u8 = 0;
 
@@ -51,6 +53,17 @@ pub(crate) const CO: u8 = 0;
 pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+
+pub(super) const CU: u8 = 1;
+
+/// Non-default CU PSK used by tests that must bypass the default-PSK gate.
+///
+/// This value intentionally differs from [`ROTATED_CO_PSK`] so accidental
+/// credential reuse between roles is easy to detect.
+pub(super) const ROTATED_CU_PSK: [u8; PSK_LEN] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
 ];
 
 /// Build a 484-byte unified `PartPolicy` blob that passes
@@ -90,6 +103,12 @@ pub(crate) fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 /// Like [`known_good_part_policy`] but with a caller-supplied **real**
 /// `POTAPubKey` (raw P-384 `X ‖ Y`, 96 bytes), so `PartFinal` can validate
 /// a PTA certificate chain anchored to it.
+///
+/// TODO(hw): gated to `feature = "emu"` because the only consumers
+/// (`part_final`, `sd_sealing_key_gen`, `sd_create_remote_backup`)
+/// are not yet supported on hw. Remove this gate once those commands
+/// land on hw.
+#[cfg(feature = "emu")]
 pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
     const OFF_POTA: usize = 2;
     let mut bytes = known_good_part_policy();
@@ -169,7 +188,9 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
 /// under the rotated PSK — ready for the in-session command under
 /// test.
 pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
-    let bootstrap = ctx.open_session(CO, SessionType::Authenticated);
+    let bootstrap = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
     ctx.psk_change(bootstrap.handshake(), target_psk)
         .expect("rotate CO PSK");
     bootstrap.close().expect("close bootstrap CO session");

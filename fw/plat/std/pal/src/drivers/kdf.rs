@@ -29,6 +29,8 @@
 //! OpenSSL KDF operation on the tokio worker pool, then write results
 //! directly into the caller's `&mut [u8]` output buffers.
 
+use azihsm_crypto::ConcatKdfAlgo;
+use azihsm_crypto::ConcatKdfMode;
 use azihsm_crypto::DeriveOp;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::GenericSecretKey;
@@ -154,6 +156,54 @@ impl StdKdf {
                     .derive(&input_key, derive_len)
                     .map_err(|_| HsmError::KbkdfError)?;
                 let bytes: Vec<u8> = derived.to_vec().map_err(|_| HsmError::KbkdfError)?;
+                Ok::<Vec<u8>, HsmError>(bytes)
+            })
+            .await?;
+
+        output.copy_from_slice(&result);
+        Ok(())
+    }
+
+    /// Derive key material using a single-step concatenation KDF
+    /// asynchronously — ANSI X9.63 or NIST SP 800-56A r3 one-step.
+    ///
+    /// # Parameters
+    /// - `z` — The shared secret (`Z`), typically an ECDH output.
+    /// - `hash_algo` — The hash algorithm (e.g. `HashAlgo::sha256()`).
+    /// - `mode` — Which concatenation variant to run (X9.63 vs SP 800-56A).
+    /// - `info` — Optional `SharedInfo` / `OtherInfo` octet string. A
+    ///   present-but-empty slice is treated as absent.
+    /// - `output` — Buffer for the derived key material. The buffer length
+    ///   determines how many bytes are derived.
+    ///
+    /// # Errors
+    /// Returns [`HsmError::ConcatKdfError`] if the derivation fails.
+    pub async fn concat_kdf(
+        &self,
+        z: &[u8],
+        hash_algo: HashAlgo,
+        mode: ConcatKdfMode,
+        info: Option<&[u8]>,
+        output: &mut [u8],
+    ) -> HsmResult<()> {
+        // Match the Uno PAL: an empty output is a no-op success.
+        if output.is_empty() {
+            return Ok(());
+        }
+        let z_owned = z.to_vec();
+        let info_owned = owned_nonempty(info);
+        let derive_len = output.len();
+
+        let result = self
+            .pool
+            .submit_with_result(async move {
+                let input_key =
+                    GenericSecretKey::from_bytes(&z_owned).map_err(|_| HsmError::ConcatKdfError)?;
+                let algo = ConcatKdfAlgo::new(hash_algo, mode, info_owned);
+                let derived = algo
+                    .derive(&input_key, derive_len)
+                    .map_err(|_| HsmError::ConcatKdfError)?;
+                let bytes: Vec<u8> = derived.to_vec().map_err(|_| HsmError::ConcatKdfError)?;
                 Ok::<Vec<u8>, HsmError>(bytes)
             })
             .await?;
@@ -327,6 +377,114 @@ mod tests {
         );
     }
 
+    /// RFC 5869 Test Case 1 inputs derived under SHA-384. RFC 5869
+    /// publishes vectors only for SHA-256 and SHA-1; the SHA-384 output
+    /// is the standard HKDF construction over the same inputs.
+    #[tokio::test]
+    async fn hkdf_known_vector_sha384() {
+        let driver = make_driver();
+        let ikm = [0x0bu8; 22];
+        let salt = hex::decode("000102030405060708090a0b0c").unwrap();
+        let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
+        let mut okm = [0u8; 42];
+        driver
+            .hkdf(
+                &ikm,
+                HashAlgo::sha384(),
+                azihsm_crypto::HkdfMode::ExtractAndExpand,
+                Some(&salt),
+                Some(&info),
+                &mut okm,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f7\
+             48b6457763e4f0204fc5"
+        );
+    }
+
+    /// RFC 5869 Test Case 1 inputs derived under SHA-512.
+    #[tokio::test]
+    async fn hkdf_known_vector_sha512() {
+        let driver = make_driver();
+        let ikm = [0x0bu8; 22];
+        let salt = hex::decode("000102030405060708090a0b0c").unwrap();
+        let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
+        let mut okm = [0u8; 42];
+        driver
+            .hkdf(
+                &ikm,
+                HashAlgo::sha512(),
+                azihsm_crypto::HkdfMode::ExtractAndExpand,
+                Some(&salt),
+                Some(&info),
+                &mut okm,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "832390086cda71fb47625bb5ceb168e4c8e26a1a16ed34d9fc7fe92c14815793\
+             38da362cb8d9f925d7cb"
+        );
+    }
+
+    /// RFC 5869 Test Case 3 — HKDF-SHA-256 with empty salt and empty
+    /// info. Exercises the zero-length salt (default all-zero salt) and
+    /// zero-length info bounds.
+    #[tokio::test]
+    async fn hkdf_known_vector_empty_salt_info_sha256() {
+        let driver = make_driver();
+        let ikm = [0x0bu8; 22];
+        let mut okm = [0u8; 42];
+        driver
+            .hkdf(
+                &ikm,
+                HashAlgo::sha256(),
+                azihsm_crypto::HkdfMode::ExtractAndExpand,
+                None,
+                None,
+                &mut okm,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
+             9d201395faa4b61a96c8"
+        );
+    }
+
+    /// RFC 5869 Test Case 2 — HKDF-SHA-256 with longer inputs and an
+    /// 82-byte output that spans multiple expand blocks (L bound).
+    #[tokio::test]
+    async fn hkdf_known_vector_long_output_sha256() {
+        let driver = make_driver();
+        let ikm: Vec<u8> = (0x00u8..0x50).collect();
+        let salt: Vec<u8> = (0x60u8..0xb0).collect();
+        let info: Vec<u8> = (0xb0u8..=0xff).collect();
+        let mut okm = [0u8; 82];
+        driver
+            .hkdf(
+                &ikm,
+                HashAlgo::sha256(),
+                azihsm_crypto::HkdfMode::ExtractAndExpand,
+                Some(&salt),
+                Some(&info),
+                &mut okm,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c\
+             59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71\
+             cc30c58179ec3e87c14c01d5c1f3434f1d87"
+        );
+    }
+
     // ── KBKDF tests ─────────────────────────────────────────────
 
     #[tokio::test]
@@ -460,6 +618,107 @@ mod tests {
         assert_ne!(
             out_a, out_b,
             "different contexts must produce different output"
+        );
+    }
+
+    // ── KBKDF known-answer vectors ──────────────────────────────
+    //
+    // NIST SP 800-108 counter mode with the fixed input
+    //   [i]_32 || Label || 0x00 || Context || [L]_32
+    // (counter and length big-endian, L in bits), matching the
+    // `KbkdfAlgo::with_len` construction the driver uses. Expected
+    // outputs are the HMAC-PRF evaluation of that input.
+
+    /// SP 800-108 counter-mode KBKDF — HMAC-SHA-256, single block.
+    #[tokio::test]
+    async fn kbkdf_known_vector_sha256() {
+        let driver = make_driver();
+        let key = [0xddu8; 32];
+        let mut out = [0u8; 32];
+        driver
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(b"kbkdf-label"),
+                Some(b"kbkdf-context"),
+                &mut out,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(out),
+            "e560d64c75e23eeaab02c3a97d0edd7a96ca2126ad4f1f7ec6da612f2569d7e0"
+        );
+    }
+
+    /// SP 800-108 counter-mode KBKDF — HMAC-SHA-384, single block.
+    #[tokio::test]
+    async fn kbkdf_known_vector_sha384() {
+        let driver = make_driver();
+        let key = [0xeeu8; 48];
+        let mut out = [0u8; 48];
+        driver
+            .kbkdf(
+                &key,
+                HashAlgo::sha384(),
+                Some(b"label"),
+                Some(b"ctx"),
+                &mut out,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(out),
+            "a47a5ef8d053aa0e681010f3bf67a198ac4d94a8b009dee22a1f6f0e445749e1\
+             c0e0440d65e7b7c9d8a07a52d1b41ee1"
+        );
+    }
+
+    /// SP 800-108 counter-mode KBKDF — HMAC-SHA-512, single block.
+    #[tokio::test]
+    async fn kbkdf_known_vector_sha512() {
+        let driver = make_driver();
+        let key = [0xffu8; 64];
+        let mut out = [0u8; 64];
+        driver
+            .kbkdf(
+                &key,
+                HashAlgo::sha512(),
+                Some(b"label"),
+                Some(b"ctx"),
+                &mut out,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(out),
+            "854d6e6ecee15d956abf29e5ae3e4103ac8f9e639006f9b05c3f4a673f15b123\
+             c6b4ffcd537479c20651c7b213caf04679aefde5cd16c9ae692b8a4b79d8aa77"
+        );
+    }
+
+    /// SP 800-108 counter-mode KBKDF — HMAC-SHA-256 with a 64-byte
+    /// output spanning two counter blocks, exercising the multi-round
+    /// counter concatenation.
+    #[tokio::test]
+    async fn kbkdf_known_vector_multiblock_sha256() {
+        let driver = make_driver();
+        let key = [0xddu8; 32];
+        let mut out = [0u8; 64];
+        driver
+            .kbkdf(
+                &key,
+                HashAlgo::sha256(),
+                Some(b"kbkdf-label"),
+                Some(b"kbkdf-context"),
+                &mut out,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(out),
+            "744f238545b9cf9e9f3b1040354734895c24739d2c98f464c9077b65f268cadd\
+             75c760020f9aa1aec8e39779dd8e439065915349bab1081720130484ae06b81b"
         );
     }
 }

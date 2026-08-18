@@ -25,10 +25,9 @@ use azihsm_fw_hsm_pal_traits::HsmRsaPct;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_drivers_upka::UpkaModSize;
 use azihsm_fw_uno_drivers_upka::UpkaRsaKeyType;
-use zeroize::Zeroize;
 
+use super::reverse_copy;
 use crate::UnoHsmPal;
-use crate::asn1::RsaPrivateKeyAsn1;
 use crate::asn1::parse_rsa_private_key;
 
 // =============================================================================
@@ -76,39 +75,95 @@ fn digest_info_prefix(algo: HsmHashAlgo) -> &'static [u8] {
 // Vault operand assembly (imported RSA private key → PKA layout)
 // =============================================================================
 
-/// Maximum RSA modulus length in bytes (RSA-4096).
-const MAX_RSA_MODULUS_LEN: usize = 512;
+/// Width of the public-exponent slot in the Uno vault's RSA private-key
+/// operand `d(k) ‖ n(k) ‖ e(EXP_WIRE_LEN)`. Fixed and zero-padded, so `e` is
+/// always stored in exactly this many little-endian bytes regardless of how
+/// few significant bytes the DER carries.
+const EXP_WIRE_LEN: usize = 4;
 
-/// Validates the RSA field sizes and writes `[d ‖ n ‖ e]` little-endian into
-/// `out`, returning `(vault_len, modulus_len)`. Rejects moduli that are not
-/// 2048/3072/4096-bit, an exponent wider than 4 bytes, or a `d` wider than the
-/// modulus. Structural validation (versions, algorithm OID) is done upstream by
-/// [`parse_rsa_private_key`](super::asn1::parse_rsa_private_key).
-fn assemble_rsa_operand(key: &RsaPrivateKeyAsn1<'_>, out: &mut [u8]) -> Option<(usize, usize)> {
+/// Big-endian layout of the three RSA fields the non-CRT vault operand needs,
+/// recovered from a parsed DER: the byte offsets of the modulus `n` and private
+/// exponent `d` within the source buffer, plus the (short) public exponent `e`.
+/// `n` is exactly `modulus_len` bytes; `d` is `d_len ≤ modulus_len`.
+struct RsaOperandLayout {
+    modulus_len: usize,
+    n_off: usize,
+    d_off: usize,
+    d_len: usize,
+    /// `e` already in the operand's wire form: little-endian, zero-padded to the
+    /// fixed [`EXP_WIRE_LEN`]-byte slot, so assembly is a single copy.
+    e: [u8; EXP_WIRE_LEN],
+}
+
+/// Byte offset of `field` within `buf`. Sound because `field` is a `UintRef`
+/// sub-slice of `buf` (same allocation), so the pointer difference is in range.
+fn offset_in(buf: &[u8], field: &[u8]) -> usize {
+    (field.as_ptr() as usize) - (buf.as_ptr() as usize)
+}
+
+/// Parses and validates the RSA key in `buf`, returning the [`RsaOperandLayout`]
+/// for in-place operand assembly. Rejects moduli that are not 2048/3072/4096-bit,
+/// an exponent wider than [`EXP_WIRE_LEN`], or a `d` wider than the modulus. `e`
+/// is copied out (it is tiny and its DER slot is overwritten during assembly),
+/// converted to the operand's little-endian wire form as it goes; `n`/`d` are
+/// located by offset so the assembler can move them once the borrow of `buf`
+/// (held by the decoded `UintRef`s) is released.
+fn rsa_operand_layout(buf: &[u8]) -> Option<RsaOperandLayout> {
+    let key = parse_rsa_private_key(buf)?;
     let n = key.modulus.as_bytes();
     let e = key.public_exponent.as_bytes();
     let d = key.private_exponent.as_bytes();
     let modulus_len = n.len();
-    if !matches!(modulus_len, 256 | 384 | 512) || e.len() > 4 || d.len() > modulus_len {
+    if !matches!(modulus_len, 256 | 384 | 512) || e.len() > EXP_WIRE_LEN || d.len() > modulus_len {
         return None;
     }
-    let vault_len = 2 * modulus_len + 4;
-    if vault_len > out.len() {
-        return None;
-    }
-    write_le(&mut out[0..modulus_len], d);
-    write_le(&mut out[modulus_len..2 * modulus_len], n);
-    write_le(&mut out[2 * modulus_len..vault_len], e);
-    Some((vault_len, modulus_len))
+    // DER `e` is big-endian and minimally encoded; the operand slot is a fixed
+    // little-endian `EXP_WIRE_LEN` field, so reverse into a zeroed array.
+    let mut e_le = [0u8; EXP_WIRE_LEN];
+    reverse_copy(&mut e_le, e);
+    Some(RsaOperandLayout {
+        modulus_len,
+        n_off: offset_in(buf, n),
+        d_off: offset_in(buf, d),
+        d_len: d.len(),
+        e: e_le,
+    })
 }
 
-/// Writes the big-endian bytes `be` as little-endian into `dst`, zero-padding
-/// the remaining high bytes. Requires `be.len() <= dst.len()`.
-fn write_le(dst: &mut [u8], be: &[u8]) {
-    for (i, &b) in be.iter().rev().enumerate() {
-        dst[i] = b;
-    }
-    dst[be.len()..].fill(0);
+/// Assembles the little-endian vault operand
+/// `[d(k) ‖ n(k) ‖ e(EXP_WIRE_LEN)]` into the front of `buf`, entirely in place.
+///
+/// The operand overlaps the DER field offsets it reads from (`d` and `n` mutually
+/// clobber each other's source), so `d` is first staged into `buf`'s tail scratch
+/// (`[vault_len..]`) via `copy_within` (memmove — safe on overlap). `n`'s source
+/// may overlap its destination too, so it is moved with `copy_within` and then
+/// reversed in place; `d`'s staged copy is disjoint from the front of the buffer,
+/// so it is folded into a single [`reverse_copy`]. Requires
+/// `buf.len() >= vault_len + d_len` (checked by the caller). The tail is left
+/// dirty; the per-IO teardown scrub wipes it.
+fn assemble_rsa_operand_in_place(buf: &mut [u8], layout: &RsaOperandLayout) {
+    let k = layout.modulus_len;
+    let vault_len = 2 * k + EXP_WIRE_LEN;
+    let d_len = layout.d_len;
+    // 1. Stage big-endian `d` into the tail scratch before its source is
+    //    clobbered by the `n` move below.
+    buf.copy_within(layout.d_off..layout.d_off + d_len, vault_len);
+    // 2. vault `n` at [k, 2k): move DER `n` (big-endian, exactly k bytes) into
+    //    place, then reverse to little-endian. Source and destination can
+    //    overlap, so this stays a memmove plus an in-place reverse.
+    buf.copy_within(layout.n_off..layout.n_off + k, k);
+    buf[k..2 * k].reverse();
+    // 3. vault `d` at [0, k): the staged copy at `vault_len` is disjoint from
+    //    `[0, d_len)`, so split the buffer and reverse-copy it to the front in
+    //    one pass. `d` may be shorter than the modulus (DER strips leading
+    //    zeros), and the bytes above it still hold DER, so zero the high end —
+    //    the vault field is a fixed k bytes.
+    let (front, staged) = buf.split_at_mut(vault_len);
+    reverse_copy(&mut front[..d_len], &staged[..d_len]);
+    front[d_len..k].fill(0);
+    // 4. vault `e` at [2k, 2k+EXP_WIRE_LEN): already little-endian and
+    //    zero-padded, so a single copy fills the fixed slot.
+    front[2 * k..vault_len].copy_from_slice(&layout.e);
 }
 
 // =============================================================================
@@ -135,7 +190,6 @@ impl UnoHsmPal {
         self.hash_finish(io, ctx, &mut digest[..algo.digest_len()], true)
             .await
     }
-
     /// Compute the derived RSA-CRT PKA operands from the recovered primes.
     ///
     /// `n1q = qInv·q` and `n2p = (p⁻¹ mod q)·p` are the two values the Uno PKA
@@ -210,8 +264,8 @@ impl UnoHsmPal {
 
             // All DMA scratch is now reserved; from here no `?` can early-return
             // before the unconditional scrub, so it is safe to write secrets.
-            write_le(&mut q_half[..half_len], q_be);
-            write_le(&mut p_half[..half_len], p_be);
+            reverse_copy(&mut q_half[..half_len], q_be);
+            reverse_copy(&mut p_half[..half_len], p_be);
 
             // Run the three PKA phases, capturing the outcome instead of
             // `?`-returning, so the scrub below runs on BOTH success and error
@@ -222,8 +276,8 @@ impl UnoHsmPal {
 
             // n1q = qInv · q. Operands sit in the low half of the full width;
             // the all-`0xFF` modulus disables reduction so the product is exact.
-            write_le(&mut a_full[..half_len], qinv_be);
-            write_le(&mut b_full[..half_len], q_be);
+            reverse_copy(&mut a_full[..half_len], qinv_be);
+            reverse_copy(&mut b_full[..half_len], q_be);
             let mut result = self
                 .pka
                 .with_engine(async |eng| {
@@ -254,7 +308,7 @@ impl UnoHsmPal {
                 a_full.fill(0);
                 a_full[..half_len].copy_from_slice(&pinvq[..half_len]);
                 b_full.fill(0);
-                write_le(&mut b_full[..half_len], p_be);
+                reverse_copy(&mut b_full[..half_len], p_be);
                 result = self
                     .pka
                     .with_engine(async |eng| {
@@ -267,20 +321,9 @@ impl UnoHsmPal {
                     .await;
             }
 
-            // Scrub scratch that held secret prime-derived material on every
-            // path (success or a failed PKA op above), before the scope frees
-            // and later reuses the DMA SRAM.
-            a_full.zeroize();
-            b_full.zeroize();
-            a_mont.zeroize();
-            b_mont.zeroize();
-            prod_mont.zeroize();
-            q_half.zeroize();
-            p_half.zeroize();
-            mont_c_h.zeroize();
-            p_mont_h.zeroize();
-            pinv_mont_h.zeroize();
-            pinvq.zeroize();
+            // Scratch that held secret prime-derived material is left dirty
+            // here: the per-IO teardown scrub wipes the whole slot, so a local
+            // wipe would be redundant work that has to be removed again.
             result
         })
         .await
@@ -337,7 +380,6 @@ impl HsmRsa for UnoHsmPal {
         // In both, `e` is the trailing 4 bytes; `n` starts at offset `k`
         // (non-CRT) or `2k` (CRT). The two length sets are disjoint, so the
         // operand length selects the layout — no endianness flip / PKA op.
-        const EXP_WIRE_LEN: usize = 4;
         let total = priv_key.len();
         if total <= EXP_WIRE_LEN {
             return Err(HsmError::InvalidArg);
@@ -370,6 +412,11 @@ impl HsmRsa for UnoHsmPal {
         der: &'a mut DmaBuf,
         crt: bool,
     ) -> HsmResult<(&'a DmaBuf, usize)> {
+        // Note: `der` holds recovered plaintext DER — and, on the non-CRT path,
+        // the staged `d` plus the leftover CRT components `p`/`q`/`dp`/`dq`/
+        // `qinv` — on every path through this function. It is not scrubbed
+        // here: the per-IO teardown scrub wipes the whole slot, so a local wipe
+        // would be redundant work that has to be removed again.
         if crt {
             // Decode the recovered CRT DER into its big-endian field magnitudes
             // (modulus `n`, exponent `e`, primes `p`/`q`, CRT exponents `dp`/`dq`,
@@ -377,7 +424,6 @@ impl HsmRsa for UnoHsmPal {
             // borrow ends at the `compute_crt_params` call below, before `der`
             // is scrubbed.
             let Some(key) = parse_rsa_private_key(&der[..]) else {
-                der.zeroize();
                 return Err(HsmError::InvalidArg);
             };
             let n = key.modulus.as_bytes();
@@ -400,7 +446,6 @@ impl HsmRsa for UnoHsmPal {
                 || dq.len() > half
                 || qinv.len() > half
             {
-                der.zeroize();
                 return Err(HsmError::InvalidArg);
             }
 
@@ -411,23 +456,14 @@ impl HsmRsa for UnoHsmPal {
             // into it (zeroed first so short fields are left-padded and the
             // derived `n1q`/`n2p` regions start clean).
             let vault_len = 5 * k + 4;
-            // Scrub the recovered plaintext DER (holds the primes/CRT
-            // components) if the vault allocation fails, before surfacing the
-            // error — the scoped DMA SRAM is reused without automatic wiping.
-            let out = match self.dma_alloc(io, vault_len) {
-                Ok(out) => out,
-                Err(err) => {
-                    der.zeroize();
-                    return Err(err);
-                }
-            };
+            let out = self.dma_alloc(io, vault_len)?;
             out.fill(0);
-            write_le(&mut out[0..half], p);
-            write_le(&mut out[half..k], q);
-            write_le(&mut out[k..k + half], dp);
-            write_le(&mut out[k + half..2 * k], dq);
-            write_le(&mut out[2 * k..3 * k], n);
-            write_le(&mut out[5 * k..vault_len], e);
+            reverse_copy(&mut out[0..half], p);
+            reverse_copy(&mut out[half..k], q);
+            reverse_copy(&mut out[k..k + half], dp);
+            reverse_copy(&mut out[k + half..2 * k], dq);
+            reverse_copy(&mut out[2 * k..3 * k], n);
+            reverse_copy(&mut out[5 * k..vault_len], e);
 
             // Derive `n1q = qInv·q` and `n2p = (p⁻¹ mod q)·p` on the PKA straight
             // into the operand: split off the `[3k..5k]` region into two disjoint
@@ -438,49 +474,28 @@ impl HsmRsa for UnoHsmPal {
             let result = self
                 .compute_crt_params(io, k, p, q, qinv, n1q_out, n2p_out)
                 .await;
-            // The recovered DER holds the plaintext primes; scrub it regardless
-            // of outcome now that every field has been consumed.
-            der.zeroize();
-            if let Err(err) = result {
-                // A PKA failure leaves partially-derived secret material in `out`.
-                out.zeroize();
-                return Err(err);
-            }
+            result?;
             return Ok((&out[..vault_len], k));
         }
 
-        // Non-CRT: decode + assemble the little-endian vault operand
-        // `[d(k) ‖ n(k) ‖ e(4)]` into a scratch buffer. Only `der` is read (the
-        // recovered plaintext DER); the decoded `UintRef`s alias into it, and
-        // the borrow ends before the in-place rewrite below.
-        let mut out = [0u8; MAX_RSA_MODULUS_LEN * 2 + 4];
-        let assembled =
-            parse_rsa_private_key(&der[..]).and_then(|key| assemble_rsa_operand(&key, &mut out));
-        let Some((vault_len, modulus_len)) = assembled else {
-            der.zeroize();
-            out.zeroize();
+        // Non-CRT: assemble the little-endian vault operand
+        // `[d(k) ‖ n(k) ‖ e(EXP_WIRE_LEN)]` in place over the source DER. The
+        // `key` borrow of `der` (held by the decoded `UintRef`s) is released
+        // before the in-place rewrite.
+        let Some(layout) = rsa_operand_layout(&der[..]) else {
             return Err(HsmError::InvalidArg);
         };
-        // The vault form is smaller than the source DER, so the in-place rewrite
-        // is safe — but reject rather than panic if a malformed DER made
-        // `vault_len` exceed `der`. `der` holds recovered plaintext, so scrub
-        // first.
-        if vault_len > der.len() {
-            der.zeroize();
-            out.zeroize();
+        let k = layout.modulus_len;
+        let vault_len = 2 * k + EXP_WIRE_LEN;
+        // In-place assembly stages `d` into `der[vault_len..]`, so the recovered
+        // DER must be at least `vault_len + d_len` bytes. A full RSAPrivateKey is
+        // always larger, but reject rather than panic on a malformed / truncated
+        // DER.
+        if der.len() < vault_len + layout.d_len {
             return Err(HsmError::InvalidArg);
         }
-        der[..vault_len].copy_from_slice(&out[..vault_len]);
-        // Scrub the leftover source DER in the tail of `der` — for a full
-        // RSAPrivateKey it still holds secret CRT components (`p`, `q`, `dp`,
-        // `dq`, `qinv`). The scoped DMA buffer is reused without automatic
-        // wiping, so scrub it here before returning.
-        der[vault_len..].zeroize();
-        // Scrub the assembled operand (holds the private exponent `d`) from the
-        // stack scratch. `Zeroize` uses volatile writes so the wipe is not
-        // elided as a dead store.
-        out.zeroize();
-        Ok((&der[..vault_len], modulus_len))
+        assemble_rsa_operand_in_place(&mut der[..], &layout);
+        Ok((&der[..vault_len], k))
     }
 
     // ── PKCS#1 v1.5 encryption ─────────────────────────────────────
@@ -751,73 +766,61 @@ impl HsmRsa for UnoHsmPal {
         let em = alloc.dma_alloc(k)?;
         let label_hash = alloc.dma_alloc(h_len)?;
 
-        // `em` holds the decrypted encoded message and then the recovered DB —
-        // both secret. The scoped allocator only rewinds its watermark on drop
-        // and never clears freed DMA, so scrub `em` on *every* exit path
-        // (including `?`-propagated errors) before it can be handed to a later
-        // per-IO allocation. The fallible decode runs in an inner block so the
-        // single `em.zeroize()` below covers all of them.
-        let result = async {
-            self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
-                .await?;
+        self.mod_exp_priv(io, key_size, priv_key, ciphertext, em)
+            .await?;
 
-            // `mod_exp_priv` is little-endian (PKA-native): both the ciphertext
-            // operand and the `em` result are LE wire form. The RSA-OAEP decode
-            // below (RFC 8017 EME-OAEP) operates on the big-endian encoded
-            // message `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, so flip the result
-            // LE→BE first (the std PAL does the same flip around OpenSSL).
-            em[..k].reverse();
+        // `mod_exp_priv` is little-endian (PKA-native): both the ciphertext
+        // operand and the `em` result are LE wire form. The RSA-OAEP decode
+        // below (RFC 8017 EME-OAEP) operates on the big-endian encoded
+        // message `EM = 0x00 ‖ maskedSeed ‖ maskedDB`, so flip the result
+        // LE→BE first (the std PAL does the same flip around OpenSSL).
+        em[..k].reverse();
 
-            if em[0] != 0x00 {
-                return Err(HsmError::RsaDecryptFailed);
-            }
-
-            // Recover seed: seed = maskedSeed XOR MGF(maskedDB, hLen)
-            {
-                let (seed, db) = em[1..k].split_at_mut(h_len);
-                self.mgf1_xor(io, algo, db, seed).await?;
-            }
-
-            // Recover DB: DB = maskedDB XOR MGF(seed, dbLen)
-            {
-                let (seed, db) = em[1..k].split_at_mut(h_len);
-                self.mgf1_xor(io, algo, seed, db).await?;
-            }
-
-            // Verify lHash using reusable scratch allocated from the alloc.
-            let db = &em[1 + h_len..k];
-            self.hash(io, algo, label, label_hash, true).await?;
-            let db_hash: &[u8] = &db[..h_len];
-            let label_hash_slice: &[u8] = &label_hash[..h_len];
-            if db_hash != label_hash_slice {
-                return Err(HsmError::RsaDecryptFailed);
-            }
-
-            // Find 0x01 separator in DB after lHash
-            let ps_and_m = &db[h_len..];
-            let sep = ps_and_m.iter().position(|&b| b == 0x01);
-            let sep = match sep {
-                Some(s) if ps_and_m[..s].iter().all(|&b| b == 0x00) => s,
-                _ => return Err(HsmError::RsaDecryptFailed),
-            };
-
-            let m_start = h_len + sep + 1;
-            let m_len = db_len - m_start;
-            // Contract (matches the std PAL): a recovered message longer than
-            // the caller's output buffer is a key/output-length error, reported
-            // as `RsaInvalidKeyLength`. The RsaUnwrap KEK path relies on this to
-            // map an oversized recovered KEK to `RsaUnwrapInvalidKek`.
-            if output.len() < m_len {
-                return Err(HsmError::RsaInvalidKeyLength);
-            }
-
-            output[..m_len].copy_from_slice(&db[m_start..]);
-            Ok(m_len)
+        if em[0] != 0x00 {
+            return Err(HsmError::RsaDecryptFailed);
         }
-        .await;
 
-        em.zeroize();
-        result
+        // Recover seed: seed = maskedSeed XOR MGF(maskedDB, hLen)
+        {
+            let (seed, db) = em[1..k].split_at_mut(h_len);
+            self.mgf1_xor(io, algo, db, seed).await?;
+        }
+
+        // Recover DB: DB = maskedDB XOR MGF(seed, dbLen)
+        {
+            let (seed, db) = em[1..k].split_at_mut(h_len);
+            self.mgf1_xor(io, algo, seed, db).await?;
+        }
+
+        // Verify lHash using reusable scratch allocated from the alloc.
+        let db = &em[1 + h_len..k];
+        self.hash(io, algo, label, label_hash, true).await?;
+        let db_hash: &[u8] = &db[..h_len];
+        let label_hash_slice: &[u8] = &label_hash[..h_len];
+        if db_hash != label_hash_slice {
+            return Err(HsmError::RsaDecryptFailed);
+        }
+
+        // Find 0x01 separator in DB after lHash
+        let ps_and_m = &db[h_len..];
+        let sep = ps_and_m.iter().position(|&b| b == 0x01);
+        let sep = match sep {
+            Some(s) if ps_and_m[..s].iter().all(|&b| b == 0x00) => s,
+            _ => return Err(HsmError::RsaDecryptFailed),
+        };
+
+        let m_start = h_len + sep + 1;
+        let m_len = db_len - m_start;
+        // Contract (matches the std PAL): a recovered message longer than
+        // the caller's output buffer is a key/output-length error, reported
+        // as `RsaInvalidKeyLength`. The RsaUnwrap KEK path relies on this to
+        // map an oversized recovered KEK to `RsaUnwrapInvalidKek`.
+        if output.len() < m_len {
+            return Err(HsmError::RsaInvalidKeyLength);
+        }
+
+        output[..m_len].copy_from_slice(&db[m_start..]);
+        Ok(m_len)
     }
 
     // ── PSS signatures ─────────────────────────────────────────────
