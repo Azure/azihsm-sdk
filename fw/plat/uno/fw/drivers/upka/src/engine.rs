@@ -14,6 +14,7 @@ use crate::executor::EngineExecutor;
 use crate::opcode::*;
 use crate::UpkaEccCurve;
 use crate::UpkaError;
+use crate::UpkaModSize;
 use crate::UpkaRsaKeyType;
 
 /// Exclusive handle to one PKA engine.
@@ -404,16 +405,38 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         let mod_size = rsa_mod_size(key_type);
+        let is_crt = matches!(
+            key_type,
+            UpkaRsaKeyType::Rsa2048Crt | UpkaRsaKeyType::Rsa3072Crt | UpkaRsaKeyType::Rsa4096Crt
+        );
+        // A non-CRT key is `[d ‖ n ‖ e]` (`2k+4`) passed as a single operand. A
+        // CRT key is the `[p ‖ q ‖ dp ‖ dq ‖ n ‖ n1q ‖ n2p ‖ e]` PKA operand
+        // (`5k+4`) submitted as TWO operands: `param1 = [p ‖ q ‖ dp ‖ dq]` (`2k`,
+        // at offset 0) in arg3 and `param2 = [n ‖ n1q ‖ n2p]` (`3k`, at offset
+        // `2k`) in arg4. The trailing `e` is unused by the private exponentiation.
+        let min_key_len = if is_crt {
+            5 * mod_size + 4
+        } else {
+            2 * mod_size
+        };
         Self::ensure_cmd_input(
-            !key.is_empty() && input.len() == mod_size && output.len() == mod_size,
+            key.len() >= min_key_len && input.len() == mod_size && output.len() == mod_size,
         )?;
+
+        // CRT needs a non-null `param2` pointer; passing `0` (as for non-CRT)
+        // makes the PKA dereference a null operand and fault with a bus error.
+        let param2 = if is_crt {
+            key.as_ptr() as u32 + (2 * mod_size) as u32
+        } else {
+            0
+        };
 
         self.execute_cmd(
             rsa_priv_opcode(key_type),
             output.as_mut_ptr() as u32,
             input.as_ptr() as u32,
             key.as_ptr() as u32,
-            0,
+            param2,
         )
         .await
     }
@@ -683,6 +706,122 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         )?;
         self.execute_cmd(
             opcode,
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            arg2.as_ptr() as u32,
+            0,
+        )
+        .await
+    }
+
+    // ── RSA-sized modular / Montgomery ops (CRT-parameter computation) ──
+    //
+    // Used to compute the derived CRT vault operands `n1q = qInv * q` and
+    // `n2p = (p^-1 mod q) * p` at import time. They run at the full modulus
+    // width (2k/3k/4k) and the half-prime width (1k/2k). Like the ECC variants,
+    // a `rsa_mont_const_calc` sets the resident modulus that the following
+    // Montgomery / modular ops consume; all steps for one derived value must run
+    // atomically on the same held engine. Montgomery-domain buffers are one PKA
+    // word (4 bytes) wider than the operand, matching the ECC `mont_operand_size`
+    // relationship and mcr-hsm's `PkaModInverseData{1,2}k` (= operand + 4).
+
+    /// Compute the Montgomery constant for the RSA-sized `modulus` and leave it
+    /// resident on the engine for the next op. `mont_result` holds the constant
+    /// (a value `< modulus`, operand-sized).
+    pub async fn rsa_mont_const_calc(
+        &mut self,
+        size: UpkaModSize,
+        modulus: &DmaBuf,
+        mont_result: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        let n = size.operand_len();
+        Self::ensure_cmd_input(modulus.len() >= n && mont_result.len() >= n)?;
+        self.execute_cmd(
+            rsa_mont_const_calc_opcode(size),
+            mont_result.as_mut_ptr() as u32,
+            modulus.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Convert `arg1` (operand-sized) into Montgomery representation. Requires a
+    /// prior `rsa_mont_const_calc` on this engine. `result` is Montgomery-form
+    /// (`operand_len + 4` bytes).
+    pub async fn rsa_mont_repr_in(
+        &mut self,
+        size: UpkaModSize,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let n = size.operand_len();
+        Self::ensure_cmd_input(result.len() >= n + 4 && arg1.len() >= n)?;
+        self.execute_cmd(
+            rsa_mont_repr_in_opcode(size),
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Convert `arg1` (Montgomery-form) out of Montgomery representation into
+    /// `result` (operand-sized, normal representation).
+    pub async fn rsa_mont_repr_out(
+        &mut self,
+        size: UpkaModSize,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let n = size.operand_len();
+        Self::ensure_cmd_input(result.len() >= n && arg1.len() >= n + 4)?;
+        self.execute_cmd(
+            rsa_mont_repr_out_opcode(size),
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Modular inverse `result = arg1^-1 mod n` (Montgomery domain). Requires a
+    /// prior `rsa_mont_const_calc` over the modulus `n`. Operands and result are
+    /// Montgomery-form (`operand_len + 4` bytes).
+    pub async fn rsa_mod_inverse(
+        &mut self,
+        size: UpkaModSize,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+    ) -> HsmResult<()> {
+        let m = size.operand_len() + 4;
+        Self::ensure_cmd_input(result.len() >= m && arg1.len() >= m)?;
+        self.execute_cmd(
+            rsa_mod_inverse_opcode(size),
+            result.as_mut_ptr() as u32,
+            arg1.as_ptr() as u32,
+            0,
+            0,
+        )
+        .await
+    }
+
+    /// Modular multiplication `result = arg1 * arg2 mod n` (Montgomery domain).
+    /// Requires a prior `rsa_mont_const_calc`. Operands and result are
+    /// Montgomery-form (`operand_len + 4` bytes).
+    pub async fn rsa_mod_mul(
+        &mut self,
+        size: UpkaModSize,
+        result: &mut DmaBuf,
+        arg1: &DmaBuf,
+        arg2: &DmaBuf,
+    ) -> HsmResult<()> {
+        let m = size.operand_len() + 4;
+        Self::ensure_cmd_input(result.len() >= m && arg1.len() >= m && arg2.len() >= m)?;
+        self.execute_cmd(
+            rsa_mod_multiplication_opcode(size),
             result.as_mut_ptr() as u32,
             arg1.as_ptr() as u32,
             arg2.as_ptr() as u32,

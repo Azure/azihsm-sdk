@@ -253,8 +253,7 @@ where
     // SHA-384. `ecc_verify` is PKA little-endian native, so hash
     // big-endian and then fully byte-reverse the digest into PKA-LE,
     // matching the other verify callers (establish_credential /
-    // x509-chain). SHA's `big_endian = false` is only a per-word swap,
-    // not the full-digest reversal the PKA needs.
+    // x509-chain).
     let digest = alloc.dma_alloc(SHA384_LEN)?;
     pal.hash(io, HsmHashAlgo::Sha384, sig_struct, digest, true)
         .await?;

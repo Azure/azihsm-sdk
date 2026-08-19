@@ -5,8 +5,8 @@
 //
 // Self-peer backup on one partition: provision a peer-cloning-enabled
 // backing partition, mint an SD sealing key, `CreateSD`
-// (`azihsm_sess_ex_sd_create_remote_backup`) to obtain the device-local
-// backup, then `azihsm_sess_ex_sd_create_peer_backup` to HPKE-Auth-seal
+// (`azihsm_sd_create_remote_backup`) to obtain the device-local
+// backup, then `azihsm_sd_create_peer_backup` to HPKE-Auth-seal
 // BKS3 to the destination peer (our own attested identity). A successful
 // seal is itself the correctness check.
 //
@@ -52,7 +52,7 @@ bool create_sd_local_backup(
     azihsm_buffer masked_buf{ masked.data(), static_cast<uint32_t>(masked.size()) };
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
-    azihsm_sess_ex_sd_create_remote_backup_params params{
+    azihsm_sd_create_remote_backup_params params{
         &masked_buf,
         &receiver,
         &policy_buf,
@@ -67,13 +67,7 @@ bool create_sd_local_backup(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_remote_backup(
-            session,
-            &params,
-            &remote_buf,
-            &local_buf,
-            &mk_buf
-        );
+        err = azihsm_sd_create_remote_backup(session, &params, &remote_buf, &local_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -110,7 +104,7 @@ bool create_sd_local_backup(
 // status and, on success, sizes `dst` to the bytes written.
 azihsm_status create_peer_fill(
     azihsm_handle session,
-    const azihsm_sess_ex_sd_create_peer_backup_params *params,
+    const azihsm_sd_create_peer_backup_params *params,
     std::vector<uint8_t> &dst
 )
 {
@@ -118,7 +112,7 @@ azihsm_status create_peer_fill(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_peer_backup(session, params, &dst_buf);
+        err = azihsm_sd_create_peer_backup(session, params, &dst_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -138,8 +132,8 @@ azihsm_status create_peer_fill(
 } // namespace
 
 /// Test fixture for security-domain create-peer-backup
-/// (`azihsm_sess_ex_sd_create_peer_backup`).
-class azihsm_sd_create_peer_backup : public ::testing::Test
+/// (`azihsm_sd_create_peer_backup`).
+class azihsm_sd_create_peer_backup_test : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -175,7 +169,7 @@ class azihsm_sd_create_peer_backup : public ::testing::Test
 
 // Happy path: create the security domain, then a peer backup of it; the
 // peer backup is a fresh 161-byte, non-zero HPKE-Auth seal.
-TEST_F(azihsm_sd_create_peer_backup, create_peer_backup_roundtrip)
+TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_roundtrip)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -215,7 +209,7 @@ TEST_F(azihsm_sd_create_peer_backup, create_peer_backup_roundtrip)
         azihsm_buffer masked_buf{ key.masked.data(), static_cast<uint32_t>(key.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
-        azihsm_sess_ex_sd_create_peer_backup_params params{
+        azihsm_sd_create_peer_backup_params params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -233,7 +227,7 @@ TEST_F(azihsm_sd_create_peer_backup, create_peer_backup_roundtrip)
 
 // A NULL params pointer is rejected with `INVALID_ARGUMENT` after the
 // session resolves and before the peer backup is created.
-TEST_F(azihsm_sd_create_peer_backup, create_peer_backup_null_params)
+TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_null_params)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -252,7 +246,7 @@ TEST_F(azihsm_sd_create_peer_backup, create_peer_backup_null_params)
         auto sess_guard = scope_guard::make_scope_exit([&ctx] { azihsm_sess_close(ctx.session); });
 
         azihsm_buffer out{ nullptr, 0 };
-        auto err = azihsm_sess_ex_sd_create_peer_backup(ctx.session, nullptr, &out);
+        auto err = azihsm_sd_create_peer_backup(ctx.session, nullptr, &out);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
