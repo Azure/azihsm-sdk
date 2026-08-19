@@ -12,11 +12,10 @@
 //! path (same underlying cert store), and confirm an invalid slot is
 //! rejected.
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::CERT_THUMBPRINT_LEN;
-
-use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn round_trip() {
