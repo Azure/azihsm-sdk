@@ -12,6 +12,7 @@ use std::path::Path;
 use azihsm_api::HsmCredentials;
 use azihsm_api::HsmEccPrivateKey;
 use azihsm_api::HsmError;
+use azihsm_api::HsmKeyDeleteOp;
 use azihsm_api::HsmOwnerBackupKey;
 use azihsm_api::HsmOwnerBackupKeyConfig;
 use azihsm_api::HsmOwnerBackupKeySource;
@@ -142,11 +143,12 @@ impl EngineData {
     }
 
     /// Take ownership of a loaded HSM private key so it lives until the engine
-    /// is destroyed (its `Drop` deletes it from the HSM), and return a stable
-    /// non-owning pointer to it for stashing in `EC_KEY` ex_data. Boxing keeps
-    /// the address stable across `Vec` growth; the returned pointer stays valid
-    /// until this `EngineData` is dropped by the destroy handler, or until
-    /// [`release_loaded_key`](Self::release_loaded_key) drops it early.
+    /// is destroyed (deleted from the HSM at teardown — HSM keys are not
+    /// deleted by their own drop), and return a stable non-owning pointer to
+    /// it for stashing in `EC_KEY` ex_data. Boxing keeps the address stable
+    /// across `Vec` growth; the returned pointer stays valid until this
+    /// `EngineData` is dropped by the destroy handler, or until
+    /// [`release_loaded_key`](Self::release_loaded_key) deletes it early.
     ///
     /// Crate-internal: an implementation detail of the key loader.
     pub(crate) fn retain_loaded_key(&self, key: HsmEccPrivateKey) -> *const HsmEccPrivateKey {
@@ -156,16 +158,39 @@ impl EngineData {
         ptr
     }
 
-    /// Drop a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
+    /// Delete a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
     /// identified by the pointer it returned. Used to roll back on a partial
     /// load failure (e.g. if stashing the ex_data pointer fails) so the key
     /// doesn't linger in the HSM until engine teardown. A no-op if the pointer
-    /// isn't currently retained. Dropping the box deletes the key from the HSM.
+    /// isn't currently retained.
     pub(crate) fn release_loaded_key(&self, ptr: *const HsmEccPrivateKey) {
-        let mut keys = self.loaded_keys.lock();
-        if let Some(pos) = keys.iter().position(|k| std::ptr::eq(k.as_ref(), ptr)) {
-            keys.remove(pos);
+        let removed = {
+            let mut keys = self.loaded_keys.lock();
+            keys.iter()
+                .position(|k| std::ptr::eq(k.as_ref(), ptr))
+                .map(|pos| keys.remove(pos))
+        };
+        if let Some(key) = removed {
+            delete_hsm_key(*key, "released EC private key");
         }
+    }
+}
+
+impl Drop for EngineData {
+    /// HSM keys are not deleted by their own drop: delete every retained key
+    /// explicitly at engine teardown.
+    fn drop(&mut self) {
+        for key in self.loaded_keys.get_mut().drain(..) {
+            delete_hsm_key(*key, "retained EC private key");
+        }
+    }
+}
+
+/// Best-effort HSM key deletion for cleanup paths: failures are logged, never
+/// propagated (the caller's operation should not fail over cleanup).
+pub(crate) fn delete_hsm_key<K: HsmKeyDeleteOp>(key: K, what: &str) {
+    if let Err(e) = key.delete_key() {
+        tracing::warn!(target: "azihsm", "failed to delete {what} from the HSM: {e}");
     }
 }
 
