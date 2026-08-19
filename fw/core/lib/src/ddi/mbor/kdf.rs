@@ -65,7 +65,7 @@ pub(crate) struct KdfTarget {
     /// Attribute family for the created key.
     pub class: KdfClass,
     /// True when the derived key is an AES-GCM bulk key: the material is
-    /// registered with the FP engine and the vault holds only the
+    /// registered with the bulk-crypto backend and the vault holds only the
     /// returned `bulk_key_id` handle.
     pub is_bulk: bool,
 }

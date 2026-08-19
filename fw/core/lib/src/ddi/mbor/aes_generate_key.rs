@@ -12,11 +12,11 @@
 //!
 //! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)
 //! the response also carries a `bulk_key_id`.  The bulk key is the key
-//! consumed by the fast-path GCM encrypt/decrypt op; the host addresses
+//! consumed by the bulk GCM encrypt/decrypt op; the host addresses
 //! it via this `bulk_key_id`.  Bulk key material is registered with the
-//! fast-path (FP) engine (see [`bulk::register_bulk_key`](super::bulk));
-//! the vault stores only the 2-byte FP handle, and `bulk_key_id` is the
-//! distinct FP-assigned id, not the vault `key_id`.
+//! bulk-crypto backend (see [`bulk::register_bulk_key`](super::bulk));
+//! the vault stores only the 2-byte backend handle, and `bulk_key_id` is
+//! the distinct backend-assigned id, not the vault `key_id`.
 //!
 //! Scope: 128/192/256-bit AES keys and AES-256-GCM bulk keys.  The
 //! AES-XTS bulk variant is rejected with `InvalidArg`.
@@ -73,10 +73,10 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
 
-    // Bulk GCM keys live in the fast-path (FP) engine: hand the freshly
-    // generated material to FP and keep only the 2-byte `bulk_key_id`
-    // reference in the vault.  The FP registration is scoped to the
-    // creating session so later fast-path GCM ops (which carry the
+    // Bulk GCM keys live in the bulk-crypto backend: hand the freshly
+    // generated material to the backend and keep only the 2-byte
+    // `bulk_key_id` reference in the vault.  The registration is scoped to
+    // the creating session so later bulk GCM ops (which carry the
     // session id) match.  Non-bulk keys are stored directly.
     let (key_handle, bulk_key_id) = if is_bulk {
         let (handle, bulk_id) = super::bulk::register_bulk_key(

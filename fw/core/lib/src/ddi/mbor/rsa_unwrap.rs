@@ -26,8 +26,8 @@
 //! by the other key-producing handlers and the reference firmware.  This
 //! keeps the largest RSA-4096 keys within the fixed per-IO DMA budget.
 //! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES
-//! bulk variants recover the raw AES key, register it with the fast-path
-//! (FP) engine, and return its `bulk_key_id`.  RSA and ECC imports return
+//! bulk variants recover the raw AES key, register it with the
+//! bulk-crypto backend, and return its `bulk_key_id`.  RSA and ECC imports return
 //! imported key's wire public key, re-derived from the committed vault
 //! key.
 
@@ -88,7 +88,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     let unwrap_key_id = HsmKeyId::from(body.key_id);
 
     // AES-256-GCM bulk keys follow a distinct import path: the recovered
-    // key is handed to the fast-path (FP) engine and only its 2-byte
+    // key is handed to the bulk-crypto backend and only its 2-byte
     // `bulk_key_id` handle is kept in the vault (mirroring
     // [`aes_generate_key`](super::aes_generate_key)'s bulk path).  Handle
     // and return here, before the asymmetric / AES import flow below.
@@ -113,10 +113,10 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
         )
         .await?;
 
-        // Push the recovered key to FP and vault only the 2-byte handle,
-        // scoped to the creating session so later fast-path GCM ops match.
-        // The shared helper frees the FP key if the vault write fails, so no
-        // FP slot leaks on a partial failure.
+        // Push the recovered key to the bulk-crypto backend and vault only
+        // the 2-byte handle, scoped to the creating session so later bulk
+        // GCM ops match.  The shared helper frees the backend key if the
+        // vault write fails, so no bulk-key slot leaks on a partial failure.
         let (key_id, bulk_id) = super::bulk::register_bulk_key(
             pal,
             io,

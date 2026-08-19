@@ -58,7 +58,7 @@ impl HsmVault for UnoHsmPal {
         v.create(self, io, app_id, key, kind, session, attrs).await
     }
 
-    async fn fp_bulk_key_create(
+    async fn bulk_key_create(
         &self,
         io: &impl HsmIo,
         key: &DmaBuf,
@@ -120,7 +120,7 @@ impl HsmVault for UnoHsmPal {
         }
     }
 
-    async fn fp_bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
+    async fn bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
         let id = AesBulk256KeyId::from_bits(bulk_key_id);
         let part_id = u8::from(io.pid());
         let pcie_fn = part_id_to_pcie_fn(part_id)?;
@@ -156,7 +156,7 @@ impl HsmVault for UnoHsmPal {
                     .then(|| u16::from_le_bytes([bytes[0], bytes[1]]))
             });
             if let Some(bulk_id) = bulk_id {
-                let _ = self.fp_bulk_key_delete(io, bulk_id).await;
+                let _ = self.bulk_key_delete(io, bulk_id).await;
             }
         }
         let mut v = vault(io);

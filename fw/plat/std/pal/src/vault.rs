@@ -78,7 +78,7 @@ impl HsmVault for StdHsmPal {
     }
 
     /// Register a bulk AES key with the simulated fast-path engine.
-    async fn fp_bulk_key_create(
+    async fn bulk_key_create(
         &self,
         io: &impl HsmIo,
         key: &DmaBuf,
@@ -104,7 +104,7 @@ impl HsmVault for StdHsmPal {
     }
 
     /// Delete a bulk AES key from the simulated fast-path engine.
-    async fn fp_bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
+    async fn bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()> {
         self.fp_bulk_delete(u8::from(io.pid()), bulk_key_id)
     }
 
@@ -126,7 +126,7 @@ impl HsmVault for StdHsmPal {
                     .then(|| u16::from_le_bytes([bytes[0], bytes[1]]))
             });
             if let Some(bulk_id) = bulk_id {
-                let _ = self.fp_bulk_key_delete(io, bulk_id).await;
+                let _ = self.bulk_key_delete(io, bulk_id).await;
             }
         }
         let entry = self.active_part_mut(io.pid())?;

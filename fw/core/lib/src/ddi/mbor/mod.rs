@@ -127,7 +127,7 @@ pub(crate) struct DispatchResult<'p> {
     pub(crate) session_id: Option<u16>,
     /// Short app id (`app_vault_id`) to place in the CQE; set only by
     /// `OpenSession`.  Its presence sets the CQE `short_app_id_is_valid`
-    /// flag the host driver requires before admitting fast-path ops.
+    /// flag the host driver requires before admitting bulk (AES-GCM/XTS) ops.
     pub(crate) app_vault_id: Option<u8>,
 }
 

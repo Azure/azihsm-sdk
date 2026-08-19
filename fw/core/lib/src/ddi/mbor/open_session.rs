@@ -57,10 +57,10 @@ pub(super) const SMK_KEY_LABEL: &[u8] = b"SMK";
 /// Short app id reported for a session.  OpenSession does not model an
 /// app-vault concept, so a single fixed value is returned to the host —
 /// in both the encoded response body and the CQE session fields (where
-/// the host driver reads it as the fast-path `short_app_id`).  It is
+/// the host driver reads it as the `short_app_id`).  It is
 /// carried in the CQE `app_vault_id` field, which sets the CQE
 /// `short_app_id_is_valid` flag the driver requires before it will admit
-/// any fast-path (AES-GCM/XTS) op on the file handle.
+/// any bulk (AES-GCM/XTS) op on the file handle.
 pub(super) const SESSION_SHORT_APP_ID: u8 = 0;
 
 /// Handle `DdiOpenSessionCmd`.

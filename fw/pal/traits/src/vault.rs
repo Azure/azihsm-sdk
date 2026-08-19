@@ -471,14 +471,17 @@ pub trait HsmVault {
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId>;
 
-    /// Register a freshly generated AES-256 bulk key with the fast-path
-    /// (FP) engine and return its FP-addressable `bulk_key_id`.
+    /// Register a freshly generated AES-256 bulk key with the platform's
+    /// bulk-crypto backend and return an opaque `bulk_key_id` the host
+    /// uses to address it.
     ///
-    /// AES bulk keys (GCM / XTS) are consumed by the FP engine, not by
-    /// the CP HSM: the host performs bulk encrypt/decrypt on the FP
-    /// fast-path addressed by this `bulk_key_id`.  The HSM generates the
-    /// key material, hands it to FP over the HSM↔FP channel, and keeps
-    /// only the 2-byte `bulk_key_id` reference in its own vault.
+    /// AES bulk keys (GCM / XTS) are consumed by a dedicated bulk-crypto
+    /// backend rather than by the CP HSM core: the host performs bulk
+    /// encrypt/decrypt directly against that backend, addressed by this
+    /// `bulk_key_id`.  The HSM generates the key material, hands it to the
+    /// backend, and keeps only the 2-byte `bulk_key_id` reference in its
+    /// own vault.  The backend is platform-specific and defined by each
+    /// PAL implementation.
     ///
     /// # Parameters
     /// - `io` — caller I/O context (partition scope).
@@ -487,19 +490,19 @@ pub trait HsmVault {
     ///   ([`AesGcmBulk256`](HsmVaultKeyKind::AesGcmBulk256),
     ///   [`AesGcmBulk256Unapproved`](HsmVaultKeyKind::AesGcmBulk256Unapproved),
     ///   [`AesXtsBulk256`](HsmVaultKeyKind::AesXtsBulk256)).
-    /// - `session_id` — the id of the session creating the key.  The FP
-    ///   registration is scoped to this session so later fast-path GCM
-    ///   ops (which carry the session id) match.
+    /// - `session_id` — the id of the session creating the key.  The
+    ///   registration is scoped to this session so later bulk ops (which
+    ///   carry the session id) match.
     /// - `session_only` — `true` if the key is session-scoped
     ///   (auto-deleted on session close), `false` for a partition-wide
     ///   (app) key.
     ///
     /// # Returns
-    /// - `Ok(bulk_key_id)` — the FP-assigned key id (an
-    ///   `AesBulk256KeyId` packed into a `u16`).
+    /// - `Ok(bulk_key_id)` — the backend-assigned key id (packed into a
+    ///   `u16`).
     /// - `Err(HsmError::InvalidKeyType)` — `kind` is not an AES bulk kind.
-    /// - `Err(HsmError::NotEnoughSpace)` — no free FP bulk-key slot.
-    async fn fp_bulk_key_create(
+    /// - `Err(HsmError::NotEnoughSpace)` — no free bulk-key slot.
+    async fn bulk_key_create(
         &self,
         io: &impl HsmIo,
         key: &DmaBuf,
@@ -509,13 +512,13 @@ pub trait HsmVault {
     ) -> HsmResult<u16>;
 
     /// Delete a bulk key previously created with
-    /// [`fp_bulk_key_create`](Self::fp_bulk_key_create) from the FP
-    /// engine, freeing its slot.
+    /// [`bulk_key_create`](Self::bulk_key_create) from the bulk-crypto
+    /// backend, freeing its slot.
     ///
     /// # Parameters
     /// - `io` — caller I/O context (partition scope).
-    /// - `bulk_key_id` — the id returned by `fp_bulk_key_create`.
-    async fn fp_bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()>;
+    /// - `bulk_key_id` — the id returned by `bulk_key_create`.
+    async fn bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()>;
 
     /// Deletes a single key by ID.
     ///

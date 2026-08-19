@@ -88,8 +88,8 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     };
 
     // Authenticate-then-decrypt in place, copy out the primary key
-    // material, and import it — for AES-GCM bulk keys into the FP engine
-    // (the vault records only the returned `bulk_key_id` handle, and the
+    // material, and import it — for AES-GCM bulk keys into the bulk-crypto
+    // backend (the vault records only the returned `bulk_key_id` handle, and the
     // 32-byte material is kept in the per-IO arena so it can be re-masked
     // below); for every other kind into the vault inside an allocation
     // scope so the (multi-KB for RSA) import scratch is freed before the
@@ -157,7 +157,7 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     };
 
     // Read back the material to re-mask: for bulk keys the vault holds only
-    // the handle, so the FP-registered 32-byte material (kept alive above)
+    // the handle, so the backend-registered 32-byte material (kept alive above)
     // is the source; other kinds read the committed key from vault storage,
     // which also drives the public-key re-derivation.
     let priv_blob = match bulk_material {

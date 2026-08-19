@@ -83,9 +83,9 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
         .await?;
 
     // Commit the derived key to the vault, session-scoped iff requested.
-    // AES-GCM bulk keys are handed to the FP engine instead; the vault
-    // records only the returned `bulk_key_id` handle, which the response
-    // carries for later fast-path GCM ops.
+    // AES-GCM bulk keys are handed to the bulk-crypto backend instead; the
+    // vault records only the returned `bulk_key_id` handle, which the
+    // response carries for later bulk GCM ops.
     let (key_id, bulk_key_id): (u16, Option<u16>) = if target.is_bulk {
         let (handle, bulk_id) = super::bulk::register_bulk_key(
             pal,
