@@ -171,12 +171,13 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     unsafe {
         engine.set_ec_method(crate::sign::ecdsa_method()?)?;
     }
-    // Advertise the engine's EC EVP_PKEY_METHOD so `genpkey -engine azihsm`
-    // (ENGINE_get_pkey_meth) can generate keys on the HSM; unarmed contexts
-    // delegate to software keygen (see azihsm_ossl_engine_core::pkey_method).
-    azihsm_ossl_engine_core::pkey_method::register_ec_pkey_method::<crate::keygen::AzihsmEcKeygen>(
-        engine,
-    )?;
+    // Advertise the engine's EC EVP_PKEY_METHOD: HSM keygen for armed
+    // contexts, HSM ECDH derive for HSM-backed keys; everything else
+    // delegates to the built-ins (see azihsm_ossl_engine_core::pkey_method).
+    azihsm_ossl_engine_core::pkey_method::register_ec_pkey_method::<
+        crate::keygen::AzihsmEcKeygen,
+        crate::derive::AzihsmEcDerive,
+    >(engine)?;
     // Provider-parity serialization for HSM-backed keys (-text info block,
     // clean export refusal); software EC keys keep the built-in behavior via
     // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
