@@ -15,7 +15,7 @@ use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborGetCertReq;
 use azihsm_ddi_tbor_types::TborStatus;
 
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 /// Fetch the chain length via TBOR `GetCertChainInfo`.
 fn num_certs(ctx: &TestCtx) -> u8 {

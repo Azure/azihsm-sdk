@@ -16,6 +16,7 @@
 //!   SAPOTA thumbprint succeeds.
 
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::assertions;
 
 use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
@@ -1057,7 +1058,7 @@ fn second_part_init_without_erase_is_rejected() {
         )
         .expect_err("second PartInit without erase must be rejected");
 
-    crate::harness::assertions::assert_fw_rejects(
+    assertions::assert_fw_rejects(
         &err,
         azihsm_ddi_tbor_types::TborStatus::PtaKeyAlreadySet,
     );
@@ -1082,7 +1083,7 @@ fn part_init_with_stale_session_after_erase_is_rejected() {
         )
         .expect_err("PartInit with a session created before erase must be rejected");
 
-    crate::harness::assertions::assert_fw_rejects(
+    assertions::assert_fw_rejects(
         &err,
         azihsm_ddi_tbor_types::TborStatus::DefaultPskMustRotate,
     );

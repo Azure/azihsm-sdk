@@ -16,7 +16,7 @@ use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::CERT_THUMBPRINT_LEN;
 
-use crate::harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 
 #[test]
 fn round_trip() {
