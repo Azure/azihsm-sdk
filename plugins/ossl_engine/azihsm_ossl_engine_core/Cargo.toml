@@ -9,10 +9,16 @@ version = "0.1.0"
 
 [features]
 default = []
-engine = ["azihsm_ossl_engine_sys/engine", "dep:thiserror", "dep:tracing"]
+engine = [
+  "azihsm_ossl_engine_sys/engine",
+  "dep:parking_lot",
+  "dep:thiserror",
+  "dep:tracing",
+]
 
 [dependencies]
 azihsm_ossl_engine_sys.workspace = true
+parking_lot = { optional = true, workspace = true }
 thiserror = { optional = true, workspace = true }
 tracing = { optional = true, workspace = true }
 

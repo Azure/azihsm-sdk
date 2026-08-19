@@ -1,4 +1,4 @@
-# RUN: @bash -ea @file
+# RUN: @bash -ea @file @keydir
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #

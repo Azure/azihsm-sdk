@@ -30,29 +30,51 @@ fn search_path(relative: &str) -> String {
     path.to_str().expect("path is not valid UTF-8").to_owned()
 }
 
-// Serial: the scripts share the process-global mock HSM state and a keymat dir.
-#[test]
-#[serial]
-fn load_ec_key_via_engine() {
+/// Run one testfiles suite with its own keymat directory.
+///
+/// Each test gets `<base>/<name>` (base = `AZIHSM_ENGINE_TEST_KEYDIR` or the
+/// env.sh default): `#[serial]` serializes only within a process, and nextest
+/// runs every test in its own process, so suites sharing one keydir race
+/// env.sh's keymat creation (torn OBK/POTA files, seen as ASN1 parse errors).
+/// Per-test dirs remove the shared state entirely — each openssl process
+/// re-initializes the mock from its own dir's persisted MOBK.
+///
+/// The directory reaches the scripts as their first positional argument (the
+/// `@keydir` constant in the RUN lines, preferred by env.sh over the plain
+/// env var) — never by mutating this process's environment, which would be
+/// unsound with any concurrent env reader.
+fn run_cli_suite(name: &str, testfiles: &str) {
+    let base = std::env::var("AZIHSM_ENGINE_TEST_KEYDIR").unwrap_or_else(|_| {
+        let cwd = std::env::current_dir().expect("cwd");
+        format!("{}/target/test-keymat/engine-cli", cwd.display())
+    });
+    let keydir = format!("{base}/{name}");
+
     lit::run::tests(lit::event_handler::Default::default(), |config| {
-        config.add_search_path(search_path("testfiles/load"));
+        config.add_search_path(search_path(testfiles));
         config.add_extension("sh");
         config
             .constants
             .insert("bash".to_owned(), "/bin/bash".to_string());
+        config.constants.insert("keydir".to_owned(), keydir.clone());
     })
     .expect("lit CLI test failed");
 }
 
 #[test]
 #[serial]
+fn load_ec_key_via_engine() {
+    run_cli_suite("load", "testfiles/load");
+}
+
+#[test]
+#[serial]
+fn create_ec_key_via_engine() {
+    run_cli_suite("create_key", "testfiles/create_key");
+}
+
+#[test]
+#[serial]
 fn sign_ec_key_via_engine() {
-    lit::run::tests(lit::event_handler::Default::default(), |config| {
-        config.add_search_path(search_path("testfiles/sign"));
-        config.add_extension("sh");
-        config
-            .constants
-            .insert("bash".to_owned(), "/bin/bash".to_string());
-    })
-    .expect("lit CLI test failed");
+    run_cli_suite("sign", "testfiles/sign");
 }
