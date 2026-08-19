@@ -100,19 +100,16 @@ fn setup_keymat() -> PathBuf {
     dir
 }
 
-/// Load `key_id` through a dynamically loaded azihsm engine, returning the owning
-/// `*mut EVP_PKEY`. The engine's own functional ref (taken when the loader builds
-/// the key via `EC_KEY_new_method`) keeps it alive after we finish/free our
-/// handle, so the returned key stays valid.
+/// Dynamically load the azihsm engine and return the initialized `*mut ENGINE`
+/// (release with `ENGINE_finish` + `ENGINE_free`).
 #[allow(unsafe_code)]
-fn load_via_engine(engine_so: &str, key_id: &str) -> *mut ffi::EVP_PKEY {
+fn open_dynamic_engine(engine_so: &str) -> *mut ffi::ENGINE {
     let dynamic = CString::new("dynamic").unwrap();
     let so_path = CString::new("SO_PATH").unwrap();
     let so_val = CString::new(engine_so).unwrap();
     let id_cmd = CString::new("ID").unwrap();
     let id_val = CString::new("azihsm").unwrap();
     let load_cmd = CString::new("LOAD").unwrap();
-    let key = CString::new(key_id).unwrap();
 
     // SAFETY: standard dynamic-engine load sequence; every return code is checked.
     unsafe {
@@ -135,13 +132,27 @@ fn load_via_engine(engine_so: &str, key_id: &str) -> *mut ffi::EVP_PKEY {
             "LOAD"
         );
         assert_eq!(ffi::ENGINE_init(e), 1, "ENGINE_init");
+        e
+    }
+}
+
+/// Load `key_id` through a dynamically loaded azihsm engine, returning the owning
+/// `*mut EVP_PKEY`. The engine's own functional ref (taken when the loader builds
+/// the key via `EC_KEY_new_method`) keeps it alive after we finish/free our
+/// handle, so the returned key stays valid.
+#[allow(unsafe_code)]
+fn load_via_engine(engine_so: &str, key_id: &str) -> *mut ffi::EVP_PKEY {
+    let key = CString::new(key_id).unwrap();
+    let e = open_dynamic_engine(engine_so);
+    // SAFETY: e is the initialized ENGINE from open_dynamic_engine; the key
+    // holds the engine alive via its own ref after we release our handle.
+    unsafe {
         let pkey = ffi::ENGINE_load_private_key(
             e,
             key.as_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         );
-        // Release our handle; the key holds the engine alive via its own ref.
         ffi::ENGINE_finish(e);
         ffi::ENGINE_free(e);
         pkey
@@ -303,6 +314,97 @@ fn sign_ec_key_via_engine_capi() {
     );
 
     // SAFETY: raw is the owning EVP_PKEY from ENGINE_load_private_key.
+    unsafe { ffi::EVP_PKEY_free(raw) };
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Generate a key on the HSM through the real C keygen ABI —
+/// `EVP_PKEY_CTX_new_id(EVP_PKEY_EC, engine)` + `-pkeyopt`-equivalent control
+/// strings + `EVP_PKEY_keygen` — with every engine handle released before the
+/// key is used, pinning the lifetime guarantees. The generated key signs via
+/// the HSM and verifies in software; the masked blob lands on disk.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn keygen_ec_key_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+
+    let dir = setup_keymat();
+    let blob = dir.join("created_ec_key.bin");
+
+    let curve_key = CString::new("ec_paramgen_curve").unwrap();
+    let curve_val = CString::new("P-384").unwrap();
+    let masked_key = CString::new("azihsm.masked_key").unwrap();
+    let blob_arg = CString::new(blob.to_str().unwrap()).unwrap();
+    let session_key = CString::new("azihsm.session").unwrap();
+    let session_val = CString::new("false").unwrap();
+    let usage_key = CString::new("azihsm.key_usage").unwrap();
+    let usage_val = CString::new("digitalSignature").unwrap();
+
+    let e = open_dynamic_engine(&engine_so);
+    // SAFETY: standard EVP_PKEY keygen sequence; every return code is checked.
+    // Our engine handle is deliberately released right after the ctx is
+    // created: int_ctx_new (pmeth_lib.c) calls ENGINE_init(e) and the ctx
+    // keeps that functional reference until EVP_PKEY_CTX_free, so the early
+    // release pins exactly that guarantee. The ctx is then freed before the
+    // key is used — the generated key alone must keep the engine and HSM
+    // state alive, exactly like a loaded key.
+    let raw = unsafe {
+        let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_EC as std::ffi::c_int, e);
+        assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(EC, engine)");
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+        assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1, "EVP_PKEY_keygen_init");
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, curve_key.as_ptr(), curve_val.as_ptr()),
+            1,
+            "ec_paramgen_curve"
+        );
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, masked_key.as_ptr(), blob_arg.as_ptr()),
+            1,
+            "azihsm.masked_key"
+        );
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, session_key.as_ptr(), session_val.as_ptr()),
+            1,
+            "azihsm.session"
+        );
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, usage_key.as_ptr(), usage_val.as_ptr()),
+            1,
+            "azihsm.key_usage"
+        );
+        let mut pkey = std::ptr::null_mut();
+        assert_eq!(ffi::EVP_PKEY_keygen(ctx, &mut pkey), 1, "EVP_PKEY_keygen");
+        ffi::EVP_PKEY_CTX_free(ctx);
+        pkey
+    };
+    assert!(!raw.is_null(), "keygen returned a NULL EVP_PKEY");
+    assert!(
+        blob.is_file() && std::fs::metadata(&blob).unwrap().len() > 0,
+        "masked blob not written"
+    );
+
+    // Sign through the generated key (HSM sign_sig) and verify in software
+    // with the public half on the same EVP_PKEY; a tampered message must fail.
+    let msg = b"engine ecdsa signing with a capi-generated key";
+    let sig = evp_digest_sign_sha384(raw, msg);
+    assert!(!sig.is_empty(), "engine produced an empty signature");
+    assert_eq!(
+        evp_digest_verify_sha384(raw, msg, &sig),
+        1,
+        "generated key's signature must verify"
+    );
+    let tampered = b"engine ecdsa signing with a capi-generated key?";
+    assert_eq!(
+        evp_digest_verify_sha384(raw, tampered, &sig),
+        0,
+        "tampered message unexpectedly verified"
+    );
+
+    // SAFETY: raw is the owning EVP_PKEY from EVP_PKEY_keygen.
     unsafe { ffi::EVP_PKEY_free(raw) };
 
     let _ = std::fs::remove_dir_all(&dir);
