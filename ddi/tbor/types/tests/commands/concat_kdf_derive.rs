@@ -633,6 +633,11 @@ fn concat_kdf_empty_masked_secret_rejected_emu() {
 fn concat_kdf_garbage_masked_secret_rejected_emu() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
+    let mut garbage = fresh_masked_secret(&ctx, session.session_id);
+    // The masked-key metadata starts after the 8-byte envelope header and
+    // 12-byte IV. Corrupt its magic while preserving valid TBOR/envelope
+    // framing so firmware reaches masked-key metadata decoding.
+    garbage[20] ^= 0xff;
 
     ctx.expect_fw_reject(
         &TborConcatKdfDeriveReq {
@@ -642,16 +647,16 @@ fn concat_kdf_garbage_masked_secret_rejected_emu() {
             kdf_alg: CONCAT_KDF_ALG_X963,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
-            masked_secret: vec![0xa5; 32],
+            masked_secret: garbage,
             info: Vec::new(),
         },
-        TborStatus::TborInvalidFixedLength,
+        TborStatus::MaskedKeyDecodeFailed,
     );
 }
 
-/// Rejects derivation through an unknown session ID.
+/// Rejects derivation when the request session ID differs from the active session.
 #[test]
-fn concat_kdf_unknown_session_rejected_emu() {
+fn concat_kdf_session_id_mismatch_rejected_emu() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let ikm = fresh_masked_secret(&ctx, session.session_id);
