@@ -13,8 +13,10 @@ cargo-fuzz = true
 azihsm_ddi_emu = { path = "../ddi/emu" }
 azihsm_ddi_interface = { path = "../ddi/interface" }
 azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
+azihsm_ddi_tbor_test_harness = { features = [
+  "emu",
+], path = "../crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
-azihsm_ddi_tbor_test_harness = { features = ["emu"], path = "../crates/tbor_test_harness" }
 
 # dependencies for fuzzing
 libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
