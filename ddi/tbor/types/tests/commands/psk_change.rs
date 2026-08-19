@@ -25,8 +25,9 @@
 //!   trips the `#[tbor(buffer, len = 100)]` check on both emu and
 //!   hw; the FW response preserves the exact structural fault via
 //!   the `HsmError::Tbor*` → `HsmErr::Tbor*` mapping.
-//! * Hw-only: rotation to a well-known default PSK is rejected with
-//!   `TborStatus::InvalidArg`.
+//! * Rotation to a well-known default PSK is rejected with
+//!   `TborStatus::InvalidArg` (the core `PskChange` handler enforces
+//!   this, so it holds on both emu and hw).
 
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
@@ -41,7 +42,6 @@ use azihsm_ddi_tbor_test_harness::TborPskChangeReq;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
-#[cfg(not(feature = "emu"))]
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
@@ -366,7 +366,6 @@ fn psk_change_wrong_aad_length() {
 // in-tree Rust FW that emu runs. Emu accepts the rotation.
 // ===========================================================================
 
-#[cfg(not(feature = "emu"))]
 fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {
     let ctx = TestCtx::new();
     let session = ctx
@@ -378,25 +377,21 @@ fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8;
     assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_cu_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CU);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_cu_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_co_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_co_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CU);

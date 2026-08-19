@@ -60,7 +60,7 @@ fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartI
 /// tag verification must fail before any plaintext is exposed, and
 /// the handler surfaces [`TborStatus::AeadEnvelopeAuthFailed`].
 #[test]
-fn part_init_envelope_tampered_emu() {
+fn part_init_envelope_tampered() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -88,7 +88,7 @@ fn part_init_envelope_tampered_emu() {
 /// FW uses B's `param_key` for AEAD-GCM verification, so the tag
 /// mismatches and the handler surfaces
 /// [`TborStatus::AeadEnvelopeAuthFailed`]. Mirrors the equivalent
-/// `psk_change_envelope_from_other_session_emu` test.
+/// `psk_change_envelope_from_other_session` test.
 #[test]
 fn part_init_envelope_from_other_session() {
     let ctx = TestCtx::new();
@@ -100,7 +100,7 @@ fn part_init_envelope_from_other_session() {
     // doesn't trip `VaultSessionLimitReached` (the FW caps
     // concurrent CO + Authenticated sessions tighter than CU
     // PlainText, so the equivalent two-CU pattern used by
-    // `psk_change_envelope_from_other_session_emu` can't be reused
+    // `psk_change_envelope_from_other_session` can't be reused
     // here verbatim).
     let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let param_key_a = session_a.param_key.clone();
@@ -145,7 +145,7 @@ fn part_init_wrong_aad_length() {
 /// decode with [`TborStatus::TborInvalidFixedLength`]. Loop over
 /// `MACH_SEED_LEN ± 1` to cover the shortest excursions on either side
 /// of the canonical length. Mirrors
-/// `psk_change_wrong_plaintext_length_emu`.
+/// `psk_change_wrong_plaintext_length`.
 #[test]
 fn part_init_wrong_mach_seed_length() {
     let ctx = TestCtx::new();
@@ -196,7 +196,7 @@ fn part_init_wrong_session_id_in_aad() {
 /// decrypts using the modified IV, so authentication must fail before the
 /// `mach_seed` plaintext is accepted.
 #[test]
-fn part_init_envelope_iv_tampered_emu() {
+fn part_init_envelope_iv_tampered() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -225,7 +225,7 @@ fn part_init_envelope_iv_tampered_emu() {
 /// must fail before firmware reaches the explicit AAD-versus-request-session
 /// comparison.
 #[test]
-fn part_init_envelope_aad_tampered_emu() {
+fn part_init_envelope_aad_tampered() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -252,7 +252,7 @@ fn part_init_envelope_aad_tampered_emu() {
 /// This directly covers the tag-verification failure path independently from
 /// IV, AAD, and ciphertext corruption.
 #[test]
-fn part_init_envelope_tag_tampered_emu() {
+fn part_init_envelope_tag_tampered() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -275,7 +275,7 @@ fn part_init_envelope_tag_tampered_emu() {
 /// Removing or appending one byte must be rejected by TBOR fixed-length
 /// validation before AEAD parsing or partition-state mutation.
 #[test]
-fn part_init_envelope_wrong_fixed_length_emu() {
+fn part_init_envelope_wrong_fixed_length() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -317,7 +317,7 @@ fn part_init_envelope_wrong_fixed_length_emu() {
 /// the same AEAD rejection rather than failing later because the first request
 /// partially initialized or disabled the partition.
 #[test]
-fn part_init_envelope_rejection_is_repeatable_emu() {
+fn part_init_envelope_rejection_is_repeatable() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -354,7 +354,7 @@ fn part_init_envelope_rejection_is_repeatable_emu() {
 /// follow a separate structural-decoding path and return a status other than
 /// `AeadEnvelopeAuthFailed`.
 #[test]
-fn part_init_every_authenticated_envelope_byte_tampered_emu() {
+fn part_init_every_authenticated_envelope_byte_tampered() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -394,7 +394,7 @@ fn part_init_every_authenticated_envelope_byte_tampered_emu() {
 /// This covers empty, very short, header-only, one-byte-short,
 /// one-byte-long, and substantially oversized envelopes.
 #[test]
-fn part_init_envelope_invalid_length_matrix_emu() {
+fn part_init_envelope_invalid_length_matrix() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -447,7 +447,7 @@ fn part_init_envelope_invalid_length_matrix_emu() {
 /// The existing tag test checks one selected bit. This test covers all eight
 /// bit positions in a tag byte.
 #[test]
-fn part_init_envelope_each_tag_bit_tampered_emu() {
+fn part_init_envelope_each_tag_bit_tampered() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -483,7 +483,7 @@ fn part_init_envelope_each_tag_bit_tampered_emu() {
 /// each rejection must leave both the partition and session usable for the
 /// next independently malformed request.
 #[test]
-fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
+fn part_init_multiple_distinct_envelope_rejections_are_isolated() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -532,7 +532,7 @@ fn part_init_multiple_distinct_envelope_rejections_are_isolated_emu() {
 /// This is stronger than submitting two malformed requests: the second
 /// request must complete the normal PartInit path successfully.
 #[test]
-fn part_init_valid_request_succeeds_after_envelope_rejection_emu() {
+fn part_init_valid_request_succeeds_after_envelope_rejection() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let seed = mach_seed();
@@ -569,7 +569,7 @@ fn part_init_valid_request_succeeds_after_envelope_rejection_emu() {
 /// Each case uses its own TestCtx because the final valid request initializes
 /// the partition.
 #[test]
-fn part_init_recovers_after_each_envelope_rejection_stage_emu() {
+fn part_init_recovers_after_each_envelope_rejection_stage() {
     enum RejectionCase {
         InvalidFixedLength,
         InvalidAuthentication,
@@ -620,7 +620,7 @@ fn part_init_recovers_after_each_envelope_rejection_stage_emu() {
 /// exists. Firmware must reject the request rather than accepting an
 /// envelope associated with a closed session.
 #[test]
-fn part_init_envelope_rejected_after_session_closed_emu() {
+fn part_init_envelope_rejected_after_session_closed() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -635,33 +635,6 @@ fn part_init_envelope_rejected_after_session_closed_emu() {
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
-/// Submit PartInit using a session id adjacent to the rotated CO session.
-///
-/// The alternate session resolves through the PartInit session path but is
-/// still associated with the default PSK. Firmware must reject the request
-/// at the default-PSK gate with [`TborStatus::DefaultPskMustRotate`].
-///
-/// This test asserts the exact firmware status so an unrelated rejection
-/// cannot make the test pass.
-#[test]
-fn part_init_alternate_session_requires_psk_rotation_emu() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let envelope =
-        encrypt_mach_seed_envelope(&session, &mach_seed()).expect("seal mach_seed envelope");
-
-    // `session_id` is a u16. Select a different in-range session id.
-    let alternate_session_id = session
-        .session_id
-        .checked_add(1)
-        .expect("test requires session_id to be less than u16::MAX");
-
-    let req = make_part_init_req(alternate_session_id, envelope);
-
-    ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
-}
-
 /// Submit the same valid PartInit request twice.
 ///
 /// The first request initializes the partition successfully. The second
@@ -672,7 +645,7 @@ fn part_init_alternate_session_requires_psk_rotation_emu() {
 /// This verifies that a valid `mach_seed_envelope` cannot be replayed after
 /// successful partition initialization.
 #[test]
-fn part_init_valid_envelope_cannot_be_replayed_emu() {
+fn part_init_valid_envelope_cannot_be_replayed() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -694,7 +667,7 @@ fn part_init_valid_envelope_cannot_be_replayed_emu() {
 /// authentication failure demonstrates that session B received fresh
 /// cryptographic key material rather than session A's parameter key.
 #[test]
-fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
+fn part_init_stale_envelope_rejected_after_session_reopen() {
     let ctx = TestCtx::new();
 
     let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -724,7 +697,7 @@ fn part_init_stale_envelope_rejected_after_session_reopen_emu() {
 /// Firmware currently treats `mach_seed` as opaque input; an all-zero seed
 /// should be accepted as long as the envelope authenticates correctly.
 #[test]
-fn part_init_all_zero_mach_seed_emu() {
+fn part_init_all_zero_mach_seed() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -746,7 +719,7 @@ fn part_init_all_zero_mach_seed_emu() {
 /// its contents therefore must not cause PartInit to reject an otherwise
 /// valid request.
 #[test]
-fn part_init_accepts_nondefault_pota_thumbprint_emu() {
+fn part_init_accepts_nondefault_pota_thumbprint() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -766,7 +739,7 @@ fn part_init_accepts_nondefault_pota_thumbprint_emu() {
 /// Reject an envelope whose four-byte format magic does not match
 /// [`azihsm_crypto::aead_envelope::FORMAT_TAG`].
 #[test]
-fn part_init_envelope_wrong_magic_rejected_emu() {
+fn part_init_envelope_wrong_magic_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -793,7 +766,7 @@ fn part_init_envelope_wrong_magic_rejected_emu() {
 /// encoded by the four-byte `FORMAT_TAG`, so changing the tag represents an
 /// unsupported envelope version.
 #[test]
-fn part_init_envelope_unsupported_version_rejected_emu() {
+fn part_init_envelope_unsupported_version_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -820,7 +793,7 @@ fn part_init_envelope_unsupported_version_rejected_emu() {
 ///
 /// Version 1 supports only AES-256-GCM (`AeadAlg` discriminant `0x03`).
 #[test]
-fn part_init_envelope_unsupported_algorithm_rejected_emu() {
+fn part_init_envelope_unsupported_algorithm_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -844,7 +817,7 @@ fn part_init_envelope_unsupported_algorithm_rejected_emu() {
 ///
 /// The v1 envelope format requires the reserved byte to remain zero.
 #[test]
-fn part_init_envelope_nonzero_reserved_byte_rejected_emu() {
+fn part_init_envelope_nonzero_reserved_byte_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 

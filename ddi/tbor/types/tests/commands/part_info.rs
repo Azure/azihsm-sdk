@@ -8,7 +8,7 @@
 //! `part_info_repeated_stable` and
 //! `part_info_independent_of_session_state` guard against per-call
 //! or session-scoped state leaking into the out-of-session handler.
-//! `part_info_reflects_part_init_transition_emu` covers the
+//! `part_info_reflects_part_init_transition` covers the
 //! `Enabled → Initializing` lifecycle transition (emu only, since it
 //! is destructive to partition state).
 //!
@@ -27,7 +27,6 @@ const PART_STATE_ENABLED: u8 = 2;
 
 /// `PartState::Initializing` discriminant — the state a partition enters
 /// after a successful `PartInit` binds its PTA / policy / POTA thumb.
-#[cfg(feature = "emu")]
 const PART_STATE_INITIALIZING: u8 = 4;
 
 /// Assert the invariant device-level fields PartInfo reports for the
@@ -134,9 +133,8 @@ fn part_info_independent_of_session_state() {
 /// SVN) are unchanged across the transition. This is the property that
 /// makes `PartInfo` more than a static device probe — it is the live
 /// view of the bound partition's posture.
-#[cfg(feature = "emu")]
 #[test]
-fn part_info_reflects_part_init_transition_emu() {
+fn part_info_reflects_part_init_transition() {
     use crate::commands::part_init::bootstrap_rotated_co;
     use crate::commands::part_init::known_good_part_policy;
     use crate::commands::part_init::mach_seed;

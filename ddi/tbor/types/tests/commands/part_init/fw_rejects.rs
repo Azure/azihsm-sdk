@@ -193,7 +193,7 @@ fn part_init_reject_bad_policy() {
 /// Even though the supplied policy is malformed, a CO session still using
 /// the default PSK must receive `DefaultPskMustRotate`, not `InvalidArg`.
 #[test]
-fn part_init_default_psk_gate_precedes_policy_decode_emu() {
+fn part_init_default_psk_gate_precedes_policy_decode() {
     let ctx = TestCtx::new();
 
     let session = ctx
@@ -218,7 +218,7 @@ fn part_init_default_psk_gate_precedes_policy_decode_emu() {
 /// must reject the request with `DefaultPskMustRotate` before the handler
 /// can return `InvalidPermissions`.
 #[test]
-fn part_init_default_psk_gate_precedes_cu_role_gate_emu() {
+fn part_init_default_psk_gate_precedes_cu_role_gate() {
     let ctx = TestCtx::new();
 
     let session = ctx
@@ -240,7 +240,7 @@ fn part_init_default_psk_gate_precedes_cu_role_gate_emu() {
 /// Although the policy is malformed, the rotated CU session must be
 /// rejected with `InvalidPermissions` before policy decoding occurs.
 #[test]
-fn part_init_cu_role_gate_precedes_policy_decode_emu() {
+fn part_init_cu_role_gate_precedes_policy_decode() {
     let ctx = TestCtx::new();
 
     let session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
@@ -261,7 +261,7 @@ fn part_init_cu_role_gate_precedes_policy_decode_emu() {
 /// This complements the all-zero policy test and exercises a malformed
 /// policy whose fields decode to their maximum encoded values.
 #[test]
-fn part_init_reject_all_ff_policy_emu() {
+fn part_init_reject_all_ff_policy() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -282,7 +282,7 @@ fn part_init_reject_all_ff_policy_emu() {
 /// This provides a more targeted version of the all-zero-policy test and
 /// verifies that `version.major == 0` is independently rejected.
 #[test]
-fn part_init_reject_zero_policy_major_version_emu() {
+fn part_init_reject_zero_policy_major_version() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -308,7 +308,7 @@ fn part_init_reject_zero_policy_major_version_emu() {
 /// This also helps detect accidental state mutation after the first
 /// rejected request.
 #[test]
-fn part_init_bad_policy_rejection_is_repeatable_emu() {
+fn part_init_bad_policy_rejection_is_repeatable() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -338,7 +338,7 @@ fn part_init_bad_policy_rejection_is_repeatable_emu() {
 /// rotated CO session must still succeed. If the failed request partially
 /// changed partition state, the valid retry would be rejected.
 #[test]
-fn part_init_bad_policy_does_not_mutate_partition_state_emu() {
+fn part_init_bad_policy_does_not_mutate_partition_state() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -363,7 +363,7 @@ fn part_init_bad_policy_does_not_mutate_partition_state_emu() {
 /// This is the basic positive-path test for PartInit. The other tests
 /// depend on this combination representing a valid initialization request.
 #[test]
-fn part_init_valid_rotated_co_request_succeeds_emu() {
+fn part_init_valid_rotated_co_request_succeeds() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -380,7 +380,7 @@ fn part_init_valid_rotated_co_request_succeeds_emu() {
 /// After the CU request is rejected with `InvalidPermissions`, a valid rotated-CO
 /// `PartInit` request must still succeed.
 #[test]
-fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
+fn part_init_cu_rejection_does_not_mutate_partition_state() {
     let ctx = TestCtx::new();
 
     let cu_session = rotate_psk_and_open_role(&ctx, CU, SessionType::PlainText, &ROTATED_CU_PSK);
@@ -395,9 +395,11 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let co_ctx = TestCtx::new_with_path(ctx.path());
+    let co_session = bootstrap_rotated_co(&co_ctx, &ROTATED_CO_PSK);
 
-    ctx.part_init(&co_session, &seed, &policy, &thumb)
+    co_ctx
+        .part_init(&co_session, &seed, &policy, &thumb)
         .expect("valid CO PartInit must succeed after CU rejection");
 }
 
@@ -409,7 +411,7 @@ fn part_init_cu_rejection_does_not_mutate_partition_state_emu() {
 /// rotated CO PSK is not valid after `PartInit` changes partition
 /// authentication state.
 #[test]
-fn part_init_rejects_second_initialization_emu() {
+fn part_init_rejects_second_initialization() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -433,7 +435,7 @@ fn part_init_rejects_second_initialization_emu() {
 /// A separate `TestCtx` is used for each case because the final valid request
 /// initializes that case's partition.
 #[test]
-fn part_init_policy_rejection_matrix_does_not_mutate_state_emu() {
+fn part_init_policy_rejection_matrix_does_not_mutate_state() {
     enum BadPolicyCase {
         AllZero,
         AllOnes,
@@ -478,7 +480,7 @@ fn part_init_policy_rejection_matrix_does_not_mutate_state_emu() {
 /// Submit multiple malformed policies through the same session, followed
 /// by one valid request.
 #[test]
-fn part_init_session_remains_usable_after_policy_rejections_emu() {
+fn part_init_session_remains_usable_after_policy_rejections() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -522,7 +524,7 @@ fn part_init_session_remains_usable_after_policy_rejections_emu() {
 /// session and rotating the CO PSK, a valid `PartInit` request must still
 /// succeed.
 #[test]
-fn part_init_default_psk_rejection_does_not_mutate_partition_state_emu() {
+fn part_init_default_psk_rejection_does_not_mutate_partition_state() {
     let ctx = TestCtx::new();
 
     let default_session = ctx
@@ -560,7 +562,7 @@ fn part_init_default_psk_rejection_does_not_mutate_partition_state_emu() {
 ///
 /// A valid rotated-CO `PartInit` request must still succeed afterward.
 #[test]
-fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
+fn part_init_multiple_rejections_do_not_mutate_partition_state() {
     let ctx = TestCtx::new();
 
     let policy = known_good_part_policy();
@@ -589,11 +591,13 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 
-    // Open an authorized CO session for handler-level validation.
-    let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    // Open an authorized CO session on a separate handle: the CU session
+    // remains live, and each hardware handle permits only one session.
+    let co_ctx = TestCtx::new_with_path(ctx.path());
+    let co_session = bootstrap_rotated_co(&co_ctx, &ROTATED_CO_PSK);
 
     // Third rejection: malformed policy.
-    let err = ctx
+    let err = co_ctx
         .part_init(&co_session, &seed, &bad_policy, &thumb)
         .expect_err("malformed PartPolicy must be rejected");
 
@@ -601,7 +605,8 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
 
     // None of the preceding rejections may have initialized or otherwise
     // mutated the partition.
-    ctx.part_init(&co_session, &seed, &policy, &thumb)
+    co_ctx
+        .part_init(&co_session, &seed, &policy, &thumb)
         .expect("valid PartInit must succeed after multiple rejected requests");
 }
 
@@ -613,7 +618,7 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state_emu() {
 /// not unexpectedly alter those buffers when firmware rejects the
 /// request.
 #[test]
-fn part_init_rejection_does_not_modify_input_buffers_emu() {
+fn part_init_rejection_does_not_modify_input_buffers() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -655,7 +660,7 @@ fn part_init_rejection_does_not_modify_input_buffers_emu() {
 /// [`TborStatus::InvalidArg`] status. After the rejected requests, a valid
 /// policy must still initialize the partition successfully.
 #[test]
-fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
+fn part_init_repeated_policy_rejections_preserve_session_and_state() {
     const ATTEMPTS: usize = 5;
 
     let ctx = TestCtx::new();
@@ -690,7 +695,7 @@ fn part_init_repeated_policy_rejections_preserve_session_and_state_emu() {
 /// request must fail with [`TborStatus::InvalidSessionType`] before a
 /// `PartInit` request can be submitted.
 #[test]
-fn part_init_co_plaintext_session_rejected_emu() {
+fn part_init_co_plaintext_session_rejected() {
     let ctx = TestCtx::new();
 
     let err = ctx
@@ -702,7 +707,7 @@ fn part_init_co_plaintext_session_rejected_emu() {
 
 /// A valid-version policy must reject an unsupported POTA public-key kind.
 #[test]
-fn part_init_rejects_invalid_pub_key_kind_with_valid_version_emu() {
+fn part_init_rejects_invalid_pub_key_kind_with_valid_version() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -723,7 +728,7 @@ fn part_init_rejects_invalid_pub_key_kind_with_valid_version_emu() {
 
 /// A valid-version policy must reject an invalid POTA public-key length.
 #[test]
-fn part_init_rejects_invalid_pub_key_len_with_valid_version_emu() {
+fn part_init_rejects_invalid_pub_key_len_with_valid_version() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -745,7 +750,7 @@ fn part_init_rejects_invalid_pub_key_len_with_valid_version_emu() {
 /// A correctly encoded optional backup partition public key must be
 /// accepted as part of an otherwise valid policy.
 #[test]
-fn part_init_accepts_valid_backup_pub_key_emu() {
+fn part_init_accepts_valid_backup_pub_key() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -762,7 +767,7 @@ fn part_init_accepts_valid_backup_pub_key_emu() {
 
 /// Every reserved policy-flag bit must be rejected independently.
 #[test]
-fn part_init_rejects_each_reserved_policy_flag_bit_emu() {
+fn part_init_rejects_each_reserved_policy_flag_bit() {
     for reserved_bit in RESERVED_POLICY_FLAG_BITS {
         let ctx = TestCtx::new();
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -784,7 +789,7 @@ fn part_init_rejects_each_reserved_policy_flag_bit_emu() {
 /// A present backup partition public key with an unsupported key kind
 /// must be rejected.
 #[test]
-fn part_init_rejects_backup_pub_key_with_invalid_kind_emu() {
+fn part_init_rejects_backup_pub_key_with_invalid_kind() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -809,7 +814,7 @@ fn part_init_rejects_backup_pub_key_with_invalid_kind_emu() {
 /// A zero length is intentionally not tested here because `len == 0`
 /// represents an absent optional backup key and is valid.
 #[test]
-fn part_init_rejects_backup_pub_key_with_wrong_length_emu() {
+fn part_init_rejects_backup_pub_key_with_wrong_length() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -831,7 +836,7 @@ fn part_init_rejects_backup_pub_key_with_wrong_length_emu() {
 /// Backup partition public-key lengths immediately below and above the
 /// required P-384 length must be rejected.
 #[test]
-fn part_init_rejects_backup_pub_key_boundary_lengths_emu() {
+fn part_init_rejects_backup_pub_key_boundary_lengths() {
     for bad_len in [
         EXPECTED_BACKUP_PUB_KEY_LEN - 1,
         EXPECTED_BACKUP_PUB_KEY_LEN + 1,
@@ -861,7 +866,7 @@ fn part_init_rejects_backup_pub_key_boundary_lengths_emu() {
 /// SATA length, and all unrelated fields valid, so the rejection
 /// directly exercises SATA key-kind validation.
 #[test]
-fn part_init_rejects_invalid_sata_pub_key_kind_emu() {
+fn part_init_rejects_invalid_sata_pub_key_kind() {
     let ctx = TestCtx::new();
 
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -883,7 +888,7 @@ fn part_init_rejects_invalid_sata_pub_key_kind_emu() {
 /// SATA public-key lengths immediately below and above the required
 /// P-384 length must both be rejected.
 #[test]
-fn part_init_rejects_invalid_sata_pub_key_boundary_lengths_emu() {
+fn part_init_rejects_invalid_sata_pub_key_boundary_lengths() {
     for bad_len in [95u16, 97u16] {
         let ctx = TestCtx::new();
 

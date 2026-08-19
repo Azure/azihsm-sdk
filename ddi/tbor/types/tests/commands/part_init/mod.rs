@@ -41,8 +41,8 @@ use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 
 mod crypto_rejects;
 mod fw_rejects;
-mod happy_path;
 mod sd_config;
+mod success_path;
 
 pub(crate) const CO: u8 = 0;
 
@@ -113,17 +113,6 @@ pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN
     let mut bytes = known_good_part_policy();
     // POTA slot layout: kind(2) ‖ len(2) ‖ data(96); overwrite the data.
     bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
-    bytes
-}
-
-/// Like [`known_good_part_policy`] but with a caller-supplied `flags`
-/// byte, so tests can toggle individual `PolicyFlags` bits (e.g.
-/// `PolicyFlags::INCLUDE_FMC_CDI`) while keeping every other field
-/// byte-identical to the canonical fixture.
-pub(crate) fn part_policy_with_flags(flags: u8) -> [u8; PART_POLICY_LEN] {
-    const OFF_FLAGS: usize = 418;
-    let mut bytes = known_good_part_policy();
-    bytes[OFF_FLAGS] = flags;
     bytes
 }
 
