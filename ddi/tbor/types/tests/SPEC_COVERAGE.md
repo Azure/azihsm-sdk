@@ -143,14 +143,14 @@ full native certificate-chain validation remains M1.5 work.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| First instantiation returns a 164-byte `local_mk_backup` and transitions to `Initialized` | ✅ | `part_final::part_final_smoke_roundtrip` | Also verifies identity stability and session reopen |
-| Restore a prior backup after reset with the same provisioning identity | ✅ | `part_final::part_final_accepts_prior_backup_across_reset` | Acceptance smoke test until a Local-scope artifact consumer exists |
-| Tampered prior backup is rejected without consuming the valid retry path | ✅ | `part_final::part_final_rejects_tampered_backup_and_allows_retry` | Verifies lifecycle and identity remain unchanged |
-| Command before `PartInit` is rejected | ✅ | `part_final::part_final_rejects_before_part_init` | Completes a valid retry afterward |
-| Re-supplied policy must match the `PartInit` policy hash | ✅ | `part_final::part_final_rejects_policy_mismatch_and_allows_retry` | Verifies rollback to `Initializing` |
-| PTA chain must anchor to policy POTA | ✅ (emu) | `part_final::part_final_rejects_unanchored_chain` | M1.0 hardware uses the documented surrogate; full chain validation is planned for M1.5 |
-| PTA certificate key must match the partition PTA key | ✅ (emu) | `part_final::part_final_rejects_pta_mismatch` | M1.0 hardware uses the documented surrogate |
-| `Initialized` partition continues serving host IO | ✅ | `part_final::part_final_smoke_roundtrip` | Checks `PartInfo` before and after reopening CO |
+| First instantiation returns a 164-byte `local_mk_backup` | ✅ | `part_final::part_final_smoke_roundtrip` | Original test body |
+| Restore a prior backup with the same provisioning identity | ✅ | `part_final::part_final_restore_prev_backup` | Original test body |
+| Tampered prior backup is rejected | 🟡 | `part_final::part_final_reject_tampered_backup` | Original test body; exact status is not pinned |
+| Command before `PartInit` is rejected | 🟡 | `part_final::part_final_reject_wrong_state` | Original test body; exact status is not pinned |
+| Re-supplied policy must match the `PartInit` policy hash | 🟡 | `part_final::part_final_reject_policy_mismatch` | Original test body; exact status is not pinned |
+| PTA chain must anchor to policy POTA | 🟡 (emu) | `part_final::part_final_reject_unanchored_chain` | Original test body; exact status is not pinned and full native chain validation is planned for M1.5 |
+| PTA certificate key must match the partition PTA key | 🟡 (emu) | `part_final::part_final_reject_pta_mismatch` | Original test body; exact status is not pinned and M1.0 hardware uses the documented surrogate |
+| `Initialized` partition continues serving host IO | ✅ | `part_final::part_final_partition_serves_io_when_initialized` | Original dedicated regression |
 | CU session is rejected with `InvalidPermissions` and CO can retry | ✅ | `part_final::part_final_rejects_cu_and_allows_co_retry` | Rotates the CU PSK first so the role gate is reached |
 | Backup from a different machine-seed identity is rejected | ✅ | `part_final::part_final_rejects_backup_from_different_mach_seed` | Verifies identity/state remain stable and fresh finalization still succeeds |
 | Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
@@ -196,6 +196,11 @@ and could be tightened to assert a specific `TborStatus`:
 2. `session_close::session_close_double_close` — likely `SessionNotFound`.
 3. `open_session::session_open_finish_unknown_session_id_emu` — likely `SessionNotFound` or `SessionNotPending`.
 4. `open_session::open_session_double_finish_emu` — likely `SessionNotPending`.
+5. `part_final::part_final_reject_tampered_backup` — expected `AesGcmDecryptTagDoesNotMatch`.
+6. `part_final::part_final_reject_wrong_state` — expected `InvalidArg`.
+7. `part_final::part_final_reject_policy_mismatch` — expected `InvalidArg`.
+8. `part_final::part_final_reject_unanchored_chain` — expected `InvalidArg`.
+9. `part_final::part_final_reject_pta_mismatch` — expected `PartFinalPtaMismatch`.
 
 ---
 
