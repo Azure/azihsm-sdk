@@ -861,11 +861,17 @@ async fn dump_cert_chain_openssl() {
 }
 
 // ---------------------------------------------------------------------------
-// SHA Digest tests (NIST FIPS 180-4 KAT: message = "abc")
+// SHA Digest session gate (ShaDigest is an InSession command)
 // ---------------------------------------------------------------------------
+//
+// `ShaDigest` is classified `SessionCtrl::InSession`, so a request that
+// carries no session is rejected by the session-flag gate before dispatch.
+// KAT coverage of the digest computation lives in the full-stack in-session
+// tests (`api/tests/src/algo/hash.rs`) and the std hash driver unit tests
+// (`fw/plat/std/pal/src/drivers/hash.rs`).
 
 #[tokio::test]
-async fn ddi_sha1_digest() {
+async fn ddi_sha_digest_requires_session() {
     use azihsm_ddi_mbor_codec::MborByteArray;
     use azihsm_ddi_mbor_types::*;
 
@@ -873,13 +879,16 @@ async fn ddi_sha1_digest() {
     let mut src = AlignedBuf::new(4096);
     let mut dst = AlignedBuf::new(4096);
 
+    // Default SQE session ctrl is NoSession, which does not match the
+    // InSession classification of ShaDigest, so the request is rejected with
+    // InvalidArg before any hash is computed.
     let req_hdr = DdiReqHdr {
         rev: Some(DdiApiRev { major: 1, minor: 0 }),
         op: DdiOp::ShaDigest,
         sess_id: None,
     };
     let req_data = DdiShaDigestReq {
-        sha_mode: DdiHashAlgorithm::Sha1,
+        sha_mode: DdiHashAlgorithm::Sha256,
         msg: MborByteArray::from_slice(b"abc").expect("msg"),
     };
     let req_len =
@@ -895,158 +904,19 @@ async fn ddi_sha1_digest() {
         .await
         .expect("io");
 
-    assert_eq!(cqe_status(&c), 0, "expected Success");
+    // Session-flag mismatch is a post-decode error: CQE Success, DDI body
+    // carries InvalidArg.
+    assert_eq!(cqe_status(&c), 0, "expected CQE Success for session error");
     let resp_len = (c[0] & 0xFFFF) as usize;
+    assert!(resp_len > 0, "expected DDI error response");
 
     let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
     let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode resp hdr");
-    assert_eq!(resp_hdr.status, DdiStatus::Success);
-
-    let resp_data: DdiShaDigestResp = decoder.decode_data().expect("decode resp data");
-
-    let expected = hex::decode("a9993e364706816aba3e25717850c26c9cd0d89d").unwrap();
-    assert_eq!(resp_data.digest.as_slice(), expected.as_slice());
-}
-
-#[tokio::test]
-async fn ddi_sha256_digest() {
-    use azihsm_ddi_mbor_codec::MborByteArray;
-    use azihsm_ddi_mbor_types::*;
-
-    ensure_io_part().await;
-    let mut src = AlignedBuf::new(4096);
-    let mut dst = AlignedBuf::new(4096);
-
-    let req_hdr = DdiReqHdr {
-        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        op: DdiOp::ShaDigest,
-        sess_id: None,
-    };
-    let req_data = DdiShaDigestReq {
-        sha_mode: DdiHashAlgorithm::Sha256,
-        msg: MborByteArray::from_slice(b"abc").expect("msg"),
-    };
-    let req_len =
-        DdiEncoder::encode_parts(req_hdr, req_data, src.as_mut_slice(), false).expect("encode req");
-
-    let c = HSM
-        .io(
-            sqe_with_dma(901, &src.as_slice()[..req_len], dst.as_mut_slice()),
-            IO_PID,
-            0,
-            0,
-        )
-        .await
-        .expect("io");
-
-    assert_eq!(cqe_status(&c), 0, "expected Success");
-    let resp_len = (c[0] & 0xFFFF) as usize;
-
-    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
-    let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode resp hdr");
-    assert_eq!(resp_hdr.status, DdiStatus::Success);
-
-    let resp_data: DdiShaDigestResp = decoder.decode_data().expect("decode resp data");
-
-    let expected =
-        hex::decode("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad").unwrap();
-    assert_eq!(resp_data.digest.as_slice(), expected.as_slice());
-}
-
-#[tokio::test]
-async fn ddi_sha384_digest() {
-    use azihsm_ddi_mbor_codec::MborByteArray;
-    use azihsm_ddi_mbor_types::*;
-
-    ensure_io_part().await;
-    let mut src = AlignedBuf::new(4096);
-    let mut dst = AlignedBuf::new(4096);
-
-    let req_hdr = DdiReqHdr {
-        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        op: DdiOp::ShaDigest,
-        sess_id: None,
-    };
-    let req_data = DdiShaDigestReq {
-        sha_mode: DdiHashAlgorithm::Sha384,
-        msg: MborByteArray::from_slice(b"abc").expect("msg"),
-    };
-    let req_len =
-        DdiEncoder::encode_parts(req_hdr, req_data, src.as_mut_slice(), false).expect("encode req");
-
-    let c = HSM
-        .io(
-            sqe_with_dma(902, &src.as_slice()[..req_len], dst.as_mut_slice()),
-            IO_PID,
-            0,
-            0,
-        )
-        .await
-        .expect("io");
-
-    assert_eq!(cqe_status(&c), 0, "expected Success");
-    let resp_len = (c[0] & 0xFFFF) as usize;
-
-    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
-    let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode resp hdr");
-    assert_eq!(resp_hdr.status, DdiStatus::Success);
-
-    let resp_data: DdiShaDigestResp = decoder.decode_data().expect("decode resp data");
-
-    let expected = hex::decode(
-        "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed\
-         8086072ba1e7cc2358baeca134c825a7",
-    )
-    .unwrap();
-    assert_eq!(resp_data.digest.as_slice(), expected.as_slice());
-}
-
-#[tokio::test]
-async fn ddi_sha512_digest() {
-    use azihsm_ddi_mbor_codec::MborByteArray;
-    use azihsm_ddi_mbor_types::*;
-
-    ensure_io_part().await;
-    let mut src = AlignedBuf::new(4096);
-    let mut dst = AlignedBuf::new(4096);
-
-    let req_hdr = DdiReqHdr {
-        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        op: DdiOp::ShaDigest,
-        sess_id: None,
-    };
-    let req_data = DdiShaDigestReq {
-        sha_mode: DdiHashAlgorithm::Sha512,
-        msg: MborByteArray::from_slice(b"abc").expect("msg"),
-    };
-    let req_len =
-        DdiEncoder::encode_parts(req_hdr, req_data, src.as_mut_slice(), false).expect("encode req");
-
-    let c = HSM
-        .io(
-            sqe_with_dma(903, &src.as_slice()[..req_len], dst.as_mut_slice()),
-            IO_PID,
-            0,
-            0,
-        )
-        .await
-        .expect("io");
-
-    assert_eq!(cqe_status(&c), 0, "expected Success");
-    let resp_len = (c[0] & 0xFFFF) as usize;
-
-    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
-    let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode resp hdr");
-    assert_eq!(resp_hdr.status, DdiStatus::Success);
-
-    let resp_data: DdiShaDigestResp = decoder.decode_data().expect("decode resp data");
-
-    let expected = hex::decode(
-        "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
-         2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
-    )
-    .unwrap();
-    assert_eq!(resp_data.digest.as_slice(), expected.as_slice());
+    assert_eq!(
+        resp_hdr.status,
+        DdiStatus::InvalidArg,
+        "expected InvalidArg for session-less ShaDigest"
+    );
 }
 
 // ---------------------------------------------------------------------------

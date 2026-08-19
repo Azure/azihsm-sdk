@@ -344,7 +344,7 @@ impl<P: HsmPal> Hsm<P> {
             )?;
 
         // ── Phase 2: parse TBOR header, validate session, dispatch ─
-        let (resp, session_ctrl) = {
+        let (resp, session_ctrl, cqe_sess_id, cqe_closed) = {
             // Capture `opcode` via a short-lived shared reborrow so
             // the parsed `RequestView` is dropped before `dispatch`
             // takes a mutable borrow of the same buffer.  AEAD-path
@@ -374,7 +374,7 @@ impl<P: HsmPal> Hsm<P> {
                         ddi::tbor::encode_tbor_err(opcode, HsmError::InvalidArg, buf)
                     })
                     .op_status(HostStatus::INTERNAL_ERROR)?;
-                (resp, session_ctrl)
+                (resp, session_ctrl, None, false)
             } else {
                 let dispatch_result = ddi::tbor::dispatch(
                     self.pal(),
@@ -386,13 +386,33 @@ impl<P: HsmPal> Hsm<P> {
                     undo,
                 )
                 .await;
-                let resp: &DmaBuf = dispatch_result.or_else(|err| {
+                // Mirror `handle_mbor_op`: a successful session-establishing
+                // command reports its allocated id in `session_id` (which sets
+                // `session_id_valid`), and a successful SessionClose additionally
+                // sets `session_closed`. The host driver registers/drops the
+                // session against the calling file handle from these fields —
+                // without them every follow-up in-session TBOR ioctl is rejected
+                // with `NoExistingSession` before reaching the firmware. Both are
+                // left cleared on any dispatch failure.
+                let (cqe_sess_id, cqe_closed) = match &dispatch_result {
+                    Ok(out) => match session_ctrl {
+                        SessionCtrl::Open => (out.session_id, false),
+                        // The dispatcher already proved the body `session_id`
+                        // matches the SQE one for close, so use the SQE value
+                        // directly rather than threading it back out.
+                        SessionCtrl::Close => (Some(params.sqe_session_id), true),
+                        _ => (None, false),
+                    },
+                    Err(_) => (None, false),
+                };
+
+                let resp: &DmaBuf = dispatch_result.map(|out| out.resp).or_else(|err| {
                     self.pal()
                         .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))
                         .op_status(HostStatus::INTERNAL_ERROR)
                         .map(|b| &*b)
                 })?;
-                (resp, session_ctrl)
+                (resp, session_ctrl, cqe_sess_id, cqe_closed)
             }
         };
 
@@ -408,7 +428,13 @@ impl<P: HsmPal> Hsm<P> {
                 HostStatus::DMA_TXN_ERROR,
             )?;
 
-        Ok(HsmOpStatus::new(resp_len, session_ctrl, None, None, false))
+        Ok(HsmOpStatus::new(
+            resp_len,
+            session_ctrl,
+            cqe_sess_id,
+            None,
+            cqe_closed,
+        ))
     }
 
     /// Validates the SQE for an MBOR / TBOR IO command and extracts the

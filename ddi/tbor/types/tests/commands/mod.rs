@@ -15,6 +15,8 @@ pub mod ecc_sign;
 pub mod ecdh_derive;
 pub mod forward_compat;
 pub mod fw_error_decode;
+pub mod get_cert;
+pub mod get_cert_chain_info;
 pub mod get_unwrapping_key;
 pub mod hash;
 pub mod hkdf_derive;
