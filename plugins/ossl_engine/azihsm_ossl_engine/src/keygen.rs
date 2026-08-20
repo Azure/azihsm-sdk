@@ -172,12 +172,11 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .build()
                 .map_err(|e| EngineError::wrap("build public key props", e))?;
             let mut algo = HsmEccKeyGenAlgo::default();
-            let (priv_key, pub_key) =
+            // The public half is a software wrapper without a device-side
+            // handle (its delete_key is a documented no-op).
+            let (priv_key, _pub) =
                 HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
                     .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-            // The EC_KEY carries the public point (pub_key_der_vec on the
-            // private handle); the public HSM handle is unused.
-            crate::context::delete_hsm_key(pub_key, "generated EC public key");
             let exported = priv_key
                 .masked_key_vec()
                 .map_err(|e| EngineError::wrap("export masked key", e))

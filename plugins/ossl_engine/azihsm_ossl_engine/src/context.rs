@@ -53,10 +53,10 @@ pub struct EngineData {
     /// HSM private keys loaded via the engine's `load_private_key` path. Owned
     /// here — never via an `EC_KEY` ex_data free callback, which would leave a
     /// libcrypto-held function pointer into this `.so` (see the module docs of
-    /// [`azihsm_ossl_engine_core::exdata`]). Each key's `Drop` deletes it from
-    /// the HSM; that runs when this `EngineData` is dropped by the destroy
-    /// handler, while the `.so` is loaded. Declared before `hsm` so it drops
-    /// first, while the session is still open.
+    /// [`azihsm_ossl_engine_core::exdata`]). HSM keys are not deleted by their
+    /// own drop: they are deleted explicitly, on `release_loaded_key` and by
+    /// this type's `Drop` at engine teardown (which runs while the `.so` is
+    /// loaded and the session still open).
     ///
     /// Keys therefore accumulate for the engine's lifetime: repeated loads (even
     /// of the same URI) each retain a handle. That is fine for the usual load-key-

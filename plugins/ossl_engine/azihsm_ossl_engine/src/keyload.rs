@@ -134,13 +134,10 @@ fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
 fn load_ec(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY> {
     let priv_key = data.with_session(|session| {
         let mut algo = HsmEccKeyUnmaskAlgo {};
+        // The public half is a software wrapper without a device-side handle
+        // (its delete_key is a documented no-op).
         HsmKeyManager::unmask_key_pair(session, &mut algo, masked)
-            .map(|(private, public)| {
-                // The EC_KEY carries the public point (pub_key_der_vec on the
-                // private handle); the public HSM handle is unused.
-                crate::context::delete_hsm_key(public, "unmasked EC public key");
-                private
-            })
+            .map(|(private, _public)| private)
             .map_err(|e| EngineError::wrap("EC key unmask", e))
     })?;
 
