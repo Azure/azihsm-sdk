@@ -146,30 +146,45 @@ impl From<DdiError> for HsmError {
     }
 }
 
-pub(crate) type HsmKeyHandle = u32;
-
-/// Marker handle for a non-resident key: its material lives only as a
-/// masked blob in its props, never in the vault. Delete is a no-op
-/// since there is nothing device-side to release.
+/// Handle to a key managed by the API layer.
+///
+/// The key's material always lives (masked) in its [`HsmKeyProps`]; this
+/// only tracks whether the device *also* holds a resident copy.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) struct HsmNoKeyHandle;
+pub(crate) enum HsmKeyHandle {
+    /// MBOR: device-resident vault key id, packed `key_id` (low 16 bits)
+    /// `| bulk_key_id` (high 16 bits).
+    VaultKeyId(u32),
+    /// Non-resident key: material lives only as the masked blob in its
+    /// props (e.g. TBOR keys, security-domain sealing keys). There is
+    /// nothing device-side to address or delete.
+    NoKeyId,
+}
 
 /// Extracts the key ID from a packed HSM key handle.
 ///
 /// The key ID is stored in the low 16 bits of the handle.
 pub(crate) fn get_key_id(handle: HsmKeyHandle) -> u16 {
-    (handle & 0xFFFF) as u16
+    match handle {
+        HsmKeyHandle::VaultKeyId(id) => (id & 0xFFFF) as u16,
+        HsmKeyHandle::NoKeyId => 0xFFFF,
+    }
 }
 
 /// Extracts the optional bulk key ID from a packed HSM key handle.
 ///
 /// Returns `None` when the bulk ID field is set to `0xFFFF`.
 pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
-    let bulk_id = (handle >> 16) as u16;
-    if bulk_id == 0xFFFF {
-        None
-    } else {
-        Some(bulk_id)
+    match handle {
+        HsmKeyHandle::VaultKeyId(id) => {
+            let bulk_id = (id >> 16) as u16;
+            if bulk_id == 0xFFFF {
+                None
+            } else {
+                Some(bulk_id)
+            }
+        }
+        HsmKeyHandle::NoKeyId => None,
     }
 }
 
@@ -178,7 +193,7 @@ pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
 /// When `bulk_key_id` is `None`, the bulk field is set to `0xFFFF`.
 pub(crate) fn to_key_handle(key_id: u16, bulk_key_id: Option<u16>) -> HsmKeyHandle {
     let bulk_part = (bulk_key_id.unwrap_or(0xFFFF) as u32) << 16;
-    bulk_part | (key_id as u32)
+    HsmKeyHandle::VaultKeyId(bulk_part | (key_id as u32))
 }
 
 /// Builds a DDI request header with optional session ID and API revision.

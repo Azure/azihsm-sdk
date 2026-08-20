@@ -14,7 +14,7 @@ use super::*;
 // A security-domain sealing key held as a masked (AEAD-GCM-256) blob.
 // Non-resident: not stored on the device or in the vault; the masked
 // blob is cached in props and unmasked on-use.
-define_hsm_key!(pub HsmSealingKey, ddi::HsmNoKeyHandle);
+define_hsm_key!(pub HsmSealingKey, ddi::HsmKeyHandle);
 
 /// Host mirror of the firmware `HsmKeyScope` — a key's lifecycle /
 /// visibility domain. Carried on the wire as its raw `u8` discriminant
@@ -118,9 +118,9 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         HsmSealingKey::validate_props(&props)?;
 
         // Cache the masked blob and public key in props. The key is
-        // non-resident (`HsmNoKeyHandle`) until unmasked on-use. Masked
-        // under the partition-local masking key so the blob survives
-        // across launches for unmask-on-use.
+        // non-resident (`NoKeyId`) until unmasked on-use. Masked under
+        // the partition-local masking key so the blob survives across
+        // launches for unmask-on-use.
         let (masked_key, pub_key_der) = ddi::sd_sealing_key_gen(session, KeyScope::Local as u8)?;
         let mut props = props;
         props.set_masked_key(&masked_key);
@@ -128,7 +128,7 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         Ok(HsmSealingKey::new(
             session.clone(),
             props,
-            ddi::HsmNoKeyHandle,
+            ddi::HsmKeyHandle::NoKeyId,
         ))
     }
 }
