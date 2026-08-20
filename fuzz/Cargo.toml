@@ -17,7 +17,7 @@ azihsm_ddi_tbor_test_harness = { features = [
   "emu",
 ], path = "../crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
-zerocopy = { features = ["derive"], version = "0.8.17" }
+zerocopy = { version = "0.8.17" }
 
 # dependencies for fuzzing
 libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
