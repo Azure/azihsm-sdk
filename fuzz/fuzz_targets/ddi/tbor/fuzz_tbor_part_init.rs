@@ -26,7 +26,9 @@ struct FuzzInput {
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
     /// Fixed-length fuzzed SATA thumbprint.
     sata_thumbprint: [u8; SATA_THUMBPRINT_LEN],
-    /// Fixed-length fuzzed optional SAPOTA thumbprint.
+    /// Whether to include a SAPOTA thumbprint (empty = absent).
+    sapota_present: bool,
+    /// Fixed-length fuzzed SAPOTA thumbprint (used when `sapota_present`).
     sapota_thumbprint: [u8; SAPOTA_THUMBPRINT_LEN],
 }
 
