@@ -53,7 +53,23 @@ impl Copyright {
     const COPYRIGHT_LINE1: &str = "Copyright (c) Microsoft Corporation.";
     const COPYRIGHT_LINE2: &str = "Licensed under the MIT License.";
 
+    /// Directories vendored from third parties. Their files keep the
+    /// upstream copyright header; stamping the Microsoft header over it
+    /// (what --fix does) would misattribute the original authors, so both
+    /// the check and the fix skip them.
+    const THIRD_PARTY_DIRS: &[&str] = &["plugins/pkcs11/include/pkcs11-v3.1"];
+
+    fn is_third_party(path: &Path) -> bool {
+        Self::THIRD_PARTY_DIRS
+            .iter()
+            .any(|dir| path.starts_with(dir))
+    }
+
     fn check_copyright(path: &Path, fix: bool) -> anyhow::Result<()> {
+        if Self::is_third_party(path) {
+            return Ok(());
+        }
+
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -211,6 +227,23 @@ mod tests {
             ext
         ));
         path
+    }
+
+    #[test]
+    fn third_party_dirs_are_exempt() {
+        use std::path::Path;
+
+        assert!(Copyright::is_third_party(Path::new(
+            "plugins/pkcs11/include/pkcs11-v3.1/pkcs11.h"
+        )));
+        // Component-wise match: a sibling dir sharing the prefix string is
+        // not exempt.
+        assert!(!Copyright::is_third_party(Path::new(
+            "plugins/pkcs11/include/pkcs11-v3.1-extras/pkcs11.h"
+        )));
+        assert!(!Copyright::is_third_party(Path::new(
+            "plugins/pkcs11/src/p11_module.c"
+        )));
     }
 
     #[test]
