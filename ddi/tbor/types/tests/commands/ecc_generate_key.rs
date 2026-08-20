@@ -224,9 +224,9 @@ fn ecc_generate_key_unknown_scope_rejected_emu() {
     );
 }
 
-/// Rejects generation bound to an unknown session identifier.
+/// Rejects a request whose `session_id` does not match the active session on the device handle.
 #[test]
-fn ecc_generate_key_unknown_session_rejected_emu() {
+fn ecc_generate_key_mismatched_session_id_rejected_emu() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     assert_ne!(
