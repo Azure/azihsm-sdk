@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Cross-platform X.509 PTA certificate-chain fixtures for `PartFinal`.
+//! Cross-platform X.509 certificate-chain fixtures for TBOR integration tests.
 //!
 //! `PartFinal` validates that the supplied PTA certificate chain is
 //! anchored to the policy `POTAPubKey` and that its leaf public key is the
@@ -26,6 +26,7 @@ use azihsm_crypto::EcdsaAlgo;
 use azihsm_crypto::HashAlgo;
 use azihsm_crypto::HashOp;
 use azihsm_crypto::SignOp;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 
 /// Length of a SEC1 uncompressed P-384 point (`0x04 ‖ X ‖ Y`).
 pub const SEC1_PUB_LEN: usize = 97;
@@ -95,6 +96,56 @@ impl CaKey {
         s.copy_from_slice(&sig[48..96]);
         (r, s)
     }
+}
+
+/// Reusable POTA root fixture for tests that provision a partition.
+///
+/// Owns the POTA signing key, its self-signed root certificate, and the
+/// certificate thumbprint supplied to `PartInit`. Command tests remain
+/// responsible for constructing their command-specific partition policy.
+pub struct PotaFixture {
+    ca: CaKey,
+    root_der: Vec<u8>,
+    thumbprint: [u8; POTA_THUMBPRINT_LEN],
+}
+
+impl PotaFixture {
+    /// Generate a P-384 POTA key and its self-signed root certificate.
+    pub fn generate() -> Self {
+        let ca = CaKey::generate();
+        let root_der = build_root(&ca);
+        let thumbprint = sha384(&root_der);
+        Self {
+            ca,
+            root_der,
+            thumbprint,
+        }
+    }
+
+    /// Raw POTA public coordinates for the partition policy.
+    pub fn raw_pub(&self) -> [u8; RAW_PUB_LEN] {
+        self.ca.raw_pub()
+    }
+
+    /// SHA-384 thumbprint of the self-signed POTA root certificate.
+    pub fn thumbprint(&self) -> &[u8; POTA_THUMBPRINT_LEN] {
+        &self.thumbprint
+    }
+
+    /// Issue a root-to-PTA chain for the partition PTA public key.
+    pub fn chain_for(&self, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> PtaChain {
+        PtaChain {
+            root_der: self.root_der.clone(),
+            pta_der: build_pta_intermediate(pta_pub_sec1, &self.ca),
+        }
+    }
+}
+
+fn sha384(input: &[u8]) -> [u8; POTA_THUMBPRINT_LEN] {
+    let mut hash = HashAlgo::sha384();
+    let mut out = [0u8; POTA_THUMBPRINT_LEN];
+    hash.hash(input, Some(&mut out)).expect("SHA-384");
+    out
 }
 
 /// SHA-1 of a SEC1 public key (Subject / Authority Key Identifier).

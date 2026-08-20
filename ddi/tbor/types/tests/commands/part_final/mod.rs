@@ -18,8 +18,6 @@
 //! restored. That stronger continuity test must be added when such an API is
 //! available.
 
-use azihsm_crypto::HashAlgo;
-use azihsm_crypto::HashOp;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborPartInfoResp;
@@ -27,7 +25,6 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
@@ -38,11 +35,10 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::sata_thumbprint;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::x509_fixture::build_pta_intermediate;
-use crate::harness::x509_fixture::build_root;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
+use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::PtaChain;
 use crate::harness::x509_fixture::SEC1_PUB_LEN;
 use crate::harness::SessionHandshake;
@@ -53,35 +49,6 @@ use crate::harness::ROTATED_CU_PSK;
 
 const PART_STATE_INITIALIZING: u8 = 4;
 const PART_STATE_INITIALIZED: u8 = 5;
-
-struct PotaFixture {
-    ca: CaKey,
-    root_der: Vec<u8>,
-    policy: [u8; PART_POLICY_LEN],
-    thumbprint: [u8; POTA_THUMBPRINT_LEN],
-}
-
-impl PotaFixture {
-    fn generate() -> Self {
-        let ca = CaKey::generate();
-        let root_der = build_root(&ca);
-        let policy = part_policy_with_pota(&ca.raw_pub());
-        let thumbprint = sha384(&root_der);
-        Self {
-            ca,
-            root_der,
-            policy,
-            thumbprint,
-        }
-    }
-
-    fn chain_for(&self, pta_pub: &[u8; SEC1_PUB_LEN]) -> PtaChain {
-        PtaChain {
-            root_der: self.root_der.clone(),
-            pta_der: build_pta_intermediate(pta_pub, &self.ca),
-        }
-    }
-}
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
 /// the PTA public key from the returned CSR and certify it under `pota`
@@ -100,11 +67,8 @@ fn issue_pta_chain(
     make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr))
 }
 
-fn sha384(input: &[u8]) -> [u8; POTA_THUMBPRINT_LEN] {
-    let mut hash = HashAlgo::sha384();
-    let mut out = [0u8; POTA_THUMBPRINT_LEN];
-    hash.hash(input, Some(&mut out)).expect("SHA-384");
-    out
+fn pota_policy(fixture: &PotaFixture) -> [u8; PART_POLICY_LEN] {
+    part_policy_with_pota(&fixture.raw_pub())
 }
 
 fn read_part_info(ctx: &TestCtx) -> TborPartInfoResp {
@@ -152,12 +116,13 @@ fn run_part_init(
     fixture: &PotaFixture,
     seed: &[u8; MACH_SEED_LEN],
 ) -> [u8; SEC1_PUB_LEN] {
+    let policy = pota_policy(fixture);
     let resp = ctx
         .part_init_sd(
             session,
             seed,
-            &fixture.policy,
-            &fixture.thumbprint,
+            &policy,
+            fixture.thumbprint(),
             &sata_thumbprint(),
             None,
         )
@@ -172,13 +137,9 @@ fn finalize(
     previous_backup: &[u8],
     chain: &PtaChain,
 ) -> Vec<u8> {
+    let policy = pota_policy(fixture);
     let resp = ctx
-        .part_final(
-            session,
-            &fixture.policy,
-            previous_backup,
-            &chain.der_items(),
-        )
+        .part_final(session, &policy, previous_backup, &chain.der_items())
         .expect("PartFinal roundtrip");
     assert_eq!(
         resp.local_mk_backup.len(),
@@ -469,7 +430,7 @@ fn part_final_rejects_backup_from_different_mach_seed() {
     let err = ctx
         .part_final(
             &second_session,
-            &fixture.policy,
+            &pota_policy(&fixture),
             &backup,
             &chain_b.der_items(),
         )
@@ -510,7 +471,7 @@ fn part_final_rejects_cu_and_allows_co_retry() {
 
     let cu_session = open_rotated_cu(&ctx);
     let err = ctx
-        .part_final(&cu_session, &fixture.policy, &[], &chain.der_items())
+        .part_final(&cu_session, &pota_policy(&fixture), &[], &chain.der_items())
         .expect_err("CU PartFinal must be rejected");
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
     ctx.session_close(cu_session.session_id)
@@ -542,7 +503,7 @@ fn part_final_rejects_second_finalize() {
     let before_reject = read_part_info(&ctx);
 
     let err = ctx
-        .part_final(&session, &fixture.policy, &[], &chain.der_items())
+        .part_final(&session, &pota_policy(&fixture), &[], &chain.der_items())
         .expect_err("a second PartFinal must be rejected");
     assert_fw_rejects(&err, TborStatus::InvalidArg);
     let after_reject = read_part_info(&ctx);
