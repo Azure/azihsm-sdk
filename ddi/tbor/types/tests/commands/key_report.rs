@@ -27,13 +27,12 @@ use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 
-use crate::commands::part_init::bootstrap_rotated_co;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::SessionOpenInitOptions;
+use crate::harness::bootstrap_rotated_co;
+use crate::harness::bootstrap_rotated_cu;
 use crate::harness::TestCtx;
 use crate::harness::CO_PSK_ID;
-use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
@@ -245,20 +244,7 @@ fn key_report_rejected_on_cu_session_emu() {
     // Rotate the CU PSK out of the default so the dispatcher's default-PSK
     // gate does not fire first; then reopen a CU session under it.  CU
     // sessions are pinned to `SessionType::PlainText`.
-    let bootstrap = ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("open_session must succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU session");
-
-    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("CU session_open_init under rotated PSK");
-    let session = ctx
-        .session_open_finish(pending)
-        .expect("CU session_open_finish under rotated PSK");
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
 
     // KeyReport is Crypto-Officer-only: the handler's role gate (checked
     // before the state/scope gates) rejects a CU session.

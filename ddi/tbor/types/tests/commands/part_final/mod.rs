@@ -18,7 +18,6 @@
 //! restored. That stronger continuity test must be added when such an API is
 //! available.
 
-use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborPartInfoResp;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -26,15 +25,15 @@ use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::open_co_with;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::sata_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
+use crate::harness::bootstrap_rotated_co;
+use crate::harness::bootstrap_rotated_cu;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
@@ -42,9 +41,8 @@ use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::PtaChain;
 use crate::harness::x509_fixture::SEC1_PUB_LEN;
 use crate::harness::SessionHandshake;
-use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
 
 const PART_STATE_INITIALIZING: u8 = 4;
@@ -147,22 +145,6 @@ fn finalize(
         "PartFinal backup must have the wire-pinned envelope length",
     );
     resp.local_mk_backup
-}
-
-fn open_rotated_cu(ctx: &TestCtx) -> SessionHandshake {
-    let bootstrap = ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("open CU default");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU");
-
-    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("CU init under rotated PSK");
-    ctx.session_open_finish(pending)
-        .expect("CU finish under rotated PSK")
 }
 
 /// Happy path: `PartInit` then a first-instantiation `PartFinal`
@@ -469,7 +451,7 @@ fn part_final_rejects_cu_and_allows_co_retry() {
     ctx.session_close(co_session.session_id)
         .expect("close PartInit CO session");
 
-    let cu_session = open_rotated_cu(&ctx);
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let err = ctx
         .part_final(&cu_session, &pota_policy(&fixture), &[], &chain.der_items())
         .expect_err("CU PartFinal must be rejected");

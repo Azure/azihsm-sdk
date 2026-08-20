@@ -28,19 +28,18 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
+use crate::harness::bootstrap_rotated_co;
+use crate::harness::bootstrap_rotated_cu;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::SessionHandshake;
-use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::CO_PSK_ID as CO;
-use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
@@ -158,20 +157,7 @@ fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
     // gate does not fire first; then reopen a CU session under the rotated
     // PSK.  CU sessions are pinned to `SessionType::PlainText` (CO-only is
     // `Authenticated`).
-    let bootstrap = ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("open_session must succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU session");
-
-    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("CU session_open_init under rotated PSK");
-    let session = ctx
-        .session_open_finish(pending)
-        .expect("CU session_open_finish under rotated PSK");
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
 
     // SdSealingKeyGen is Crypto-Officer-only: the handler's role gate
     // (checked before the scope/state gates) rejects a CU session.

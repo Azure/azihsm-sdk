@@ -31,14 +31,14 @@ use x509::X509CertificateOp;
 use x509::X509Csr;
 use x509::X509CsrOp;
 
-use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
 use super::pota_thumbprint;
-use super::ROTATED_CO_PSK;
 use crate::harness::assertions::assert_fw_rejects;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// Runs the supplied cleanup function when this value goes out of scope,
 /// including during panic unwinding.

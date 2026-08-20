@@ -9,8 +9,7 @@
 //! `part_info_independent_of_session_state` guard against per-call
 //! or session-scoped state leaking into the out-of-session handler.
 //! `part_info_reflects_part_init_transition` covers the
-//! `Enabled → Initializing` lifecycle transition (emu only, since it
-//! is destructive to partition state).
+//! `Enabled → Initializing` lifecycle transition.
 //!
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
@@ -137,11 +136,11 @@ fn part_info_independent_of_session_state() {
 /// view of the bound partition's posture.
 #[test]
 fn part_info_reflects_part_init_transition() {
-    use crate::commands::part_init::bootstrap_rotated_co;
     use crate::commands::part_init::known_good_part_policy;
     use crate::commands::part_init::mach_seed;
     use crate::commands::part_init::pota_thumbprint;
-    use crate::commands::part_init::ROTATED_CO_PSK;
+    use crate::harness::bootstrap_rotated_co;
+    use crate::harness::ROTATED_CO_PSK;
 
     let ctx = TestCtx::new();
 
