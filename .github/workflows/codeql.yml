@@ -2,9 +2,9 @@ name: "CodeQL Advanced"
 
 on:
   push:
-    branches: [ main, dev, fw-main ]
+    branches: [ main, dev, fw-main, feature/pkcs11 ]
   pull_request:
-    branches: [ main, dev, fw-main ]
+    branches: [ main, dev, fw-main, feature/pkcs11 ]
   merge_group:
     branches: [ main, dev, fw-main ]
   workflow_dispatch:
