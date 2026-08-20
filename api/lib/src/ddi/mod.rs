@@ -164,10 +164,12 @@ pub(crate) enum HsmKeyHandle {
 /// Extracts the key ID from a packed HSM key handle.
 ///
 /// The key ID is stored in the low 16 bits of the handle.
-pub(crate) fn get_key_id(handle: HsmKeyHandle) -> u16 {
+///
+/// Returns [`HsmError::InvalidKey`] for a non-resident key.
+pub(crate) fn get_key_id(handle: HsmKeyHandle) -> HsmResult<u16> {
     match handle {
-        HsmKeyHandle::VaultKeyId(id) => (id & 0xFFFF) as u16,
-        HsmKeyHandle::NoKeyId => 0xFFFF,
+        HsmKeyHandle::VaultKeyId(id) => Ok((id & 0xFFFF) as u16),
+        HsmKeyHandle::NoKeyId => Err(HsmError::InvalidKey),
     }
 }
 
@@ -277,5 +279,18 @@ impl From<HsmKeyFlags> for DdiTargetKeyMetadata {
         }
 
         meta
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_key_id_rejects_non_resident_handle() {
+        assert!(matches!(
+            get_key_id(HsmKeyHandle::NoKeyId),
+            Err(HsmError::InvalidKey)
+        ));
     }
 }

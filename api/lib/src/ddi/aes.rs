@@ -217,7 +217,7 @@ fn aes_cbc_encrypt_decrypt(
     let req = DdiAesEncryptDecryptCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AesEncryptDecrypt, &key.session()),
         data: DdiAesEncryptDecryptReq {
-            key_id: ddi::get_key_id(key.handle()),
+            key_id: ddi::get_key_id(key.handle())?,
             op,
             msg: MborByteArray::from_slice(&input).map_hsm_err(HsmError::InternalError)?,
             iv: MborByteArray::from_slice(iv).map_hsm_err(HsmError::InternalError)?,

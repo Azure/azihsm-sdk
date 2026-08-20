@@ -98,7 +98,7 @@ fn delete_key_raw_no_res(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResul
     let req = DdiDeleteKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::DeleteKey, session),
         data: DdiDeleteKeyReq {
-            key_id: ddi::get_key_id(key_id),
+            key_id: ddi::get_key_id(key_id)?,
         },
         ext: None,
     };
@@ -282,7 +282,7 @@ pub(crate) fn generate_key_report(
     let req = DdiAttestKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AttestKey, session),
         data: DdiAttestKeyReq {
-            key_id: ddi::get_key_id(key_handle),
+            key_id: ddi::get_key_id(key_handle)?,
             report_data: MborByteArray::from_slice(report_data)
                 .map_hsm_err(HsmError::InternalError)?,
         },
