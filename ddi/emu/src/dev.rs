@@ -432,102 +432,24 @@ impl DdiDev for DdiEmuDev {
 
     fn exec_op_fp_gcm_slice(
         &self,
-        mode: DdiAesOp,
-        gcm_params: DdiAesGcmParams,
-        src_buf: &[u8],
-        dst_buf: &mut [u8],
-        tag: &mut Option<[u8; 16]>,
-        iv: &mut Option<[u8; 12]>,
-        fips_approved: &mut bool,
+        _mode: DdiAesOp,
+        _gcm_params: DdiAesGcmParams,
+        _src_buf: &[u8],
+        _dst_buf: &mut [u8],
+        _tag: &mut Option<[u8; 16]>,
+        _iv: &mut Option<[u8; 12]>,
+        _fips_approved: &mut bool,
     ) -> Result<usize, DdiError> {
-        let encrypt = match mode {
-            DdiAesOp::Encrypt => true,
-            DdiAesOp::Decrypt => false,
-            _ => return Err(DdiError::InvalidParameter),
-        };
-
-        // Validate the fast-path request against the handle's tracked
-        // session, mirroring the mock backend: the op is bound to the
-        // live session id and the app's short id.
-        {
-            let sess = self.session.lock();
-            let current = sess
-                .session_id
-                .ok_or(DdiError::DdiStatus(DdiStatus::FileHandleNoExistingSession))?;
-            if current != gcm_params.session_id {
-                return Err(DdiError::DdiStatus(
-                    DdiStatus::FileHandleSessionIdDoesNotMatch,
-                ));
-            }
-            if let Some(short_app_id) = sess.short_app_id {
-                if short_app_id != gcm_params.short_app_id {
-                    return Err(DdiError::DdiStatus(DdiStatus::InvalidShortAppId));
-                }
-            }
-        }
-
-        // Decryption requires the authentication tag.
-        if !encrypt && gcm_params.tag.is_none() {
-            return Err(DdiError::DdiStatus(DdiStatus::NoTagProvided));
-        }
-
-        if dst_buf.len() < src_buf.len() {
-            return Err(DdiError::DdiStatus(DdiStatus::AesGcmInvalidBufferSize));
-        }
-
-        // Bulk key handles are 16-bit; reject an out-of-range id instead of
-        // silently truncating it to a different (possibly valid) handle.
-        let key_id = u16::try_from(gcm_params.key_id).map_err(|_| DdiError::InvalidParameter)?;
-
-        let out = self
-            .handle
-            .block_on(self.hsm.fp_gcm(
-                EMU_PID,
-                encrypt,
-                key_id,
-                gcm_params.iv,
-                gcm_params.aad.clone(),
-                gcm_params.tag,
-                src_buf.to_vec(),
-            ))
-            .map_err(|e| DdiError::DdiStatus(DdiStatus(u32::from(e))))?;
-
-        let total = out.data.len();
-        dst_buf[..total].copy_from_slice(&out.data);
-        *tag = out.tag;
-        *iv = out.iv;
-        *fips_approved = out.fips_approved;
-        Ok(total)
+        Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))
     }
 
     fn exec_op_fp_gcm(
         &self,
-        mode: DdiAesOp,
-        gcm_params: DdiAesGcmParams,
-        src_buf: Vec<u8>,
+        _mode: DdiAesOp,
+        _gcm_params: DdiAesGcmParams,
+        _src_buf: Vec<u8>,
     ) -> Result<DdiAesGcmResult, DdiError> {
-        let mut dst_buf = vec![0u8; src_buf.len()];
-        let mut tag = None;
-        let mut iv = None;
-        let mut fips_approved = false;
-
-        let total = self.exec_op_fp_gcm_slice(
-            mode,
-            gcm_params,
-            &src_buf,
-            &mut dst_buf,
-            &mut tag,
-            &mut iv,
-            &mut fips_approved,
-        )?;
-        dst_buf.truncate(total);
-
-        Ok(DdiAesGcmResult {
-            tag,
-            iv,
-            fips_approved,
-            data: dst_buf,
-        })
+        Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))
     }
 
     fn exec_op_fp_xts_slice(

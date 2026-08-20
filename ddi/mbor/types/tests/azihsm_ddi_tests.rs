@@ -7,7 +7,6 @@ mod integration {
     pub mod aes_cbc;
     pub mod aes_cbc_smoke;
     pub mod aes_gcm_bulk_stress;
-    pub mod aes_gcm_smoke;
     pub mod aes_generate;
     pub mod aes_generate_smoke;
     pub mod aes_xts_bulk_stress;

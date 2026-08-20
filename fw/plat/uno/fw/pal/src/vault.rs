@@ -276,14 +276,13 @@ fn part_id_to_pcie_fn(part_id: u8) -> HsmResult<u8> {
 /// bulk-key capacity scales with the partition's owned tables.
 fn fp_slot_alloc(res_mask: u128) -> HsmResult<(u8, u8)> {
     FP_SLOTS.with(|slots| {
-        for table in 0..NUM_FP_TABLES {
+        for (table, used) in slots.iter_mut().enumerate().take(NUM_FP_TABLES) {
             if res_mask & (1u128 << table) == 0 {
                 continue; // table not owned by this partition
             }
-            let used = slots[table];
             for bit in 0..FP_MAX_SLOTS_PER_PART {
-                if used & (1 << bit) == 0 {
-                    slots[table] = used | (1 << bit);
+                if *used & (1 << bit) == 0 {
+                    *used |= 1 << bit;
                     return Ok((table as u8, bit));
                 }
             }

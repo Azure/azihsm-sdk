@@ -481,7 +481,9 @@ pub trait HsmVault {
     /// `bulk_key_id`.  The HSM generates the key material, hands it to the
     /// backend, and keeps only the 2-byte `bulk_key_id` reference in its
     /// own vault.  The backend is platform-specific and defined by each
-    /// PAL implementation.
+    /// PAL implementation; the default returns
+    /// [`HsmError::UnsupportedCmd`], so a platform gains bulk-key support
+    /// only by overriding this method.
     ///
     /// # Parameters
     /// - `io` — caller I/O context (partition scope).
@@ -502,23 +504,32 @@ pub trait HsmVault {
     ///   `u16`).
     /// - `Err(HsmError::InvalidKeyType)` — `kind` is not an AES bulk kind.
     /// - `Err(HsmError::NotEnoughSpace)` — no free bulk-key slot.
+    /// - `Err(HsmError::UnsupportedCmd)` — platform has no bulk backend.
     async fn bulk_key_create(
         &self,
-        io: &impl HsmIo,
-        key: &DmaBuf,
-        kind: HsmVaultKeyKind,
-        session_id: HsmSessId,
-        session_only: bool,
-    ) -> HsmResult<u16>;
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _kind: HsmVaultKeyKind,
+        _session_id: HsmSessId,
+        _session_only: bool,
+    ) -> HsmResult<u16> {
+        Err(HsmError::UnsupportedCmd)
+    }
 
     /// Delete a bulk key previously created with
     /// [`bulk_key_create`](Self::bulk_key_create) from the bulk-crypto
     /// backend, freeing its slot.
     ///
+    /// The default returns [`HsmError::UnsupportedCmd`]; platforms with a
+    /// bulk backend override it alongside
+    /// [`bulk_key_create`](Self::bulk_key_create).
+    ///
     /// # Parameters
     /// - `io` — caller I/O context (partition scope).
     /// - `bulk_key_id` — the id returned by `bulk_key_create`.
-    async fn bulk_key_delete(&self, io: &impl HsmIo, bulk_key_id: u16) -> HsmResult<()>;
+    async fn bulk_key_delete(&self, _io: &impl HsmIo, _bulk_key_id: u16) -> HsmResult<()> {
+        Err(HsmError::UnsupportedCmd)
+    }
 
     /// Deletes a single key by ID.
     ///

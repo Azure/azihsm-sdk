@@ -54,7 +54,6 @@ mod buf_pool;
 mod cert;
 mod drivers;
 mod ecc;
-mod fp_gcm;
 mod gdma;
 mod hash;
 mod hmac;
@@ -74,7 +73,6 @@ mod worker;
 pub use alloc::StdScopedAlloc;
 
 use azihsm_fw_hsm_pal_traits::*;
-pub use fp_gcm::FpGcmOutput;
 pub use io::HsmIoRequest;
 pub use io::StdHsmIo;
 pub use pal::StdHsmPal;

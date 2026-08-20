@@ -114,21 +114,6 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
             PartCommand::Disable { pid, reply } => {
                 let _ = reply.send(pal.part_disable_internal(pid));
             }
-            PartCommand::FpGcm {
-                pid,
-                encrypt,
-                key_id,
-                iv,
-                aad,
-                tag,
-                input,
-                reply,
-            } => {
-                let _ = reply.send(
-                    pal.fp_gcm_internal(pid, encrypt, key_id, iv, aad, tag, input)
-                        .await,
-                );
-            }
         }
     }
 }
@@ -385,42 +370,6 @@ impl StdHsm {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let cmd = PartCommand::Disable {
             pid,
-            reply: reply_tx,
-        };
-        self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
-        reply_rx.await.expect("partition command reply dropped")
-    }
-
-    /// Fast-path AES-256-GCM encrypt or decrypt using the bulk key
-    /// `key_id` in partition `pid`'s vault.
-    ///
-    /// Reproduces the hardware FP GCM engine, which the host addresses
-    /// through the dedicated `exec_op_fp_gcm` device entry point rather
-    /// than the DDI command pipeline.  `encrypt` selects the direction;
-    /// on decrypt, `tag` must carry the authentication tag.
-    ///
-    /// See [`StdHsmPal::fp_gcm_internal`] for the key-type, permission,
-    /// and approved/unapproved IV semantics.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn fp_gcm(
-        &self,
-        pid: u8,
-        encrypt: bool,
-        key_id: u16,
-        iv: [u8; 12],
-        aad: Option<Vec<u8>>,
-        tag: Option<[u8; 16]>,
-        input: Vec<u8>,
-    ) -> HsmResult<FpGcmOutput> {
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        let cmd = PartCommand::FpGcm {
-            pid,
-            encrypt,
-            key_id,
-            iv,
-            aad,
-            tag,
-            input,
             reply: reply_tx,
         };
         self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
