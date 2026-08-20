@@ -3,19 +3,19 @@
 
 //! `PartFinal` tests that supply a real PTA certificate chain.
 //!
-//! Every test here carries certificates **out of band** as SGL Data
-//! Blocks, which only the emulator transport implements
-//! (`ddi/emu/src/dev.rs`); `ddi/nix` rejects non-empty `oob_items`, so
-//! these cannot run on hardware until the driver grows an OOB path. The
-//! gates that fire *before* the chain walk live in [`super::fw_rejects`]
-//! and do run on hardware.
+//! Every test here carries certificates **out of band**. Both transports
+//! now implement that: `ddi/emu` writes the Metadata Page directly, and
+//! `ddi/nix` hands the items to the driver's data-transfer ioctl, which
+//! DMA-maps them and builds the page in the kernel. So these run on
+//! `emu` **and hardware**. The gates that fire *before* the chain walk
+//! live in [`super::fw_rejects`].
 
-#![cfg(feature = "emu")]
-
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 
 use super::*;
 use crate::commands::part_init::part_policy_with_pota;
+use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
@@ -43,7 +43,7 @@ fn issue_pta_chain(
 /// (no prior backup) with a valid POTA-anchored PTA chain returns a
 /// `local_mk_backup` of the pinned length.
 #[test]
-fn part_final_smoke_roundtrip_emu() {
+fn part_final_smoke_roundtrip() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -76,7 +76,7 @@ fn part_final_smoke_roundtrip_emu() {
 /// seed/owner.  The PTA key is derived deterministically from the seed +
 /// policy, so the same chain re-validates on the second device.
 #[test]
-fn part_final_restore_prev_backup_emu() {
+fn part_final_restore_prev_backup() {
     let pota = CaKey::generate();
     let policy = part_policy_with_pota(&pota.raw_pub());
     let seed = mach_seed();
@@ -115,7 +115,7 @@ fn part_final_restore_prev_backup_emu() {
 /// the tag-bound metadata makes the re-derived `PartLocalBMK` unmask fail
 /// the AEAD tag check, so restore must error rather than mint blindly.
 #[test]
-fn part_final_reject_tampered_backup_emu() {
+fn part_final_reject_tampered_backup() {
     let pota = CaKey::generate();
     let policy = part_policy_with_pota(&pota.raw_pub());
     let seed = mach_seed();
@@ -149,7 +149,7 @@ fn part_final_reject_tampered_backup_emu() {
 /// rejected: here the chain is rooted at a different CA than the policy's
 /// POTA key, so the anchor requirement is never met.
 #[test]
-fn part_final_reject_unanchored_chain_emu() {
+fn part_final_reject_unanchored_chain() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -164,15 +164,19 @@ fn part_final_reject_unanchored_chain_emu() {
     let rogue = CaKey::generate();
     let chain = make_pta_chain(&rogue, &pta_pub_from_csr(&init.pta_csr));
 
-    ctx.part_final(&session, &policy, &[], &chain.der_items())
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a chain not anchored to the policy POTA must be rejected");
+    // Assert the specific status: a bare `expect_err` would also accept
+    // a transport/DMA failure and pass for the wrong reason.
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
 /// A POTA-anchored chain whose terminal (PTA) certificate carries a key
 /// other than the partition PTA key must be rejected
 /// (`PartFinalPtaMismatch`).
 #[test]
-fn part_final_reject_pta_mismatch_emu() {
+fn part_final_reject_pta_mismatch() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -186,8 +190,10 @@ fn part_final_reject_pta_mismatch_emu() {
     let wrong_pta = CaKey::generate();
     let chain = make_pta_chain(&pota, &wrong_pta.sec1_pub());
 
-    ctx.part_final(&session, &policy, &[], &chain.der_items())
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a PTA cert carrying a non-partition key must be rejected");
+    assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
 }
 
 /// Regression: after `PartFinal` the partition is `Initialized`, and an
@@ -196,7 +202,7 @@ fn part_final_reject_pta_mismatch_emu() {
 /// post-finalize command — here `PartInfo` — was silently dropped as a
 /// "disabled partition".
 #[test]
-fn part_final_partition_serves_io_when_initialized_emu() {
+fn part_final_partition_serves_io_when_initialized() {
     use azihsm_ddi_tbor_types::TborPartInfoReq;
 
     /// `PartState::Initialized` wire discriminant.

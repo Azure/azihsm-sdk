@@ -443,25 +443,16 @@ impl<P: HsmPal> Hsm<P> {
     fn decode_io_sqe(io: &P::Io) -> Result<IoSqeParams, OpError> {
         let sqe = Sqe::from(io.sqe());
         sqe.validate_io_op()?;
-        // Out-of-band SGL descriptor array (side-band bulk transfers such
-        // as PartFinal's PTA cert chain); `None` when the SQE carries no
-        // OOB region.  A non-zero `oob_len` with a null `oob_prp` is
-        // rejected up front: `validate_io_op` only bounds the OOB length,
-        // so without this a later OOB read would DMA from a null address.
-        let oob_len = sqe.oob_len();
+        // Out-of-band Metadata Page (side-band bulk transfers such as
+        // PartFinal's PTA cert chain); `None` when the SQE carries no OOB
+        // region.  Presence is signalled by a non-null `oob_prp`: the
+        // driver leaves `oob_len` (DW15) reserved, and the Metadata Page
+        // is self-describing via its `buffer_count` header.
         let oob_prp = sqe.oob_prp();
-        let oob = match (oob_len != 0, oob_prp.is_null()) {
-            (false, _) => None,
-            (true, false) => Some(OobPtr {
-                prp: oob_prp,
-                len: oob_len,
-            }),
-            (true, true) => {
-                return Err(OpError::new(
-                    HsmError::InvalidArg,
-                    HostStatus::INVALID_FIELD_IN_COMMAND,
-                ));
-            }
+        let oob = if oob_prp.is_null() {
+            None
+        } else {
+            Some(OobPtr { prp: oob_prp })
         };
         Ok(IoSqeParams {
             src_len: sqe.src_len() as usize,

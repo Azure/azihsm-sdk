@@ -1,22 +1,42 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Out-of-band (OOB) side-band item transfer over NVMe SGL descriptors.
+//! Out-of-band (OOB) side-band item transfer via the host **Metadata
+//! Page**.
 //!
 //! Some TBOR commands carry bulk evidence — DER certificate chains and
 //! COSE_Sign1 attestation reports — **out of band** rather than inside
-//! the 4 KiB request buffer. The SQE's `oob_prp` points at a host page
-//! of 16-byte **NVMe SGL Data Block descriptors**; a TBOR message
-//! references an item by its **index** into that array. [`copy_oob`]
-//! locates the indexed descriptor and forwards it **verbatim** to the
-//! GDMA ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets
-//! the descriptor and copies the item into a caller-allocated
-//! [`DmaBuf`]. This layer does **no** SGL parsing itself — it only
-//! bounds the index and computes the descriptor's address.
+//! the 4 KiB request buffer. The SQE's `oob_prp` (DW13-14) points at a
+//! single 4 KiB host page, the *Metadata Page*, and a TBOR message
+//! references an item by its **index** into that page.
 //!
-//! The Uno GDMA does not walk PRP lists; each transfer is a single SGL
-//! Data Block (arbitrary address, no page-alignment constraint), so OOB
-//! items are copied one at a time by index.
+//! Layout (mirrors `azihsm_hsm_data_xfer_metadata` in the Linux driver,
+//! `drivers/linux/drvsrc/azihsm_hsm_cmd.h`):
+//!
+//! ```text
+//! offset 0            buffer_count : u32          (1 ..= MAX_OOB_ITEMS)
+//! offset 4 + 16*i     xfer_length      : u32      bytes of item i
+//!                     rsvd             : u32
+//!                     hw_sgl_mem_paddr : u64      -> item i's SGL segment
+//! offset 260..4095    rsvd
+//! ```
+//!
+//! Each `hw_sgl_mem_paddr` is **not** the data: it points at a per-item
+//! **NVMe SGL segment**, a page of 16-byte SGL Data Block descriptors
+//! (`addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`), one per physically
+//! contiguous chunk of the host buffer. [`copy_oob`] walks that segment
+//! and forwards each descriptor **verbatim** to the GDMA
+//! ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets it
+//! and copies the chunk into the matching sub-range of a caller-allocated
+//! [`DmaBuf`].
+//!
+//! The Uno GDMA does not walk PRP lists or SGL chains itself; each
+//! transfer is a single SGL Data Block, so this layer drives the walk one
+//! descriptor at a time.
+//!
+//! Note the SQE's `oob_len` (DW15) is **not** used: the driver leaves it
+//! reserved, and the Metadata Page is self-describing via `buffer_count`.
+//! Presence of OOB data is signalled by a non-null `oob_prp`.
 
 #![no_std]
 
@@ -32,22 +52,36 @@ use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 /// Size of one NVMe SGL Data Block descriptor on the wire.
 pub const SGL_ENTRY_LEN: usize = 16;
 
-/// Reference to the OOB SGL descriptor array carried by the SQE
-/// (`oob_prp` + `oob_len`).
+/// Size of one Metadata Page entry (`xfer_length ‖ rsvd ‖ paddr`).
+pub const METADATA_ENTRY_LEN: usize = 16;
+
+/// Byte offset of the first entry, past the `buffer_count` header.
+pub const METADATA_ENTRY_OFF: usize = 4;
+
+/// Maximum number of OOB items the device accepts, matching the driver's
+/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
+pub const MAX_OOB_ITEMS: usize = 16;
+
+/// Bytes fetched from a per-item SGL segment in one read, and the
+/// resulting descriptor budget. The driver rejects items needing more
+/// than one segment, and a cert-chain item is a handful of descriptors
+/// at most, so this is ample.
+const SEG_READ_LEN: usize = 256;
+const MAX_SEG_DESCRIPTORS: usize = SEG_READ_LEN / SGL_ENTRY_LEN;
+
+/// Size of the Metadata Page (`METADATA_SIZE` in the driver UAPI).
+const METADATA_PAGE_LEN: usize = 4096;
+
+/// Granularity that Metadata Page prefix reads are rounded up to. The
+/// GDMA faults on very small transfers, so the header/entry fetch is
+/// padded rather than issued as a 4- or 16-byte read.
+const PREFIX_GRAIN: usize = 32;
+
+/// Reference to the OOB Metadata Page carried by the SQE (`oob_prp`).
 #[derive(Debug, Clone, Copy)]
 pub struct OobPtr {
-    /// Host pointer to the 16-byte-per-entry SGL descriptor array.
+    /// Host pointer to the 4 KiB Metadata Page.
     pub prp: HsmDmaAddr,
-    /// Byte length of the descriptor array (`num_entries * 16`).
-    pub len: u32,
-}
-
-impl OobPtr {
-    /// Number of SGL descriptors in the array.
-    #[inline]
-    pub fn entry_count(&self) -> usize {
-        self.len as usize / SGL_ENTRY_LEN
-    }
 }
 
 /// Byte-offset an [`HsmDmaAddr`], rejecting 64-bit overflow.
@@ -61,45 +95,60 @@ fn addr_offset(base: HsmDmaAddr, off: u64) -> HsmResult<HsmDmaAddr> {
     })
 }
 
-/// Host address of the SGL Data Block descriptor at `index`, bounds-checked
-/// against the descriptor array length.
+/// Host address of the Metadata Page entry for `index`.
 ///
-/// This is the only interpretation the OOB layer does — locating the
-/// 16-byte descriptor.  The descriptor's contents (address / length /
-/// type) are consumed by the GDMA layer
-/// ([`HsmGdmaController::copy_mem_from_host_raw`]), not here.
+/// Entries start at [`METADATA_ENTRY_OFF`] (past the `buffer_count`
+/// header) and are [`METADATA_ENTRY_LEN`] bytes each. The index is
+/// bounded by [`MAX_OOB_ITEMS`] here; it is additionally checked against
+/// the page's own `buffer_count` in [`copy_oob`].
 ///
 /// # Errors
-/// * [`HsmError::InvalidArg`] — `index` is out of bounds for `oob.len`,
-///   or the descriptor address overflows.
+/// * [`HsmError::InvalidArg`] — `index` >= [`MAX_OOB_ITEMS`], or the
+///   address overflows.
 pub fn entry_addr(oob: &OobPtr, index: usize) -> HsmResult<HsmDmaAddr> {
-    let entry_off = index
-        .checked_mul(SGL_ENTRY_LEN)
-        .ok_or(HsmError::InvalidArg)?;
-    let entry_end = entry_off
-        .checked_add(SGL_ENTRY_LEN)
-        .ok_or(HsmError::InvalidArg)?;
-    if entry_end > oob.len as usize {
+    if index >= MAX_OOB_ITEMS {
         return Err(HsmError::InvalidArg);
     }
-    addr_offset(oob.prp, entry_off as u64)
+    let off = index
+        .checked_mul(METADATA_ENTRY_LEN)
+        .and_then(|v| v.checked_add(METADATA_ENTRY_OFF))
+        .ok_or(HsmError::InvalidArg)?;
+    addr_offset(oob.prp, off as u64)
+}
+
+/// Read a little-endian `u32` from `bytes[off..off + 4]`.
+fn le_u32(bytes: &[u8], off: usize) -> HsmResult<u32> {
+    let raw: [u8; 4] = bytes
+        .get(off..off + 4)
+        .and_then(|s| s.try_into().ok())
+        .ok_or(HsmError::InternalError)?;
+    Ok(u32::from_le_bytes(raw))
+}
+
+/// Read a little-endian `u64` from `bytes[off..off + 8]` as an
+/// [`HsmDmaAddr`].
+fn le_addr(bytes: &[u8], off: usize) -> HsmResult<HsmDmaAddr> {
+    Ok(HsmDmaAddr {
+        lo: le_u32(bytes, off)?,
+        hi: le_u32(bytes, off + 4)?,
+    })
 }
 
 /// Copy OOB item `index` into the caller-allocated `dst`.
 ///
-/// Locates the 16-byte SGL Data Block descriptor at `oob.prp + index*16`,
-/// reads it, and forwards it **verbatim** to the GDMA
-/// ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets the
-/// descriptor (address / length / type) and copies the item into `dst`.
-/// The OOB layer does no SGL parsing itself.
+/// Reads the Metadata Page header and the item's entry, then walks the
+/// item's NVMe SGL segment, forwarding each 16-byte Data Block descriptor
+/// to the GDMA so its chunk lands at the running offset in `dst`.
 ///
-/// The GDMA enforces that the descriptor's `length` equals `dst.len()`,
-/// so the caller must size `dst` to the item's length (from the TBOR
-/// descriptor, which must agree with the OOB descriptor).
+/// `dst.len()` must equal the entry's `xfer_length`, and the segment's
+/// descriptor lengths must sum to exactly that — a short or over-long
+/// segment is rejected rather than silently truncating.
 ///
 /// # Errors
-/// * [`HsmError::InvalidArg`] — `index` out of bounds, or the descriptor
-///   `length` does not equal `dst.len()` (from the GDMA).
+/// * [`HsmError::InvalidArg`] — `index` out of range for the page's
+///   `buffer_count`, a `buffer_count` above [`MAX_OOB_ITEMS`],
+///   `xfer_length != dst.len()`, or a segment whose chunks do not sum to
+///   `xfer_length`.
 /// * [`HsmError`] — propagated from the GDMA / allocator.
 pub async fn copy_oob<P>(
     pal: &P,
@@ -111,22 +160,92 @@ pub async fn copy_oob<P>(
 where
     P: HsmGdmaController + HsmAlloc,
 {
-    let entry_addr = entry_addr(oob, index)?;
+    // Bounds the index before any DMA; the page's own `buffer_count`
+    // is checked once the prefix has been read.
+    if index >= MAX_OOB_ITEMS {
+        return Err(HsmError::InvalidArg);
+    }
 
     pal.alloc_scoped_async(io, async |scoped| {
-        // Read the 16-byte SGL Data Block descriptor (unaligned address
-        // is fine for an SGL read).
-        let entry = scoped.dma_alloc(SGL_ENTRY_LEN)?;
-        pal.copy_mem_from_host(io, entry_addr, entry, false).await?;
+        // ── Metadata Page prefix: header + entries up to `index` ─────
+        //
+        // Read the header and the wanted entry in a single transfer.
+        // Two separate 4- and 16-byte reads are avoided deliberately:
+        // the GDMA faults on very small transfers, and one read is
+        // cheaper anyway. The prefix is rounded up to `PREFIX_GRAIN` and
+        // always stays inside the 4 KiB page.
+        let want = METADATA_ENTRY_OFF + METADATA_ENTRY_LEN * (index + 1);
+        let prefix_len = want.next_multiple_of(PREFIX_GRAIN).min(METADATA_PAGE_LEN);
+        let hdr = scoped.dma_alloc(prefix_len)?;
+        // `prp = true`: the Metadata Page is a plain contiguous host
+        // buffer, so the address goes in a PRP and the length is passed
+        // separately. The SGL form would put the length in the
+        // descriptor's second word, which this call site leaves zero —
+        // a zero-length SGL read that the GDMA rejects.
+        pal.copy_mem_from_host(io, oob.prp, hdr, true).await?;
 
-        // Borrow the descriptor bytes directly as a fixed array (no
-        // copy) — `entry` derefs to a 16-byte `[u8]`.
-        let bytes: &[u8] = entry;
-        let raw: &[u8; SGL_ENTRY_LEN] = bytes.try_into().map_err(|_| HsmError::InternalError)?;
+        let buffer_count = le_u32(hdr, 0)? as usize;
+        if buffer_count == 0 || buffer_count > MAX_OOB_ITEMS || index >= buffer_count {
+            return Err(HsmError::InvalidArg);
+        }
 
-        // Forward the raw descriptor to the GDMA, which interprets it and
-        // copies the item into `dst` (validating `length == dst.len()`).
-        pal.copy_mem_from_host_raw(io, raw, dst, false).await?;
+        // ── The item's entry: `xfer_length ‖ rsvd ‖ hw_sgl_mem_paddr` ──
+        let entry_off = METADATA_ENTRY_OFF + METADATA_ENTRY_LEN * index;
+        let xfer_length = le_u32(hdr, entry_off)? as usize;
+        let seg_addr = le_addr(hdr, entry_off + 8)?;
+
+        // The caller sizes `dst` from the TBOR descriptor; the two must
+        // agree or we would copy a different item than was requested.
+        if xfer_length != dst.len() {
+            return Err(HsmError::InvalidArg);
+        }
+        if seg_addr.is_null() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // ── Walk the item's SGL segment, chunk by chunk ──────────────
+        //
+        // The whole segment is fetched once: per-descriptor 16-byte
+        // reads would hit the same GDMA small-transfer fault as the
+        // header, and one read is cheaper. The driver allocates the
+        // segment as a coherent page, so reading `SEG_READ_LEN` from
+        // its (page-aligned) base stays in bounds.
+        let seg = scoped.dma_alloc(SEG_READ_LEN)?;
+        // Also a plain contiguous host buffer — read via PRP, as above.
+        pal.copy_mem_from_host(io, seg_addr, seg, true).await?;
+
+        let mut copied = 0usize;
+        let mut tail: &mut DmaBuf = dst;
+
+        for i in 0..MAX_SEG_DESCRIPTORS {
+            if copied == xfer_length {
+                break;
+            }
+            let off = i * SGL_ENTRY_LEN;
+
+            // NVMe SGL Data Block: `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`.
+            let chunk = le_u32(seg, off + 8)? as usize;
+            if chunk == 0 || copied + chunk > xfer_length {
+                return Err(HsmError::InvalidArg);
+            }
+
+            // Hand the GDMA exactly this chunk's destination window; it
+            // validates the descriptor length against the slice length.
+            let (head, rest) = tail.split_at_mut(chunk);
+            let raw: &[u8; SGL_ENTRY_LEN] = seg
+                .get(off..off + SGL_ENTRY_LEN)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(HsmError::InternalError)?;
+            pal.copy_mem_from_host_raw(io, raw, head, false).await?;
+
+            copied += chunk;
+            tail = rest;
+        }
+
+        // A segment that never reached `xfer_length` is malformed.
+        if copied != xfer_length {
+            return Err(HsmError::InvalidArg);
+        }
         Ok(())
     })
     .await
@@ -139,37 +258,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entry_count_divides_by_16() {
+    fn entry_addr_skips_the_buffer_count_header() {
         let oob = OobPtr {
             prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
-            len: 48,
         };
-        assert_eq!(oob.entry_count(), 3);
-    }
-
-    #[test]
-    fn entry_addr_computes_indexed_offset() {
-        let oob = OobPtr {
-            prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
-            len: 48,
-        };
+        // Entry 0 sits immediately after the 4-byte header.
         assert_eq!(
             entry_addr(&oob, 0).unwrap(),
-            HsmDmaAddr { lo: 0x1000, hi: 0 }
+            HsmDmaAddr { lo: 0x1004, hi: 0 }
         );
+        // Entry 2 is at 4 + 2*16 = 0x24.
         assert_eq!(
             entry_addr(&oob, 2).unwrap(),
-            HsmDmaAddr { lo: 0x1020, hi: 0 }
+            HsmDmaAddr { lo: 0x1024, hi: 0 }
         );
     }
 
     #[test]
-    fn entry_addr_rejects_out_of_bounds_index() {
+    fn entry_addr_rejects_index_beyond_device_max() {
         let oob = OobPtr {
             prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
-            len: 48, // 3 entries → valid indices 0..=2
         };
-        assert_eq!(entry_addr(&oob, 3), Err(HsmError::InvalidArg));
+        assert_eq!(entry_addr(&oob, MAX_OOB_ITEMS), Err(HsmError::InvalidArg));
         assert_eq!(entry_addr(&oob, usize::MAX), Err(HsmError::InvalidArg));
     }
 
@@ -177,26 +287,41 @@ mod tests {
     fn entry_addr_crosses_32bit_boundary() {
         let oob = OobPtr {
             prp: HsmDmaAddr {
-                lo: 0xFFFF_FFF0,
+                lo: 0xFFFF_FFFC,
                 hi: 0,
             },
-            len: 32,
         };
-        // Entry 1 at +16 wraps `lo` into `hi`.
-        assert_eq!(entry_addr(&oob, 1).unwrap(), HsmDmaAddr { lo: 0, hi: 1 });
+        // Entry 0 at +4 wraps `lo` into `hi`.
+        assert_eq!(entry_addr(&oob, 0).unwrap(), HsmDmaAddr { lo: 0, hi: 1 });
     }
 
     #[test]
     fn addr_offset_rejects_overflow() {
+        let base = HsmDmaAddr {
+            lo: 0xFFFF_FFFF,
+            hi: 0xFFFF_FFFF,
+        };
+        assert_eq!(addr_offset(base, 1), Err(HsmError::InvalidArg));
+    }
+
+    #[test]
+    fn le_readers_decode_little_endian() {
+        let bytes = [
+            0x78, 0x56, 0x34, 0x12, 0x01, 0x00, 0x00, 0x00, 0xEF, 0xBE, 0, 0, 1, 0, 0, 0,
+        ];
+        assert_eq!(le_u32(&bytes, 0).unwrap(), 0x1234_5678);
         assert_eq!(
-            addr_offset(
-                HsmDmaAddr {
-                    lo: 0xFFFF_FFFF,
-                    hi: 0xFFFF_FFFF
-                },
-                1
-            ),
-            Err(HsmError::InvalidArg)
+            le_addr(&bytes, 8).unwrap(),
+            HsmDmaAddr {
+                lo: 0x0000_BEEF,
+                hi: 1
+            }
         );
+    }
+
+    #[test]
+    fn le_readers_reject_short_input() {
+        let bytes = [0u8; 3];
+        assert_eq!(le_u32(&bytes, 0), Err(HsmError::InternalError));
     }
 }

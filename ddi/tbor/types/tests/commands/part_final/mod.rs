@@ -12,12 +12,12 @@
 //! certificate transport, because that is what decides where it can run:
 //!
 //! * [`fw_rejects`] — handler gates that fire *before* the cert-chain
-//!   walk, so they pass an empty `certs` slice and reference no SGL Data
-//!   Block. These run on `emu` **and hardware**.
-//! * [`chain_path`] — everything that supplies a real chain. The
-//!   certificates travel out of band, which only `ddi/emu` implements
-//!   (`ddi/nix` rejects non-empty `oob_items`), so these stay
-//!   `#[cfg(feature = "emu")]` until the driver grows an OOB path.
+//!   walk, so they pass an empty `certs` slice and reference no
+//!   out-of-band page.
+//! * [`chain_path`] — everything that supplies a real chain, carried
+//!   out of band. Both transports implement this (`ddi/emu` writes the
+//!   Metadata Page itself; `ddi/nix` goes through the driver's
+//!   data-transfer ioctl), so these run on emu and hardware alike.
 //!
 //! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
 //! process-global lock held for the ctx's lifetime), so each test starts

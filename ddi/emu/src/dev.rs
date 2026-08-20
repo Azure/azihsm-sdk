@@ -74,6 +74,19 @@ const SCRATCH_LEN: usize = 4096;
 /// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
 const OOB_ENTRY_LEN: usize = 16;
 
+/// Size of one OOB Metadata Page entry
+/// (`xfer_length ‖ rsvd ‖ hw_sgl_mem_paddr`).
+const METADATA_ENTRY_LEN: usize = 16;
+
+/// Byte offset of the first Metadata Page entry, past the
+/// `buffer_count` header.
+const METADATA_ENTRY_OFF: usize = 4;
+
+/// Maximum OOB items the device accepts, matching the firmware's
+/// `MAX_OOB_ITEMS` and the driver's
+/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
+const MAX_OOB_ITEMS: usize = 16;
+
 /// Page size enforced by the firmware platform.
 const PAGE_4K: usize = 4096;
 
@@ -312,39 +325,63 @@ impl DdiDev for DdiEmuDev {
             &src.as_slice()[..req_len]
         );
 
-        // ── 1b. Build the out-of-band SGL Data Block descriptor page ─
+        // ── 1b. Build the out-of-band Metadata Page ─────────────────
         //
-        // Each caller-supplied item becomes one 16-byte NVMe SGL Data
-        // Block descriptor `addr(8, LE) ‖ length(4, LE) ‖ rsvd(3) ‖
-        // type(1)=0` written into a page-aligned buffer the SQE points
-        // at via `oob_prp`/`oob_len`. The device indexes descriptors by
-        // position; the item slices are borrowed (no copy) and stay live
-        // for the duration of the blocking `io` below.
+        // Mirrors what the Linux driver builds (`azihsm_hsm_data_xfer_
+        // metadata`): a 4 KiB page holding `buffer_count: u32` followed
+        // by one 16-byte entry per item —
+        // `xfer_length(4) ‖ rsvd(4) ‖ hw_sgl_mem_paddr(8)`, all LE.
+        //
+        // `hw_sgl_mem_paddr` does not point at the data: it points at a
+        // per-item NVMe SGL *segment*. The emulator's host buffers are
+        // virtually contiguous, so each segment holds exactly one Data
+        // Block descriptor `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)=0`
+        // covering the whole item — hardware may split an item across
+        // several descriptors and the firmware walks them all.
+        //
+        // Item slices are borrowed (no copy) and stay live for the
+        // duration of the blocking `io` below; `sgl_segs` keeps the
+        // per-item segments alive for the same span.
         let mut oob_page = AlignedBuf::new(SCRATCH_LEN);
-        let oob_len = match oob_items {
+        let mut sgl_segs: Vec<AlignedBuf> = Vec::new();
+        let have_oob = match oob_items {
             Some(items) if !items.is_empty() => {
-                let total = items.len() * OOB_ENTRY_LEN;
-                if total > SCRATCH_LEN {
+                if items.len() > MAX_OOB_ITEMS {
                     return Err(DdiError::InvalidParameter);
                 }
-                let page = oob_page.as_mut_slice();
-                for (i, item) in items.iter().enumerate() {
-                    let off = i * OOB_ENTRY_LEN;
-                    let addr = item.as_ptr() as u64;
-                    page[off..off + 8].copy_from_slice(&addr.to_le_bytes());
-                    page[off + 8..off + 12].copy_from_slice(&(item.len() as u32).to_le_bytes());
-                    // bytes [off+12..off+16] stay zero: rsvd (3) +
-                    // SGL descriptor-type nibble 0 (Data Block).
+                // Build each item's single-descriptor SGL segment first,
+                // so their addresses are stable before the page records
+                // them.
+                for item in items.iter() {
+                    let mut seg = AlignedBuf::new(OOB_ENTRY_LEN);
+                    let s = seg.as_mut_slice();
+                    s[0..8].copy_from_slice(&(item.as_ptr() as u64).to_le_bytes());
+                    s[8..12].copy_from_slice(&(item.len() as u32).to_le_bytes());
+                    // [12..16] stay zero: rsvd(3) + SGL type nibble 0
+                    // (Data Block).
+                    sgl_segs.push(seg);
                 }
-                total as u32
+
+                let page = oob_page.as_mut_slice();
+                page[0..4].copy_from_slice(&(items.len() as u32).to_le_bytes());
+                for (i, item) in items.iter().enumerate() {
+                    let off = METADATA_ENTRY_OFF + i * METADATA_ENTRY_LEN;
+                    let seg_addr = sgl_segs[i].as_slice().as_ptr() as u64;
+                    page[off..off + 4].copy_from_slice(&(item.len() as u32).to_le_bytes());
+                    // [off+4..off+8] stay zero: rsvd.
+                    page[off + 8..off + 16].copy_from_slice(&seg_addr.to_le_bytes());
+                }
+                true
             }
-            _ => 0,
+            _ => false,
         };
 
         // ── 2. Build SQE with OP_TBOR ──────────────────────────────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_ctrl = req.session_ctrl();
-        let oob_prp = if oob_len != 0 {
+        // Presence is signalled by a non-null `oob_prp`; `oob_len` (DW15)
+        // is left reserved, matching the driver.
+        let oob_prp = if have_oob {
             oob_page.as_slice().as_ptr() as u64
         } else {
             0
@@ -355,7 +392,7 @@ impl DdiDev for DdiEmuDev {
             .src_prp1(src.as_slice().as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .oob_prp(oob_prp)
-            .oob_len(oob_len)
+            .oob_len(0)
             .session_flags(
                 SessionFlags::new()
                     .with_ctrl(u8::from(session_ctrl))
