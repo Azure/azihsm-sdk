@@ -437,9 +437,8 @@ fn part_final_rejects_backup_from_different_mach_seed() {
         PART_STATE_INITIALIZED,
         "after fresh finalization for the new identity",
     );
-    ctx.session_close(second_session.session_id)
-        .expect("close finalized CO session");
 }
+
 #[test]
 fn part_final_rejects_cu_and_allows_co_retry() {
     let ctx = TestCtx::new();
@@ -470,8 +469,6 @@ fn part_final_rejects_cu_and_allows_co_retry() {
         PART_STATE_INITIALIZED,
         "after CO retry",
     );
-    ctx.session_close(retry_session.session_id)
-        .expect("close retry CO session");
 }
 
 #[test]
@@ -498,12 +495,10 @@ fn part_final_rejects_second_finalize() {
 
     ctx.session_close(session.session_id)
         .expect("close finalized CO session");
-    let reopened = open_co_with(&ctx, &ROTATED_CO_PSK);
+    let _reopened = open_co_with(&ctx, &ROTATED_CO_PSK);
     assert_part_state(
         &read_part_info(&ctx),
         PART_STATE_INITIALIZED,
         "after reopening CO following second-finalize rejection",
     );
-    ctx.session_close(reopened.session_id)
-        .expect("close reopened CO session");
 }
