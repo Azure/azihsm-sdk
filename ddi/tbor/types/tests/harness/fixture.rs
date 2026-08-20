@@ -37,6 +37,18 @@ pub use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 
+/// Crypto-Officer PSK identifier.
+pub const CO_PSK_ID: u8 = 0;
+
+/// Crypto-User PSK identifier.
+pub const CU_PSK_ID: u8 = 1;
+
+/// Non-default CU PSK shared by tests that must bypass the default-PSK gate.
+pub const ROTATED_CU_PSK: [u8; PSK_LEN] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+];
+
 /// Process-global serialisation lock — see module docs.
 ///
 /// Uses `parking_lot::Mutex` (workspace convention; std's variant is

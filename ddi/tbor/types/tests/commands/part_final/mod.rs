@@ -28,7 +28,6 @@ use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
@@ -49,12 +48,8 @@ use crate::harness::x509_fixture::SEC1_PUB_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
-const CU: u8 = 1;
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
-];
+use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CU_PSK;
 
 const PART_STATE_INITIALIZING: u8 = 4;
 const PART_STATE_INITIALIZED: u8 = 5;

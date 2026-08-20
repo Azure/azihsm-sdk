@@ -18,6 +18,7 @@
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
 const DEVICE_KIND_PHYSICAL: u8 = 2;
@@ -96,7 +97,7 @@ fn part_info_independent_of_session_state() {
 
     // CO Pending: init only, do not finish yet.
     let pending = ctx
-        .session_open_init(0, SessionType::Authenticated)
+        .session_open_init(CO_PSK_ID, SessionType::Authenticated)
         .expect("SessionOpenInit (CO/Authenticated) for pending-state probe");
     let during_pending = ctx
         .tbor(&TborPartInfoReq::new())

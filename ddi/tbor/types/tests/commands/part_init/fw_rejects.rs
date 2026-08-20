@@ -17,14 +17,14 @@ use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
-use super::CO;
-use super::CU;
 use super::ROTATED_CO_PSK;
-use super::ROTATED_CU_PSK;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::session_guard::SessionGuard;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CU_PSK;
 
 // Replace these with the canonical offsets/constants from the PartPolicy
 // encoder or firmware policy structure.

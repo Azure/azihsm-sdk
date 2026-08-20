@@ -26,13 +26,15 @@ use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID;
+use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_EPHEMERAL: u8 = 0b010;
@@ -41,20 +43,6 @@ const SCOPE_LOCAL: u8 = 0b011;
 /// P-384 coordinate length (raw, big-endian) — the sealed key is a P-384
 /// keypair, so each attested COSE_Key coordinate is 48 bytes.
 const P384_COORD_LEN: usize = 48;
-
-/// Crypto-User PSK id.
-const CU: u8 = 1;
-
-/// Crypto-Officer PSK id (the default-PSK gate test opens under the
-/// public default CO PSK).
-const CO_DEFAULT: u8 = 0;
-
-/// Non-default 32-byte CU PSK, used to clear the default-PSK gate so the
-/// CU-role reject path — not the default-PSK gate — is exercised.
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
-];
 
 /// Sample caller-supplied report data bound into the report payload.
 fn sample_report_data() -> [u8; KEY_REPORT_DATA_LEN] {
@@ -289,7 +277,7 @@ fn key_report_rejected_on_default_psk_emu() {
     // default) — the dispatcher's default-PSK gate must reject the command
     // before the handler runs.
     let session = ctx
-        .open_session(CO_DEFAULT, SessionType::Authenticated)
+        .open_session(CO_PSK_ID, SessionType::Authenticated)
         .expect("open_session must succeed");
 
     let req = TborKeyReportReq {

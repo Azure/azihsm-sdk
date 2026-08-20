@@ -35,9 +35,8 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 /// Non-default PSK used as the rotation target for the `PskChange`
 /// bypass test. Distinct from the constant used in `psk_change.rs` so

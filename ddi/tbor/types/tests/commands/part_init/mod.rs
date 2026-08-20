@@ -39,13 +39,12 @@ use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID as CO;
 
 mod crypto_rejects;
 mod fw_rejects;
 mod sd_config;
 mod success_path;
-
-pub(crate) const CO: u8 = 0;
 
 /// Non-default 32-byte CO PSK used so PartInit clears the
 /// default-PSK-gate.  Pinned to a fixed value so the smoke test is
