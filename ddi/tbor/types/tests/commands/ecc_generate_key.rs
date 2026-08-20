@@ -239,7 +239,7 @@ fn ecc_generate_key_unknown_scope_rejected() {
     );
 }
 
-/// Rejects generation bound to an unknown session identifier.
+/// Rejects a request whose `session_id` does not match the active session on the device handle.
 #[test]
 fn ecc_generate_key_unknown_session_rejected() {
     let ctx = TestCtx::new();
