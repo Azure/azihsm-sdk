@@ -8,6 +8,13 @@
 //! the construction of DDI requests and processing of responses for AES
 //! cryptographic operations.
 
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
+use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
+use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
+use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
 use itertools::Itertools;
 use resiliency_macro::*;
 
@@ -43,33 +50,47 @@ pub(crate) fn aes_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    // Transport step: run the generate command and get the key handle
+    // plus the device-returned masked blob. A V2 (TBOR) session yields a
+    // non-resident handle (`NonResident`); a V1 (MBOR) session a resident
+    // vault id (`Resident`).
+    let (handle, masked_key) = if session.is_ex() {
+        aes_generate_key_tbor(session, &props)?
+    } else {
+        aes_generate_key_mbor(session, &props)?
+    };
+
+    // Common step (identical for both transports): a guard deletes a
+    // device-resident key if validation fails — a no-op for a
+    // non-resident key. Derive props from the returned masked blob
+    // and validate them against the request.
+    let guard = ddi::HsmKeyIdGuard::new(session, handle);
+    let key_props = HsmMaskedKey::to_key_props(&masked_key)?;
+    if !props.validate_dev_props(&key_props) {
+        return Err(HsmError::InvalidKeyProps);
+    }
+    Ok((guard.release(), key_props))
+}
+
+/// Runs MBOR `AesGenerateKey`, returning the resident `Resident`
+/// handle and the device-returned masked blob.
+fn aes_generate_key_mbor(
+    session: &HsmSession,
+    props: &HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, Vec<u8>)> {
     let req = DdiAesGenerateKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AesGenerateKey, session),
         data: DdiAesGenerateKeyReq {
             key_size: key_size_to_ddi(props.bits() as usize)?,
             key_tag: None,
-            key_properties: (&props).try_into()?,
+            key_properties: props.try_into()?,
         },
         ext: None,
     };
 
     let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
-
-    // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
-    let key_id = ddi::HsmKeyIdGuard::new(
-        session,
-        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
-    );
-
-    let masked_key = resp.data.masked_key.as_slice();
-    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
-
-    // Validate that the device returned properties match the requested properties.
-    if !props.validate_dev_props(&key_props) {
-        //return error
-        Err(HsmError::InvalidKeyProps)?;
-    }
-    Ok((key_id.release(), key_props))
+    let handle = to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
+    Ok((handle, resp.data.masked_key.as_slice().to_vec()))
 }
 
 /// Encrypts data using AES-CBC mode at the DDI layer.
@@ -214,12 +235,29 @@ fn aes_cbc_encrypt_decrypt(
     input: Vec<u8>,
     output: &mut [u8],
 ) -> HsmResult<usize> {
+    if key.session().is_ex() {
+        aes_cbc_encrypt_decrypt_tbor(key, op, iv, &input, output)
+    } else {
+        aes_cbc_encrypt_decrypt_mbor(key, op, iv, &input, output)
+    }
+}
+
+/// AES-CBC transforms one chunk over MBOR `AesEncryptDecrypt` using the
+/// device-resident key. Updates `iv` with the chaining IV and copies the
+/// transformed bytes into `output`.
+fn aes_cbc_encrypt_decrypt_mbor(
+    key: &HsmAesKey,
+    op: DdiAesOp,
+    iv: &mut [u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
     let req = DdiAesEncryptDecryptCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AesEncryptDecrypt, &key.session()),
         data: DdiAesEncryptDecryptReq {
             key_id: ddi::get_key_id(key.handle())?,
             op,
-            msg: MborByteArray::from_slice(&input).map_hsm_err(HsmError::InternalError)?,
+            msg: MborByteArray::from_slice(input).map_hsm_err(HsmError::InternalError)?,
             iv: MborByteArray::from_slice(iv).map_hsm_err(HsmError::InternalError)?,
         },
         ext: None,
@@ -236,6 +274,82 @@ fn aes_cbc_encrypt_decrypt(
     let to_copy = resp_msg.len().min(output.len());
     output[..to_copy].copy_from_slice(&resp_msg[..to_copy]);
 
+    Ok(to_copy)
+}
+
+/// Maps an AES key size in bits to the 1-byte TBOR `AesKeySize`
+/// discriminant.
+fn aes_bits_to_tbor_size(bits: u32) -> HsmResult<u8> {
+    match bits {
+        128 => Ok(AES_KEY_SIZE_128),
+        192 => Ok(AES_KEY_SIZE_192),
+        256 => Ok(AES_KEY_SIZE_256),
+        _ => Err(HsmError::InvalidKeySize),
+    }
+}
+
+/// Runs TBOR `AesGenerateKey`, returning the non-resident `NonResident`
+/// handle and the device-returned masked blob (the key is never stored
+/// on-device; the blob is unmasked on-use by `aes_cbc_encrypt_decrypt`).
+fn aes_generate_key_tbor(
+    session: &HsmSession,
+    props: &HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, Vec<u8>)> {
+    let req = TborAesGenerateKeyReq {
+        session_id: session.ex_session_id()?,
+        scope: props.tbor_scope(),
+        key_size: aes_bits_to_tbor_size(props.bits())?,
+    };
+    let mut cookie = None;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    Ok((ddi::HsmKeyHandle::NonResident, resp.masked_key))
+}
+
+/// AES-CBC transforms one chunk over TBOR `AesEncryptDecrypt` using the
+/// caller-held masked key (unmask-on-use). Updates `iv` with the chaining
+/// IV and copies the transformed bytes into `output`.
+fn aes_cbc_encrypt_decrypt_tbor(
+    key: &HsmAesKey,
+    op: DdiAesOp,
+    iv: &mut [u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
+    let props = key.props();
+    let masked = props.masked_key().ok_or(HsmError::InternalError)?;
+
+    let mut iv_arr = [0u8; 16];
+    if iv.len() != iv_arr.len() {
+        return Err(HsmError::InternalError);
+    }
+    iv_arr.copy_from_slice(iv);
+
+    let tbor_op = match op {
+        DdiAesOp::Encrypt => AES_OP_ENCRYPT,
+        DdiAesOp::Decrypt => AES_OP_DECRYPT,
+        _ => return Err(HsmError::InternalError),
+    };
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: key.session().ex_session_id()?,
+        masked_key: masked.to_vec(),
+        op: tbor_op,
+        msg: input.to_vec(),
+        iv: iv_arr,
+    };
+    let mut cookie = None;
+    let resp = key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    iv.copy_from_slice(&resp.iv);
+    let to_copy = resp.msg.len().min(output.len());
+    output[..to_copy].copy_from_slice(&resp.msg[..to_copy]);
     Ok(to_copy)
 }
 
