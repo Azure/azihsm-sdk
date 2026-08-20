@@ -377,6 +377,11 @@ fn part_final_partition_serves_io_when_initialized() {
     );
 }
 
+/// A `local_mk_backup` is bound to the machine-seed identity that
+/// created it. Replaying the backup after re-initializing with a
+/// different machine seed must return
+/// [`TborStatus::AesGcmDecryptTagDoesNotMatch`], preserve the new
+/// identity in `Initializing`, and still allow a fresh `PartFinal`.
 #[test]
 fn part_final_rejects_backup_from_different_mach_seed() {
     let ctx = TestCtx::new();
@@ -439,6 +444,10 @@ fn part_final_rejects_backup_from_different_mach_seed() {
     );
 }
 
+/// `PartFinal` is CO-only: a rotated CU session must be rejected with
+/// [`TborStatus::InvalidPermissions`] without changing the partition
+/// identity or `Initializing` state. A subsequent CO session must be
+/// able to retry the same finalization and reach `Initialized`.
 #[test]
 fn part_final_rejects_cu_and_allows_co_retry() {
     let ctx = TestCtx::new();
@@ -471,6 +480,10 @@ fn part_final_rejects_cu_and_allows_co_retry() {
     );
 }
 
+/// `PartFinal` is a one-shot lifecycle transition. Calling it after
+/// the partition is already `Initialized` must return
+/// [`TborStatus::InvalidArg`], preserve the partition identity and
+/// state, and leave the partition usable after reopening a CO session.
 #[test]
 fn part_final_rejects_second_finalize() {
     let ctx = TestCtx::new();
