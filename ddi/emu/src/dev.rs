@@ -71,9 +71,6 @@ const EMU_PART_RES_MASK: u128 = 1u128 << EMU_PID;
 /// 4-KiB page bound, so we allocate one full page per direction.
 const SCRATCH_LEN: usize = 4096;
 
-/// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
-const OOB_ENTRY_LEN: usize = 16;
-
 /// Size of a per-item SGL segment. The driver allocates segments in
 /// whole pages, and the firmware walks a segment page-wide, so the
 /// emulator must back each one with a full page too.
