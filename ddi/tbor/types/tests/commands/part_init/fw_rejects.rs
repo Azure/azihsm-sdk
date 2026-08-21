@@ -109,13 +109,13 @@ fn part_init_reject_default_psk_co() {
 fn part_init_reject_cu_session() {
     let ctx = TestCtx::new();
 
-    let session = SessionGuard::new(&ctx, bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK));
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let policy = known_good_part_policy();
     let seed = mach_seed();
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(session.handshake(), &seed, &policy, &thumb)
+        .part_init(&session, &seed, &policy, &thumb)
         .expect_err("PartInit on CU session must be rejected");
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
 }
@@ -338,13 +338,13 @@ fn part_init_valid_rotated_co_request_succeeds() {
 fn part_init_cu_rejection_does_not_mutate_partition_state() {
     let ctx = TestCtx::new();
 
-    let cu_session = SessionGuard::new(&ctx, bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK));
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let policy = known_good_part_policy();
     let seed = mach_seed();
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(cu_session.handshake(), &seed, &policy, &thumb)
+        .part_init(&cu_session, &seed, &policy, &thumb)
         .expect_err("PartInit from a CU session must be rejected");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
@@ -537,10 +537,10 @@ fn part_init_multiple_rejections_do_not_mutate_partition_state() {
     default_co.close().expect("close default-PSK CO session");
 
     // Second rejection: CU role.
-    let cu_session = SessionGuard::new(&ctx, bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK));
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
 
     let err = ctx
-        .part_init(cu_session.handshake(), &seed, &policy, &thumb)
+        .part_init(&cu_session, &seed, &policy, &thumb)
         .expect_err("PartInit from CU must be rejected");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
