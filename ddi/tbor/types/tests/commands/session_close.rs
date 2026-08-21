@@ -20,8 +20,6 @@
 //! Cross-test isolation comes from `open_dev`'s factory-reset; no
 //! per-test cleanup is required.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::SessionType;
 
 use crate::harness::TestCtx;
@@ -34,7 +32,7 @@ const CU: u8 = 1;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn session_close_cu_plaintext_active_emu() {
+fn session_close_cu_plaintext_active() {
     let ctx = TestCtx::new();
     let session = ctx
         .open_session(CU, SessionType::PlainText)
@@ -43,7 +41,7 @@ fn session_close_cu_plaintext_active_emu() {
 }
 
 #[test]
-fn session_close_co_authenticated_active_emu() {
+fn session_close_co_authenticated_active() {
     let ctx = TestCtx::new();
     let session = ctx
         .open_session(CO, SessionType::Authenticated)
@@ -57,7 +55,7 @@ fn session_close_co_authenticated_active_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn session_close_pending_slot_emu() {
+fn session_close_pending_slot() {
     let ctx = TestCtx::new();
     let pending = ctx
         .session_open_init(CU, SessionType::PlainText)
@@ -72,7 +70,7 @@ fn session_close_pending_slot_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn session_close_unknown_id_emu() {
+fn session_close_unknown_id() {
     let ctx = TestCtx::new();
     let err = ctx
         .session_close(0xFFFF)
@@ -84,7 +82,7 @@ fn session_close_unknown_id_emu() {
 }
 
 #[test]
-fn session_close_double_close_emu() {
+fn session_close_double_close() {
     let ctx = TestCtx::new();
     // Take the `SessionHandshake` out of the guard via `.close()` so
     // we own the lifecycle for the second (failing) call. The first
@@ -108,7 +106,7 @@ fn session_close_double_close_emu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn session_close_then_reopen_emu() {
+fn session_close_then_reopen() {
     let ctx = TestCtx::new();
     let first = ctx
         .open_session(CU, SessionType::PlainText)

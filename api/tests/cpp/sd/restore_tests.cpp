@@ -10,7 +10,7 @@
 // a restore target — reusing the policy and SATA/POTA anchors and supplying
 // the captured `local_mk_backup` so the sealing key unmasks — and the
 // security domain is restored from the remote backup via
-// `azihsm_sess_ex_sd_restore_remote_backup`. A successful restore is itself
+// `azihsm_sd_restore_remote_backup`. A successful restore is itself
 // the correctness check: the HPKE open only succeeds if the receiver key and
 // the attested sender key match those that sealed the backup.
 //
@@ -42,18 +42,6 @@ constexpr uint32_t kPokRemoteBackupLen = 161;
 constexpr uint32_t kMaskedSdLen = 180;
 constexpr uint32_t kSdMkBackupLen = 164;
 
-bool any_nonzero(const std::vector<uint8_t> &bytes)
-{
-    for (uint8_t b : bytes)
-    {
-        if (b != 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Create a real remote backup sealed to `receiver`'s attested key by
 // `masked`, capturing both the 161-byte remote backup and the 164-byte
 // masking-key backup needed to drive a later restore. Sizes the three output
@@ -71,7 +59,7 @@ bool create_backup_capture(
     azihsm_buffer masked_buf{ masked.data(), static_cast<uint32_t>(masked.size()) };
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
-    azihsm_sess_ex_sd_create_remote_backup_params params{
+    azihsm_sd_create_remote_backup_params params{
         &masked_buf,
         &receiver,
         &policy_buf,
@@ -86,13 +74,7 @@ bool create_backup_capture(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_remote_backup(
-            session,
-            &params,
-            &remote_buf,
-            &local_buf,
-            &mk_buf
-        );
+        err = azihsm_sd_create_remote_backup(session, &params, &remote_buf, &local_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -131,7 +113,7 @@ bool create_backup_capture(
 // on success, sizes `pok_local` / `sd_mk` to the bytes written.
 azihsm_status restore_fill(
     azihsm_handle session,
-    const azihsm_sess_ex_sd_restore_remote_backup_params *params,
+    const azihsm_sd_restore_remote_backup_params *params,
     std::vector<uint8_t> &pok_local,
     std::vector<uint8_t> &sd_mk
 )
@@ -141,7 +123,7 @@ azihsm_status restore_fill(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_restore_remote_backup(session, params, &pok_buf, &mk_buf);
+        err = azihsm_sd_restore_remote_backup(session, params, &pok_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -167,8 +149,8 @@ azihsm_status restore_fill(
 } // namespace
 
 /// Test fixture for security-domain restore-remote-backup
-/// (`azihsm_sess_ex_sd_restore_remote_backup`).
-class azihsm_sd_restore_backup : public ::testing::Test
+/// (`azihsm_sd_restore_remote_backup`).
+class azihsm_sd_restore_backup_test : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -206,7 +188,7 @@ class azihsm_sd_restore_backup : public ::testing::Test
 // a rebooted (factory-reset, re-provisioned) incarnation of the same
 // partition; the restore returns non-zero refreshed device-local backups of
 // the pinned lengths.
-TEST_F(azihsm_sd_restore_backup, restore_backup_roundtrip)
+TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -277,7 +259,7 @@ TEST_F(azihsm_sd_restore_backup, restore_backup_roundtrip)
         azihsm_buffer remote_buf{ remote_backup.data(),
                                   static_cast<uint32_t>(remote_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
-        azihsm_sess_ex_sd_restore_remote_backup_params params{
+        azihsm_sd_restore_remote_backup_params params{
             &masked_buf, &evidence.get(), &policy_buf, &remote_buf, &prev_mk_buf,
         };
 
@@ -296,7 +278,7 @@ TEST_F(azihsm_sd_restore_backup, restore_backup_roundtrip)
 
 // A NULL params pointer is rejected with `INVALID_ARGUMENT` after the
 // session resolves and before the restore is performed.
-TEST_F(azihsm_sd_restore_backup, restore_backup_null_params)
+TEST_F(azihsm_sd_restore_backup_test, restore_backup_null_params)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -316,8 +298,7 @@ TEST_F(azihsm_sd_restore_backup, restore_backup_null_params)
 
         azihsm_buffer pok_local{ nullptr, 0 };
         azihsm_buffer sd_mk{ nullptr, 0 };
-        auto err =
-            azihsm_sess_ex_sd_restore_remote_backup(ctx.session, nullptr, &pok_local, &sd_mk);
+        auto err = azihsm_sd_restore_remote_backup(ctx.session, nullptr, &pok_local, &sd_mk);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }

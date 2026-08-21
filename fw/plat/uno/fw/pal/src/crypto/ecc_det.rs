@@ -17,9 +17,9 @@
 //!   ([`UnoHsmPal::ecc_sign_deterministic`]) that composes the two.
 //!
 //! P-384 only — the alias key curve used to sign the partition-id (PID)
-//! certificate leaf. The shared prime modulus [`PRIME384_LE`] lives in
-//! [`super::ecc`]; the order and base-point constants are P-384 specific
-//! to this path and defined here.
+//! certificate leaf. The prime modulus [`PRIME384_LE`] and the base-point
+//! constants live in [`super::ecc`] (shared with the ECC-import path); only
+//! the curve order is P-384 specific to this path and defined here.
 //!
 //! [`HsmEcc`]: azihsm_fw_hsm_pal_traits::HsmEcc
 
@@ -37,7 +37,10 @@ use azihsm_fw_uno_drivers_upka::EccStepOp;
 use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::mont_operand_size;
 
+use super::ecc::BASE384_X_LE;
+use super::ecc::BASE384_Y_LE;
 use super::ecc::PRIME384_LE;
+use super::reverse_copy;
 use crate::UnoHsmPal;
 
 // =============================================================================
@@ -46,11 +49,11 @@ use crate::UnoHsmPal;
 //
 // The on-the-fly partition-id (PID) certificate leaf is signed with the P-384
 // alias key using a PKA-primitive ECDSA sign (see the A1 modular opcodes in the
-// upka driver). That path needs the curve order `n` and base point `G` in
-// addition to the prime `p` ([`PRIME384_LE`] in [`super::ecc`]). P-384 only —
-// the alias key curve. Values are the significant 48 little-endian operand bytes
-// (no PKA slot padding), matching [`PRIME384_LE`]. Consumed by `ecc_sign_with_k`
-// (A4).
+// upka driver). That path needs the curve order `n`, defined here, in addition
+// to the prime `p` ([`PRIME384_LE`]) and base point `G` (`BASE384_*_LE`) that
+// live in [`super::ecc`]. P-384 only — the alias key curve. Values are the
+// significant 48 little-endian operand bytes (no PKA slot padding), matching
+// [`PRIME384_LE`]. Consumed by `ecc_sign_with_k` (A4).
 
 /// NIST P-384 curve order `n` in PKA little-endian operand order.
 ///
@@ -80,21 +83,7 @@ const fn reverse48(mut a: [u8; 48]) -> [u8; 48] {
 /// candidate-range check ([`ct_in_range`]) compares big-endian. Derived from
 /// [`ORDER384_LE`] at compile time so the sign hot path does not reverse the
 /// order on every call.
-const ORDER384_BE: [u8; 48] = reverse48(ORDER384_LE);
-
-/// NIST P-384 base point `G` x-coordinate in PKA little-endian operand order.
-const BASE384_X_LE: [u8; 48] = [
-    0xb7, 0x0a, 0x76, 0x72, 0x38, 0x5e, 0x54, 0x3a, 0x6c, 0x29, 0x55, 0xbf, 0x5d, 0xf2, 0x02, 0x55,
-    0x38, 0x2a, 0x54, 0x82, 0xe0, 0x41, 0xf7, 0x59, 0x98, 0x9b, 0xa7, 0x8b, 0x62, 0x3b, 0x1d, 0x6e,
-    0x74, 0xad, 0x20, 0xf3, 0x1e, 0xc7, 0xb1, 0x8e, 0x37, 0x05, 0x8b, 0xbe, 0x22, 0xca, 0x87, 0xaa,
-];
-
-/// NIST P-384 base point `G` y-coordinate in PKA little-endian operand order.
-const BASE384_Y_LE: [u8; 48] = [
-    0x5f, 0x0e, 0xea, 0x90, 0x7c, 0x1d, 0x43, 0x7a, 0x9d, 0x81, 0x7e, 0x1d, 0xce, 0xb1, 0x60, 0x0a,
-    0xc0, 0xb8, 0xf0, 0xb5, 0x13, 0x31, 0xda, 0xe9, 0x7c, 0x14, 0x9a, 0x28, 0xbd, 0x1d, 0xf4, 0xf8,
-    0x29, 0xdc, 0x92, 0x92, 0xbf, 0x98, 0x9e, 0x5d, 0x6f, 0x2c, 0x26, 0x96, 0x4a, 0xde, 0x17, 0x36,
-];
+pub(super) const ORDER384_BE: [u8; 48] = reverse48(ORDER384_LE);
 
 /// Big-endian `a -= b` for equal-length operands, assuming `a >= b`.
 ///
@@ -123,7 +112,7 @@ fn be_sub_assign(a: &mut [u8], b: &[u8]) {
 /// the private key from a few biased/leaked nonce bits). Both operands are
 /// equal-length big-endian; every byte is read with no data-dependent early
 /// exit.
-fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
+pub(super) fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
     // v != 0: OR all bytes, then test the accumulator once.
     let mut acc = 0u8;
     for &b in v {
@@ -137,6 +126,36 @@ fn ct_in_range(v: &[u8], n: &[u8]) -> bool {
     let mut borrow = 0i32;
     for i in (0..v.len()).rev() {
         let diff = v[i] as i32 - n[i] as i32 - borrow;
+        borrow = (diff >> 8) & 1;
+    }
+    let lt = borrow == 1;
+
+    nonzero & lt
+}
+
+/// Constant-time check that the little-endian candidate `v_le` is in
+/// `[1, n_be - 1]`.
+///
+/// Same guarantees and byte-level arithmetic as [`ct_in_range`], but reads
+/// `v_le` in native PKA (little-endian) order and `n_be` in big-endian —
+/// so the caller need not materialize (and then scrub) a byte-reversed copy
+/// of the secret scalar just to reuse the BE-vs-BE variant. Both slices must
+/// be the same length.
+pub(super) fn ct_in_range_le(v_le: &[u8], n_be: &[u8]) -> bool {
+    // v != 0: OR all bytes, then test the accumulator once.
+    let mut acc = 0u8;
+    for &b in v_le {
+        acc |= b;
+    }
+    let nonzero = acc != 0;
+
+    // v < n: full-width subtraction from LSB to MSB. LSB is `v_le[0]` for the
+    // LE scalar and `n_be[len - 1]` for the BE order; step both indices in
+    // opposite directions so the same borrow-propagation runs branch-free.
+    let len = v_le.len();
+    let mut borrow = 0i32;
+    for j in 0..len {
+        let diff = v_le[j] as i32 - n_be[len - 1 - j] as i32 - borrow;
         borrow = (diff >> 8) & 1;
     }
     let lt = borrow == 1;
@@ -481,8 +500,7 @@ impl UnoHsmPal {
                     let v_be: &[u8] = &drbg.v[..];
                     if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate `k` (big-endian) in [1, n-1]; emit little-endian.
-                        k[..field].copy_from_slice(&drbg.v[..field]);
-                        k[..field].reverse();
+                        reverse_copy(&mut k[..field], &drbg.v[..field]);
                         return Ok(());
                     }
                     self.rfc6979_reseed(io, &mut drbg).await?;
@@ -562,8 +580,7 @@ impl UnoHsmPal {
                     let v_be: &[u8] = &drbg.v[..];
                     if ct_in_range(&v_be[..field], &drbg.n_be[..field]) {
                         // Candidate k in [1, n-1]; stage little-endian and sign.
-                        k[..field].copy_from_slice(&drbg.v[..field]);
-                        k[..field].reverse();
+                        reverse_copy(&mut k[..field], &drbg.v[..field]);
                         match self.ecc_sign_with_k(io, curve, k, digest, d, r, s).await {
                             Ok(()) => return Ok(()),
                             // Degenerate r/s — advance the DRBG and retry.
@@ -610,14 +627,12 @@ impl UnoHsmPal {
         // msg = V ‖ 0x00 ‖ int2octets(x) ‖ bits2octets(h1).
         drbg.msg[..field].copy_from_slice(&drbg.v[..field]);
         drbg.msg[field] = 0x00;
-        drbg.msg[field + 1..field + 1 + field].copy_from_slice(&d[..field]);
-        drbg.msg[field + 1..field + 1 + field].reverse();
+        reverse_copy(&mut drbg.msg[field + 1..field + 1 + field], &d[..field]);
         {
             // h1 = bits2octets(digest): big-endian digest reduced mod n.
             let (_, tail) = drbg.msg.split_at_mut(field + 1 + field);
             let h1: &mut [u8] = &mut tail[..field];
-            h1.copy_from_slice(&digest[..field]);
-            h1.reverse();
+            reverse_copy(h1, &digest[..field]);
             if h1[..] >= drbg.n_be[..] {
                 be_sub_assign(h1, &drbg.n_be);
             }
@@ -823,7 +838,6 @@ impl UnoHsmPal {
     /// * [`HsmError::EccGenerateError`] — the A.2.2 derivation exhausted its
     ///   retries (see [`derive_pta_scalar_be`](Self::derive_pta_scalar_be)).
     /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
-    #[allow(dead_code)] // consumed by PTA/alias keygen + boot KAT
     pub(crate) async fn ecc_gen_keypair_deterministic(
         &self,
         io: &impl HsmIo,

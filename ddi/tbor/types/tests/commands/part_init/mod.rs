@@ -42,8 +42,8 @@ use crate::harness::TestCtx;
 
 mod crypto_rejects;
 mod fw_rejects;
-mod happy_path;
 mod sd_config;
+mod success_path;
 
 pub(crate) const CO: u8 = 0;
 
@@ -53,6 +53,17 @@ pub(crate) const CO: u8 = 0;
 pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+
+pub(super) const CU: u8 = 1;
+
+/// Non-default CU PSK used by tests that must bypass the default-PSK gate.
+///
+/// This value intentionally differs from [`ROTATED_CO_PSK`] so accidental
+/// credential reuse between roles is easy to detect.
+pub(super) const ROTATED_CU_PSK: [u8; PSK_LEN] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
 ];
 
 /// Build a 484-byte unified `PartPolicy` blob that passes
@@ -103,17 +114,6 @@ pub(crate) fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN
     let mut bytes = known_good_part_policy();
     // POTA slot layout: kind(2) ‖ len(2) ‖ data(96); overwrite the data.
     bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
-    bytes
-}
-
-/// Like [`known_good_part_policy`] but with a caller-supplied `flags`
-/// byte, so tests can toggle individual `PolicyFlags` bits (e.g.
-/// `PolicyFlags::INCLUDE_FMC_CDI`) while keeping every other field
-/// byte-identical to the canonical fixture.
-pub(crate) fn part_policy_with_flags(flags: u8) -> [u8; PART_POLICY_LEN] {
-    const OFF_FLAGS: usize = 418;
-    let mut bytes = known_good_part_policy();
-    bytes[OFF_FLAGS] = flags;
     bytes
 }
 

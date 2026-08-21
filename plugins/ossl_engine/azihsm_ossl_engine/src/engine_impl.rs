@@ -32,7 +32,7 @@ const ENGINE_NAME: &CStr = c"Azure Integrated HSM Engine";
 /// `CRYPTO_get_ex_new_index` does not dedupe, so we register at most once.
 static ENGINE_DATA_SLOT: OnceLock<EngineExData<EngineData>> = OnceLock::new();
 
-fn engine_data_slot() -> EngineResult<EngineExData<EngineData>> {
+pub(crate) fn engine_data_slot() -> EngineResult<EngineExData<EngineData>> {
     if let Some(slot) = ENGINE_DATA_SLOT.get() {
         return Ok(*slot);
     }
@@ -73,8 +73,16 @@ impl DestroyHandler for AzihsmDestroy {
         // slot: if it was never registered there is nothing to clear, and
         // registering one here would just leak an index.
         if let Some(slot) = ENGINE_DATA_SLOT.get() {
+            tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
             slot.take(engine)?;
         }
+        // Unconditional (no-op-safe): if bind failed after registering the
+        // methods but before parking EngineData, the table entries and the
+        // global ASN1 registration still need cleaning. The framework has
+        // already freed the methods themselves (engine_pkey_(asn1_)meths_free
+        // run before this hook); only stale pointers are dropped here.
+        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(engine);
+        azihsm_ossl_engine_core::asn1_method::release_ec_asn1_method(engine);
         Ok(())
     }
 }
@@ -153,10 +161,28 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     engine.set_name(ENGINE_NAME)?;
     engine.set_destroy::<AzihsmDestroy>()?;
     engine.set_load_privkey::<AzihsmLoadPrivKey>()?;
-    // Advertise an EC method so the loader can bind returned keys to the
-    // engine (EC_KEY_new_method), which keeps the engine alive while any
-    // loaded key lives. Software EC ops for now; signing is wired later.
-    engine.set_default_ec_method()?;
+    // Advertise the engine's EC method — OpenSSL defaults with sign_sig routed
+    // to the HSM — so keys the loader creates with EC_KEY_new_method adopt it
+    // at creation and keep their engine reference (see crate::sign for why it
+    // must not be attached per key with EC_KEY_set_method).
+    // SAFETY: ecdsa_method() is process-global and never freed, so it outlives
+    // the engine.
+    #[allow(unsafe_code)]
+    unsafe {
+        engine.set_ec_method(crate::sign::ecdsa_method()?)?;
+    }
+    // Advertise the engine's EC EVP_PKEY_METHOD so `genpkey -engine azihsm`
+    // (ENGINE_get_pkey_meth) can generate keys on the HSM; unarmed contexts
+    // delegate to software keygen (see azihsm_ossl_engine_core::pkey_method).
+    azihsm_ossl_engine_core::pkey_method::register_ec_pkey_method::<crate::keygen::AzihsmEcKeygen>(
+        engine,
+    )?;
+    // Provider-parity serialization for HSM-backed keys (-text info block,
+    // clean export refusal); software EC keys keep the built-in behavior via
+    // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
+    azihsm_ossl_engine_core::asn1_method::register_ec_asn1_method::<crate::asn1::AzihsmEcAsn1>(
+        engine,
+    )?;
 
     // Park an empty EngineData. Its HSM session is opened on demand via
     // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and

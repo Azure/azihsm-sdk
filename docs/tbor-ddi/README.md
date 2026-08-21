@@ -75,8 +75,11 @@ single `none` TOC placeholder and no typed body fields.
 | `0x18` | `EccSign` | InSession | [`commands/ecc_sign.md`](./commands/ecc_sign.md) |
 | `0x19` | `EcdhDerive` | InSession | [`commands/ecdh_derive.md`](./commands/ecdh_derive.md) |
 | `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](./commands/rsa_mod_exp.md) |
+| `0x1B` | `Hash` | InSession | [`commands/hash.md`](./commands/hash.md) |
 | `0x1C` | `HkdfDerive` | InSession | [`commands/hkdf_derive.md`](./commands/hkdf_derive.md) |
 | `0x1D` | `ConcatKdfDerive` | InSession | [`commands/concat_kdf_derive.md`](./commands/concat_kdf_derive.md) |
+| `0x1E` | `GetCertChainInfo` | NoSession | [`commands/get_cert_chain_info.md`](./commands/get_cert_chain_info.md) |
+| `0x1F` | `GetCertificate` | NoSession | [`commands/get_cert.md`](./commands/get_cert.md) |
 
 ## Default-PSK gate
 
@@ -99,8 +102,9 @@ Any other in-session opcode returns `DefaultPskMustRotate`
 (`0x087000E6`).  The gate is **per role**: rotating the CO PSK
 unlocks CO sessions but does not affect CU; rotating the CU PSK is a
 separate operation.  Out-of-session opcodes (`ApiRev`,
-`SessionOpenInit`, `SessionOpenFinish`, `PartInfo`) are never gated so a
-client can always open the bootstrap session.
+`SessionOpenInit`, `SessionOpenFinish`, `PartInfo`, `GetCertChainInfo`,
+`GetCertificate`) are never gated so a client can always open the
+bootstrap session.
 
 **Bootstrap sequence (mandatory on first provisioning):**
 

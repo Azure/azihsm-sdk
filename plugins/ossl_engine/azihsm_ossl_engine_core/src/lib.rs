@@ -12,10 +12,18 @@
 //! No HSM-specific logic. Linux only.
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod asn1_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod ec_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod engine;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod error;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod exdata;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod method_table;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod pkey_method;
 
 pub use azihsm_ossl_engine_sys as ffi;

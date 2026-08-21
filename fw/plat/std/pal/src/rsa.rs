@@ -96,25 +96,25 @@ impl HsmRsa for StdHsmPal {
         crate::drivers::rsa::rsa_pub_wire(&pubk, pub_out.map(|b| &mut **b))
     }
 
-    fn rsa_priv_der_to_vault(
-        &self,
+    async fn rsa_priv_der_to_vault<'a>(
+        &'a self,
         _io: &impl HsmIo,
-        buf: &mut DmaBuf,
+        der: &'a mut DmaBuf,
         crt: bool,
-    ) -> HsmResult<(usize, usize)> {
-        // Parse the recovered DER and re-serialize it in place into the
-        // vault HSM byte format: the CRT layout (`n|e|d|p|q|dp|dq|qinv`)
-        // when `crt`, else non-CRT (`n|e|p|q`).  Both HSM layouts are no
-        // larger than the source DER, so they fit in `buf`.
-        let pk = RsaPrivateKey::from_bytes(buf).map_err(|_| HsmError::InvalidArg)?;
+    ) -> HsmResult<(&'a DmaBuf, usize)> {
+        // Parse the recovered DER and re-serialize it in place into the vault
+        // HSM byte format: the CRT layout (`n|e|d|p|q|dp|dq|qinv`) when `crt`,
+        // else non-CRT (`n|e|p|q`). Both HSM layouts are no larger than the
+        // source DER, so `der` doubles as the vault buffer (no second buffer).
+        let pk = RsaPrivateKey::from_bytes(der).map_err(|_| HsmError::InvalidArg)?;
         let modulus_len = pk.size();
         let hsm_len = if crt {
-            pk.to_hsm_crt_bytes(buf)
+            pk.to_hsm_crt_bytes(der)
         } else {
-            pk.to_hsm_bytes(buf)
+            pk.to_hsm_bytes(der)
         }
         .map_err(|_| HsmError::RsaToDerError)?;
-        Ok((hsm_len, modulus_len))
+        Ok((&der[..hsm_len], modulus_len))
     }
 
     async fn rsa_pkcs1_encrypt<'a>(

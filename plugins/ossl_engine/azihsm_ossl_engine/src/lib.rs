@@ -33,6 +33,15 @@ mod uri;
 mod keyload;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod sign;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod keygen;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod asn1;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod engine_impl;
 
 /// Integration-test helpers (masked-key generation). Gated behind `integration`;

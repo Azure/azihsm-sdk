@@ -15,7 +15,9 @@ set -eu
 umask 0077
 
 # Isolated keymat dir (xtask wipes target/test-keymat before a run).
-KEYDIR="${AZIHSM_ENGINE_TEST_KEYDIR:-$PWD/target/test-keymat/engine-cli}"
+# The runner passes each suite's keydir as the script's first argument (lit's
+# @keydir constant); the env var / default remain for manual invocations.
+KEYDIR="${1:-${AZIHSM_ENGINE_TEST_KEYDIR:-$PWD/target/test-keymat/engine-cli}}"
 mkdir -p "$KEYDIR"
 install -d -m 700 "$KEYDIR/res"
 

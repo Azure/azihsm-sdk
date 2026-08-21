@@ -95,6 +95,10 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
 darling = "0.20"
+der = { default-features = false, features = [
+  "derive",
+  "oid",
+], version = "0.8" }
 embassy-executor = "0.10.0"
 embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
