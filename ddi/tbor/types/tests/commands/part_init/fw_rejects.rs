@@ -198,13 +198,13 @@ fn part_init_default_psk_gate_precedes_cu_role_gate() {
 fn part_init_cu_role_gate_precedes_policy_decode() {
     let ctx = TestCtx::new();
 
-    let session = SessionGuard::new(&ctx, bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK));
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let bad_policy = [0u8; PART_POLICY_LEN];
     let seed = mach_seed();
     let thumb = pota_thumbprint();
 
     let err = ctx
-        .part_init(session.handshake(), &seed, &bad_policy, &thumb)
+        .part_init(&session, &seed, &bad_policy, &thumb)
         .expect_err("CU role gate must reject before policy decoding");
 
     assert_fw_rejects(&err, TborStatus::InvalidPermissions);
