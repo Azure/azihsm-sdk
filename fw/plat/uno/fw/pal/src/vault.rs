@@ -33,6 +33,11 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::psram::PSRAM_BASE;
 
 use crate::UnoHsmPal;
 
@@ -144,9 +149,9 @@ impl HsmVault for UnoHsmPal {
         // material lives in the bulk-crypto backend.  Snapshot the handle
         // synchronously, remove the vault entry first (making it invisible
         // to other handlers atomically w.r.t. the vault), then release the
-        // backend slot best-effort so a torn-down partition or a failed
-        // vault delete cannot leave a dangling FP slot with no vault
-        // pointer.
+        // backend slot.  If the backend delete fails the FP key stays
+        // live and its handle would remain usable by the host — surface
+        // the error so the caller knows deletion did not fully complete.
         let bulk_id = matches!(
             self.vault_key_kind(io, key_id),
             Ok(HsmVaultKeyKind::AesGcmBulk256
@@ -166,7 +171,7 @@ impl HsmVault for UnoHsmPal {
         v.delete(self, io, key_id).await?;
 
         if let Some(bulk_id) = bulk_id {
-            let _ = self.bulk_key_delete(io, bulk_id).await;
+            self.bulk_key_delete(io, bulk_id).await?;
         }
         Ok(())
     }
@@ -186,11 +191,22 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
+        // TODO(aes-gcm follow-up): session-tagged bulk keys are dropped
+        // from the vault here but their backend slots are not released.
+        // The reference firmware handles this via per-session bulk-key
+        // tracking on the partition state (see `close_session` FSM +
+        // `AesBulk256Cmd::DeleteKey`).  Porting that tracking model is
+        // out of scope for this AES-GCM bring-up; explicit `DeleteKey`
+        // DDI still routes through `vault_key_delete` and releases the
+        // backend slot correctly.
         let mut v = vault(io);
         v.delete_by_session(self, io, u16::from(session_id)).await
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
+        // TODO(aes-gcm follow-up): partition reset drops the vault
+        // entries but does not release backend bulk-key slots.  See the
+        // note on `vault_key_delete_by_session` for the same reason.
         let mut v = vault(io);
         v.clear(self, io).await
     }
@@ -311,6 +327,13 @@ fn fp_slot_free(vault_id: u8, key_index: u8) {
 
 /// Send an `AesKeyUpdate` message to FP over the HSM↔FP IPC channel and
 /// await the response, mapping a non-`Success` status to an error.
+///
+/// The message body contains raw 32-byte AES key material.  After the
+/// exchange completes the corresponding PSRAM TX ring slot still holds
+/// that material until the ring wraps; zero it out here so the plaintext
+/// key does not linger in shared SRAM.  The channel is single-use by the
+/// HSM and the IPC driver serialises callers, so we can safely observe
+/// the PI value we sent to and clear the slot we just occupied.
 async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<()> {
     let msg = IpcMessageKeyUpdate {
         header: IpcMessageHeader::new()
@@ -321,10 +344,34 @@ async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<(
     };
     let request = msg.encode();
 
+    // Snapshot the TX PI before the send; the IPC driver writes to this
+    // slot and advances PI atomically, so the slot we need to zero is the
+    // one at this observed index.
+    // SAFETY: TX PI is a fixed 32-bit MMIO register in PSRAM; a plain
+    // volatile read is race-free against the FP-side reader.
+    let tx_slot =
+        unsafe { ((PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET) as *const u32).read_volatile() }
+            % HSM_TO_FP_IPC_TX_RING_COUNT;
+
     let mut resp = [0u32; IPC_MESSAGE_LENGTH];
     pal.ipc
         .send(IpcChannel::FpMessage as u8, &request.data, &mut resp)
         .await;
+
+    // Zero the PSRAM TX slot that held the 32-byte AES key.  The FP has
+    // already consumed the message (the response bit is only set after
+    // the read); subsequent sends target later slots (PI has advanced),
+    // so this write does not race with the driver.
+    // SAFETY: the slot is a fixed `HSM_TO_FP_IPC_TX_RING_STRIDE`-byte
+    // region in PSRAM, aligned and sized for `u32` writes.
+    let slot_addr =
+        PSRAM_BASE + HSM_TO_FP_IPC_TX_RING_OFFSET + tx_slot * HSM_TO_FP_IPC_TX_RING_STRIDE;
+    let words = (HSM_TO_FP_IPC_TX_RING_STRIDE / 4) as usize;
+    for i in 0..words {
+        unsafe {
+            ((slot_addr as usize + i * 4) as *mut u32).write_volatile(0);
+        }
+    }
 
     let header = IpcMessageDecoder::decode_header(&IpcMessage { data: resp })
         .map_err(|_| HsmError::InternalError)?;

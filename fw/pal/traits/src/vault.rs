@@ -495,9 +495,18 @@ pub trait HsmVault {
     /// - `session_id` — the id of the session creating the key.  The
     ///   registration is scoped to this session so later bulk ops (which
     ///   carry the session id) match.
-    /// - `session_only` — `true` if the key is session-scoped
-    ///   (auto-deleted on session close), `false` for a partition-wide
-    ///   (app) key.
+    /// - `session_only` — `true` if the key is session-scoped, `false`
+    ///   for a partition-wide (app) key.  The backend records the
+    ///   session id and rejects bulk ops that carry a different one,
+    ///   but backend-side cleanup on session teardown is the caller's
+    ///   responsibility: `session_only` only tags the key, it does not
+    ///   subscribe it to automatic teardown here.  The explicit
+    ///   `DeleteKey` DDI path routes through
+    ///   [`vault_key_delete`](Self::vault_key_delete), which releases
+    ///   the backend slot.  Cleanup of session-tagged bulk keys on
+    ///   `CloseSession` / partition reset requires an equivalent
+    ///   backend-delete step in the corresponding lifecycle path (see
+    ///   the reference firmware's `close_session` FSM for the model).
     ///
     /// # Returns
     /// - `Ok(bulk_key_id)` — the backend-assigned key id (packed into a
