@@ -326,19 +326,25 @@ impl UnoHsmPal {
 /// 8-byte-aligned `u64` (QWORD) body, framed by a byte-wise head/tail for
 /// any unaligned edges. `[u64]::zeroize()` lowers to 64-bit volatile stores
 /// (a single `STRD`/64-bit AXI transfer on Cortex-M7), so it issues half as
-/// many stores as a 32-bit wipe and a quarter of a byte-wise one. Both
-/// per-IO regions are 8-byte aligned with 8-multiple sizes (`DTCM_IO_BUF`
-/// 0x600, `SRAM_IO_BUF` 0x4000), so in practice this is a pure `u64` body
-/// with no head or tail. `zeroize` emits the volatile writes plus a
-/// compiler+atomic fence, so the wipe cannot be elided.
+/// many stores as a 32-bit wipe and a quarter of a byte-wise one.
+///
+/// The **head** is normally empty: callers pass a per-IO region base, and
+/// both regions are 8-byte aligned (`DTCM_IO_BUF` 0x600, `SRAM_IO_BUF`
+/// 0x4000). The **tail** is not — `len` is the heap's dirty high-water
+/// mark, not the region size, and the bump allocator aligns to each
+/// value's `align_of`, so a watermark that is not a multiple of 8 is the
+/// normal case and the tail path runs routinely.
+///
+/// `zeroize` emits the volatile writes plus a compiler+atomic fence, so
+/// the wipe cannot be elided.
 ///
 /// # Safety
 ///
 /// `ptr` must be valid for writes of `len` bytes.
 #[inline]
 unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
-    // Byte-wise head up to the first 8-byte boundary (empty for the aligned
-    // per-IO regions).
+    // Byte-wise head up to the first 8-byte boundary (empty when the
+    // caller passes an 8-aligned region base, which is the normal case).
     let head = ((8 - (ptr as usize & 7)) & 7).min(len);
     if head != 0 {
         // SAFETY: `head <= len`, so this stays within the caller's region.
@@ -354,7 +360,8 @@ unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
         let body = unsafe { core::slice::from_raw_parts_mut(body_ptr, body_len / 8) };
         body.zeroize();
     }
-    // Byte-wise tail (sub-`u64` remainder; empty for the per-IO regions).
+    // Byte-wise tail (sub-`u64` remainder). Unlike the head this is
+    // common: `len` is the dirty high-water mark, not the region size.
     let tail_off = head + body_len;
     if tail_off < len {
         // SAFETY: `tail_off < len`, so `ptr + tail_off` is within the region.
