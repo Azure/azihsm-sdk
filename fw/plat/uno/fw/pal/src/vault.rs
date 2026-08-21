@@ -140,27 +140,35 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        // A bulk key lives in the FP engine with only its 2-byte handle in
-        // the vault; free the FP slot before dropping the vault entry so it
-        // can be reused.  Best-effort — a missing / oddly-sized entry simply
-        // skips the FP delete and proceeds to remove the vault entry.
-        if matches!(
+        // Bulk keys keep only a 2-byte handle in the vault; the actual key
+        // material lives in the bulk-crypto backend.  Snapshot the handle
+        // synchronously, remove the vault entry first (making it invisible
+        // to other handlers atomically w.r.t. the vault), then release the
+        // backend slot best-effort so a torn-down partition or a failed
+        // vault delete cannot leave a dangling FP slot with no vault
+        // pointer.
+        let bulk_id = matches!(
             self.vault_key_kind(io, key_id),
             Ok(HsmVaultKeyKind::AesGcmBulk256
                 | HsmVaultKeyKind::AesGcmBulk256Unapproved
                 | HsmVaultKeyKind::AesXtsBulk256)
-        ) {
-            let bulk_id = self.vault_key(io, key_id).ok().and_then(|b| {
+        )
+        .then(|| {
+            self.vault_key(io, key_id).ok().and_then(|b| {
                 let bytes: &[u8] = b;
                 (bytes.len() == core::mem::size_of::<u16>())
                     .then(|| u16::from_le_bytes([bytes[0], bytes[1]]))
-            });
-            if let Some(bulk_id) = bulk_id {
-                let _ = self.bulk_key_delete(io, bulk_id).await;
-            }
-        }
+            })
+        })
+        .flatten();
+
         let mut v = vault(io);
-        v.delete(self, io, key_id).await
+        v.delete(self, io, key_id).await?;
+
+        if let Some(bulk_id) = bulk_id {
+            let _ = self.bulk_key_delete(io, bulk_id).await;
+        }
+        Ok(())
     }
 
     fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {

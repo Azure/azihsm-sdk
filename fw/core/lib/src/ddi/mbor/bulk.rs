@@ -33,6 +33,26 @@ pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
 /// backend-assigned `bulk_key_id`.  The registration is scoped to
 /// `sess_id` when the key is session-scoped (`attrs.session()`), matching
 /// the session id later bulk ops carry.
+///
+/// # Concurrency
+///
+/// This helper contains two awaits — the backend registration and the
+/// vault insert — but does not take a partition-lifecycle lock.  DDI
+/// commands run on the single-threaded cooperative executor and may
+/// interleave at await points, matching the "no partition_lock needed"
+/// convention documented on the calling handlers (see
+/// `aes_generate_key`).  Interleaving is safe here because:
+///
+/// * The only cross-await state is the local `bulk_id`, which is not
+///   observable from the vault until [`HsmVault::vault_key_create`]
+///   commits.
+/// * If the vault write fails (`NotEnoughSpace`, torn-down partition,
+///   etc.) the compensation branch releases the backend slot best-effort
+///   before returning, so the backend cannot outlive a failed vault
+///   insert.
+/// * The reverse order — vault first, then backend — is not usable: the
+///   vault must record the backend-assigned handle, so the backend id
+///   has to exist first.
 pub(crate) async fn register_bulk_key<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
