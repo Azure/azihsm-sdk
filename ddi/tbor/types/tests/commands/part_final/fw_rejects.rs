@@ -5,11 +5,10 @@
 //! walk.
 //!
 //! These tests supply an empty `certs` slice, so nothing is carried out
-//! of band and no SGL Data Block is referenced. That makes them the only
-//! part of the `PartFinal` surface that runs on real hardware today: the
-//! host-side OOB path is implemented for the emulator only (`ddi/emu`),
-//! while `ddi/nix` still rejects non-empty `oob_items`. Everything that
-//! needs a real chain lives in [`super::chain_path`] and stays emu-gated.
+//! of band and no SGL Data Block is referenced. They therefore exercise
+//! the handler gates in isolation from the OOB transport. The tests that
+//! supply a real chain live in [`super::chain_path`] and now run on
+//! hardware too, via the driver's data-transfer ioctl.
 //!
 //! The reachable gates, in the order the firmware applies them
 //! (`fw/core/lib/src/ddi/tbor/part_final.rs`):
@@ -122,8 +121,10 @@ fn part_final_reject_wrong_state() {
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let policy = known_good_part_policy();
 
-    ctx.part_final(&session, &policy, &[], &[])
+    let err = ctx
+        .part_final(&session, &policy, &[], &[])
         .expect_err("PartFinal without PartInit must be rejected by the state gate");
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
 /// `PartFinal` re-supplying a policy that does not match the one bound at
@@ -145,6 +146,8 @@ fn part_final_reject_policy_mismatch() {
     let last = wrong.len() - 2;
     wrong[last] ^= 0x01;
 
-    ctx.part_final(&session, &wrong, &[], &[])
+    let err = ctx
+        .part_final(&session, &wrong, &[], &[])
         .expect_err("PartFinal with a mismatched policy must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
 }

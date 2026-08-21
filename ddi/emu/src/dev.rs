@@ -74,6 +74,11 @@ const SCRATCH_LEN: usize = 4096;
 /// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
 const OOB_ENTRY_LEN: usize = 16;
 
+/// Size of a per-item SGL segment. The driver allocates segments in
+/// whole pages, and the firmware walks a segment page-wide, so the
+/// emulator must back each one with a full page too.
+const SGL_SEGMENT_LEN: usize = 4096;
+
 /// Size of one OOB Metadata Page entry
 /// (`xfer_length ‖ rsvd ‖ hw_sgl_mem_paddr`).
 const METADATA_ENTRY_LEN: usize = 16;
@@ -352,13 +357,21 @@ impl DdiDev for DdiEmuDev {
                 // Build each item's single-descriptor SGL segment first,
                 // so their addresses are stable before the page records
                 // them.
+                //
+                // Each segment is a full page, matching the driver
+                // (`coh_mem_sz = seg_cnt * PAGE_SIZE`). The firmware
+                // walks a segment page-wide, so a 16-byte allocation
+                // here would be read out of bounds on the std PAL, where
+                // the "DMA" is a raw pointer read.
                 for item in items.iter() {
-                    let mut seg = AlignedBuf::new(OOB_ENTRY_LEN);
+                    let mut seg = AlignedBuf::new(SGL_SEGMENT_LEN);
                     let s = seg.as_mut_slice();
                     s[0..8].copy_from_slice(&(item.as_ptr() as u64).to_le_bytes());
                     s[8..12].copy_from_slice(&(item.len() as u32).to_le_bytes());
                     // [12..16] stay zero: rsvd(3) + SGL type nibble 0
-                    // (Data Block).
+                    // (Data Block). The rest of the page stays zero, so
+                    // the firmware's walk terminates once the item's
+                    // `xfer_length` is satisfied.
                     sgl_segs.push(seg);
                 }
 

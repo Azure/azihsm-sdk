@@ -62,12 +62,15 @@ pub const METADATA_ENTRY_OFF: usize = 4;
 /// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
 pub const MAX_OOB_ITEMS: usize = 16;
 
-/// Bytes fetched from a per-item SGL segment in one read, and the
-/// resulting descriptor budget. The driver rejects items needing more
-/// than one segment, and a cert-chain item is a handful of descriptors
-/// at most, so this is ample.
-const SEG_READ_LEN: usize = 256;
-const MAX_SEG_DESCRIPTORS: usize = SEG_READ_LEN / SGL_ENTRY_LEN;
+/// A per-item SGL segment is read in chunks of this size rather than in
+/// one 4 KiB read, to keep the scratch allocation small. The driver
+/// allocates each segment as `seg_cnt * PAGE_SIZE` (so at least one full
+/// page) and rejects items needing more than one segment, hence the
+/// walk is bounded by the page rather than by a fixed descriptor count.
+const SEG_CHUNK_LEN: usize = 256;
+const SEG_CHUNK_DESCRIPTORS: usize = SEG_CHUNK_LEN / SGL_ENTRY_LEN;
+const SEG_PAGE_LEN: usize = 4096;
+const SEG_CHUNKS: usize = SEG_PAGE_LEN / SEG_CHUNK_LEN;
 
 /// Size of the Metadata Page (`METADATA_SIZE` in the driver UAPI).
 const METADATA_PAGE_LEN: usize = 4096;
@@ -205,41 +208,48 @@ where
 
         // ── Walk the item's SGL segment, chunk by chunk ──────────────
         //
-        // The whole segment is fetched once: per-descriptor 16-byte
-        // reads would hit the same GDMA small-transfer fault as the
-        // header, and one read is cheaper. The driver allocates the
-        // segment as a coherent page, so reading `SEG_READ_LEN` from
-        // its (page-aligned) base stays in bounds.
-        let seg = scoped.dma_alloc(SEG_READ_LEN)?;
-        // Also a plain contiguous host buffer — read via PRP, as above.
-        pal.copy_mem_from_host(io, seg_addr, seg, true).await?;
-
+        // The segment is read in `SEG_CHUNK_LEN` slices rather than one
+        // descriptor at a time: 16-byte reads hit the same GDMA
+        // small-transfer fault as the header. The walk spans the whole
+        // segment page, so an item split across many descriptors is
+        // handled; the driver allocates at least one full page per
+        // segment and rejects items needing more than one segment.
+        let seg = scoped.dma_alloc(SEG_CHUNK_LEN)?;
         let mut copied = 0usize;
         let mut tail: &mut DmaBuf = dst;
 
-        for i in 0..MAX_SEG_DESCRIPTORS {
+        'outer: for chunk_idx in 0..SEG_CHUNKS {
             if copied == xfer_length {
                 break;
             }
-            let off = i * SGL_ENTRY_LEN;
+            let chunk_addr = addr_offset(seg_addr, (chunk_idx * SEG_CHUNK_LEN) as u64)?;
+            // Plain contiguous host memory — read via PRP, as above.
+            pal.copy_mem_from_host(io, chunk_addr, seg, true).await?;
 
-            // NVMe SGL Data Block: `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`.
-            let chunk = le_u32(seg, off + 8)? as usize;
-            if chunk == 0 || copied + chunk > xfer_length {
-                return Err(HsmError::InvalidArg);
+            for i in 0..SEG_CHUNK_DESCRIPTORS {
+                if copied == xfer_length {
+                    break 'outer;
+                }
+                let off = i * SGL_ENTRY_LEN;
+
+                // NVMe SGL Data Block: `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`.
+                let chunk = le_u32(seg, off + 8)? as usize;
+                if chunk == 0 || copied + chunk > xfer_length {
+                    return Err(HsmError::InvalidArg);
+                }
+
+                // Hand the GDMA exactly this chunk's destination window;
+                // it validates the descriptor length against the slice.
+                let (head, rest) = tail.split_at_mut(chunk);
+                let raw: &[u8; SGL_ENTRY_LEN] = seg
+                    .get(off..off + SGL_ENTRY_LEN)
+                    .and_then(|s| s.try_into().ok())
+                    .ok_or(HsmError::InternalError)?;
+                pal.copy_mem_from_host_raw(io, raw, head, false).await?;
+
+                copied += chunk;
+                tail = rest;
             }
-
-            // Hand the GDMA exactly this chunk's destination window; it
-            // validates the descriptor length against the slice length.
-            let (head, rest) = tail.split_at_mut(chunk);
-            let raw: &[u8; SGL_ENTRY_LEN] = seg
-                .get(off..off + SGL_ENTRY_LEN)
-                .and_then(|s| s.try_into().ok())
-                .ok_or(HsmError::InternalError)?;
-            pal.copy_mem_from_host_raw(io, raw, head, false).await?;
-
-            copied += chunk;
-            tail = rest;
         }
 
         // A segment that never reached `xfer_length` is malformed.

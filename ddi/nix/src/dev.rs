@@ -1017,11 +1017,12 @@ impl DdiDev for DdiNixDev {
         cmd.in_data.dst_buf = resp_buf.as_mut_ptr();
 
         // ── 3. Issue the ioctl ───────────────────────────────────
-        // SAFETY: src/dst pointers above are valid for the duration
-        // of the ioctl call; the buffers outlive `cmd`. On the OOB
-        // path the borrowed `oob` slices likewise outlive the call.
         let fd = self.file.read().as_raw_fd();
         let out_data = if oob.is_empty() {
+            // SAFETY: `cmd` is a valid, fully-initialised
+            // `McrCpGenericCmd`, and the src/dst pointers it holds stay
+            // valid for the duration of the call because `req_buf` and
+            // `resp_buf` outlive it.
             let res = unsafe { mcr_ctrl_cmd_generic_ioctl(fd, &mut cmd) };
             if res.is_err() {
                 self.map_ioctl_status_tbor(cmd.out_data.ioctl_status)?;
@@ -1056,6 +1057,11 @@ impl DdiDev for DdiNixDev {
             xfer_cmd.generic_cmd.hdr.ioctl_data_size =
                 mem::size_of::<AzihsmCtrlDataXferCmd>() as u32;
 
+            // SAFETY: `xfer_cmd` is a valid, fully-initialised
+            // `AzihsmCtrlDataXferCmd`. Its src/dst pointers and the
+            // borrowed `oob` item slices recorded in `buffers` all
+            // outlive this blocking call, so the driver only ever
+            // dereferences live memory.
             let res = unsafe { azihsm_ctrl_data_xfer_ioctl(fd, &mut xfer_cmd) };
             if res.is_err() {
                 self.map_ioctl_status_tbor(xfer_cmd.generic_cmd.out_data.ioctl_status)?;
