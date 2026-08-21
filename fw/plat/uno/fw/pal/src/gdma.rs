@@ -285,8 +285,9 @@ impl UnoHsmPal {
     /// The bump watermark rewinds on every scope exit, but the peak bounds
     /// every byte written since the previous scrub, and everything past it is
     /// already zero from that scrub. Measured over ~1.7k host IOs the DMA peak
-    /// averaged ~933 B of the 18 KiB slot (max ~3.3 KiB), so this also keeps
-    /// the wipe inside a single `DUMMY_PERIPHERAL`-sized GDMA transfer instead of two.
+    /// averaged ~933 B of the 16 KiB slot (max ~3.3 KiB). The slot is sized to
+    /// `DUMMY_PERIPHERAL`, so even a full-capacity wipe is a single GDMA
+    /// transfer.
     /// A heap that was never touched is skipped entirely.
     pub(crate) async fn scrub_io_slot(&self, io_index: u16) {
         let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_dirty(self, io_index);
@@ -327,7 +328,7 @@ impl UnoHsmPal {
 /// (a single `STRD`/64-bit AXI transfer on Cortex-M7), so it issues half as
 /// many stores as a 32-bit wipe and a quarter of a byte-wise one. Both
 /// per-IO regions are 8-byte aligned with 8-multiple sizes (`DTCM_IO_BUF`
-/// 0x600, `SRAM_IO_BUF` 0x4800), so in practice this is a pure `u64` body
+/// 0x600, `SRAM_IO_BUF` 0x4000), so in practice this is a pure `u64` body
 /// with no head or tail. `zeroize` emits the volatile writes plus a
 /// compiler+atomic fence, so the wipe cannot be elided.
 ///

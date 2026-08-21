@@ -387,7 +387,7 @@ impl UnoHsmPal {
     /// [`KeyVault::delete`](azihsm_fw_uno_key_vault::KeyVault::delete) takes
     /// only a GDMA controller and an IO — no allocator — so it writes nothing
     /// to the admin slot's bump heaps. A session per key would scrub the full
-    /// 18 KiB slot once per deletion for no benefit, and
+    /// 16 KiB slot once per deletion for no benefit, and
     /// [`clear_enabled_state`](Self::clear_enabled_state) deletes one key per
     /// provisioning slot *and* per live session.
     async fn delete_key(&self, admin_io: &UnoHsmIo, key_id: HsmKeyId) {

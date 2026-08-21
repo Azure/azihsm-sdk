@@ -18,7 +18,7 @@
 //! | `IO_CQ[index]`  | 16B CQE           | Completion queue entry (write)       |
 //! | `IO_META[index]` | 8B metadata      | Controller/queue IDs from IIC recv   |
 //! | `DTCM_IO_BUF[index]` | 1.5KB fmem   | Fast DTCM workspace buffer           |
-//! | `SRAM_IO_BUF[index]` | 18KB smem    | Large SRAM workspace buffer          |
+//! | `SRAM_IO_BUF[index]` | 16KB smem    | Large SRAM workspace buffer          |
 //!
 //! The IIC controller DMAs incoming SQE data directly into `IO_SQ[index]`
 //! (configured via `io_pool_base`). The firmware reads the SQE in-place

@@ -15,7 +15,7 @@
 //   0x0E440 - 0x0F580  IIC / OIC queues
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
-//   0x20C58 - 0xB8C58  Heap (IO_META + SRAM_IO_BUF)
+//   0x20C58 - 0xA4D60  Heap (IO_META + SRAM_IO_BUF)
 //   0xBB000 - 0xEBC00  Partition store
 //   0xEBC00 - 0x200000 Key vault
 //
@@ -402,8 +402,10 @@ regfile sha_cmd_entry_t {
 // ══════════════════════════════════════════════════════════════
 
 mem sram_io_buf_t {
-    desc = "18KB per-slot DMA buffer for the bump allocator.";
-    mementries = 4608;
+    desc = "16KB per-slot DMA buffer for the bump allocator. Sized to
+            DUMMY_PERIPHERAL (16 KB) so a full-slot GDMA scrub is a single
+            transfer from the read-as-zero window rather than two.";
+    mementries = 4096;
     memwidth = 32;
 };
 
@@ -571,7 +573,7 @@ addrmap io_gsram {
 
     // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
     io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
-    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4800;
+    sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4000;
 
     // ─── Partition persistent store (65 entries, 3072 B each) ───
     part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;

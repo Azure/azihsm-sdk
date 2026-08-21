@@ -165,7 +165,7 @@ fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
 /// `dirty_len` is the slot's peak watermark (see [`pk`]) — every byte
 /// written since the last scrub, and nothing beyond it. Used by
 /// [`UnoHsmPal::scrub_io_slot`](crate::UnoHsmPal::scrub_io_slot) so a
-/// command that touches a few hundred bytes does not pay an 18 KiB wipe.
+/// command that touches a few hundred bytes does not pay a 16 KiB wipe.
 #[inline(always)]
 pub(crate) fn io_slot_dma_dirty(pal: &UnoHsmPal, io_index: u16) -> (*mut u8, usize) {
     let (base, cap) = heap_base_cap(io_index, DMA);
