@@ -296,7 +296,7 @@ fn part_final_reject_policy_mismatch() {
 /// POTA key, so the anchor requirement is never met.
 #[cfg(feature = "emu")]
 #[test]
-fn part_final_reject_unanchored_chain() {
+fn part_final_reject_unanchored_chain_emu() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -320,7 +320,7 @@ fn part_final_reject_unanchored_chain() {
 /// (`PartFinalPtaMismatch`).
 #[cfg(feature = "emu")]
 #[test]
-fn part_final_reject_pta_mismatch() {
+fn part_final_reject_pta_mismatch_emu() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
