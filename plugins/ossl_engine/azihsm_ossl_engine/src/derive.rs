@@ -99,9 +99,7 @@ impl EcDeriveHandler for AzihsmEcDerive {
             .get(engine)
             .ok_or(EngineError::NullParam("engine_data"))?;
 
-        // Derived shared secret: same props as the provider's keyexch. The
-        // handle is ephemeral — masked, then deleted explicitly on both paths
-        // (keys do not delete on drop; the blob is the persistent form).
+        // Derived shared secret: same props as the provider's keyexch.
         let masked = data.with_session(|session| {
             let props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Secret)
@@ -114,11 +112,10 @@ impl EcDeriveHandler for AzihsmEcDerive {
             let derived = HsmKeyManager::derive_key(session, &mut algo, hsm_key, props)
                 .map_err(|e| EngineError::wrap("ECDH derive", e))?;
             let masked = derived.masked_key_vec();
-            let deleted = HsmKeyManager::delete_key(derived);
-            let masked =
-                masked.map_err(|e| EngineError::wrap("export masked shared secret", e))?;
-            deleted.map_err(|e| EngineError::wrap("delete derived key", e))?;
-            Ok(masked)
+            // Ephemeral handle — the blob is the persistent form; deletion is
+            // best-effort cleanup (HSM keys are not deleted by their drop).
+            crate::context::delete_hsm_key(derived, "derived shared secret");
+            masked.map_err(|e| EngineError::wrap("export masked shared secret", e))
         })?;
         let masked = Zeroizing::new(masked);
 
