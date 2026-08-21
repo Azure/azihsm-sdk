@@ -3,12 +3,12 @@
 
 //! Happy-path `PartInit` tests:
 //!
-//! * [`part_init_smoke_roundtrip_emu`] — `OpenSession → PskChange →
+//! * [`part_init_smoke_roundtrip`] — `OpenSession → PskChange →
 //!   PartInit` returns a parseable PKCS#10 CSR and a verifiable
 //!   COSE_Sign1 PTAReport that cross-binds to the CSR pubkey; a
 //!   second `PartInit` on a fresh session surfaces the one-shot
 //!   `PtaKeyAlreadySet` guard.
-//! * [`part_init_determinism_emu`] — across two cold restarts (via
+//! * [`part_init_determinism`] — across two cold restarts (via
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
 
