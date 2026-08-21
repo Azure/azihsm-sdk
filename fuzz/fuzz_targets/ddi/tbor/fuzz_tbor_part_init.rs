@@ -15,7 +15,7 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-const CU: u8 = 1;
+const CO: u8 = 0;
 static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 #[derive(Arbitrary, Debug)]
@@ -37,7 +37,7 @@ fuzz_target!(|input: FuzzInput| {
     ctx.erase().expect("erase should succeed");
 
     let session = ctx
-        .open_session(CU, SessionType::PlainText)
+        .open_session(CO, SessionType::PlainText)
         .expect("session open should succeed");
 
     let part_init_req = TborPartInitReq {
