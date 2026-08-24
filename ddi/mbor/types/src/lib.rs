@@ -828,20 +828,21 @@ pub enum DdiStatus {
     /// underlying AES failure)
     AesUnwrapFailed = 141557977,
 
+    // Note: 141557978..=141557991 (0x087000DA..=0x087000E7) are reserved; do not reuse.
     /// BK3 PIN already set (Phase 2 is one-shot per partition)
-    Bk3PinAlreadySet = 141557978,
+    Bk3PinAlreadySet = 141557992,
 
     /// BK3 PIN not set (Phase 4 requires Phase 2 to have completed)
-    Bk3PinNotSet = 141557979,
+    Bk3PinNotSet = 141557993,
 
     /// BK3 PIN credential tag mismatch (Phase 2 / Phase 4 HMAC verification failed)
-    Bk3PinTagMismatch = 141557980,
+    Bk3PinTagMismatch = 141557994,
 
     /// BK3 transport integrity tag mismatch (Phase 4 K2_hmac verification failed)
-    Bk3TransportTagMismatch = 141557981,
+    Bk3TransportTagMismatch = 141557995,
 
     /// Seal op attempted before a successful secure_init_bk3 (Phase 4)
-    Bk3NotSecurelyProvisioned = 141557982,
+    Bk3NotSecurelyProvisioned = 141557996,
 }
 
 /// DDI Key Class

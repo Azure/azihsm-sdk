@@ -128,7 +128,7 @@ fn secure_provision_bk3(
 fn assert_pin_not_set(err: &DdiError, ctx: &str) {
     assert!(
         matches!(err, DdiError::DdiStatus(DdiStatus::Bk3PinNotSet)),
-        "{ctx}: expected Bk3PinNotSet (141557979), got {err:?}"
+        "{ctx}: expected Bk3PinNotSet (141557993), got {err:?}"
     );
 }
 
