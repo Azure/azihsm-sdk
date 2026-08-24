@@ -23,19 +23,19 @@ use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::Verifier;
 #[cfg(feature = "emu")]
 use azihsm_crypto::{EccCurve, EccPrivateKey, ExportableKey};
-use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 #[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::{KEY_CLASS_AES, KEY_CLASS_ECC};
 
 use crate::commands::part_init::CU;
 use crate::commands::part_init::ROTATED_CU_PSK;
-use crate::commands::part_init::{ROTATED_CO_PSK, bootstrap_rotated_co};
+use crate::commands::part_init::{bootstrap_rotated_co, ROTATED_CO_PSK};
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 #[cfg(feature = "emu")]
