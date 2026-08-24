@@ -8,6 +8,12 @@
 //! DDI protocol, handling the translation of HSM key properties to DDI-specific
 //! structures and command execution.
 
+use azihsm_crypto::DerEccPublicKey;
+use azihsm_crypto::EccCurve;
+use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use resiliency_macro::*;
 
 use super::*;
@@ -53,33 +59,159 @@ pub(crate) fn ecc_generate_key(
         return Err(HsmError::PropertyNotPresent);
     };
 
-    let req = DdiEccGenerateKeyPairCmdReq {
-        hdr: build_ddi_req_hdr_sess(DdiOp::EccGenerateKeyPair, session),
-        data: DdiEccGenerateKeyPairReq {
-            curve: curve.into(),
-            key_tag: None,
-            key_properties: (&priv_key_props).try_into()?,
-        },
-        ext: None,
+    // A V2 (TBOR) session yields a non-resident `Unpinned` and a raw wire
+    // public key; a V1 (MBOR) session yields a resident `Pinned` and a
+    // DER public key.
+    let (handle, masked_key, pub_key_der) = if session.is_ex() {
+        ecc_generate_key_tbor(session, &priv_key_props, curve)?
+    } else {
+        ecc_generate_key_mbor(session, &priv_key_props)?
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
-
-    // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
-    let key_id = HsmKeyIdGuard::new(session, to_key_handle(resp.data.private_key_id, None));
-
-    let pub_key_der = resp.data.pub_key.der.as_slice();
-    let masked_key = resp.data.masked_key.as_slice();
+    let guard = HsmKeyIdGuard::new(session, handle);
     let (dev_priv_key_props, dev_pub_key_props) =
-        HsmMaskedKey::to_key_pair_props(masked_key, pub_key_der)?;
+        HsmMaskedKey::to_key_pair_props(&masked_key, &pub_key_der)?;
+
+    // Firmware may grant a superset of the requested ECC capabilities
+    // (TBOR stamps both SIGN and DERIVE). Narrow the returned capabilities
+    // to the caller's request; this only ever removes capabilities.
+    let dev_priv_key_props = narrow_ecc_usage(&dev_priv_key_props, &priv_key_props);
 
     // Validate that the device returned properties match the requested properties.
     if !priv_key_props.validate_dev_props(&dev_priv_key_props) {
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((key_id.release(), dev_priv_key_props, dev_pub_key_props))
+    Ok((guard.release(), dev_priv_key_props, dev_pub_key_props))
 }
+
+/// Runs MBOR `EccGenerateKeyPair`, returning the resident `Pinned`
+/// handle, the device-returned masked blob, and the DER public key.
+fn ecc_generate_key_mbor(
+    session: &HsmSession,
+    priv_key_props: &HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, Vec<u8>, Vec<u8>)> {
+    let curve = priv_key_props.ecc_curve().ok_or(HsmError::PropertyNotPresent)?;
+    let req = DdiEccGenerateKeyPairCmdReq {
+        hdr: build_ddi_req_hdr_sess(DdiOp::EccGenerateKeyPair, session),
+        data: DdiEccGenerateKeyPairReq {
+            curve: curve.into(),
+            key_tag: None,
+            key_properties: priv_key_props.try_into()?,
+        },
+        ext: None,
+    };
+
+    let resp = session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
+    let handle = to_key_handle(resp.data.private_key_id, None);
+    let masked_key = resp.data.masked_key.as_slice().to_vec();
+    let pub_key_der = resp.data.pub_key.der.as_slice().to_vec();
+    Ok((handle, masked_key, pub_key_der))
+}
+
+/// Runs TBOR `EccGenerateKey`, returning the non-resident `Unpinned`
+/// handle, the device-returned masked blob, and a DER public key built
+/// from the raw wire coordinates.
+fn ecc_generate_key_tbor(
+    session: &HsmSession,
+    props: &HsmKeyProps,
+    curve: HsmEccCurve,
+) -> HsmResult<(HsmKeyHandle, Vec<u8>, Vec<u8>)> {
+    let req = TborEccGenerateKeyReq {
+        session_id: session.ex_session_id()?,
+        scope: props.tbor_scope(),
+        curve: ecc_curve_to_tbor(curve),
+    };
+    let mut cookie = None;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    let pub_key_der = ecc_wire_pub_key_to_der(curve, &resp.pub_key)?;
+    Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key, pub_key_der))
+}
+
+/// Maps an [`HsmEccCurve`] to the 1-byte TBOR `EccCurve` discriminant.
+fn ecc_curve_to_tbor(curve: HsmEccCurve) -> u8 {
+    match curve {
+        HsmEccCurve::P256 => ECC_CURVE_P256,
+        HsmEccCurve::P384 => ECC_CURVE_P384,
+        HsmEccCurve::P521 => ECC_CURVE_P521,
+    }
+}
+
+/// Returns a copy of `dev_props` with its ECC capabilities narrowed to the
+/// caller's requested `SIGN` / `DERIVE` subset; capabilities are only ever
+/// removed, never added.
+fn narrow_ecc_usage(dev_props: &HsmKeyProps, requested: &HsmKeyProps) -> HsmKeyProps {
+    let caps = HsmKeyFlags::SIGN | HsmKeyFlags::DERIVE;
+    let narrowed = (dev_props.flags() & !caps) | (dev_props.flags() & requested.flags() & caps);
+
+    let mut props = HsmKeyProps::new(
+        dev_props.class(),
+        dev_props.kind(),
+        dev_props.bits(),
+        dev_props.ecc_curve(),
+        narrowed,
+        dev_props.label().to_vec(),
+    );
+    if let Some(masked_key) = dev_props.masked_key() {
+        props.set_masked_key(masked_key);
+    }
+    if let Some(pub_key_der) = dev_props.pub_key_der() {
+        props.set_pub_key_der(pub_key_der);
+    }
+    props
+}
+
+/// Builds a DER `SubjectPublicKeyInfo` from the TBOR wire public key.
+///
+/// The wire form is `x ‖ y` affine coordinates, little-endian per
+/// coordinate and zero-padded above the curve's byte length (P-521 pads
+/// 66 -> 68). DER SPKI expects big-endian coordinates of exactly the
+/// curve's component length, so each half is reversed and its leading
+/// zero padding removed.
+fn ecc_wire_pub_key_to_der(curve: HsmEccCurve, wire: &[u8]) -> HsmResult<Vec<u8>> {
+    if wire.is_empty() || wire.len() % 2 != 0 {
+        return Err(HsmError::InternalError);
+    }
+    let coord = curve.component_size();
+    let half = wire.len() / 2;
+    if half < coord {
+        return Err(HsmError::InternalError);
+    }
+
+    let mut x = wire[..half].to_vec();
+    let mut y = wire[half..].to_vec();
+    x.reverse();
+    y.reverse();
+    let x = strip_leading_zero_pad(&x, coord)?;
+    let y = strip_leading_zero_pad(&y, coord)?;
+
+    let crypto_curve = match curve {
+        HsmEccCurve::P256 => EccCurve::P256,
+        HsmEccCurve::P384 => EccCurve::P384,
+        HsmEccCurve::P521 => EccCurve::P521,
+    };
+    let der = DerEccPublicKey::new(crypto_curve, x, y).map_err(|_| HsmError::InternalError)?;
+    let der_len = der.to_der(None).map_err(|_| HsmError::InternalError)?;
+    let mut out = vec![0u8; der_len];
+    der.to_der(Some(&mut out))
+        .map_err(|_| HsmError::InternalError)?;
+    Ok(out)
+}
+
+/// Removes leading zero padding from a big-endian coordinate down to
+/// `coord` bytes, rejecting any non-zero byte in the padding region.
+fn strip_leading_zero_pad(be: &[u8], coord: usize) -> HsmResult<&[u8]> {
+    let pad = be.len() - coord;
+    if be[..pad].iter().any(|&byte| byte != 0) {
+        return Err(HsmError::InternalError);
+    }
+    Ok(&be[pad..])
+}
+
 
 /// Performs an ECC signature operation using a pre-computed hash.
 ///
