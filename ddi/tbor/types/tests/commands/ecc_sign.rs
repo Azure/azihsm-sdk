@@ -19,11 +19,14 @@
 //! the host verifies against the reversed digest.
 
 use azihsm_crypto::EccAlgo;
-use azihsm_crypto::EccPublicKey;
-use azihsm_crypto::Verifier;
 #[cfg(feature = "emu")]
-use azihsm_crypto::{EccCurve, EccPrivateKey, ExportableKey};
-
+use azihsm_crypto::EccCurve;
+#[cfg(feature = "emu")]
+use azihsm_crypto::EccPrivateKey;
+use azihsm_crypto::EccPublicKey;
+#[cfg(feature = "emu")]
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::Verifier;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use azihsm_ddi_tbor_types::TborStatus;
