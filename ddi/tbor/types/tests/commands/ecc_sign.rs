@@ -18,27 +18,27 @@
 //! reverses the supplied wire-LE digest to big-endian before signing, so
 //! the host verifies against the reversed digest.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::EccAlgo;
-use azihsm_crypto::EccCurve;
-use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::EccPublicKey;
-use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Verifier;
+#[cfg(feature = "emu")]
+use azihsm_crypto::{EccCurve, EccPrivateKey, ExportableKey};
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-use azihsm_ddi_tbor_types::KEY_CLASS_AES;
-use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
+#[cfg(feature = "emu")]
+use azihsm_ddi_tbor_types::{KEY_CLASS_AES, KEY_CLASS_ECC};
 
 use crate::commands::part_init::CU;
 use crate::commands::part_init::ROTATED_CU_PSK;
+use crate::commands::part_init::{ROTATED_CO_PSK, bootstrap_rotated_co};
+#[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+#[cfg(feature = "emu")]
 use crate::commands::unwrap_key::unwrap;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
@@ -46,6 +46,7 @@ use crate::harness::TestCtx;
 /// `KeyScope::Session` discriminant.
 const SCOPE_SESSION: u8 = 0b001;
 /// `KeyScope::Local` discriminant.
+#[cfg(feature = "emu")]
 const SCOPE_LOCAL: u8 = 0b011;
 
 /// Per-curve wire sizes: `(wire_coord_len, raw_coord_len)`.
@@ -64,7 +65,7 @@ fn coord_sizes(pub_len: usize) -> (usize, usize) {
 /// Generate an ECC key on-device for `curve`, returning `(masked_key,
 /// wire_pub_key)`.
 fn generate(ctx: &TestCtx, session_id: u16, curve: u8) -> (Vec<u8>, Vec<u8>) {
-    generate_in_scope(ctx, session_id, SCOPE_LOCAL, curve)
+    generate_in_scope(ctx, session_id, SCOPE_SESSION, curve)
 }
 
 /// Generate an ECC key on-device for `curve` under `scope`.
@@ -128,9 +129,9 @@ fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
 
 /// Signs and verifies a curve-appropriate digest on every supported ECC curve.
 #[test]
-fn ecc_sign_roundtrip_all_curves_emu() {
+fn ecc_sign_roundtrip_all_curves() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     for (curve, digest_len) in [
         (ECC_CURVE_P256, 32usize),
@@ -166,9 +167,9 @@ fn ecc_sign_roundtrip_all_curves_emu() {
 
 /// Verifies every supported ECC curve and SHA-2 digest-length pairing.
 #[test]
-fn ecc_sign_all_supported_curve_digest_pairs_emu() {
+fn ecc_sign_all_supported_curve_digest_pairs() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     // A digest may be shorter than the curve field, but never longer. Cover
     // every SHA-2 digest length accepted by each curve rather than only the
@@ -194,9 +195,9 @@ fn ecc_sign_all_supported_curve_digest_pairs_emu() {
 
 /// Confirms a signature authenticates only the digest that was actually signed.
 #[test]
-fn ecc_sign_signature_rejects_different_digest_emu() {
+fn ecc_sign_signature_rejects_different_digest() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
     let digest = vec![0x31; 32];
     let signature = sign(&ctx, session.session_id, masked_key, &digest);
@@ -211,9 +212,9 @@ fn ecc_sign_signature_rejects_different_digest_emu() {
 
 /// Verifies P-521 signatures zero-fill the two wire-padding bytes per component.
 #[test]
-fn ecc_sign_p521_signature_padding_is_zero_emu() {
+fn ecc_sign_p521_signature_padding_is_zero() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P521);
     let digest = vec![0x43; 64];
     let signature = sign(&ctx, session.session_id, masked_key, &digest);
@@ -224,13 +225,14 @@ fn ecc_sign_p521_signature_padding_is_zero_emu() {
     assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
 }
 
-/// Signs and verifies with a key masked under the active session's scope.
+/// Signs and verifies with a key masked under the partition-local scope.
+#[cfg(feature = "emu")]
 #[test]
-fn ecc_sign_session_scoped_key_emu() {
+fn ecc_sign_local_scoped_key_emu() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let (masked_key, pub_key) =
-        generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
     let digest = vec![0x5A; 32];
     let signature = sign(&ctx, session.session_id, masked_key, &digest);
     assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
@@ -238,7 +240,7 @@ fn ecc_sign_session_scoped_key_emu() {
 
 /// Confirms an authenticated Crypto-User session is authorized to sign.
 #[test]
-fn ecc_sign_allowed_on_crypto_user_session_emu() {
+fn ecc_sign_allowed_on_crypto_user_session() {
     // Rotate away from the default CU PSK so the default-PSK gate does not
     // obscure EccSign's role authorization.
     let ctx = TestCtx::new();
@@ -265,6 +267,7 @@ fn ecc_sign_allowed_on_crypto_user_session_emu() {
 }
 
 /// Signs and verifies with an ECC private key imported through `UnwrapKey`.
+#[cfg(feature = "emu")]
 #[test]
 fn ecc_sign_with_unwrapped_key_emu() {
     let ctx = TestCtx::new();
@@ -301,9 +304,9 @@ fn ecc_sign_with_unwrapped_key_emu() {
 
 /// Rejects a digest whose length does not identify a supported SHA-2 algorithm.
 #[test]
-fn ecc_sign_wrong_digest_len_rejected_emu() {
+fn ecc_sign_wrong_digest_len_rejected() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, _pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
 
     // A 31-byte digest is not one of the supported SHA-2 digest lengths
@@ -321,9 +324,9 @@ fn ecc_sign_wrong_digest_len_rejected_emu() {
 
 /// Rejects the unsupported SHA-1 digest length.
 #[test]
-fn ecc_sign_unsupported_digest_len_rejected_emu() {
+fn ecc_sign_unsupported_digest_len_rejected() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, _pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
 
     // A 20-byte digest (SHA-1 length) is a real hash length but not one of
@@ -341,9 +344,9 @@ fn ecc_sign_unsupported_digest_len_rejected_emu() {
 
 /// Rejects a valid SHA-2 digest that exceeds the selected curve's field width.
 #[test]
-fn ecc_sign_digest_longer_than_curve_field_rejected_emu() {
+fn ecc_sign_digest_longer_than_curve_field_rejected() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, _pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
 
     // A 64-byte digest (SHA-512 length) is a valid SHA-2 length but exceeds
@@ -361,9 +364,9 @@ fn ecc_sign_digest_longer_than_curve_field_rejected_emu() {
 
 /// Rejects a masked private key whose authenticated ciphertext was modified.
 #[test]
-fn ecc_sign_tampered_masked_key_rejected_emu() {
+fn ecc_sign_tampered_masked_key_rejected() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (mut masked_key, _pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
 
     // Corrupt the AEAD tag without changing the cleartext, tag-bound scope
@@ -381,6 +384,7 @@ fn ecc_sign_tampered_masked_key_rejected_emu() {
 }
 
 /// Rejects a valid masked key whose key class is AES rather than ECC private.
+#[cfg(feature = "emu")]
 #[test]
 fn ecc_sign_wrong_key_class_rejected_emu() {
     let ctx = TestCtx::new();
@@ -399,9 +403,9 @@ fn ecc_sign_wrong_key_class_rejected_emu() {
 
 /// Rejects signing when the request is bound to an unknown session identifier.
 #[test]
-fn ecc_sign_unknown_session_rejected_emu() {
+fn ecc_sign_unknown_session_rejected() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, _pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
     assert_ne!(session.session_id, u16::MAX, "test requires an unused id");
 
