@@ -37,16 +37,22 @@ fuzz_target!(|input: FuzzInput| {
     ctx.erase().expect("erase should succeed");
 
     let session = ctx
-        .open_session(CO, SessionType::PlainText)
+        .open_session(CO, SessionType::Authenticated)
         .expect("session open should succeed");
 
+    let sapota_thumbprint = if input.sapota_present {
+        input.sapota_thumbprint.to_vec()
+    } else {
+        Vec::new()
+    };
+    
     let part_init_req = TborPartInitReq {
         session_id: session.session_id(),
         mach_seed_envelope: input.mach_seed_envelope.to_vec(),
         part_policy: PartPolicy::zeroed(),
         pota_thumbprint: input.pota_thumbprint,
         sata_thumbprint: input.sata_thumbprint,
-        sapota_thumbprint: input.sapota_thumbprint.to_vec(),
+        sapota_thumbprint,
     };
     let _ = ctx.tbor(&part_init_req);
 
