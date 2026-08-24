@@ -42,6 +42,9 @@ use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
+use crate::commands::part_init::known_good_part_policy;
+use crate::commands::part_init::mach_seed;
+use crate::commands::part_init::pota_thumbprint;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
@@ -144,20 +147,23 @@ fn default_psk_gate_session_close_bypass() {
 /// Repeatedly opening and closing sessions must not alter allow-list
 /// behavior.
 #[test]
-fn default_psk_gate_session_close_repeated_sessions_emu() {
+fn default_psk_gate_session_close_repeated_sessions() {
     let ctx = TestCtx::new();
 
     for attempt in 1..=3 {
         let session = ctx
             .open_session(CO, SessionType::Authenticated)
             .unwrap_or_else(|err| {
-                panic!("failed to open CO authenticated session on attempt {attempt}: {err:?}")
+                panic!(
+                    "failed to open CO authenticated session on attempt {}: {:?}",
+                    attempt, err
+                )
             });
 
         session.close().unwrap_or_else(|err| {
             panic!(
-                "CO SessionClose attempt {attempt} must bypass the \
-                 default-PSK gate: {err:?}"
+                "CO SessionClose attempt {} must bypass the default-PSK gate: {:?}",
+                attempt, err
             )
         });
     }
@@ -166,13 +172,16 @@ fn default_psk_gate_session_close_repeated_sessions_emu() {
         let session = ctx
             .open_session(CU, SessionType::PlainText)
             .unwrap_or_else(|err| {
-                panic!("failed to open CU plaintext session on attempt {attempt}: {err:?}")
+                panic!(
+                    "failed to open CU plaintext session on attempt {}: {:?}",
+                    attempt, err
+                )
             });
 
         session.close().unwrap_or_else(|err| {
             panic!(
-                "CU SessionClose attempt {attempt} must bypass the \
-                 default-PSK gate: {err:?}"
+                "CU SessionClose attempt {} must bypass the default-PSK gate: {:?}",
+                attempt, err
             )
         });
     }
@@ -529,4 +538,26 @@ fn default_psk_gate_second_close_of_same_session_is_rejected() {
     replacement
         .close()
         .expect("failed duplicate close must not corrupt session state");
+}
+
+/// A non-allow-listed in-session opcode (`PartInit`) is rejected at
+/// dispatch with `DefaultPskMustRotate`. The FW returns the gate
+/// error before any partition-state mutation, so this is safe to run
+/// on real silicon.
+#[test]
+fn default_psk_gate_part_init_rejected() {
+    let ctx = TestCtx::new();
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open_session must succeed");
+
+    let err = ctx
+        .part_init(
+            session.handshake(),
+            &mach_seed(),
+            &known_good_part_policy(),
+            &pota_thumbprint(),
+        )
+        .expect_err("PartInit under default PSK must be gated");
+    assert_fw_rejects(&err, TborStatus::DefaultPskMustRotate);
 }
