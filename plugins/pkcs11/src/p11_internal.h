@@ -129,6 +129,7 @@ typedef struct
 
 extern p11_module_t g_p11;
 
+/* Acquire / release the module lock (g_p11.lock). */
 void p11_lock(void);
 void p11_unlock(void);
 
@@ -136,7 +137,11 @@ void p11_unlock(void);
 /* Shared helpers                                                            */
 /* ------------------------------------------------------------------------- */
 
+/* Resolve a session handle to its table entry; NULL if invalid or closed. */
 p11_session_t *p11_session_lookup(CK_SESSION_HANDLE h);
+
+/* Abandon the session's active operation, releasing its digest state or find
+ * cursor. */
 CK_RV p11_session_reset_op(p11_session_t *s);
 
 /* Fill a fixed-width, space-padded CK_UTF8CHAR string field. */

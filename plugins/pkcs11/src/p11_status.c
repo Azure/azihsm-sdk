@@ -11,8 +11,9 @@
  *
  * Administrative "already provisioned" statuses (PARTITION_ALREADY_PROVISIONED,
  * VAULT_APP_LIMIT_REACHED) are handled by the caller before mapping — the lazy
- * provision in p11_hsm.c treats them as "already established, proceed" — so the
- * conservative mapping here is only a fallback should one reach a caller.
+ * provisioning in p11_hsm_login treats them as "already established" and lets
+ * the sess_open retry decide — so the conservative mapping here is only a
+ * fallback should one reach a caller.
  */
 CK_RV p11_ckr_from_azihsm(int status)
 {

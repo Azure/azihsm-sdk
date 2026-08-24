@@ -34,8 +34,9 @@
 #define AZIHSM_PARTITION_ALREADY_PROVISIONED (-33)
 #define AZIHSM_VAULT_APP_LIMIT_REACHED (-34)
 #define AZIHSM_BUFFER_TOO_SMALL (-4)
+#define AZIHSM_INTERNAL_ERROR (-5)
 
-int p11_hsm_enumerate_slots(void)
+int32_t p11_hsm_enumerate_slots(void)
 {
     azihsm_handle list = 0;
     azihsm_status st = azihsm_part_get_list(&list);
@@ -102,9 +103,11 @@ int p11_hsm_enumerate_slots(void)
 
     azihsm_part_free_list(list);
     P11LOG("enumerated %lu AZIHSM partition(s)", (unsigned long)produced);
-    return (int)produced;
+    return (int32_t)produced;
 }
 
+/* Build the fixed-size AZIHSM credential from the configured id plus either the
+ * caller's C_Login PIN or, when none was given, the configured default PIN. */
 static void make_creds(
     struct azihsm_credentials *creds,
     const p11_config *cfg,
@@ -258,7 +261,10 @@ cleanup:
     return ok;
 }
 
-/* Run the one-time provisioning ceremony on an already-open partition handle. */
+/* Run the one-time provisioning ceremony on an already-open partition handle.
+ * Returns the device's raw status: the caller decides which non-OK statuses
+ * (e.g. a concurrent process winning the provisioning race) still allow the
+ * login to proceed. */
 static azihsm_status provision(azihsm_handle dev, const struct azihsm_credentials *creds)
 {
     struct azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, NULL, 0 };
@@ -270,7 +276,7 @@ static azihsm_status provision(azihsm_handle dev, const struct azihsm_credential
     unsigned char *pid = (unsigned char *)malloc(prop.len ? prop.len : 1);
     if (pid == NULL)
     {
-        return -5; /* INTERNAL_ERROR */
+        return AZIHSM_INTERNAL_ERROR;
     }
     prop.val = pid;
     st = azihsm_part_get_prop(dev, &prop);
@@ -288,7 +294,7 @@ static azihsm_status provision(azihsm_handle dev, const struct azihsm_credential
     if (!pota_ok)
     {
         P11LOG("POTA endorsement build failed");
-        return -5; /* INTERNAL_ERROR */
+        return AZIHSM_INTERNAL_ERROR;
     }
 
     p11_config cfg;
@@ -302,14 +308,7 @@ static azihsm_status provision(azihsm_handle dev, const struct azihsm_credential
     struct azihsm_pota_endorsement_data pdata = { &sig_buf, &pub_buf };
     struct azihsm_pota_endorsement pota = { AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER, &pdata };
 
-    st = azihsm_part_init(dev, creds, NULL, NULL, &obk_cfg, &pota, NULL);
-    /* A concurrent process may have provisioned the partition between our
-     * sess_open probe and here; the device reports that benignly. */
-    if (st == AZIHSM_PARTITION_ALREADY_PROVISIONED || st == AZIHSM_VAULT_APP_LIMIT_REACHED)
-    {
-        return AZIHSM_OK;
-    }
-    return st;
+    return azihsm_part_init(dev, creds, NULL, NULL, &obk_cfg, &pota, NULL);
 }
 
 CK_RV p11_hsm_login(
@@ -319,6 +318,10 @@ CK_RV p11_hsm_login(
     uint32_t *out_session
 )
 {
+    if (out_session == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
     if (slot >= g_p11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
@@ -355,7 +358,14 @@ CK_RV p11_hsm_login(
     if (st == AZIHSM_CREDENTIALS_NOT_ESTABLISHED || st == AZIHSM_PARTITION_NOT_PROVISIONED)
     {
         st = provision(sl->hsm_dev, &creds);
-        if (st != AZIHSM_OK)
+        /* ALREADY_PROVISIONED / VAULT_APP_LIMIT_REACHED mean a concurrent
+         * process won the provisioning race between our sess_open probe and the
+         * part_init; the SDK treats both as "credentials already established"
+         * (api/lib/src/resiliency.rs, is_credentials_already_established). The
+         * sess_open retry below verifies the credential either way and its
+         * result is what the caller sees. */
+        if (st != AZIHSM_OK && st != AZIHSM_PARTITION_ALREADY_PROVISIONED &&
+            st != AZIHSM_VAULT_APP_LIMIT_REACHED)
         {
             P11LOG("provision failed: %d", (int)st);
             return p11_ckr_from_azihsm((int)st);
@@ -397,7 +407,7 @@ void p11_hsm_close_all(void)
 /* No device linked: one placeholder slot, and a login that "succeeds" with a
  * sentinel so the framework and object/digest paths stay exercisable. */
 
-int p11_hsm_enumerate_slots(void)
+int32_t p11_hsm_enumerate_slots(void)
 {
     p11_slot_t *slot = &g_p11.slots[0];
     slot->present = true;
@@ -407,7 +417,7 @@ int p11_hsm_enumerate_slots(void)
     snprintf(slot->serial, sizeof(slot->serial), "AZIHSM000000");
     slot->api_rev_major = 1;
     slot->api_rev_minor = 0;
-    return 1;
+    return 1; /* slot count: the placeholder above */
 }
 
 CK_RV p11_hsm_login(
@@ -420,6 +430,10 @@ CK_RV p11_hsm_login(
     (void)slot;
     (void)pin;
     (void)pin_len;
+    if (out_session == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
     *out_session = 0xFFFFFFFFu; /* sentinel: logged in, no device session */
     return CKR_OK;
 }

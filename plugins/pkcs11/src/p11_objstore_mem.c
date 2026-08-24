@@ -105,6 +105,8 @@ static CK_BBOOL attr_bool(const mem_object *o, CK_ATTRIBUTE_TYPE t, CK_BBOOL dfl
     return a->value[0] != 0 ? CK_TRUE : CK_FALSE;
 }
 
+/* Release an object, zeroing attribute values and the key body first — they
+ * may hold secrets. */
 static void free_object(mem_object *o)
 {
     for (CK_ULONG i = 0; i < o->attr_count; i++)
@@ -208,6 +210,9 @@ static CK_RV mem_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, CK
     return CKR_OK;
 }
 
+/* Per-attribute outcomes follow PKCS#11 §5.7.5: missing type, sensitive value,
+ * two-call sizing, and too-small buffer each set ulValueLen and the return
+ * value as the spec's cases prescribe. */
 static CK_RV mem_get_attr(
     void *ctx,
     CK_SLOT_ID slot,
@@ -264,6 +269,8 @@ static CK_RV mem_get_attr(
     return rv;
 }
 
+/* Not reachable yet (no C_SetAttributeValue is wired) but kept correct for
+ * when it is. */
 static CK_RV mem_set_attr(
     void *ctx,
     CK_SLOT_ID slot,
@@ -332,6 +339,8 @@ static CK_RV mem_set_attr(
     return CKR_OK;
 }
 
+/* PKCS#11 search semantics: an object matches when every template attribute is
+ * present with an exactly equal value; an empty template matches everything. */
 static CK_BBOOL matches(const mem_object *o, const CK_ATTRIBUTE *tmpl, CK_ULONG count)
 {
     for (CK_ULONG i = 0; i < count; i++)

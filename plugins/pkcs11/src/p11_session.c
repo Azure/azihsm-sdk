@@ -15,6 +15,9 @@
 
 /* ========================================================================= */
 /* SHA-256 (host-side)                                                       */
+/*                                                                           */
+/* A minimal, self-contained FIPS 180-4 implementation so the digest path    */
+/* links no libcrypto (keeping the no-device build dependency-free).         */
 /* ========================================================================= */
 
 typedef struct
@@ -447,6 +450,10 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
 
 /* ========================================================================= */
 /* Objects (delegated to the object-store seam)                              */
+/*                                                                           */
+/* Each entry point validates its arguments and session, then hands off to   */
+/* g_p11.store; slot isolation and private-object login-gating are enforced  */
+/* by the store (see p11_objstore.h).                                        */
 /* ========================================================================= */
 
 CK_RV C_CreateObject(

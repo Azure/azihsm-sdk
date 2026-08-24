@@ -21,9 +21,10 @@ extern "C"
 
 /*
  * Enumerate AZIHSM partitions into g_p11.slots[] and set g_p11.slot_count.
- * Returns the number of slots (>= 0), or -1 on error.
+ * Returns the number of slots (>= 0), or -1 on error. A partition that fails to
+ * describe itself is skipped rather than failing the whole enumeration.
  */
-int p11_hsm_enumerate_slots(void);
+int32_t p11_hsm_enumerate_slots(void);
 
 /*
  * Log a user into `slot`: open the partition, provision it lazily (only if the

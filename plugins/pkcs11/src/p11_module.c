@@ -123,7 +123,7 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
         return rv;
     }
 
-    int n_slots = p11_hsm_enumerate_slots();
+    int32_t n_slots = p11_hsm_enumerate_slots();
     if (n_slots < 0)
     {
         g_p11.store.ops->teardown(g_p11.store.ctx);
