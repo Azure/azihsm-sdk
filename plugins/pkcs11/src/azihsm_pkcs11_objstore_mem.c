@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 /*
- * In-memory object-store backend for the seam in p11_objstore.h.
+ * In-memory object-store backend for the seam in azihsm_pkcs11_objstore.h.
  *
  * Objects live only for the process lifetime; token objects do not yet survive a
  * restart (that is the persistent backend's job — this one implements the same
@@ -14,7 +14,7 @@
  * layer holds the module lock across every call.
  */
 
-#include "p11_objstore.h"
+#include "azihsm_pkcs11_objstore.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -494,7 +494,7 @@ static void mem_teardown(void *ctx)
     free(st);
 }
 
-static const p11_objstore_ops MEM_OPS = {
+static const azihsm_pkcs11_objstore_ops MEM_OPS = {
     .create = mem_create,
     .destroy = mem_destroy,
     .get_attr = mem_get_attr,
@@ -507,7 +507,7 @@ static const p11_objstore_ops MEM_OPS = {
     .persist = NULL, /* in-memory: nothing to flush */
 };
 
-CK_RV p11_objstore_mem_create(p11_objstore *out)
+CK_RV azihsm_pkcs11_objstore_mem_create(azihsm_pkcs11_objstore *out)
 {
     mem_store *st = (mem_store *)calloc(1, sizeof(mem_store));
     if (st == NULL)

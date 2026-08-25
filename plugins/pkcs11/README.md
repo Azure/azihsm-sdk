@@ -26,15 +26,15 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
 
 | Layer | Files | Responsibility |
 |---|---|---|
-| C ABI | `p11_dispatch.c` | `CK_FUNCTION_LIST` + `_3_0` + the "PKCS 11" interface |
-| Framework | `p11_module.c`, `p11_slot.c`, `p11_session.c` | init, slots, sessions, login, operation state machine |
-| Object store | `p11_objstore.h`, `p11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
-| HSM binding | `p11_hsm.c`, `p11_status.c`, `p11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
-| Not implemented | `p11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
+| C ABI | `azihsm_pkcs11_dispatch.c` | `CK_FUNCTION_LIST` + `_3_0` + the "PKCS 11" interface |
+| Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
+| Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
+| HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
+| Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
 
 The object store is the emulation layer PKCS#11 requires and the device does not
 provide (no persistent, attribute-templated, searchable key store). It is fronted
-by the `p11_objstore` vtable so the in-memory backend can be replaced by a
+by the `azihsm_pkcs11_objstore` vtable so the in-memory backend can be replaced by a
 persistent one without changing any caller.
 
 ## Build

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "p11_status.h"
+#include "azihsm_pkcs11_status.h"
 
 /*
  * The cases use the raw azihsm_status integer values (names in the comments)
@@ -11,11 +11,11 @@
  *
  * Administrative "already provisioned" statuses (PARTITION_ALREADY_PROVISIONED,
  * VAULT_APP_LIMIT_REACHED) are handled by the caller before mapping — the lazy
- * provisioning in p11_hsm_login treats them as "already established" and lets
+ * provisioning in azihsm_pkcs11_hsm_login treats them as "already established" and lets
  * the sess_open retry decide — so the conservative mapping here is only a
  * fallback should one reach a caller.
  */
-CK_RV p11_ckr_from_azihsm(int status)
+CK_RV azihsm_pkcs11_ckr_from_azihsm(int status)
 {
     switch (status)
     {

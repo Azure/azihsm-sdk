@@ -9,11 +9,11 @@
  * functions.
  */
 
-#include "p11_internal.h"
+#include "azihsm_pkcs11_internal.h"
 
 /* The classic v2.40 function list (function pointers up to C_WaitForSlotEvent). */
-CK_FUNCTION_LIST azihsm_p11_function_list = {
-    .version = { AZIHSM_P11_CK_LEGACY_MAJOR, AZIHSM_P11_CK_LEGACY_MINOR },
+CK_FUNCTION_LIST azihsm_pkcs11_function_list = {
+    .version = { AZIHSM_PKCS11_CK_LEGACY_MAJOR, AZIHSM_PKCS11_CK_LEGACY_MINOR },
     .C_Initialize = C_Initialize,
     .C_Finalize = C_Finalize,
     .C_GetInfo = C_GetInfo,
@@ -85,8 +85,8 @@ CK_FUNCTION_LIST azihsm_p11_function_list = {
 };
 
 /* The v3.x function list (superset; used by C_GetInterface). */
-CK_FUNCTION_LIST_3_0 azihsm_p11_function_list_3_0 = {
-    .version = { AZIHSM_P11_CK_MAJOR, AZIHSM_P11_CK_MINOR },
+CK_FUNCTION_LIST_3_0 azihsm_pkcs11_function_list_3_0 = {
+    .version = { AZIHSM_PKCS11_CK_MAJOR, AZIHSM_PKCS11_CK_MINOR },
     .C_Initialize = C_Initialize,
     .C_Finalize = C_Finalize,
     .C_GetInfo = C_GetInfo,
@@ -182,14 +182,15 @@ CK_FUNCTION_LIST_3_0 azihsm_p11_function_list_3_0 = {
 };
 
 /* One advertised interface: "PKCS 11" -> the 3.x function list. */
-static CK_INTERFACE azihsm_p11_interfaces[] = {
+static CK_INTERFACE azihsm_pkcs11_interfaces[] = {
     {
         .pInterfaceName = (CK_CHAR_PTR) "PKCS 11",
-        .pFunctionList = &azihsm_p11_function_list_3_0,
+        .pFunctionList = &azihsm_pkcs11_function_list_3_0,
         .flags = 0,
     },
 };
-#define AZIHSM_P11_NUM_INTERFACES (sizeof(azihsm_p11_interfaces) / sizeof(azihsm_p11_interfaces[0]))
+#define AZIHSM_PKCS11_NUM_INTERFACES                                                               \
+    (sizeof(azihsm_pkcs11_interfaces) / sizeof(azihsm_pkcs11_interfaces[0]))
 
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
@@ -197,7 +198,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     {
         return CKR_ARGUMENTS_BAD;
     }
-    *ppFunctionList = &azihsm_p11_function_list;
+    *ppFunctionList = &azihsm_pkcs11_function_list;
     return CKR_OK;
 }
 
@@ -209,19 +210,19 @@ CK_RV C_GetInterfaceList(CK_INTERFACE_PTR pInterfacesList, CK_ULONG_PTR pulCount
     }
     if (pInterfacesList == NULL_PTR)
     {
-        *pulCount = AZIHSM_P11_NUM_INTERFACES;
+        *pulCount = AZIHSM_PKCS11_NUM_INTERFACES;
         return CKR_OK;
     }
-    if (*pulCount < AZIHSM_P11_NUM_INTERFACES)
+    if (*pulCount < AZIHSM_PKCS11_NUM_INTERFACES)
     {
-        *pulCount = AZIHSM_P11_NUM_INTERFACES;
+        *pulCount = AZIHSM_PKCS11_NUM_INTERFACES;
         return CKR_BUFFER_TOO_SMALL;
     }
-    for (CK_ULONG i = 0; i < AZIHSM_P11_NUM_INTERFACES; i++)
+    for (CK_ULONG i = 0; i < AZIHSM_PKCS11_NUM_INTERFACES; i++)
     {
-        pInterfacesList[i] = azihsm_p11_interfaces[i];
+        pInterfacesList[i] = azihsm_pkcs11_interfaces[i];
     }
-    *pulCount = AZIHSM_P11_NUM_INTERFACES;
+    *pulCount = AZIHSM_PKCS11_NUM_INTERFACES;
     return CKR_OK;
 }
 
@@ -236,9 +237,9 @@ CK_RV C_GetInterface(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    for (CK_ULONG i = 0; i < AZIHSM_P11_NUM_INTERFACES; i++)
+    for (CK_ULONG i = 0; i < AZIHSM_PKCS11_NUM_INTERFACES; i++)
     {
-        CK_INTERFACE *iface = &azihsm_p11_interfaces[i];
+        CK_INTERFACE *iface = &azihsm_pkcs11_interfaces[i];
         if (pInterfaceName != NULL_PTR &&
             strcmp((const char *)pInterfaceName, (const char *)iface->pInterfaceName) != 0)
         {

@@ -14,7 +14,7 @@ include(GNUInstallDirs)
 include(FetchContent)
 
 # libcrypto is needed only for the caller POTA endorsement in the C_Login
-# ceremony (p11_hsm.c) — exactly as the OpenSSL provider uses it.
+# ceremony (azihsm_pkcs11_hsm.c) — exactly as the OpenSSL provider uses it.
 find_package(OpenSSL 3 REQUIRED)
 
 # --- Import the AZIHSM native C API (Rust cdylib) via Corrosion, then generate
@@ -58,15 +58,15 @@ if(ENABLE_WERROR)
 endif()
 
 set(AZIHSM_PKCS11_SOURCES
-    ./src/p11_module.c
-    ./src/p11_dispatch.c
-    ./src/p11_slot.c
-    ./src/p11_session.c
-    ./src/p11_objstore_mem.c
-    ./src/p11_config.c
-    ./src/p11_status.c
-    ./src/p11_hsm.c
-    ./src/p11_stubs.c
+    ./src/azihsm_pkcs11_module.c
+    ./src/azihsm_pkcs11_dispatch.c
+    ./src/azihsm_pkcs11_slot.c
+    ./src/azihsm_pkcs11_session.c
+    ./src/azihsm_pkcs11_objstore_mem.c
+    ./src/azihsm_pkcs11_config.c
+    ./src/azihsm_pkcs11_status.c
+    ./src/azihsm_pkcs11_hsm.c
+    ./src/azihsm_pkcs11_stubs.c
 )
 
 add_library(azihsm_pkcs11 SHARED ${AZIHSM_PKCS11_SOURCES})

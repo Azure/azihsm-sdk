@@ -2,13 +2,13 @@
 // Licensed under the MIT License.
 
 /*
- * Slot / token / mechanism enumeration over g_p11.slots[] (populated by the HSM
+ * Slot / token / mechanism enumeration over g_azihsm_pkcs11.slots[] (populated by the HSM
  * binding). The mechanism table reflects the AZIHSM SDK's actual capabilities:
  * no CKM_RSA_PKCS_KEY_PAIR_GEN (the device has no general RSA keygen, only an
  * internal unwrapping-key pair), no AES-ECB/CTR, no non-NIST curves, no SHA-3.
  */
 
-#include "p11_internal.h"
+#include "azihsm_pkcs11_internal.h"
 
 /* ------------------------------------------------------------------------- */
 /* Mechanism table (AZIHSM real capabilities)                                */
@@ -20,10 +20,10 @@ typedef struct
     CK_ULONG min_key;
     CK_ULONG max_key;
     CK_FLAGS flags;
-} p11_mech_t;
+} azihsm_pkcs11_mech_t;
 
 /* AES key sizes expressed in bytes; RSA/EC in bits, per common convention. */
-static const p11_mech_t g_mechs[] = {
+static const azihsm_pkcs11_mech_t g_mechs[] = {
     /* AES */
     { CKM_AES_KEY_GEN, 16, 32, CKF_GENERATE },
     { CKM_AES_CBC, 16, 32, CKF_ENCRYPT | CKF_DECRYPT },
@@ -65,7 +65,7 @@ static const p11_mech_t g_mechs[] = {
     { CKM_HKDF_DERIVE, 0, 0, CKF_DERIVE },
     { CKM_SP800_108_COUNTER_KDF, 0, 0, CKF_DERIVE },
 };
-#define AZIHSM_P11_NUM_MECHS (sizeof(g_mechs) / sizeof(g_mechs[0]))
+#define AZIHSM_PKCS11_NUM_MECHS (sizeof(g_mechs) / sizeof(g_mechs[0]))
 
 /* ------------------------------------------------------------------------- */
 /* Slot / token functions                                                    */
@@ -73,7 +73,7 @@ static const p11_mech_t g_mechs[] = {
 
 CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -83,7 +83,7 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PT
     }
     (void)tokenPresent; /* every discovered partition has a token present */
 
-    CK_ULONG n = g_p11.slot_count;
+    CK_ULONG n = g_azihsm_pkcs11.slot_count;
     if (pSlotList == NULL_PTR)
     {
         *pulCount = n;
@@ -104,7 +104,7 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PT
 
 CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -112,17 +112,21 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    p11_slot_t *slot = &g_p11.slots[slotID];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[slotID];
     memset(pInfo, 0, sizeof(*pInfo));
 
     char desc[600];
-    snprintf(desc, sizeof(desc), "%s [%s]", AZIHSM_P11_SLOT_DESC, slot->device_path);
-    p11_pad_str(pInfo->slotDescription, sizeof(pInfo->slotDescription), desc);
-    p11_pad_str(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), AZIHSM_P11_MANUFACTURER);
+    snprintf(desc, sizeof(desc), "%s [%s]", AZIHSM_PKCS11_SLOT_DESC, slot->device_path);
+    azihsm_pkcs11_pad_str(pInfo->slotDescription, sizeof(pInfo->slotDescription), desc);
+    azihsm_pkcs11_pad_str(
+        pInfo->manufacturerID,
+        sizeof(pInfo->manufacturerID),
+        AZIHSM_PKCS11_MANUFACTURER
+    );
     pInfo->flags = CKF_HW_SLOT;
     if (slot->present)
     {
@@ -136,7 +140,7 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 
 CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -144,21 +148,25 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    p11_slot_t *slot = &g_p11.slots[slotID];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[slotID];
     if (!slot->present)
     {
         return CKR_TOKEN_NOT_PRESENT;
     }
     memset(pInfo, 0, sizeof(*pInfo));
 
-    p11_pad_str(pInfo->label, sizeof(pInfo->label), slot->label);
-    p11_pad_str(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), AZIHSM_P11_MANUFACTURER);
-    p11_pad_str(pInfo->model, sizeof(pInfo->model), AZIHSM_P11_TOKEN_MODEL);
-    p11_pad_str(pInfo->serialNumber, sizeof(pInfo->serialNumber), slot->serial);
+    azihsm_pkcs11_pad_str(pInfo->label, sizeof(pInfo->label), slot->label);
+    azihsm_pkcs11_pad_str(
+        pInfo->manufacturerID,
+        sizeof(pInfo->manufacturerID),
+        AZIHSM_PKCS11_MANUFACTURER
+    );
+    azihsm_pkcs11_pad_str(pInfo->model, sizeof(pInfo->model), AZIHSM_PKCS11_TOKEN_MODEL);
+    azihsm_pkcs11_pad_str(pInfo->serialNumber, sizeof(pInfo->serialNumber), slot->serial);
 
     pInfo->flags = CKF_RNG | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED;
     if (slot->token_initialized)
@@ -171,8 +179,8 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     pInfo->ulMaxRwSessionCount = CK_EFFECTIVELY_INFINITE;
     pInfo->ulRwSessionCount = CK_UNAVAILABLE_INFORMATION;
     /* AZIHSM credentials PIN is a fixed 16-byte value. */
-    pInfo->ulMaxPinLen = AZIHSM_P11_MAX_PIN_LEN;
-    pInfo->ulMinPinLen = AZIHSM_P11_MIN_PIN_LEN;
+    pInfo->ulMaxPinLen = AZIHSM_PKCS11_MAX_PIN_LEN;
+    pInfo->ulMinPinLen = AZIHSM_PKCS11_MIN_PIN_LEN;
     pInfo->ulTotalPublicMemory = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulFreePublicMemory = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulTotalPrivateMemory = CK_UNAVAILABLE_INFORMATION;
@@ -181,7 +189,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     pInfo->firmwareVersion.major = (CK_BYTE)slot->api_rev_major;
     pInfo->firmwareVersion.minor = (CK_BYTE)slot->api_rev_minor;
     /* No on-token clock: leave utcTime blank (space-padded). */
-    p11_pad_str(pInfo->utcTime, sizeof(pInfo->utcTime), "");
+    azihsm_pkcs11_pad_str(pInfo->utcTime, sizeof(pInfo->utcTime), "");
     return CKR_OK;
 }
 
@@ -191,7 +199,7 @@ CK_RV C_GetMechanismList(
     CK_ULONG_PTR pulCount
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -199,11 +207,11 @@ CK_RV C_GetMechanismList(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    CK_ULONG n = AZIHSM_P11_NUM_MECHS;
+    CK_ULONG n = AZIHSM_PKCS11_NUM_MECHS;
     if (pMechanismList == NULL_PTR)
     {
         *pulCount = n;
@@ -224,7 +232,7 @@ CK_RV C_GetMechanismList(
 
 CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -232,11 +240,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    for (CK_ULONG i = 0; i < AZIHSM_P11_NUM_MECHS; i++)
+    for (CK_ULONG i = 0; i < AZIHSM_PKCS11_NUM_MECHS; i++)
     {
         if (g_mechs[i].type == type)
         {
@@ -251,7 +259,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM
 
 CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot, CK_VOID_PTR pReserved)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }

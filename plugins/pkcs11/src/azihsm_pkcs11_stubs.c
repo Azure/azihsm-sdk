@@ -10,7 +10,7 @@
  * module always exposes a complete CK_FUNCTION_LIST / _3_0.
  */
 
-#include "p11_internal.h"
+#include "azihsm_pkcs11_internal.h"
 
 CK_RV C_InitToken(
     CK_SLOT_ID slotID,

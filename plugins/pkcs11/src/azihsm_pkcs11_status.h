@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "p11_compat.h"
+#include "azihsm_pkcs11_compat.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -13,10 +13,10 @@ extern "C"
 /*
  * Translate an azihsm_status (int32; 0 = success, negative = error) to a CK_RV.
  * This is the single point where the AZIHSM error domain crosses into PKCS#11
- * space: call it only from the HSM-binding layer (p11_hsm.c) so every layer
+ * space: call it only from the HSM-binding layer (azihsm_pkcs11_hsm.c) so every layer
  * above it deals purely in CK_RV.
  */
-CK_RV p11_ckr_from_azihsm(int status);
+CK_RV azihsm_pkcs11_ckr_from_azihsm(int status);
 
 #ifdef __cplusplus
 }

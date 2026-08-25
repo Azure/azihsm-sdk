@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "p11_compat.h"
+#include "azihsm_pkcs11_compat.h"
 
 #include <stdint.h>
 
@@ -14,17 +14,17 @@ extern "C"
 
 /*
  * HSM-binding layer: the only place that calls azihsm_* and the only place that
- * translates azihsm_status into CK_RV (via p11_status.h). Compiled against the
+ * translates azihsm_status into CK_RV (via azihsm_pkcs11_status.h). Compiled against the
  * SDK under AZIHSM_WITH_HSM; the no-device build provides stubs so the framework
  * still loads and the object/digest paths remain testable.
  */
 
 /*
- * Enumerate AZIHSM partitions into g_p11.slots[] and set g_p11.slot_count.
+ * Enumerate AZIHSM partitions into g_azihsm_pkcs11.slots[] and set g_azihsm_pkcs11.slot_count.
  * Returns the number of slots (>= 0), or -1 on error. A partition that fails to
  * describe itself is skipped rather than failing the whole enumeration.
  */
-int32_t p11_hsm_enumerate_slots(void);
+int32_t azihsm_pkcs11_hsm_enumerate_slots(void);
 
 /*
  * Log a user into `slot`: open the partition, provision it lazily (only if the
@@ -32,7 +32,7 @@ int32_t p11_hsm_enumerate_slots(void);
  * cycle), then open a session. On success writes the AZIHSM session handle to
  * *out_session. `pin`/`pin_len` are the C_Login PIN (see the PIN-shape mapping).
  */
-CK_RV p11_hsm_login(
+CK_RV azihsm_pkcs11_hsm_login(
     CK_SLOT_ID slot,
     const CK_UTF8CHAR *pin,
     CK_ULONG pin_len,
@@ -40,10 +40,10 @@ CK_RV p11_hsm_login(
 );
 
 /* Close a previously opened AZIHSM session (no-op if 0). */
-void p11_hsm_logout(uint32_t hsm_session);
+void azihsm_pkcs11_hsm_logout(uint32_t hsm_session);
 
 /* Close every open partition handle. Called from C_Finalize. */
-void p11_hsm_close_all(void);
+void azihsm_pkcs11_hsm_close_all(void);
 
 #ifdef __cplusplus
 }

@@ -8,8 +8,8 @@
  * end-to-end while the key-backed mechanisms are still unimplemented.
  */
 
-#include "p11_hsm.h"
-#include "p11_internal.h"
+#include "azihsm_pkcs11_hsm.h"
+#include "azihsm_pkcs11_internal.h"
 
 #include <stdlib.h>
 
@@ -148,7 +148,7 @@ static void sha256_final(sha256_ctx *c, uint8_t out[32])
 /* Operation state                                                           */
 /* ========================================================================= */
 
-CK_RV p11_session_reset_op(p11_session_t *s)
+CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
 {
     if (s->op == P11_OP_DIGEST && s->op_ctx != NULL)
     {
@@ -157,7 +157,7 @@ CK_RV p11_session_reset_op(p11_session_t *s)
     s->op_ctx = NULL;
     if (s->op == P11_OP_FIND && s->find_cursor != NULL)
     {
-        g_p11.store.ops->find_final(g_p11.store.ctx, s->find_cursor);
+        g_azihsm_pkcs11.store.ops->find_final(g_azihsm_pkcs11.store.ctx, s->find_cursor);
     }
     s->find_cursor = NULL;
     s->op = P11_OP_NONE;
@@ -176,7 +176,7 @@ CK_RV C_OpenSession(
     CK_SESSION_HANDLE_PTR phSession
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -184,7 +184,7 @@ CK_RV C_OpenSession(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
@@ -193,45 +193,45 @@ CK_RV C_OpenSession(
         return CKR_SESSION_PARALLEL_NOT_SUPPORTED;
     }
 
-    p11_lock();
+    azihsm_pkcs11_lock();
     /* An RO session may not be opened while the SO is logged in. */
-    if ((flags & CKF_RW_SESSION) == 0 && g_p11.slots[slotID].so_logged_in)
+    if ((flags & CKF_RW_SESSION) == 0 && g_azihsm_pkcs11.slots[slotID].so_logged_in)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_READ_WRITE_SO_EXISTS;
     }
-    p11_session_t *s = NULL;
-    for (size_t i = 0; i < AZIHSM_P11_MAX_SESSIONS; i++)
+    azihsm_pkcs11_session_t *s = NULL;
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
     {
-        if (!g_p11.sessions[i].in_use)
+        if (!g_azihsm_pkcs11.sessions[i].in_use)
         {
-            s = &g_p11.sessions[i];
+            s = &g_azihsm_pkcs11.sessions[i];
             break;
         }
     }
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_COUNT;
     }
     memset(s, 0, sizeof(*s));
     s->in_use = true;
-    s->handle = g_p11.next_session_handle++;
+    s->handle = g_azihsm_pkcs11.next_session_handle++;
     s->slot = slotID;
     s->flags = flags;
     s->app = pApplication;
     s->notify = Notify;
     s->op = P11_OP_NONE;
     *phSession = s->handle;
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
 static bool slot_has_sessions(CK_SLOT_ID slot)
 {
-    for (size_t i = 0; i < AZIHSM_P11_MAX_SESSIONS; i++)
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
     {
-        if (g_p11.sessions[i].in_use && g_p11.sessions[i].slot == slot)
+        if (g_azihsm_pkcs11.sessions[i].in_use && g_azihsm_pkcs11.sessions[i].slot == slot)
         {
             return true;
         }
@@ -241,65 +241,65 @@ static bool slot_has_sessions(CK_SLOT_ID slot)
 
 CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     CK_SLOT_ID slot_id = s->slot;
-    p11_session_reset_op(s);
+    azihsm_pkcs11_session_reset_op(s);
     s->in_use = false;
     /* The HSM login is token-wide: close it only when the last session on the
      * slot goes away, not whenever any one session closes. */
     if (!slot_has_sessions(slot_id))
     {
-        p11_slot_t *slot = &g_p11.slots[slot_id];
-        p11_hsm_logout(slot->hsm_session);
+        azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[slot_id];
+        azihsm_pkcs11_hsm_logout(slot->hsm_session);
         slot->hsm_session = 0;
         slot->user_logged_in = false;
         slot->so_logged_in = false;
     }
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
 CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (slotID >= g_p11.slot_count)
+    if (slotID >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    p11_lock();
-    for (size_t i = 0; i < AZIHSM_P11_MAX_SESSIONS; i++)
+    azihsm_pkcs11_lock();
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
     {
-        if (g_p11.sessions[i].in_use && g_p11.sessions[i].slot == slotID)
+        if (g_azihsm_pkcs11.sessions[i].in_use && g_azihsm_pkcs11.sessions[i].slot == slotID)
         {
-            p11_session_reset_op(&g_p11.sessions[i]);
-            g_p11.sessions[i].in_use = false;
+            azihsm_pkcs11_session_reset_op(&g_azihsm_pkcs11.sessions[i]);
+            g_azihsm_pkcs11.sessions[i].in_use = false;
         }
     }
-    p11_slot_t *slot = &g_p11.slots[slotID];
-    p11_hsm_logout(slot->hsm_session);
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[slotID];
+    azihsm_pkcs11_hsm_logout(slot->hsm_session);
     slot->hsm_session = 0;
     slot->user_logged_in = false;
     slot->so_logged_in = false;
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
 CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -307,14 +307,14 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    p11_slot_t *slot = &g_p11.slots[s->slot];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
     bool rw = (s->flags & CKF_RW_SESSION) != 0;
 
     CK_STATE state;
@@ -335,7 +335,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
     pInfo->state = state;
     pInfo->flags = s->flags;
     pInfo->ulDeviceError = 0;
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
@@ -346,18 +346,18 @@ CK_RV C_Login(
     CK_ULONG ulPinLen
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    p11_slot_t *slot = &g_p11.slots[s->slot];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
     CK_RV rv = CKR_OK;
     switch (userType)
     {
@@ -375,7 +375,7 @@ CK_RV C_Login(
             break;
         }
         if (ulPinLen > 0 &&
-            (ulPinLen < AZIHSM_P11_MIN_PIN_LEN || ulPinLen > AZIHSM_P11_MAX_PIN_LEN))
+            (ulPinLen < AZIHSM_PKCS11_MIN_PIN_LEN || ulPinLen > AZIHSM_PKCS11_MAX_PIN_LEN))
         {
             rv = CKR_PIN_LEN_RANGE;
             break;
@@ -386,7 +386,7 @@ CK_RV C_Login(
             break;
         }
         uint32_t hs = 0;
-        rv = p11_hsm_login(s->slot, pPin, ulPinLen, &hs);
+        rv = azihsm_pkcs11_hsm_login(s->slot, pPin, ulPinLen, &hs);
         if (rv == CKR_OK)
         {
             slot->hsm_session = hs;
@@ -415,36 +415,36 @@ CK_RV C_Login(
         rv = CKR_USER_TYPE_INVALID;
         break;
     }
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
 CK_RV C_Logout(CK_SESSION_HANDLE hSession)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    p11_slot_t *slot = &g_p11.slots[s->slot];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
     if (!slot->user_logged_in && !slot->so_logged_in)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_USER_NOT_LOGGED_IN;
     }
     /* Login is token-wide, so log the token out regardless of which session
      * calls C_Logout — including one that never called C_Login itself. */
-    p11_hsm_logout(slot->hsm_session);
+    azihsm_pkcs11_hsm_logout(slot->hsm_session);
     slot->hsm_session = 0;
     slot->user_logged_in = false;
     slot->so_logged_in = false;
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
@@ -452,8 +452,8 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
 /* Objects (delegated to the object-store seam)                              */
 /*                                                                           */
 /* Each entry point validates its arguments and session, then hands off to   */
-/* g_p11.store; slot isolation and private-object login-gating are enforced  */
-/* by the store (see p11_objstore.h).                                        */
+/* g_azihsm_pkcs11.store; slot isolation and private-object login-gating are enforced  */
+/* by the store (see azihsm_pkcs11_objstore.h).                                        */
 /* ========================================================================= */
 
 CK_RV C_CreateObject(
@@ -463,7 +463,7 @@ CK_RV C_CreateObject(
     CK_OBJECT_HANDLE_PTR phObject
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -471,36 +471,38 @@ CK_RV C_CreateObject(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    CK_BBOOL logged_in = g_p11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
     CK_RV rv =
-        g_p11.store.ops->create(g_p11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
-    p11_unlock();
+        g_azihsm_pkcs11.store.ops
+            ->create(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
 CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    CK_BBOOL logged_in = g_p11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
-    CK_RV rv = g_p11.store.ops->destroy(g_p11.store.ctx, s->slot, logged_in, hObject);
-    p11_unlock();
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_RV rv =
+        g_azihsm_pkcs11.store.ops->destroy(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject);
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
@@ -511,7 +513,7 @@ CK_RV C_GetAttributeValue(
     CK_ULONG ulCount
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -519,23 +521,24 @@ CK_RV C_GetAttributeValue(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    CK_BBOOL logged_in = g_p11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
     CK_RV rv =
-        g_p11.store.ops->get_attr(g_p11.store.ctx, s->slot, logged_in, hObject, pTemplate, ulCount);
-    p11_unlock();
+        g_azihsm_pkcs11.store.ops
+            ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject, pTemplate, ulCount);
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
 CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -543,27 +546,32 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, 
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_NONE)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_ACTIVE;
     }
-    CK_BBOOL logged_in = g_p11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
-    CK_RV rv =
-        g_p11.store.ops
-            ->find_init(g_p11.store.ctx, s->slot, logged_in, pTemplate, ulCount, &s->find_cursor);
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_RV rv = g_azihsm_pkcs11.store.ops->find_init(
+        g_azihsm_pkcs11.store.ctx,
+        s->slot,
+        logged_in,
+        pTemplate,
+        ulCount,
+        &s->find_cursor
+    );
     if (rv == CKR_OK)
     {
         s->op = P11_OP_FIND;
     }
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
@@ -574,7 +582,7 @@ CK_RV C_FindObjects(
     CK_ULONG_PTR pulObjectCount
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -582,45 +590,49 @@ CK_RV C_FindObjects(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_FIND)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    CK_RV rv =
-        g_p11.store.ops
-            ->find(g_p11.store.ctx, s->find_cursor, phObject, ulMaxObjectCount, pulObjectCount);
-    p11_unlock();
+    CK_RV rv = g_azihsm_pkcs11.store.ops->find(
+        g_azihsm_pkcs11.store.ctx,
+        s->find_cursor,
+        phObject,
+        ulMaxObjectCount,
+        pulObjectCount
+    );
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
 CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_FIND)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    p11_session_reset_op(s);
-    p11_unlock();
+    azihsm_pkcs11_session_reset_op(s);
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
@@ -630,7 +642,7 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -638,39 +650,39 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_NONE)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_ACTIVE;
     }
     if (pMechanism->mechanism != CKM_SHA256)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_MECHANISM_INVALID;
     }
     sha256_ctx *ctx = (sha256_ctx *)malloc(sizeof(sha256_ctx));
     if (ctx == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_HOST_MEMORY;
     }
     sha256_init(ctx);
     s->op_ctx = ctx;
     s->op = P11_OP_DIGEST;
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
 CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -678,27 +690,31 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_DIGEST)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
     if (ulPartLen > 0)
     {
         sha256_update((sha256_ctx *)s->op_ctx, pPart, ulPartLen);
     }
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return CKR_OK;
 }
 
-static CK_RV digest_output(p11_session_t *s, CK_BYTE_PTR pDigest, CK_ULONG_PTR pulDigestLen)
+static CK_RV digest_output(
+    azihsm_pkcs11_session_t *s,
+    CK_BYTE_PTR pDigest,
+    CK_ULONG_PTR pulDigestLen
+)
 {
     if (pDigest == NULL_PTR)
     {
@@ -714,7 +730,7 @@ static CK_RV digest_output(p11_session_t *s, CK_BYTE_PTR pDigest, CK_ULONG_PTR p
     sha256_final((sha256_ctx *)s->op_ctx, out);
     memcpy(pDigest, out, 32);
     *pulDigestLen = 32;
-    p11_session_reset_op(s);
+    azihsm_pkcs11_session_reset_op(s);
     return CKR_OK;
 }
 
@@ -726,7 +742,7 @@ CK_RV C_Digest(
     CK_ULONG_PTR pulDigestLen
 )
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -738,16 +754,16 @@ CK_RV C_Digest(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_DIGEST)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
     if (pDigest != NULL_PTR && *pulDigestLen >= 32 && ulDataLen > 0)
@@ -755,13 +771,13 @@ CK_RV C_Digest(
         sha256_update((sha256_ctx *)s->op_ctx, pData, ulDataLen);
     }
     CK_RV rv = digest_output(s, pDigest, pulDigestLen);
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return rv;
 }
 
 CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PTR pulDigestLen)
 {
-    if (!g_p11.initialized)
+    if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
@@ -769,19 +785,19 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
     {
         return CKR_ARGUMENTS_BAD;
     }
-    p11_lock();
-    p11_session_t *s = p11_session_lookup(hSession);
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
     if (s->op != P11_OP_DIGEST)
     {
-        p11_unlock();
+        azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
     CK_RV rv = digest_output(s, pDigest, pulDigestLen);
-    p11_unlock();
+    azihsm_pkcs11_unlock();
     return rv;
 }

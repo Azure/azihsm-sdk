@@ -2,7 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 """
-Generate src/p11_stubs.c — the PKCS#11 functions the module does not implement
+Generate src/azihsm_pkcs11_stubs.c — the PKCS#11 functions the module does not implement
 yet — from the canonical v3.1 function signatures.
 
 The signatures are captured in tools/pkcs11f_signatures.tsv (name<TAB>arglist),
@@ -18,7 +18,7 @@ parsed once from the OASIS pkcs11f.h. Regenerate that TSV with:
         print(f"{m.group(1)}\\t{args}")
     PY
 
-Then: python3 tools/gen_stubs.py > src/p11_stubs.c
+Then: python3 tools/gen_stubs.py > src/azihsm_pkcs11_stubs.c
 """
 import os
 import sys
@@ -53,7 +53,7 @@ HEADER = """// Copyright (c) Microsoft Corporation.
  * module always exposes a complete CK_FUNCTION_LIST / _3_0.
  */
 
-#include "p11_internal.h"
+#include "azihsm_pkcs11_internal.h"
 """
 
 

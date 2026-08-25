@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include "p11_compat.h"
-#include "p11_objstore.h"
+#include "azihsm_pkcs11_compat.h"
+#include "azihsm_pkcs11_objstore.h"
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -16,35 +16,35 @@
 /* Module identity                                                           */
 /* ------------------------------------------------------------------------- */
 
-#define AZIHSM_P11_MANUFACTURER "Microsoft Corporation"
-#define AZIHSM_P11_LIBRARY_DESC "AZIHSM PKCS#11"
-#define AZIHSM_P11_TOKEN_MODEL "AZIHSM"
-#define AZIHSM_P11_SLOT_DESC "Azure Integrated HSM partition"
+#define AZIHSM_PKCS11_MANUFACTURER "Microsoft Corporation"
+#define AZIHSM_PKCS11_LIBRARY_DESC "AZIHSM PKCS#11"
+#define AZIHSM_PKCS11_TOKEN_MODEL "AZIHSM"
+#define AZIHSM_PKCS11_SLOT_DESC "Azure Integrated HSM partition"
 
 /* Cryptoki version reported from C_GetInfo / the 3.0 interface. */
-#define AZIHSM_P11_CK_MAJOR 3
-#define AZIHSM_P11_CK_MINOR 1
+#define AZIHSM_PKCS11_CK_MAJOR 3
+#define AZIHSM_PKCS11_CK_MINOR 1
 /* Legacy version reported through the classic CK_FUNCTION_LIST. */
-#define AZIHSM_P11_CK_LEGACY_MAJOR 2
-#define AZIHSM_P11_CK_LEGACY_MINOR 40
+#define AZIHSM_PKCS11_CK_LEGACY_MAJOR 2
+#define AZIHSM_PKCS11_CK_LEGACY_MINOR 40
 /* This module's own version. */
-#define AZIHSM_P11_LIB_MAJOR 0
-#define AZIHSM_P11_LIB_MINOR 1
+#define AZIHSM_PKCS11_LIB_MAJOR 0
+#define AZIHSM_PKCS11_LIB_MINOR 1
 
-#define AZIHSM_P11_MAX_SLOTS 16
-#define AZIHSM_P11_MAX_SESSIONS 256
+#define AZIHSM_PKCS11_MAX_SLOTS 16
+#define AZIHSM_PKCS11_MAX_SESSIONS 256
 
 /* Advertised PIN length range (C_GetTokenInfo); the AZIHSM credential PIN is a
  * fixed 16-byte value. Enforced in C_Login. */
-#define AZIHSM_P11_MIN_PIN_LEN 4
-#define AZIHSM_P11_MAX_PIN_LEN 16
+#define AZIHSM_PKCS11_MIN_PIN_LEN 4
+#define AZIHSM_PKCS11_MAX_PIN_LEN 16
 
 /* ------------------------------------------------------------------------- */
 /* Logging (enable with env AZIHSM_PKCS11_DEBUG=1; off by default)           */
 /* ------------------------------------------------------------------------- */
 
-void azihsm_p11_log(const char *fmt, ...);
-#define P11LOG(...) azihsm_p11_log(__VA_ARGS__)
+void azihsm_pkcs11_log(const char *fmt, ...);
+#define AZIHSM_PKCS11_LOG(...) azihsm_pkcs11_log(__VA_ARGS__)
 
 /* ------------------------------------------------------------------------- */
 /* Sessions                                                                  */
@@ -60,7 +60,7 @@ typedef enum
     P11_OP_DIGEST,
     P11_OP_SIGN,
     P11_OP_VERIFY,
-} p11_op_type_t;
+} azihsm_pkcs11_op_type_t;
 
 typedef struct
 {
@@ -71,10 +71,10 @@ typedef struct
     CK_VOID_PTR app;
     CK_NOTIFY notify;
 
-    p11_op_type_t op;
+    azihsm_pkcs11_op_type_t op;
     void *op_ctx;      /* digest state while op == P11_OP_DIGEST */
     void *find_cursor; /* object-store cursor while op == P11_OP_FIND */
-} p11_session_t;
+} azihsm_pkcs11_session_t;
 
 /* ------------------------------------------------------------------------- */
 /* Slots / tokens                                                            */
@@ -106,7 +106,7 @@ typedef struct
      * 0 = not logged in.
      */
     uint32_t hsm_session;
-} p11_slot_t;
+} azihsm_pkcs11_slot_t;
 
 /* ------------------------------------------------------------------------- */
 /* Global module state                                                       */
@@ -118,35 +118,35 @@ typedef struct
     pthread_mutex_t lock; /* one coarse module lock; held across store calls */
     bool os_locking_ok;   /* from CK_C_INITIALIZE_ARGS */
 
-    p11_slot_t slots[AZIHSM_P11_MAX_SLOTS];
+    azihsm_pkcs11_slot_t slots[AZIHSM_PKCS11_MAX_SLOTS];
     CK_ULONG slot_count;
 
-    p11_session_t sessions[AZIHSM_P11_MAX_SESSIONS];
+    azihsm_pkcs11_session_t sessions[AZIHSM_PKCS11_MAX_SESSIONS];
     CK_ULONG next_session_handle; /* monotonic, never reused */
 
-    p11_objstore store; /* host object store behind the seam */
-} p11_module_t;
+    azihsm_pkcs11_objstore store; /* host object store behind the seam */
+} azihsm_pkcs11_module_t;
 
-extern p11_module_t g_p11;
+extern azihsm_pkcs11_module_t g_azihsm_pkcs11;
 
-/* Acquire / release the module lock (g_p11.lock). */
-void p11_lock(void);
-void p11_unlock(void);
+/* Acquire / release the module lock (g_azihsm_pkcs11.lock). */
+void azihsm_pkcs11_lock(void);
+void azihsm_pkcs11_unlock(void);
 
 /* ------------------------------------------------------------------------- */
 /* Shared helpers                                                            */
 /* ------------------------------------------------------------------------- */
 
 /* Resolve a session handle to its table entry; NULL if invalid or closed. */
-p11_session_t *p11_session_lookup(CK_SESSION_HANDLE h);
+azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h);
 
 /* Abandon the session's active operation, releasing its digest state or find
  * cursor. */
-CK_RV p11_session_reset_op(p11_session_t *s);
+CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s);
 
 /* Fill a fixed-width, space-padded CK_UTF8CHAR string field. */
-void p11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src);
+void azihsm_pkcs11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src);
 
-/* The two shared function-list tables (defined in p11_dispatch.c). */
-extern CK_FUNCTION_LIST azihsm_p11_function_list;         /* v2.40 view */
-extern CK_FUNCTION_LIST_3_0 azihsm_p11_function_list_3_0; /* v3.x view  */
+/* The two shared function-list tables (defined in azihsm_pkcs11_dispatch.c). */
+extern CK_FUNCTION_LIST azihsm_pkcs11_function_list;         /* v2.40 view */
+extern CK_FUNCTION_LIST_3_0 azihsm_pkcs11_function_list_3_0; /* v3.x view  */

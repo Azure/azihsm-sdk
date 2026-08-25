@@ -3,16 +3,16 @@
 
 /*
  * HSM-binding layer. The only translation unit that calls azihsm_* and the only
- * one that maps azihsm_status to CK_RV (p11_status.h). Two builds:
+ * one that maps azihsm_status to CK_RV (azihsm_pkcs11_status.h). Two builds:
  *   - AZIHSM_WITH_HSM: binds the native C API against a real or simulated device.
  *   - otherwise: stubs that keep the framework loadable and the object/digest
  *     paths testable with no device present.
  */
 
-#include "p11_hsm.h"
-#include "p11_config.h"
-#include "p11_internal.h"
-#include "p11_status.h"
+#include "azihsm_pkcs11_hsm.h"
+#include "azihsm_pkcs11_config.h"
+#include "azihsm_pkcs11_internal.h"
+#include "azihsm_pkcs11_status.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@
 #include <openssl/provider.h>
 
 /* azihsm_status values referenced by the lazy-provision decision. Spelled out
- * here (rather than via the enum) to keep the mapping table in p11_status.c the
+ * here (rather than via the enum) to keep the mapping table in azihsm_pkcs11_status.c the
  * single documented list. */
 #define AZIHSM_OK 0
 #define AZIHSM_CREDENTIALS_NOT_ESTABLISHED (-23)
@@ -36,13 +36,13 @@
 #define AZIHSM_BUFFER_TOO_SMALL (-4)
 #define AZIHSM_INTERNAL_ERROR (-5)
 
-int32_t p11_hsm_enumerate_slots(void)
+int32_t azihsm_pkcs11_hsm_enumerate_slots(void)
 {
     azihsm_handle list = 0;
     azihsm_status st = azihsm_part_get_list(&list);
     if (st != AZIHSM_OK)
     {
-        P11LOG("part_get_list failed: %d", (int)st);
+        AZIHSM_PKCS11_LOG("part_get_list failed: %d", (int)st);
         return -1;
     }
 
@@ -50,13 +50,13 @@ int32_t p11_hsm_enumerate_slots(void)
     st = azihsm_part_get_count(list, &count);
     if (st != AZIHSM_OK)
     {
-        P11LOG("part_get_count failed: %d", (int)st);
+        AZIHSM_PKCS11_LOG("part_get_count failed: %d", (int)st);
         azihsm_part_free_list(list);
         return -1;
     }
-    if (count > AZIHSM_P11_MAX_SLOTS)
+    if (count > AZIHSM_PKCS11_MAX_SLOTS)
     {
-        count = AZIHSM_P11_MAX_SLOTS;
+        count = AZIHSM_PKCS11_MAX_SLOTS;
     }
 
     CK_ULONG produced = 0;
@@ -70,7 +70,7 @@ int32_t p11_hsm_enumerate_slots(void)
         st = azihsm_part_get_info(list, i, &info);
         if (st != AZIHSM_OK && st != AZIHSM_BUFFER_TOO_SMALL)
         {
-            P11LOG("part_get_info(%u) sizing failed: %d", i, (int)st);
+            AZIHSM_PKCS11_LOG("part_get_info(%u) sizing failed: %d", i, (int)st);
             continue;
         }
         uint32_t path_elems = info.path.len ? info.path.len : 1; /* incl. NUL */
@@ -84,12 +84,12 @@ int32_t p11_hsm_enumerate_slots(void)
         st = azihsm_part_get_info(list, i, &info);
         if (st != AZIHSM_OK)
         {
-            P11LOG("part_get_info(%u) fill failed: %d", i, (int)st);
+            AZIHSM_PKCS11_LOG("part_get_info(%u) fill failed: %d", i, (int)st);
             free(buf);
             continue;
         }
 
-        p11_slot_t *slot = &g_p11.slots[produced];
+        azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[produced];
         slot->present = true;
         slot->token_initialized = true; /* a discovered partition is a token */
         snprintf(slot->device_path, sizeof(slot->device_path), "%s", (const char *)buf);
@@ -102,7 +102,7 @@ int32_t p11_hsm_enumerate_slots(void)
     }
 
     azihsm_part_free_list(list);
-    P11LOG("enumerated %lu AZIHSM partition(s)", (unsigned long)produced);
+    AZIHSM_PKCS11_LOG("enumerated %lu AZIHSM partition(s)", (unsigned long)produced);
     return (int32_t)produced;
 }
 
@@ -110,7 +110,7 @@ int32_t p11_hsm_enumerate_slots(void)
  * caller's C_Login PIN or, when none was given, the configured default PIN. */
 static void make_creds(
     struct azihsm_credentials *creds,
-    const p11_config *cfg,
+    const azihsm_pkcs11_config *cfg,
     const CK_UTF8CHAR *pin,
     CK_ULONG pin_len
 )
@@ -293,12 +293,12 @@ static azihsm_status provision(azihsm_handle dev, const struct azihsm_credential
     free(pid);
     if (!pota_ok)
     {
-        P11LOG("POTA endorsement build failed");
+        AZIHSM_PKCS11_LOG("POTA endorsement build failed");
         return AZIHSM_INTERNAL_ERROR;
     }
 
-    p11_config cfg;
-    p11_config_load(&cfg);
+    azihsm_pkcs11_config cfg;
+    azihsm_pkcs11_config_load(&cfg);
     struct azihsm_buffer obk_buf = { cfg.obk, sizeof(cfg.obk) };
     struct azihsm_owner_backup_key_config obk_cfg = { AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
                                                       &obk_buf,
@@ -311,7 +311,7 @@ static azihsm_status provision(azihsm_handle dev, const struct azihsm_credential
     return azihsm_part_init(dev, creds, NULL, NULL, &obk_cfg, &pota, NULL);
 }
 
-CK_RV p11_hsm_login(
+CK_RV azihsm_pkcs11_hsm_login(
     CK_SLOT_ID slot,
     const CK_UTF8CHAR *pin,
     CK_ULONG pin_len,
@@ -322,11 +322,11 @@ CK_RV p11_hsm_login(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (slot >= g_p11.slot_count)
+    if (slot >= g_azihsm_pkcs11.slot_count)
     {
         return CKR_SLOT_ID_INVALID;
     }
-    p11_slot_t *sl = &g_p11.slots[slot];
+    azihsm_pkcs11_slot_t *sl = &g_azihsm_pkcs11.slots[slot];
 
     /* Open the partition once per slot and reuse it across logins. */
     if (sl->hsm_dev == 0)
@@ -339,15 +339,15 @@ CK_RV p11_hsm_login(
         azihsm_status st = azihsm_part_open(&spath, &dev, rev);
         if (st != AZIHSM_OK)
         {
-            P11LOG("part_open failed: %d", (int)st);
-            return p11_ckr_from_azihsm((int)st);
+            AZIHSM_PKCS11_LOG("part_open failed: %d", (int)st);
+            return azihsm_pkcs11_ckr_from_azihsm((int)st);
         }
         sl->hsm_dev = dev;
     }
 
     struct azihsm_credentials creds;
-    p11_config cfg;
-    p11_config_load(&cfg);
+    azihsm_pkcs11_config cfg;
+    azihsm_pkcs11_config_load(&cfg);
     make_creds(&creds, &cfg, pin, pin_len);
 
     /* Login = OpenSession. Provisioning is a separate, one-shot-per-power-cycle
@@ -367,22 +367,22 @@ CK_RV p11_hsm_login(
         if (st != AZIHSM_OK && st != AZIHSM_PARTITION_ALREADY_PROVISIONED &&
             st != AZIHSM_VAULT_APP_LIMIT_REACHED)
         {
-            P11LOG("provision failed: %d", (int)st);
-            return p11_ckr_from_azihsm((int)st);
+            AZIHSM_PKCS11_LOG("provision failed: %d", (int)st);
+            return azihsm_pkcs11_ckr_from_azihsm((int)st);
         }
         st = azihsm_sess_open(sl->hsm_dev, &creds, NULL, &sess);
     }
     if (st != AZIHSM_OK)
     {
-        P11LOG("sess_open failed: %d", (int)st);
-        return p11_ckr_from_azihsm((int)st);
+        AZIHSM_PKCS11_LOG("sess_open failed: %d", (int)st);
+        return azihsm_pkcs11_ckr_from_azihsm((int)st);
     }
     *out_session = sess;
-    P11LOG("login ok (dev=%u sess=%u)", sl->hsm_dev, sess);
+    AZIHSM_PKCS11_LOG("login ok (dev=%u sess=%u)", sl->hsm_dev, sess);
     return CKR_OK;
 }
 
-void p11_hsm_logout(uint32_t hsm_session)
+void azihsm_pkcs11_hsm_logout(uint32_t hsm_session)
 {
     if (hsm_session != 0)
     {
@@ -390,14 +390,14 @@ void p11_hsm_logout(uint32_t hsm_session)
     }
 }
 
-void p11_hsm_close_all(void)
+void azihsm_pkcs11_hsm_close_all(void)
 {
-    for (CK_ULONG i = 0; i < g_p11.slot_count; i++)
+    for (CK_ULONG i = 0; i < g_azihsm_pkcs11.slot_count; i++)
     {
-        if (g_p11.slots[i].hsm_dev != 0)
+        if (g_azihsm_pkcs11.slots[i].hsm_dev != 0)
         {
-            (void)azihsm_part_close(g_p11.slots[i].hsm_dev);
-            g_p11.slots[i].hsm_dev = 0;
+            (void)azihsm_part_close(g_azihsm_pkcs11.slots[i].hsm_dev);
+            g_azihsm_pkcs11.slots[i].hsm_dev = 0;
         }
     }
 }
@@ -407,9 +407,9 @@ void p11_hsm_close_all(void)
 /* No device linked: one placeholder slot, and a login that "succeeds" with a
  * sentinel so the framework and object/digest paths stay exercisable. */
 
-int32_t p11_hsm_enumerate_slots(void)
+int32_t azihsm_pkcs11_hsm_enumerate_slots(void)
 {
-    p11_slot_t *slot = &g_p11.slots[0];
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[0];
     slot->present = true;
     slot->token_initialized = true;
     snprintf(slot->device_path, sizeof(slot->device_path), "azihsm-placeholder-0");
@@ -420,7 +420,7 @@ int32_t p11_hsm_enumerate_slots(void)
     return 1; /* slot count: the placeholder above */
 }
 
-CK_RV p11_hsm_login(
+CK_RV azihsm_pkcs11_hsm_login(
     CK_SLOT_ID slot,
     const CK_UTF8CHAR *pin,
     CK_ULONG pin_len,
@@ -438,12 +438,12 @@ CK_RV p11_hsm_login(
     return CKR_OK;
 }
 
-void p11_hsm_logout(uint32_t hsm_session)
+void azihsm_pkcs11_hsm_logout(uint32_t hsm_session)
 {
     (void)hsm_session;
 }
 
-void p11_hsm_close_all(void)
+void azihsm_pkcs11_hsm_close_all(void)
 {
 }
 

@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "p11_config.h"
+#include "azihsm_pkcs11_config.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-/* Staging bound for hex_decode; must cover the largest p11_config field
+/* Staging bound for hex_decode; must cover the largest azihsm_pkcs11_config field
  * (P11_OBK_LEN). */
 #define P11_HEX_DECODE_MAX 64
 
@@ -46,7 +46,7 @@ static int hex_decode(const char *hex, CK_BYTE *out, size_t bytes)
     return 0;
 }
 
-void p11_config_load(p11_config *cfg)
+void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
     /* Simulator defaults: any non-zero id/pin is accepted, OBK is any 48 bytes. */
@@ -54,6 +54,6 @@ void p11_config_load(p11_config *cfg)
     memset(cfg->default_pin, 0x02, sizeof(cfg->default_pin));
     memset(cfg->obk, 0xA5, sizeof(cfg->obk));
 
-    (void)hex_decode(getenv(AZIHSM_P11_ENV_ID), cfg->id, sizeof(cfg->id));
-    (void)hex_decode(getenv(AZIHSM_P11_ENV_PIN), cfg->default_pin, sizeof(cfg->default_pin));
+    (void)hex_decode(getenv(AZIHSM_PKCS11_ENV_ID), cfg->id, sizeof(cfg->id));
+    (void)hex_decode(getenv(AZIHSM_PKCS11_ENV_PIN), cfg->default_pin, sizeof(cfg->default_pin));
 }

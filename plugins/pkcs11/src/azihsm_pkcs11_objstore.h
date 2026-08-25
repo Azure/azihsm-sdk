@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "p11_compat.h"
+#include "azihsm_pkcs11_compat.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -20,20 +20,20 @@ extern "C"
  * the opaque AZIHSM masked blob as the key body; it deals in CK_RV only and never
  * calls the HSM.
  *
- * The in-memory backend (p11_objstore_mem.c) is the only implementation today. A
+ * The in-memory backend (azihsm_pkcs11_objstore_mem.c) is the only implementation today. A
  * persistent backend (file/DB, plus the SDK resiliency storage) will implement
  * the same ops and set `persist`; the framework callers do not change when the
  * backend is swapped — construction picks the backend, everything else goes
  * through `ops`/`ctx`.
  */
 
-typedef struct p11_objstore_ops p11_objstore_ops;
+typedef struct azihsm_pkcs11_objstore_ops azihsm_pkcs11_objstore_ops;
 
 typedef struct
 {
-    const p11_objstore_ops *ops;
+    const azihsm_pkcs11_objstore_ops *ops;
     void *ctx; /* backend-owned; opaque to callers */
-} p11_objstore;
+} azihsm_pkcs11_objstore;
 
 /*
  * Every object is bound to the slot (token) it was created in, so handle-based
@@ -43,7 +43,7 @@ typedef struct
  * slot, or a private object while not logged in, is not visible to the caller
  * and yields CKR_OBJECT_HANDLE_INVALID (rather than leaking its existence).
  */
-struct p11_objstore_ops
+struct azihsm_pkcs11_objstore_ops
 {
     /* Create an object in `slot`; a private object requires `user_logged_in`. */
     CK_RV(*create)
@@ -102,7 +102,7 @@ struct p11_objstore_ops
 };
 
 /* Construct the in-memory backend into `out`. */
-CK_RV p11_objstore_mem_create(p11_objstore *out);
+CK_RV azihsm_pkcs11_objstore_mem_create(azihsm_pkcs11_objstore *out);
 
 #ifdef __cplusplus
 }
