@@ -10,10 +10,11 @@
 
 use azihsm_crypto::DerEccPublicKey;
 use azihsm_crypto::EccCurve;
-use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+use azihsm_ddi_tbor_types::TborEccSignReq;
 use resiliency_macro::*;
 
 use super::*;
@@ -55,15 +56,11 @@ pub(crate) fn ecc_generate_key(
     session: &HsmSession,
     priv_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
-    let Some(curve) = priv_key_props.ecc_curve() else {
-        return Err(HsmError::PropertyNotPresent);
-    };
-
     // A V2 (TBOR) session yields a non-resident `Unpinned` and a raw wire
     // public key; a V1 (MBOR) session yields a resident `Pinned` and a
     // DER public key.
     let (handle, masked_key, pub_key_der) = if session.is_ex() {
-        ecc_generate_key_tbor(session, &priv_key_props, curve)?
+        ecc_generate_key_tbor(session, &priv_key_props)?
     } else {
         ecc_generate_key_mbor(session, &priv_key_props)?
     };
@@ -76,6 +73,11 @@ pub(crate) fn ecc_generate_key(
     // (TBOR stamps both SIGN and DERIVE). Narrow the returned capabilities
     // to the caller's request; this only ever removes capabilities.
     let dev_priv_key_props = narrow_ecc_usage(&dev_priv_key_props, &priv_key_props);
+
+    // The public key is a software object whose capabilities follow its
+    // private counterpart. TBOR masked metadata only carries the private
+    // usage (SIGN/DERIVE), so derive the public VERIFY/DERIVE from it.
+    let dev_pub_key_props = ecc_public_props_for(&dev_pub_key_props, &dev_priv_key_props);
 
     // Validate that the device returned properties match the requested properties.
     if !priv_key_props.validate_dev_props(&dev_priv_key_props) {
@@ -91,7 +93,9 @@ fn ecc_generate_key_mbor(
     session: &HsmSession,
     priv_key_props: &HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, Vec<u8>, Vec<u8>)> {
-    let curve = priv_key_props.ecc_curve().ok_or(HsmError::PropertyNotPresent)?;
+    let curve = priv_key_props
+        .ecc_curve()
+        .ok_or(HsmError::PropertyNotPresent)?;
     let req = DdiEccGenerateKeyPairCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EccGenerateKeyPair, session),
         data: DdiEccGenerateKeyPairReq {
@@ -115,8 +119,10 @@ fn ecc_generate_key_mbor(
 fn ecc_generate_key_tbor(
     session: &HsmSession,
     props: &HsmKeyProps,
-    curve: HsmEccCurve,
 ) -> HsmResult<(HsmKeyHandle, Vec<u8>, Vec<u8>)> {
+    //check if curve is present or not
+    let curve = props.ecc_curve().ok_or(HsmError::PropertyNotPresent)?;
+
     let req = TborEccGenerateKeyReq {
         session_id: session.ex_session_id()?,
         scope: props.tbor_scope(),
@@ -160,6 +166,33 @@ fn narrow_ecc_usage(dev_props: &HsmKeyProps, requested: &HsmKeyProps) -> HsmKeyP
         props.set_masked_key(masked_key);
     }
     if let Some(pub_key_der) = dev_props.pub_key_der() {
+        props.set_pub_key_der(pub_key_der);
+    }
+    props
+}
+
+/// Builds the public key's properties so its capabilities mirror the
+/// private key's narrowed usage: a signing key's public half verifies, a
+/// derivation key's public half derives.
+fn ecc_public_props_for(dev_pub: &HsmKeyProps, priv_props: &HsmKeyProps) -> HsmKeyProps {
+    let caps = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
+    let mut flags = dev_pub.flags() & !caps;
+    if priv_props.can_sign() {
+        flags |= HsmKeyFlags::VERIFY;
+    }
+    if priv_props.can_derive() {
+        flags |= HsmKeyFlags::DERIVE;
+    }
+
+    let mut props = HsmKeyProps::new(
+        dev_pub.class(),
+        dev_pub.kind(),
+        dev_pub.bits(),
+        dev_pub.ecc_curve(),
+        flags,
+        dev_pub.label().to_vec(),
+    );
+    if let Some(pub_key_der) = dev_pub.pub_key_der() {
         props.set_pub_key_der(pub_key_der);
     }
     props
@@ -212,7 +245,6 @@ fn strip_leading_zero_pad(be: &[u8], coord: usize) -> HsmResult<&[u8]> {
     Ok(&be[pad..])
 }
 
-
 /// Performs an ECC signature operation using a pre-computed hash.
 ///
 /// This function creates an ECC signature over a provided hash digest using the specified
@@ -257,6 +289,25 @@ pub(crate) fn ecc_sign(
     let Some(curve) = key.ecc_curve() else {
         return Err(HsmError::PropertyNotPresent);
     };
+
+    // Transport is selected by session type: a V2 (TBOR) session signs with
+    // the caller-held masked key; a V1 (MBOR) session signs with the
+    // device-resident key id.
+    if key.session().is_ex() {
+        ecc_sign_tbor(key, curve, hash, sig)
+    } else {
+        ecc_sign_mbor(key, curve, hash, hash_algo, sig)
+    }
+}
+
+/// Signs a pre-computed digest over MBOR `EccSign` using the resident key.
+fn ecc_sign_mbor(
+    key: &HsmEccPrivateKey,
+    curve: HsmEccCurve,
+    hash: &[u8],
+    hash_algo: HsmHashAlgo,
+    sig: &mut [u8],
+) -> HsmResult<usize> {
     let req = DdiEccSignCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EccSign, &key.session()),
         data: DdiEccSignReq {
@@ -272,6 +323,65 @@ pub(crate) fn ecc_sign(
     let sig_len = curve.signature_size();
     sig[..sig_len].copy_from_slice(&resp.data.signature.as_slice()[..sig_len]);
 
+    Ok(sig_len)
+}
+
+/// Signs a pre-computed digest over TBOR `EccSign` using the caller-held
+/// masked key (unmask-on-use). The digest is sent in wire little-endian
+/// order and the returned `r ‖ s` is converted back to big-endian.
+fn ecc_sign_tbor(
+    key: &HsmEccPrivateKey,
+    curve: HsmEccCurve,
+    hash: &[u8],
+    sig: &mut [u8],
+) -> HsmResult<usize> {
+    let masked = key.masked_key_vec()?;
+
+    // Firmware reads the digest as a little-endian integer; the host holds
+    // it big-endian.
+    let mut digest = hash.to_vec();
+    digest.reverse();
+
+    let req = TborEccSignReq {
+        session_id: key.session().ex_session_id()?,
+        masked_key: masked,
+        digest,
+    };
+    let mut cookie = None;
+    let resp = key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    tbor_sig_to_be(curve, &resp.signature, sig)
+}
+
+/// Converts the TBOR wire signature (`r ‖ s`, each component little-endian
+/// and zero-padded to the wire coordinate length) into big-endian `r ‖ s`
+/// of the curve's component length, matching the MBOR signature format.
+fn tbor_sig_to_be(curve: HsmEccCurve, wire_sig: &[u8], out: &mut [u8]) -> HsmResult<usize> {
+    if wire_sig.is_empty() || wire_sig.len() % 2 != 0 {
+        return Err(HsmError::InternalError);
+    }
+    let coord = curve.component_size();
+    let half = wire_sig.len() / 2;
+    if half < coord {
+        return Err(HsmError::InternalError);
+    }
+    let sig_len = coord * 2;
+    if out.len() < sig_len {
+        return Err(HsmError::BufferTooSmall);
+    }
+
+    let mut r = wire_sig[..half].to_vec();
+    let mut s = wire_sig[half..].to_vec();
+    r.reverse();
+    s.reverse();
+    let r = strip_leading_zero_pad(&r, coord)?;
+    let s = strip_leading_zero_pad(&s, coord)?;
+
+    out[..coord].copy_from_slice(r);
+    out[coord..sig_len].copy_from_slice(s);
     Ok(sig_len)
 }
 
