@@ -27,6 +27,7 @@
 //! * The previous PSK is rejected after a second rotation.
 //! * Rotating CO does not alter the CU PSK slot.
 //! * CU activity does not alter the CO PSK slot.
+//! * Parallel CO/CU session opens on separate handles remain isolated.
 //! * `ApiRev` remains available after rotation and during an active
 //!   session.
 //!
@@ -46,6 +47,7 @@ use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
 use crate::harness::assertions::assert_fw_rejects;
+use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 
@@ -257,12 +259,10 @@ fn default_psk_gate_old_co_psk_rejected_after_rotation() {
     // that handle, so dropping it prevents the negative probe from
     // contaminating the valid reopen below.
     let stale_ctx = TestCtx::new_with_path(ctx.path());
-    assert!(
-        stale_ctx
-            .session_open_init_with_options(old_psk_opts)
-            .is_err(),
-        "DEFAULT_PSK_CO must no longer authenticate after rotation"
-    );
+    let err = stale_ctx
+        .session_open_init_with_options(old_psk_opts)
+        .expect_err("DEFAULT_PSK_CO must no longer authenticate after rotation");
+    assert_tbor_decode_error(&err);
     drop(stale_ctx);
 
     let rotated_psk_opts =
@@ -305,12 +305,10 @@ fn default_psk_gate_wrong_rotated_psk_rejected() {
     // separate file handle so any pending session state is discarded when
     // that handle is dropped.
     let stale_ctx = TestCtx::new_with_path(ctx.path());
-    assert!(
-        stale_ctx
-            .session_open_init_with_options(wrong_opts)
-            .is_err(),
-        "an incorrect non-default CO PSK must not authenticate"
-    );
+    let err = stale_ctx
+        .session_open_init_with_options(wrong_opts)
+        .expect_err("an incorrect non-default CO PSK must not authenticate");
+    assert_tbor_decode_error(&err);
     drop(stale_ctx);
 
     let correct_opts =
@@ -418,12 +416,10 @@ fn default_psk_gate_previous_psk_rejected_after_second_rotation() {
     // authentication must not leave pending state on the primary handle
     // used to verify PSK B immediately afterward.
     let stale_ctx = TestCtx::new_with_path(ctx.path());
-    assert!(
-        stale_ctx
-            .session_open_init_with_options(stale_opts)
-            .is_err(),
-        "PSK A must stop authenticating after rotation to PSK B"
-    );
+    let err = stale_ctx
+        .session_open_init_with_options(stale_opts)
+        .expect_err("PSK A must stop authenticating after rotation to PSK B");
+    assert_tbor_decode_error(&err);
     drop(stale_ctx);
 
     let opts_b =
