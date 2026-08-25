@@ -252,10 +252,18 @@ fn default_psk_gate_old_co_psk_rejected_after_rotation() {
     let old_psk_opts =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&DEFAULT_PSK_CO);
 
+    // Run the deliberately rejected authentication on a separate file
+    // handle. A failed SessionOpenInit can leave pending session state on
+    // that handle, so dropping it prevents the negative probe from
+    // contaminating the valid reopen below.
+    let stale_ctx = TestCtx::new_with_path(ctx.path());
     assert!(
-        ctx.session_open_init_with_options(old_psk_opts).is_err(),
+        stale_ctx
+            .session_open_init_with_options(old_psk_opts)
+            .is_err(),
         "DEFAULT_PSK_CO must no longer authenticate after rotation"
     );
+    drop(stale_ctx);
 
     let rotated_psk_opts =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&GATE_ROTATED_PSK_A);
@@ -293,10 +301,17 @@ fn default_psk_gate_wrong_rotated_psk_rejected() {
     let wrong_opts =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&GATE_WRONG_PSK);
 
+    // Isolate the intentionally failed authentication attempt on a
+    // separate file handle so any pending session state is discarded when
+    // that handle is dropped.
+    let stale_ctx = TestCtx::new_with_path(ctx.path());
     assert!(
-        ctx.session_open_init_with_options(wrong_opts).is_err(),
+        stale_ctx
+            .session_open_init_with_options(wrong_opts)
+            .is_err(),
         "an incorrect non-default CO PSK must not authenticate"
     );
+    drop(stale_ctx);
 
     let correct_opts =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&GATE_ROTATED_PSK_A);
@@ -399,10 +414,17 @@ fn default_psk_gate_previous_psk_rejected_after_second_rotation() {
     let stale_opts =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&GATE_ROTATED_PSK_A);
 
+    // Use a throwaway file handle for the stale-PSK probe. The failed
+    // authentication must not leave pending state on the primary handle
+    // used to verify PSK B immediately afterward.
+    let stale_ctx = TestCtx::new_with_path(ctx.path());
     assert!(
-        ctx.session_open_init_with_options(stale_opts).is_err(),
+        stale_ctx
+            .session_open_init_with_options(stale_opts)
+            .is_err(),
         "PSK A must stop authenticating after rotation to PSK B"
     );
+    drop(stale_ctx);
 
     let opts_b =
         SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&GATE_ROTATED_PSK_B);
@@ -560,4 +582,34 @@ fn default_psk_gate_part_init_rejected() {
         )
         .expect_err("PartInit under default PSK must be gated");
     assert_fw_rejects(&err, TborStatus::DefaultPskMustRotate);
+}
+
+/// `SessionOpenInit` is out-of-session and per-role, so parallel opens
+/// against distinct roles on distinct file descriptors must both
+/// succeed while both partition PSKs remain at their defaults.
+///
+/// This guards against cross-role gate state leaking between CO and CU.
+/// The two sessions intentionally use separate `TestCtx` handles bound
+/// to the same underlying device because hardware permits only one
+/// active session per file descriptor.
+#[test]
+fn default_psk_gate_co_and_cu_parallel_on_separate_devs_bypass() {
+    let ctx_a = TestCtx::new();
+
+    let session_co = ctx_a
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO session on first file descriptor");
+
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+    let session_cu = ctx_b
+        .open_session(CU, SessionType::PlainText)
+        .expect("open CU session on second file descriptor while CO session is active");
+
+    assert_ne!(
+        session_co.session_id(),
+        session_cu.session_id(),
+        "parallel CO and CU sessions must have distinct session ids",
+    );
+
+    // Both sessions are closed automatically when their SessionGuards drop.
 }
