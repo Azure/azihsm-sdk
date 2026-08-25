@@ -236,7 +236,7 @@ fn ecc_sign_local_scoped_key_emu() {
     assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
 }
 
-/// Confirms an authenticated Crypto-User session is authorized to sign.
+/// Confirms a Crypto-User (`PlainText`) session is authorized to sign.
 #[test]
 fn ecc_sign_allowed_on_crypto_user_session() {
     let ctx = TestCtx::new();
