@@ -57,7 +57,7 @@ impl Copyright {
     /// upstream copyright header; stamping the Microsoft header over it
     /// (what --fix does) would misattribute the original authors, so both
     /// the check and the fix skip them.
-    const THIRD_PARTY_DIRS: &[&str] = &["plugins/pkcs11/include/pkcs11-v3.1"];
+    const THIRD_PARTY_DIRS: &[&str] = &["plugins/azihsm_pkcs11/include/pkcs11-v3.1"];
 
     fn is_third_party(path: &Path) -> bool {
         Self::THIRD_PARTY_DIRS
@@ -234,15 +234,15 @@ mod tests {
         use std::path::Path;
 
         assert!(Copyright::is_third_party(Path::new(
-            "plugins/pkcs11/include/pkcs11-v3.1/pkcs11.h"
+            "plugins/azihsm_pkcs11/include/pkcs11-v3.1/pkcs11.h"
         )));
         // Component-wise match: a sibling dir sharing the prefix string is
         // not exempt.
         assert!(!Copyright::is_third_party(Path::new(
-            "plugins/pkcs11/include/pkcs11-v3.1-extras/pkcs11.h"
+            "plugins/azihsm_pkcs11/include/pkcs11-v3.1-extras/pkcs11.h"
         )));
         assert!(!Copyright::is_third_party(Path::new(
-            "plugins/pkcs11/src/p11_module.c"
+            "plugins/azihsm_pkcs11/src/azihsm_pkcs11_module.c"
         )));
     }
 
