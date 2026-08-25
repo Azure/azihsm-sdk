@@ -142,29 +142,6 @@ fn not_truly_fresh(err: &DdiError) -> bool {
     )
 }
 
-/// True when a secure-BK3 op is rejected because the firmware doesn't implement
-/// it -- the signal to skip this secure-only test. Two statuses mean this:
-///
-/// * `InvalidArg` -- the real signal on hardware. `SetInitBk3Pin` (op 1114) is a
-///   no-session op, but firmware that doesn't know it defaults it to *in-session*
-///   while the host tags the SQE *no-session*; the header's session-control
-///   hijack check rejects that mismatch with `InvalidArg` *before* dispatch, so
-///   `UnsupportedCmd` is never reached for this op.
-/// * `UnsupportedCmd` -- the dispatch-table equivalent (an unrecognized
-///   *in-session* op; also how the mock signals it).
-///
-/// CAVEAT: `InvalidArg` is ambiguous -- a secure-*capable* firmware with a
-/// request-encoding bug returns it too, so the caller logs loudly when it skips
-/// on this status. There is no clean capability probe today (API rev is pinned
-/// at 1.0, device-info has no secure-BK3 bit); prefer a positive probe once
-/// firmware exposes one.
-fn is_secure_bk3_unsupported(err: &DdiError) -> bool {
-    matches!(
-        err,
-        DdiError::DdiStatus(DdiStatus::UnsupportedCmd) | DdiError::DdiStatus(DdiStatus::InvalidArg)
-    )
-}
-
 /// A live migration in the MIDDLE of secure provisioning must leave no partial
 /// persistent state on the target, and a clean flow must still provision
 /// afterwards.
@@ -188,24 +165,16 @@ fn is_secure_bk3_unsupported(err: &DdiError) -> bool {
 #[test]
 fn test_secure_provision_lm_midflow_restart() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        // Guard: mid-flow scenarios need a partition that is fresh AND on
-        // secure-capable firmware, signalled by the seal-op gate rejecting
-        // `GetSealedBk3` with `Bk3NotSecurelyProvisioned`. Anything else --
-        // already provisioned, or legacy firmware (which returns
-        // `SealedBk3NotPresent`, having no gate) -- can't run this secure-only
-        // scenario, so skip.
+        // Guard: mid-flow scenarios need a fresh partition, detected via the
+        // seal-op gate rejecting `GetSealedBk3` while un-provisioned.
         match helper_get_sealed_bk3(dev) {
             Err(DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned)) => {}
             Err(err) if is_unsupported_cmd(&err) => {
-                tracing::warn!("ops unsupported (emu backend); skipping");
+                println!("skipping: ops unsupported (emu backend)");
                 return;
             }
             other => {
-                tracing::warn!(
-                    ?other,
-                    "partition not fresh-on-secure-firmware (already provisioned \
-                     or legacy firmware); skipping"
-                );
+                println!("skipping: partition already provisioned (AC-cycle to reset): {other:?}");
                 return;
             }
         }
@@ -232,10 +201,7 @@ fn test_secure_provision_lm_midflow_restart() {
         let result = helper_secure_init_bk3(dev, eb, pk);
         if let Err(err) = &result {
             if not_truly_fresh(err) {
-                tracing::warn!(
-                    ?err,
-                    "device not truly fresh (legacy/persistent BK3); skipping"
-                );
+                println!("skipping: device not truly fresh (legacy/persistent BK3)");
                 return;
             }
         }
@@ -397,7 +363,7 @@ fn test_secure_provision_lm_completed_survives() {
         // Skip on backends that don't implement the sealed-BK3 ops.
         if let Err(err) = &initial {
             if is_unsupported_cmd(err) {
-                tracing::warn!("ops unsupported (emu backend); skipping");
+                println!("skipping: ops unsupported (emu backend)");
                 return;
             }
         }
@@ -421,29 +387,12 @@ fn test_secure_provision_lm_completed_survives() {
             assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
             let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
             if let Err(err) = &result {
-                // This is a secure-only test: firmware without secure BK3 rejects
-                // the provisioning ops (InvalidArg on hardware, UnsupportedCmd on
-                // mock/emu; see `is_secure_bk3_unsupported`), so skip rather than
-                // fail.
-                if is_secure_bk3_unsupported(err) {
-                    if matches!(err, DdiError::DdiStatus(DdiStatus::InvalidArg)) {
-                        // Loud, because InvalidArg is ambiguous with a genuine
-                        // request-encoding bug on secure-capable firmware.
-                        tracing::warn!(
-                            "secure provisioning returned InvalidArg; treating as \
-                             'secure BK3 unsupported (legacy firmware)' and skipping. \
-                             NOTE: verify the flashed firmware genuinely lacks secure BK3."
-                        );
-                    } else {
-                        tracing::warn!("secure BK3 unsupported by firmware; skipping");
-                    }
+                if is_unsupported_cmd(err) {
+                    println!("skipping: ops unsupported (emu backend)");
                     return;
                 }
                 if not_truly_fresh(err) {
-                    tracing::warn!(
-                        ?err,
-                        "device not truly fresh (legacy/persistent BK3); skipping"
-                    );
+                    println!("skipping: device not truly fresh (legacy/persistent BK3)");
                     return;
                 }
             }
