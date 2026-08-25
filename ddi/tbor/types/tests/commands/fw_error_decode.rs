@@ -279,21 +279,25 @@ fn alternating_bit_status_values_are_preserved() {
     }
 }
 
-/// Verifies that an FW status is not affected by bytes after the encoded envelope.
+/// Verifies that decoding does not modify bytes outside the response slice.
 #[test]
-fn fw_status_decode_ignores_bytes_outside_the_response_slice() {
+fn fw_status_decode_does_not_modify_bytes_outside_response_slice() {
     let mut buf = [0xA5u8; 128];
     let len = encode_err_envelope(SESSION_NOT_FOUND, &mut buf);
 
-    // Only pass the encoded response. Sentinel bytes after `len` must have
-    // no effect on decoding.
+    // Snapshot the tail after encoding so this test isolates decoder behavior
+    // from any writes performed by ResponseEncoder.
+    let tail_before_decode = buf[len..].to_vec();
+
     let err = TborSessionCloseResp::decode_response(&buf[..len])
         .expect_err("non-zero status must produce FwError");
 
     assert_eq!(err, DecodeError::FwError(SESSION_NOT_FOUND));
-    assert!(
-        buf[len..].iter().all(|byte| *byte == 0xA5),
-        "encoder or decoder unexpectedly modified bytes after the response",
+
+    assert_eq!(
+        &buf[len..],
+        tail_before_decode.as_slice(),
+        "decode_response unexpectedly modified bytes outside the response slice",
     );
 }
 
