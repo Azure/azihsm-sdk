@@ -33,7 +33,6 @@ use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
-#[cfg(not(feature = "emu"))]
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::build_psk_change_aad;
 use azihsm_ddi_tbor_test_harness::encrypt_psk_envelope;
