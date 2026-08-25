@@ -29,9 +29,17 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
 
 static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
+fn bounded_prev_local_mk_backup(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    // Keep allocations bounded to improve fuzz throughput while still exercising invalid lengths.
+    let max = azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN * 4;
+    let len = usize::arbitrary(u)? % (max + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
+
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     /// Fuzzed prior local_mk backup (empty = first-instantiation path).
+    #[arbitrary(with = bounded_prev_local_mk_backup)]
     prev_local_mk_backup: Vec<u8>,
 }
 
