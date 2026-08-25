@@ -176,8 +176,7 @@ pub(crate) fn fake_key_report_bytes(pk_r_sec1: &[u8; SEC1_PUB_LEN]) -> Vec<u8> {
     // COSE_Sign1 envelope: 1 tag byte + array header + protected
     // header bstr + empty unprotected map + payload bstr + signature
     // bstr.  16 bytes covers CBOR array/bstr headers with margin.
-    let envelope_max =
-        1 + 16 + PROTECTED_HEADER_SIZE + payload_bytes.len() + SIGNATURE_SIZE;
+    let envelope_max = 1 + 16 + PROTECTED_HEADER_SIZE + payload_bytes.len() + SIGNATURE_SIZE;
     let mut out = vec![0u8; envelope_max];
     let n = cose
         .encode(&mut out)
@@ -207,11 +206,15 @@ mod tests {
 
         assert_eq!(bytes[0], 0xD2, "first byte must be COSE_Sign1 CBOR tag");
         assert!(
-            bytes.windows(P384_FE_LEN).any(|w| w == &pk[1..1 + P384_FE_LEN]),
+            bytes
+                .windows(P384_FE_LEN)
+                .any(|w| w == &pk[1..1 + P384_FE_LEN]),
             "emitted report must contain the SEC1 X coordinate verbatim",
         );
         assert!(
-            bytes.windows(P384_FE_LEN).any(|w| w == &pk[1 + P384_FE_LEN..SEC1_PUB_LEN]),
+            bytes
+                .windows(P384_FE_LEN)
+                .any(|w| w == &pk[1 + P384_FE_LEN..SEC1_PUB_LEN]),
             "emitted report must contain the SEC1 Y coordinate verbatim",
         );
     }

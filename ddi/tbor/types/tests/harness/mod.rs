@@ -40,7 +40,6 @@ pub mod ctx;
 pub mod fixture;
 pub mod session;
 pub mod session_guard;
-#[cfg(feature = "emu")]
 pub mod x509_fixture;
 
 // Hardware-only: emu/mock/sock backends short-circuit create-sd OOB;

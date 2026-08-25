@@ -32,15 +32,14 @@ use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
-use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
-use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
+use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::TestCtx;
 
@@ -62,7 +61,7 @@ struct CreatedSd {
 /// `pota` / `sata` trust anchors and machine `seed` are supplied by the
 /// caller so the second device can re-finalize with an identical policy /
 /// certificate chain.
-fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &CaKey) -> CreatedSd {
+fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &PotaFixture) -> CreatedSd {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -77,9 +76,9 @@ fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &CaKey) -> Created
     );
 
     let init = ctx
-        .part_init(&session, seed, &policy, &pota_thumbprint())
+        .part_init(&session, seed, &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     let local_mk_backup = ctx
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal")
@@ -105,14 +104,14 @@ fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &CaKey) -> Created
 fn reboot_and_restore_part_local_mk(
     ctx: &TestCtx,
     seed: &[u8],
-    pota: &CaKey,
+    pota: &PotaFixture,
     created: &CreatedSd,
 ) -> crate::harness::SessionHandshake {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let init = ctx
-        .part_init(&session, seed, &created.policy, &pota_thumbprint())
+        .part_init(&session, seed, &created.policy, pota.thumbprint())
         .expect("PartInit (device 2)");
-    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(
         &session,
         &created.policy,
@@ -127,7 +126,7 @@ fn reboot_and_restore_part_local_mk(
 fn sd_restore_local_backup_roundtrip_emu() {
     let seed = mach_seed();
     let sata = CaKey::generate();
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
 
     // Device 1: finalize + CreateSD, capturing the local backups.
     let created = create_sd_on_first_device(&seed, &sata, &pota);
@@ -162,7 +161,7 @@ fn sd_restore_local_backup_roundtrip_emu() {
 fn sd_restore_local_backup_is_one_shot_emu() {
     let seed = mach_seed();
     let sata = CaKey::generate();
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
 
     // A single device that has just created its SD is already
     // SD-initialized, so a local restore on the same incarnation is
@@ -179,9 +178,9 @@ fn sd_restore_local_backup_is_one_shot_emu() {
         &pota.raw_pub(),
     );
     let init = ctx
-        .part_init(&session, &seed, &policy, &pota_thumbprint())
+        .part_init(&session, &seed, &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
@@ -222,7 +221,7 @@ fn sd_restore_local_backup_rejects_before_finalize_emu() {
 fn sd_restore_local_backup_rejects_tampered_pok_emu() {
     let seed = mach_seed();
     let sata = CaKey::generate();
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
 
     let created = create_sd_on_first_device(&seed, &sata, &pota);
 

@@ -26,19 +26,28 @@
 //! * Missing OOB evidence → `InvalidArg`.
 //! * Policy that does not name this partition as the backing partition
 //!   (`backup_part_id` / `backup_part_pub_key` absent) → `InvalidArg`.
-
-#![cfg(feature = "emu")]
+//! * Malformed receiver report → `InvalidArg`.
+//! * Invalid receiver P-384 point → `EccPointValidationFailed`.
+//! * Tampered masked sealing key → `AesGcmDecryptTagDoesNotMatch`.
+//! * Create before partition finalization → `InvalidArg`.
+//!
+//! Hardware exercises the externally observable command contract with an
+//! unsigned synthetic KeyReport. Certificate-chain, leaf-binding, and report
+//! signature authenticity remain emulator-only until Manticore enables those
+//! verification steps.
 
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::ReportDescriptor;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -51,15 +60,19 @@ use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
-use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::ROTATED_CO_PSK;
+#[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+use crate::harness::fake_key_report::fake_key_report_bytes;
 use crate::harness::x509_fixture::make_chain;
-use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::GeneratedChain;
+use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+use crate::harness::x509_fixture::SEC1_PUB_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
 
@@ -127,7 +140,7 @@ pub(crate) fn finalized_backing_session(
     pid_pub.copy_from_slice(&info.pid_pub_key);
 
     // POTA anchor for the PTA certificate chain `PartFinal` validates.
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
     let policy = backing_part_policy(
         &info.pid,
         &info.pid_pub_key,
@@ -136,9 +149,9 @@ pub(crate) fn finalized_backing_session(
     );
 
     let init = ctx
-        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .part_init(&session, &mach_seed(), &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
@@ -149,6 +162,7 @@ pub(crate) fn finalized_backing_session(
 /// `(masked_sealing_key, key_report_bytes)`.  In the self-backup tests
 /// this key is both the sender's authentication key and (via its report)
 /// the receiver's `RcvrPub` source; the report is signed by the PID key.
+#[cfg(feature = "emu")]
 pub(crate) fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {
     let seal = ctx
         .tbor(&TborSdSealingKeyGenReq {
@@ -287,6 +301,70 @@ fn dummy_evidence(report: &[u8]) -> ReceiverEvidence {
     }
 }
 
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+struct HardwareFixture {
+    session: SessionHandshake,
+    policy: [u8; PART_POLICY_LEN],
+    masked_sealing_key: Vec<u8>,
+    evidence: ReceiverEvidence,
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+impl HardwareFixture {
+    fn new(ctx: &TestCtx) -> Self {
+        let sata_key = CaKey::generate();
+        let (session, policy, pid_pub) = finalized_backing_session(ctx, &sata_key);
+        let sealing_key = ctx
+            .tbor(&TborSdSealingKeyGenReq {
+                session_id: session.session_id,
+                scope: SCOPE_LOCAL,
+            })
+            .expect("SdSealingKeyGen");
+        let receiver_pub = sealing_pub_to_sec1(&sealing_key.pub_key);
+        let report = fake_key_report_bytes(&receiver_pub);
+        let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
+
+        Self {
+            session,
+            policy,
+            masked_sealing_key: sealing_key.masked_key.to_vec(),
+            evidence,
+        }
+    }
+
+    fn request(&self) -> TborSdCreateRemoteBackupReq {
+        backup_request(
+            self.session.session_id,
+            self.masked_sealing_key.clone(),
+            &self.evidence,
+            &self.policy,
+        )
+    }
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+fn sealing_pub_to_sec1(pub_key_le: &[u8]) -> [u8; SEC1_PUB_LEN] {
+    let mut receiver_pub = [0u8; SEC1_PUB_LEN];
+    receiver_pub[0] = 0x04;
+    let coord_len = pub_key_le.len() / 2;
+    receiver_pub[1..1 + coord_len].copy_from_slice(&pub_key_le[..coord_len]);
+    receiver_pub[1..1 + coord_len].reverse();
+    receiver_pub[1 + coord_len..].copy_from_slice(&pub_key_le[coord_len..]);
+    receiver_pub[1 + coord_len..].reverse();
+    receiver_pub
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+fn assert_backup_response(resp: &azihsm_ddi_tbor_types::TborSdCreateRemoteBackupResp) {
+    assert_eq!(resp.pok_remote_backup.len(), POK_REMOTE_BACKUP_LEN);
+    assert!(resp.pok_remote_backup.iter().any(|&byte| byte != 0));
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
+    assert!(resp.pok_local_backup.iter().any(|&byte| byte != 0));
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+    assert!(resp.sd_mk_backup.iter().any(|&byte| byte != 0));
+}
+
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_roundtrip_emu() {
     let ctx = TestCtx::new();
@@ -323,6 +401,7 @@ fn sd_create_remote_backup_roundtrip_emu() {
     );
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_is_one_shot_emu() {
     let ctx = TestCtx::new();
@@ -343,6 +422,7 @@ fn sd_create_remote_backup_is_one_shot_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::SdAlreadyInitialized);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_missing_oob_emu() {
     let ctx = TestCtx::new();
@@ -357,6 +437,7 @@ fn sd_create_remote_backup_rejects_missing_oob_emu() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
     let ctx = TestCtx::new();
@@ -377,12 +458,14 @@ fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
 
 /// Flip the final byte of a DER/COSE blob — corrupts the trailing ECDSA
 /// signature value without disturbing the outer length-prefixed structure.
+#[cfg(feature = "emu")]
 fn flip_last_byte(mut bytes: Vec<u8>) -> Vec<u8> {
     let n = bytes.len();
     bytes[n - 1] ^= 0xFF;
     bytes
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
     let ctx = TestCtx::new();
@@ -401,6 +484,7 @@ fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
     let ctx = TestCtx::new();
@@ -420,6 +504,7 @@ fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
     let ctx = TestCtx::new();
@@ -439,6 +524,7 @@ fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::X509SignatureInvalid);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_tampered_report_emu() {
     let ctx = TestCtx::new();
@@ -452,5 +538,140 @@ fn sd_create_remote_backup_rejects_tampered_report_emu() {
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &tampered_report);
 
     let req = backup_request(session.session_id, masked, &evidence, &policy);
+    ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_roundtrip_hw() {
+    let ctx = TestCtx::new();
+    let fixture = HardwareFixture::new(&ctx);
+    let req = fixture.request();
+
+    let resp = ctx
+        .tbor_oob(&req, &fixture.evidence.oob())
+        .expect("SdCreateRemoteBackup hardware roundtrip");
+    assert_backup_response(&resp);
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_is_one_shot_hw() {
+    let ctx = TestCtx::new();
+    let fixture = HardwareFixture::new(&ctx);
+    let req = fixture.request();
+
+    ctx.tbor_oob(&req, &fixture.evidence.oob())
+        .expect("first SdCreateRemoteBackup");
+    ctx.expect_fw_reject_oob(
+        &req,
+        &fixture.evidence.oob(),
+        TborStatus::SdAlreadyInitialized,
+    );
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_missing_oob_hw() {
+    let ctx = TestCtx::new();
+    let fixture = HardwareFixture::new(&ctx);
+
+    ctx.expect_fw_reject(&fixture.request(), TborStatus::InvalidArg);
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_non_backing_policy_hw() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = PotaFixture::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, pota.thumbprint())
+        .expect("PartInit");
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+    let sealing_key = ctx
+        .tbor(&TborSdSealingKeyGenReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+        })
+        .expect("SdSealingKeyGen");
+    let report = fake_key_report_bytes(&sealing_pub_to_sec1(&sealing_key.pub_key));
+    let evidence = dummy_evidence(&report);
+    let req = backup_request(
+        session.session_id,
+        sealing_key.masked_key.to_vec(),
+        &evidence,
+        &policy,
+    );
+
+    ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_malformed_report_hw() {
+    let ctx = TestCtx::new();
+    let mut fixture = HardwareFixture::new(&ctx);
+    let report_index = fixture.evidence.report.index as usize;
+    fixture.evidence.oob_items[report_index][0] = 0;
+    let req = fixture.request();
+
+    ctx.expect_fw_reject_oob(&req, &fixture.evidence.oob(), TborStatus::InvalidArg);
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_invalid_receiver_point_hw() {
+    let ctx = TestCtx::new();
+    let mut fixture = HardwareFixture::new(&ctx);
+    let mut invalid_pub = [0u8; SEC1_PUB_LEN];
+    invalid_pub[0] = 0x04;
+    let invalid_report = fake_key_report_bytes(&invalid_pub);
+    let report_index = fixture.evidence.report.index as usize;
+    fixture.evidence.oob_items[report_index] = invalid_report;
+    let req = fixture.request();
+
+    ctx.expect_fw_reject_oob(
+        &req,
+        &fixture.evidence.oob(),
+        TborStatus::EccPointValidationFailed,
+    );
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_tampered_sealing_key_hw() {
+    let ctx = TestCtx::new();
+    let mut fixture = HardwareFixture::new(&ctx);
+    let last = fixture.masked_sealing_key.len() - 1;
+    fixture.masked_sealing_key[last] ^= 0x01;
+
+    ctx.expect_fw_reject_oob(
+        &fixture.request(),
+        &fixture.evidence.oob(),
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+}
+
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+#[test]
+fn sd_create_remote_backup_rejects_before_finalize_hw() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let policy = known_good_part_policy();
+    let mut receiver_pub = [0u8; SEC1_PUB_LEN];
+    receiver_pub[0] = 0x04;
+    let report = fake_key_report_bytes(&receiver_pub);
+    let evidence = dummy_evidence(&report);
+    let req = backup_request(
+        session.session_id,
+        vec![0u8; azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN],
+        &evidence,
+        &policy,
+    );
+
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
