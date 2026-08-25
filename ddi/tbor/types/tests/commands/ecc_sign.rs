@@ -19,10 +19,14 @@
 //! the host verifies against the reversed digest.
 
 use azihsm_crypto::EccAlgo;
-use azihsm_crypto::EccPublicKey;
-use azihsm_crypto::Verifier;
 #[cfg(feature = "emu")]
-use azihsm_crypto::{EccCurve, EccPrivateKey, ExportableKey};
+use azihsm_crypto::EccCurve;
+#[cfg(feature = "emu")]
+use azihsm_crypto::EccPrivateKey;
+use azihsm_crypto::EccPublicKey;
+#[cfg(feature = "emu")]
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::Verifier;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
@@ -31,11 +35,14 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 #[cfg(feature = "emu")]
-use azihsm_ddi_tbor_types::{KEY_CLASS_AES, KEY_CLASS_ECC};
+use azihsm_ddi_tbor_types::KEY_CLASS_AES;
+#[cfg(feature = "emu")]
+use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 
+use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::CU;
+use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::part_init::ROTATED_CU_PSK;
-use crate::commands::part_init::{bootstrap_rotated_co, ROTATED_CO_PSK};
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 #[cfg(feature = "emu")]
@@ -238,7 +245,7 @@ fn ecc_sign_local_scoped_key_emu() {
     assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
 }
 
-/// Confirms an authenticated Crypto-User session is authorized to sign.
+/// Confirms a Crypto-User (`PlainText`) session is authorized to sign.
 #[test]
 fn ecc_sign_allowed_on_crypto_user_session() {
     // Rotate away from the default CU PSK so the default-PSK gate does not
