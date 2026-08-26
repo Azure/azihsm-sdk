@@ -141,6 +141,7 @@ impl PotaFixture {
     }
 }
 
+/// SHA-384 of a DER certificate (POTA root thumbprint).
 fn sha384(input: &[u8]) -> [u8; POTA_THUMBPRINT_LEN] {
     let mut hash = HashAlgo::sha384();
     let mut out = [0u8; POTA_THUMBPRINT_LEN];

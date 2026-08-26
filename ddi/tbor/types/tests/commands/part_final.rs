@@ -1,16 +1,23 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! End-to-end tests for the TBOR `PartFinal` command.
+//! Integration tests for the TBOR `PartFinal` command.
 //!
-//! The original emulator test bodies are preserved and run on native hardware
-//! where M1.0 behavior supports the same contract. Additional tests cover
-//! lifecycle, identity, retry, and exact-status behavior without changing the
-//! original cases. Emulator runs transfer and validate each POTA-to-PTA chain;
-//! native M1.0 runs send the schema-required placeholder descriptor because the
-//! current firmware intentionally does not consume certificate OOB data.
-//! Tests that specifically validate certificate-chain integrity remain
-//! emulator-only until M1.5.
+//! `PartFinal` completes partition provisioning: it validates the supplied
+//! `PartPolicy` and the POTA-anchored PTA certificate chain, advances the
+//! partition from `Initializing` to `Initialized`, and returns the
+//! `PartLocalMK` backup envelope. Coverage spans the happy path, prior-backup
+//! acceptance, partition I/O once initialized, and the exact rejection status
+//! for a tampered backup, a backup from a different machine seed, a policy or
+//! PTA mismatch, the wrong lifecycle state, a Crypto-User attempt, and a
+//! second finalize.
+//!
+//! Backend is selected at compile time by
+//! [`azihsm_ddi::AzihsmDdi::default`]. Emulator runs transfer and validate
+//! each POTA-to-PTA chain; native M1.0 runs send the schema-required
+//! placeholder descriptor because the current firmware intentionally does not
+//! consume certificate OOB data. Tests that specifically validate
+//! certificate-chain integrity are therefore emulator-only until M1.5.
 //!
 //! The prior-backup acceptance case is intentionally a smoke test. M1.0 has no
 //! public command that consumes a Local-scope masked artifact, so accepting the
@@ -65,15 +72,19 @@ fn issue_pta_chain(
     make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr))
 }
 
+/// Build the `PartPolicy` bound to `fixture`'s POTA public key.
 fn pota_policy(fixture: &PotaFixture) -> [u8; PART_POLICY_LEN] {
     part_policy_with_pota(&fixture.raw_pub())
 }
 
+/// Read the current `PartInfo` view of the bound partition.
 fn read_part_info(ctx: &TestCtx) -> TborPartInfoResp {
     ctx.tbor(&TborPartInfoReq::new())
         .expect("PartInfo roundtrip")
 }
 
+/// Assert the reported partition lifecycle state. `context` identifies the
+/// call site in the failure message.
 fn assert_part_state(info: &TborPartInfoResp, expected: u8, context: &str) {
     assert_eq!(
         info.part_state, expected,
@@ -81,6 +92,8 @@ fn assert_part_state(info: &TborPartInfoResp, expected: u8, context: &str) {
     );
 }
 
+/// Assert the partition identity fields — PID, PID public key, and the owner
+/// and manufacturer SVNs — are unchanged across an operation.
 fn assert_identity_stable(before: &TborPartInfoResp, after: &TborPartInfoResp, context: &str) {
     assert_eq!(after.pid, before.pid, "{context}: PID changed");
     assert_eq!(
@@ -97,6 +110,8 @@ fn assert_identity_stable(before: &TborPartInfoResp, after: &TborPartInfoResp, c
     );
 }
 
+/// Assert the owner and manufacturer SVN lineage is unchanged across an
+/// operation.
 fn assert_svn_lineage_stable(before: &TborPartInfoResp, after: &TborPartInfoResp, context: &str) {
     assert_eq!(
         after.owner_svn, before.owner_svn,
@@ -108,6 +123,8 @@ fn assert_svn_lineage_stable(before: &TborPartInfoResp, after: &TborPartInfoResp
     );
 }
 
+/// Run `PartInit` under `fixture`'s POTA policy and return the PTA public key
+/// read back from the returned CSR.
 fn run_part_init(
     ctx: &TestCtx,
     session: &SessionHandshake,
@@ -128,6 +145,8 @@ fn run_part_init(
     pta_pub_from_csr(&resp.pta_csr)
 }
 
+/// Run `PartFinal` and return its `local_mk_backup`, asserting the wire-pinned
+/// envelope length.
 fn finalize(
     ctx: &TestCtx,
     session: &SessionHandshake,
