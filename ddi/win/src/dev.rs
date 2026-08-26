@@ -47,10 +47,15 @@ use winapi::um::winnt::HANDLE;
 use crate::io_event::IoEvent;
 
 const MCR_CP_CMD_SESSION_GENERIC: u16 = 0x0;
+/// `CP_CMD_SET_DATA_XFER` selects the driver's data-transfer path,
+/// which attaches the OOB Metadata Page to the SQE.
 const MCR_CP_CMD_DATA_XFER: u16 = 0x1;
 const MCR_IOCTL_CONTROL_PATH_CMD_SESSION: u32 = 0x201;
+/// Function code for `MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER`.
 const MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER: u32 = 0x202;
+/// Maximum number of OOB buffers accepted by the V2 data-transfer IOCTL.
 const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
+/// Maximum size of one OOB buffer accepted by the Windows driver.
 const AZIHSM_MAX_DATA_XFER_PER_BUFFER: usize = 64 * 1024;
 
 #[derive(Default)]
@@ -251,15 +256,20 @@ pub struct McrCpGenericIoctlOutData {
     hot_patch_reserved: [usize; 16],
 }
 
-#[derive(Clone, Copy, Default)]
+/// One entry of `MCR_HSM_DATA_XFER_BUFFERS::buffers`.
+///
+/// The Windows C ABI layout is `{ UINT32 XferLen; PVOID BufferAddr; }`.
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
 struct McrHsmDataXferBuffer {
     xfer_length: u32,
     buffer_addr: *const u8,
 }
 
-#[derive(Clone, Copy)]
+/// Caller-supplied OOB buffer list matching
+/// `MCR_HSM_DATA_XFER_BUFFERS`.
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct McrHsmDataXferBuffers {
     buffer_count: u32,
     buffers: [McrHsmDataXferBuffer; AZIHSM_MAX_DATA_XFER_BUFFERS],
@@ -276,6 +286,8 @@ impl Default for McrHsmDataXferBuffers {
     }
 }
 
+/// V2 IOCTL extension matching the `uin` union in
+/// `CP_IOCTL_INDATA_DATA_V2`.
 #[repr(C)]
 union McrCpDataXferInputData {
     data_xfer: McrHsmDataXferBuffers,
@@ -290,13 +302,17 @@ impl Default for McrCpDataXferInputData {
     }
 }
 
-#[derive(Default)]
+/// `CP_IOCTL_INDATA_DATA_V2`: the generic command followed by the
+/// 4-KiB V2 extension. Only the data-transfer IOCTL consumes this
+/// larger layout.
 #[repr(C)]
+#[derive(Default)]
 struct McrCpDataXferIoctlIndata {
     generic: McrCpGenericIoctlIndata,
     input_data: McrCpDataXferInputData,
 }
 
+// Keep the Rust representation pinned to the 64-bit Windows driver ABI.
 const _: [(); 16] = [(); mem::size_of::<McrHsmDataXferBuffer>()];
 const _: [(); 776] = [(); mem::size_of::<McrHsmDataXferBuffers>()];
 const _: [(); 344] = [(); mem::size_of::<McrCpGenericIoctlIndata>()];
@@ -990,15 +1006,19 @@ impl DdiDev for DdiWinDev {
         /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
         const OP_TBOR: u16 = 2;
 
-        let oob_slice = oob_items.unwrap_or(&[]);
-        if oob_slice.len() > AZIHSM_MAX_DATA_XFER_BUFFERS
-            || oob_slice
+        // The V2 ioctl carries the same generic command followed by
+        // user virtual addresses for the OOB items. The driver pins and
+        // DMA-maps each item, then builds the device-visible Metadata
+        // Page and per-item NVMe SGL segments.
+        let oob = oob_items.unwrap_or(&[]);
+        if oob.len() > AZIHSM_MAX_DATA_XFER_BUFFERS
+            || oob
                 .iter()
                 .any(|item| item.is_empty() || item.len() > AZIHSM_MAX_DATA_XFER_PER_BUFFER)
         {
             return Err(DdiError::InvalidParameter);
         }
-        let use_data_xfer = !oob_slice.is_empty();
+        let use_data_xfer = !oob.is_empty();
 
         const REQ_BUF_LEN: usize = 8192;
         const RESP_BUF_LEN: usize = 8192;
@@ -1058,8 +1078,8 @@ impl DdiDev for DdiWinDev {
             // SAFETY: `input_data` was initialized with the `data_xfer`
             // union field, which remains active for this request.
             let data_xfer = unsafe { &mut ioctl_in_buffer.input_data.data_xfer };
-            data_xfer.buffer_count = oob_slice.len() as u32;
-            for (slot, item) in data_xfer.buffers.iter_mut().zip(oob_slice) {
+            data_xfer.buffer_count = oob.len() as u32;
+            for (slot, item) in data_xfer.buffers.iter_mut().zip(oob) {
                 slot.xfer_length = item.len() as u32;
                 slot.buffer_addr = item.as_ptr();
             }
