@@ -119,9 +119,9 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
         );
 
         let (handle, bulk_id) =
-            super::bulk::register_bulk_key(pal, io, key_buf, kind, HsmSessId::from(sess_id), attrs)
+            super::bulk::commit_key(pal, io, key_buf, kind, HsmSessId::from(sess_id), attrs)
                 .await?;
-        (handle, Some(bulk_id), Some(&*key_buf))
+        (handle, bulk_id, Some(&*key_buf))
     } else {
         let key_id = pal
             .alloc_scoped_async(io, async |_scope| -> HsmResult<HsmKeyId> {

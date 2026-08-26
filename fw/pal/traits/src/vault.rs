@@ -471,73 +471,27 @@ pub trait HsmVault {
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId>;
 
-    /// Register a freshly generated AES-256 bulk key with the platform's
-    /// bulk-crypto backend and return an opaque `bulk_key_id` the host
-    /// uses to address it.
+    /// The backend-assigned bulk key id for `key_id`, if it names a bulk key.
     ///
-    /// AES bulk keys (GCM / XTS) are consumed by a dedicated bulk-crypto
-    /// backend rather than by the CP HSM core: the host performs bulk
-    /// encrypt/decrypt directly against that backend, addressed by this
-    /// `bulk_key_id`.  The HSM generates the key material, hands it to the
-    /// backend, and keeps only the 2-byte `bulk_key_id` reference in its
-    /// own vault.  The backend is platform-specific and defined by each
-    /// PAL implementation; the default returns
-    /// [`HsmError::UnsupportedCmd`], so a platform gains bulk-key support
-    /// only by overriding this method.
+    /// Bulk (AES-GCM / XTS) keys are held by a platform bulk-crypto backend
+    /// rather than as material in the vault; the host addresses them by this
+    /// opaque id.  How the id is produced, and how the vault entry relates to
+    /// it, is entirely platform-defined — a platform folds any backend
+    /// registration into its [`vault_key_create`](Self::vault_key_create) /
+    /// [`vault_key_delete`](Self::vault_key_delete) overrides and exposes only
+    /// this lookup to the core.  Platforms without a bulk backend inherit the
+    /// default `Ok(None)`.
     ///
     /// # Parameters
     /// - `io` — caller I/O context (partition scope).
-    /// - `key` — raw 32-byte AES-256 key material.
-    /// - `kind` — one of the AES bulk vault kinds
-    ///   ([`AesGcmBulk256`](HsmVaultKeyKind::AesGcmBulk256),
-    ///   [`AesGcmBulk256Unapproved`](HsmVaultKeyKind::AesGcmBulk256Unapproved),
-    ///   [`AesXtsBulk256`](HsmVaultKeyKind::AesXtsBulk256)).
-    /// - `session_id` — the id of the session creating the key.  The
-    ///   registration is scoped to this session so later bulk ops (which
-    ///   carry the session id) match.
-    /// - `session_only` — `true` if the key is session-scoped, `false`
-    ///   for a partition-wide (app) key.  The backend records the
-    ///   session id and rejects bulk ops that carry a different one,
-    ///   but backend-side cleanup on session teardown is the caller's
-    ///   responsibility: `session_only` only tags the key, it does not
-    ///   subscribe it to automatic teardown here.  The explicit
-    ///   `DeleteKey` DDI path routes through
-    ///   [`vault_key_delete`](Self::vault_key_delete), which releases
-    ///   the backend slot.  Cleanup of session-tagged bulk keys on
-    ///   `CloseSession` / partition reset requires an equivalent
-    ///   backend-delete step in the corresponding lifecycle path (see
-    ///   the reference firmware's `close_session` FSM for the model).
+    /// - `key_id` — the vault handle returned by `vault_key_create`.
     ///
     /// # Returns
-    /// - `Ok(bulk_key_id)` — the backend-assigned key id (packed into a
-    ///   `u16`).
-    /// - `Err(HsmError::InvalidKeyType)` — `kind` is not an AES bulk kind.
-    /// - `Err(HsmError::NotEnoughSpace)` — no free bulk-key slot.
-    /// - `Err(HsmError::UnsupportedCmd)` — platform has no bulk backend.
-    async fn bulk_key_create(
-        &self,
-        _io: &impl HsmIo,
-        _key: &DmaBuf,
-        _kind: HsmVaultKeyKind,
-        _session_id: HsmSessId,
-        _session_only: bool,
-    ) -> HsmResult<u16> {
-        Err(HsmError::UnsupportedCmd)
-    }
-
-    /// Delete a bulk key previously created with
-    /// [`bulk_key_create`](Self::bulk_key_create) from the bulk-crypto
-    /// backend, freeing its slot.
-    ///
-    /// The default returns [`HsmError::UnsupportedCmd`]; platforms with a
-    /// bulk backend override it alongside
-    /// [`bulk_key_create`](Self::bulk_key_create).
-    ///
-    /// # Parameters
-    /// - `io` — caller I/O context (partition scope).
-    /// - `bulk_key_id` — the id returned by `bulk_key_create`.
-    async fn bulk_key_delete(&self, _io: &impl HsmIo, _bulk_key_id: u16) -> HsmResult<()> {
-        Err(HsmError::UnsupportedCmd)
+    /// - `Ok(Some(bulk_key_id))` — `key_id` is a bulk key.
+    /// - `Ok(None)` — `key_id` is an ordinary vault key, or the platform has
+    ///   no bulk backend.
+    fn bulk_key_id(&self, _io: &impl HsmIo, _key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        Ok(None)
     }
 
     /// Deletes a single key by ID.

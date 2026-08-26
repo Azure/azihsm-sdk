@@ -268,7 +268,11 @@ impl<P: HsmPal> Hsm<P> {
             // only populated on success.
             let (cqe_sess_id, cqe_app_vault_id, cqe_closed) = match &dispatch_result {
                 Ok(out) => match session_ctrl {
-                    SessionCtrl::Open => (out.session_id, out.app_vault_id, false),
+                    SessionCtrl::Open => (
+                        out.session_id,
+                        Some(ddi::mbor::open_session::SESSION_SHORT_APP_ID),
+                        false,
+                    ),
                     SessionCtrl::Close => (hdr.sess_id, None, true),
                     _ => (None, None, false),
                 },

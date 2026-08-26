@@ -81,33 +81,13 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
         .await?;
     }
 
-    // Commit the derived key to the vault, session-scoped iff requested.
-    // AES-GCM bulk keys are handed to the bulk-crypto backend instead; the
-    // vault records only the returned `bulk_key_id` handle, which the
-    // response carries for later bulk GCM ops.
-    let (key_id, bulk_key_id): (u16, Option<u16>) = if target.is_bulk {
-        let (handle, bulk_id) = super::bulk::register_bulk_key(
-            pal,
-            io,
-            out,
-            target.kind,
-            HsmSessId::from(sess_id),
-            attrs,
-        )
-        .await?;
-        (handle.into(), Some(bulk_id))
-    } else {
-        let handle = pal
-            .vault_key_create(
-                io,
-                out,
-                target.kind,
-                attrs.session().then_some(HsmSessId::from(sess_id)),
-                attrs,
-            )
-            .await?;
-        (handle.into(), None)
-    };
+    // Commit the derived key: AES-GCM bulk keys are handed to the
+    // bulk-crypto backend (the vault records only the returned
+    // `bulk_key_id` handle, carried in the response for later bulk GCM
+    // ops); every other kind is stored directly in the vault.
+    let (key_handle, bulk_key_id) =
+        super::bulk::commit_key(pal, io, out, target.kind, HsmSessId::from(sess_id), attrs).await?;
+    let key_id: u16 = key_handle.into();
 
     // Envelope the derived key into the host's opaque re-import blob.
     let masked_key = super::masking::mask_blob(

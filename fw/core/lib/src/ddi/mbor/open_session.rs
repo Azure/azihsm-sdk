@@ -61,7 +61,7 @@ pub(super) const SMK_KEY_LABEL: &[u8] = b"SMK";
 /// carried in the CQE `app_vault_id` field, which sets the CQE
 /// `short_app_id_is_valid` flag the driver requires before it will admit
 /// any bulk (AES-GCM/XTS) op on the file handle.
-pub(super) const SESSION_SHORT_APP_ID: u8 = 0;
+pub(crate) const SESSION_SHORT_APP_ID: u8 = 0;
 
 /// Handle `DdiOpenSessionCmd`.
 ///
@@ -126,7 +126,6 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     Ok(DispatchResult {
         resp,
         session_id: Some(u16::from(sess_id)),
-        app_vault_id: Some(SESSION_SHORT_APP_ID),
     })
 }
 

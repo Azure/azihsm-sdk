@@ -118,13 +118,6 @@ const IO_QUEUE_DEPTH: usize = 32;
 /// Number of IPC pairs configured for the firmware.
 const IPC_PAIRS: usize = 3;
 
-/// HSM↔backend IPC protocol descriptor IDs.  These identify the outbound
-/// (send) and inbound (receive) messages of the bulk-key IPC exchange
-/// and match the reference firmware's wire protocol.  Ring addresses,
-/// depth, and slot size come from the PSRAM register map instead.
-const FP_SEND_DESC: u8 = 15;
-const FP_RECV_DESC: u8 = 16;
-
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -375,8 +368,8 @@ impl Default for UnoHsmPal {
                 // over the PSRAM HSM↔backend IPC rings.
                 IpcPairConfig {
                     kind: IpcPairKind::SendMessage,
-                    inbound_desc: FP_RECV_DESC,
-                    outbound_desc: FP_SEND_DESC,
+                    inbound_desc: 16,
+                    outbound_desc: 15,
                     tx_ring_base: PSRAM_BASE + HSM_TO_FP_IPC_TX_RING_OFFSET,
                     tx_pi: PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET,
                     tx_ci: PSRAM_BASE + HSM_TO_FP_IPC_TX_CI_OFFSET,

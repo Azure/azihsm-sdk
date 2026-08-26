@@ -113,11 +113,12 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
         )
         .await?;
 
-        // Push the recovered key to the bulk-crypto backend and vault only
-        // the 2-byte handle, scoped to the creating session so later bulk
-        // GCM ops match.  The shared helper frees the backend key if the
-        // vault write fails, so no bulk-key slot leaks on a partial failure.
-        let (key_id, bulk_id) = super::bulk::register_bulk_key(
+        // Commit the recovered key: the Uno PAL registers it with the
+        // bulk-crypto backend and stores only the 2-byte handle in the
+        // vault (scoped to the creating session so later bulk GCM ops
+        // match), returning the backend id.  RSA-unwrap always produces a
+        // bulk key, so `bulk_key_id` is present.
+        let (key_id, bulk_id) = super::bulk::commit_key(
             pal,
             io,
             material,
@@ -126,6 +127,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
             attrs,
         )
         .await?;
+        let bulk_id = bulk_id.ok_or(HsmError::InternalError)?;
 
         // Mask the raw key material directly (the vault holds only the
         // handle) so the host can re-import it on a later session.

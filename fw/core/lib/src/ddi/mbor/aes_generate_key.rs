@@ -14,7 +14,7 @@
 //! the response also carries a `bulk_key_id`.  The bulk key is the key
 //! consumed by the bulk GCM encrypt/decrypt op; the host addresses
 //! it via this `bulk_key_id`.  Bulk key material is registered with the
-//! bulk-crypto backend (see [`bulk::register_bulk_key`](super::bulk));
+//! bulk-crypto backend (see [`bulk::commit_key`](super::bulk));
 //! the vault stores only the 2-byte backend handle, and `bulk_key_id` is
 //! the distinct backend-assigned id, not the vault `key_id`.
 //!
@@ -71,30 +71,20 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     let key_buf = pal.dma_alloc(io, key_len)?;
     pal.aes_gen_key(io, key_buf).await?;
 
-    let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-
     // Bulk GCM keys live in the bulk-crypto backend: hand the freshly
     // generated material to the backend and keep only the 2-byte
-    // `bulk_key_id` reference in the vault.  The registration is scoped to
-    // the creating session so later bulk GCM ops (which carry the
-    // session id) match.  Non-bulk keys are stored directly.
-    let (key_handle, bulk_key_id) = if is_bulk {
-        let (handle, bulk_id) = super::bulk::register_bulk_key(
-            pal,
-            io,
-            key_buf,
-            vault_kind,
-            HsmSessId::from(sess_id),
-            attrs,
-        )
-        .await?;
-        (handle, Some(bulk_id))
-    } else {
-        let handle = pal
-            .vault_key_create(io, key_buf, vault_kind, session_binding, attrs)
-            .await?;
-        (handle, None)
-    };
+    // `bulk_key_id` reference in the vault.  Non-bulk keys are stored
+    // directly.  The registration is scoped to the creating session so
+    // later bulk GCM ops (which carry the session id) match.
+    let (key_handle, bulk_key_id) = super::bulk::commit_key(
+        pal,
+        io,
+        key_buf,
+        vault_kind,
+        HsmSessId::from(sess_id),
+        attrs,
+    )
+    .await?;
     let key_id: u16 = key_handle.into();
 
     // Build the host's opaque re-import blob: envelope the freshly

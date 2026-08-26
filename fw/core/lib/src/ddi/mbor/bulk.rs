@@ -1,24 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Shared helper for registering AES *bulk* keys with the platform's
-//! bulk-crypto backend.
+//! Shared helper for committing freshly produced keys to storage.
 //!
-//! Bulk keys (GCM / XTS) are not stored in the HSM vault as key material:
-//! the bulk crypto runs on a dedicated backend, so the freshly produced
-//! 32-byte key is handed to it via
-//! [`bulk_key_create`](azihsm_fw_hsm_pal_traits::HsmVault::bulk_key_create)
-//! and the vault records only the 2-byte `bulk_key_id` handle the backend
-//! returns.  Later bulk ops carry the session id and resolve the key by
-//! this handle.  Every op that produces a bulk key — generate, HKDF /
-//! KBKDF derive, and unmask — routes through this helper so the backend
-//! registration and vault bookkeeping stay identical.  The backend is
-//! platform-specific and defined by each PAL implementation.
+//! Bulk keys (AES-GCM / XTS) are not stored in the HSM vault as key
+//! material: the bulk crypto runs on a dedicated platform backend, so the
+//! vault records only a small opaque handle and the host addresses the key
+//! by a backend-assigned `bulk_key_id`.  The core stays unaware of that
+//! backend — each PAL folds any bulk registration into its
+//! [`vault_key_create`](azihsm_fw_hsm_pal_traits::HsmVault::vault_key_create)
+//! override and exposes the id through
+//! [`bulk_key_id`](azihsm_fw_hsm_pal_traits::HsmVault::bulk_key_id).  Every
+//! op that produces a key — generate, HKDF / KBKDF derive, unmask, RSA
+//! unwrap — routes through [`commit_key`] so the storage path stays
+//! identical.
 
 use super::*;
 
 /// True for the AES-GCM bulk vault kinds whose material lives in the
-/// bulk-crypto backend rather than the vault.
+/// platform bulk-crypto backend rather than the vault.
 pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
     matches!(
         kind,
@@ -26,61 +26,33 @@ pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
     )
 }
 
-/// Register `material` as a GCM bulk key with the bulk-crypto backend and
-/// record the returned handle in the vault.
+/// Commit freshly produced key `material` to the vault and return its
+/// handle plus, for bulk kinds, the backend-assigned `bulk_key_id`.
 ///
-/// Returns the vault key id (which aliases the 2-byte handle) and the
-/// backend-assigned `bulk_key_id`.  The registration is scoped to
-/// `sess_id` when the key is session-scoped (`attrs.session()`), matching
-/// the session id later bulk ops carry.
-///
-/// # Concurrency
-///
-/// This helper contains two awaits — the backend registration and the
-/// vault insert — but does not take a partition-lifecycle lock.  DDI
-/// commands run on the single-threaded cooperative executor and may
-/// interleave at await points, matching the "no partition_lock needed"
-/// convention documented on the calling handlers (see
-/// `aes_generate_key`).  Interleaving is safe here because:
-///
-/// * The only cross-await state is the local `bulk_id`, which is not
-///   observable from the vault until [`HsmVault::vault_key_create`]
-///   commits.
-/// * If the vault write fails (`NotEnoughSpace`, torn-down partition,
-///   etc.) the compensation branch releases the backend slot best-effort
-///   before returning, so the backend cannot outlive a failed vault
-///   insert.
-/// * The reverse order — vault first, then backend — is not usable: the
-///   vault must record the backend-assigned handle, so the backend id
-///   has to exist first.
-pub(crate) async fn register_bulk_key<P: HsmPal>(
+/// The core treats every key uniformly: it always calls
+/// [`vault_key_create`](HsmVault::vault_key_create) and then queries
+/// [`bulk_key_id`](HsmVault::bulk_key_id).  For bulk kinds the Uno PAL's
+/// `vault_key_create` performs the backend roundtrip and stores only the
+/// opaque handle, so `bulk_key_id` returns `Some`; ordinary keys store
+/// their material and return `None`.  This keeps all platform-specific
+/// bulk handling below the PAL trait boundary.
+pub(crate) async fn commit_key<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     material: &DmaBuf,
     kind: HsmVaultKeyKind,
     sess_id: HsmSessId,
     attrs: HsmVaultKeyAttrs,
-) -> HsmResult<(HsmKeyId, u16)> {
-    let bulk_id = pal
-        .bulk_key_create(io, material, kind, sess_id, attrs.session())
+) -> HsmResult<(HsmKeyId, Option<u16>)> {
+    let handle = pal
+        .vault_key_create(
+            io,
+            material,
+            kind,
+            attrs.session().then_some(sess_id),
+            attrs,
+        )
         .await?;
-
-    // The bulk key is now registered with the backend. Any failure while
-    // recording its 2-byte handle in the vault must free that bulk key
-    // (best-effort), otherwise its slot leaks with no vault entry pointing
-    // at it.
-    let store = async {
-        let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
-        id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
-        let session_binding = attrs.session().then_some(sess_id);
-        pal.vault_key_create(io, id_bytes, kind, session_binding, attrs)
-            .await
-    };
-    match store.await {
-        Ok(handle) => Ok((handle, bulk_id)),
-        Err(e) => {
-            let _ = pal.bulk_key_delete(io, bulk_id).await;
-            Err(e)
-        }
-    }
+    let bulk_key_id = pal.bulk_key_id(io, handle)?;
+    Ok((handle, bulk_key_id))
 }
