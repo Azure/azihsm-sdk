@@ -17,6 +17,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
+use azihsm_ddi_tbor_types::TborEcdhDeriveReq;
 use resiliency_macro::*;
 
 use super::*;
@@ -408,6 +409,24 @@ pub(crate) fn ecdh_derive(
     let Some(curve) = base_key.ecc_curve() else {
         return Err(HsmError::PropertyNotPresent);
     };
+
+    // Transport is selected by session type: a V2 (TBOR) session derives
+    // with the caller-held masked key; a V1 (MBOR) session with the
+    // device-resident key id.
+    if base_key.session().is_ex() {
+        ecdh_derive_tbor(base_key, curve, peer_pub_der, derived_key_props)
+    } else {
+        ecdh_derive_mbor(base_key, curve, peer_pub_der, derived_key_props)
+    }
+}
+
+/// Derives an ECDH shared secret over MBOR using the resident base key.
+fn ecdh_derive_mbor(
+    base_key: &HsmEccPrivateKey,
+    curve: HsmEccCurve,
+    peer_pub_der: &[u8],
+    derived_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     // Build the DDI ECDH derive key command request.
     let req = DdiEcdhKeyExchangeCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EcdhKeyExchange, &base_key.session()),
@@ -434,6 +453,59 @@ pub(crate) fn ecdh_derive(
     }
 
     Ok((key_id.release(), dev_key_props))
+}
+
+/// Derives an ECDH shared secret over TBOR using the caller-held masked
+/// ECC private key (unmask-on-use); the secret is returned non-resident.
+fn ecdh_derive_tbor(
+    base_key: &HsmEccPrivateKey,
+    curve: HsmEccCurve,
+    peer_pub_der: &[u8],
+    derived_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    let masked = base_key.masked_key_vec()?;
+    let peer_pub_key = ecc_der_pub_key_to_wire(curve, peer_pub_der)?;
+
+    let req = TborEcdhDeriveReq {
+        session_id: base_key.session().ex_session_id()?,
+        scope: derived_key_props.tbor_scope(),
+        masked_key: masked,
+        peer_pub_key,
+    };
+    let mut cookie = None;
+    let resp = base_key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_secret)?;
+    // Validate that the device returned properties match the requested properties.
+    if !derived_key_props.validate_dev_props(&dev_key_props) {
+        Err(HsmError::InvalidKeyProps)?;
+    }
+
+    Ok((ddi::HsmKeyHandle::NoKeyId, dev_key_props))
+}
+
+/// Converts a DER SPKI peer public key into the TBOR wire form: `x ‖ y`,
+/// little-endian per coordinate, zero-padded to the 4-byte-aligned wire
+/// coordinate length (P-521: 66 -> 68).
+fn ecc_der_pub_key_to_wire(curve: HsmEccCurve, der: &[u8]) -> HsmResult<Vec<u8>> {
+    let pub_key = DerEccPublicKey::from_der(der).map_err(|_| HsmError::InvalidKey)?;
+    let wire_coord = curve.component_size().next_multiple_of(4);
+    let mut wire = Vec::with_capacity(wire_coord * 2);
+    for be in [pub_key.x(), pub_key.y()] {
+        if be.len() > wire_coord {
+            return Err(HsmError::InternalError);
+        }
+        // Reverse the big-endian coordinate to little-endian, then zero-pad
+        // the high bytes up to the wire coordinate length.
+        let mut le = be.to_vec();
+        le.reverse();
+        le.resize(wire_coord, 0);
+        wire.extend_from_slice(&le);
+    }
+    Ok(wire)
 }
 
 /// Generates a key report (attestation) for the specified ECC private key.

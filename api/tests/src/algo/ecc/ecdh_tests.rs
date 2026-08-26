@@ -552,6 +552,55 @@ fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve
 // test cases sections
 // ============================================================
 
+/// ECDH derive through a V2 (TBOR) session for every supported curve.
+/// Exercises the public API's TBOR dispatch, the DER->wire peer-key
+/// conversion, and the shared-secret masked-blob parsing.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_ecdh_derive_tbor_all_curves() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    for curve in [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521] {
+        let (priv_a, pub_a) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
+            .expect("generate party A key");
+        let (priv_b, pub_b) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
+            .expect("generate party B key");
+
+        // Session-scoped shared secret: the un-finalized session has no
+        // partition-local masking key.
+        let derived_props = || {
+            HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::SharedSecret)
+                .bits(curve.key_size_bits() as u32)
+                .can_derive(true)
+                .is_session(true)
+                .build()
+                .expect("build shared-secret props")
+        };
+
+        let secret_a =
+            ecdh_derive_shared_secret_with_props(&session, &priv_a, &pub_b, derived_props())
+                .expect("derive secret A");
+        let secret_b =
+            ecdh_derive_shared_secret_with_props(&session, &priv_b, &pub_a, derived_props())
+                .expect("derive secret B");
+
+        assert_eq!(secret_a.kind(), HsmKeyKind::SharedSecret);
+        assert_eq!(secret_a.bits(), curve.key_size_bits() as u32);
+        assert!(secret_a.can_derive());
+        // Both agreement directions yield a same-length masked secret.
+        assert_eq!(
+            secret_a.masked_key(None).expect("secret A size"),
+            secret_b.masked_key(None).expect("secret B size"),
+        );
+    }
+}
+
 /// Test ECDH key derivation.
 ///
 /// Generates two ECC P-256 key pairs (party A and party B) and performs ECDH from both sides.
