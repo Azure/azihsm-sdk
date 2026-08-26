@@ -6,6 +6,8 @@
 //! Manticore does not yet implement `TborKeyReport`, so these tests build
 //! unsigned policy-bound v2 reports from real `SdSealingKeyGen` public keys.
 
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HashOp;
 use azihsm_ddi_mbor_test_helpers::fake_manticore_key_report_bytes;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
@@ -30,6 +32,20 @@ use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
 
 const SCOPE_LOCAL: u8 = 0b011;
+
+#[test]
+fn synthetic_report_binds_policy_hw() {
+    let mut public_key = [0x5A; 97];
+    public_key[0] = 0x04;
+    let policy = [0xA5; PART_POLICY_LEN];
+    let report = fake_manticore_key_report_bytes(&public_key, &policy);
+    let mut digest = [0u8; 48];
+    HashAlgo::sha384()
+        .hash(&policy, Some(&mut digest))
+        .expect("SHA-384 policy digest");
+
+    assert!(report.windows(digest.len()).any(|window| window == digest));
+}
 
 struct ResealEvidence {
     oob_items: Vec<Vec<u8>>,

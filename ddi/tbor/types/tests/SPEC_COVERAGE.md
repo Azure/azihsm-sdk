@@ -156,6 +156,20 @@ remain emulator-only until Manticore enables those checks.
 | Tampered certificate signature → `X509SignatureInvalid` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_tampered_cert_sig_emu` | Authenticity path is not enabled on Manticore |
 | Tampered KeyReport signature → `InvalidArg` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_tampered_report_emu` | Authenticity path is not enabled on Manticore |
 
+## `SdResealRemoteBackup` (opcode in-session, gated)
+
+Hardware tests create a real source backup through `SdCreateRemoteBackup`,
+then reseal it using real masked sealing keys and policy-bound synthetic v2
+reports. Certificate-chain and report-signature authenticity remain outside
+the hardware acceptance scope until Manticore enables those checks.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Happy path returns a non-zero fresh remote backup | ✅ (hw) | `sd_reseal_remote_backup_hw::sd_reseal_remote_backup_roundtrip_hw` | Source backup is produced by CreateSD in the same initialized partition |
+| Repeated reseal uses a fresh HPKE encapsulation | ✅ (hw) | `sd_reseal_remote_backup_hw::sd_reseal_remote_backup_rerandomizes_hw` | Two outputs for the same source must differ |
+| Tampered source ciphertext is rejected | ✅ (hw) | `sd_reseal_remote_backup_hw::sd_reseal_remote_backup_rejects_tampered_source_hw` | Flips the final source-backup byte before HPKE open |
+| Missing source/destination OOB payloads → `InvalidArg` | ✅ (hw) | `sd_reseal_remote_backup_hw::sd_reseal_remote_backup_rejects_missing_oob_hw` | Request descriptors are present but no OOB page is supplied |
+
 ## Default-PSK dispatcher gate (cross-cutting)
 
 The gate (see `fw/core/lib/src/ddi/tbor/mod.rs::dispatch`) rejects
