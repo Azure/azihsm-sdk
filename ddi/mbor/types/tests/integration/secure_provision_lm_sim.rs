@@ -132,8 +132,10 @@ fn assert_pin_not_set(err: &DdiError, ctx: &str) {
     );
 }
 
-/// True if the device carries a persistent/legacy BK3 (`Bk3AlreadyInitialized` /
-/// `Bk3PinAlreadySet`), which the seal-op gate alone cannot detect.
+/// True if the device already carries persistent BK3 provisioning state
+/// (`Bk3AlreadyInitialized` / `Bk3PinAlreadySet`), which the seal-op gate alone
+/// cannot detect. These statuses only signal that provisioning state is present;
+/// they do not indicate which API (legacy `init_bk3` or secure) produced it.
 fn not_truly_fresh(err: &DdiError) -> bool {
     matches!(
         err,
@@ -154,8 +156,8 @@ fn not_truly_fresh(err: &DdiError) -> bool {
 /// - A2: migrate after `set_init_bk3_pin` (the volatile PIN is lost) —
 ///   `secure_init_bk3` over a fresh tunnel is rejected as pin-not-set.
 /// - A3: pre-build the encrypted-BK3 payload, THEN migrate (both tunnel key and
-///   PIN lost) — `secure_init_bk3` must not decrypt-succeed against the stale
-///   state (`Bk3PinNotSet` / `NonceMismatch` / `Bk3TransportTagMismatch`).
+///   PIN lost) — `secure_init_bk3` fails the pin-set guard (the persistent nonce
+///   survives migration, so the nonce check passes first) with `Bk3PinNotSet`.
 /// - A4: no partial persistent state landed — `get_sealed_bk3` stays gated and
 ///   `is_fips_approved` stays false.
 ///
@@ -184,8 +186,8 @@ fn test_secure_provision_lm_midflow_restart() {
         assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
 
         // A1: migrate after minting the establish key (no PIN set). With the
-        // volatile prov-cred empty, secure_init_bk3 must fail Bk3PinNotSet; a
-        // legacy persistent BK3 means the device isn't truly fresh, so skip.
+        // volatile prov-cred empty, secure_init_bk3 must fail Bk3PinNotSet;
+        // pre-existing persistent BK3 means the device isn't truly fresh, so skip.
         let resp = helper_get_establish_cred_encryption_key(dev, None, Some(API_REV));
         assert!(
             resp.is_ok(),
@@ -201,7 +203,7 @@ fn test_secure_provision_lm_midflow_restart() {
         let result = helper_secure_init_bk3(dev, eb, pk);
         if let Err(err) = &result {
             if not_truly_fresh(err) {
-                println!("skipping: device not truly fresh (legacy/persistent BK3)");
+                println!("skipping: device already provisioned (persistent BK3 present)");
                 return;
             }
         }
@@ -248,16 +250,10 @@ fn test_secure_provision_lm_midflow_restart() {
         migrate_sim(dev);
         let result = helper_secure_init_bk3(dev, eb, pk);
         assert!(
-            matches!(
-                result,
-                Err(DdiError::DdiStatus(
-                    DdiStatus::Bk3PinNotSet
-                        | DdiStatus::NonceMismatch
-                        | DdiStatus::Bk3TransportTagMismatch,
-                ))
-            ),
-            "A3: secure_init_bk3 after migration must fail with a volatile-loss status, got {result:?}"
+            result.is_err(),
+            "A3: secure_init_bk3 after mid-flow migration must be rejected, got {result:?}"
         );
+        assert_pin_not_set(&result.unwrap_err(), "A3: migrate after pre-building the payload");
 
         // A4: no partial persistent state landed on the target.
         assert!(
@@ -392,7 +388,7 @@ fn test_secure_provision_lm_completed_survives() {
                     return;
                 }
                 if not_truly_fresh(err) {
-                    println!("skipping: device not truly fresh (legacy/persistent BK3)");
+                    println!("skipping: device already provisioned (persistent BK3 present)");
                     return;
                 }
             }
