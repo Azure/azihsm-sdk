@@ -35,8 +35,6 @@
 //! [`TestCtx::new`](crate::harness::TestCtx::new), so partition PSKs
 //! begin at their canonical defaults.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
