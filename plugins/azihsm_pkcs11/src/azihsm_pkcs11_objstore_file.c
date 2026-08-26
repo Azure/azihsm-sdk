@@ -4,32 +4,311 @@
 /*
  * Persistent file-backed object-store backend for the seam in azihsm_pkcs11_objstore.h.
  *
- * Objects — each object's attribute template plus, for keys, the opaque AZIHSM
- * masked blob as the key body — are written through to a directory tree under
- * the configured store root, so token objects survive a process restart and are
- * visible to other processes sharing the directory (which the in-memory backend,
- * azihsm_pkcs11_objstore_mem.c, cannot do).
+ * Token objects (CKA_TOKEN == TRUE) are written through to disk so they survive
+ * a process restart and are visible to other processes sharing the store
+ * directory; each object is one <handle>.object record (azihsm_pkcs11_store_record.c) in a
+ * per-token directory "<store_dir>/slot-<id>/", alongside token.meta (the
+ * persistent monotonic handle counter) and a .lock file. Session objects
+ * (CKA_TOKEN == FALSE) are ephemeral and are delegated verbatim to an embedded
+ * in-memory backend (azihsm_pkcs11_objstore_mem.c) — no need to reimplement that logic.
  *
- * Like the in-memory backend this file links no libcrypto: durability rests on
- * the filesystem (atomic temp+rename, flock), not on host cryptography, so the
- * no-device smoke build still compiles. It performs no internal thread locking —
- * the framework layer holds the module lock across every call; cross-process
- * exclusion is added with the filesystem primitives in a later phase.
+ * A handle carries which store owns it in its top-but-one bit
+ * (P11_FILE_TOKEN_FLAG): set for on-disk token objects (the low bits are the
+ * counter value / filename), clear for the embedded backend's session handles
+ * (small counters). Every op routes on that bit.
  *
- * This is the skeleton: construction, teardown, and the vtable wiring are in
- * place and select-able via AZIHSM_PKCS11_PERSIST; the object operations are
- * filled in by later phases and until then report CKR_FUNCTION_NOT_SUPPORTED.
+ * Token isolation is structural: an op only ever touches the caller slot's own
+ * directory, so an object created in another slot is simply not found. The
+ * CKA_PRIVATE login gate and sensitive-attribute hiding are enforced here
+ * exactly as the in-memory backend does, because the device authenticates the
+ * partition, not individual objects.
+ *
+ * Like the in-memory backend this file links no libcrypto (durability rests on
+ * the filesystem, not host cryptography) so the no-device smoke build compiles.
+ * It does no internal thread locking — the framework holds the module lock
+ * across every call — but takes the cross-process flock for each disk mutation
+ * and read.
  */
 
 #include "azihsm_pkcs11_objstore.h"
+#include "azihsm_pkcs11_store_io.h"
+#include "azihsm_pkcs11_store_record.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+/*
+ * Top-but-one bit of a CK_OBJECT_HANDLE marks an on-disk token object; the
+ * embedded in-memory backend's session handles are small counters that never
+ * reach it. (Top-but-one rather than the top bit to steer clear of all-ones
+ * error sentinels.)
+ */
+#define P11_FILE_TOKEN_FLAG (((CK_OBJECT_HANDLE)1) << (sizeof(CK_OBJECT_HANDLE) * 8 - 2))
+
+/* store_dir + "/slot-" + up to 20 decimal digits + NUL. */
+#define P11_FILE_TOKEN_DIR_LEN (AZIHSM_PKCS11_STORE_DIR_LEN + 32)
+#define P11_FILE_OBJ_NAME_LEN 32
 
 typedef struct
 {
-    char store_dir[AZIHSM_PKCS11_STORE_DIR_LEN]; /* persistent object-store root */
+    char store_dir[AZIHSM_PKCS11_STORE_DIR_LEN];
+    azihsm_pkcs11_objstore mem; /* embedded backend for session (CKA_TOKEN == FALSE) objects */
 } file_store;
+
+/* ---- template / record attribute helpers ------------------------------- */
+
+static const CK_ATTRIBUTE *tmpl_find(const CK_ATTRIBUTE *tmpl, CK_ULONG count, CK_ATTRIBUTE_TYPE t)
+{
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        if (tmpl[i].type == t)
+        {
+            return &tmpl[i];
+        }
+    }
+    return NULL;
+}
+
+static CK_BBOOL tmpl_bool(
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count,
+    CK_ATTRIBUTE_TYPE t,
+    CK_BBOOL dflt
+)
+{
+    const CK_ATTRIBUTE *a = tmpl_find(tmpl, count, t);
+    if (a == NULL || a->ulValueLen == 0 || a->pValue == NULL)
+    {
+        return dflt;
+    }
+    return ((const CK_BYTE *)a->pValue)[0] != 0 ? CK_TRUE : CK_FALSE;
+}
+
+static const azihsm_pkcs11_rec_attr *rec_find(
+    const azihsm_pkcs11_rec_object *o,
+    CK_ATTRIBUTE_TYPE t
+)
+{
+    for (CK_ULONG i = 0; i < o->attr_count; i++)
+    {
+        if (o->attrs[i].type == t)
+        {
+            return &o->attrs[i];
+        }
+    }
+    return NULL;
+}
+
+static CK_BBOOL rec_bool(const azihsm_pkcs11_rec_object *o, CK_ATTRIBUTE_TYPE t, CK_BBOOL dflt)
+{
+    const azihsm_pkcs11_rec_attr *a = rec_find(o, t);
+    if (a == NULL || a->len == 0 || a->value == NULL)
+    {
+        return dflt;
+    }
+    return a->value[0] != 0 ? CK_TRUE : CK_FALSE;
+}
+
+/* ---- path helpers ------------------------------------------------------- */
+
+static CK_RV token_dir(const file_store *st, CK_SLOT_ID slot, char *out, size_t outlen)
+{
+    int written = snprintf(out, outlen, "%s/slot-%lu", st->store_dir, (unsigned long)slot);
+    if (written < 0 || (size_t)written >= outlen)
+    {
+        return CKR_FUNCTION_FAILED;
+    }
+    return CKR_OK;
+}
+
+static void object_name(CK_ULONG num, char *out, size_t outlen)
+{
+    (void)snprintf(out, outlen, "%lu.object", (unsigned long)num);
+}
+
+/* ---- disk-backed token object operations -------------------------------- */
+
+static CK_RV create_token_object(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count,
+    CK_OBJECT_HANDLE *out
+)
+{
+    CK_BBOOL is_private = tmpl_bool(tmpl, count, CKA_PRIVATE, CK_FALSE);
+    if (is_private && !user_logged_in)
+    {
+        return CKR_USER_NOT_LOGGED_IN;
+    }
+    /*
+     * v1 refuses to persist a private object whose secret is not the
+     * device-encrypted masked blob: a private CKA_VALUE (e.g. a CKO_DATA app
+     * secret) or a plaintext CKA_PRIVATE_EXPONENT would sit in cleartext at rest
+     * (the device protects only the masked key body). At-rest encryption of such
+     * material is a later phase; until then, refuse rather than leak.
+     */
+    if (is_private && (tmpl_find(tmpl, count, CKA_VALUE) != NULL ||
+                       tmpl_find(tmpl, count, CKA_PRIVATE_EXPONENT) != NULL))
+    {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    rv = azihsm_pkcs11_store_dir_ensure(dir);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+
+    /* Read the persistent counter (absent -> start at 1; 0 stays invalid). */
+    CK_ULONG next_handle = 1;
+    CK_ULONG generation = 0;
+    unsigned char *meta = NULL;
+    size_t meta_len = 0;
+    rv = azihsm_pkcs11_store_read(dir, "token.meta", &meta, &meta_len);
+    if (rv == CKR_OK && meta != NULL)
+    {
+        rv = azihsm_pkcs11_meta_decode(meta, meta_len, &next_handle, &generation);
+        free(meta);
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+    CK_ULONG n = next_handle;
+
+    /*
+     * Counter-first: advance and fsync token.meta BEFORE writing the object, so
+     * a crash between the two leaves handle n as an unused hole, never a reused
+     * number that would overwrite a surviving object.
+     */
+    unsigned char metabuf[P11_META_SIZE];
+    size_t mlen = sizeof(metabuf);
+    rv = azihsm_pkcs11_meta_encode(n + 1, generation, metabuf, &mlen);
+    if (rv == CKR_OK)
+    {
+        rv = azihsm_pkcs11_store_write(dir, "token.meta", metabuf, mlen);
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+
+    /* Serialize the template (borrowed pointers) and write <n>.object. */
+    azihsm_pkcs11_rec_attr *ra =
+        (azihsm_pkcs11_rec_attr *)calloc(count ? count : 1, sizeof(azihsm_pkcs11_rec_attr));
+    if (ra == NULL)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return CKR_HOST_MEMORY;
+    }
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        ra[i].type = tmpl[i].type;
+        ra[i].value = (unsigned char *)tmpl[i].pValue;
+        ra[i].len = tmpl[i].ulValueLen;
+    }
+    azihsm_pkcs11_rec_object obj = { ra, count, NULL, 0 };
+
+    unsigned char *buf = NULL;
+    size_t blen = 0;
+    rv = azihsm_pkcs11_record_encode(&obj, NULL, &blen);
+    if (rv == CKR_OK)
+    {
+        buf = (unsigned char *)malloc(blen ? blen : 1);
+        if (buf == NULL)
+        {
+            rv = CKR_HOST_MEMORY;
+        }
+    }
+    if (rv == CKR_OK)
+    {
+        rv = azihsm_pkcs11_record_encode(&obj, buf, &blen);
+    }
+    if (rv == CKR_OK)
+    {
+        char name[P11_FILE_OBJ_NAME_LEN];
+        object_name(n, name, sizeof(name));
+        rv = azihsm_pkcs11_store_write(dir, name, buf, blen);
+    }
+    if (buf != NULL)
+    {
+        memset(buf, 0, blen); /* the record may hold attribute bytes */
+        free(buf);
+    }
+    free(ra);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv; /* counter already advanced: n is a hole, never reused */
+    }
+    *out = P11_FILE_TOKEN_FLAG | n;
+    return CKR_OK;
+}
+
+/* Load and decode a token object under the caller's slot; applies the private
+ * login gate. *found is set false (and CKR_OBJECT_HANDLE_INVALID returned) when
+ * the object is absent or not visible, without leaking its existence. */
+static CK_RV load_visible_token_object(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    azihsm_pkcs11_rec_object *out
+)
+{
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    char name[P11_FILE_OBJ_NAME_LEN];
+    object_name(h & ~P11_FILE_TOKEN_FLAG, name, sizeof(name));
+
+    unsigned char *buf = NULL;
+    size_t blen = 0;
+    rv = azihsm_pkcs11_store_read(dir, name, &buf, &blen);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    if (buf == NULL) /* absent */
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    rv = azihsm_pkcs11_record_decode(buf, blen, out);
+    free(buf);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    if (rec_bool(out, CKA_PRIVATE, CK_FALSE) && !user_logged_in)
+    {
+        azihsm_pkcs11_record_free(out);
+        return CKR_OBJECT_HANDLE_INVALID; /* private + logged out: invisible */
+    }
+    return CKR_OK;
+}
+
+/* ---- vtable ops --------------------------------------------------------- */
 
 static CK_RV file_create(
     void *ctx,
@@ -40,22 +319,62 @@ static CK_RV file_create(
     CK_OBJECT_HANDLE *out
 )
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)tmpl;
-    (void)count;
-    (void)out;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    file_store *st = (file_store *)ctx;
+    if (out == NULL || (count > 0 && tmpl == NULL))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    /* A non-zero length with a NULL value is malformed (later reads would
+     * dereference it); reject up front, as the in-memory backend does. */
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
+        {
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+    }
+    if (tmpl_bool(tmpl, count, CKA_TOKEN, CK_FALSE))
+    {
+        return create_token_object(st, slot, user_logged_in, tmpl, count, out);
+    }
+    return st->mem.ops->create(st->mem.ctx, slot, user_logged_in, tmpl, count, out);
 }
 
 static CK_RV file_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, CK_OBJECT_HANDLE h)
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)h;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    file_store *st = (file_store *)ctx;
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->destroy(st->mem.ctx, slot, user_logged_in, h);
+    }
+
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    /* Check visibility (existence + private gate) before removing. */
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+    azihsm_pkcs11_record_free(&o);
+
+    char name[P11_FILE_OBJ_NAME_LEN];
+    object_name(h & ~P11_FILE_TOKEN_FLAG, name, sizeof(name));
+    rv = azihsm_pkcs11_store_unlink(dir, name);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return rv;
 }
 
 static CK_RV file_get_attr(
@@ -67,13 +386,74 @@ static CK_RV file_get_attr(
     CK_ULONG count
 )
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)h;
-    (void)tmpl;
-    (void)count;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    file_store *st = (file_store *)ctx;
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->get_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
+    }
+
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+
+    /* Sensitive or non-extractable secret material must not be revealed
+     * (identical rule to the in-memory backend). */
+    CK_BBOOL sensitive =
+        rec_bool(&o, CKA_SENSITIVE, CK_FALSE) || !rec_bool(&o, CKA_EXTRACTABLE, CK_TRUE);
+
+    CK_RV ret = CKR_OK;
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        const azihsm_pkcs11_rec_attr *a = rec_find(&o, tmpl[i].type);
+        if (a == NULL)
+        {
+            tmpl[i].ulValueLen = CK_UNAVAILABLE_INFORMATION;
+            ret = CKR_ATTRIBUTE_TYPE_INVALID;
+            continue;
+        }
+        CK_BBOOL secret = (tmpl[i].type == CKA_VALUE || tmpl[i].type == CKA_PRIVATE_EXPONENT);
+        if (sensitive && secret)
+        {
+            tmpl[i].ulValueLen = CK_UNAVAILABLE_INFORMATION;
+            ret = CKR_ATTRIBUTE_SENSITIVE;
+            continue;
+        }
+        if (tmpl[i].pValue == NULL_PTR)
+        {
+            tmpl[i].ulValueLen = a->len; /* two-call: report length */
+            continue;
+        }
+        if (tmpl[i].ulValueLen < a->len)
+        {
+            tmpl[i].ulValueLen = CK_UNAVAILABLE_INFORMATION;
+            ret = CKR_BUFFER_TOO_SMALL;
+            continue;
+        }
+        if (a->len > 0)
+        {
+            memcpy(tmpl[i].pValue, a->value, a->len);
+        }
+        tmpl[i].ulValueLen = a->len;
+    }
+    azihsm_pkcs11_record_free(&o);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return ret;
 }
 
 static CK_RV file_set_attr(
@@ -85,13 +465,14 @@ static CK_RV file_set_attr(
     CK_ULONG count
 )
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)h;
+    file_store *st = (file_store *)ctx;
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->set_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
+    }
     (void)tmpl;
     (void)count;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    return CKR_FUNCTION_NOT_SUPPORTED; /* token set_attr lands in a later phase */
 }
 
 static CK_RV file_find_init(
@@ -109,7 +490,7 @@ static CK_RV file_find_init(
     (void)tmpl;
     (void)count;
     (void)cursor;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    return CKR_FUNCTION_NOT_SUPPORTED; /* enumeration lands in a later phase */
 }
 
 static CK_RV file_find(
@@ -143,20 +524,21 @@ static CK_RV file_set_key_body(
     CK_ULONG len
 )
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)h;
+    file_store *st = (file_store *)ctx;
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->set_key_body(st->mem.ctx, slot, user_logged_in, h, blob, len);
+    }
     (void)blob;
     (void)len;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    return CKR_FUNCTION_NOT_SUPPORTED; /* token key bodies land with key ops */
 }
 
 static CK_RV file_persist(void *ctx)
 {
     (void)ctx;
-    /* Object operations write through synchronously, so this flush barrier has
-     * nothing to flush yet; it is populated as the ops land. */
+    /* Token operations write through synchronously (each mutation fsyncs its own
+     * file and the directory), so this flush barrier has nothing outstanding. */
     return CKR_OK;
 }
 
@@ -167,7 +549,11 @@ static void file_teardown(void *ctx)
     {
         return;
     }
-    /* Object files persist on disk; teardown frees only in-process state. */
+    if (st->mem.ops != NULL && st->mem.ctx != NULL)
+    {
+        st->mem.ops->teardown(st->mem.ctx); /* frees session objects */
+    }
+    /* Token object files persist on disk; teardown frees only in-process state. */
     free(st);
 }
 
@@ -203,6 +589,18 @@ CK_RV azihsm_pkcs11_objstore_file_create(
     {
         free(st);
         return CKR_ARGUMENTS_BAD;
+    }
+    CK_RV rv = azihsm_pkcs11_store_dir_ensure(st->store_dir);
+    if (rv != CKR_OK)
+    {
+        free(st);
+        return rv;
+    }
+    rv = azihsm_pkcs11_objstore_mem_create(&st->mem);
+    if (rv != CKR_OK)
+    {
+        free(st);
+        return rv;
     }
     out->ops = &FILE_OPS;
     out->ctx = st;
