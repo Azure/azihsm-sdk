@@ -65,6 +65,7 @@ members = [
   "fw/pal/traits",
   "fw/plat/std/lib",
   "fw/plat/std/pal",
+  "plugins/azihsm_pkcs11",
   "plugins/ossl_engine/azihsm_ossl_engine",
   "plugins/ossl_engine/azihsm_ossl_engine_core",
   "plugins/ossl_engine/azihsm_ossl_engine_resiliency",
