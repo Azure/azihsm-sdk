@@ -619,24 +619,6 @@ fn aes_encrypt_decrypt_rejects_bad_decrypt_msg_len() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
 
-/// Verifies an empty AES-CBC message is rejected.
-#[test]
-fn aes_encrypt_decrypt_rejects_empty_msg() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
-
-    let req = TborAesEncryptDecryptReq {
-        session_id: session.session_id,
-        masked_key: key,
-        op: AES_OP_ENCRYPT,
-        msg: Vec::new(),
-        iv: random_iv(),
-    };
-
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
-}
-
 /// Verifies encryption rejects an empty AES-CBC message.
 #[test]
 fn aes_encrypt_decrypt_rejects_empty_encrypt_msg() {
