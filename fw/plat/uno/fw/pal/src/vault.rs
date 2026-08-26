@@ -80,40 +80,38 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-        // A bulk key is mirrored in the fast-path engine and keeps only its
-        // 2-byte handle in the vault.  Read the handle and the session id it
-        // was created under (both from the vault entry) so the engine-side
-        // delete matches the create, then attempt BOTH the vault delete and
-        // the engine delete even if the first fails — so neither a failed
-        // vault delete leaves the engine key allocated with no owner, nor a
-        // failed engine delete leaves a usable handle behind.  The vault
-        // error is surfaced first, else the engine error.
-        let bulk = if is_bulk_kind(self.vault_key_kind(io, key_id)?) {
-            let session = vault(io).key_session(key_id)?;
+        // Non-bulk keys live entirely in the vault; delete directly.
+        if !is_bulk_kind(self.vault_key_kind(io, key_id)?) {
+            return vault(io).delete(self, io, key_id).await;
+        }
+
+        // Bulk keys are mirrored in the fast-path engine and keep only their
+        // 2-byte handle in the vault.  Read the handle + creating session
+        // while the entry is live, disable it (synchronous: hides the key and
+        // pins its slot across the engine round-trip), delete the engine key,
+        // then drop the vault entry.  Re-enable on engine-delete failure.
+        let session = vault(io).key_session(key_id)?;
+        let bulk_id = {
             let blob = self.vault_key(io, key_id)?;
             let bytes: &[u8] = blob;
-            // A bulk vault entry must hold exactly the 2-byte engine handle;
-            // any other length means the entry is corrupt.  Fail fast BEFORE
-            // deleting the vault entry so the inconsistency surfaces and the
-            // engine key is not silently orphaned (which would also lose the
-            // handle needed to recover it).
+            // A bulk entry holds exactly the 2-byte handle; any other length
+            // is a corrupt entry.
             if bytes.len() != core::mem::size_of::<u16>() {
                 return Err(HsmError::InternalError);
             }
-            Some((u16::from_le_bytes([bytes[0], bytes[1]]), session))
-        } else {
-            None
+            u16::from_le_bytes([bytes[0], bytes[1]])
         };
 
-        let mut v = vault(io);
-        let vault_res = v.delete(self, io, key_id).await;
-        let backend_res = match bulk {
-            Some((bulk_id, session)) => {
-                fp_bulk_delete(self, io, bulk_id, session.unwrap_or(0), session.is_some()).await
-            }
-            None => Ok(()),
-        };
-        vault_res.and(backend_res)
+        vault(io).disable(key_id)?;
+
+        if let Err(e) =
+            fp_bulk_delete(self, io, bulk_id, session.unwrap_or(0), session.is_some()).await
+        {
+            let _ = vault(io).enable(key_id);
+            return Err(e);
+        }
+
+        vault(io).delete(self, io, key_id).await
     }
 
     fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
@@ -131,13 +129,12 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        // Session teardown: release the session's bulk keys from the
-        // fast-path engine, mirroring the reference firmware's close path.
-        // First free the HSM-side slot bitmap for each of the session's
-        // bulk keys (read from the vault before the entries are dropped),
-        // then a single DeleteEphemeral clears them on the engine (which
-        // matches by session id + app id), then drop the vault entries.
+        // Session teardown: a single DeleteEphemeral clears the session's
+        // bulk keys on the fast-path engine (matched by session id + app id;
+        // a no-op when the session owns none), then reclaim their HSM-side
+        // slot bitmap, then drop the vault entries.
         let sess = u16::from(session_id);
+        fp_delete_ephemeral(self, io, sess).await?;
         vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
             if is_bulk_kind(kind) {
                 let bytes: &[u8] = blob;
@@ -147,10 +144,7 @@ impl HsmVault for UnoHsmPal {
                 }
             }
         })?;
-        let backend_res = fp_delete_ephemeral(self, io, sess).await;
-        let mut v = vault(io);
-        let vault_res = v.delete_by_session(self, io, sess).await;
-        vault_res.and(backend_res)
+        vault(io).delete_by_session(self, io, sess).await
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {

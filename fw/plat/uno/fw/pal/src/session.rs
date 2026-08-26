@@ -85,9 +85,8 @@ impl HsmSessionManager for UnoHsmPal {
         // session key before creating the replacement.
         if let Some(reopen_id) = id {
             let old_phys = table.physical_id(reopen_id)?;
-            let mut v = crate::vault::vault(io);
-            v.delete_by_session(self, io, u16::from(reopen_id)).await?;
-            v.delete(self, io, old_phys).await?;
+            self.vault_key_delete_by_session(io, reopen_id).await?;
+            crate::vault::vault(io).delete(self, io, old_phys).await?;
         }
 
         // Build the 88-byte session blob in a DMA buffer:
@@ -140,11 +139,13 @@ impl HsmSessionManager for UnoHsmPal {
         // session-store borrow before the awaits).
         let physical_id = table.physical_id(id)?;
 
-        // Delete every session-scoped key bound to this logical session,
-        // then the session key itself.
-        let mut v = crate::vault::vault(io);
-        v.delete_by_session(self, io, u16::from(id)).await?;
-        v.delete(self, io, physical_id).await?;
+        // Delete every session-scoped key bound to this logical session
+        // (including any fast-path engine cleanup), then the session key
+        // itself.
+        self.vault_key_delete_by_session(io, id).await?;
+        crate::vault::vault(io)
+            .delete(self, io, physical_id)
+            .await?;
 
         // Free the logical session slot.
         table.delete(id)?;

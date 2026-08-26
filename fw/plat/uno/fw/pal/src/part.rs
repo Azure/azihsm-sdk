@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
@@ -565,11 +566,10 @@ impl UnoHsmPal {
         // because the session slots were never freed.
 
         // Wipe every vault key (app + session + internal) so no prior
-        // tenant key material survives the reset.
+        // tenant key material survives the reset, and release the partition's
+        // fast-path engine bulk-key slots.
         let admin_io = UnoHsmIo::admin(pid);
-        crate::vault::vault(&admin_io)
-            .clear(self, &admin_io)
-            .await?;
+        self.vault_clear(&admin_io).await?;
         // Clear the per-tenant persistent state (including the session
         // table), preserving the partition's provisioning material.
         part.clear_state(PartResetKind::Migrate);
