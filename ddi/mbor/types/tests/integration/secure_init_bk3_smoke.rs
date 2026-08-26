@@ -1,20 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SecureInitBk3 / SetInitBk3Pin smoke test for mock and hardware backends.
+//! SecureInitBk3 / SetInitBk3Pin smoke tests for mock and hardware backends.
 //!
-//! `test_secure_init_bk3_smoke` mirrors `helper_get_or_init_bk3`, but on the
-//! secure BK3 path:
-//! - Skips when a sealed BK3 is already present (secure provisioning is one-shot
-//!   and persistent, so a re-run is a no-op).
-//! - Otherwise securely provisions (`set_init_bk3_pin` + `secure_init_bk3`) and
-//!   seals the resulting masked BK3 (MOBK).
+//! - `test_secure_init_bk3_smoke` mirrors `helper_get_or_init_bk3`, but on the
+//!   secure BK3 path:
+//!   - Skips when a sealed BK3 is already present (secure provisioning is
+//!     one-shot and persistent, so a re-run is a no-op).
+//!   - Otherwise securely provisions (`set_init_bk3_pin` + `secure_init_bk3`)
+//!     and seals the resulting masked BK3 (MOBK).
+//! - `test_secure_init_bk3_requires_pin` is the negative case: on a fresh
+//!   partition, `secure_init_bk3` before `set_init_bk3_pin` must be rejected
+//!   with `Bk3PinNotSet`.
 
 #![cfg(not(feature = "emu"))]
 #![cfg(test)]
 
-use azihsm_cred_encrypt::Bk3EncryptionKey;
-use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto::Rng;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
@@ -32,71 +33,6 @@ pub fn cleanup(
     _path: &str,
     _setup_session_id: Option<u16>,
 ) {
-}
-
-const API_REV: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
-
-/// Full secure provisioning (set_init_bk3_pin + secure_init_bk3), each over its
-/// own fresh ECDH tunnel.
-fn secure_provision_bk3(
-    dev: &<DdiTest as Ddi>::Dev,
-    id: [u8; 16],
-    pin: [u8; 16],
-    bk3: &[u8; 48],
-) -> Result<DdiSecureInitBk3CmdResp, DdiError> {
-    let rev = Some(API_REV);
-
-    // set_init_bk3_pin
-    let resp1 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
-    let nonce1 = resp1.data.nonce;
-    let dev_key1 = DeviceCredKey::new(&resp1.data.pub_key, nonce1);
-    assert!(dev_key1.is_ok(), "DeviceCredKey::new failed: {dev_key1:?}");
-    let cred = dev_key1
-        .unwrap()
-        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
-    assert!(
-        cred.is_ok(),
-        "create_credential_key_from_der failed: {:?}",
-        cred.as_ref().err()
-    );
-    let (cred_key, pub_key1) = cred.unwrap();
-    let encrypted_credential = cred_key.encrypt_establish_credential(id, pin, nonce1);
-    assert!(
-        encrypted_credential.is_ok(),
-        "encrypt_establish_credential failed: {encrypted_credential:?}"
-    );
-    helper_set_init_bk3_pin(dev, encrypted_credential.unwrap(), pub_key1)?;
-
-    // secure_init_bk3
-    let resp2 = helper_get_establish_cred_encryption_key(dev, None, rev)?;
-    let nonce2 = resp2.data.nonce;
-    let dev_key2 = DeviceCredKey::new(&resp2.data.pub_key, nonce2);
-    assert!(dev_key2.is_ok(), "DeviceCredKey::new failed: {dev_key2:?}");
-    let bk3_res = dev_key2
-        .unwrap()
-        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
-    assert!(
-        bk3_res.is_ok(),
-        "create_bk3_key_from_der failed: {:?}",
-        bk3_res.as_ref().err()
-    );
-    let (bk3_key, pub_key2): (Bk3EncryptionKey, DdiDerPublicKey) = bk3_res.unwrap();
-    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce2);
-    assert!(
-        encrypted_bk3.is_ok(),
-        "encrypt_bk3 failed: {encrypted_bk3:?}"
-    );
-    helper_secure_init_bk3(dev, encrypted_bk3.unwrap(), pub_key2)
-}
-
-/// Validate whether the device already has a sealed BK3.
-///
-/// Secure provisioning is one-shot and persistent, so a present sealed BK3 means
-/// the partition is already provisioned and callers can skip (re)provisioning.
-/// `helper_get_sealed_bk3` returns `Ok` only when a sealed BK3 is present;
-/// otherwise it errors (`Bk3NotSecurelyProvisioned` / `SealedBk3NotPresent`).
-fn is_bk3_sealed(dev: &<DdiTest as Ddi>::Dev) -> bool {
-    helper_get_sealed_bk3(dev).is_ok()
 }
 
 /// Secure BK3 smoke: provision (`set_init_bk3_pin` + `secure_init_bk3`) and seal,
@@ -117,11 +53,38 @@ fn test_secure_init_bk3_smoke() {
         Rng::rand_bytes(&mut bk3).expect("rand_bytes failed");
 
         // Not provisioned yet: securely provision, then seal the masked BK3 (MOBK).
-        let result = secure_provision_bk3(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
-        assert!(result.is_ok(), "result {:?}", result);
-        let masked_bk3 = result.unwrap().data.masked_bk3;
+        let result = secure_bk3_provision_and_seal(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(result.is_ok(), "provision + seal {result:?}");
+    });
+}
 
-        let result = helper_set_sealed_bk3(dev, masked_bk3.as_slice().to_vec());
-        assert!(result.is_ok(), "result {:?}", result);
+/// Negative smoke: `secure_init_bk3` before `set_init_bk3_pin` must be rejected.
+///
+/// On a fresh partition the in-flight provisioning PIN is unset, so a
+/// `secure_init_bk3` attempt must fail `Bk3PinNotSet`. This is the basic
+/// ordering guard, independent of any live-migration semantics. It fails
+/// cleanly without advancing the (process-global, monotonic) mock BK3 store, so
+/// it is kept as a separate test and run one-at-a-time via an exact filter.
+#[test]
+fn test_secure_init_bk3_requires_pin() {
+    ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        // A sealed BK3 means provisioning is already complete; nothing to check.
+        if is_bk3_sealed(dev) {
+            return;
+        }
+
+        let mut bk3 = [0u8; 48];
+        Rng::rand_bytes(&mut bk3).expect("rand_bytes failed");
+
+        // Build the encrypted-BK3 payload, then attempt secure_init_bk3 without
+        // having set the provisioning PIN: it must be rejected as Bk3PinNotSet.
+        let payload = build_secure_init_bk3_payload(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+        assert!(payload.is_ok(), "payload {payload:?}");
+        let (eb, pk) = payload.unwrap();
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        assert!(
+            matches!(result, Err(DdiError::DdiStatus(DdiStatus::Bk3PinNotSet))),
+            "secure_init before set_pin: {result:?}"
+        );
     });
 }

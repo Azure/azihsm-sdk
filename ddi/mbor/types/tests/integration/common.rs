@@ -9,6 +9,7 @@ pub mod helpers;
 
 use std::thread;
 
+use azihsm_cred_encrypt::Bk3EncryptionKey;
 use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto::*;
 use azihsm_ddi::*;
@@ -1474,6 +1475,126 @@ pub fn is_unsupported_cmd(err: &DdiError) -> bool {
     } else {
         false
     }
+}
+
+/// Validate whether the device already has a sealed BK3.
+///
+/// Secure provisioning is one-shot and persistent, so a present sealed BK3 means
+/// the partition is already provisioned and callers can skip (re)provisioning.
+/// `helper_get_sealed_bk3` returns `Ok` only when a sealed BK3 is present;
+/// otherwise it errors (`Bk3NotSecurelyProvisioned` / `SealedBk3NotPresent`).
+#[allow(dead_code)]
+pub fn is_bk3_sealed(dev: &<DdiTest as Ddi>::Dev) -> bool {
+    helper_get_sealed_bk3(dev).is_ok()
+}
+
+/// `SetInitBk3Pin`: store the encrypted `(id, pin)` provisioning credential over
+/// a fresh ECDH tunnel.
+#[allow(dead_code)]
+pub fn set_init_bk3_pin(
+    dev: &<DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+) -> Result<(), DdiError> {
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
+    let nonce = resp.data.nonce;
+    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
+    assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");
+    let cred = dev_key
+        .unwrap()
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        cred.is_ok(),
+        "create_credential_key_from_der failed: {:?}",
+        cred.as_ref().err()
+    );
+    let (cred_key, pub_key) = cred.unwrap();
+    let ecred = cred_key.encrypt_establish_credential(id, pin, nonce);
+    assert!(
+        ecred.is_ok(),
+        "encrypt_establish_credential failed: {ecred:?}"
+    );
+    helper_set_init_bk3_pin(dev, ecred.unwrap(), pub_key)?;
+    Ok(())
+}
+
+/// Build the encrypted, PIN-authenticated BK3 payload for `SecureInitBk3` over a
+/// fresh ECDH tunnel.
+#[allow(dead_code)]
+pub fn build_secure_init_bk3_payload(
+    dev: &<DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    bk3: &[u8; 48],
+) -> Result<(DdiEncryptedBk3, DdiDerPublicKey), DdiError> {
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
+    let nonce = resp.data.nonce;
+    let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
+    assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");
+    let bk3_res = dev_key
+        .unwrap()
+        .create_bk3_key_from_der(&TEST_ECC_384_PRIVATE_KEY);
+    assert!(
+        bk3_res.is_ok(),
+        "create_bk3_key_from_der failed: {:?}",
+        bk3_res.as_ref().err()
+    );
+    let (bk3_key, pub_key): (Bk3EncryptionKey, DdiDerPublicKey) = bk3_res.unwrap();
+    let encrypted_bk3 = bk3_key.encrypt_bk3(bk3, id, pin, nonce);
+    assert!(
+        encrypted_bk3.is_ok(),
+        "encrypt_bk3 failed: {encrypted_bk3:?}"
+    );
+    Ok((encrypted_bk3.unwrap(), pub_key))
+}
+
+/// Full secure provisioning: set the PIN, then inject BK3 (each over its own
+/// fresh ECDH tunnel).
+#[allow(dead_code)]
+pub fn secure_provision_bk3(
+    dev: &<DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    bk3: &[u8; 48],
+) -> Result<DdiSecureInitBk3CmdResp, DdiError> {
+    set_init_bk3_pin(dev, id, pin)?;
+    let (encrypted_bk3, pub_key) = build_secure_init_bk3_payload(dev, id, pin, bk3)?;
+    helper_secure_init_bk3(dev, encrypted_bk3, pub_key)
+}
+
+/// Securely provision a fresh partition (`set_init_bk3_pin` + `secure_init_bk3`)
+/// and seal the resulting masked BK3 (MOBK). Returns the sealed blob read back
+/// from the device.
+///
+/// Propagates the underlying op error (e.g. `UnsupportedCmd` on emu, or a
+/// persistent-BK3 status on a non-fresh partition) so callers can skip; asserts
+/// the on-success invariants (response status, masked-BK3 length and launch
+/// GUID, seal + read-back succeed).
+#[allow(dead_code)]
+pub fn secure_bk3_provision_and_seal(
+    dev: &<DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    bk3: &[u8; 48],
+) -> Result<Vec<u8>, DdiError> {
+    let resp = secure_provision_bk3(dev, id, pin, bk3)?;
+    assert_eq!(resp.hdr.status, DdiStatus::Success);
+    assert_eq!(resp.data.vm_launch_guid.len(), 16);
+    let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
+    assert!(
+        (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_bk3.len()),
+        "masked_bk3 length {} is outside the expected range",
+        masked_bk3.len()
+    );
+    helper_set_sealed_bk3(dev, masked_bk3)?;
+    let sealed = helper_get_sealed_bk3(dev)?
+        .data
+        .sealed_bk3
+        .as_slice()
+        .to_vec();
+    Ok(sealed)
 }
 
 /// Helper to check if firmware was not build with mcr_test_hooks
