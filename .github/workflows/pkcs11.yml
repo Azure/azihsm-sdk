@@ -54,3 +54,26 @@ jobs:
 
       # TODO: add pkcs11test as the conformance gate once the key-backed
       # mechanisms land and there is a meaningful conformance surface to check.
+
+  # Object-store unit tests: standalone C harnesses that link the backend
+  # sources directly (no device, no libcrypto), so they need only a compiler.
+  objstore-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and run the object-store unit tests
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          inc="-I include/pkcs11-v3.1 -I src"
+          warn="-Wall -Wextra -Werror"
+          store_src="src/azihsm_pkcs11_objstore_file.c src/azihsm_pkcs11_objstore_mem.c src/azihsm_pkcs11_store_io.c src/azihsm_pkcs11_store_record.c"
+          gcc $warn $inc tests/store_io_test.c src/azihsm_pkcs11_store_io.c -o store_io_test
+          gcc $warn $inc tests/record_test.c src/azihsm_pkcs11_store_record.c -o record_test
+          gcc $warn $inc tests/objstore_file_test.c $store_src -o objstore_file_test -lpthread
+          gcc $warn $inc tests/objstore_stress_test.c $store_src -o objstore_stress_test -lpthread
+          ./store_io_test
+          ./record_test
+          ./objstore_file_test
+          ./objstore_stress_test

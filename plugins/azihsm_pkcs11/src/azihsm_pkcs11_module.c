@@ -183,6 +183,14 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
     azihsm_pkcs11_hsm_close_all();
     if (g_azihsm_pkcs11.store.ctx != NULL)
     {
+        /* Flush the store before tearing it down. Backends that write through
+         * (or hold nothing durable) have nothing to do; persist is NULL on the
+         * in-memory backend. It is a barrier, so its result does not change the
+         * C_Finalize outcome. */
+        if (g_azihsm_pkcs11.store.ops->persist != NULL)
+        {
+            (void)g_azihsm_pkcs11.store.ops->persist(g_azihsm_pkcs11.store.ctx);
+        }
         g_azihsm_pkcs11.store.ops->teardown(g_azihsm_pkcs11.store.ctx);
         g_azihsm_pkcs11.store.ctx = NULL;
     }
