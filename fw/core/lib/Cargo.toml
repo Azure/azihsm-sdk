@@ -36,5 +36,7 @@ zerocopy.workspace = true
 
 [features]
 default = ["std"]
+fips_validation_hooks = []
+mcr_test_hooks = []
 std = []
 tracing = []
