@@ -29,6 +29,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::AES_MSG_MAX_LEN;
 use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
 use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
@@ -616,4 +617,257 @@ fn aes_encrypt_decrypt_rejects_bad_decrypt_msg_len() {
     };
 
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Verifies an empty AES-CBC message is rejected.
+#[test]
+fn aes_encrypt_decrypt_rejects_empty_msg() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: session.session_id,
+        masked_key: key,
+        op: AES_OP_ENCRYPT,
+        msg: Vec::new(),
+        iv: random_iv(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Verifies encryption rejects an empty AES-CBC message.
+#[test]
+fn aes_encrypt_decrypt_rejects_empty_encrypt_msg() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: session.session_id,
+        masked_key: key,
+        op: AES_OP_ENCRYPT,
+        msg: Vec::new(),
+        iv: random_iv(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Verifies decryption rejects an empty AES-CBC message.
+#[test]
+fn aes_encrypt_decrypt_rejects_empty_decrypt_msg() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: session.session_id,
+        masked_key: key,
+        op: AES_OP_DECRYPT,
+        msg: Vec::new(),
+        iv: random_iv(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Verifies unsupported AES operation discriminants are rejected.
+#[test]
+fn aes_encrypt_decrypt_rejects_invalid_ops() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for op in [0, AES_OP_DECRYPT + 1, u8::MAX] {
+        let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+        let req = TborAesEncryptDecryptReq {
+            session_id: session.session_id,
+            masked_key: key,
+            op,
+            msg: vec![0u8; IV_LEN],
+            iv: random_iv(),
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
+}
+
+/// Verifies an invalid AES operation is rejected before message-length validation.
+#[test]
+fn aes_encrypt_decrypt_invalid_op_precedes_bad_msg_len() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: session.session_id,
+        masked_key: key,
+        op: 0,
+        msg: vec![0u8; 20],
+        iv: random_iv(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Verifies the encrypt operation independently produces ciphertext and the expected chaining IV.
+#[test]
+fn aes_encrypt_decrypt_encrypt_op_semantics() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let msg = [0x5Au8; 32];
+    let iv = random_iv();
+
+    let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
+
+    assert_ne!(
+        enc.msg, msg,
+        "encrypt operation must produce ciphertext different from plaintext",
+    );
+
+    assert_eq!(
+        enc.msg.len(),
+        msg.len(),
+        "encrypt operation must preserve message length",
+    );
+
+    assert_eq!(
+        enc.iv,
+        enc.msg[enc.msg.len() - IV_LEN..],
+        "encrypt operation must return the final ciphertext block as the chaining IV",
+    );
+}
+
+/// Verifies the decrypt operation independently recovers plaintext and returns the consumed ciphertext block as the IV.
+#[test]
+fn aes_encrypt_decrypt_decrypt_op_semantics() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let msg = [0x5Au8; 32];
+    let iv = random_iv();
+
+    let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
+
+    let dec = aes_op(
+        &ctx,
+        session.session_id,
+        &key,
+        AES_OP_DECRYPT,
+        &enc.msg,
+        &iv,
+    );
+
+    assert_eq!(
+        dec.msg, msg,
+        "decrypt operation must recover the original plaintext",
+    );
+
+    assert_eq!(
+        dec.iv,
+        enc.msg[enc.msg.len() - IV_LEN..],
+        "decrypt operation must return the final ciphertext block as the chaining IV",
+    );
+}
+
+/// Verifies AES-CBC accepts and round-trips the maximum supported message length.
+#[test]
+fn aes_encrypt_decrypt_max_msg_len_roundtrip() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let msg = vec![0xA5u8; AES_MSG_MAX_LEN];
+    let iv = random_iv();
+
+    assert_eq!(
+        msg.len() % IV_LEN,
+        0,
+        "maximum message length must be AES-block aligned",
+    );
+
+    let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
+
+    assert_eq!(
+        enc.msg.len(),
+        AES_MSG_MAX_LEN,
+        "maximum-length encryption must preserve message length",
+    );
+
+    assert_eq!(
+        enc.iv,
+        enc.msg[enc.msg.len() - IV_LEN..],
+        "maximum-length encryption must return the final ciphertext block as the IV",
+    );
+
+    let dec = aes_op(
+        &ctx,
+        session.session_id,
+        &key,
+        AES_OP_DECRYPT,
+        &enc.msg,
+        &iv,
+    );
+
+    assert_eq!(
+        dec.msg, msg,
+        "maximum-length AES-CBC message must round-trip",
+    );
+}
+
+/// Verifies the maximum-length decrypt operation returns the final ciphertext block as the chaining IV.
+#[test]
+fn aes_encrypt_decrypt_max_msg_len_decrypt_iv() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let msg = vec![0x5Au8; AES_MSG_MAX_LEN];
+    let iv = random_iv();
+
+    let enc = aes_op(&ctx, session.session_id, &key, AES_OP_ENCRYPT, &msg, &iv);
+
+    let dec = aes_op(
+        &ctx,
+        session.session_id,
+        &key,
+        AES_OP_DECRYPT,
+        &enc.msg,
+        &iv,
+    );
+
+    assert_eq!(
+        dec.msg, msg,
+        "maximum-length decrypt must recover the plaintext",
+    );
+
+    assert_eq!(
+        dec.iv,
+        enc.msg[enc.msg.len() - IV_LEN..],
+        "maximum-length decrypt must return the final ciphertext block as the chaining IV",
+    );
+}
+
+/// Verifies AES-CBC rejects a nonexistent session.
+#[test]
+fn aes_encrypt_decrypt_rejects_invalid_session() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+    let req = TborAesEncryptDecryptReq {
+        session_id: u16::MAX,
+        masked_key: key,
+        op: AES_OP_ENCRYPT,
+        msg: vec![0u8; IV_LEN],
+        iv: random_iv(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
 }
