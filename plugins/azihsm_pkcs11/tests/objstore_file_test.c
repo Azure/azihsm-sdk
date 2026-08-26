@@ -97,6 +97,36 @@ static CK_RV read_label(
     return rv;
 }
 
+/* Run a full find (init -> drain -> final) and return the number of matches;
+ * (CK_ULONG)-1 on an op error. */
+static CK_ULONG find_count(
+    azihsm_pkcs11_objstore *s,
+    CK_SLOT_ID slot,
+    CK_BBOOL logged_in,
+    CK_ATTRIBUTE *tmpl,
+    CK_ULONG n
+)
+{
+    void *cur = NULL;
+    if (s->ops->find_init(s->ctx, slot, logged_in, tmpl, n, &cur) != CKR_OK)
+    {
+        return (CK_ULONG)-1;
+    }
+    CK_ULONG total = 0;
+    for (;;)
+    {
+        CK_OBJECT_HANDLE batch[16];
+        CK_ULONG got = 0;
+        if (s->ops->find(s->ctx, cur, batch, 16, &got) != CKR_OK || got == 0)
+        {
+            break;
+        }
+        total += got;
+    }
+    s->ops->find_final(s->ctx, cur);
+    return total;
+}
+
 int main(void)
 {
     char root[] = "/tmp/azihsm_pkcs11_objstore_test.XXXXXX";
@@ -223,6 +253,39 @@ int main(void)
         "two-call sizing on CKA_LABEL (pValue NULL -> length)"
     );
 
+    /* --- find: token + session, label filter, private gating, empty template.
+           So far this slot has (visible): tok-public (token), sess-obj
+           (session), priv-key-meta (token, private), sens (token). --- */
+    CK_OBJECT_CLASS data_cls = CKO_DATA;
+    CK_ATTRIBUTE by_class[] = { { CKA_CLASS, &data_cls, sizeof(data_cls) } };
+    /* Logged out: the private object is excluded -> 3 (tok-public, sess, sens). */
+    CHECK(
+        find_count(&s, SLOT, CK_FALSE, by_class, 1) == 3,
+        "find by class excludes the private object when logged out"
+    );
+    /* Logged in: the private object is included -> 4. */
+    CHECK(
+        find_count(&s, SLOT, CK_TRUE, by_class, 1) == 4,
+        "find by class includes the private object when logged in"
+    );
+    /* Empty template returns all visible objects (same 3 when logged out). */
+    CHECK(
+        find_count(&s, SLOT, CK_FALSE, NULL, 0) == 3,
+        "find with empty template returns all visible"
+    );
+    /* Label filter selects exactly one, and it is the on-disk token object. */
+    CK_ATTRIBUTE by_label[] = { { CKA_LABEL, (void *)"tok-public", 10 } };
+    void *cur = NULL;
+    CK_OBJECT_HANDLE got1[4];
+    CK_ULONG got1n = 0;
+    s.ops->find_init(s.ctx, SLOT, CK_FALSE, by_label, 1, &cur);
+    s.ops->find(s.ctx, cur, got1, 4, &got1n);
+    s.ops->find_final(s.ctx, cur);
+    CHECK(got1n == 1 && got1[0] == tok, "find by label returns exactly the matching token handle");
+    /* A session object is found too (label filter on the session object). */
+    CK_ATTRIBUTE by_slabel[] = { { CKA_LABEL, (void *)"sess-obj", 8 } };
+    CHECK(find_count(&s, SLOT, CK_FALSE, by_slabel, 1) == 1, "find locates the session object");
+
     /* --- counter-first no reuse: destroy then create gets a higher number --- */
     CK_OBJECT_HANDLE a = 0, b = 0;
     make_object(&s, SLOT, CK_FALSE, CK_TRUE, CK_FALSE, "a", NULL, 0, CK_FALSE, &a);
@@ -255,6 +318,13 @@ int main(void)
             memcmp(cl, "tok-public", 10) != 0)
         {
             bad_child = 1; /* the parent's token object did not persist */
+        }
+        /* A fresh find must see the persisted token objects (tok-public,
+         * priv-key-meta, sens, b = 4 when logged in) and none of the parent's
+         * ephemeral session objects. */
+        if (find_count(&cs, SLOT, CK_TRUE, by_class, 1) != 4)
+        {
+            bad_child = 1;
         }
         CK_OBJECT_HANDLE cnew = 0;
         if (make_object(

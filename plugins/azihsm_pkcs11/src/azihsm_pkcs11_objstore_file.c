@@ -34,6 +34,7 @@
 #include "azihsm_pkcs11_store_io.h"
 #include "azihsm_pkcs11_store_record.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -475,6 +476,147 @@ static CK_RV file_set_attr(
     return CKR_FUNCTION_NOT_SUPPORTED; /* token set_attr lands in a later phase */
 }
 
+/* ---- find (enumeration) ------------------------------------------------- */
+
+/* A find cursor is a snapshot of matching handles built at find_init; find just
+ * drains it and find_final frees it, so neither touches the store again. */
+typedef struct
+{
+    CK_OBJECT_HANDLE *handles;
+    CK_ULONG count;
+    CK_ULONG cap;
+    CK_ULONG pos;
+} file_cursor;
+
+static CK_RV cursor_append(file_cursor *c, CK_OBJECT_HANDLE h)
+{
+    if (c->count == c->cap)
+    {
+        CK_ULONG ncap = c->cap ? c->cap * 2 : 16;
+        CK_OBJECT_HANDLE *grown = (CK_OBJECT_HANDLE *)realloc(c->handles, ncap * sizeof(*grown));
+        if (grown == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        c->handles = grown;
+        c->cap = ncap;
+    }
+    c->handles[c->count++] = h;
+    return CKR_OK;
+}
+
+static CK_BBOOL matches_rec(
+    const azihsm_pkcs11_rec_object *o,
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count
+)
+{
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        const azihsm_pkcs11_rec_attr *a = rec_find(o, tmpl[i].type);
+        if (a == NULL || a->len != tmpl[i].ulValueLen)
+        {
+            return CK_FALSE;
+        }
+        if (a->len > 0 && memcmp(a->value, tmpl[i].pValue, a->len) != 0)
+        {
+            return CK_FALSE;
+        }
+    }
+    return CK_TRUE;
+}
+
+/* Parse "<digits>.object" into its handle number; returns 0 for any other name
+ * (token.meta, .lock, temp files, ".", ".."), so the scan skips them. */
+static int parse_object_name(const char *name, CK_ULONG *num)
+{
+    static const char suffix[] = ".object";
+    size_t len = strlen(name);
+    size_t slen = sizeof(suffix) - 1;
+    if (len <= slen || len - slen > 20) /* 20 = max decimal digits in a u64 */
+    {
+        return 0;
+    }
+    size_t digits = len - slen;
+    if (strcmp(name + digits, suffix) != 0)
+    {
+        return 0;
+    }
+    CK_ULONG v = 0;
+    for (size_t i = 0; i < digits; i++)
+    {
+        if (name[i] < '0' || name[i] > '9')
+        {
+            return 0;
+        }
+        v = v * 10 + (CK_ULONG)(name[i] - '0');
+    }
+    *num = v;
+    return 1;
+}
+
+/*
+ * Append every visible token object in `slot` matching `tmpl` to the cursor.
+ * Lock-free by design: each object write is an atomic rename and a deletion is
+ * tolerated (a file that vanishes mid-scan is skipped), so a scan never reads a
+ * torn record; an object added concurrently may be missed, which PKCS#11 allows.
+ */
+static CK_RV collect_token_matches(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count,
+    file_cursor *c
+)
+{
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    DIR *d = opendir(dir);
+    if (d == NULL)
+    {
+        return CKR_OK; /* no token directory yet -> no token objects */
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL)
+    {
+        CK_ULONG num = 0;
+        if (!parse_object_name(e->d_name, &num))
+        {
+            continue;
+        }
+        unsigned char *buf = NULL;
+        size_t blen = 0;
+        if (azihsm_pkcs11_store_read(dir, e->d_name, &buf, &blen) != CKR_OK || buf == NULL)
+        {
+            continue; /* removed or unreadable mid-scan */
+        }
+        azihsm_pkcs11_rec_object o;
+        int decoded = (azihsm_pkcs11_record_decode(buf, blen, &o) == CKR_OK);
+        free(buf);
+        if (!decoded)
+        {
+            continue; /* skip a corrupt record rather than fail the whole scan */
+        }
+        CK_BBOOL is_private = rec_bool(&o, CKA_PRIVATE, CK_FALSE);
+        if ((!is_private || user_logged_in) && matches_rec(&o, tmpl, count))
+        {
+            rv = cursor_append(c, P11_FILE_TOKEN_FLAG | num);
+        }
+        azihsm_pkcs11_record_free(&o);
+        if (rv != CKR_OK)
+        {
+            break;
+        }
+    }
+    closedir(d);
+    return rv;
+}
+
 static CK_RV file_find_init(
     void *ctx,
     CK_SLOT_ID slot,
@@ -484,13 +626,70 @@ static CK_RV file_find_init(
     void **cursor
 )
 {
-    (void)ctx;
-    (void)slot;
-    (void)user_logged_in;
-    (void)tmpl;
-    (void)count;
-    (void)cursor;
-    return CKR_FUNCTION_NOT_SUPPORTED; /* enumeration lands in a later phase */
+    file_store *st = (file_store *)ctx;
+    /* Reject a malformed template up front (mirrors the in-memory backend). */
+    if (count > 0 && tmpl == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
+        {
+            return CKR_ARGUMENTS_BAD;
+        }
+    }
+
+    file_cursor *c = (file_cursor *)calloc(1, sizeof(file_cursor));
+    if (c == NULL)
+    {
+        return CKR_HOST_MEMORY;
+    }
+
+    /* Session matches come from the embedded backend; drain its cursor into our
+     * snapshot so find/find_final never touch it again. */
+    void *memcur = NULL;
+    CK_RV rv = st->mem.ops->find_init(st->mem.ctx, slot, user_logged_in, tmpl, count, &memcur);
+    if (rv == CKR_OK)
+    {
+        for (;;)
+        {
+            CK_OBJECT_HANDLE batch[64];
+            CK_ULONG got = 0;
+            rv = st->mem.ops->find(st->mem.ctx, memcur, batch, 64, &got);
+            if (rv != CKR_OK || got == 0)
+            {
+                break;
+            }
+            for (CK_ULONG i = 0; i < got; i++)
+            {
+                rv = cursor_append(c, batch[i]);
+                if (rv != CKR_OK)
+                {
+                    break;
+                }
+            }
+            if (rv != CKR_OK)
+            {
+                break;
+            }
+        }
+        st->mem.ops->find_final(st->mem.ctx, memcur);
+    }
+
+    /* Token matches from disk. */
+    if (rv == CKR_OK)
+    {
+        rv = collect_token_matches(st, slot, user_logged_in, tmpl, count, c);
+    }
+    if (rv != CKR_OK)
+    {
+        free(c->handles);
+        free(c);
+        return rv;
+    }
+    *cursor = c;
+    return CKR_OK;
 }
 
 static CK_RV file_find(
@@ -502,17 +701,25 @@ static CK_RV file_find(
 )
 {
     (void)ctx;
-    (void)cursor;
-    (void)out;
-    (void)max;
-    (void)count;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    file_cursor *c = (file_cursor *)cursor;
+    CK_ULONG n = 0;
+    while (c->pos < c->count && n < max)
+    {
+        out[n++] = c->handles[c->pos++];
+    }
+    *count = n;
+    return CKR_OK;
 }
 
 static void file_find_final(void *ctx, void *cursor)
 {
     (void)ctx;
-    (void)cursor;
+    file_cursor *c = (file_cursor *)cursor;
+    if (c != NULL)
+    {
+        free(c->handles);
+        free(c);
+    }
 }
 
 static CK_RV file_set_key_body(
