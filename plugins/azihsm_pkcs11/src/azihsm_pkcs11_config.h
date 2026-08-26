@@ -5,6 +5,8 @@
 
 #include "azihsm_pkcs11_compat.h"
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -18,17 +20,28 @@ extern "C"
 #define AZIHSM_PKCS11_ENV_ID "AZIHSM_PKCS11_ID"
 #define AZIHSM_PKCS11_ENV_PIN "AZIHSM_PKCS11_PIN"
 
+/* Persistent host object store: opt-in file backend rooted at a store directory.
+ * The backend is enabled by AZIHSM_PKCS11_PERSIST and rooted at
+ * AZIHSM_PKCS11_STORE_DIR (a safe path), defaulting to a dedicated directory. */
+#define AZIHSM_PKCS11_STORE_DIR_LEN 4096
+#define AZIHSM_PKCS11_ENV_STORE_DIR "AZIHSM_PKCS11_STORE_DIR"
+#define AZIHSM_PKCS11_ENV_PERSIST "AZIHSM_PKCS11_PERSIST"
+#define AZIHSM_PKCS11_DEFAULT_STORE_DIR "/var/lib/azihsm/pkcs11"
+
 /*
- * Provisioning inputs the module supplies to the AZIHSM ceremony. The partition
- * identifier and owner backup key are operator/token-install configuration; the
- * per-login PIN comes from C_Login, and `default_pin` is only the fallback used
- * when a caller logs in without one.
+ * Provisioning inputs the module supplies to the AZIHSM ceremony, plus the host
+ * object-store settings. The partition identifier and owner backup key are
+ * operator/token-install configuration; the per-login PIN comes from C_Login,
+ * and `default_pin` is only the fallback used when a caller logs in without one.
  */
 typedef struct
 {
     CK_BYTE id[P11_CREDS_ID_LEN];
     CK_BYTE obk[P11_OBK_LEN];
     CK_BYTE default_pin[P11_CREDS_PIN_LEN];
+
+    char store_dir[AZIHSM_PKCS11_STORE_DIR_LEN]; /* persistent object-store root */
+    bool store_persist;                          /* select the file backend over in-memory */
 } azihsm_pkcs11_config;
 
 /*

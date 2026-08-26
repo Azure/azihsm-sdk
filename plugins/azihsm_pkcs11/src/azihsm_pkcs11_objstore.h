@@ -4,6 +4,7 @@
 #pragma once
 
 #include "azihsm_pkcs11_compat.h"
+#include "azihsm_pkcs11_config.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -20,11 +21,12 @@ extern "C"
  * the opaque AZIHSM masked blob as the key body; it deals in CK_RV only and never
  * calls the HSM.
  *
- * The in-memory backend (azihsm_pkcs11_objstore_mem.c) is the only implementation today. A
- * persistent backend (file/DB, plus the SDK resiliency storage) will implement
- * the same ops and set `persist`; the framework callers do not change when the
- * backend is swapped — construction picks the backend, everything else goes
- * through `ops`/`ctx`.
+ * Two backends implement the seam: the in-memory backend
+ * (azihsm_pkcs11_objstore_mem.c), the default, whose objects do not survive
+ * C_Finalize, and the persistent file backend (azihsm_pkcs11_objstore_file.c),
+ * opt-in via AZIHSM_PKCS11_PERSIST, which writes token objects through to disk.
+ * The framework callers do not change when the backend is swapped —
+ * construction picks the backend, everything else goes through `ops`/`ctx`.
  */
 
 typedef struct azihsm_pkcs11_objstore_ops azihsm_pkcs11_objstore_ops;
@@ -103,6 +105,17 @@ struct azihsm_pkcs11_objstore_ops
 
 /* Construct the in-memory backend into `out`. */
 CK_RV azihsm_pkcs11_objstore_mem_create(azihsm_pkcs11_objstore *out);
+
+/*
+ * Construct the persistent file backend into `out`, rooted at cfg->store_dir.
+ * Objects are written through to disk so token objects survive a process restart
+ * and are visible to other processes sharing the directory
+ * (azihsm_pkcs11_objstore_file.c).
+ */
+CK_RV azihsm_pkcs11_objstore_file_create(
+    azihsm_pkcs11_objstore *out,
+    const azihsm_pkcs11_config *cfg
+);
 
 #ifdef __cplusplus
 }

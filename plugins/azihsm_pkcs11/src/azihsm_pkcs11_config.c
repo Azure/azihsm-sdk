@@ -3,8 +3,10 @@
 
 #include "azihsm_pkcs11_config.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* Staging bound for hex_decode; must cover the largest azihsm_pkcs11_config field
  * (P11_OBK_LEN). */
@@ -46,6 +48,26 @@ static int hex_decode(const char *hex, CK_BYTE *out, size_t bytes)
     return 0;
 }
 
+/* Return `path` advanced past a leading "file:" scheme, mirroring the provider's
+ * handling of path values; returns the original pointer when the prefix is
+ * absent (NULL passes through unchanged). */
+static const char *strip_file_prefix(const char *path)
+{
+    if (path != NULL && strncmp(path, "file:", 5) == 0)
+    {
+        return path + 5;
+    }
+    return path;
+}
+
+/* Reject an empty path or any ".." component so the store directory cannot be
+ * pointed outside its intended location — the same rule the provider applies to
+ * its resiliency storage dir. */
+static bool path_is_safe(const char *path)
+{
+    return path != NULL && path[0] != '\0' && strstr(path, "..") == NULL;
+}
+
 void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
@@ -56,4 +78,25 @@ void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg)
 
     (void)hex_decode(getenv(AZIHSM_PKCS11_ENV_ID), cfg->id, sizeof(cfg->id));
     (void)hex_decode(getenv(AZIHSM_PKCS11_ENV_PIN), cfg->default_pin, sizeof(cfg->default_pin));
+
+    /* Persistent object store: rooted at a dedicated default, overridable by a
+     * safe AZIHSM_PKCS11_STORE_DIR; the file backend is opt-in via
+     * AZIHSM_PKCS11_PERSIST (unset keeps the in-memory backend as before). */
+    const char *dir = strip_file_prefix(getenv(AZIHSM_PKCS11_ENV_STORE_DIR));
+    if (!path_is_safe(dir))
+    {
+        dir = AZIHSM_PKCS11_DEFAULT_STORE_DIR;
+    }
+    int written = snprintf(cfg->store_dir, sizeof(cfg->store_dir), "%s", dir);
+    if (written < 0 || (size_t)written >= sizeof(cfg->store_dir))
+    {
+        /* An overlong override cannot be stored safely; fall back to the default
+         * (which always fits) rather than a truncated path. */
+        dir = AZIHSM_PKCS11_DEFAULT_STORE_DIR;
+        (void)snprintf(cfg->store_dir, sizeof(cfg->store_dir), "%s", dir);
+    }
+
+    const char *persist = getenv(AZIHSM_PKCS11_ENV_PERSIST);
+    cfg->store_persist =
+        persist != NULL && (strcmp(persist, "1") == 0 || strcasecmp(persist, "true") == 0);
 }

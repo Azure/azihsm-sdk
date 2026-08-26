@@ -116,7 +116,13 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     g_azihsm_pkcs11.slot_count = 0;
     g_azihsm_pkcs11.next_session_handle = 1;
 
-    CK_RV rv = azihsm_pkcs11_objstore_mem_create(&g_azihsm_pkcs11.store);
+    /* Load module config (env-driven) before building the store: the persistent
+     * file backend is opt-in via AZIHSM_PKCS11_PERSIST and needs its root dir;
+     * unset keeps the in-memory backend, so the default path is unchanged. */
+    azihsm_pkcs11_config cfg;
+    azihsm_pkcs11_config_load(&cfg);
+    CK_RV rv = cfg.store_persist ? azihsm_pkcs11_objstore_file_create(&g_azihsm_pkcs11.store, &cfg)
+                                 : azihsm_pkcs11_objstore_mem_create(&g_azihsm_pkcs11.store);
     if (rv != CKR_OK)
     {
         azihsm_pkcs11_unlock();
