@@ -143,7 +143,14 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
             },
             material,
         )
-        .await?;
+        .await;
+
+        // Scrub the recovered key material now that the engine owns it and
+        // masking has consumed it.  Wipe on all paths — including a masking
+        // error — since per-IO DMA arenas are not reliably cleared on
+        // teardown.
+        material.zeroize();
+        let masked_key = masked_key?;
 
         let key_id: u16 = key_id.into();
         let resp = pal.dma_alloc_var(io, |buf| {

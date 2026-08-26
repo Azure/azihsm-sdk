@@ -110,7 +110,14 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
         },
         plaintext,
     )
-    .await?;
+    .await;
+
+    // Scrub the freshly generated key material now that the vault (or
+    // fast-path engine, for bulk keys) owns it and masking has consumed it.
+    // Wipe on all paths — including a masking error — since per-IO DMA
+    // arenas are not reliably cleared on teardown.
+    key_buf.zeroize();
+    let masked_key = masked_key?;
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(

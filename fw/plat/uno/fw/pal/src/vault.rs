@@ -92,8 +92,15 @@ impl HsmVault for UnoHsmPal {
             let session = vault(io).key_session(key_id)?;
             let blob = self.vault_key(io, key_id)?;
             let bytes: &[u8] = blob;
-            (bytes.len() == core::mem::size_of::<u16>())
-                .then(|| (u16::from_le_bytes([bytes[0], bytes[1]]), session))
+            // A bulk vault entry must hold exactly the 2-byte engine handle;
+            // any other length means the entry is corrupt.  Fail fast BEFORE
+            // deleting the vault entry so the inconsistency surfaces and the
+            // engine key is not silently orphaned (which would also lose the
+            // handle needed to recover it).
+            if bytes.len() != core::mem::size_of::<u16>() {
+                return Err(HsmError::InternalError);
+            }
+            Some((u16::from_le_bytes([bytes[0], bytes[1]]), session))
         } else {
             None
         };
