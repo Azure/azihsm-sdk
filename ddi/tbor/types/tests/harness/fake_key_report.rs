@@ -8,9 +8,9 @@
 //! receiver's public key (`pk_r`) but has no `KeyReport` handler of
 //! its own, so tests can't obtain a signed report the normal way. This
 //! module builds a wire-format-identical, **unsigned** report that
-//! carries just `pk_r` in its inner EC2 `COSE_Key`. The rest of the
-//! payload is zero-filled and the outer `COSE_Sign1` signature is 96
-//! zero bytes.
+//! carries `pk_r` in its inner EC2 `COSE_Key` and the SHA-384 policy
+//! digest required by reseal. The rest of the payload is zero-filled and
+//! the outer `COSE_Sign1` signature is 96 zero bytes.
 //!
 //! The FW that consumes this report must run with signature and cert-
 //! chain verification disabled (behind a compile-time flag on the
@@ -31,6 +31,8 @@
 //! `hsm/src/key_attestation/report_v2_reader.rs`) accepts this shape
 //! when signature and cert-chain verification are disabled.
 
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HashOp;
 use azihsm_ddi_mbor_sim::report::encode_ecc_public;
 use azihsm_ddi_mbor_sim::report::CoseSign1Object;
 use azihsm_ddi_mbor_sim::report::UnprotectedHeader;
@@ -128,12 +130,12 @@ struct KeyAttestationReportPayloadV2 {
 /// payload schema -- with two differences from a real report:
 ///
 /// * the outer `signature` bstr is 96 zero bytes;
-/// * all payload fields except `public_key` / `public_key_size` are
-///   zeroed (report version = 2, no policy binding, no PID/POTA keys).
+/// * all payload fields except `public_key`, `public_key_size`, and
+///   `policy_digest` are zeroed (report version = 2, no PID/POTA keys).
 ///
 /// Firmware consuming this report must skip both the ES384 signature
 /// check and cert-chain validation for the surrounding evidence.
-pub(crate) fn fake_key_report_bytes(pk_r_sec1: &[u8; SEC1_PUB_LEN]) -> Vec<u8> {
+pub(crate) fn fake_key_report_bytes(pk_r_sec1: &[u8; SEC1_PUB_LEN], policy: &[u8]) -> Vec<u8> {
     assert_eq!(
         pk_r_sec1[0], 0x04,
         "expected SEC1 uncompressed point (0x04 || X || Y)",
@@ -148,6 +150,10 @@ pub(crate) fn fake_key_report_bytes(pk_r_sec1: &[u8; SEC1_PUB_LEN]) -> Vec<u8> {
     let cose_len = encode_ecc_public(COSE_ELLIPTIC_CURVES_P_384, x, y, &mut public_key)
         .expect("encode_ecc_public into 525-byte buffer must fit");
     let public_key_size = u16::try_from(cose_len).expect("COSE_Key length fits u16");
+    let mut policy_digest = [0u8; POLICY_DIGEST_SIZE];
+    HashAlgo::sha384()
+        .hash(policy, Some(&mut policy_digest))
+        .expect("SHA-384 policy digest");
 
     let payload_struct = KeyAttestationReportPayloadV2 {
         version: REPORT_VERSION_V2,
@@ -161,7 +167,7 @@ pub(crate) fn fake_key_report_bytes(pk_r_sec1: &[u8; SEC1_PUB_LEN]) -> Vec<u8> {
         partition_id: [0u8; PARTITION_ID_SIZE],
         pid_pub_key: [0u8; PID_PUB_KEY_SIZE],
         pota_pub_key: [0u8; POTA_PUB_KEY_SIZE],
-        policy_digest: [0u8; POLICY_DIGEST_SIZE],
+        policy_digest,
     };
     let mut payload_bytes = vec![0u8; minicbor::len(&payload_struct)];
     minicbor::encode(&payload_struct, payload_bytes.as_mut_slice())
@@ -202,7 +208,8 @@ mod tests {
             pk[i] = (0xff - i) as u8;
         }
 
-        let bytes = fake_key_report_bytes(&pk);
+        let policy = [0xA5; 32];
+        let bytes = fake_key_report_bytes(&pk, &policy);
 
         assert_eq!(bytes[0], 0xD2, "first byte must be COSE_Sign1 CBOR tag");
         assert!(
@@ -216,6 +223,16 @@ mod tests {
                 .windows(P384_FE_LEN)
                 .any(|w| w == &pk[1 + P384_FE_LEN..SEC1_PUB_LEN]),
             "emitted report must contain the SEC1 Y coordinate verbatim",
+        );
+        let mut policy_digest = [0u8; POLICY_DIGEST_SIZE];
+        HashAlgo::sha384()
+            .hash(&policy, Some(&mut policy_digest))
+            .expect("SHA-384 policy digest");
+        assert!(
+            bytes
+                .windows(POLICY_DIGEST_SIZE)
+                .any(|window| window == policy_digest),
+            "emitted report must contain the policy digest",
         );
     }
 }
