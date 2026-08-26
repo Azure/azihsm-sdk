@@ -27,7 +27,7 @@ fn sd_create_peer_backup_roundtrip() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
+    let (masked, report) = masked_key_and_report(&session, &policy);
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     // Create the security domain first to obtain the device-local backup
@@ -60,7 +60,7 @@ fn sd_create_peer_backup_rerandomizes() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
+    let (masked, report) = masked_key_and_report(&session, &policy);
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     let created = evidence

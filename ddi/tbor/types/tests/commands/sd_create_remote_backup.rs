@@ -36,6 +36,8 @@
 //! signature authenticity remain emulator-only until Manticore enables those
 //! verification steps.
 
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+use azihsm_ddi_mbor_test_helpers::fake_manticore_key_report_bytes;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -63,8 +65,6 @@ use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::ROTATED_CO_PSK;
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
-use crate::harness::fake_key_report::fake_key_report_bytes;
 use crate::harness::x509_fixture::make_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
@@ -321,7 +321,7 @@ impl HardwareFixture {
             })
             .expect("SdSealingKeyGen");
         let receiver_pub = sealing_pub_to_sec1(&sealing_key.pub_key);
-        let report = fake_key_report_bytes(&receiver_pub, &policy);
+        let report = fake_manticore_key_report_bytes(&receiver_pub, &policy);
         let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
         Self {
@@ -598,7 +598,8 @@ fn sd_create_remote_backup_rejects_non_backing_policy_hw() {
             scope: SCOPE_LOCAL,
         })
         .expect("SdSealingKeyGen");
-    let report = fake_key_report_bytes(&sealing_pub_to_sec1(&sealing_key.pub_key), &policy);
+    let report =
+        fake_manticore_key_report_bytes(&sealing_pub_to_sec1(&sealing_key.pub_key), &policy);
     let evidence = dummy_evidence(&report);
     let req = backup_request(
         session.session_id,
@@ -629,7 +630,7 @@ fn sd_create_remote_backup_rejects_invalid_receiver_point_hw() {
     let mut fixture = HardwareFixture::new(&ctx);
     let mut invalid_pub = [0u8; SEC1_PUB_LEN];
     invalid_pub[0] = 0x04;
-    let invalid_report = fake_key_report_bytes(&invalid_pub, &fixture.policy);
+    let invalid_report = fake_manticore_key_report_bytes(&invalid_pub, &fixture.policy);
     let report_index = fixture.evidence.report.index as usize;
     fixture.evidence.oob_items[report_index] = invalid_report;
     let req = fixture.request();
@@ -664,7 +665,7 @@ fn sd_create_remote_backup_rejects_before_finalize_hw() {
     let policy = known_good_part_policy();
     let mut receiver_pub = [0u8; SEC1_PUB_LEN];
     receiver_pub[0] = 0x04;
-    let report = fake_key_report_bytes(&receiver_pub, &policy);
+    let report = fake_manticore_key_report_bytes(&receiver_pub, &policy);
     let evidence = dummy_evidence(&report);
     let req = backup_request(
         session.session_id,

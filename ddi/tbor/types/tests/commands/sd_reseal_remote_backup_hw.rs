@@ -6,6 +6,7 @@
 //! Manticore does not yet implement `TborKeyReport`, so these tests build
 //! unsigned policy-bound v2 reports from real `SdSealingKeyGen` public keys.
 
+use azihsm_ddi_mbor_test_helpers::fake_manticore_key_report_bytes;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -21,7 +22,6 @@ use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::finalized_backing_session;
 use crate::commands::sd_create_remote_backup::sealing_pub_to_sec1;
-use crate::harness::fake_key_report::fake_key_report_bytes;
 use crate::harness::x509_fixture::make_chain;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::GeneratedChain;
@@ -139,7 +139,8 @@ fn sealing_key_and_report(
             scope: SCOPE_LOCAL,
         })
         .expect("SdSealingKeyGen");
-    let report = fake_key_report_bytes(&sealing_pub_to_sec1(&sealing_key.pub_key), policy);
+    let report =
+        fake_manticore_key_report_bytes(&sealing_pub_to_sec1(&sealing_key.pub_key), policy);
     (sealing_key.masked_key.to_vec(), report)
 }
 

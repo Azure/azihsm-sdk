@@ -3,6 +3,8 @@
 
 //! Key Attestation Report Format in COSE_Sign1.
 
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HashOp;
 use bitfield_struct::bitfield;
 use minicbor::CborLen;
 use minicbor::Decode;
@@ -360,6 +362,110 @@ pub fn encode_ecc_public(
     // We can safely do the subtraction given that encoder already ensures the size
     // of the encoded data is bounded by the size of the buffer.
     Ok(out_len - encoder.writer().len())
+}
+
+const MANTICORE_REPORT_VERSION_V2: u16 = 2;
+const MANTICORE_PARTITION_ID_SIZE: usize = 16;
+const MANTICORE_PID_PUB_KEY_SIZE: usize = 97;
+const MANTICORE_POTA_PUB_KEY_SIZE: usize = 97;
+const MANTICORE_POLICY_DIGEST_SIZE: usize = 48;
+const P384_SEC1_PUB_LEN: usize = 97;
+const P384_FE_LEN: usize = 48;
+const COSE_ELLIPTIC_CURVES_P_384: i8 = 2;
+
+#[derive(Encode, CborLen)]
+#[cbor(map)]
+struct ManticoreKeyAttestationReportPayloadV2 {
+    #[n(0)]
+    version: u16,
+    #[n(1)]
+    #[cbor(with = "minicbor::bytes")]
+    public_key: [u8; PUBLIC_KEY_MAX_SIZE],
+    #[n(2)]
+    public_key_size: u16,
+    #[n(3)]
+    flags: u32,
+    #[n(4)]
+    #[cbor(with = "minicbor::bytes")]
+    app_uuid: [u8; APP_UUID_SIZE],
+    #[n(5)]
+    #[cbor(with = "minicbor::bytes")]
+    report_data: [u8; REPORT_DATA_SIZE],
+    #[n(6)]
+    #[cbor(with = "minicbor::bytes")]
+    vm_launch_id: [u8; VM_LAUNCH_ID_SIZE],
+    #[n(7)]
+    key_scope: u8,
+    #[n(8)]
+    #[cbor(with = "minicbor::bytes")]
+    partition_id: [u8; MANTICORE_PARTITION_ID_SIZE],
+    #[n(9)]
+    #[cbor(with = "minicbor::bytes")]
+    pid_pub_key: [u8; MANTICORE_PID_PUB_KEY_SIZE],
+    #[n(10)]
+    #[cbor(with = "minicbor::bytes")]
+    pota_pub_key: [u8; MANTICORE_POTA_PUB_KEY_SIZE],
+    #[n(11)]
+    #[cbor(with = "minicbor::bytes")]
+    policy_digest: [u8; MANTICORE_POLICY_DIGEST_SIZE],
+}
+
+/// Build an unsigned Manticore v2 key report for hardware tests.
+///
+/// The report carries a real P-384 public key and the SHA-384 digest of
+/// `policy`; all other payload fields and the ES384 signature are zeroed.
+pub fn fake_manticore_key_report_bytes(
+    public_key_sec1: &[u8; P384_SEC1_PUB_LEN],
+    policy: &[u8],
+) -> Vec<u8> {
+    assert_eq!(public_key_sec1[0], 0x04, "expected uncompressed P-384 key");
+    let mut public_key = [0u8; PUBLIC_KEY_MAX_SIZE];
+    let public_key_size = encode_ecc_public(
+        COSE_ELLIPTIC_CURVES_P_384,
+        &public_key_sec1[1..1 + P384_FE_LEN],
+        &public_key_sec1[1 + P384_FE_LEN..],
+        &mut public_key,
+    )
+    .expect("encode P-384 COSE key");
+    let mut policy_digest = [0u8; MANTICORE_POLICY_DIGEST_SIZE];
+    HashAlgo::sha384()
+        .hash(policy, Some(&mut policy_digest))
+        .expect("SHA-384 policy digest");
+    let payload = ManticoreKeyAttestationReportPayloadV2 {
+        version: MANTICORE_REPORT_VERSION_V2,
+        public_key,
+        public_key_size: u16::try_from(public_key_size).expect("COSE key length"),
+        flags: 0,
+        app_uuid: [0u8; APP_UUID_SIZE],
+        report_data: [0u8; REPORT_DATA_SIZE],
+        vm_launch_id: [0u8; VM_LAUNCH_ID_SIZE],
+        key_scope: 0,
+        partition_id: [0u8; MANTICORE_PARTITION_ID_SIZE],
+        pid_pub_key: [0u8; MANTICORE_PID_PUB_KEY_SIZE],
+        pota_pub_key: [0u8; MANTICORE_POTA_PUB_KEY_SIZE],
+        policy_digest,
+    };
+    let mut payload_bytes = vec![0u8; minicbor::len(&payload)];
+    minicbor::encode(&payload, payload_bytes.as_mut_slice()).expect("encode Manticore v2 report");
+    let cose = CoseSign1Object {
+        protected_header: PROTECTED_HEADER,
+        unprotected_header: UnprotectedHeader {},
+        payload: &payload_bytes,
+        signature: [0u8; SIGNATURE_SIZE],
+    };
+    let mut output = vec![
+        0u8;
+        COSE_SIGN1_TAG_SIZE
+            + COSE_SIGN1_ENCODING_BYTES
+            + PROTECTED_HEADER_SIZE
+            + payload_bytes.len()
+            + SIGNATURE_SIZE
+    ];
+    let written = cose
+        .encode(&mut output)
+        .expect("encode Manticore COSE_Sign1");
+    output.truncate(written);
+    output
 }
 
 #[cfg(test)]

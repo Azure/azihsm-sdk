@@ -48,9 +48,9 @@ fn sd_reseal_remote_backup_roundtrip() {
 
     // Receiver (unseals the source), sender (sealed the source), and
     // destination (the reseal target) SD sealing keys, each attested.
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&session);
-    let (_masked_dst, report_dst) = masked_key_and_report(&session);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&session, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&session, &policy);
 
     let src_backup = create_source_backup(
         &session,
@@ -94,9 +94,9 @@ fn sd_reseal_remote_backup_rerandomizes() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&session);
-    let (_masked_dst, report_dst) = masked_key_and_report(&session);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&session, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&session, &policy);
 
     let src_backup = create_source_backup(
         &session,

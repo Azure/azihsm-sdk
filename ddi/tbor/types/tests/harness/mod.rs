@@ -42,12 +42,6 @@ pub mod session;
 pub mod session_guard;
 pub mod x509_fixture;
 
-// Hardware-only: emu/mock/sock backends short-circuit create-sd OOB;
-// only real hardware actually parses the OOB report bytes, so the
-// fake-report builder is compiled in only for hw runs.
-#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
-pub mod fake_key_report;
-
 // Re-export commonly-used schema items so test code doesn't have to
 // import them from `azihsm_ddi_tbor_types` directly when driving
 // negative-path tests through raw `TborSessionOpen*Req` /

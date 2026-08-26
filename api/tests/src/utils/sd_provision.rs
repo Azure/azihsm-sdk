@@ -15,9 +15,13 @@ use azihsm_api::*;
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
+#[cfg(not(feature = "emu"))]
+use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::EcdsaAlgo;
 use azihsm_crypto::HashAlgo;
 use azihsm_crypto::HashOp;
+#[cfg(not(feature = "emu"))]
+use azihsm_crypto::ImportableKey;
 use azihsm_crypto::SignOp;
 use azihsm_crypto::x509_builder::cert_builder;
 use azihsm_crypto::x509_builder::cert_builder::CN_LEN;
@@ -29,6 +33,9 @@ use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
 use azihsm_crypto::x509_builder::intermediate_cert;
 use azihsm_crypto::x509_builder::leaf_cert;
 use azihsm_crypto::x509_builder::root_cert;
+#[cfg(not(feature = "emu"))]
+use azihsm_ddi_mbor_test_helpers::fake_manticore_key_report_bytes;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -759,24 +766,50 @@ pub(crate) fn sealing_props() -> HsmKeyProps {
         .expect("build sealing props")
 }
 
-/// Mint an SD sealing key on `session` and return its masked blob and a
-/// COSE_Sign1 `KeyReport` attesting it (signed by the PID key).
-pub(crate) fn masked_key_and_report(session: &HsmSession) -> (Vec<u8>, Vec<u8>) {
+/// Mint an SD sealing key and return its masked blob and attestation report.
+///
+/// Emulator runs request a signed KeyReport. Hardware runs synthesize the
+/// policy-bound v2 report until Manticore implements `TborKeyReport`.
+pub(crate) fn masked_key_and_report(
+    session: &HsmSession,
+    policy: &[u8; PART_POLICY_LEN],
+) -> (Vec<u8>, Vec<u8>) {
+    #[cfg(feature = "emu")]
+    let _ = policy;
     let mut algo = HsmSealingKeyGenAlgo::default();
     let key = HsmKeyManager::generate_key(session, &mut algo, sealing_props())
         .expect("generate sealing key");
 
     let masked = key.masked_key_vec().expect("masked key");
 
+    #[cfg(feature = "emu")]
     let report_data = [0u8; KEY_REPORT_DATA_LEN];
+    #[cfg(feature = "emu")]
     let report_len = key
         .generate_key_report(&report_data, None)
         .expect("key report size");
+    #[cfg(feature = "emu")]
     let mut report = vec![0u8; report_len];
+    #[cfg(feature = "emu")]
     let written = key
         .generate_key_report(&report_data, Some(&mut report))
         .expect("key report");
+    #[cfg(feature = "emu")]
     report.truncate(written);
+
+    #[cfg(not(feature = "emu"))]
+    let report = {
+        let der = key.pub_key_der_vec().expect("sealing public key");
+        let public_key = EccPublicKey::from_bytes(&der).expect("P-384 public key DER");
+        let (x, y) = public_key.coord_vec().expect("P-384 coordinates");
+        assert_eq!(x.len(), 48, "P-384 X coordinate");
+        assert_eq!(y.len(), 48, "P-384 Y coordinate");
+        let mut sec1 = [0u8; SEC1_PUB_LEN];
+        sec1[0] = 0x04;
+        sec1[1..49].copy_from_slice(&x);
+        sec1[49..].copy_from_slice(&y);
+        fake_manticore_key_report_bytes(&sec1, policy)
+    };
 
     (masked, report)
 }
