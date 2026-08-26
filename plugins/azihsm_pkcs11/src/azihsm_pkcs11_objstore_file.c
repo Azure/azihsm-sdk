@@ -111,6 +111,59 @@ static CK_BBOOL rec_bool(const azihsm_pkcs11_rec_object *o, CK_ATTRIBUTE_TYPE t,
     return a->value[0] != 0 ? CK_TRUE : CK_FALSE;
 }
 
+/* Set (replace or append) one attribute on a decoded record. The new value is
+ * staged before the object is touched, so a failed allocation leaves the record
+ * unchanged rather than half-mutated (mirrors the in-memory backend). */
+static CK_RV rec_set_attr(
+    azihsm_pkcs11_rec_object *o,
+    CK_ATTRIBUTE_TYPE type,
+    const unsigned char *val,
+    CK_ULONG len
+)
+{
+    unsigned char *nv = NULL;
+    if (len > 0)
+    {
+        nv = (unsigned char *)malloc(len);
+        if (nv == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        memcpy(nv, val, len);
+    }
+    azihsm_pkcs11_rec_attr *a = NULL;
+    for (CK_ULONG i = 0; i < o->attr_count; i++)
+    {
+        if (o->attrs[i].type == type)
+        {
+            a = &o->attrs[i];
+            break;
+        }
+    }
+    if (a == NULL)
+    {
+        azihsm_pkcs11_rec_attr *grown = (azihsm_pkcs11_rec_attr *)
+            realloc(o->attrs, (o->attr_count + 1) * sizeof(azihsm_pkcs11_rec_attr));
+        if (grown == NULL)
+        {
+            free(nv);
+            return CKR_HOST_MEMORY;
+        }
+        o->attrs = grown;
+        a = &o->attrs[o->attr_count++];
+        memset(a, 0, sizeof(*a));
+        a->type = type;
+    }
+    if (a->value != NULL)
+    {
+        memset(a->value, 0, a->len);
+        free(a->value);
+    }
+    a->value = nv;
+    a->len = len;
+    return CKR_OK;
+}
+
 /* ---- path helpers ------------------------------------------------------- */
 
 static CK_RV token_dir(const file_store *st, CK_SLOT_ID slot, char *out, size_t outlen)
@@ -129,6 +182,39 @@ static void object_name(CK_ULONG num, char *out, size_t outlen)
 }
 
 /* ---- disk-backed token object operations -------------------------------- */
+
+/* Encode `o` and atomically (re)write it as <num>.object in `dir`. The encoded
+ * buffer is wiped after the write since it may hold attribute bytes. */
+static CK_RV rewrite_token_object(const char *dir, CK_ULONG num, const azihsm_pkcs11_rec_object *o)
+{
+    unsigned char *buf = NULL;
+    size_t blen = 0;
+    CK_RV rv = azihsm_pkcs11_record_encode(o, NULL, &blen);
+    if (rv == CKR_OK)
+    {
+        buf = (unsigned char *)malloc(blen ? blen : 1);
+        if (buf == NULL)
+        {
+            rv = CKR_HOST_MEMORY;
+        }
+    }
+    if (rv == CKR_OK)
+    {
+        rv = azihsm_pkcs11_record_encode(o, buf, &blen);
+    }
+    if (rv == CKR_OK)
+    {
+        char name[P11_FILE_OBJ_NAME_LEN];
+        object_name(num, name, sizeof(name));
+        rv = azihsm_pkcs11_store_write(dir, name, buf, blen);
+    }
+    if (buf != NULL)
+    {
+        memset(buf, 0, blen);
+        free(buf);
+    }
+    return rv;
+}
 
 static CK_RV create_token_object(
     file_store *st,
@@ -228,32 +314,7 @@ static CK_RV create_token_object(
     }
     azihsm_pkcs11_rec_object obj = { ra, count, NULL, 0 };
 
-    unsigned char *buf = NULL;
-    size_t blen = 0;
-    rv = azihsm_pkcs11_record_encode(&obj, NULL, &blen);
-    if (rv == CKR_OK)
-    {
-        buf = (unsigned char *)malloc(blen ? blen : 1);
-        if (buf == NULL)
-        {
-            rv = CKR_HOST_MEMORY;
-        }
-    }
-    if (rv == CKR_OK)
-    {
-        rv = azihsm_pkcs11_record_encode(&obj, buf, &blen);
-    }
-    if (rv == CKR_OK)
-    {
-        char name[P11_FILE_OBJ_NAME_LEN];
-        object_name(n, name, sizeof(name));
-        rv = azihsm_pkcs11_store_write(dir, name, buf, blen);
-    }
-    if (buf != NULL)
-    {
-        memset(buf, 0, blen); /* the record may hold attribute bytes */
-        free(buf);
-    }
+    rv = rewrite_token_object(dir, n, &obj);
     free(ra);
     azihsm_pkcs11_store_unlock(lock_fd);
     if (rv != CKR_OK)
@@ -457,6 +518,68 @@ static CK_RV file_get_attr(
     return ret;
 }
 
+static CK_RV set_attr_token(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count
+)
+{
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
+        {
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+    }
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+    /* Apply changes to the decoded copy only; the on-disk object is rewritten
+     * once, so a mid-update failure leaves it unchanged (all-or-nothing). */
+    for (CK_ULONG i = 0; i < count && rv == CKR_OK; i++)
+    {
+        rv = rec_set_attr(
+            &o,
+            tmpl[i].type,
+            (const unsigned char *)tmpl[i].pValue,
+            tmpl[i].ulValueLen
+        );
+    }
+    /* The same v1 refusal as create: a private object must not end up carrying a
+     * non-device-protected plaintext secret at rest. */
+    if (rv == CKR_OK && rec_bool(&o, CKA_PRIVATE, CK_FALSE) &&
+        (rec_find(&o, CKA_VALUE) != NULL || rec_find(&o, CKA_PRIVATE_EXPONENT) != NULL))
+    {
+        rv = CKR_TEMPLATE_INCONSISTENT;
+    }
+    if (rv == CKR_OK)
+    {
+        rv = rewrite_token_object(dir, h & ~P11_FILE_TOKEN_FLAG, &o);
+    }
+    azihsm_pkcs11_record_free(&o);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return rv;
+}
+
 static CK_RV file_set_attr(
     void *ctx,
     CK_SLOT_ID slot,
@@ -471,9 +594,7 @@ static CK_RV file_set_attr(
     {
         return st->mem.ops->set_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
     }
-    (void)tmpl;
-    (void)count;
-    return CKR_FUNCTION_NOT_SUPPORTED; /* token set_attr lands in a later phase */
+    return set_attr_token(st, slot, user_logged_in, h, tmpl, count);
 }
 
 /* ---- find (enumeration) ------------------------------------------------- */
@@ -722,6 +843,64 @@ static void file_find_final(void *ctx, void *cursor)
     }
 }
 
+static CK_RV set_key_body_token(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    const CK_BYTE *blob,
+    CK_ULONG len
+)
+{
+    if (len > 0 && blob == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+    /* Stage the new body before touching the record, then rewrite once. */
+    unsigned char *nb = NULL;
+    if (len > 0)
+    {
+        nb = (unsigned char *)malloc(len);
+        if (nb == NULL)
+        {
+            azihsm_pkcs11_record_free(&o);
+            azihsm_pkcs11_store_unlock(lock_fd);
+            return CKR_HOST_MEMORY;
+        }
+        memcpy(nb, blob, len);
+    }
+    if (o.body != NULL)
+    {
+        memset(o.body, 0, o.body_len);
+        free(o.body);
+    }
+    o.body = nb;
+    o.body_len = len;
+    rv = rewrite_token_object(dir, h & ~P11_FILE_TOKEN_FLAG, &o);
+    azihsm_pkcs11_record_free(&o);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return rv;
+}
+
 static CK_RV file_set_key_body(
     void *ctx,
     CK_SLOT_ID slot,
@@ -736,9 +915,7 @@ static CK_RV file_set_key_body(
     {
         return st->mem.ops->set_key_body(st->mem.ctx, slot, user_logged_in, h, blob, len);
     }
-    (void)blob;
-    (void)len;
-    return CKR_FUNCTION_NOT_SUPPORTED; /* token key bodies land with key ops */
+    return set_key_body_token(st, slot, user_logged_in, h, blob, len);
 }
 
 static CK_RV file_persist(void *ctx)

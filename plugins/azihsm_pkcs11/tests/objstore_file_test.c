@@ -19,6 +19,8 @@
  */
 
 #include "azihsm_pkcs11_objstore.h"
+#include "azihsm_pkcs11_store_io.h"
+#include "azihsm_pkcs11_store_record.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,6 +127,38 @@ static CK_ULONG find_count(
     }
     s->ops->find_final(s->ctx, cur);
     return total;
+}
+
+/* White-box check of a token object's masked-blob body: the seam has no body
+ * getter yet (that arrives with the crypto ops), so read and decode the record
+ * file directly and compare its body field. */
+static int body_equals(
+    const char *store_dir,
+    CK_SLOT_ID slot,
+    CK_OBJECT_HANDLE h,
+    const unsigned char *exp,
+    CK_ULONG exp_len
+)
+{
+    char dir[4200];
+    char name[32];
+    snprintf(dir, sizeof(dir), "%s/slot-%lu", store_dir, (unsigned long)slot);
+    snprintf(name, sizeof(name), "%lu.object", (unsigned long)(h & ~TOKEN_FLAG));
+    unsigned char *buf = NULL;
+    size_t len = 0;
+    if (azihsm_pkcs11_store_read(dir, name, &buf, &len) != CKR_OK || buf == NULL)
+    {
+        return 0;
+    }
+    azihsm_pkcs11_rec_object o;
+    int ok = 0;
+    if (azihsm_pkcs11_record_decode(buf, len, &o) == CKR_OK)
+    {
+        ok = (o.body_len == exp_len) && (exp_len == 0 || memcmp(o.body, exp, exp_len) == 0);
+        azihsm_pkcs11_record_free(&o);
+    }
+    free(buf);
+    return ok;
 }
 
 int main(void)
@@ -285,6 +319,89 @@ int main(void)
     /* A session object is found too (label filter on the session object). */
     CK_ATTRIBUTE by_slabel[] = { { CKA_LABEL, (void *)"sess-obj", 8 } };
     CHECK(find_count(&s, SLOT, CK_FALSE, by_slabel, 1) == 1, "find locates the session object");
+
+    /* --- set_attr / set_key_body on a dedicated token object, destroyed at the
+           end of this block so the persisted set stays as the later checks
+           expect. --- */
+    unsigned char xval[] = { 9, 8, 7 };
+    CK_OBJECT_HANDLE x = 0;
+    CHECK(
+        make_object(
+            &s,
+            SLOT,
+            CK_FALSE,
+            CK_TRUE,
+            CK_FALSE,
+            "x-label",
+            xval,
+            sizeof(xval),
+            CK_FALSE,
+            &x
+        ) == CKR_OK,
+        "create public token object with a value"
+    );
+
+    unsigned char idbytes[] = { 0x01, 0x02 };
+    CK_ATTRIBUTE chg[] = {
+        { CKA_LABEL, (void *)"x-renamed", 9 },
+        { CKA_ID, idbytes, sizeof(idbytes) },
+    };
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg, 2) == CKR_OK,
+        "set_attr updates label + adds id"
+    );
+    CHECK(
+        read_label(&s, SLOT, CK_FALSE, x, lbuf, sizeof(lbuf), &llen) == CKR_OK && llen == 9 &&
+            memcmp(lbuf, "x-renamed", 9) == 0,
+        "set_attr new label persisted"
+    );
+    CK_ATTRIBUTE idq = { CKA_ID, lbuf, sizeof(lbuf) };
+    CHECK(
+        s.ops->get_attr(s.ctx, SLOT, CK_FALSE, x, &idq, 1) == CKR_OK && idq.ulValueLen == 2 &&
+            memcmp(lbuf, idbytes, 2) == 0,
+        "set_attr added CKA_ID readable"
+    );
+
+    unsigned char body[] = { 0xAA, 0xBB, 0xCC, 0xDD };
+    CHECK(
+        s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, x, body, sizeof(body)) == CKR_OK,
+        "set_key_body attaches the masked blob"
+    );
+    CHECK(
+        body_equals(cfg.store_dir, SLOT, x, body, sizeof(body)),
+        "masked blob stored in the record body"
+    );
+    /* The body is a distinguished field, not an attribute: CKA_VALUE still
+     * returns the object's own value, never the masked blob. */
+    CK_ATTRIBUTE vq2 = { CKA_VALUE, lbuf, sizeof(lbuf) };
+    CHECK(
+        s.ops->get_attr(s.ctx, SLOT, CK_FALSE, x, &vq2, 1) == CKR_OK && vq2.ulValueLen == 3 &&
+            memcmp(lbuf, xval, 3) == 0,
+        "get_attr(CKA_VALUE) returns the value, not the masked blob"
+    );
+    /* A later set_attr must preserve the body (read-modify-rewrite). */
+    CK_ATTRIBUTE chg2[] = { { CKA_LABEL, (void *)"x-again", 7 } };
+    CHECK(s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg2, 1) == CKR_OK, "second set_attr ok");
+    CHECK(
+        body_equals(cfg.store_dir, SLOT, x, body, sizeof(body)),
+        "set_attr preserved the masked blob body"
+    );
+
+    /* v1 refusal via set_attr: making an object that carries CKA_VALUE private. */
+    CK_ATTRIBUTE mkpriv[] = { { CKA_PRIVATE, &ck_true, sizeof(CK_BBOOL) } };
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_TRUE, x, mkpriv, 1) == CKR_TEMPLATE_INCONSISTENT,
+        "set_attr refuses to make a value-carrying object private"
+    );
+    CHECK(
+        read_label(&s, SLOT, CK_FALSE, x, lbuf, sizeof(lbuf), &llen) == CKR_OK,
+        "refused set_attr left the object unchanged (still public)"
+    );
+
+    CHECK(
+        s.ops->destroy(s.ctx, SLOT, CK_FALSE, x) == CKR_OK,
+        "cleanup: destroy the scratch object"
+    );
 
     /* --- counter-first no reuse: destroy then create gets a higher number --- */
     CK_OBJECT_HANDLE a = 0, b = 0;
