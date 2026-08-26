@@ -47,6 +47,11 @@ use winapi::um::winnt::HANDLE;
 use crate::io_event::IoEvent;
 
 const MCR_CP_CMD_SESSION_GENERIC: u16 = 0x0;
+const MCR_CP_CMD_DATA_XFER: u16 = 0x1;
+const MCR_IOCTL_CONTROL_PATH_CMD_SESSION: u32 = 0x201;
+const MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER: u32 = 0x202;
+const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
+const AZIHSM_MAX_DATA_XFER_PER_BUFFER: usize = 64 * 1024;
 
 #[derive(Default)]
 #[repr(C)]
@@ -245,6 +250,57 @@ pub struct McrCpGenericIoctlOutData {
     pub rsvd: [u32; 32],
     hot_patch_reserved: [usize; 16],
 }
+
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+struct McrHsmDataXferBuffer {
+    xfer_length: u32,
+    buffer_addr: *const u8,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct McrHsmDataXferBuffers {
+    buffer_count: u32,
+    buffers: [McrHsmDataXferBuffer; AZIHSM_MAX_DATA_XFER_BUFFERS],
+    reserved: [u32; 128],
+}
+
+impl Default for McrHsmDataXferBuffers {
+    fn default() -> Self {
+        Self {
+            buffer_count: 0,
+            buffers: [McrHsmDataXferBuffer::default(); AZIHSM_MAX_DATA_XFER_BUFFERS],
+            reserved: [0; 128],
+        }
+    }
+}
+
+#[repr(C)]
+union McrCpDataXferInputData {
+    data_xfer: McrHsmDataXferBuffers,
+    reserved: [u8; 4096],
+}
+
+impl Default for McrCpDataXferInputData {
+    fn default() -> Self {
+        Self {
+            data_xfer: McrHsmDataXferBuffers::default(),
+        }
+    }
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct McrCpDataXferIoctlIndata {
+    generic: McrCpGenericIoctlIndata,
+    input_data: McrCpDataXferInputData,
+}
+
+const _: [(); 16] = [(); mem::size_of::<McrHsmDataXferBuffer>()];
+const _: [(); 776] = [(); mem::size_of::<McrHsmDataXferBuffers>()];
+const _: [(); 344] = [(); mem::size_of::<McrCpGenericIoctlIndata>()];
+const _: [(); 4440] = [(); mem::size_of::<McrCpDataXferIoctlIndata>()];
 
 ///McrFpIoctlErrorKind
 /// Enumeration values for ioctl error status
@@ -921,8 +977,9 @@ impl DdiDev for DdiWinDev {
     ///     [`DdiError::DdiError`] / [`DdiError::TborDecodeError`].
     ///
     /// The Windows kernel driver is wire-agnostic — it forwards the
-    /// `opc` and `cmdset` ioctl fields verbatim into the SQE — so
-    /// no driver change is required to route TBOR.
+    /// `opc` and `cmdset` ioctl fields verbatim into the SQE. Requests
+    /// with OOB items use its V2 data-transfer IOCTL so each item is
+    /// represented by an NVMe SGL Data Block descriptor.
     fn exec_op_tbor<T: TborOpReq>(
         &self,
         req: &T,
@@ -933,12 +990,15 @@ impl DdiDev for DdiWinDev {
         /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
         const OP_TBOR: u16 = 2;
 
-        // The Windows backend does not (yet) forward out-of-band
-        // items as SGL Data Block descriptors. Reject non-empty
-        // `oob_items` loudly rather than silently dropping payloads.
-        if oob_items.is_some_and(|items| !items.is_empty()) {
+        let oob_slice = oob_items.unwrap_or(&[]);
+        if oob_slice.len() > AZIHSM_MAX_DATA_XFER_BUFFERS
+            || oob_slice
+                .iter()
+                .any(|item| item.is_empty() || item.len() > AZIHSM_MAX_DATA_XFER_PER_BUFFER)
+        {
             return Err(DdiError::InvalidParameter);
         }
+        let use_data_xfer = !oob_slice.is_empty();
 
         const REQ_BUF_LEN: usize = 8192;
         const RESP_BUF_LEN: usize = 8192;
@@ -955,44 +1015,64 @@ impl DdiDev for DdiWinDev {
         let mut resp_buf = Box::<[u8; RESP_BUF_LEN]>::new([0u8; RESP_BUF_LEN]);
 
         // -- 2. Build the ioctl command --------------------------------
-        let mut ioctl_in_buffer = McrCpGenericIoctlIndata::default();
+        let mut ioctl_in_buffer = McrCpDataXferIoctlIndata::default();
         let ioctl_out_buffer = McrCpGenericIoctlOutData::default();
 
-        ioctl_in_buffer.ioctl_hdr.ioctl_data_size =
-            mem::size_of::<McrCpGenericIoctlIndata>() as u32;
-        ioctl_in_buffer.ioctl_hdr.app_cmd_id = 0xCD1DDEAD;
-        ioctl_in_buffer.ioctl_hdr.timeout = 100; // in ms
-        ioctl_in_buffer.ioctl_hdr.flags = 0;
+        let ioctl_input_size = if use_data_xfer {
+            mem::size_of::<McrCpDataXferIoctlIndata>()
+        } else {
+            mem::size_of::<McrCpGenericIoctlIndata>()
+        };
+        let generic = &mut ioctl_in_buffer.generic;
+        generic.ioctl_hdr.ioctl_data_size = ioctl_input_size as u32;
+        generic.ioctl_hdr.app_cmd_id = 0xCD1DDEAD;
+        generic.ioctl_hdr.timeout = 100; // in ms
+        generic.ioctl_hdr.flags = 0;
 
-        ioctl_in_buffer.context = 0;
+        generic.context = 0;
         // OP_TBOR is THE flag the firmware uses to route the request
         // through the TBOR dispatcher instead of `handle_mbor_op`.
-        ioctl_in_buffer.opc = OP_TBOR;
-        ioctl_in_buffer.cmdset = MCR_CP_CMD_SESSION_GENERIC;
+        generic.opc = OP_TBOR;
+        generic.cmdset = if use_data_xfer {
+            MCR_CP_CMD_DATA_XFER
+        } else {
+            MCR_CP_CMD_SESSION_GENERIC
+        };
 
-        ioctl_in_buffer.user_buffers.src_length = req_len as u32;
-        ioctl_in_buffer.user_buffers.src_buf = req_buf.as_ptr();
-        ioctl_in_buffer.user_buffers.dst_length = resp_buf.len() as u32;
-        ioctl_in_buffer.user_buffers.dst_buf = resp_buf.as_mut_ptr();
+        generic.user_buffers.src_length = req_len as u32;
+        generic.user_buffers.src_buf = req_buf.as_ptr();
+        generic.user_buffers.dst_length = resp_buf.len() as u32;
+        generic.user_buffers.dst_buf = resp_buf.as_mut_ptr();
 
         // Session control flags come from the TBOR request type;
         // each request declares its own kind so the transport layer
         // doesn't need a central opcode->ctrl table.
         let session_ctrl = req.session_ctrl();
-        ioctl_in_buffer
-            .session_control
-            .set_kind(u8::from(session_ctrl));
+        generic.session_control.set_kind(u8::from(session_ctrl));
         if let Some(sid) = req.get_session_id() {
-            ioctl_in_buffer.session_id = sid;
-            ioctl_in_buffer
-                .session_control
-                .set_session_id_is_valid(true);
+            generic.session_id = sid;
+            generic.session_control.set_session_id_is_valid(true);
+        }
+
+        if use_data_xfer {
+            // SAFETY: `input_data` was initialized with the `data_xfer`
+            // union field, which remains active for this request.
+            let data_xfer = unsafe { &mut ioctl_in_buffer.input_data.data_xfer };
+            data_xfer.buffer_count = oob_slice.len() as u32;
+            for (slot, item) in data_xfer.buffers.iter_mut().zip(oob_slice) {
+                slot.xfer_length = item.len() as u32;
+                slot.buffer_addr = item.as_ptr();
+            }
         }
 
         // -- 3. Issue the ioctl (overlapped, same as MBOR) ----------------
         let ioctl_code: DWORD = CTL_CODE(
             0x3F,
-            0x201,
+            if use_data_xfer {
+                MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER
+            } else {
+                MCR_IOCTL_CONTROL_PATH_CMD_SESSION
+            },
             METHOD_BUFFERED,
             FILE_READ_ACCESS | FILE_WRITE_ACCESS,
         );
@@ -1015,7 +1095,7 @@ impl DdiDev for DdiWinDev {
                 self.file.read().as_raw_handle() as HANDLE,
                 ioctl_code,
                 in_ptr as *mut c_void,
-                mem::size_of::<McrCpGenericIoctlIndata>() as DWORD,
+                ioctl_input_size as DWORD,
                 out_ptr as *mut c_void,
                 mem::size_of::<McrCpGenericIoctlOutData>() as DWORD,
                 ptr::null_mut(),
