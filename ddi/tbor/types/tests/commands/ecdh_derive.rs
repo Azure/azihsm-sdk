@@ -36,6 +36,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 
 use crate::commands::part_init::bootstrap_rotated_co;
+use crate::commands::part_init::CO;
 use crate::commands::part_init::CU;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::part_init::ROTATED_CU_PSK;
@@ -293,7 +294,7 @@ fn ecdh_derive_unsupported_target_scope_rejected_emu() {
     );
 }
 
-/// Rejects deriving when the request names an unknown session identifier.
+/// Rejects deriving when the request uses a `session_id` that does not match the active session on this device handle.
 #[test]
 fn ecdh_derive_unknown_session_rejected_emu() {
     let ctx = TestCtx::new();
@@ -400,5 +401,205 @@ fn ecdh_derive_key_without_derive_usage_rejected_emu() {
             peer_pub_key: peer_pub,
         },
         TborStatus::InvalidPermissions,
+    );
+}
+
+/// Rejects an empty peer public key.
+#[test]
+fn ecdh_derive_empty_peer_pub_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: Vec::new(),
+        },
+        TborStatus::InvalidArg,
+    );
+}
+
+/// Rejects an empty masked private-key envelope.
+#[test]
+fn ecdh_derive_empty_masked_key_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key: Vec::new(),
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::TborInvalidFixedLength,
+    );
+}
+
+/// Rejects a truncated masked private-key envelope.
+#[test]
+fn ecdh_derive_truncated_masked_key_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (mut masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    masked_key.pop();
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::TborInvalidFixedLength,
+    );
+}
+
+/// Rejects an unknown target-scope discriminant.
+#[test]
+fn ecdh_derive_invalid_scope_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: 0xff,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+/// Rejects a Local result scope before partition finalization.
+#[test]
+fn ecdh_derive_local_target_before_finalize_rejected() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let (masked_key, _) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+/// Rejects an Ephemeral result scope before partition finalization.
+#[test]
+fn ecdh_derive_ephemeral_target_before_finalize_rejected() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let (masked_key, _) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_EPHEMERAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+/// Rejects a session-scoped ECC private key after its originating session is closed.
+#[test]
+fn ecdh_derive_session_key_from_other_session_rejected() {
+    let ctx = TestCtx::new();
+    let session_a = finalized_co_session(&ctx);
+
+    let (masked_key, _) =
+        generate_in_scope(&ctx, session_a.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+
+    ctx.session_close(session_a.session_id)
+        .expect("close originating CO session");
+
+    let opts =
+        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("open replacement CO session");
+
+    let session_b = ctx
+        .session_open_finish(pending)
+        .expect("finish replacement CO session");
+
+    let (_, peer_pub) =
+        generate_in_scope(&ctx, session_b.session_id, SCOPE_SESSION, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session_b.session_id,
+            scope: SCOPE_SESSION,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+}
+
+/// A local-scoped ECC private key remains usable after reopening the session.
+#[test]
+fn ecdh_derive_local_key_across_sessions() {
+    let ctx = TestCtx::new();
+    let session_a = finalized_co_session(&ctx);
+
+    let (masked_key, _) =
+        generate_in_scope(&ctx, session_a.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    ctx.session_close(session_a.session_id)
+        .expect("close originating CO session");
+
+    let opts =
+        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("open replacement CO session");
+
+    let session_b = ctx
+        .session_open_finish(pending)
+        .expect("finish replacement CO session");
+
+    let (_, peer_pub) = generate_in_scope(&ctx, session_b.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    let secret = derive(
+        &ctx,
+        session_b.session_id,
+        SCOPE_LOCAL,
+        masked_key,
+        peer_pub,
+    );
+
+    assert_eq!(
+        secret.len(),
+        masked_secret_len(ECC_CURVE_P256),
+        "local-scoped key must remain usable after reopening the session",
+    );
+
+    assert!(
+        secret.iter().any(|&b| b != 0),
+        "derived secret must not be all-zero",
     );
 }
