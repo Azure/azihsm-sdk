@@ -38,6 +38,7 @@ use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA256;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA384;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC256;
+use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC384;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
@@ -799,7 +800,7 @@ fn concat_kdf_fixed_key_type_ignores_explicit_length() {
         HASH_SHA256,
         CONCAT_KDF_ALG_X963,
         KDF_KEY_TYPE_AES256,
-        32,
+        17, // deliberately incorrect; fixed-size AES ignores key_length
         ikm,
         Vec::new(),
     );
@@ -807,8 +808,6 @@ fn concat_kdf_fixed_key_type_ignores_explicit_length() {
     assert_eq!(masked.len(), MASK_OVERHEAD + 32);
     assert!(masked.iter().any(|&b| b != 0));
 }
-
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC384;
 
 /// Accepts the minimum supported `VarHmac384` output length.
 #[test]
