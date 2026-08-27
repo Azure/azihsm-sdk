@@ -370,7 +370,7 @@ mod emu_tests {
         ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
     }
 
-    /// Rejects the firmware-reserved `Internal` key-scope discriminant (0b101).    #[test]
+    /// Rejects the firmware-reserved `Internal` key-scope discriminant (0b101).
     #[test]
     fn aes_generate_key_rejects_internal_scope() {
         let ctx = TestCtx::new();
