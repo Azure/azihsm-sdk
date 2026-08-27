@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for the TBOR `PartFinal` command.
+//! End-to-end tests for the TBOR `PartFinal` command.
 //!
 //! `PartFinal` completes partition provisioning: it validates the supplied
 //! `PartPolicy` and the POTA-anchored PTA certificate chain, advances the

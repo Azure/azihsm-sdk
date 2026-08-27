@@ -103,7 +103,7 @@ impl CaKey {
 /// Owns the POTA signing key, its self-signed root certificate, and the
 /// certificate thumbprint supplied to `PartInit`. Command tests remain
 /// responsible for constructing their command-specific partition policy.
-pub struct PotaFixture {
+pub(crate) struct PotaFixture {
     ca: CaKey,
     root_der: Vec<u8>,
     thumbprint: [u8; POTA_THUMBPRINT_LEN],
@@ -111,7 +111,7 @@ pub struct PotaFixture {
 
 impl PotaFixture {
     /// Generate a P-384 POTA key and its self-signed root certificate.
-    pub fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         let ca = CaKey::generate();
         let root_der = build_root(&ca);
         let thumbprint = sha384(&root_der);
@@ -123,17 +123,17 @@ impl PotaFixture {
     }
 
     /// Raw POTA public coordinates for the partition policy.
-    pub fn raw_pub(&self) -> [u8; RAW_PUB_LEN] {
+    pub(crate) fn raw_pub(&self) -> [u8; RAW_PUB_LEN] {
         self.ca.raw_pub()
     }
 
     /// SHA-384 thumbprint of the self-signed POTA root certificate.
-    pub fn thumbprint(&self) -> &[u8; POTA_THUMBPRINT_LEN] {
+    pub(crate) fn thumbprint(&self) -> &[u8; POTA_THUMBPRINT_LEN] {
         &self.thumbprint
     }
 
     /// Issue a root-to-PTA chain for the partition PTA public key.
-    pub fn chain_for(&self, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> PtaChain {
+    pub(crate) fn chain_for(&self, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> PtaChain {
         PtaChain {
             root_der: self.root_der.clone(),
             pta_der: build_pta_intermediate(pta_pub_sec1, &self.ca),
