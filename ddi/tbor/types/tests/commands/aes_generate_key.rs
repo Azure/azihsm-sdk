@@ -370,9 +370,9 @@ mod emu_tests {
         ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
     }
 
-    /// Rejects the key-scope discriminant immediately above the supported range.
+    /// Rejects the firmware-reserved `Internal` key-scope discriminant (0b101).    #[test]
     #[test]
-    fn aes_generate_key_rejects_adjacent_invalid_scope() {
+    fn aes_generate_key_rejects_internal_scope() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
