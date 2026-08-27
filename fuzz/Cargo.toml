@@ -119,3 +119,17 @@ doc = false
 name = "fuzz_tbor_part_info"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_info.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_encrypt_decrypt"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_encrypt_decrypt.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_generate_key.rs"
+test = false
