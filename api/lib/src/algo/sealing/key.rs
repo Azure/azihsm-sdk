@@ -128,7 +128,7 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         Ok(HsmSealingKey::new(
             session.clone(),
             props,
-            ddi::HsmKeyHandle::NoKeyId,
+            ddi::HsmKeyHandle::NonResident,
         ))
     }
 }

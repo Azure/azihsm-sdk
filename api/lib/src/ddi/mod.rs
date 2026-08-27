@@ -154,22 +154,22 @@ impl From<DdiError> for HsmError {
 pub(crate) enum HsmKeyHandle {
     /// MBOR: device-resident vault key id, packed `key_id` (low 16 bits)
     /// `| bulk_key_id` (high 16 bits).
-    VaultKeyId(u32),
+    Resident(u32),
     /// Non-resident key: material lives only as the masked blob in its
     /// props (e.g. TBOR keys, security-domain sealing keys). There is
     /// nothing device-side to address or delete.
-    NoKeyId,
+    NonResident,
 }
 
 /// Extracts the key ID from a packed HSM key handle.
 ///
 /// The key ID is stored in the low 16 bits of the handle.
 ///
-/// Returns [`HsmError::InvalidKey`] for a non-resident key.
+/// Returns [`HsmError::UnsupportedKeyOperation`] for a non-resident key.
 pub(crate) fn get_key_id(handle: HsmKeyHandle) -> HsmResult<u16> {
     match handle {
-        HsmKeyHandle::VaultKeyId(id) => Ok((id & 0xFFFF) as u16),
-        HsmKeyHandle::NoKeyId => Err(HsmError::InvalidKey),
+        HsmKeyHandle::Resident(id) => Ok((id & 0xFFFF) as u16),
+        HsmKeyHandle::NonResident => Err(HsmError::UnsupportedKeyOperation),
     }
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn get_key_id(handle: HsmKeyHandle) -> HsmResult<u16> {
 /// Returns `None` when the bulk ID field is set to `0xFFFF`.
 pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
     match handle {
-        HsmKeyHandle::VaultKeyId(id) => {
+        HsmKeyHandle::Resident(id) => {
             let bulk_id = (id >> 16) as u16;
             if bulk_id == 0xFFFF {
                 None
@@ -186,7 +186,7 @@ pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
                 Some(bulk_id)
             }
         }
-        HsmKeyHandle::NoKeyId => None,
+        HsmKeyHandle::NonResident => None,
     }
 }
 
@@ -195,7 +195,7 @@ pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
 /// When `bulk_key_id` is `None`, the bulk field is set to `0xFFFF`.
 pub(crate) fn to_key_handle(key_id: u16, bulk_key_id: Option<u16>) -> HsmKeyHandle {
     let bulk_part = (bulk_key_id.unwrap_or(0xFFFF) as u32) << 16;
-    HsmKeyHandle::VaultKeyId(bulk_part | (key_id as u32))
+    HsmKeyHandle::Resident(bulk_part | (key_id as u32))
 }
 
 /// Builds a DDI request header with optional session ID and API revision.
@@ -289,8 +289,8 @@ mod tests {
     #[test]
     fn get_key_id_rejects_non_resident_handle() {
         assert!(matches!(
-            get_key_id(HsmKeyHandle::NoKeyId),
-            Err(HsmError::InvalidKey)
+            get_key_id(HsmKeyHandle::NonResident),
+            Err(HsmError::UnsupportedKeyOperation)
         ));
     }
 }

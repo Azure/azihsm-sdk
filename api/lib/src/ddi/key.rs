@@ -92,7 +92,7 @@ impl<'a> HsmKeyIdGuard<'a> {
 /// All other errors are propagated to the caller.
 fn delete_key_raw_no_res(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
     // A non-resident key has no device-side handle to delete.
-    if matches!(key_id, HsmKeyHandle::NoKeyId) {
+    if matches!(key_id, HsmKeyHandle::NonResident) {
         return Ok(());
     }
     let req = DdiDeleteKeyCmdReq {
