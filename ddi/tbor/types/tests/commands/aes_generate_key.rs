@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 //! Integration tests for the TBOR `AesGenerateKey` command.
 //!
 //! The command generates a random AES key of the requested size and
@@ -350,5 +353,35 @@ mod emu_tests {
             ephemeral_masked, local_masked,
             "Ephemeral and Local scopes must not return identical masked blobs",
         );
+    }
+
+    /// Verifies invalid key size takes precedence when both size and scope are invalid.
+    #[test]
+    fn aes_generate_key_invalid_size_takes_precedence_over_invalid_scope() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let req = TborAesGenerateKeyReq {
+            session_id: session.session_id,
+            scope: 0,
+            key_size: 0,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
+
+    /// Rejects the key-scope discriminant immediately above the supported range.
+    #[test]
+    fn aes_generate_key_rejects_adjacent_invalid_scope() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let req = TborAesGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SECURITY_DOMAIN + 1,
+            key_size: AES_KEY_SIZE_256,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
     }
 }
