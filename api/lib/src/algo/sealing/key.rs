@@ -118,7 +118,7 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         HsmSealingKey::validate_props(&props)?;
 
         // Cache the masked blob and public key in props. The key is
-        // non-resident (`NoKeyId`) until unmasked on-use. Masked under
+        // non-resident (`NonResident`) until unmasked on-use. Masked under
         // the partition-local masking key so the blob survives across
         // launches for unmask-on-use.
         let (masked_key, pub_key_der) = ddi::sd_sealing_key_gen(session, KeyScope::Local as u8)?;

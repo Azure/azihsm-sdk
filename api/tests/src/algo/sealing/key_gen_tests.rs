@@ -182,7 +182,7 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
     assert!(!pub_der.is_empty());
 }
 
-/// Explicit deletion exercises the `NoKeyId` no-op instead of relying on
+/// Explicit deletion exercises the `NonResident` no-op instead of relying on
 /// `Drop`, which intentionally ignores deletion errors.
 #[test]
 fn sealing_key_explicit_delete_succeeds() {
