@@ -140,3 +140,17 @@ doc = false
 name = "fuzz_tbor_concat_kdf_derive"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_concat_kdf_derive.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecc_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_generate_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecc_sign"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_sign.rs"
+test = false
