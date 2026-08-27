@@ -46,6 +46,9 @@ use winapi::um::winnt::HANDLE;
 
 use crate::io_event::IoEvent;
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("The AZIHSM Windows driver ABI requires a 64-bit target");
+
 const MCR_CP_CMD_SESSION_GENERIC: u16 = 0x0;
 /// `CP_CMD_SET_DATA_XFER` selects the driver's data-transfer path,
 /// which attaches the OOB Metadata Page to the SQE.
@@ -53,10 +56,14 @@ const MCR_CP_CMD_DATA_XFER: u16 = 0x1;
 const MCR_IOCTL_CONTROL_PATH_CMD_SESSION: u32 = 0x201;
 /// Function code for `MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER`.
 const MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER: u32 = 0x202;
-/// Maximum number of OOB buffers accepted by the V2 data-transfer IOCTL.
+/// Maximum number of OOB buffers accepted by the data-transfer IOCTL.
+///
+/// Matches `AZIHSM_MAX_DATA_XFER_BUFFERS` in `McrDrvIface.h`.
 const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
 /// Maximum size of one OOB buffer accepted by the Windows driver.
-const AZIHSM_MAX_DATA_XFER_PER_BUFFER: usize = 64 * 1024;
+///
+/// Matches `AZIHSM_MAX_DATA_XFER_PER_BUFFER` in `McrDrvIface.h`.
+const AZIHSM_MAX_DATA_XFER_PER_BUFFER: u32 = 64 * 1024;
 
 #[derive(Default)]
 #[repr(C)]
@@ -256,31 +263,33 @@ pub struct McrCpGenericIoctlOutData {
     hot_patch_reserved: [usize; 16],
 }
 
-/// One entry of `MCR_HSM_DATA_XFER_BUFFERS::buffers`.
+/// One caller-supplied OOB buffer entry.
 ///
-/// The Windows C ABI layout is `{ UINT32 XferLen; PVOID BufferAddr; }`.
+/// Matches one anonymous `{ XferLen, BufferAddr }` entry in
+/// `MCR_HSM_DATA_XFER_BUFFERS`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-struct McrHsmDataXferBuffer {
+struct DataXferBuffer {
     xfer_length: u32,
     buffer_addr: *const u8,
 }
 
-/// Caller-supplied OOB buffer list matching
-/// `MCR_HSM_DATA_XFER_BUFFERS`.
+/// Caller-supplied OOB buffer list.
+///
+/// Matches `MCR_HSM_DATA_XFER_BUFFERS`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct McrHsmDataXferBuffers {
+struct DataXferBuffers {
     buffer_count: u32,
-    buffers: [McrHsmDataXferBuffer; AZIHSM_MAX_DATA_XFER_BUFFERS],
+    buffers: [DataXferBuffer; AZIHSM_MAX_DATA_XFER_BUFFERS],
     reserved: [u32; 128],
 }
 
-impl Default for McrHsmDataXferBuffers {
+impl Default for DataXferBuffers {
     fn default() -> Self {
         Self {
             buffer_count: 0,
-            buffers: [McrHsmDataXferBuffer::default(); AZIHSM_MAX_DATA_XFER_BUFFERS],
+            buffers: [DataXferBuffer::default(); AZIHSM_MAX_DATA_XFER_BUFFERS],
             reserved: [0; 128],
         }
     }
@@ -290,14 +299,14 @@ impl Default for McrHsmDataXferBuffers {
 /// `CP_IOCTL_INDATA_DATA_V2`.
 #[repr(C)]
 union McrCpDataXferInputData {
-    data_xfer: McrHsmDataXferBuffers,
+    data_xfer: DataXferBuffers,
     reserved: [u8; 4096],
 }
 
 impl Default for McrCpDataXferInputData {
     fn default() -> Self {
         Self {
-            data_xfer: McrHsmDataXferBuffers::default(),
+            reserved: [0; 4096],
         }
     }
 }
@@ -313,10 +322,13 @@ struct McrCpDataXferIoctlIndata {
 }
 
 // Keep the Rust representation pinned to the 64-bit Windows driver ABI.
-const _: [(); 16] = [(); mem::size_of::<McrHsmDataXferBuffer>()];
-const _: [(); 776] = [(); mem::size_of::<McrHsmDataXferBuffers>()];
-const _: [(); 344] = [(); mem::size_of::<McrCpGenericIoctlIndata>()];
-const _: [(); 4440] = [(); mem::size_of::<McrCpDataXferIoctlIndata>()];
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(mem::size_of::<DataXferBuffer>() == 16);
+    assert!(mem::size_of::<DataXferBuffers>() == 776);
+    assert!(mem::size_of::<McrCpGenericIoctlIndata>() == 344);
+    assert!(mem::size_of::<McrCpDataXferIoctlIndata>() == 4440);
+};
 
 ///McrFpIoctlErrorKind
 /// Enumeration values for ioctl error status
@@ -1006,19 +1018,20 @@ impl DdiDev for DdiWinDev {
         /// TBOR dispatcher (see `fw/core/lib/src/op.rs::OP_TBOR`).
         const OP_TBOR: u16 = 2;
 
-        // The V2 ioctl carries the same generic command followed by
-        // user virtual addresses for the OOB items. The driver pins and
-        // DMA-maps each item, then builds the device-visible Metadata
-        // Page and per-item NVMe SGL segments.
-        let oob = oob_items.unwrap_or(&[]);
-        if oob.len() > AZIHSM_MAX_DATA_XFER_BUFFERS
-            || oob
-                .iter()
-                .any(|item| item.is_empty() || item.len() > AZIHSM_MAX_DATA_XFER_PER_BUFFER)
+        // Determine whether this TBOR call needs to route through
+        // the driver's Large-Data-Transfer path. When `oob_items` is
+        // Some(non-empty), the driver pins those user buffers, builds
+        // per-buffer NVMe SGL segments, and attaches a 4 KB Metadata
+        // Page through the SQE's metadata-with-session source data.
+        let oob_slice: &[&[u8]] = oob_items.unwrap_or(&[]);
+        if oob_slice.len() > AZIHSM_MAX_DATA_XFER_BUFFERS
+            || oob_slice.iter().any(|item| {
+                item.is_empty() || item.len() > AZIHSM_MAX_DATA_XFER_PER_BUFFER as usize
+            })
         {
             return Err(DdiError::InvalidParameter);
         }
-        let use_data_xfer = !oob.is_empty();
+        let use_data_xfer = !oob_slice.is_empty();
 
         const REQ_BUF_LEN: usize = 8192;
         const RESP_BUF_LEN: usize = 8192;
@@ -1075,13 +1088,15 @@ impl DdiDev for DdiWinDev {
         }
 
         if use_data_xfer {
-            // SAFETY: `input_data` was initialized with the `data_xfer`
-            // union field, which remains active for this request.
+            // SAFETY: `input_data` was fully zero-initialized. All-zero
+            // bytes are a valid representation of `DataXferBuffers`.
             let data_xfer = unsafe { &mut ioctl_in_buffer.input_data.data_xfer };
-            data_xfer.buffer_count = oob.len() as u32;
-            for (slot, item) in data_xfer.buffers.iter_mut().zip(oob) {
-                slot.xfer_length = item.len() as u32;
-                slot.buffer_addr = item.as_ptr();
+            data_xfer.buffer_count = oob_slice.len() as u32;
+            for (i, item) in oob_slice.iter().enumerate() {
+                data_xfer.buffers[i] = DataXferBuffer {
+                    xfer_length: item.len() as u32,
+                    buffer_addr: item.as_ptr(),
+                };
             }
         }
 
@@ -1110,7 +1125,7 @@ impl DdiDev for DdiWinDev {
 
         // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
         // debugging as well as code reviews.
-        let _ioctl_ret = unsafe {
+        let ioctl_ret = unsafe {
             DeviceIoControl(
                 self.file.read().as_raw_handle() as HANDLE,
                 ioctl_code,
@@ -1123,35 +1138,37 @@ impl DdiDev for DdiWinDev {
             )
         };
 
-        let last_error = std::io::Error::last_os_error();
-        if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
-            tracing::warn!(
-                ?last_error,
-                "DeviceIoControl returned error after exec_op_tbor"
-            );
-            Err(DdiError::IoError(last_error))?;
-        }
-
-        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
-        // debugging as well as code reviews.
-        let result = unsafe {
-            GetOverlappedResult(
-                self.file.read().as_raw_handle() as HANDLE,
-                overlapped_ptr,
-                &mut bytes_returned,
-                1,
-            )
-        };
-
-        if result == 0 {
-            // WinApi failure path: driver does not copy any data,
-            // so the extended ioctl status is unreliable here.
+        if ioctl_ret == 0 {
             let last_error = std::io::Error::last_os_error();
-            tracing::warn!(
-                ?last_error,
-                "GetOverlappedResult returned error after exec_op_tbor"
-            );
-            Err(DdiError::IoError(last_error))?;
+            if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+                tracing::warn!(
+                    ?last_error,
+                    "DeviceIoControl returned error after exec_op_tbor"
+                );
+                Err(DdiError::IoError(last_error))?;
+            }
+
+            // SAFETY: the IOCTL is pending and the pointers passed to
+            // `DeviceIoControl` remain valid until completion.
+            let result = unsafe {
+                GetOverlappedResult(
+                    self.file.read().as_raw_handle() as HANDLE,
+                    overlapped_ptr,
+                    &mut bytes_returned,
+                    1,
+                )
+            };
+
+            if result == 0 {
+                // WinApi failure path: driver does not copy any data,
+                // so the extended ioctl status is unreliable here.
+                let last_error = std::io::Error::last_os_error();
+                tracing::warn!(
+                    ?last_error,
+                    "GetOverlappedResult returned error after exec_op_tbor"
+                );
+                Err(DdiError::IoError(last_error))?;
+            }
         }
 
         self.map_ioctl_status_tbor(ioctl_out_buffer.ioctl_status)?;
