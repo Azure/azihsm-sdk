@@ -187,7 +187,7 @@ jobs:
           pip3 install --no-warn-script-location cmake
           echo /usr/local/bin >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Show OpenSSL version
         run: openssl version
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload coverage report
         if: ${{ matrix.cov }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-report-provider-matrix-${{ matrix.distro }}
           path: ./target/reports/
