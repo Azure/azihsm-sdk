@@ -13,19 +13,47 @@
 //! * **More** entries than the schema knows ⇒ trailing entries are
 //!   ignored and the known prefix decodes successfully.
 //!
-//! `TborApiRevResp` is used because its schema contains two `Uint8`
-//! entries:
+//! Coverage includes representative response layouts:
 //!
-//! 1. `min_ver`
-//! 2. `max_ver`
+//! * Inline scalar fields in `TborApiRevResp`.
+//! * Typed inline fields (`SessionId` and `KeyId`).
+//! * Single variable-length buffers in `TborEccSignResp` and
+//!   `TborKeyReportResp`.
+//! * Variable-length buffer plus fixed-size array in
+//!   `TborAesEncryptDecryptResp`.
+//! * Two variable-length buffers in `TborEccGenerateKeyResp`.
+//! * Scalar plus two variable-length buffers in `TborUnwrapKeyResp`.
+//! * Mixed-width integer and fixed-size buffer fields in
+//!   `TborPartInfoResp`.
+//! * Session-id plus multiple fixed-size buffer fields in
+//!   `TborSessionOpenInitResp`.
 
 use azihsm_ddi_tbor_codec::EncodeError;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
 use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
+use azihsm_ddi_tbor_types::tbor;
+use azihsm_ddi_tbor_types::tbor_int::U32;
+use azihsm_ddi_tbor_types::tbor_int::U64;
+use azihsm_ddi_tbor_types::tbor_int::U8;
+use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
 use azihsm_ddi_tbor_types::TborApiRevResp;
+use azihsm_ddi_tbor_types::TborEccGenerateKeyResp;
+use azihsm_ddi_tbor_types::TborEccSignResp;
+use azihsm_ddi_tbor_types::TborKeyReportResp;
+use azihsm_ddi_tbor_types::TborPartInfoResp;
 use azihsm_ddi_tbor_types::TborResp;
+use azihsm_ddi_tbor_types::TborSessionOpenInitResp;
+use azihsm_ddi_tbor_types::TborUnwrapKeyResp;
+
+#[tbor(response)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeyIdForwardCompatResp {
+    #[tbor(key_id)]
+    key_id: u16,
+    value: u8,
+}
 
 /// Decode a normal two-field `TborApiRevResp`.
 fn decode_api_rev(min_ver: u8, max_ver: u8) -> TborApiRevResp {
@@ -612,4 +640,404 @@ fn forward_compatibility_preserves_known_fields_at_toc_limit_boundary() {
         assert_eq!(resp.min_ver, 0x2A);
         assert_eq!(resp.max_ver, 0xD5);
     }
+}
+
+/// Encode one known buffer field followed by the supplied future fields.
+fn encode_buffer_with_trailing<'a>(buf: &'a mut [u8], value: &[u8], trailing: &[u8]) -> &'a [u8] {
+    let mut encoder = ResponseEncoder::new(buf, PROTOCOL_VERSION, 0, false)
+        .buffer(value)
+        .expect("encode known buffer");
+
+    for value in trailing.iter().copied() {
+        encoder = encoder.uint8(value).unwrap_or_else(|err| {
+            panic!(
+                "encode trailing future field \
+                 with value {value:#04x}: {err:?}"
+            )
+        });
+    }
+
+    encoder.finish().expect("finish response")
+}
+/// Verifies exact-count decoding of a variable-length ECDSA signature.
+#[test]
+fn ecc_sign_exact_toc_count_decodes_signature() {
+    let signature: Vec<u8> = (0..96).map(|index| index as u8).collect();
+    let mut buf = [0u8; 512];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .buffer(&signature)
+        .expect("encode signature")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborEccSignResp::decode_response(bytes).expect("decode ECC sign response");
+
+    assert_eq!(resp.signature, signature);
+}
+
+/// Verifies that an appended field is ignored for a variable-length ECDSA signature.
+#[test]
+fn ecc_sign_extra_trailing_toc_entry_is_ignored() {
+    let signature: Vec<u8> = (0..96).map(|index| index as u8).collect();
+    let mut buf = [0u8; 512];
+
+    let bytes = encode_buffer_with_trailing(&mut buf, &signature, &[0xFF]);
+
+    let resp = TborEccSignResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entry must not disturb signature");
+
+    assert_eq!(resp.signature, signature);
+}
+
+/// Verifies that multiple appended fields are ignored for an ECDSA signature.
+#[test]
+fn ecc_sign_multiple_trailing_toc_entries_are_ignored() {
+    let signature: Vec<u8> = (0..96).map(|index| index as u8).collect();
+    let trailing = [0x11, 0x22, 0x33, 0x44];
+    let mut buf = [0u8; 512];
+
+    let bytes = encode_buffer_with_trailing(&mut buf, &signature, &trailing);
+
+    let resp = TborEccSignResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entries must not disturb signature");
+
+    assert_eq!(resp.signature, signature);
+}
+
+/// Verifies forward-compatible decoding of the maximum-size ECDSA signature buffer.
+#[test]
+fn ecc_sign_maximum_signature_with_trailing_entry_is_preserved() {
+    let signature: Vec<u8> = (0..136).map(|index| index as u8).collect();
+
+    let mut buf = [0u8; 512];
+    let bytes = encode_buffer_with_trailing(&mut buf, &signature, &[0xA5]);
+
+    let resp = TborEccSignResp::decode_response(bytes)
+        .expect("maximum-size signature with trailing entry must decode");
+
+    assert_eq!(resp.signature, signature);
+}
+/// Verifies exact-count decoding of a variable-length key report.
+#[test]
+fn key_report_exact_toc_count_decodes_report() {
+    let report: Vec<u8> = (0..512).map(|index| (index & 0xFF) as u8).collect();
+
+    let mut buf = [0u8; 2048];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .buffer(&report)
+        .expect("encode report")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborKeyReportResp::decode_response(bytes).expect("decode key report response");
+
+    assert_eq!(resp.report, report);
+}
+
+/// Verifies that an appended field is ignored for a variable-length key report.
+#[test]
+fn key_report_extra_trailing_toc_entry_is_ignored() {
+    let report: Vec<u8> = (0..512).map(|index| (index & 0xFF) as u8).collect();
+
+    let mut buf = [0u8; 2048];
+
+    let bytes = encode_buffer_with_trailing(&mut buf, &report, &[0xFF]);
+
+    let resp = TborKeyReportResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entry must not disturb report");
+
+    assert_eq!(resp.report, report);
+}
+
+/// Verifies that multiple appended fields are ignored for a variable-length key report.
+#[test]
+fn key_report_multiple_trailing_toc_entries_are_ignored() {
+    let report: Vec<u8> = (0..512).map(|index| (index & 0xFF) as u8).collect();
+
+    let trailing = [0x10, 0x20, 0x30, 0x40];
+    let mut buf = [0u8; 2048];
+
+    let bytes = encode_buffer_with_trailing(&mut buf, &report, &trailing);
+
+    let resp = TborKeyReportResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entries must not disturb report");
+
+    assert_eq!(resp.report, report);
+}
+
+/// Verifies forward-compatible decoding of the maximum-size key report buffer.
+#[test]
+fn key_report_maximum_report_with_trailing_entry_is_preserved() {
+    let report: Vec<u8> = (0..1024).map(|index| (index & 0xFF) as u8).collect();
+
+    let mut buf = [0u8; 2048];
+
+    let bytes = encode_buffer_with_trailing(&mut buf, &report, &[0xA5]);
+
+    let resp = TborKeyReportResp::decode_response(bytes)
+        .expect("maximum-size report with trailing entry must decode");
+
+    assert_eq!(resp.report, report);
+}
+
+/// Verifies that an appended field is ignored for a variable-length
+/// message followed by a fixed-size IV.
+#[test]
+fn aes_encrypt_decrypt_extra_trailing_toc_entry_is_ignored() {
+    let msg: Vec<u8> = (0..64).map(|index| index as u8).collect();
+    let iv = [0xA5u8; 16];
+
+    let mut buf = [0u8; 512];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .buffer(&msg)
+        .expect("encode transformed message")
+        .buffer(&iv)
+        .expect("encode IV")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborAesEncryptDecryptResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entry must not disturb AES response");
+
+    assert_eq!(resp.msg, msg);
+    assert_eq!(resp.iv, iv);
+}
+
+/// Verifies that an appended field is ignored for a response containing
+/// two variable-length buffers.
+#[test]
+fn ecc_generate_key_extra_trailing_toc_entry_is_ignored() {
+    let masked_key: Vec<u8> = (0..180).map(|index| index as u8).collect();
+    let pub_key: Vec<u8> = (0..96)
+        .map(|index| 0xFFu8.wrapping_sub(index as u8))
+        .collect();
+
+    let mut buf = [0u8; 1024];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .buffer(&masked_key)
+        .expect("encode masked key")
+        .buffer(&pub_key)
+        .expect("encode public key")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborEccGenerateKeyResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entry must not disturb generated key response");
+
+    assert_eq!(resp.masked_key, masked_key);
+    assert_eq!(resp.pub_key, pub_key);
+}
+
+/// Verifies that an appended field is ignored for a mixed scalar and
+/// multi-buffer response.
+#[test]
+fn unwrap_key_extra_trailing_toc_entry_is_ignored() {
+    let key_kind = 0x03;
+
+    let masked_key: Vec<u8> = (0..256).map(|index| (index & 0xFF) as u8).collect();
+
+    let pub_key: Vec<u8> = (0..136)
+        .map(|index| 0xFFu8.wrapping_sub(index as u8))
+        .collect();
+
+    let mut buf = [0u8; 1024];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(key_kind)
+        .expect("encode key kind")
+        .buffer(&masked_key)
+        .expect("encode masked key")
+        .buffer(&pub_key)
+        .expect("encode public key")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborUnwrapKeyResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entry must not disturb unwrap response");
+
+    assert_eq!(resp.key_kind, key_kind);
+    assert_eq!(resp.masked_key, masked_key);
+    assert_eq!(resp.pub_key, pub_key);
+}
+
+/// Verifies that multiple appended fields are ignored for a mixed scalar
+/// and multi-buffer response.
+#[test]
+fn unwrap_key_multiple_trailing_toc_entries_are_ignored() {
+    let key_kind = 0x03;
+    let masked_key = vec![0x11; 256];
+    let pub_key = vec![0x22; 136];
+
+    let mut buf = [0u8; 1024];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(key_kind)
+        .expect("encode key kind")
+        .buffer(&masked_key)
+        .expect("encode masked key")
+        .buffer(&pub_key)
+        .expect("encode public key")
+        .uint8(0xA1)
+        .expect("encode future field 1")
+        .uint8(0xA2)
+        .expect("encode future field 2")
+        .uint8(0xA3)
+        .expect("encode future field 3")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborUnwrapKeyResp::decode_response(bytes)
+        .expect("forward compatibility: trailing entries must not disturb unwrap response");
+
+    assert_eq!(resp.key_kind, key_kind);
+    assert_eq!(resp.masked_key, masked_key);
+    assert_eq!(resp.pub_key, pub_key);
+}
+
+/// Verifies that a mixed response missing its final required field is truncated.
+#[test]
+fn unwrap_key_missing_required_field_is_message_truncated() {
+    let key_kind = 0x03;
+    let masked_key = vec![0x11; 256];
+
+    let mut buf = [0u8; 1024];
+
+    // TborUnwrapKeyResp expects:
+    //   key_kind, masked_key, pub_key.
+    // Encode only the first two.
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(key_kind)
+        .expect("encode key kind")
+        .buffer(&masked_key)
+        .expect("encode masked key")
+        .finish()
+        .expect("finish response");
+
+    let err = TborUnwrapKeyResp::decode_response(bytes)
+        .expect_err("missing pub_key must produce MessageTruncated");
+
+    assert_eq!(err, DecodeError::MessageTruncated);
+}
+
+/// Verifies that an AES response missing its IV is reported as truncated.
+#[test]
+fn aes_encrypt_decrypt_missing_iv_is_message_truncated() {
+    let msg = vec![0x22; 64];
+    let mut buf = [0u8; 512];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .buffer(&msg)
+        .expect("encode transformed message")
+        .finish()
+        .expect("finish response");
+
+    let err = TborAesEncryptDecryptResp::decode_response(bytes)
+        .expect_err("missing IV must produce MessageTruncated");
+
+    assert_eq!(err, DecodeError::MessageTruncated);
+}
+
+/// Verifies forward compatibility for mixed-width integers and
+/// fixed-size buffer fields.
+#[test]
+fn part_info_extra_trailing_toc_entry_is_ignored() {
+    let pid = [0xA5u8; 16];
+    let pid_pub_key = [0x5Au8; 96];
+
+    let mut buf = [0u8; 512];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(0x02)
+        .expect("encode device kind")
+        .uint8(0x03)
+        .expect("encode partition state")
+        .uint32(0x1122_3344)
+        .expect("encode generation")
+        .uint64(0x1122_3344_5566_7788)
+        .expect("encode owner SVN")
+        .uint64(0x8877_6655_4433_2211)
+        .expect("encode manufacturer SVN")
+        .buffer(&pid)
+        .expect("encode PID")
+        .buffer(&pid_pub_key)
+        .expect("encode PID public key")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborPartInfoResp::decode_response(bytes)
+        .expect("trailing entry must not disturb PartInfo response");
+
+    assert_eq!(resp.device_kind, U8::from(0x02));
+    assert_eq!(resp.part_state, U8::from(0x03));
+    assert_eq!(resp.generation, U32::from(0x1122_3344));
+    assert_eq!(resp.owner_svn, U64::from(0x1122_3344_5566_7788));
+    assert_eq!(resp.mfgr_svn, U64::from(0x8877_6655_4433_2211));
+    assert_eq!(resp.pid, pid);
+    assert_eq!(resp.pid_pub_key, pid_pub_key);
+}
+
+/// Verifies forward compatibility for a session-id scalar followed by
+/// multiple fixed-size array fields.
+#[test]
+fn session_open_init_extra_trailing_toc_entry_is_ignored() {
+    let session_id = 0x1234;
+    let pk_resp = [0x11u8; 97];
+    let mac_resp = [0x22u8; 48];
+
+    let mut buf = [0u8; 512];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .session_id(session_id)
+        .expect("encode session id")
+        .buffer(&pk_resp)
+        .expect("encode response public key")
+        .buffer(&mac_resp)
+        .expect("encode response MAC")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = TborSessionOpenInitResp::decode_response(bytes)
+        .expect("trailing entry must not disturb session-open response");
+
+    assert_eq!(resp.session_id, session_id);
+    assert_eq!(resp.pk_resp, pk_resp);
+    assert_eq!(resp.mac_resp, mac_resp);
+}
+
+/// Verifies forward compatibility for the typed `KeyId` TOC entry.
+#[test]
+fn key_id_extra_trailing_toc_entry_is_ignored() {
+    let key_id = 0x1234;
+
+    let mut buf = [0u8; 128];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .key_id(key_id)
+        .expect("encode key id")
+        .uint8(0x56)
+        .expect("encode known value")
+        .uint8(0xFF)
+        .expect("encode trailing future field")
+        .finish()
+        .expect("finish response");
+
+    let resp = KeyIdForwardCompatResp::decode_response(bytes)
+        .expect("trailing entry must not disturb key-id response");
+
+    assert_eq!(resp.key_id, key_id);
+    assert_eq!(resp.value, 0x56);
 }
