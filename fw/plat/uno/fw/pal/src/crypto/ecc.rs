@@ -724,9 +724,24 @@ impl HsmEcc for UnoHsmPal {
 
     /// Derive the public key from a raw private scalar (`pub = priv · G`).
     ///
-    /// Delegates to [`UnoHsmPal::pka.ecc_gen_pub_key`] (PKA base-point
-    /// scalar multiplication) after curve mapping. Both buffers are in
-    /// the little-endian PKA wire format.
+    /// Delegates to [`ecc_priv_pub_key`](Self::ecc_priv_pub_key), which
+    /// performs the point multiply with every operand in a GSRAM DMA
+    /// buffer.
+    ///
+    /// This deliberately does **not** use the PKA driver's
+    /// `ecc_gen_pub_key`: that issues the point-mul opcode with a null (0)
+    /// scalar operand, so the engine reads the scalar from address 0
+    /// rather than GSRAM and faults with an AXI `BUS_ERROR`
+    /// (`0x08f0c003`). The same note appears on the deterministic-keygen
+    /// path in `ecc_det.rs`, which avoids the primitive for the same
+    /// reason. Emulator builds do not model PKA operand addressing, so
+    /// this fault only ever appears on silicon.
+    ///
+    /// `ecc_priv_pub_key` infers the curve from the scalar length — which
+    /// is exactly `wire_priv_key_len()`, itself defined as
+    /// `wire_coord_len()` — so the mapping is equivalent to the explicit
+    /// `curve` argument, and it additionally range-checks the scalar
+    /// against the curve order.
     ///
     /// # Parameters
     /// * `curve` — NIST curve the private key is on.
@@ -736,17 +751,16 @@ impl HsmEcc for UnoHsmPal {
     ///   ([`HsmEccCurve::wire_pub_key_len`] bytes).
     ///
     /// # Errors
-    /// * [`HsmError::InvalidArg`] if `curve` is unsupported or a buffer is
-    ///   undersized.
+    /// * [`HsmError::InvalidArg`] if `curve` is unsupported, a buffer is
+    ///   undersized, or the scalar is out of range.
     /// * Any [`HsmError`] surfaced by the PKA driver.
     async fn ecc_pub_from_priv(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
         priv_key: &DmaBuf,
         pub_key: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let pka_curve = map_ecc_curve(curve)?;
         let wire_pub_len = curve.wire_pub_key_len();
         if priv_key.len() != curve.wire_priv_key_len() || pub_key.len() < wire_pub_len {
             return Err(HsmError::InvalidArg);
@@ -754,8 +768,8 @@ impl HsmEcc for UnoHsmPal {
         // Pass an exact-sized sub-view: the PKA writes a fixed number of
         // bytes per curve and is not given a length, so an oversized caller
         // buffer would otherwise keep stale bytes in its tail.
-        self.pka
-            .ecc_gen_pub_key(pka_curve, priv_key, &mut pub_key[..wire_pub_len])
-            .await
+        let (head, _rest) = pub_key.split_at_mut(wire_pub_len);
+        self.ecc_priv_pub_key(io, priv_key, Some(head)).await?;
+        Ok(())
     }
 }
