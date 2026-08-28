@@ -22,8 +22,6 @@
 //! * One-shot — restore onto an already-initialized SD → `SdAlreadyInitialized`.
 //! * Restore before finalize → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreRemoteBackupReq;
@@ -129,7 +127,7 @@ fn restore_remote_req(session_id: u16, backup: &RemoteBackup) -> TborSdRestoreRe
 }
 
 #[test]
-fn sd_restore_remote_backup_roundtrip_emu() {
+fn sd_restore_remote_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -173,7 +171,7 @@ fn sd_restore_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_is_one_shot_emu() {
+fn sd_restore_remote_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -223,7 +221,7 @@ fn sd_restore_remote_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_rejects_before_finalize_emu() {
+fn sd_restore_remote_backup_rejects_before_finalize() {
     // A partition that has not been finalized is rejected at the lifecycle
     // gate before any evidence or crypto work.
     let ctx = TestCtx::new();

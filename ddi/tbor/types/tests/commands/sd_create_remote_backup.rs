@@ -43,8 +43,6 @@
 //! after an NSSR. Un-gating these needs a way to reset the one-shot from
 //! the harness; until then they would be order-dependent and misleading.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -304,7 +302,7 @@ fn dummy_evidence(report: &[u8]) -> ReceiverEvidence {
 }
 
 #[test]
-fn sd_create_remote_backup_roundtrip_emu() {
+fn sd_create_remote_backup_roundtrip() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -340,7 +338,7 @@ fn sd_create_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_is_one_shot_emu() {
+fn sd_create_remote_backup_is_one_shot() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -360,7 +358,7 @@ fn sd_create_remote_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_missing_oob_emu() {
+fn sd_create_remote_backup_rejects_missing_oob() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, _pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -374,7 +372,7 @@ fn sd_create_remote_backup_rejects_missing_oob_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
+fn sd_create_remote_backup_rejects_non_backing_policy() {
     let ctx = TestCtx::new();
 
     // `finalized_co_session` binds `known_good_part_policy` — POTA/SATA
@@ -400,7 +398,7 @@ fn flip_last_byte(mut bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
+fn sd_create_remote_backup_rejects_wrong_sata_anchor() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -418,7 +416,7 @@ fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
+fn sd_create_remote_backup_rejects_leaf_key_mismatch() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -437,7 +435,7 @@ fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
+fn sd_create_remote_backup_rejects_tampered_cert_sig() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -456,7 +454,7 @@ fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_tampered_report_emu() {
+fn sd_create_remote_backup_rejects_tampered_report() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
