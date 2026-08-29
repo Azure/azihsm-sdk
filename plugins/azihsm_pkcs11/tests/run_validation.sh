@@ -28,6 +28,13 @@ gcc -shared -fPIC -Wall -Wextra -Wno-unknown-pragmas \
 MOD="$WORK/azihsm_pkcs11.so"
 echo "  built $MOD ; exported C_ symbols: $(nm -D "$MOD" | grep -c ' T C_')"
 
+echo; echo "== digest KAT (NIST vectors, no device) =="
+gcc -Wall -Wextra -Werror \
+    -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
+    "$HERE/digest_kat_test.c" "$PLUGIN/src/azihsm_pkcs11_digest.c" \
+    -o "$WORK/digest_kat_test"
+"$WORK/digest_kat_test"
+
 if [ -f "$PKCS11_TESTING/env.sh" ]; then
     # shellcheck disable=SC1091
     source "$PKCS11_TESTING/env.sh"
@@ -38,14 +45,17 @@ pkcs11-tool --module "$MOD" --show-info
 pkcs11-tool --module "$MOD" --list-slots
 pkcs11-tool --module "$MOD" --list-mechanisms | head -n 20
 
-echo; echo "== pkcs11-tool: SHA-256('abc') must equal openssl (the demo op) =="
+echo; echo "== pkcs11-tool: digests of 'abc' must equal coreutils =="
 printf abc > "$WORK/msg"
-pkcs11-tool --module "$MOD" --hash --mechanism SHA256 \
-    --input-file "$WORK/msg" --output-file "$WORK/dig" 2>/dev/null
-got="$(xxd -p -c64 "$WORK/dig")"
-exp="$(printf abc | sha256sum | cut -d' ' -f1)"
-echo "  module : $got"; echo "  openssl: $exp"
-[ "$got" = "$exp" ] && echo "  *** DIGEST OK ***" || { echo "  MISMATCH"; exit 1; }
+for pair in SHA-1:sha1sum SHA256:sha256sum SHA384:sha384sum SHA512:sha512sum; do
+    mech="${pair%%:*}"; sum="${pair##*:}"
+    pkcs11-tool --module "$MOD" --hash --mechanism "$mech" \
+        --input-file "$WORK/msg" --output-file "$WORK/dig" 2>/dev/null
+    got="$(xxd -p -c130 "$WORK/dig")"
+    exp="$("$sum" < "$WORK/msg" | cut -d' ' -f1)"
+    echo "  $mech module   : $got"; echo "  $mech coreutils: $exp"
+    [ "$got" = "$exp" ] && echo "  *** $mech OK ***" || { echo "  MISMATCH"; exit 1; }
+done
 
 if [ -x "$PKCS11_TESTING/pkcs11test/pkcs11test" ]; then
     echo; echo "== pkcs11test: framework conformance subset =="

@@ -18,9 +18,9 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
   is one-shot per power cycle; a session is the repeatable per-login primitive).
 - **Host objects** — `C_CreateObject` / `C_DestroyObject` / `C_GetAttributeValue`
   / `C_FindObjects*` against an in-memory object store (see the seam below).
-- **`C_Digest` (SHA-256)** — a host-side digest, the one demonstrable crypto
-  operation. Key-backed mechanisms (AES/RSA/ECDSA, wrap/unwrap, derive) are not
-  implemented yet.
+- **`C_Digest` (SHA-1/256/384/512)** — host-side digests, the demonstrable
+  crypto operations. Key-backed mechanisms (AES/RSA/ECDSA, wrap/unwrap, derive)
+  are not implemented yet.
 
 ## Layering
 
@@ -28,6 +28,7 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
 |---|---|---|
 | C ABI | `azihsm_pkcs11_dispatch.c` | `CK_FUNCTION_LIST` + `_3_0` + the "PKCS 11" interface |
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
+| Host crypto | `azihsm_pkcs11_digest.c` | self-contained SHA-1/256/384/512 (PKCS#11 digests must work in public sessions; the SDK digest needs a login) |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
 | HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
