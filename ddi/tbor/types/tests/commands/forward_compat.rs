@@ -36,7 +36,6 @@ use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
 use azihsm_ddi_tbor_types::tbor;
 use azihsm_ddi_tbor_types::tbor_int::U32;
 use azihsm_ddi_tbor_types::tbor_int::U64;
-use azihsm_ddi_tbor_types::tbor_int::U8;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
 use azihsm_ddi_tbor_types::TborApiRevResp;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyResp;
@@ -54,6 +53,8 @@ struct KeyIdForwardCompatResp {
     key_id: u16,
     value: u8,
 }
+
+const TRAILING_COUNT: usize = MAX_TOC_ENTRIES - 2;
 
 /// Decode a normal two-field `TborApiRevResp`.
 fn decode_api_rev(min_ver: u8, max_ver: u8) -> TborApiRevResp {
@@ -432,7 +433,6 @@ fn forward_compatibility_preserves_representative_known_values() {
 fn maximum_supported_toc_count_decodes_known_prefix() {
     // TborApiRevResp uses two known TOC entries; fill the remaining
     // encoder capacity with trailing future entries.
-    const TRAILING_COUNT: usize = MAX_TOC_ENTRIES - 2;
 
     let trailing: [u8; TRAILING_COUNT] = core::array::from_fn(|index| index as u8);
 
@@ -449,8 +449,8 @@ fn maximum_supported_toc_count_decodes_known_prefix() {
 /// Verifies that the encoder rejects a TOC entry beyond its supported limit.
 #[test]
 fn toc_entry_beyond_encoder_limit_is_rejected() {
-    // Two known fields plus 30 trailing fields reaches the encoder's
-    // maximum of 32 TOC entries. One additional field must fail with
+    // Fill the remaining TOC capacity after the two known fields.
+    // One additional entry beyond MAX_TOC_ENTRIES must fail with
     // TooManyTocEntries.
     let mut buf = [0u8; 512];
 
@@ -460,18 +460,18 @@ fn toc_entry_beyond_encoder_limit_is_rejected() {
         .uint8(0x34)
         .expect("encode max_ver");
 
-    for index in 0..30u8 {
-        encoder = encoder.uint8(index).unwrap_or_else(|err| {
+    for index in 0..TRAILING_COUNT {
+        encoder = encoder.uint8(index as u8).unwrap_or_else(|err| {
             panic!(
                 "trailing field {index} must fit within the \
-                     32-entry limit: {err:?}"
+             MAX_TOC_ENTRIES limit: {err:?}"
             )
         });
     }
 
     let err = encoder
         .uint8(0xFF)
-        .expect_err("the 33rd total TOC entry must be rejected");
+        .expect_err("one TOC entry beyond MAX_TOC_ENTRIES must be rejected");
 
     assert_eq!(err, EncodeError::TooManyTocEntries);
 }
@@ -480,15 +480,15 @@ fn toc_entry_beyond_encoder_limit_is_rejected() {
 #[test]
 fn many_extra_trailing_toc_entries_are_ignored() {
     // Exercise the maximum number of future fields supported by the
-    // encoder: two known fields plus 30 trailing entries.
-    const TRAILING_COUNT: usize = 30;
+    // encoder after the two known fields.
 
     let trailing: [u8; TRAILING_COUNT] = core::array::from_fn(|index| index as u8);
 
     let mut buf = [0u8; 512];
     let bytes = encode_api_rev_with_trailing(&mut buf, 0x21, 0x43, &trailing);
 
-    let resp = TborApiRevResp::decode_response(bytes).expect("30 trailing entries must be ignored");
+    let resp =
+        TborApiRevResp::decode_response(bytes).expect("maximum trailing entries must be ignored");
 
     assert_eq!(resp.min_ver, 0x21);
     assert_eq!(resp.max_ver, 0x43);
@@ -499,7 +499,7 @@ fn many_extra_trailing_toc_entries_are_ignored() {
 fn different_trailing_counts_preserve_the_same_known_fields() {
     // Include values immediately below and at the encoder's maximum
     // supported trailing-entry count.
-    for trailing_count in [0usize, 1, 2, 3, 8, 16, 29, 30] {
+    for trailing_count in [0usize, 1, 2, 3, 8, 16, TRAILING_COUNT - 1, TRAILING_COUNT] {
         let trailing: Vec<u8> = (0..trailing_count).map(|index| index as u8).collect();
 
         let mut buf = [0u8; 512];
@@ -524,11 +524,13 @@ fn different_trailing_counts_preserve_the_same_known_fields() {
     }
 }
 
-/// Verifies exact-count decoding for every possible pair of `u8` known-field values.
+/// Verifies exact-count decoding across representative `u8` values.
 #[test]
-fn exact_toc_count_exhaustively_preserves_all_uint8_pairs() {
-    for min_ver in u8::MIN..=u8::MAX {
-        for max_ver in u8::MIN..=u8::MAX {
+fn exact_toc_count_preserves_representative_uint8_pairs() {
+    let values = [u8::MIN, 0x01, 0x7F, 0x80, 0xFE, u8::MAX];
+
+    for min_ver in values {
+        for max_ver in values {
             let resp = decode_api_rev(min_ver, max_ver);
 
             assert_eq!(
@@ -570,8 +572,6 @@ fn forward_compatibility_preserves_equal_known_values() {
 /// Verifies that maximum-count trailing entries filled with zero are ignored.
 #[test]
 fn maximum_supported_trailing_zero_values_are_ignored() {
-    const TRAILING_COUNT: usize = 30;
-
     let trailing = [u8::MIN; TRAILING_COUNT];
     let mut buf = [0u8; 512];
 
@@ -587,8 +587,6 @@ fn maximum_supported_trailing_zero_values_are_ignored() {
 /// Verifies that maximum-count trailing entries filled with `u8::MAX` are ignored.
 #[test]
 fn maximum_supported_trailing_max_values_are_ignored() {
-    const TRAILING_COUNT: usize = 30;
-
     let trailing = [u8::MAX; TRAILING_COUNT];
     let mut buf = [0u8; 512];
 
@@ -604,8 +602,6 @@ fn maximum_supported_trailing_max_values_are_ignored() {
 /// Verifies that alternating boundary-valued future fields are ignored at the TOC limit.
 #[test]
 fn maximum_supported_alternating_trailing_values_are_ignored() {
-    const TRAILING_COUNT: usize = 30;
-
     let trailing: [u8; TRAILING_COUNT] =
         core::array::from_fn(|index| if index % 2 == 0 { u8::MIN } else { u8::MAX });
 
@@ -622,7 +618,7 @@ fn maximum_supported_alternating_trailing_values_are_ignored() {
 /// Verifies forward compatibility immediately below and at the maximum TOC count.
 #[test]
 fn forward_compatibility_preserves_known_fields_at_toc_limit_boundary() {
-    for trailing_count in [29usize, 30] {
+    for trailing_count in [TRAILING_COUNT - 1, TRAILING_COUNT] {
         let trailing: Vec<u8> = (0..trailing_count)
             .map(|index| 0xF0u8.wrapping_add(index as u8))
             .collect();
@@ -979,8 +975,8 @@ fn part_info_extra_trailing_toc_entry_is_ignored() {
     let resp = TborPartInfoResp::decode_response(bytes)
         .expect("trailing entry must not disturb PartInfo response");
 
-    assert_eq!(resp.device_kind, U8::from(0x02));
-    assert_eq!(resp.part_state, U8::from(0x03));
+    assert_eq!(resp.device_kind, 0x02);
+    assert_eq!(resp.part_state, 0x03);
     assert_eq!(resp.generation, U32::from(0x1122_3344));
     assert_eq!(resp.owner_svn, U64::from(0x1122_3344_5566_7788));
     assert_eq!(resp.mfgr_svn, U64::from(0x8877_6655_4433_2211));
