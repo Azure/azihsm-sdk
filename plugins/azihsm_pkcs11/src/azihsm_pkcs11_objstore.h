@@ -99,6 +99,20 @@ struct azihsm_pkcs11_objstore_ops
      const CK_BYTE *blob,
      CK_ULONG len);
 
+    /*
+     * Retrieve a key object's masked-blob body (the input to azihsm_key_unmask).
+     * Two-call sizing: with blob == NULL, *len receives the body length; a
+     * length of 0 means the object carries no body. The body is internal to the
+     * module and is never exposed through C_GetAttributeValue.
+     */
+    CK_RV(*get_key_body)
+    (void *ctx,
+     CK_SLOT_ID slot,
+     CK_BBOOL user_logged_in,
+     CK_OBJECT_HANDLE h,
+     CK_BYTE *blob,
+     CK_ULONG *len);
+
     void (*teardown)(void *ctx); /* free the whole store (C_Finalize) */
     CK_RV (*persist)(void *ctx); /* NULL on the in-memory backend */
 };

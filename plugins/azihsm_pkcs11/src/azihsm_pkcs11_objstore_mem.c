@@ -477,6 +477,43 @@ static CK_RV mem_set_key_body(
     return CKR_OK;
 }
 
+static CK_RV mem_get_key_body(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_BYTE *blob,
+    CK_ULONG *len
+)
+{
+    mem_store *st = (mem_store *)ctx;
+    if (len == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    mem_object *o = lookup(st, h);
+    if (o == NULL || !visible(o, slot, user_logged_in))
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    if (blob == NULL)
+    {
+        *len = o->key_body_len;
+        return CKR_OK;
+    }
+    if (*len < o->key_body_len)
+    {
+        *len = o->key_body_len;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+    if (o->key_body_len > 0)
+    {
+        memcpy(blob, o->key_body, o->key_body_len);
+    }
+    *len = o->key_body_len;
+    return CKR_OK;
+}
+
 static void mem_teardown(void *ctx)
 {
     mem_store *st = (mem_store *)ctx;
@@ -503,6 +540,7 @@ static const azihsm_pkcs11_objstore_ops MEM_OPS = {
     .find = mem_find,
     .find_final = mem_find_final,
     .set_key_body = mem_set_key_body,
+    .get_key_body = mem_get_key_body,
     .teardown = mem_teardown,
     .persist = NULL, /* in-memory: nothing to flush */
 };

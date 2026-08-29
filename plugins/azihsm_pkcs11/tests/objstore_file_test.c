@@ -387,6 +387,51 @@ int main(void)
         "set_attr preserved the masked blob body"
     );
 
+    /* --- get_key_body: the crypto layer's read side of the body --- */
+    CK_ULONG kb_len = 0;
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, x, NULL, &kb_len) == CKR_OK &&
+            kb_len == sizeof(body),
+        "get_key_body two-call probe reports the body length"
+    );
+    unsigned char kb_buf[8] = { 0 };
+    kb_len = sizeof(kb_buf);
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, x, kb_buf, &kb_len) == CKR_OK &&
+            kb_len == sizeof(body) && memcmp(kb_buf, body, sizeof(body)) == 0,
+        "get_key_body returns the stored masked blob"
+    );
+    kb_len = 2; /* deliberately too small */
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, x, kb_buf, &kb_len) == CKR_BUFFER_TOO_SMALL &&
+            kb_len == sizeof(body),
+        "get_key_body rejects a short buffer and reports the length"
+    );
+    kb_len = 99;
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, tok, NULL, &kb_len) == CKR_OK && kb_len == 0,
+        "get_key_body reports length 0 for an object with no body"
+    );
+    /* Session objects route to the embedded backend: set + get round-trip. */
+    unsigned char sbody[] = { 0x11, 0x22 };
+    CHECK(
+        s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, sess, sbody, sizeof(sbody)) == CKR_OK,
+        "set_key_body on a session object"
+    );
+    kb_len = sizeof(kb_buf);
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, sess, kb_buf, &kb_len) == CKR_OK &&
+            kb_len == sizeof(sbody) && memcmp(kb_buf, sbody, sizeof(sbody)) == 0,
+        "get_key_body round-trips on a session object"
+    );
+    /* The private gate applies to the body like any other access. */
+    kb_len = sizeof(kb_buf);
+    CHECK(
+        s.ops->get_key_body(s.ctx, SLOT, CK_FALSE, priv, kb_buf, &kb_len) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "get_key_body on a private object is INVALID when logged out"
+    );
+
     /* v1 refusal via set_attr: making an object that carries CKA_VALUE private. */
     CK_ATTRIBUTE mkpriv[] = { { CKA_PRIVATE, &ck_true, sizeof(CK_BBOOL) } };
     CHECK(

@@ -918,6 +918,80 @@ static CK_RV file_set_key_body(
     return set_key_body_token(st, slot, user_logged_in, h, blob, len);
 }
 
+static CK_RV get_key_body_token(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_BYTE *blob,
+    CK_ULONG *len
+)
+{
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    /* Brief lock: reading the record non-atomically vs. a concurrent
+     * set_key_body would be safe (writes are atomic renames) but could return a
+     * stale body; the lock matches get_attr's read-under-lock discipline. */
+    int lock_fd = -1;
+    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+    if (blob == NULL)
+    {
+        *len = o.body_len;
+    }
+    else if (*len < o.body_len)
+    {
+        *len = o.body_len;
+        rv = CKR_BUFFER_TOO_SMALL;
+    }
+    else
+    {
+        if (o.body_len > 0)
+        {
+            memcpy(blob, o.body, o.body_len);
+        }
+        *len = o.body_len;
+    }
+    azihsm_pkcs11_record_free(&o);
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return rv;
+}
+
+static CK_RV file_get_key_body(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_BYTE *blob,
+    CK_ULONG *len
+)
+{
+    file_store *st = (file_store *)ctx;
+    if (len == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->get_key_body(st->mem.ctx, slot, user_logged_in, h, blob, len);
+    }
+    return get_key_body_token(st, slot, user_logged_in, h, blob, len);
+}
+
 static CK_RV file_persist(void *ctx)
 {
     (void)ctx;
@@ -950,6 +1024,7 @@ static const azihsm_pkcs11_objstore_ops FILE_OPS = {
     .find = file_find,
     .find_final = file_find_final,
     .set_key_body = file_set_key_body,
+    .get_key_body = file_get_key_body,
     .teardown = file_teardown,
     .persist = file_persist, /* file backend flushes; contrast MEM_OPS (.persist = NULL) */
 };
