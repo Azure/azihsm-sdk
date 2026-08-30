@@ -4,10 +4,10 @@ A standalone **PKCS#11 (Cryptoki) v3.1** module for the AZIHSM. It links the
 native C API (`azihsm.h`, generated from `api/native`) the same way
 `plugins/ossl_prov` does.
 
-## Status — framework + login slice
+## Status — framework + login + first key-backed slice
 
-This is the first implementation slice. **Every PKCS#11 entry point returns
-`CKR_FUNCTION_NOT_SUPPORTED` except the demo path:**
+Unimplemented PKCS#11 entry points return `CKR_FUNCTION_NOT_SUPPORTED`.
+Implemented so far:
 
 - **Library / slots / sessions** — `C_Initialize`, `C_GetInfo`, slot/token/
   mechanism enumeration (real AZIHSM partitions become slots), sessions and the
@@ -18,9 +18,18 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
   is one-shot per power cycle; a session is the repeatable per-login primitive).
 - **Host objects** — `C_CreateObject` / `C_DestroyObject` / `C_GetAttributeValue`
   / `C_FindObjects*` against an in-memory object store (see the seam below).
-- **`C_Digest` (SHA-256)** — a host-side digest, the one demonstrable crypto
-  operation. Key-backed mechanisms (AES/RSA/ECDSA, wrap/unwrap, derive) are not
-  implemented yet.
+- **`C_Digest*` (`CKM_SHA256`)** — a host-side SHA-256 digest (one-shot and
+  multi-part); every other digest mechanism returns `CKR_MECHANISM_INVALID`.
+- **`C_GenerateKey` (`CKM_AES_KEY_GEN`)** — generates an AES-128/192/256 key on
+  the device and stores its **masked blob** (the AZIHSM key's only durable form)
+  as the object's key body. Generated keys are always sensitive, unextractable
+  and local — a template asking otherwise is rejected (note: OpenSC
+  `pkcs11-tool --keygen` needs its `--sensitive` flag for this reason).
+- **`C_Encrypt` / `C_Decrypt` one-shot (`CKM_AES_CBC`, `CKM_AES_CBC_PAD`)** —
+  each `C_EncryptInit`/`C_DecryptInit` unmasks the stored blob into a fresh
+  session-scoped device key that lives exactly as long as the operation.
+  Multi-part (`C_EncryptUpdate`…), AES-GCM/XTS and the other key-backed
+  mechanisms (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
 
 ## Layering
 
@@ -29,7 +38,8 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
 | C ABI | `azihsm_pkcs11_dispatch.c` | `CK_FUNCTION_LIST` + `_3_0` + the "PKCS 11" interface |
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
-| HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
+| Key operations | `azihsm_pkcs11_crypt.c` | key-backed entry points: template normalisation, operation state, masked-blob store/unmask flow (CK_RV only) |
+| HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_key.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
 
 The object store is the emulation layer PKCS#11 requires and the device does not
@@ -62,5 +72,8 @@ for stderr tracing.
 ## Testing
 
 `tests/run_validation.sh` builds the module and drives it with OpenSC
-`pkcs11-tool` (interactive smoke). The CI workflow (`.github/workflows/pkcs11.yml`) is **manual only**
-(`workflow_dispatch`) while the module is still mostly unimplemented.
+`pkcs11-tool` (interactive smoke). `tests/aes_test.c` is a functional harness
+for the AES slice (keygen templates, CBC round trips, the two-call sizing
+discipline, operation state machine); it drives the real module ABI via
+`dlopen`, so it needs the mock-backed build. The CI workflow
+(`.github/workflows/pkcs11.yml`) runs on pushes/PRs to the staging branch.

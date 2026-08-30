@@ -5,9 +5,10 @@
 #
 # Runs on PRs into the feature/pkcs11 staging branch (where the module is
 # developed until it merges to main) and on pushes to that branch; manual
-# dispatch stays available. Every entry point but the demo path returns
-# CKR_FUNCTION_NOT_SUPPORTED. Add main to the triggers when the staging
-# branch merges.
+# dispatch stays available. Unimplemented entry points return
+# CKR_FUNCTION_NOT_SUPPORTED; the drive covers init/login, host objects,
+# SHA-256 digest, and the AES keygen/CBC slice. Add main to the triggers when
+# the staging branch merges.
 name: pkcs11
 
 on:
@@ -51,6 +52,20 @@ jobs:
           exp="$(printf abc | sha256sum | cut -d' ' -f1)"
           echo "module=$got openssl=$exp"
           test "$got" = "$exp"
+
+      - name: AES keygen via pkcs11-tool and the CBC round-trip harness
+        run: |
+          set -euo pipefail
+          MOD="$PWD/target/debug/azihsm_pkcs11.so"
+          # --sensitive is required: the module refuses non-sensitive HSM keys.
+          pkcs11-tool --module "$MOD" --login --pin 1234 --keygen \
+            --key-type aes:32 --label ci-aes --sensitive
+          cd plugins/azihsm_pkcs11
+          out="$RUNNER_TEMP/aes-test"
+          mkdir -p "$out"
+          gcc -Wall -Wextra -Werror -I include/pkcs11-v3.1 -I src \
+            tests/aes_test.c -o "$out/aes_test" -ldl
+          "$out/aes_test" "$MOD"
 
       # TODO: add pkcs11test as the conformance gate once the key-backed
       # mechanisms land and there is a meaningful conformance surface to check.

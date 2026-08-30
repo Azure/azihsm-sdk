@@ -116,30 +116,6 @@ CK_RV C_SetAttributeValue(
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
-{
-    (void)hSession;
-    (void)pMechanism;
-    (void)hKey;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
-CK_RV C_Encrypt(
-    CK_SESSION_HANDLE hSession,
-    CK_BYTE_PTR pData,
-    CK_ULONG ulDataLen,
-    CK_BYTE_PTR pEncryptedData,
-    CK_ULONG_PTR pulEncryptedDataLen
-)
-{
-    (void)hSession;
-    (void)pData;
-    (void)ulDataLen;
-    (void)pEncryptedData;
-    (void)pulEncryptedDataLen;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
 CK_RV C_EncryptUpdate(
     CK_SESSION_HANDLE hSession,
     CK_BYTE_PTR pPart,
@@ -165,30 +141,6 @@ CK_RV C_EncryptFinal(
     (void)hSession;
     (void)pLastEncryptedPart;
     (void)pulLastEncryptedPartLen;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
-CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
-{
-    (void)hSession;
-    (void)pMechanism;
-    (void)hKey;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
-CK_RV C_Decrypt(
-    CK_SESSION_HANDLE hSession,
-    CK_BYTE_PTR pEncryptedData,
-    CK_ULONG ulEncryptedDataLen,
-    CK_BYTE_PTR pData,
-    CK_ULONG_PTR pulDataLen
-)
-{
-    (void)hSession;
-    (void)pEncryptedData;
-    (void)ulEncryptedDataLen;
-    (void)pData;
-    (void)pulDataLen;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
@@ -420,22 +372,6 @@ CK_RV C_DecryptVerifyUpdate(
     (void)ulEncryptedPartLen;
     (void)pPart;
     (void)pulPartLen;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
-CK_RV C_GenerateKey(
-    CK_SESSION_HANDLE hSession,
-    CK_MECHANISM_PTR pMechanism,
-    CK_ATTRIBUTE_PTR pTemplate,
-    CK_ULONG ulCount,
-    CK_OBJECT_HANDLE_PTR phKey
-)
-{
-    (void)hSession;
-    (void)pMechanism;
-    (void)pTemplate;
-    (void)ulCount;
-    (void)phKey;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
