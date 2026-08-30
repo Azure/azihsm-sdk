@@ -72,7 +72,9 @@ typedef struct
     CK_NOTIFY notify;
 
     azihsm_pkcs11_op_type_t op;
-    void *op_ctx;      /* digest state while op == P11_OP_DIGEST */
+    void *op_ctx;      /* digest state (P11_OP_DIGEST) or cipher operation state
+                        * (P11_OP_ENCRYPT / P11_OP_DECRYPT, owned by
+                        * azihsm_pkcs11_crypt.c) */
     void *find_cursor; /* object-store cursor while op == P11_OP_FIND */
 } azihsm_pkcs11_session_t;
 
@@ -140,12 +142,24 @@ void azihsm_pkcs11_unlock(void);
 /* Resolve a session handle to its table entry; NULL if invalid or closed. */
 azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h);
 
-/* Abandon the session's active operation, releasing its digest state or find
- * cursor. */
+/* Abandon the session's active operation, releasing its digest state, cipher
+ * state (including the unmasked device key), or find cursor. */
 CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s);
+
+/* Free a cipher operation context (releases its unmasked device key first).
+ * NULL-safe no-op. Defined in azihsm_pkcs11_crypt.c, which owns the type. */
+void azihsm_pkcs11_cipher_op_free(void *op_ctx);
 
 /* Fill a fixed-width, space-padded CK_UTF8CHAR string field. */
 void azihsm_pkcs11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src);
+
+/*
+ * Zero `n` bytes at `p` through a volatile pointer so the store is not elided
+ * as a dead write when the memory is freed or leaves scope right after — the
+ * same reason azihsm_pkcs11_config.c wipes credentials this way (this module
+ * links no libcrypto, so OPENSSL_cleanse is unavailable). NULL-safe.
+ */
+void azihsm_pkcs11_wipe(void *p, size_t n);
 
 /* The two shared function-list tables (defined in azihsm_pkcs11_dispatch.c). */
 extern CK_FUNCTION_LIST azihsm_pkcs11_function_list;         /* v2.40 view */
