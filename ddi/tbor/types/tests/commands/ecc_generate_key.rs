@@ -262,7 +262,7 @@ fn ecc_generate_key_unknown_scope_rejected() {
 
 /// Rejects a mismatched `session_id` on every supported ECC curve.
 #[test]
-fn ecc_generate_key_unknown_session_rejected() {
+fn ecc_generate_key_mismatched_session_id_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
