@@ -25,6 +25,8 @@
 //! restored. That stronger continuity test must be added when such an API is
 //! available.
 
+use std::sync::Barrier;
+
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborPartInfoResp;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -532,5 +534,78 @@ fn part_final_rejects_second_finalize() {
         &read_part_info(&ctx),
         PART_STATE_INITIALIZED,
         "after reopening CO following second-finalize rejection",
+    );
+}
+
+/// Concurrent requests share the same active CO session. The lifecycle
+/// transition to `Initialized` is published by `commit_part_final_state`
+/// before the response is built, so only one request can commit and every
+/// later contender fails the `Initializing` gate in `on_start`.
+///
+/// It follows the concurrency shape of
+/// `open_session::open_session_multi_threaded_all_should_open`, and pins the
+/// claim that motivated removing `PartFinalTransaction`: the command holds no
+/// cross-request state, so the write-once behaviour comes from the partition's
+/// lifecycle byte rather than from any in-FSM flag.
+#[test]
+fn part_final_multi_threaded_single_winner() {
+    const THREAD_COUNT: usize = 16;
+
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pta_pub = run_part_init(&ctx, &session, &fixture, &mach_seed());
+    let chain = fixture.chain_for(&pta_pub);
+    let policy = pota_policy(&fixture);
+    let barrier = Barrier::new(THREAD_COUNT);
+
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREAD_COUNT)
+            .map(|_| {
+                let barrier = &barrier;
+                let worker_ctx = &ctx;
+                let handshake = &session;
+                let policy = &policy;
+                let chain = &chain;
+
+                scope.spawn(move || {
+                    barrier.wait();
+                    worker_ctx.part_final(handshake, policy, &[], &chain.der_items())
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread must not panic"))
+            .collect()
+    });
+
+    let (winners, rejections): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one concurrent PartFinal request must succeed",
+    );
+    assert_eq!(
+        rejections.len(),
+        THREAD_COUNT - 1,
+        "every non-winning PartFinal request must be rejected",
+    );
+
+    // Same status the sequential `part_final_rejects_second_finalize` pins:
+    // the losers see a partition that is already `Initialized`.
+    for err in rejections.into_iter().map(Result::unwrap_err) {
+        assert_fw_rejects(&err, TborStatus::InvalidArg);
+    }
+
+    // A losing request must not have torn down the winner's work. Rollback
+    // unwinds past PartInit when it runs, so a loser that wrongly reached
+    // the staging path would drop the partition to `Enabled` here.
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after the concurrent PartFinal race",
     );
 }
