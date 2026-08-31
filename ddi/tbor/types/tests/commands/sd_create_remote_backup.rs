@@ -27,21 +27,22 @@
 //! * Policy that does not name this partition as the backing partition
 //!   (`backup_part_id` / `backup_part_pub_key` absent) → `InvalidArg`.
 //!
-//! # Why these stay emulator-only
+//! # The SD one-shot
 //!
-//! The command provisions the SDMK behind a one-shot gate that resets
-//! only on **partition free / NSSR** (see `HsmError::SdAlreadyInitialized`),
-//! and the harness factory reset does not clear it. On hardware that makes
-//! these tests mutually exclusive: the first create after a boot succeeds
-//! and every later one — including across separate `cargo test` runs —
-//! returns `SdAlreadyInitialized`. Verified on silicon: all 8 fail with
-//! `0x08700108`, running a single test alone still fails, and it passes
-//! only after an EVB power cycle. On emu the problem is invisible because
-//! each run gets a fresh in-process device.
+//! The command provisions the SDMK behind a one-shot gate (see
+//! `HsmError::SdAlreadyInitialized`), so a second create on an
+//! already-initialized partition is rejected — that is the behaviour
+//! `sd_create_remote_backup_is_one_shot` asserts.
 //!
-//! The firmware path itself is fine on hardware — the roundtrip passes
-//! after an NSSR. Un-gating these needs a way to reset the one-shot from
-//! the harness; until then they would be order-dependent and misleading.
+//! The gate is cleared by `clear_state` on every partition reset kind,
+//! including the `Migrate` driven by the harness factory reset, so each
+//! test starts from an uninitialized security domain and the file is
+//! self-isolating on hardware. That was not always true: uno previously
+//! cleared the flag only on `Disable`, so it survived an NSSR while the
+//! same reset dropped the SDMK handle — leaving the partition claiming a
+//! security domain whose key was gone, permanently. Emulator builds never
+//! saw it because the std PAL clears the flag on `part_enable` and
+//! `clear_enabled_state`.
 
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
