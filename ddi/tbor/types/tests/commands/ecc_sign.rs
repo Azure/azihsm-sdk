@@ -56,6 +56,14 @@ const SCOPE_SESSION: u8 = 0b001;
 #[cfg(feature = "emu")]
 const SCOPE_LOCAL: u8 = 0b011;
 
+/// `KeyScope::Unspecified` discriminant.
+#[cfg(feature = "emu")]
+const SCOPE_UNSPECIFIED: u8 = 0b000;
+
+/// `KeyScope::Internal` discriminant.
+#[cfg(feature = "emu")]
+const SCOPE_INTERNAL: u8 = 0b101;
+
 /// Per-curve wire sizes: `(wire_coord_len, raw_coord_len)`.
 ///
 /// `wire_coord_len` is the padded on-wire component size (P-521 → 68);
@@ -423,5 +431,63 @@ fn ecc_sign_unknown_session_rejected() {
             digest: vec![0x8D; 32],
         },
         TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+}
+
+/// Rejects `KeyScope::Unspecified` for a caller-generated ECC key.
+#[cfg(feature = "emu")]
+#[test]
+fn ecc_generate_key_unspecified_scope_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    ctx.expect_fw_reject(
+        &TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_UNSPECIFIED,
+            curve: ECC_CURVE_P256,
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+/// Rejects the firmware-internal scope for a caller-generated ECC key.
+#[cfg(feature = "emu")]
+#[test]
+fn ecc_generate_key_internal_scope_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    ctx.expect_fw_reject(
+        &TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_INTERNAL,
+            curve: ECC_CURVE_P256,
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+/// Confirms a signature does not verify against a different public key.
+#[test]
+fn ecc_sign_signature_rejects_different_public_key() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let (_other_masked_key, other_pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let digest = vec![0x42; 32];
+    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature, &digest),
+        "signature must verify against the originating public key",
+    );
+
+    assert!(
+        !verify_wire_ecdsa(&other_pub_key, &signature, &digest),
+        "signature must not verify against a different public key",
     );
 }
