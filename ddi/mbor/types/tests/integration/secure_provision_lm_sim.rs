@@ -73,11 +73,10 @@ fn assert_pin_not_set(err: &DdiError, ctx: &str) {
 ///   lost) — `secure_init_bk3` over a fresh tunnel is rejected as pin-not-set.
 /// - prebuild-then-migrate: pre-build the encrypted-BK3 payload over a second
 ///   tunnel, THEN migrate (both the tunnel key and the volatile PIN are lost and
-///   NSSR resets the tunnel nonce) — the pre-built payload is now stale and
-///   `secure_init_bk3` must reject it. Firmware verifies the nonce before the
-///   PIN, so it fails `NonceMismatch`; the mock clears the prov-cred on reset
-///   and checks the PIN first, so it fails `Bk3PinNotSet`. Either is a valid
-///   rejection of a stale/replayed payload.
+///   NSSR regenerates the tunnel nonce) — the pre-built payload now carries a
+///   stale nonce. `secure_init_bk3` verifies the nonce before the PIN (firmware
+///   `on_start`, which the mock mirrors), so the stale/replayed payload is
+///   rejected with `NonceMismatch`.
 /// - no-partial-state: `get_sealed_bk3` stays gated and `fips_approved` stays
 ///   false, confirming no partial persistent state landed.
 ///
@@ -129,10 +128,11 @@ fn test_secure_provision_lm_midflow_restart() {
 
         // prebuild-then-migrate: re-set the volatile PIN, pre-build an
         // encrypted-BK3 payload over a second tunnel, THEN migrate so both the
-        // tunnel key and PIN are lost and the tunnel nonce is reset. The
-        // pre-built payload is now stale and secure_init_bk3 must reject it:
-        // firmware verifies the nonce first (NonceMismatch), while the mock
-        // clears the prov-cred on reset and checks the PIN first (Bk3PinNotSet).
+        // tunnel key and PIN are lost and the tunnel nonce is regenerated. The
+        // pre-built payload now carries a stale nonce, and secure_init_bk3
+        // verifies the nonce before the PIN (firmware `on_start`; the mock
+        // mirrors this), so the stale/replayed payload is rejected with
+        // NonceMismatch.
         let pin_resp = set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN);
         assert!(pin_resp.is_ok(), "pin_resp {pin_resp:?}");
         let payload = build_secure_init_bk3_payload(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
@@ -141,13 +141,8 @@ fn test_secure_provision_lm_midflow_restart() {
         migrate_sim(dev);
         let result = helper_secure_init_bk3(dev, eb, pk);
         assert!(
-            matches!(
-                result,
-                Err(DdiError::DdiStatus(
-                    DdiStatus::NonceMismatch | DdiStatus::Bk3PinNotSet
-                ))
-            ),
-            "prebuild-then-migrate: expected stale-payload rejection, got {result:?}"
+            matches!(result, Err(DdiError::DdiStatus(DdiStatus::NonceMismatch))),
+            "prebuild-then-migrate: expected NonceMismatch for stale payload, got {result:?}"
         );
 
         // no-partial-state: no partial persistent state landed on the target.
@@ -177,9 +172,19 @@ fn test_secure_provision_lm_midflow_restart() {
         let sealed_after = helper_get_sealed_bk3(dev);
         assert!(sealed_after.is_ok(), "sealed_after {sealed_after:?}");
         let sealed_after = sealed_after.unwrap().data.sealed_bk3.as_slice().to_vec();
-        assert_eq!(sealed_after, sealed_before, "persist-identical: sealed_bk3 changed");
-        assert_eq!(fips_approved(dev), image_is_fips, "persist-identical: fips changed");
-        assert!(!sealed_after.is_empty(), "fips-implies-sealed: sealed_bk3 empty");
+        assert_eq!(
+            sealed_after, sealed_before,
+            "persist-identical: sealed_bk3 changed"
+        );
+        assert_eq!(
+            fips_approved(dev),
+            image_is_fips,
+            "persist-identical: fips changed"
+        );
+        assert!(
+            !sealed_after.is_empty(),
+            "fips-implies-sealed: sealed_bk3 empty"
+        );
 
         // One-shot: re-sealing the migrated partition is rejected.
         let reseal = helper_set_sealed_bk3(dev, sealed_after.clone());
@@ -236,8 +241,15 @@ fn test_secure_provision_lm_completed_survives() {
         let sealed_after = helper_get_sealed_bk3(dev);
         assert!(sealed_after.is_ok(), "sealed_after {sealed_after:?}");
         let sealed_after = sealed_after.unwrap().data.sealed_bk3.as_slice().to_vec();
-        assert_eq!(sealed_after, sealed_before, "persist-identical: sealed_bk3 changed");
-        assert_eq!(fips_approved(dev), fips_before, "persist-identical: fips changed");
+        assert_eq!(
+            sealed_after, sealed_before,
+            "persist-identical: sealed_bk3 changed"
+        );
+        assert_eq!(
+            fips_approved(dev),
+            fips_before,
+            "persist-identical: fips changed"
+        );
 
         // One-shot: re-sealing the migrated partition is rejected.
         let reseal = helper_set_sealed_bk3(dev, sealed_after.clone());
@@ -251,7 +263,10 @@ fn test_secure_provision_lm_completed_survives() {
 
         // fips-implies-sealed: FIPS-approved implies a non-empty sealed BK3.
         if fips_approved(dev) {
-            assert!(!sealed_after.is_empty(), "fips-implies-sealed: sealed_bk3 empty");
+            assert!(
+                !sealed_after.is_empty(),
+                "fips-implies-sealed: sealed_bk3 empty"
+            );
         }
     });
 }

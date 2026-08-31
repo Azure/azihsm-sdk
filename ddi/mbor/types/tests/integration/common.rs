@@ -1496,8 +1496,11 @@ pub fn set_init_bk3_pin(
     id: [u8; 16],
     pin: [u8; 16],
 ) -> Result<(), DdiError> {
-    let resp =
-        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
+    let resp = helper_get_establish_cred_encryption_key(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+    )?;
     let nonce = resp.data.nonce;
     let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
     assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");
@@ -1528,8 +1531,11 @@ pub fn build_secure_init_bk3_payload(
     pin: [u8; 16],
     bk3: &[u8; 48],
 ) -> Result<(DdiEncryptedBk3, DdiDerPublicKey), DdiError> {
-    let resp =
-        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
+    let resp = helper_get_establish_cred_encryption_key(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+    )?;
     let nonce = resp.data.nonce;
     let dev_key = DeviceCredKey::new(&resp.data.pub_key, nonce);
     assert!(dev_key.is_ok(), "DeviceCredKey::new failed: {dev_key:?}");

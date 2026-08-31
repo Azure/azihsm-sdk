@@ -282,6 +282,16 @@ impl Function {
         }
 
         let vault = state.get_vault(DEFAULT_VAULT_ID)?;
+
+        // Fail fast on the tunnel nonce before the PIN check, mirroring firmware
+        // (`secure_init_bk3::on_start`). A stale/replayed payload (e.g. built
+        // before an NSSR/live-migration reset regenerated the nonce) is rejected
+        // as `NonceMismatch` here, so the mock and firmware return the same
+        // status regardless of prov-cred state.
+        if encrypted_bk3.nonce != vault.get_nonce() {
+            return Err(ManticoreError::NonceMismatch);
+        }
+
         let bk3 = state
             .with_bk3_prov_cred(|cred| {
                 vault.decrypt_secure_bk3(encrypted_bk3, client_pub_key, &cred.id, &cred.pin)
