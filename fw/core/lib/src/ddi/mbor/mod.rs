@@ -18,6 +18,8 @@ pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
 pub(crate) mod get_device_info;
 pub(crate) mod get_establish_cred_encryption_key;
+#[cfg(feature = "fips_validation_hooks")]
+pub(crate) mod get_priv_key;
 pub(crate) mod get_sealed_bk3;
 pub(crate) mod get_session_encryption_key;
 pub(crate) mod get_unwrapping_key;
@@ -29,6 +31,8 @@ pub(crate) mod kdf;
 pub(crate) mod key_attrs;
 pub(crate) mod masking;
 pub(crate) mod open_session;
+#[cfg(feature = "fips_validation_hooks")]
+pub(crate) mod raw_key_import;
 pub(crate) mod reopen_session;
 pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
@@ -56,6 +60,8 @@ pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;
 pub(crate) use get_device_info::*;
 pub(crate) use get_establish_cred_encryption_key::*;
+#[cfg(feature = "fips_validation_hooks")]
+pub(crate) use get_priv_key::*;
 pub(crate) use get_sealed_bk3::*;
 pub(crate) use get_session_encryption_key::*;
 pub(crate) use get_unwrapping_key::*;
@@ -64,6 +70,8 @@ pub(crate) use hmac::*;
 pub(crate) use init_bk3::*;
 pub(crate) use kbkdf_derive::*;
 pub(crate) use open_session::*;
+#[cfg(feature = "fips_validation_hooks")]
+pub(crate) use raw_key_import::*;
 pub(crate) use reopen_session::*;
 pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
@@ -166,6 +174,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetCertChainInfo => get_cert_chain_info(pal, io, decoder, hdr).await,
         DdiOp::GetCertificate => get_certificate(pal, io, decoder, hdr).await,
         DdiOp::ShaDigest => sha_digest(pal, io, decoder, hdr).await,
+        #[cfg(feature = "fips_validation_hooks")]
+        DdiOp::GetPrivKey => get_priv_key(pal, io, decoder, hdr).await,
         DdiOp::GetEstablishCredEncryptionKey => {
             get_establish_cred_encryption_key(pal, io, decoder, hdr).await
         }
@@ -191,6 +201,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
         DdiOp::AttestKey => attest_key(pal, io, decoder, hdr).await,
+        #[cfg(feature = "fips_validation_hooks")]
+        DdiOp::RawKeyImport => raw_key_import(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }?;
     Ok(DispatchResult::from_resp(resp))

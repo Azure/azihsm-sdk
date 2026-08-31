@@ -29,6 +29,8 @@ pub mod get_cert_chain_info;
 pub mod get_certificate;
 pub mod get_device_info;
 pub mod get_establish_cred_encryption_key;
+#[cfg(feature = "fips_validation_hooks")]
+pub mod get_priv_key;
 pub mod get_sealed_bk3;
 pub mod get_session_encryption_key;
 pub mod get_unwrapping_key;
@@ -37,6 +39,8 @@ pub mod init_bk3;
 pub mod masked_key;
 pub mod open_key;
 pub mod open_session;
+#[cfg(feature = "fips_validation_hooks")]
+pub mod raw_key_import;
 pub mod reopen_session;
 pub mod rsa_mod_exp;
 pub mod rsa_unwrap;
@@ -95,7 +99,9 @@ pub enum DdiOp {
     InitBk3 = 1111,
     GetSealedBk3 = 1112,
     SetSealedBk3 = 1113,
+    GetPrivKey = 2005,
     ShaDigest = 2006,
+    RawKeyImport = 2008,
 }
 
 // ── Key and crypto enums ───────────────────────────────────────────────

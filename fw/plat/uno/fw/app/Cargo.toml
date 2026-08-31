@@ -35,6 +35,8 @@ embassy-time = { workspace = true }
 [features]
 #default = ["trace-uart"]
 default = []
+fips_validation_hooks = ["azihsm_fw_hsm_core/fips_validation_hooks"]
+mcr_test_hooks = ["azihsm_fw_hsm_core/mcr_test_hooks"]
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the
