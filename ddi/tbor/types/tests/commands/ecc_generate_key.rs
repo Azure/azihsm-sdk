@@ -97,7 +97,7 @@ fn generate(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (Vec<u8>, V
 
 /// Generates fresh, correctly sized keypairs on every supported NIST curve.
 #[test]
-fn ecc_generate_key_all_curves_emu() {
+fn ecc_generate_key_all_curves() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -118,7 +118,7 @@ fn ecc_generate_key_all_curves_emu() {
 
 /// Allows Session-scoped generation before partition finalization on every supported curve.
 #[test]
-fn ecc_generate_key_session_scope_before_finalize_emu() {
+fn ecc_generate_key_session_scope_before_finalize() {
     // Session-scoped keys only require the per-session masking key; the
     // partition's Ephemeral and Local masking keys need not exist yet.
     let ctx = TestCtx::new();
@@ -131,7 +131,7 @@ fn ecc_generate_key_session_scope_before_finalize_emu() {
 
 /// Allows ECC key generation from an authenticated Crypto-User session.
 #[test]
-fn ecc_generate_key_allowed_on_crypto_user_session_emu() {
+fn ecc_generate_key_allowed_on_crypto_user_session() {
     // Rotate away from the default CU PSK so the dispatcher's default-PSK
     // gate does not obscure the command's role authorization.
     let ctx = TestCtx::new();
@@ -161,7 +161,7 @@ fn ecc_generate_key_allowed_on_crypto_user_session_emu() {
 
 /// Rejects SecurityDomain scope when its masking key is not provisioned.
 #[test]
-fn ecc_generate_key_security_domain_scope_rejected_emu() {
+fn ecc_generate_key_security_domain_scope_rejected() {
     // The SecurityDomain masking key is unavailable until CreateSD.
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
@@ -178,7 +178,7 @@ fn ecc_generate_key_security_domain_scope_rejected_emu() {
 
 /// Rejects Ephemeral scope before partition finalization provisions its key.
 #[test]
-fn ecc_generate_key_ephemeral_scope_before_finalize_rejected_emu() {
+fn ecc_generate_key_ephemeral_scope_before_finalize_rejected() {
     // PartFinal provisions the Ephemeral and Local masking keys; until then,
     // ECC generation reports that the requested scope is unsupported.
     let ctx = TestCtx::new();
@@ -196,7 +196,7 @@ fn ecc_generate_key_ephemeral_scope_before_finalize_rejected_emu() {
 
 /// Generates a well-formed keypair on every supported curve under every provisioned scope.
 #[test]
-fn ecc_generate_key_scopes_emu() {
+fn ecc_generate_key_scopes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -211,7 +211,7 @@ fn ecc_generate_key_scopes_emu() {
 
 /// Rejects curve discriminants outside the supported range.
 #[test]
-fn ecc_generate_key_unknown_curve_rejected_emu() {
+fn ecc_generate_key_unknown_curve_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -231,7 +231,7 @@ fn ecc_generate_key_unknown_curve_rejected_emu() {
 
 /// Rejects an unknown masking-scope discriminant.
 #[test]
-fn ecc_generate_key_unknown_scope_rejected_emu() {
+fn ecc_generate_key_unknown_scope_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -247,7 +247,7 @@ fn ecc_generate_key_unknown_scope_rejected_emu() {
 
 /// Rejects a mismatched `session_id` on every supported ECC curve.
 #[test]
-fn ecc_generate_key_mismatched_session_id_rejected_emu() {
+fn ecc_generate_key_mismatched_session_id_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
