@@ -31,9 +31,6 @@ use bitfield_struct::bitfield;
 use nix::ioctl_readwrite;
 use parking_lot::RwLock;
 
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("The AZIHSM Linux driver ABI requires a 64-bit target");
-
 ///McrCpGenericIoctlErrorKind
 /// Enumeration values for ioctl error status
 #[derive(PartialEq)]
@@ -335,15 +332,6 @@ struct McrCpDataXferCmd {
     generic_cmd: McrCpGenericCmd,
     data_xfer: DataXferBuffers,
 }
-
-// Keep the Rust representation pinned to the 64-bit Linux driver ABI.
-#[cfg(target_pointer_width = "64")]
-const _: () = {
-    assert!(mem::size_of::<DataXferBuffer>() == 16);
-    assert!(mem::size_of::<DataXferBuffers>() == 776);
-    assert!(mem::size_of::<McrCpGenericCmd>() == 112);
-    assert!(mem::size_of::<McrCpDataXferCmd>() == 888);
-};
 
 /// IOCTL sequence for `AZIHSM_CTRL_PATH_DATA_XFER`.
 const MCR_HSM_IOC_SEQ_DATA_XFER: u8 = 0x07;

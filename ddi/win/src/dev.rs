@@ -1049,7 +1049,7 @@ impl DdiDev for DdiWinDev {
 
         // -- 2. Build the ioctl command --------------------------------
         let mut ioctl_in_buffer = McrCpDataXferIoctlIndata::default();
-        let ioctl_out_buffer = McrCpGenericIoctlOutData::default();
+        let mut ioctl_out_buffer = McrCpGenericIoctlOutData::default();
 
         let ioctl_input_size = if use_data_xfer {
             mem::size_of::<McrCpDataXferIoctlIndata>()
@@ -1117,7 +1117,7 @@ impl DdiDev for DdiWinDev {
         let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
         let mut bytes_returned: DWORD = 0;
         let in_ptr = ptr::addr_of!(ioctl_in_buffer);
-        let out_ptr = ptr::addr_of!(ioctl_out_buffer);
+        let out_ptr = ptr::addr_of_mut!(ioctl_out_buffer);
         let overlapped_ptr: *mut OVERLAPPED = &mut overlapped;
 
         let event = IoEvent::new()?;
