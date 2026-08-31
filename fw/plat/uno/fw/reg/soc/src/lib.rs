@@ -28,7 +28,6 @@ mod access {
 pub use access::*;
 pub mod aes;
 pub mod dual_cp_m7;
-pub mod dummy_peripheral;
 pub mod gdma;
 pub mod hsm_dtcm;
 pub mod iic;
@@ -42,3 +41,4 @@ pub mod sha;
 pub mod trace_mailbox;
 pub mod uart;
 pub mod upka;
+pub mod zero;

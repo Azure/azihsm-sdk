@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Dummy Peripheral address map (dummy_peripheral).
+// Zero peripheral address map (zero).
 //
 // A passive, register-less AXI target at 0xA0B0_0000 — the SoC memory
 // map calls it the "Dummy Memory Slave". Despite that name it is a
@@ -24,7 +24,7 @@
 // Read-as-zero window
 // ══════════════════════════════════════════════════════════════
 
-mem dummy_peripheral_t {
+mem zero_t {
     desc = "Passive read-as-zero AXI window (16 KB decode). The constant
             zero source for GDMA buffer zeroization; GDMA has no
             fill/memset opcode, so a wipe is a DMA copy whose source is
@@ -38,8 +38,8 @@ mem dummy_peripheral_t {
 // Address Map
 // ══════════════════════════════════════════════════════════════
 
-addrmap dummy_peripheral {
-    name = "Dummy Peripheral";
+addrmap zero {
+    name = "Zero Peripheral";
     desc = "Passive read-as-zero AXI target (16 KB window at 0xA0B0_0000),
              used as the constant zero source for GDMA-based buffer
              wiping. Peripheral aperture, outside GSRAM.";
@@ -47,5 +47,5 @@ addrmap dummy_peripheral {
     default hw = na;
     default sw = r;
 
-    dummy_peripheral_t DUMMY_PERIPHERAL @ 0x0;
+    zero_t ZERO @ 0x0;
 };

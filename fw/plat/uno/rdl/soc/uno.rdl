@@ -28,7 +28,7 @@
 `include "gdma.rdl"
 `include "aes.rdl"
 `include "sha.rdl"
-`include "dummy_peripheral.rdl"
+`include "zero.rdl"
 `include "upka.rdl"
 `include "rng.rdl"
 `include "intc.rdl"
@@ -53,7 +53,7 @@ addrmap uno {
     aes    AES             @ 0xA020_0000;
     rng    RNG             @ 0xA030_0000;
     sha    SHA             @ 0xA040_0000;
-    dummy_peripheral DUMMY_PERIPHERAL @ 0xA0B0_0000;
+    zero   ZERO            @ 0xA0B0_0000;
     iic    IIC             @ 0xA128_0000;
     oic    OIC             @ 0xA12C_0000;
     intc   INTC            @ 0xB000_6000;

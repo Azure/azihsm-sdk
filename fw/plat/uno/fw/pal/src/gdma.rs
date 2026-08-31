@@ -35,8 +35,8 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
-use azihsm_fw_uno_reg_soc::dummy_peripheral::DUMMY_PERIPHERAL_BASE;
-use azihsm_fw_uno_reg_soc::dummy_peripheral::DUMMY_PERIPHERAL_SIZE;
+use azihsm_fw_uno_reg_soc::zero::ZERO_BASE;
+use azihsm_fw_uno_reg_soc::zero::ZERO_SIZE;
 use azihsm_fw_uno_trace::tracing::*;
 use zeroize::Zeroize;
 
@@ -138,7 +138,7 @@ impl HsmGdmaController for UnoHsmPal {
     ///
     /// Wipes off-CPU with the GDMA engine via
     /// [`gdma_zero_region`](UnoHsmPal::gdma_zero_region), which copies from
-    /// the read-as-zero `DUMMY_PERIPHERAL` window — GDMA has no fill/memset opcode,
+    /// the read-as-zero `ZERO` window — GDMA has no fill/memset opcode,
     /// so a wipe is a device-to-device copy out of that region. Every
     /// [`DmaBuf`] is GSRAM-backed by construction (the DTCM heap hands out
     /// plain `&mut [u8]`, never a `DmaBuf`), so the destination is always
@@ -239,16 +239,16 @@ impl HsmGdmaController for UnoHsmPal {
 impl UnoHsmPal {
     /// GDMA-zero a GDMA-reachable device region `[dst_ptr, dst_ptr + len)`.
     ///
-    /// Copies zeros from the [`DUMMY_PERIPHERAL_BASE`] window, chunked to its
-    /// [`DUMMY_PERIPHERAL_SIZE`] so an arbitrarily large region can be wiped
-    /// with a fixed 16 KiB zero source. Both operands use the device
+    /// Copies zeros from the [`ZERO_BASE`] window, chunked to its
+    /// [`ZERO_SIZE`] so an arbitrarily large region can be wiped with a
+    /// fixed 16 KiB zero source. Both operands use the device
     /// interface. Only valid for GDMA-reachable memory (GSRAM); the M7 TCM
     /// is not on the GDMA fabric and must be wiped by the CPU.
     async fn gdma_zero_region(&self, dst_ptr: *mut u8, len: usize) -> HsmResult<()> {
         let mut off = 0usize;
         while off < len {
-            let chunk = core::cmp::min(len - off, DUMMY_PERIPHERAL_SIZE as usize);
-            let src = device_dma_buf(DUMMY_PERIPHERAL_BASE as *const u8, chunk as u32);
+            let chunk = core::cmp::min(len - off, ZERO_SIZE as usize);
+            let src = device_dma_buf(ZERO_BASE as *const u8, chunk as u32);
             // SAFETY: `off < len`, so `dst_ptr + off` stays within the
             // caller-provided `[dst_ptr, dst_ptr + len)` region.
             let dst = device_dma_buf(unsafe { dst_ptr.add(off) }, chunk as u32);
@@ -286,8 +286,7 @@ impl UnoHsmPal {
     /// every byte written since the previous scrub, and everything past it is
     /// already zero from that scrub. Measured over ~1.7k host IOs the DMA peak
     /// averaged ~933 B of the 16 KiB slot (max ~3.3 KiB). The slot is sized to
-    /// `DUMMY_PERIPHERAL`, so even a full-capacity wipe is a single GDMA
-    /// transfer.
+    /// `ZERO`, so even a full-capacity wipe is a single GDMA transfer.
     /// A heap that was never touched is skipped entirely.
     pub(crate) async fn scrub_io_slot(&self, io_index: u16) {
         let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_dirty(self, io_index);

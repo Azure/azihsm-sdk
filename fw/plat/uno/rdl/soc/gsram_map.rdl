@@ -403,8 +403,8 @@ regfile sha_cmd_entry_t {
 
 mem sram_io_buf_t {
     desc = "16KB per-slot DMA buffer for the bump allocator. Sized to
-            DUMMY_PERIPHERAL (16 KB) so a full-slot GDMA scrub is a single
-            transfer from the read-as-zero window rather than two.";
+            ZERO (16 KB) so a full-slot GDMA scrub is a single transfer
+            from the read-as-zero window rather than two.";
     mementries = 4096;
     memwidth = 32;
 };
