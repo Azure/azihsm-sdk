@@ -12,9 +12,15 @@
 //! path (same underlying cert store), and confirm an invalid slot is
 //! rejected.
 
+use azihsm_ddi_tbor_types::codec::DecodeError;
+use azihsm_ddi_tbor_types::codec::ResponseEncoder;
+use azihsm_ddi_tbor_types::codec::MAX_TOC_ENTRIES;
+use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
+use azihsm_ddi_tbor_types::TborGetCertChainInfoResp;
 use azihsm_ddi_tbor_types::TborGetCertReq;
+use azihsm_ddi_tbor_types::TborResp;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::CERT_THUMBPRINT_LEN;
 
@@ -107,19 +113,6 @@ fn reported_count_defines_certificate_bounds() {
         &TborGetCertReq::new(0, info.num_certs),
         TborStatus::InvalidArg,
     );
-}
-
-/// The std/emu PAL only provisions chain slot 0; any other slot is
-/// rejected with `InvalidArg`.
-#[test]
-fn invalid_slots_rejected() {
-    let ctx = TestCtx::new();
-    for slot_id in [1, u8::MAX] {
-        ctx.expect_fw_reject(
-            &TborGetCertChainInfoReq::new(slot_id),
-            TborStatus::InvalidArg,
-        );
-    }
 }
 
 /// Reading certificates from the chain must not mutate the information
@@ -288,4 +281,92 @@ fn unsupported_slot_boundaries_rejected() {
             TborStatus::InvalidArg,
         );
     }
+}
+
+/// A response missing the thumbprint TOC entry is rejected as truncated.
+#[test]
+fn truncated_response_rejected() {
+    let mut buf = [0u8; 128];
+
+    // GetCertChainInfo expects:
+    //   1. num_certs
+    //   2. thumbprint
+    // Encode only num_certs.
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(4)
+        .expect("encode num_certs")
+        .finish()
+        .expect("finish truncated response");
+
+    let err = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect_err("missing thumbprint must be rejected");
+
+    assert_eq!(err, DecodeError::MessageTruncated);
+}
+
+/// A response with the maximum supported TOC count still decodes the known prefix.
+#[test]
+fn max_toc_response_decodes_known_fields() {
+    let mut buf = [0u8; 512];
+    let thumbprint = [0xA5u8; CERT_THUMBPRINT_LEN];
+
+    let mut encoder = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(4)
+        .expect("encode num_certs")
+        .buffer(&thumbprint)
+        .expect("encode thumbprint");
+
+    // Fill the remaining TOC slots with unknown future fields.
+    for _ in 2..MAX_TOC_ENTRIES {
+        encoder = encoder.uint8(0xFF).expect("encode trailing TOC entry");
+    }
+
+    let bytes = encoder.finish().expect("finish max-TOC response");
+
+    let resp = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect("maximum TOC response must decode known prefix");
+
+    assert_eq!(resp.num_certs, 4);
+    assert_eq!(resp.thumbprint, thumbprint);
+}
+
+/// A response with the wrong TOC type for `num_certs` is rejected.
+#[test]
+fn wrong_num_certs_type_rejected() {
+    let mut buf = [0u8; 512];
+    let thumbprint = [0xA5u8; CERT_THUMBPRINT_LEN];
+
+    // num_certs expects Uint8; deliberately encode it as Uint16.
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint16(4)
+        .expect("encode wrong num_certs type")
+        .buffer(&thumbprint)
+        .expect("encode thumbprint")
+        .finish()
+        .expect("finish response");
+
+    let err = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect_err("wrong num_certs TOC type must be rejected");
+
+    assert_eq!(err, DecodeError::UnexpectedTocType);
+}
+
+/// A response with the wrong TOC type for the thumbprint is rejected.
+#[test]
+fn wrong_thumbprint_type_rejected() {
+    let mut buf = [0u8; 128];
+
+    // thumbprint expects Buffer; deliberately encode it as Uint8.
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(4)
+        .expect("encode num_certs")
+        .uint8(0xA5)
+        .expect("encode wrong thumbprint type")
+        .finish()
+        .expect("finish response");
+
+    let err = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect_err("wrong thumbprint TOC type must be rejected");
+
+    assert_eq!(err, DecodeError::UnexpectedTocType);
 }
