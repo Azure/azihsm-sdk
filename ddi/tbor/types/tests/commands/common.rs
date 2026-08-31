@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Common const and helpers for TBOR command tests.
-//!
+//! Common constants and helpers for TBOR command tests.
 
 #[cfg(feature = "emu")]
 /// `KeyScope::Session` discriminant.
