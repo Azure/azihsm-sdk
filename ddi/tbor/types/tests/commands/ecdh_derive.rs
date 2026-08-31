@@ -35,6 +35,10 @@ use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SECURITY_DOMAIN;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::CO;
 use crate::commands::part_init::CU;
@@ -45,16 +49,6 @@ use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
-/// `KeyScope::Session` discriminant.
-const SCOPE_SESSION: u8 = 0b001;
-/// `KeyScope::Ephemeral` discriminant.
-const SCOPE_EPHEMERAL: u8 = 0b010;
-/// `KeyScope::Local` discriminant.
-const SCOPE_LOCAL: u8 = 0b011;
-/// `KeyScope::SecurityDomain` discriminant.
-const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
-
 /// Expected masked shared-secret envelope length per curve:
 /// `header(8) ‖ iv(12) ‖ aad(96) ‖ secret(raw_coord) ‖ tag(16)` = 132 + raw.
 fn masked_secret_len(curve: u8) -> usize {
@@ -64,12 +58,6 @@ fn masked_secret_len(curve: u8) -> usize {
         ECC_CURVE_P521 => 132 + 66,
         _ => unreachable!(),
     }
-}
-
-/// Generate an ECC key on-device for `curve`, returning `(masked_key,
-/// wire_pub_key)`.
-fn generate(ctx: &TestCtx, session_id: u16, curve: u8) -> (Vec<u8>, Vec<u8>) {
-    generate_in_scope(ctx, session_id, SCOPE_LOCAL, curve)
 }
 
 /// Generate an ECC key on-device under `scope`.
@@ -104,15 +92,15 @@ fn derive(
 }
 
 #[test]
-fn ecdh_derive_all_curves_emu() {
+fn ecdh_derive_all_curves() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
     for curve in [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521] {
         // Two device-generated keypairs on the same curve; each side's
         // public key is a valid wire-LE peer point for the other.
-        let (masked_a, pub_a) = generate(&ctx, session.session_id, curve);
-        let (masked_b, pub_b) = generate(&ctx, session.session_id, curve);
+        let (masked_a, pub_a) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, curve);
+        let (masked_b, pub_b) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, curve);
 
         let secret_ab = derive(&ctx, session.session_id, SCOPE_LOCAL, masked_a, pub_b);
         let secret_ba = derive(&ctx, session.session_id, SCOPE_LOCAL, masked_b, pub_a);
@@ -132,12 +120,14 @@ fn ecdh_derive_all_curves_emu() {
 }
 
 #[test]
-fn ecdh_derive_scopes_emu() {
+fn ecdh_derive_scopes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    let (masked_a, _pub_a) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_masked_b, pub_b) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_a, _pub_a) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_masked_b, pub_b) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     // The derived secret can be masked under any provisioned scope.
     for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
@@ -154,12 +144,12 @@ fn ecdh_derive_scopes_emu() {
 }
 
 #[test]
-fn ecdh_derive_bad_peer_pub_len_rejected_emu() {
+fn ecdh_derive_bad_peer_pub_len_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let (masked_a, pub_b) = {
-        let (ma, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-        let (_, pb) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+        let (ma, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+        let (_, pb) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
         (ma, pb)
     };
 
@@ -180,11 +170,11 @@ fn ecdh_derive_bad_peer_pub_len_rejected_emu() {
 
 /// Rejects trailing bytes in an otherwise valid peer public key.
 #[test]
-fn ecdh_derive_peer_pub_trailing_byte_rejected_emu() {
+fn ecdh_derive_peer_pub_trailing_byte_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     let overlong = [peer_pub.as_slice(), &[0xAA]].concat();
     ctx.expect_fw_reject(
@@ -200,11 +190,11 @@ fn ecdh_derive_peer_pub_trailing_byte_rejected_emu() {
 
 /// Rejects a peer public key whose wire size belongs to another curve.
 #[test]
-fn ecdh_derive_peer_curve_mismatch_rejected_emu() {
+fn ecdh_derive_peer_curve_mismatch_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, p384_pub) = generate(&ctx, session.session_id, ECC_CURVE_P384);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, p384_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P384);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -219,10 +209,11 @@ fn ecdh_derive_peer_curve_mismatch_rejected_emu() {
 
 /// Rejects a correctly sized peer point that is not a valid curve point.
 #[test]
-fn ecdh_derive_invalid_peer_point_rejected_emu() {
+fn ecdh_derive_invalid_peer_point_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, peer_pub) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -237,11 +228,12 @@ fn ecdh_derive_invalid_peer_point_rejected_emu() {
 
 /// Rejects a masked private key whose authenticated ciphertext was modified.
 #[test]
-fn ecdh_derive_tampered_masked_key_rejected_emu() {
+fn ecdh_derive_tampered_masked_key_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (mut masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (mut masked_key, _) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
     let last = masked_key.len() - 1;
     masked_key[last] ^= 1;
 
@@ -258,11 +250,11 @@ fn ecdh_derive_tampered_masked_key_rejected_emu() {
 
 /// Rejects a valid masked key whose class is AES rather than ECC private.
 #[test]
-fn ecdh_derive_wrong_key_class_rejected_emu() {
+fn ecdh_derive_wrong_key_class_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let aes = unwrap(&ctx, session.session_id, KEY_CLASS_AES, &[0x54; 32]);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -277,11 +269,11 @@ fn ecdh_derive_wrong_key_class_rejected_emu() {
 
 /// Rejects a target scope whose masking key has not been provisioned.
 #[test]
-fn ecdh_derive_unsupported_target_scope_rejected_emu() {
+fn ecdh_derive_unsupported_target_scope_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -296,11 +288,11 @@ fn ecdh_derive_unsupported_target_scope_rejected_emu() {
 
 /// Rejects deriving when the request uses a `session_id` that does not match the active session on this device handle.
 #[test]
-fn ecdh_derive_unknown_session_rejected_emu() {
+fn ecdh_derive_unknown_session_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
     assert_ne!(session.session_id, u16::MAX, "test requires an unused id");
 
     ctx.expect_fw_reject(
@@ -316,7 +308,7 @@ fn ecdh_derive_unknown_session_rejected_emu() {
 
 /// Session-scoped keys and results work before partition finalization.
 #[test]
-fn ecdh_derive_session_scope_before_finalize_emu() {
+fn ecdh_derive_session_scope_before_finalize() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_a, _) = generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
@@ -328,7 +320,7 @@ fn ecdh_derive_session_scope_before_finalize_emu() {
 
 /// Confirms a Crypto-User (`PlainText`) session is authorized to derive.
 #[test]
-fn ecdh_derive_allowed_on_crypto_user_session_emu() {
+fn ecdh_derive_allowed_on_crypto_user_session() {
     let ctx = TestCtx::new();
     let bootstrap = ctx
         .open_session(CU, SessionType::PlainText)
@@ -353,7 +345,7 @@ fn ecdh_derive_allowed_on_crypto_user_session_emu() {
 
 /// Derives with an ECC private key imported with `Derive` usage.
 #[test]
-fn ecdh_derive_with_unwrapped_key_emu() {
+fn ecdh_derive_with_unwrapped_key() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let host_key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate host ECC key");
@@ -365,7 +357,7 @@ fn ecdh_derive_with_unwrapped_key_emu() {
         KEY_USAGE_DERIVE,
         &der,
     );
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     let secret = derive(
         &ctx,
@@ -379,7 +371,7 @@ fn ecdh_derive_with_unwrapped_key_emu() {
 
 /// Rejects an imported ECC key that has signing but not derivation usage.
 #[test]
-fn ecdh_derive_key_without_derive_usage_rejected_emu() {
+fn ecdh_derive_key_without_derive_usage_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let host_key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate host ECC key");
@@ -391,7 +383,7 @@ fn ecdh_derive_key_without_derive_usage_rejected_emu() {
         KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
         &der,
     );
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -406,10 +398,10 @@ fn ecdh_derive_key_without_derive_usage_rejected_emu() {
 
 /// Rejects an empty peer public key.
 #[test]
-fn ecdh_derive_empty_peer_pub_rejected_emu() {
+fn ecdh_derive_empty_peer_pub_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -424,10 +416,10 @@ fn ecdh_derive_empty_peer_pub_rejected_emu() {
 
 /// Rejects an empty masked private-key envelope.
 #[test]
-fn ecdh_derive_empty_masked_key_rejected_emu() {
+fn ecdh_derive_empty_masked_key_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
@@ -442,11 +434,12 @@ fn ecdh_derive_empty_masked_key_rejected_emu() {
 
 /// Rejects a truncated masked private-key envelope.
 #[test]
-fn ecdh_derive_truncated_masked_key_rejected_emu() {
+fn ecdh_derive_truncated_masked_key_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (mut masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (mut masked_key, _) =
+        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     masked_key.pop();
 
@@ -463,11 +456,11 @@ fn ecdh_derive_truncated_masked_key_rejected_emu() {
 
 /// Rejects an unknown target-scope discriminant.
 #[test]
-fn ecdh_derive_invalid_scope_rejected_emu() {
+fn ecdh_derive_invalid_scope_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let (_, peer_pub) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborEcdhDeriveReq {
