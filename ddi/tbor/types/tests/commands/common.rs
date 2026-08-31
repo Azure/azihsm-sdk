@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! common helpers for TBOR command tests
+//! Common const and helpers for TBOR command tests.
 //!
 
 #[cfg(feature = "emu")]
