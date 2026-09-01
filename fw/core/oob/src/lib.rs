@@ -148,12 +148,14 @@ pub async fn copy_oob<P>(
 where
     P: HsmGdmaController + HsmAlloc,
 {
-    let entry_addr = entry_addr(oob, index)?;
+    // Bounds-check `index` against `oob.len`. The address itself is
+    // recomputed below, aligned down for the padded read.
+    entry_addr(oob, index)?;
 
     pal.alloc_scoped_async(io, async |scoped| {
-        // Read the item's 16-byte entry. Two hardware constraints apply,
-        // both invisible on the emulator (which never models the GDMA
-        // descriptor):
+        // Read the item's 16-byte entry. Three hardware/safety
+        // constraints apply, the first two invisible on the emulator
+        // (which never models the GDMA descriptor):
         //
         // * `prp = true` — the Metadata Page is plain contiguous host
         //   memory, so the address goes in a PRP and the length is passed
@@ -162,15 +164,26 @@ where
         //   and the GDMA rejects the zero-length read with `dma_error(1)`
         //   (`0x08f08101`).
         // * the read is padded to `ENTRY_READ_LEN` — the GDMA faults on
-        //   very small transfers. Entries occupy at most the first
-        //   `64 * 16` bytes of a 4 KiB page, so the padding cannot run
-        //   off the end.
-        let entry = scoped.dma_alloc(ENTRY_READ_LEN)?;
-        pal.copy_mem_from_host(io, entry_addr, entry, true).await?;
+        //   very small transfers.
+        // * the padded read is *aligned down* to `ENTRY_READ_LEN` and the
+        //   entry parsed at the offset within it. SQE validation allows
+        //   `oob_len` up to a full page, so a naive padded read at a high
+        //   index (entry 255 sits at 4080) would run past the end of the
+        //   validated page. Aligning down keeps every read inside it,
+        //   since `ENTRY_READ_LEN` divides the page size.
+        let entry_off = index
+            .checked_mul(SGL_ENTRY_LEN)
+            .ok_or(HsmError::InvalidArg)?;
+        let read_off = entry_off & !(ENTRY_READ_LEN - 1);
+        let inner = entry_off - read_off;
+        let read_addr = addr_offset(oob.prp, read_off as u64)?;
 
-        let mut seg_addr = le_addr(entry, 0)?;
-        let mut seg_len = le_u32(entry, 8)? as usize;
-        let mut seg_type = desc_type(entry, 0)?;
+        let entry = scoped.dma_alloc(ENTRY_READ_LEN)?;
+        pal.copy_mem_from_host(io, read_addr, entry, true).await?;
+
+        let mut seg_addr = le_addr(entry, inner)?;
+        let mut seg_len = le_u32(entry, inner + 8)? as usize;
+        let mut seg_type = desc_type(entry, inner)?;
 
         let mut copied = 0usize;
         let total = dst.len();
@@ -183,19 +196,11 @@ where
         let seg = scoped.dma_alloc(SEG_CHUNK_LEN)?;
 
         for _ in 0..MAX_SEGMENTS {
-            if seg_addr.is_null() || seg_len == 0 || !seg_len.is_multiple_of(SGL_ENTRY_LEN) {
+            if seg_addr.is_null() {
                 return Err(HsmError::InvalidArg);
             }
-            let (descriptors, chained) = match seg_type {
-                SGL_TYPE_LAST_SEGMENT => (seg_len / SGL_ENTRY_LEN, false),
-                SGL_TYPE_SEGMENT => {
-                    if seg_len > SEG_PAGE_LEN {
-                        return Err(HsmError::InvalidArg);
-                    }
-                    (seg_len / SGL_ENTRY_LEN - 1, true)
-                }
-                _ => return Err(HsmError::InvalidArg),
-            };
+            let (descriptors, chained) =
+                segment_shape(seg_len, seg_type).ok_or(HsmError::InvalidArg)?;
 
             let mut next: Option<(HsmDmaAddr, usize, u8)> = None;
 
@@ -299,6 +304,31 @@ fn desc_type(bytes: &[u8], off: usize) -> HsmResult<u8> {
     Ok(b >> 4)
 }
 
+/// How many Data Block descriptors a segment contributes, and whether it
+/// chains onward. `None` for a malformed or out-of-contract segment.
+///
+/// `seg_len` is host-controlled and drives both the read loop and the DMA
+/// reads, so it is bounded for **every** descriptor type: an unbounded
+/// `LAST_SEGMENT` length would spin the loop and read far past the
+/// segment allocation. The driver backs every segment with whole pages
+/// (`coh_mem_sz = seg_cnt * PAGE_SIZE`, `azihsm_dma_io.c`) and rejects
+/// items needing more than one page of descriptors, so a segment can
+/// never legitimately exceed [`SEG_PAGE_LEN`].
+fn segment_shape(seg_len: usize, seg_type: u8) -> Option<(usize, bool)> {
+    if seg_len == 0 || seg_len > SEG_PAGE_LEN || !seg_len.is_multiple_of(SGL_ENTRY_LEN) {
+        return None;
+    }
+    match seg_type {
+        SGL_TYPE_LAST_SEGMENT => Some((seg_len / SGL_ENTRY_LEN, false)),
+        // The final descriptor chains to the next segment rather than
+        // describing data, so a chained segment needs at least two.
+        SGL_TYPE_SEGMENT if seg_len >= 2 * SGL_ENTRY_LEN => {
+            Some((seg_len / SGL_ENTRY_LEN - 1, true))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -312,6 +342,66 @@ mod tests {
             len: 48,
         };
         assert_eq!(oob.entry_count(), 3);
+    }
+
+    /// The padded entry read must stay inside the Metadata Page even for
+    /// the highest index SQE validation permits (a full page of entries).
+    /// Aligning the read down to `ENTRY_READ_LEN` is what guarantees it.
+    #[test]
+    fn padded_entry_read_stays_within_the_page() {
+        const PAGE: usize = 4096;
+        assert!(PAGE.is_multiple_of(ENTRY_READ_LEN));
+        for index in 0..PAGE / SGL_ENTRY_LEN {
+            let entry_off = index * SGL_ENTRY_LEN;
+            let read_off = entry_off & !(ENTRY_READ_LEN - 1);
+            let inner = entry_off - read_off;
+            // The whole padded read is inside the page ...
+            assert!(read_off + ENTRY_READ_LEN <= PAGE, "index {index} overruns");
+            // ... and the entry sits wholly inside the padded read.
+            assert!(inner + SGL_ENTRY_LEN <= ENTRY_READ_LEN);
+            // ... at the address the caller asked for.
+            assert_eq!(read_off + inner, entry_off);
+        }
+    }
+
+    /// A segment length is host-controlled, so it is bounded for every
+    /// descriptor type — an unbounded `LAST_SEGMENT` would drive both an
+    /// enormous read loop and DMA past the segment allocation.
+    #[test]
+    fn segment_length_is_bounded_for_every_type() {
+        for ty in [SGL_TYPE_LAST_SEGMENT, SGL_TYPE_SEGMENT] {
+            assert!(
+                segment_shape(SEG_PAGE_LEN + SGL_ENTRY_LEN, ty).is_none(),
+                "type {ty:#x} accepted an over-page segment"
+            );
+            assert!(segment_shape(0, ty).is_none());
+            assert!(segment_shape(SGL_ENTRY_LEN + 1, ty).is_none());
+            assert!(segment_shape(usize::MAX, ty).is_none());
+        }
+        // A single descriptor is a valid last segment, but a chained
+        // segment needs a second one to hold the chain pointer.
+        assert_eq!(
+            segment_shape(SGL_ENTRY_LEN, SGL_TYPE_LAST_SEGMENT),
+            Some((1, false))
+        );
+        assert!(segment_shape(SGL_ENTRY_LEN, SGL_TYPE_SEGMENT).is_none());
+        assert_eq!(
+            segment_shape(2 * SGL_ENTRY_LEN, SGL_TYPE_SEGMENT),
+            Some((1, true))
+        );
+        // Unknown descriptor types are rejected outright.
+        assert!(segment_shape(SEG_PAGE_LEN, SGL_TYPE_DATA_BLOCK).is_none());
+    }
+
+    #[test]
+    fn desc_type_reads_the_high_nibble() {
+        let mut desc = [0u8; SGL_ENTRY_LEN];
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_DATA_BLOCK);
+        desc[SGL_ENTRY_LEN - 1] = SGL_TYPE_LAST_SEGMENT << 4;
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_LAST_SEGMENT);
+        // A set sub_type nibble must not leak into the type.
+        desc[SGL_ENTRY_LEN - 1] = (SGL_TYPE_SEGMENT << 4) | 0x0F;
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_SEGMENT);
     }
 
     #[test]

@@ -87,9 +87,12 @@ const METADATA_ENTRY_OFF: usize = 0;
 /// NVMe SGL descriptor types used when building the page.
 const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
 
-/// Maximum OOB items the device accepts, matching the firmware's
-/// `MAX_OOB_ITEMS` and the driver's
-/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
+/// Maximum OOB items the emulator will describe, matching the driver's
+/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`. This is a driver/emulator
+/// compatibility cap, not a firmware invariant: firmware SQE validation
+/// bounds `oob_len` by the Metadata Page size, and `copy_oob` bounds the
+/// index against `oob_len`, so the firmware itself accepts any item
+/// count that fits the page.
 const MAX_OOB_ITEMS: usize = 64;
 
 /// Page size enforced by the firmware platform.

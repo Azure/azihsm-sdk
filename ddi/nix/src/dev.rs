@@ -282,13 +282,16 @@ ioctl_readwrite!(
 );
 
 /// Maximum number of out-of-band buffers the data-transfer ioctl
-/// accepts (`AZIHSM_MAX_DATA_XFER_BUFFERS`). Deliberately equal to the
-/// firmware's `MAX_OOB_ITEMS`, so a request the host accepts is one the
-/// device can also describe in a single Metadata Page.
+/// accepts (`AZIHSM_MAX_DATA_XFER_BUFFERS`).
 ///
 /// This value is part of the ioctl's ABI: it sizes
 /// `azi_hsm_dataxfer_buffers`, whose `size_of` is encoded in the
 /// `_IOWR` number, so it must track the driver header exactly.
+///
+/// It is a driver-side limit only. Firmware does not impose a matching
+/// item count: SQE validation bounds `oob_len` by the Metadata Page
+/// size, and the OOB layer bounds the referenced index against
+/// `oob_len`.
 const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 64;
 
 /// One entry of `struct azi_hsm_dataxfer_buffers::buffers`.
