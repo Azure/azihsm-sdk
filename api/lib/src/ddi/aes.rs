@@ -8,6 +8,7 @@
 //! the construction of DDI requests and processing of responses for AES
 //! cryptographic operations.
 
+use azihsm_ddi_tbor_types::AES_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
@@ -295,10 +296,15 @@ fn aes_generate_key_tbor(
     session: &HsmSession,
     props: &HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, Vec<u8>)> {
+    let key_label = props.label();
+    if key_label.len() > AES_KEY_LABEL_MAX_LEN {
+        return Err(HsmError::InvalidKeyProps);
+    }
     let req = TborAesGenerateKeyReq {
         session_id: session.ex_session_id()?,
         scope: props.tbor_scope(),
         key_size: aes_bits_to_tbor_size(props.bits())?,
+        key_label: key_label.to_vec(),
     };
     let mut cookie = None;
     let resp = session.with_dev(|dev| {

@@ -11,11 +11,17 @@ use super::*;
 /// Size of the masked key attributes flags in bytes.
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
+/// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
 const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
+/// Maximum caller-supplied key-label length recorded in the metadata.
 const TBOR_KEY_LABEL_MAX_LEN: usize = 32;
+/// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
+/// Bit offset of the `KeyScope` field packed into `usage_flags`.
 const TBOR_KEY_SCOPE_SHIFT: u32 = 17;
+/// 3-bit mask selecting the `KeyScope` field within `usage_flags`.
 const TBOR_KEY_SCOPE_MASK: u64 = 0b111;
+/// `KeyScope::Session` value in the packed scope field.
 const TBOR_KEY_SCOPE_SESSION: u64 = 0b001;
 
 /// Key-kind discriminant recorded in the TBOR masked-key metadata
@@ -47,6 +53,9 @@ impl TryFrom<u8> for TborMaskedKeyKind {
     }
 }
 
+/// TBOR masked-key metadata: the fixed-layout authenticated header (AAD)
+/// of the AEAD-GCM-256 masked-key envelope, mirroring the firmware
+/// `MaskedKeyMetadata`. Parsed zero-copy from the envelope's AAD.
 #[repr(C)]
 #[derive(FromBytes, Immutable, KnownLayout, Unaligned)]
 struct TborMaskedKeyMetadata {
@@ -166,6 +175,8 @@ impl HsmMaskedKey {
     ///
     /// Returns the parsed masked key metadata.
     fn parse_metadata(masked_key: &[u8]) -> HsmResult<HsmMaskedKeyMetadata> {
+        // TBOR blobs are AEAD-GCM-256 envelopes tagged with an "AEAD" magic;
+        // MBOR blobs use the legacy AES-CBC masked-key header instead.
         if masked_key.starts_with(b"AEAD") {
             return Self::parse_tbor_metadata(masked_key);
         }
@@ -176,6 +187,15 @@ impl HsmMaskedKey {
         Ok(metadata)
     }
 
+    /// Parses a TBOR masked-key blob (an AEAD-GCM-256 envelope) into
+    /// [`HsmMaskedKeyMetadata`].
+    ///
+    /// Validates the envelope algorithm and the authenticated metadata
+    /// (magic, version, key kind, packed scope, label, and reserved
+    /// padding) and checks the masked payload length against the key kind.
+    /// Every device-supplied length is bounds-checked, so a malformed blob
+    /// is rejected with [`HsmError::MaskedKeyDecodeFailed`] rather than
+    /// panicking.
     fn parse_tbor_metadata(masked_key: &[u8]) -> HsmResult<HsmMaskedKeyMetadata> {
         let envelope =
             aead_envelope::inspect(masked_key).map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
@@ -224,16 +244,24 @@ impl HsmMaskedKey {
 
         let raw_attrs = metadata.usage_flags.get();
         let mut attrs = HsmMaskedKeyAttributes::from_bits_truncate(raw_attrs);
+        // The key scope is packed into the usage_flags word; surface a
+        // session-scoped key as the SESSION attribute.
         let scope = (raw_attrs >> TBOR_KEY_SCOPE_SHIFT) & TBOR_KEY_SCOPE_MASK;
         if scope == TBOR_KEY_SCOPE_SESSION {
             attrs |= HsmMaskedKeyAttributes::SESSION;
         }
 
+        // The caller-supplied key label stamped by the keygen handler; the
+        // padding tail past `label_len` was validated to be zero above.
+        let label = metadata
+            .key_label
+            .get(..label_len)
+            .ok_or(HsmError::MaskedKeyDecodeFailed)?
+            .to_vec();
+
         Ok(HsmMaskedKeyMetadata {
             attrs,
-            // TBOR's key label identifies the envelope contents to firmware;
-            // it is not the caller-visible label from HsmKeyProps.
-            label: Vec::new(),
+            label,
             kind,
             bits,
             curve,

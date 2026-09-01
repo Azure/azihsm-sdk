@@ -42,9 +42,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
-const AES_KEY_LABEL: &[u8] = b"AesKey";
-
 /// Map the wire [`AesKeySize`] onto the key length (bytes) and the AES
 /// vault kind stamped into the masked blob's metadata.  An unrecognized
 /// discriminant is rejected with [`HsmError::InvalidArg`].
@@ -100,6 +97,9 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     }
 
     let (key_len, kind) = aes_size_kind(req.key_size())?;
+    // Caller-supplied label stamped into the masked metadata (≤ 32 B,
+    // bounded by the wire `max_len`); empty for an unlabeled key.
+    let caller_label = req.key_label();
     // The masked-blob length is fixed by the key length (16 / 24 / 32 B →
     // 148 / 156 / 164 B), so the response slot can be reserved up front,
     // before any key material exists.
@@ -133,8 +133,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             // contract that scope failures happen before keygen, and so no
             // early return can leave a raw key sitting in DMA scratch.
             let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
-            let key_label = alloc.dma_alloc(AES_KEY_LABEL.len())?;
-            key_label.copy_from_slice(AES_KEY_LABEL);
+            let key_label = alloc.dma_alloc(caller_label.len())?;
+            key_label.copy_from_slice(caller_label);
             let params = MaskParams {
                 key_kind: kind,
                 key_attrs: attrs,

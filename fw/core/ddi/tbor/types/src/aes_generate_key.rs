@@ -75,7 +75,7 @@ pub enum AesKeySize {
 /// active session's partition, masked with the requested [`KeyScope`]'s
 /// masking key.
 #[tbor(opcode = 0x15)]
-pub struct TborAesGenerateKeyReq {
+pub struct TborAesGenerateKeyReq<'a> {
     /// CO/CU session id this request is bound to.  The dispatcher
     /// cross-checks it against the SQE-carried session id.
     #[tbor(session_id)]
@@ -90,6 +90,12 @@ pub struct TborAesGenerateKeyReq {
     /// [`AesKeySize`] discriminant.
     #[tbor(U8)]
     pub key_size: AesKeySize,
+
+    /// Caller-supplied key label recorded in the masked blob's
+    /// `MaskedKeyMetadata.key_label`, up to [`KEY_LABEL_MAX`] bytes.
+    /// Empty for an unlabeled key.
+    #[tbor(buffer, max_len = 32)]
+    pub key_label: &'a [u8],
 }
 
 /// `AesGenerateKey` response schema.
@@ -118,6 +124,7 @@ mod tests {
     #[test]
     fn request_round_trips_scope_and_size() {
         let mut buf = [0u8; 256];
+        let label = b"my-aes-key";
         let frame = TborAesGenerateKeyReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(5))
@@ -126,10 +133,13 @@ mod tests {
             .unwrap()
             .key_size(AesKeySize::Aes256)
             .unwrap()
+            .key_label(label)
+            .unwrap()
             .finish();
 
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.key_size(), AesKeySize::Aes256);
+        assert_eq!(frame.key_label(), label);
     }
 
     #[test]

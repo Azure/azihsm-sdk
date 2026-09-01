@@ -464,6 +464,62 @@ fn test_cbc_tbor_roundtrip_all_key_sizes() {
     }
 }
 
+/// AES key generation with a caller-supplied label through a V2 (TBOR)
+/// session: the label round-trips into the key's props (proving the
+/// keygen request carries it and the masked-blob parser reads it back),
+/// and the labeled key stays usable for CBC. An unlabeled key still yields
+/// an empty label.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_aes_generate_key_label_tbor() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    let iv = test_iv();
+    let plaintext = [0x5Au8; AES_CBC_BLOCK_SIZE * 2];
+    let label = b"my-aes-label";
+
+    for key_bits in [128u32, 192, 256] {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(key_bits)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .is_session(true)
+            .label(label)
+            .build()
+            .expect("build labeled AES key props");
+        let mut algo = HsmAesKeyGenAlgo::default();
+        let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+            .expect("generate labeled AES key over TBOR");
+
+        assert_eq!(key.label(), label.to_vec(), "caller label must round-trip");
+
+        let ct = cbc_encrypt(&key, false, &iv, &plaintext).expect("encrypt labeled key");
+        let pt = cbc_decrypt(&key, false, &iv, &ct).expect("decrypt labeled key");
+        assert_eq!(pt, plaintext, "labeled key roundtrip failed ({key_bits}b)");
+    }
+
+    // An unlabeled key still generates and reports an empty label.
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("build unlabeled AES key props");
+    let mut algo = HsmAesKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("generate unlabeled AES key over TBOR");
+    assert!(key.label().is_empty(), "unlabeled key must report an empty label");
+}
+
 /// Basic AES-CBC PKCS#7 padding roundtrip with a 128-bit key and non-block-aligned plaintext.
 #[dual_session_test]
 fn test_cbc_crypt_basic_pad_128(session: HsmSession) {
