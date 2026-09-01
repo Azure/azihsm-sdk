@@ -25,7 +25,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
     - uses: ./.github/actions/ubuntu-setup
     - name: Free disk space
       run: |
@@ -56,7 +56,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: coverage-report-ubuntu
         path: ./target/reports/
@@ -75,7 +75,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
     - uses: ./.github/actions/windows-setup
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
@@ -93,7 +93,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: coverage-report-windows
         path: ./target/reports/
