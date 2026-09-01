@@ -32,6 +32,8 @@ pub mod rsa_mod_exp;
 pub mod sd_create_peer_backup;
 pub mod sd_create_remote_backup;
 pub mod sd_reseal_remote_backup;
+#[cfg(all(not(feature = "emu"), not(feature = "mock"), not(feature = "sock")))]
+pub mod sd_reseal_remote_backup_hw;
 pub mod sd_restore_local_backup;
 pub mod sd_restore_peer_backup;
 pub mod sd_restore_remote_backup;

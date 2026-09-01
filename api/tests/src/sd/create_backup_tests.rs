@@ -33,7 +33,7 @@ fn sd_create_remote_backup_roundtrip() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
+    let (masked, report) = masked_key_and_report(&session, &policy);
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
     let result = evidence
         .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&masked, receiver, &policy))
@@ -72,7 +72,7 @@ fn sd_create_remote_backup_is_one_shot() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
+    let (masked, report) = masked_key_and_report(&session, &policy);
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     evidence

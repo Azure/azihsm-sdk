@@ -22,6 +22,7 @@ xshell.workspace = true
 azihsm_api.workspace = true
 azihsm_api_tests_macro.workspace = true
 azihsm_crypto = { features = ["testvectors"], workspace = true }
+azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_tbor_types.workspace = true
 azihsm_resiliency_test_helpers.workspace = true
 hex.workspace = true
