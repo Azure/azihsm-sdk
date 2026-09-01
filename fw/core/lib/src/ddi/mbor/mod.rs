@@ -34,6 +34,8 @@ pub(crate) mod rsa_mod_exp;
 pub(crate) mod rsa_unwrap;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
+#[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
+pub(crate) mod test_action;
 pub(crate) mod unmask_key;
 
 pub(crate) use aes_encrypt_decrypt::*;
@@ -69,6 +71,8 @@ pub(crate) use rsa_mod_exp::*;
 pub(crate) use rsa_unwrap::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
+#[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
+pub(crate) use test_action::*;
 pub(crate) use unmask_key::*;
 
 use super::*;
@@ -166,6 +170,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::GetCertChainInfo => get_cert_chain_info(pal, io, decoder, hdr).await,
         DdiOp::GetCertificate => get_certificate(pal, io, decoder, hdr).await,
         DdiOp::ShaDigest => sha_digest(pal, io, decoder, hdr).await,
+        #[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
+        DdiOp::TestAction => test_action(pal, io, decoder, hdr).await,
         DdiOp::GetEstablishCredEncryptionKey => {
             get_establish_cred_encryption_key(pal, io, decoder, hdr).await
         }
