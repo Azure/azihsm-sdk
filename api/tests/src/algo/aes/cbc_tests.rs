@@ -517,7 +517,10 @@ fn test_aes_generate_key_label_tbor() {
     let mut algo = HsmAesKeyGenAlgo::default();
     let key = HsmKeyManager::generate_key(&session, &mut algo, props)
         .expect("generate unlabeled AES key over TBOR");
-    assert!(key.label().is_empty(), "unlabeled key must report an empty label");
+    assert!(
+        key.label().is_empty(),
+        "unlabeled key must report an empty label"
+    );
 }
 
 /// Basic AES-CBC PKCS#7 padding roundtrip with a 128-bit key and non-block-aligned plaintext.
