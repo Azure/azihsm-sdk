@@ -348,8 +348,8 @@ fn aes_xts_encrypt_decrypt(
 ) -> HsmResult<usize> {
     // Setup DDI params for AES XTS encrypt/decrypt
     let xts_params = DdiAesXtsParams {
-        key_id1: ddi::get_bulk_key_id(key.handle().0).ok_or(HsmError::InvalidKey)? as u32,
-        key_id2: ddi::get_bulk_key_id(key.handle().1).ok_or(HsmError::InvalidKey)? as u32,
+        key_id1: ddi::get_bulk_key_id(key.handle().0)?.ok_or(HsmError::InvalidKey)? as u32,
+        key_id2: ddi::get_bulk_key_id(key.handle().1)?.ok_or(HsmError::InvalidKey)? as u32,
         data_unit_len: dul,
         tweak: tweak.to_le_bytes(),
         session_id: key.sess_id(),
@@ -451,7 +451,7 @@ pub(crate) fn aes_gcm_encrypt(
     ciphertext: &mut [u8],
 ) -> HsmResult<(usize, [u8; 16])> {
     let gcm_params = DdiAesGcmParams {
-        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKey)? as u32,
+        key_id: ddi::get_bulk_key_id(key.handle())?.ok_or(HsmError::InvalidKey)? as u32,
         iv,
         aad,
         tag: None, // Tag is output for encryption
@@ -515,7 +515,7 @@ pub(crate) fn aes_gcm_decrypt(
     plaintext: &mut [u8],
 ) -> HsmResult<usize> {
     let gcm_params = DdiAesGcmParams {
-        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKey)? as u32,
+        key_id: ddi::get_bulk_key_id(key.handle())?.ok_or(HsmError::InvalidKey)? as u32,
         iv,
         aad,
         tag: Some(tag),

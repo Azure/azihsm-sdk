@@ -173,20 +173,18 @@ pub(crate) fn get_key_id(handle: HsmKeyHandle) -> HsmResult<u16> {
     }
 }
 
-/// Extracts the optional bulk key ID from a packed HSM key handle.
+/// Extracts the optional bulk key ID from a resident HSM key handle.
 ///
-/// Returns `None` when the bulk ID field is set to `0xFFFF`.
-pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
+/// Returns `Ok(None)` when the resident handle's bulk-ID field is unset
+/// (`0xFFFF`), and [`HsmError::UnsupportedKeyOperation`] for a non-resident
+/// key, which has no device-side bulk id.
+pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> HsmResult<Option<u16>> {
     match handle {
         HsmKeyHandle::Resident(id) => {
             let bulk_id = (id >> 16) as u16;
-            if bulk_id == 0xFFFF {
-                None
-            } else {
-                Some(bulk_id)
-            }
+            Ok((bulk_id != 0xFFFF).then_some(bulk_id))
         }
-        HsmKeyHandle::NonResident => None,
+        HsmKeyHandle::NonResident => Err(HsmError::UnsupportedKeyOperation),
     }
 }
 
