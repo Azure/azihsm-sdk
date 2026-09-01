@@ -312,7 +312,7 @@ fn aes_generate_key_tbor(
             .map_err(HsmError::from)
     })?;
 
-    Ok((ddi::HsmKeyHandle::NonResident, resp.masked_key))
+    Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key))
 }
 
 /// AES-CBC transforms one chunk over TBOR `AesEncryptDecrypt` using the
