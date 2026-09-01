@@ -53,9 +53,10 @@ static int hex_decode(const char *hex, CK_BYTE *out, size_t bytes)
  * absent (NULL passes through unchanged). */
 static const char *strip_file_prefix(const char *path)
 {
-    if (path != NULL && strncmp(path, "file:", 5) == 0)
+    static const char FILE_PREFIX[] = "file:";
+    if ((path != NULL) && (strncmp(path, FILE_PREFIX, sizeof(FILE_PREFIX) - 1) == 0))
     {
-        return path + 5;
+        return path + (sizeof(FILE_PREFIX) - 1);
     }
     return path;
 }
@@ -65,9 +66,12 @@ static const char *strip_file_prefix(const char *path)
  * its resiliency storage dir. */
 static bool path_is_safe(const char *path)
 {
-    return path != NULL && path[0] != '\0' && strstr(path, "..") == NULL;
+    return (path != NULL) && (path[0] != '\0') && (strstr(path, "..") == NULL);
 }
 
+/* Populate `cfg` from the environment: mock-friendly credential defaults, then
+ * the env-var overrides, then the object-store settings (see the contract on
+ * the declaration in azihsm_pkcs11_config.h). */
 void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
@@ -98,5 +102,22 @@ void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg)
 
     const char *persist = getenv(AZIHSM_PKCS11_ENV_PERSIST);
     cfg->store_persist =
-        persist != NULL && (strcmp(persist, "1") == 0 || strcasecmp(persist, "true") == 0);
+        (persist != NULL) && ((strcmp(persist, "1") == 0) || (strcasecmp(persist, "true") == 0));
+}
+
+/* Wipe `cfg` — it carries credential and OBK bytes. The store goes through a
+ * volatile pointer so the compiler cannot elide it as a dead store when the
+ * config is a stack object about to leave scope; this module links no
+ * libcrypto, so OPENSSL_cleanse is not available here. */
+void azihsm_pkcs11_config_clear(azihsm_pkcs11_config *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+    volatile unsigned char *p = (volatile unsigned char *)cfg;
+    for (size_t i = 0; i < sizeof(*cfg); i++)
+    {
+        p[i] = 0;
+    }
 }

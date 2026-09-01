@@ -39,7 +39,6 @@ typedef struct
     CK_BYTE id[P11_CREDS_ID_LEN];
     CK_BYTE obk[P11_OBK_LEN];
     CK_BYTE default_pin[P11_CREDS_PIN_LEN];
-
     char store_dir[AZIHSM_PKCS11_STORE_DIR_LEN]; /* persistent object-store root */
     bool store_persist;                          /* select the file backend over in-memory */
 } azihsm_pkcs11_config;
@@ -52,6 +51,13 @@ typedef struct
  * carrying key-material paths and slot layout once persistence lands.
  */
 void azihsm_pkcs11_config_load(azihsm_pkcs11_config *cfg);
+
+/*
+ * Wipe `cfg` (credential id, OBK, and PIN bytes). Callers must clear a loaded
+ * config as soon as it is no longer needed, on success and error paths alike;
+ * the wipe is not elided for stack objects about to leave scope.
+ */
+void azihsm_pkcs11_config_clear(azihsm_pkcs11_config *cfg);
 
 #ifdef __cplusplus
 }

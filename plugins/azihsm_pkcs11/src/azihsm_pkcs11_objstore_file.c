@@ -61,6 +61,12 @@ typedef struct
 
 static const CK_ATTRIBUTE *tmpl_find(const CK_ATTRIBUTE *tmpl, CK_ULONG count, CK_ATTRIBUTE_TYPE t)
 {
+    if (tmpl == NULL)
+    {
+        /* Defensive: the entry points reject (count > 0, tmpl == NULL), but do
+         * not make this helper's safety depend on every future caller. */
+        return NULL;
+    }
     for (CK_ULONG i = 0; i < count; i++)
     {
         if (tmpl[i].type == t)
@@ -271,8 +277,10 @@ static CK_RV create_token_object(
     if (rv == CKR_OK && meta != NULL)
     {
         rv = azihsm_pkcs11_meta_decode(meta, meta_len, &next_handle, &generation);
-        free(meta);
     }
+    /* Unconditional (free(NULL) is a no-op) so no future change to the read or
+     * decode paths can turn this into a leak. */
+    free(meta);
     if (rv != CKR_OK)
     {
         azihsm_pkcs11_store_unlock(lock_fd);

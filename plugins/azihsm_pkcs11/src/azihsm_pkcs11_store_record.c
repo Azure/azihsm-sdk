@@ -14,11 +14,23 @@
  * followed by attr_count * (u32 type | u32 value_len | value bytes) and then
  * body_len masked-blob bytes. total_len is the whole record size.
  */
-#define P11O_HEADER_SIZE 20
-#define P11O_ATTR_HEADER_SIZE 8 /* u32 type + u32 value_len */
-
 static const unsigned char P11O_MAGIC[4] = { 'P', '1', '1', 'O' };
 static const unsigned char P11M_MAGIC[4] = { 'P', '1', '1', 'M' };
+
+/* Header sizes are composed from sizeof of the fields actually written, so the
+ * offset arithmetic below cannot drift from the layout; the on-disk format
+ * itself stays frozen (the fixed-width types pin every field). */
+#define P11O_HEADER_SIZE (sizeof(P11O_MAGIC) + 2 * sizeof(uint16_t) + 3 * sizeof(uint32_t))
+#define P11O_ATTR_HEADER_SIZE (2 * sizeof(uint32_t)) /* u32 type + u32 value_len */
+
+/* The public buffer-size constant callers use must equal the composed P11M
+ * field layout (magic | u16 version | u16 reserved | u64 next_handle |
+ * u32 generation | u32 reserved). */
+_Static_assert(
+    sizeof(P11M_MAGIC) + 2 * sizeof(uint16_t) + sizeof(uint64_t) + 2 * sizeof(uint32_t) ==
+        P11_META_SIZE,
+    "P11_META_SIZE does not match the P11M field layout"
+);
 
 /* Explicit little-endian scalar encoding — never a native struct dump, matching
  * the repo's persisted-format convention. */
@@ -135,25 +147,25 @@ CK_RV azihsm_pkcs11_record_encode(
     }
 
     unsigned char *p = buf;
-    memcpy(p, P11O_MAGIC, 4);
-    p += 4;
+    memcpy(p, P11O_MAGIC, sizeof(P11O_MAGIC));
+    p += sizeof(P11O_MAGIC);
     put_u16(p, P11_RECORD_VERSION);
-    p += 2;
+    p += sizeof(uint16_t);
     put_u16(p, 0); /* reserved */
-    p += 2;
+    p += sizeof(uint16_t);
     put_u32(p, (uint32_t)obj->attr_count);
-    p += 4;
+    p += sizeof(uint32_t);
     put_u32(p, (uint32_t)obj->body_len);
-    p += 4;
+    p += sizeof(uint32_t);
     put_u32(p, (uint32_t)need); /* total_len */
-    p += 4;
+    p += sizeof(uint32_t);
     for (CK_ULONG i = 0; i < obj->attr_count; i++)
     {
         const azihsm_pkcs11_rec_attr *a = &obj->attrs[i];
         put_u32(p, (uint32_t)a->type);
-        p += 4;
+        p += sizeof(uint32_t);
         put_u32(p, (uint32_t)a->len);
-        p += 4;
+        p += sizeof(uint32_t);
         if (a->len > 0)
         {
             memcpy(p, a->value, a->len);
@@ -180,15 +192,20 @@ CK_RV azihsm_pkcs11_record_decode(
         return CKR_ARGUMENTS_BAD;
     }
     memset(out, 0, sizeof(*out));
-    if (len < P11O_HEADER_SIZE || memcmp(buf, P11O_MAGIC, 4) != 0)
+    if (len < P11O_HEADER_SIZE || memcmp(buf, P11O_MAGIC, sizeof(P11O_MAGIC)) != 0)
     {
         return CKR_FUNCTION_FAILED;
     }
-    uint16_t version = get_u16(buf + 4);
-    uint16_t reserved = get_u16(buf + 6);
-    uint32_t attr_count = get_u32(buf + 8);
-    uint32_t body_len = get_u32(buf + 12);
-    uint32_t total_len = get_u32(buf + 16);
+    const unsigned char *hdr = buf + sizeof(P11O_MAGIC);
+    uint16_t version = get_u16(hdr);
+    hdr += sizeof(uint16_t);
+    uint16_t reserved = get_u16(hdr);
+    hdr += sizeof(uint16_t);
+    uint32_t attr_count = get_u32(hdr);
+    hdr += sizeof(uint32_t);
+    uint32_t body_len = get_u32(hdr);
+    hdr += sizeof(uint32_t);
+    uint32_t total_len = get_u32(hdr);
     /* An unknown version or non-zero reserved field is a format we do not
      * understand; total_len must match exactly so trailing garbage is rejected. */
     if (version != P11_RECORD_VERSION || reserved != 0 || total_len != len)
@@ -221,9 +238,9 @@ CK_RV azihsm_pkcs11_record_decode(
             return CKR_FUNCTION_FAILED;
         }
         uint32_t type = get_u32(buf + pos);
-        pos += 4;
+        pos += sizeof(uint32_t);
         uint32_t vlen = get_u32(buf + pos);
-        pos += 4;
+        pos += sizeof(uint32_t);
         if (len - pos < vlen)
         {
             free_attrs(attrs, i);
@@ -304,16 +321,16 @@ CK_RV azihsm_pkcs11_meta_encode(
         return CKR_BUFFER_TOO_SMALL;
     }
     unsigned char *p = buf;
-    memcpy(p, P11M_MAGIC, 4);
-    p += 4;
+    memcpy(p, P11M_MAGIC, sizeof(P11M_MAGIC));
+    p += sizeof(P11M_MAGIC);
     put_u16(p, P11_RECORD_VERSION);
-    p += 2;
+    p += sizeof(uint16_t);
     put_u16(p, 0); /* reserved */
-    p += 2;
+    p += sizeof(uint16_t);
     put_u64(p, (uint64_t)next_handle);
-    p += 8;
+    p += sizeof(uint64_t);
     put_u32(p, (uint32_t)generation);
-    p += 4;
+    p += sizeof(uint32_t);
     put_u32(p, 0); /* reserved */
     *len = P11_META_SIZE;
     return CKR_OK;
@@ -331,15 +348,26 @@ azihsm_pkcs11_meta_decode(
     {
         return CKR_ARGUMENTS_BAD;
     }
-    if (len != P11_META_SIZE || memcmp(buf, P11M_MAGIC, 4) != 0)
+    if (len != P11_META_SIZE || memcmp(buf, P11M_MAGIC, sizeof(P11M_MAGIC)) != 0)
     {
         return CKR_FUNCTION_FAILED;
     }
-    if (get_u16(buf + 4) != P11_RECORD_VERSION || get_u16(buf + 6) != 0 || get_u32(buf + 20) != 0)
+    const unsigned char *p = buf + sizeof(P11M_MAGIC);
+    uint16_t version = get_u16(p);
+    p += sizeof(uint16_t);
+    uint16_t reserved16 = get_u16(p);
+    p += sizeof(uint16_t);
+    uint64_t next = get_u64(p);
+    p += sizeof(uint64_t);
+    uint32_t generation32 = get_u32(p);
+    p += sizeof(uint32_t);
+    uint32_t reserved32 = get_u32(p);
+    /* Validate every field before assigning the outputs. */
+    if (version != P11_RECORD_VERSION || reserved16 != 0 || reserved32 != 0)
     {
         return CKR_FUNCTION_FAILED;
     }
-    *next_handle = (CK_ULONG)get_u64(buf + 8);
-    *generation = (CK_ULONG)get_u32(buf + 16);
+    *next_handle = (CK_ULONG)next;
+    *generation = (CK_ULONG)generation32;
     return CKR_OK;
 }

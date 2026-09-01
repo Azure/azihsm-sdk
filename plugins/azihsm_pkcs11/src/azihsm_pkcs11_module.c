@@ -123,6 +123,9 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     azihsm_pkcs11_config_load(&cfg);
     CK_RV rv = cfg.store_persist ? azihsm_pkcs11_objstore_file_create(&g_azihsm_pkcs11.store, &cfg)
                                  : azihsm_pkcs11_objstore_mem_create(&g_azihsm_pkcs11.store);
+    /* The config carries credential and OBK bytes and is only needed to select
+     * and seed the store; wipe it before any return (error paths included). */
+    azihsm_pkcs11_config_clear(&cfg);
     if (rv != CKR_OK)
     {
         azihsm_pkcs11_unlock();
