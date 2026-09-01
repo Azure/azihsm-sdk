@@ -25,7 +25,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install arm64 build dependencies
       if: ${{ runner.arch == 'ARM64' }}
       shell: bash
@@ -42,7 +42,7 @@ jobs:
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/bin/
@@ -66,11 +66,11 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/bin/

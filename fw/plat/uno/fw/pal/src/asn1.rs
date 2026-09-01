@@ -23,8 +23,10 @@
 //!   decoders alongside the RSA ones below, plus a `parse_ec_private_key`
 //!   returning the scalar + curve OID; consumed by `ecc`.
 
+use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use der::Decode;
 use der::Sequence;
+use der::asn1::AnyRef;
 use der::asn1::Null;
 use der::asn1::ObjectIdentifier;
 use der::asn1::OctetStringRef;
@@ -100,4 +102,80 @@ pub(crate) fn parse_rsa_private_key(der_bytes: &[u8]) -> Option<RsaPrivateKeyAsn
         return None;
     }
     Some(key)
+}
+
+// ── ECC (PKCS#8 PrivateKeyInfo / SEC1 ECPrivateKey) ───────────────────────
+
+/// id-ecPublicKey OID (1.2.840.10045.2.1) — the algorithm identifier of an EC
+/// key inside a PKCS#8 `PrivateKeyInfo`.
+const EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+
+/// Named-curve OIDs (RFC 5480 §2.1.1.1) for the supported curves.
+const P256_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+const P384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.132.0.34");
+const P521_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.132.0.35");
+
+/// PKCS#8 `AlgorithmIdentifier` for EC: the `id-ecPublicKey` OID followed by a
+/// `namedCurve` OID carrying the ECC domain parameters (RFC 5480 §2.1.1).
+#[derive(Sequence)]
+struct EcAlgorithmIdentifier {
+    algorithm: ObjectIdentifier,
+    named_curve: ObjectIdentifier,
+}
+
+/// PKCS#8 `PrivateKeyInfo` (RFC 5208) whose `privateKey` OCTET STRING wraps a
+/// SEC1 `ECPrivateKey`.
+#[derive(Sequence)]
+struct EcPrivateKeyInfo<'a> {
+    version: u8,
+    algorithm: EcAlgorithmIdentifier,
+    private_key: &'a OctetStringRef,
+}
+
+/// SEC1 `ECPrivateKey` (RFC 5915). The optional `[0] parameters` and
+/// `[1] publicKey` context-specific fields are decoded but unused (a
+/// PKCS#8-wrapped key commonly carries the public key), leaving `private_key`
+/// as the raw big-endian scalar `d`.
+#[derive(Sequence)]
+struct EcPrivateKeyAsn1<'a> {
+    version: u8,
+    private_key: &'a OctetStringRef,
+    #[asn1(context_specific = "0", optional = "true", tag_mode = "EXPLICIT")]
+    parameters: Option<AnyRef<'a>>,
+    #[asn1(context_specific = "1", optional = "true", tag_mode = "EXPLICIT")]
+    public_key: Option<AnyRef<'a>>,
+}
+
+/// Maps a `namedCurve` OID to the supported [`HsmEccCurve`].
+fn curve_from_oid(oid: ObjectIdentifier) -> Option<HsmEccCurve> {
+    if oid == P256_OID {
+        Some(HsmEccCurve::P256)
+    } else if oid == P384_OID {
+        Some(HsmEccCurve::P384)
+    } else if oid == P521_OID {
+        Some(HsmEccCurve::P521)
+    } else {
+        None
+    }
+}
+
+/// Decodes a recovered PKCS#8 EC private key (`PrivateKeyInfo` wrapping a SEC1
+/// `ECPrivateKey`) into `(curve, scalar)`, where `scalar` is the raw big-endian
+/// `d` borrowed from `der_bytes`.
+///
+/// Validates the PKCS#8 version (v1 = 0), the `id-ecPublicKey` algorithm OID,
+/// the `namedCurve` OID (must be a supported curve), and the SEC1 `ECPrivateKey`
+/// version (`ecPrivkeyVer1` = 1). The scalar length / range checks are a PKA
+/// concern and are done by the caller.
+pub(crate) fn parse_ec_private_key(der_bytes: &[u8]) -> Option<(HsmEccCurve, &[u8])> {
+    let pki = EcPrivateKeyInfo::from_der(der_bytes).ok()?;
+    if pki.version != 0 || pki.algorithm.algorithm != EC_PUBLIC_KEY {
+        return None;
+    }
+    let curve = curve_from_oid(pki.algorithm.named_curve)?;
+    let ec = EcPrivateKeyAsn1::from_der(pki.private_key.as_bytes()).ok()?;
+    if ec.version != 1 {
+        return None;
+    }
+    Some((curve, ec.private_key.as_bytes()))
 }
