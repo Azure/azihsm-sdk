@@ -43,6 +43,13 @@ const MAX_SRC_LEN: u32 = PAGE_4K;
 /// the GDMA path to plumb a second PRP page (`dst_prp2`).
 const MAX_DST_LEN: u32 = 2 * PAGE_4K;
 
+/// Size of one NVMe SGL Data Block descriptor in the OOB array.
+const OOB_ENTRY_LEN: u32 = 16;
+
+/// Maximum out-of-band descriptor-array length: one 4K descriptor page
+/// (→ up to 256 SGL Data Block descriptors).
+const MAX_OOB_LEN: u32 = PAGE_4K;
+
 /// Returns true if the 64-bit DMA address is 4K-page-aligned.
 #[inline]
 fn is_aligned_4k(addr: HsmDmaAddr) -> bool {
@@ -147,26 +154,37 @@ impl SqeValidateExt for Sqe<'_> {
             ));
         }
 
-        // Optional out-of-band Metadata Page (`oob_prp`).  When present it
-        // must be 4K-page-aligned: the driver allocates it from a
-        // PAGE_SIZE `dma_pool`, and the page is a fixed 4 KiB structure
-        // that must not straddle a page boundary.
-        //
-        // `oob_len` (DW15) is deliberately not validated: the driver
-        // leaves it reserved and the Metadata Page carries its own
-        // `buffer_count` header, so length lives in the page rather than
-        // the SQE.
-        if !self.oob_prp().is_null() && !is_aligned_4k(self.oob_prp()) {
-            error!(
-                "core",
-                HsmError::IoChannelInvalidOobAlignment,
-                "Invalid OOB PRP alignment: {:?}",
-                self.oob_prp()
-            );
-            return Err(OpError::new(
-                HsmError::IoChannelInvalidOobAlignment,
-                HostStatus::INVALID_OOB_PRP,
-            ));
+        // Optional out-of-band SGL descriptor array (`oob_prp`/`oob_len`).
+        // When present it must be a whole number of 16-byte SGL Data
+        // Block descriptors, no larger than a single descriptor page, and
+        // 4K-page-aligned so the array cannot straddle a page boundary.
+        let oob_len = self.oob_len();
+        if oob_len != 0 {
+            if !oob_len.is_multiple_of(OOB_ENTRY_LEN) || oob_len > MAX_OOB_LEN {
+                error!(
+                    "core",
+                    HsmError::IoChannelInvalidOobLen,
+                    "Invalid OOB descriptor-array length: {}",
+                    oob_len
+                );
+                return Err(OpError::new(
+                    HsmError::IoChannelInvalidOobLen,
+                    HostStatus::INVALID_OOB_LEN,
+                ));
+            }
+
+            if !is_aligned_4k(self.oob_prp()) {
+                error!(
+                    "core",
+                    HsmError::IoChannelInvalidOobAlignment,
+                    "Invalid OOB PRP alignment: {:?}",
+                    self.oob_prp()
+                );
+                return Err(OpError::new(
+                    HsmError::IoChannelInvalidOobAlignment,
+                    HostStatus::INVALID_OOB_PRP,
+                ));
+            }
         }
 
         Ok(())

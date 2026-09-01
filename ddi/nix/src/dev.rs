@@ -285,7 +285,11 @@ ioctl_readwrite!(
 /// accepts (`AZIHSM_MAX_DATA_XFER_BUFFERS`). Deliberately equal to the
 /// firmware's `MAX_OOB_ITEMS`, so a request the host accepts is one the
 /// device can also describe in a single Metadata Page.
-const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
+///
+/// This value is part of the ioctl's ABI: it sizes
+/// `azi_hsm_dataxfer_buffers`, whose `size_of` is encoded in the
+/// `_IOWR` number, so it must track the driver header exactly.
+const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 64;
 
 /// One entry of `struct azi_hsm_dataxfer_buffers::buffers`.
 ///
@@ -303,10 +307,10 @@ struct AzihsmDataXferBuffer {
 /// of the out-of-band items.
 ///
 /// The driver walks `buffers[..buffer_cnt]`, DMA-maps each one, and
-/// builds the device-visible Metadata Page (a `buffer_count` header
-/// plus one `{xfer_length, rsvd, hw_sgl_mem_paddr}` entry per item)
-/// itself. The page's physical address lands in SQE DW13-14, which the
-/// firmware reads as `oob_prp`.
+/// builds the device-visible Metadata Page (one NVMe SGL descriptor per
+/// item, no header) itself. The page's physical address lands in SQE
+/// DW13-14 (`oob_prp`) and its byte size in DW15 (`oob_len`, the
+/// driver's `metadata_size`).
 #[repr(C)]
 struct AzihsmDataXferBuffers {
     buffer_cnt: u32,
