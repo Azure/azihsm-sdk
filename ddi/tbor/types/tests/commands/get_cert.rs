@@ -347,3 +347,100 @@ fn certificates_can_be_read_in_reverse_order() {
         );
     }
 }
+
+/// Both ends of the advertised certificate-index range are readable.
+#[test]
+fn first_and_last_valid_indices_succeed() {
+    let ctx = TestCtx::new();
+    let count = num_certs(&ctx);
+
+    assert!(count > 0, "certificate chain must be non-empty");
+
+    ctx.tbor(&TborGetCertReq::new(0, 0))
+        .expect("first certificate must be readable");
+
+    ctx.tbor(&TborGetCertReq::new(0, count - 1))
+        .expect("last advertised certificate must be readable");
+}
+/// An invalid slot is rejected independently of the certificate index.
+#[test]
+fn invalid_slot_rejected_for_multiple_cert_indices() {
+    let ctx = TestCtx::new();
+
+    for cert_id in [0, 1, u8::MAX] {
+        ctx.expect_fw_reject(
+            &TborGetCertReq::new(u8::MAX, cert_id),
+            TborStatus::InvalidArg,
+        );
+    }
+}
+
+/// An invalid certificate index is rejected at the valid chain slot.
+#[test]
+fn max_cert_id_rejected() {
+    let ctx = TestCtx::new();
+
+    ctx.expect_fw_reject(&TborGetCertReq::new(0, u8::MAX), TborStatus::InvalidArg);
+}
+
+/// Interleaving MBOR and TBOR certificate reads must not alter the
+/// certificate returned by either interface.
+#[test]
+fn mbor_tbor_interleaved_reads_remain_identical() {
+    let ctx = TestCtx::new();
+
+    for cert_id in 0..num_certs(&ctx) {
+        let tbor_before = ctx
+            .tbor(&TborGetCertReq::new(0, cert_id))
+            .unwrap_or_else(|e| panic!("initial TBOR certificate {cert_id}: {e:?}"));
+
+        let mbor = ctx
+            .get_certificate(cert_id)
+            .unwrap_or_else(|e| panic!("MBOR certificate {cert_id}: {e:?}"));
+
+        let tbor_after = ctx
+            .tbor(&TborGetCertReq::new(0, cert_id))
+            .unwrap_or_else(|e| panic!("final TBOR certificate {cert_id}: {e:?}"));
+
+        assert_eq!(
+            tbor_before.certificate.as_slice(),
+            mbor.data.certificate.as_slice(),
+            "initial TBOR and MBOR certificate must match at index {cert_id}",
+        );
+
+        assert_eq!(
+            tbor_before, tbor_after,
+            "MBOR read must not affect TBOR certificate {cert_id}",
+        );
+    }
+}
+
+/// Invalid slot and invalid certificate-index failures must not affect any
+/// certificate in the valid chain.
+#[test]
+fn all_reject_classes_preserve_entire_chain() {
+    let ctx = TestCtx::new();
+    let count = num_certs(&ctx);
+
+    let before: Vec<_> = (0..count)
+        .map(|cert_id| {
+            ctx.tbor(&TborGetCertReq::new(0, cert_id))
+                .unwrap_or_else(|e| panic!("initial certificate {cert_id}: {e:?}"))
+        })
+        .collect();
+
+    ctx.expect_fw_reject(&TborGetCertReq::new(u8::MAX, 0), TborStatus::InvalidArg);
+
+    ctx.expect_fw_reject(&TborGetCertReq::new(0, u8::MAX), TborStatus::InvalidArg);
+
+    for (cert_id, expected) in before.iter().enumerate() {
+        let actual = ctx
+            .tbor(&TborGetCertReq::new(0, cert_id as u8))
+            .unwrap_or_else(|e| panic!("certificate {cert_id} after rejects: {e:?}"));
+
+        assert_eq!(
+            &actual, expected,
+            "rejects must not modify certificate {cert_id}",
+        );
+    }
+}
