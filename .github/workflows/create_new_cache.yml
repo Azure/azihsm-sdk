@@ -15,6 +15,7 @@ jobs:
     name: create_new_cache_ubuntu (${{ matrix.runner }})
 
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-24.04, azihsm-x64-gh-ubuntu2404-pool, azihsm-arm64-gh-ubuntu2404-pool]
 

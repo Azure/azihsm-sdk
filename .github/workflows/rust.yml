@@ -155,6 +155,7 @@ jobs:
     name: test_ubuntu_emu_ddi (${{ matrix.runner }})
 
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-24.04, azihsm-arm64-gh-ubuntu2404-pool]
 
