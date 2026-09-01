@@ -195,7 +195,7 @@ where
         // onward rather than describing data.
         let seg = scoped.dma_alloc(SEG_CHUNK_LEN)?;
 
-        for _ in 0..MAX_SEGMENTS {
+        for seg_idx in 0..MAX_SEGMENTS {
             if seg_addr.is_null() {
                 return Err(HsmError::InvalidArg);
             }
@@ -259,6 +259,14 @@ where
 
             match next {
                 Some((addr, len, ty)) => {
+                    // A chain that would run past `MAX_SEGMENTS` is
+                    // rejected rather than silently truncated: otherwise
+                    // a page claiming more segments than we walk could
+                    // still succeed whenever the segments we *did* walk
+                    // happened to fill `dst` exactly.
+                    if seg_idx + 1 == MAX_SEGMENTS {
+                        return Err(HsmError::InvalidArg);
+                    }
                     seg_addr = addr;
                     seg_len = len;
                     seg_type = ty;
