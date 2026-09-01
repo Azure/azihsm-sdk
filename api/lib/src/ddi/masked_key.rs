@@ -48,7 +48,7 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             16 => Self::Aes128,
             17 => Self::Aes192,
             18 => Self::Aes256,
-            _ => return Err(HsmError::InternalError),
+            _ => return Err(HsmError::MaskedKeyDecodeFailed),
         })
     }
 }
