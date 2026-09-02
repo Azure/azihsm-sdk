@@ -26,24 +26,13 @@
 #![cfg_attr(not(feature = "emu"), allow(dead_code))]
 
 use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
-// The reject/scope tests need the emu FW handler and its partition
-// bootstrap helpers; keep those imports emu-only so the shared masked-key
-// helpers below stay available under any backend.
-#[cfg(feature = "emu")]
-use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 
-#[cfg(feature = "emu")]
-use crate::commands::part_init::bootstrap_rotated_co;
-#[cfg(feature = "emu")]
-use crate::commands::part_init::ROTATED_CO_PSK;
-#[cfg(feature = "emu")]
-use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
 
-/// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
+/// `KeyScope` discriminants matching the firmware `HsmKeyScope`.
 pub(crate) const SCOPE_SESSION: u8 = 0b001;
 pub(crate) const SCOPE_EPHEMERAL: u8 = 0b010;
 pub(crate) const SCOPE_LOCAL: u8 = 0b011;
@@ -82,7 +71,7 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, size: u8) {
     assert_eq!(
         masked.len(),
         masked_len(key_len_for_size(size)),
-        "masked key length must match the key size",
+        "masked key length must match the requested AES key size",
     );
     assert!(
         masked.iter().any(|&b| b != 0),
@@ -98,77 +87,301 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, size: u8) {
 }
 
 #[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_roundtrip_all_sizes_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    for size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
-        roundtrip(&ctx, session.session_id, SCOPE_EPHEMERAL, size);
+mod emu_tests {
+    use azihsm_ddi_tbor_types::TborStatus;
+
+    use super::*;
+    use crate::commands::part_init::bootstrap_rotated_co;
+    use crate::commands::part_init::ROTATED_CO_PSK;
+    use crate::commands::sd_sealing_key_gen::finalized_co_session;
+
+    /// Generates every supported AES size under every supported masking-key scope.
+    #[test]
+    fn aes_generate_key_roundtrip_all_sizes_all_supported_scopes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            for size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+                roundtrip(&ctx, session.session_id, scope, size);
+            }
+        }
     }
-}
 
-#[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_roundtrip_all_scopes_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    // Session / Ephemeral / Local masking keys all exist on an Initialized
-    // partition with an Active session.
-    for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
-        roundtrip(&ctx, session.session_id, scope, AES_KEY_SIZE_256);
+    /// Verifies Session-scoped generation works for every AES size before `PartFinal`.
+    #[test]
+    fn aes_generate_key_session_scope_all_sizes_before_finalize() {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+        for size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+            roundtrip(&ctx, session.session_id, SCOPE_SESSION, size);
+        }
     }
-}
 
-#[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_session_scope_before_finalize_emu() {
-    // Session-scoped keys are masked under the per-session masking key, so
-    // they do not require a finalized partition — only an Active session.
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    roundtrip(&ctx, session.session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
-}
+    /// Rejects Ephemeral scope before `PartFinal` for every supported AES size.
+    #[test]
+    fn aes_generate_key_rejects_ephemeral_before_finalize_all_sizes() {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-#[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_rejects_security_domain_scope_emu() {
-    // The SecurityDomain masking key (SDMK) is only provisioned by
-    // CreateSD, so the scope is rejected with the dedicated error.
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    let req = TborAesGenerateKeyReq {
-        session_id: session.session_id,
-        scope: SCOPE_SECURITY_DOMAIN,
-        key_size: AES_KEY_SIZE_256,
-    };
-    ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
-}
+        for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_EPHEMERAL,
+                key_size,
+            };
 
-#[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_rejects_ephemeral_before_finalize_emu() {
-    // Ephemeral / Local masking keys are provisioned at PartFinal, so a
-    // non-Session scope before finalize is rejected with InvalidArg.
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let req = TborAesGenerateKeyReq {
-        session_id: session.session_id,
-        scope: SCOPE_EPHEMERAL,
-        key_size: AES_KEY_SIZE_256,
-    };
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
-}
+            ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        }
+    }
 
-#[cfg(feature = "emu")]
-#[test]
-fn aes_generate_key_rejects_unknown_size_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    let req = TborAesGenerateKeyReq {
-        session_id: session.session_id,
-        scope: SCOPE_EPHEMERAL,
-        // 0 is not a valid AesKeySize discriminant.
-        key_size: 0,
-    };
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    /// Rejects Local scope before `PartFinal` for every supported AES size.
+    #[test]
+    fn aes_generate_key_rejects_local_before_finalize_all_sizes() {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+        for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_LOCAL,
+                key_size,
+            };
+
+            ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        }
+    }
+
+    /// Rejects SecurityDomain scope for every supported AES key size.
+    #[test]
+    fn aes_generate_key_rejects_security_domain_scope_all_sizes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_SECURITY_DOMAIN,
+                key_size,
+            };
+
+            ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
+        }
+    }
+
+    /// Rejects minimum and maximum invalid AES key-size discriminants.
+    #[test]
+    fn aes_generate_key_rejects_unknown_sizes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for key_size in [0, u8::MAX] {
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_EPHEMERAL,
+                key_size,
+            };
+
+            ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        }
+    }
+
+    /// Rejects key-size discriminants adjacent to the supported AES sizes.
+    #[test]
+    fn aes_generate_key_rejects_adjacent_invalid_sizes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let valid = [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256];
+
+        let candidates = [
+            AES_KEY_SIZE_128.wrapping_sub(1),
+            AES_KEY_SIZE_128.wrapping_add(1),
+            AES_KEY_SIZE_192.wrapping_sub(1),
+            AES_KEY_SIZE_192.wrapping_add(1),
+            AES_KEY_SIZE_256.wrapping_sub(1),
+            AES_KEY_SIZE_256.wrapping_add(1),
+        ];
+
+        for key_size in candidates {
+            if valid.contains(&key_size) {
+                continue;
+            }
+
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_EPHEMERAL,
+                key_size,
+            };
+
+            ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        }
+    }
+
+    /// Rejects an invalid AES key size consistently across every supported scope.
+    #[test]
+    fn aes_generate_key_rejects_invalid_size_for_all_supported_scopes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            let req = TborAesGenerateKeyReq {
+                session_id: session.session_id,
+                scope,
+                key_size: 0,
+            };
+
+            ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+        }
+    }
+
+    /// Rejects an invalid AES key size before `PartFinal` for Session scope.
+    #[test]
+    fn aes_generate_key_rejects_invalid_size_before_finalize() {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+        let req = TborAesGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SESSION,
+            key_size: 0,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
+
+    /// Rejects invalid key-scope discriminants across every supported AES size.
+    #[test]
+    fn aes_generate_key_rejects_invalid_scopes_for_all_sizes() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for scope in [0, u8::MAX] {
+            for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+                let req = TborAesGenerateKeyReq {
+                    session_id: session.session_id,
+                    scope,
+                    key_size,
+                };
+
+                ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
+            }
+        }
+    }
+
+    /// Rejects an unknown session ID.
+    #[test]
+    fn aes_generate_key_rejects_unknown_session() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let unknown_session_id = session.session_id.wrapping_add(1);
+
+        assert_ne!(
+            unknown_session_id, session.session_id,
+            "unknown session ID must differ from the active session",
+        );
+
+        let req = TborAesGenerateKeyReq {
+            session_id: unknown_session_id,
+            scope: SCOPE_SESSION,
+            key_size: AES_KEY_SIZE_256,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
+    }
+
+    /// Verifies repeated generations do not reuse an earlier masked-key blob.
+    #[test]
+    fn aes_generate_key_repeated_generations_are_distinct() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let mut generated = Vec::new();
+
+        for _ in 0..4 {
+            let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, AES_KEY_SIZE_256);
+
+            assert!(
+                generated.iter().all(|previous| previous != &masked),
+                "each AesGenerateKey call must return a distinct masked key",
+            );
+
+            generated.push(masked);
+        }
+    }
+
+    /// Verifies repeated generation across every AES size on one active session.
+    #[test]
+    fn aes_generate_key_multiple_sizes_same_session() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        for _ in 0..3 {
+            for size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
+                roundtrip(&ctx, session.session_id, SCOPE_EPHEMERAL, size);
+            }
+        }
+    }
+
+    /// Verifies different masking scopes return distinct masked-key blobs.
+    #[test]
+    fn aes_generate_key_different_scopes_return_distinct_masked_blobs() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let session_masked =
+            generate_key(&ctx, session.session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
+
+        let ephemeral_masked =
+            generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, AES_KEY_SIZE_256);
+
+        let local_masked = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+
+        assert_ne!(
+            session_masked, ephemeral_masked,
+            "Session and Ephemeral scopes must not return identical masked blobs",
+        );
+
+        assert_ne!(
+            session_masked, local_masked,
+            "Session and Local scopes must not return identical masked blobs",
+        );
+
+        assert_ne!(
+            ephemeral_masked, local_masked,
+            "Ephemeral and Local scopes must not return identical masked blobs",
+        );
+    }
+
+    /// Verifies invalid key size takes precedence when both size and scope are invalid.
+    #[test]
+    fn aes_generate_key_invalid_size_takes_precedence_over_invalid_scope() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let req = TborAesGenerateKeyReq {
+            session_id: session.session_id,
+            scope: 0,
+            key_size: 0,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
+
+    /// Rejects the firmware-reserved `Internal` key-scope discriminant (0b101).
+    #[test]
+    fn aes_generate_key_rejects_internal_scope() {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+
+        let req = TborAesGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SECURITY_DOMAIN + 1,
+            key_size: AES_KEY_SIZE_256,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
+    }
 }
