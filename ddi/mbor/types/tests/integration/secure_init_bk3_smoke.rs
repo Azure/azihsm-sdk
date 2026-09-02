@@ -44,8 +44,10 @@ pub fn cleanup(
 #[test]
 fn test_secure_init_bk3_smoke() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        // If the sealed BK3 is already set, there is nothing to do.
-        if is_bk3_sealed(dev) {
+        // Provision + seal can only run on a genuinely fresh partition. Any
+        // other known state (sealed, provisioned-but-unsealed, unsupported) is
+        // skipped; an unexpected GetSealedBk3 status fails loudly in bk3_state.
+        if bk3_state(dev) != Bk3State::Fresh {
             return;
         }
 
@@ -68,8 +70,9 @@ fn test_secure_init_bk3_smoke() {
 #[test]
 fn test_secure_init_bk3_requires_pin() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        // A sealed BK3 means provisioning is already complete; nothing to check.
-        if is_bk3_sealed(dev) {
+        // The negative check needs a genuinely fresh partition; any other known
+        // state is skipped and an unexpected status fails loudly in bk3_state.
+        if bk3_state(dev) != Bk3State::Fresh {
             return;
         }
 

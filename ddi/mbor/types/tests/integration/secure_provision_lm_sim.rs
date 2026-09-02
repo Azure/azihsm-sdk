@@ -86,11 +86,13 @@ fn assert_pin_not_set(err: &DdiError, ctx: &str) {
 #[test]
 fn test_secure_provision_lm_midflow_restart() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
-        // Guard: mid-flow scenarios need a partition that isn't already sealed.
-        // A present sealed BK3 means secure provisioning is complete (one-shot),
-        // so skip; a provisioned-but-unsealed device is caught downstream.
-        if is_bk3_sealed(dev) {
-            println!("skipping: sealed BK3 already present (AC-cycle to reset)");
+        // Guard: mid-flow scenarios need a genuinely fresh partition. Proceed
+        // only on Fresh (Bk3NotSecurelyProvisioned); any sealed /
+        // provisioned-but-unsealed (secure or legacy) / unsupported state can't
+        // be re-provisioned (SecureInitBk3 is one-shot and the MOBK can't be
+        // re-minted), so skip. An unexpected status fails loudly in bk3_state.
+        if bk3_state(dev) != Bk3State::Fresh {
+            println!("skipping: partition not fresh (AC-cycle to reset)");
             return;
         }
 
@@ -217,21 +219,31 @@ fn test_secure_provision_lm_completed_survives() {
         // Obtain a securely-provisioned + sealed partition. If the device is not
         // already sealed, complete a full secure provisioning + seal here so the
         // test does not depend on prior firmware/test state.
-        let sealed_before = if is_bk3_sealed(dev) {
-            helper_get_sealed_bk3(dev)
+        // Obtain a securely-provisioned + sealed partition. If the device is not
+        // already sealed, complete a full secure provisioning + seal here so the
+        // test does not depend on prior firmware/test state. An unexpected
+        // GetSealedBk3 status fails loudly in bk3_state.
+        let sealed_before = match bk3_state(dev) {
+            Bk3State::Sealed => helper_get_sealed_bk3(dev)
                 .expect("sealed BK3 present")
                 .data
                 .sealed_bk3
                 .as_slice()
-                .to_vec()
-        } else {
-            // Not sealed yet: securely provision + seal.
-            let mut bk3 = [0u8; 48];
-            let rng = Rng::rand_bytes(&mut bk3);
-            assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
-            let result = secure_bk3_provision_and_seal(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
-            assert!(result.is_ok(), "provision + seal {result:?}");
-            result.unwrap()
+                .to_vec(),
+            Bk3State::Fresh => {
+                // Fresh: securely provision + seal.
+                let mut bk3 = [0u8; 48];
+                let rng = Rng::rand_bytes(&mut bk3);
+                assert!(rng.is_ok(), "rand_bytes failed: {rng:?}");
+                let result = secure_bk3_provision_and_seal(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3);
+                assert!(result.is_ok(), "provision + seal {result:?}");
+                result.unwrap()
+            }
+            // Provisioned-but-unsealed or unsupported: can't recover here.
+            Bk3State::Unsealed | Bk3State::Unsupported => {
+                println!("skipping: partition not fresh or sealed (AC-cycle to reset)");
+                return;
+            }
         };
         let fips_before = fips_approved(dev);
 

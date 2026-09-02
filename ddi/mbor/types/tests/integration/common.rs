@@ -1488,6 +1488,46 @@ pub fn is_bk3_sealed(dev: &<DdiTest as Ddi>::Dev) -> bool {
     helper_get_sealed_bk3(dev).is_ok()
 }
 
+/// The partition's BK3 provisioning state, derived from the single
+/// `GetSealedBk3` status. Tests branch on this instead of collapsing every
+/// `GetSealedBk3` failure to "not sealed", which would misread a
+/// provisioned-but-unsealed (legacy or secure) or unsupported partition as
+/// fresh and drive it into a one-shot provisioning error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bk3State {
+    /// `Bk3NotSecurelyProvisioned`: no `masked_bk_boot` is present. The only
+    /// state in which a full secure provision + seal may run.
+    Fresh,
+    /// `Success`: a sealed BK3 blob is stored; secure provisioning is complete.
+    Sealed,
+    /// `SealedBk3NotPresent`: BK3 is provisioned (secure OR legacy/normal) but
+    /// no sealed blob is stored yet. `SecureInitBk3` is one-shot
+    /// (`Bk3AlreadyInitialized`) and the MOBK can neither be re-minted nor read
+    /// back, so this is unrecoverable until an AC-cycle.
+    Unsealed,
+    /// `UnsupportedCmd`: firmware was built without secure-BK3 support.
+    Unsupported,
+}
+
+/// Classify the partition's BK3 state from a single `GetSealedBk3` call.
+///
+/// Only the four documented statuses are expected; any other status (a
+/// transport fault or protocol regression) is surfaced by panicking rather than
+/// being silently treated as fresh or not-sealed. Firmware and the mock return
+/// identical statuses here.
+#[allow(dead_code)]
+pub fn bk3_state(dev: &<DdiTest as Ddi>::Dev) -> Bk3State {
+    match helper_get_sealed_bk3(dev) {
+        Ok(_) => Bk3State::Sealed,
+        Err(DdiError::DdiStatus(DdiStatus::Bk3NotSecurelyProvisioned)) => Bk3State::Fresh,
+        Err(DdiError::DdiStatus(DdiStatus::SealedBk3NotPresent)) => Bk3State::Unsealed,
+        Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => Bk3State::Unsupported,
+        Err(other) => {
+            panic!("unexpected GetSealedBk3 status while classifying BK3 state: {other:?}")
+        }
+    }
+}
+
 /// `SetInitBk3Pin`: store the encrypted `(id, pin)` provisioning credential over
 /// a fresh ECDH tunnel.
 #[allow(dead_code)]
@@ -1594,12 +1634,16 @@ pub fn secure_bk3_provision_and_seal(
         "masked_bk3 length {} is outside the expected range",
         masked_bk3.len()
     );
-    helper_set_sealed_bk3(dev, masked_bk3)?;
+    helper_set_sealed_bk3(dev, masked_bk3.clone())?;
     let sealed = helper_get_sealed_bk3(dev)?
         .data
         .sealed_bk3
         .as_slice()
         .to_vec();
+    assert_eq!(
+        sealed, masked_bk3,
+        "sealed BK3 read-back must equal the MOBK that was sealed"
+    );
     Ok(sealed)
 }
 
