@@ -228,6 +228,48 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_sd_create_peer_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_create_peer_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_create_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_create_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_reseal_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_reseal_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_local_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_local_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_peer_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_peer_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_sealing_key_gen"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_sealing_key_gen.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_unwrap_key"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_unwrap_key.rs"
 test = false
