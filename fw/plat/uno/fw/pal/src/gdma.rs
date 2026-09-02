@@ -170,18 +170,43 @@ impl HsmGdmaController for UnoHsmPal {
         dst: &mut DmaBuf,
         prp: bool,
     ) -> HsmResult<()> {
-        // Only inline SGL Data Block descriptors are supported here; the
-        // GDMA hardware consumes the descriptor and interprets its SGL
-        // format.
+        // The GDMA consumes the descriptor and interprets its SGL
+        // format, so this path is SGL-only.
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
-        // Transfer length is the descriptor's embedded length; it must
-        // match the destination exactly.
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
-        if len as usize != dst.len() {
-            return Err(HsmError::InvalidArg);
-        }
+
+        // The descriptor's type is the high nibble of its last byte; the
+        // low nibble is `sub_type`.
+        //
+        // A Data Block names the payload directly, so its embedded
+        // length is the transfer length and must match the destination
+        // exactly. A Segment / Last Segment descriptor instead names a
+        // run of descriptors for the engine to walk, so its length field
+        // is a count of *descriptor* bytes and says nothing about the
+        // payload — the transfer length is what the caller asked for,
+        // and the engine gathers that many bytes by following the
+        // segment. Treating a segment descriptor as a data block would
+        // reject the transfer outright and, if forced through, move the
+        // 16-byte descriptor instead of the item.
+        const SGL_TYPE_DATA_BLOCK: u8 = 0x0;
+        const SGL_TYPE_SEGMENT: u8 = 0x2;
+        const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
+
+        let desc_len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+        let len = match desc[15] >> 4 {
+            SGL_TYPE_DATA_BLOCK => {
+                if desc_len as usize != dst.len() {
+                    return Err(HsmError::InvalidArg);
+                }
+                desc_len
+            }
+            SGL_TYPE_SEGMENT | SGL_TYPE_LAST_SEGMENT => {
+                u32::try_from(dst.len()).map_err(|_| HsmError::InvalidArg)?
+            }
+            _ => return Err(HsmError::InvalidArg),
+        };
+
         let src_addr = sgl_desc_buf(desc);
         let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
         self.gdma
