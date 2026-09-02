@@ -182,7 +182,7 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
     assert!(!pub_der.is_empty());
 }
 
-/// Explicit deletion exercises the `NonResident` no-op instead of relying on
+/// Explicit deletion exercises the `Unpinned` no-op instead of relying on
 /// `Drop`, which intentionally ignores deletion errors.
 #[test]
 fn sealing_key_explicit_delete_succeeds() {
@@ -193,7 +193,7 @@ fn sealing_key_explicit_delete_succeeds() {
     let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
         .expect("generate sealing key on a provisioned partition");
 
-    HsmKeyManager::delete_key(key).expect("delete non-resident sealing key");
+    HsmKeyManager::delete_key(key).expect("delete unpinned sealing key");
 }
 
 /// Each `SdSealingKeyGen` call produces fresh key material: two keys

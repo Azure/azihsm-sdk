@@ -149,42 +149,42 @@ impl From<DdiError> for HsmError {
 /// Handle to a key managed by the API layer.
 ///
 /// The key's material always lives (masked) in its [`HsmKeyProps`]; this
-/// only tracks whether the device *also* holds a resident copy.
+/// only tracks whether the device *also* holds a pinned copy.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum HsmKeyHandle {
-    /// MBOR: device-resident vault key id, packed `key_id` (low 16 bits)
+    /// MBOR: key pinned in the device vault, packed `key_id` (low 16 bits)
     /// `| bulk_key_id` (high 16 bits).
-    Resident(u32),
-    /// Non-resident key: material lives only as the masked blob in its
+    Pinned(u32),
+    /// Unpinned key: material lives only as the masked blob in its
     /// props (e.g. TBOR keys, security-domain sealing keys). There is
     /// nothing device-side to address or delete.
-    NonResident,
+    Unpinned,
 }
 
-/// Extracts the key ID from a packed HSM key handle.
+/// Extracts the key ID from a pinned HSM key handle.
 ///
 /// The key ID is stored in the low 16 bits of the handle.
 ///
-/// Returns [`HsmError::UnsupportedKeyOperation`] for a non-resident key.
+/// Returns [`HsmError::UnsupportedKeyOperation`] for an unpinned key.
 pub(crate) fn get_key_id(handle: HsmKeyHandle) -> HsmResult<u16> {
     match handle {
-        HsmKeyHandle::Resident(id) => Ok((id & 0xFFFF) as u16),
-        HsmKeyHandle::NonResident => Err(HsmError::UnsupportedKeyOperation),
+        HsmKeyHandle::Pinned(id) => Ok((id & 0xFFFF) as u16),
+        HsmKeyHandle::Unpinned => Err(HsmError::UnsupportedKeyOperation),
     }
 }
 
-/// Extracts the optional bulk key ID from a resident HSM key handle.
+/// Extracts the optional bulk key ID from a pinned HSM key handle.
 ///
-/// Returns `Ok(None)` when the resident handle's bulk-ID field is unset
-/// (`0xFFFF`), and [`HsmError::UnsupportedKeyOperation`] for a non-resident
+/// Returns `Ok(None)` when the pinned handle's bulk-ID field is unset
+/// (`0xFFFF`), and [`HsmError::UnsupportedKeyOperation`] for an unpinned
 /// key, which has no device-side bulk id.
 pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> HsmResult<Option<u16>> {
     match handle {
-        HsmKeyHandle::Resident(id) => {
+        HsmKeyHandle::Pinned(id) => {
             let bulk_id = (id >> 16) as u16;
             Ok((bulk_id != 0xFFFF).then_some(bulk_id))
         }
-        HsmKeyHandle::NonResident => Err(HsmError::UnsupportedKeyOperation),
+        HsmKeyHandle::Unpinned => Err(HsmError::UnsupportedKeyOperation),
     }
 }
 
@@ -193,7 +193,7 @@ pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> HsmResult<Option<u16>> {
 /// When `bulk_key_id` is `None`, the bulk field is set to `0xFFFF`.
 pub(crate) fn to_key_handle(key_id: u16, bulk_key_id: Option<u16>) -> HsmKeyHandle {
     let bulk_part = (bulk_key_id.unwrap_or(0xFFFF) as u32) << 16;
-    HsmKeyHandle::Resident(bulk_part | (key_id as u32))
+    HsmKeyHandle::Pinned(bulk_part | (key_id as u32))
 }
 
 /// Builds a DDI request header with optional session ID and API revision.
@@ -285,9 +285,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn get_key_id_rejects_non_resident_handle() {
+    fn get_key_id_rejects_unpinned_handle() {
         assert!(matches!(
-            get_key_id(HsmKeyHandle::NonResident),
+            get_key_id(HsmKeyHandle::Unpinned),
             Err(HsmError::UnsupportedKeyOperation)
         ));
     }
