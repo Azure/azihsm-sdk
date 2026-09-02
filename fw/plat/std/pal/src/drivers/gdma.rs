@@ -56,17 +56,91 @@ impl StdGdma {
     /// that `dst` is at least that long (the trait wrapper enforces
     /// `length == dst.len()`).
     pub unsafe fn copy_mem_from_host_raw(&self, desc: &[u8; 16], dst: &mut [u8]) {
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
-        // A zero-length transfer is a no-op; skip so a (permitted) null
-        // source address on an empty descriptor is never dereferenced.
-        if len == 0 {
-            return;
+        // Emulate what the GDMA does with an NVMe SGL descriptor.
+        //
+        // A Data Block names the payload directly. A Segment / Last
+        // Segment instead names a run of descriptors, which the engine
+        // walks, gathering each Data Block into successive offsets of
+        // the destination; a Segment's final descriptor chains to the
+        // next segment rather than describing data.
+        //
+        // Firmware deliberately does none of this — it hands the
+        // descriptor to the engine and lets the hardware gather. The std
+        // PAL stands in for that engine, so the behaviour has to live
+        // here or the emulator would model something the silicon does
+        // not do.
+        const T_DATA_BLOCK: u8 = 0x0;
+        const T_SEGMENT: u8 = 0x2;
+        const T_LAST_SEGMENT: u8 = 0x3;
+        /// Bound on chained segments, so a malformed page cannot spin.
+        const MAX_SEGMENTS: usize = 16;
+
+        unsafe fn desc_at(base: *const u8, i: usize) -> [u8; 16] {
+            let mut d = [0u8; 16];
+            core::ptr::copy_nonoverlapping(base.add(i * 16), d.as_mut_ptr(), 16);
+            d
         }
-        let src = HsmDmaAddr {
-            lo: u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]),
-            hi: u32::from_le_bytes([desc[4], desc[5], desc[6], desc[7]]),
-        };
-        core::ptr::copy_nonoverlapping(addr_to_ptr(src), dst.as_mut_ptr(), len);
+        unsafe fn block_of(d: &[u8; 16]) -> (*const u8, usize) {
+            let src = HsmDmaAddr {
+                lo: u32::from_le_bytes([d[0], d[1], d[2], d[3]]),
+                hi: u32::from_le_bytes([d[4], d[5], d[6], d[7]]),
+            };
+            let len = u32::from_le_bytes([d[8], d[9], d[10], d[11]]) as usize;
+            (addr_to_ptr(src) as *const u8, len)
+        }
+
+        let mut cur = *desc;
+        let mut written = 0usize;
+
+        for _ in 0..MAX_SEGMENTS {
+            let ty = cur[15] >> 4;
+            // SAFETY: descriptor addresses are raw host-process pointers
+            // the caller guarantees valid; see the method's contract.
+            let (ptr, len) = unsafe { block_of(&cur) };
+            if len == 0 {
+                return;
+            }
+
+            if ty == T_DATA_BLOCK {
+                if written + len > dst.len() {
+                    return;
+                }
+                // SAFETY: as above; bounds checked against `dst`.
+                unsafe { core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr().add(written), len) };
+                return;
+            }
+            if ty != T_SEGMENT && ty != T_LAST_SEGMENT {
+                return;
+            }
+
+            let count = len / 16;
+            let data_count = if ty == T_LAST_SEGMENT {
+                count
+            } else {
+                count.saturating_sub(1)
+            };
+
+            for i in 0..data_count {
+                // SAFETY: the segment holds `count` descriptors.
+                let d = unsafe { desc_at(ptr, i) };
+                // SAFETY: as above.
+                let (bptr, blen) = unsafe { block_of(&d) };
+                if blen == 0 || written + blen > dst.len() {
+                    return;
+                }
+                // SAFETY: as above; bounds checked against `dst`.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(bptr, dst.as_mut_ptr().add(written), blen)
+                };
+                written += blen;
+            }
+
+            if ty == T_LAST_SEGMENT {
+                return;
+            }
+            // SAFETY: the chain pointer is the segment's last descriptor.
+            cur = unsafe { desc_at(ptr, count - 1) };
+        }
     }
 
     /// Copy from an HSM buffer to host memory.
@@ -106,7 +180,11 @@ fn addr_to_ptr(addr: HsmDmaAddr) -> *mut u8 {
 ///   address.
 pub(crate) fn validate_raw_src(desc: &[u8; 16], dst_len: usize) -> HsmResult<()> {
     let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]) as usize;
-    if len != dst_len {
+    // Only a Data Block's length describes the payload, so only it can be
+    // checked against the destination. A Segment / Last Segment length
+    // counts descriptor bytes; the payload size is whatever the walk
+    // gathers, which the copy bounds against `dst` as it goes.
+    if desc[15] >> 4 == 0 && len != dst_len {
         return Err(HsmError::InvalidArg);
     }
     // A non-empty transfer must name a non-null source address (bytes 0-7).
