@@ -19,8 +19,6 @@
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
@@ -205,17 +203,17 @@ fn report_roundtrip_for_scope(scope: u8) {
 }
 
 #[test]
-fn key_report_ephemeral_roundtrip_emu() {
+fn key_report_ephemeral_roundtrip() {
     report_roundtrip_for_scope(SCOPE_EPHEMERAL);
 }
 
 #[test]
-fn key_report_local_roundtrip_emu() {
+fn key_report_local_roundtrip() {
     report_roundtrip_for_scope(SCOPE_LOCAL);
 }
 
 #[test]
-fn key_report_rejects_tampered_masked_key_emu() {
+fn key_report_rejects_tampered_masked_key() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let (mut masked_key, _pub) = masked_sealing_key(&ctx, session.session_id, SCOPE_EPHEMERAL);
@@ -235,7 +233,7 @@ fn key_report_rejects_tampered_masked_key_emu() {
 }
 
 #[test]
-fn key_report_rejects_before_finalize_emu() {
+fn key_report_rejects_before_finalize() {
     let ctx = TestCtx::new();
     // Rotated CO session but no PartInit/PartFinal → the partition is not
     // Initialized, so the handler rejects before it ever unmasks.  The
@@ -251,7 +249,7 @@ fn key_report_rejects_before_finalize_emu() {
 }
 
 #[test]
-fn key_report_rejected_on_cu_session_emu() {
+fn key_report_rejected_on_cu_session() {
     let ctx = TestCtx::new();
 
     // Rotate the CU PSK out of the default so the dispatcher's default-PSK
@@ -283,7 +281,7 @@ fn key_report_rejected_on_cu_session_emu() {
 }
 
 #[test]
-fn key_report_rejected_on_default_psk_emu() {
+fn key_report_rejected_on_default_psk() {
     let ctx = TestCtx::new();
     // Open a CO session WITHOUT rotating the PSK (still the public
     // default) — the dispatcher's default-PSK gate must reject the command
