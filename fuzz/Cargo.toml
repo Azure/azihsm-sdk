@@ -10,7 +10,10 @@ version = "0.0.0"
 cargo-fuzz = true
 
 [dependencies]
+azihsm_ddi_emu = { path = "../ddi/emu" }
+azihsm_ddi_interface = { path = "../ddi/interface" }
 azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
+azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
 
 # dependencies for fuzzing
 libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
@@ -55,4 +58,32 @@ bench = false
 doc = false
 name = "fuzz_tbor_response_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_close"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_close.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_open_finish"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_finish.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_open_init"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_init.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_open_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_round_trip.rs"
 test = false
