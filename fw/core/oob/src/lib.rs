@@ -1,31 +1,27 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Out-of-band (OOB) side-band item transfer via the host **Metadata
-//! Page**.
+//! Out-of-band (OOB) side-band item transfer over NVMe SGL descriptors.
 //!
 //! Some TBOR commands carry bulk evidence — DER certificate chains and
 //! COSE_Sign1 attestation reports — **out of band** rather than inside
-//! the 4 KiB request buffer. The SQE's `oob_prp` (DW13-14) points at a
-//! single 4 KiB host page, the *Metadata Page*, and a TBOR message
-//! references an item by its **index** into that page.
+//! the 4 KiB request buffer. The SQE's `oob_prp` points at a host page
+//! of 16-byte **NVMe SGL descriptors** (the driver's *Metadata Page*)
+//! and `oob_len` (its `metadata_size`) gives that array's byte size; a
+//! TBOR message references an item by its **index** into the array.
 //!
-//! Layout (mirrors `azihsm_hsm_data_xfer_metadata` in the Linux driver,
-//! `drivers/linux/drvsrc/azihsm_hsm_cmd.h`):
+//! Each entry is the descriptor of the item's first SGL **segment**, a
+//! run of Data Block descriptors (`addr(8) ‖ len(4) ‖ rsvd(3) ‖
+//! sub_type:4|type:4`), one per physically contiguous chunk of the host
+//! buffer:
 //!
-//! ```text
-//! offset 0            buffer_count : u32          (1 ..= MAX_OOB_ITEMS)
-//! offset 4 + 16*i     xfer_length      : u32      bytes of item i
-//!                     rsvd             : u32
-//!                     hw_sgl_mem_paddr : u64      -> item i's SGL segment
-//! offset 260..4095    rsvd
-//! ```
+//! * `type == LAST_SEGMENT` — `len` is the exact byte count of Data
+//!   Block descriptors (`16 * sg_cnt`); the item ends there.
+//! * `type == SEGMENT` — the segment is a full page whose **final**
+//!   descriptor chains to the next segment.
 //!
-//! Each `hw_sgl_mem_paddr` is **not** the data: it points at a per-item
-//! **NVMe SGL segment**, a page of 16-byte SGL Data Block descriptors
-//! (`addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`), one per physically
-//! contiguous chunk of the host buffer. [`copy_oob`] walks that segment
-//! and forwards each descriptor **verbatim** to the GDMA
+//! [`copy_oob`] walks that chain and forwards each Data Block descriptor
+//! **verbatim** to the GDMA
 //! ([`HsmGdmaController::copy_mem_from_host_raw`]), which interprets it
 //! and copies the chunk into the matching sub-range of a caller-allocated
 //! [`DmaBuf`].
@@ -33,10 +29,6 @@
 //! The Uno GDMA does not walk PRP lists or SGL chains itself; each
 //! transfer is a single SGL Data Block, so this layer drives the walk one
 //! descriptor at a time.
-//!
-//! Note the SQE's `oob_len` (DW15) is **not** used: the driver leaves it
-//! reserved, and the Metadata Page is self-describing via `buffer_count`.
-//! Presence of OOB data is signalled by a non-null `oob_prp`.
 
 #![no_std]
 
@@ -52,39 +44,44 @@ use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 /// Size of one NVMe SGL Data Block descriptor on the wire.
 pub const SGL_ENTRY_LEN: usize = 16;
 
-/// Size of one Metadata Page entry (`xfer_length ‖ rsvd ‖ paddr`).
-pub const METADATA_ENTRY_LEN: usize = 16;
+/// NVMe SGL descriptor type, in the high nibble of the descriptor's last
+/// byte (`sub_type` occupies the low nibble).
+const SGL_TYPE_DATA_BLOCK: u8 = 0x0;
+const SGL_TYPE_SEGMENT: u8 = 0x2;
+const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
 
-/// Byte offset of the first entry, past the `buffer_count` header.
-pub const METADATA_ENTRY_OFF: usize = 4;
-
-/// Maximum number of OOB items the device accepts, matching the driver's
-/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
-pub const MAX_OOB_ITEMS: usize = 16;
-
-/// A per-item SGL segment is read in chunks of this size rather than in
-/// one 4 KiB read, to keep the scratch allocation small. The driver
-/// allocates each segment as `seg_cnt * PAGE_SIZE` (so at least one full
-/// page) and rejects items needing more than one segment, hence the
-/// walk is bounded by the page rather than by a fixed descriptor count.
+/// A segment is read in chunks of this size rather than one descriptor at
+/// a time: 16-byte reads hit the GDMA's small-transfer fault.
 const SEG_CHUNK_LEN: usize = 256;
 const SEG_CHUNK_DESCRIPTORS: usize = SEG_CHUNK_LEN / SGL_ENTRY_LEN;
+
+/// A chained (`SEGMENT`-type) segment is one host page.
 const SEG_PAGE_LEN: usize = 4096;
-const SEG_CHUNKS: usize = SEG_PAGE_LEN / SEG_CHUNK_LEN;
 
-/// Size of the Metadata Page (`METADATA_SIZE` in the driver UAPI).
-const METADATA_PAGE_LEN: usize = 4096;
+/// Upper bound on chained segments walked for a single item, so a
+/// malformed page cannot spin forever.
+const MAX_SEGMENTS: usize = 16;
 
-/// Granularity that Metadata Page prefix reads are rounded up to. The
-/// GDMA faults on very small transfers, so the header/entry fetch is
-/// padded rather than issued as a 4- or 16-byte read.
-const PREFIX_GRAIN: usize = 32;
+/// Bytes fetched when reading a single Metadata Page entry. The GDMA
+/// faults on very small transfers, so the 16-byte entry read is padded.
+const ENTRY_READ_LEN: usize = 32;
 
-/// Reference to the OOB Metadata Page carried by the SQE (`oob_prp`).
+/// Reference to the OOB SGL descriptor array carried by the SQE
+/// (`oob_prp` + `oob_len`).
 #[derive(Debug, Clone, Copy)]
 pub struct OobPtr {
-    /// Host pointer to the 4 KiB Metadata Page.
+    /// Host pointer to the 16-byte-per-entry SGL descriptor array.
     pub prp: HsmDmaAddr,
+    /// Byte length of the descriptor array (`num_entries * 16`).
+    pub len: u32,
+}
+
+impl OobPtr {
+    /// Number of SGL descriptors in the array.
+    #[inline]
+    pub fn entry_count(&self) -> usize {
+        self.len as usize / SGL_ENTRY_LEN
+    }
 }
 
 /// Byte-offset an [`HsmDmaAddr`], rejecting 64-bit overflow.
@@ -98,25 +95,193 @@ fn addr_offset(base: HsmDmaAddr, off: u64) -> HsmResult<HsmDmaAddr> {
     })
 }
 
-/// Host address of the Metadata Page entry for `index`.
+/// Host address of the SGL Data Block descriptor at `index`, bounds-checked
+/// against the descriptor array length.
 ///
-/// Entries start at [`METADATA_ENTRY_OFF`] (past the `buffer_count`
-/// header) and are [`METADATA_ENTRY_LEN`] bytes each. The index is
-/// bounded by [`MAX_OOB_ITEMS`] here; it is additionally checked against
-/// the page's own `buffer_count` in [`copy_oob`].
+/// This is the only interpretation the OOB layer does — locating the
+/// 16-byte descriptor.  The descriptor's contents (address / length /
+/// type) are consumed by the GDMA layer
+/// ([`HsmGdmaController::copy_mem_from_host_raw`]), not here.
 ///
 /// # Errors
-/// * [`HsmError::InvalidArg`] — `index` >= [`MAX_OOB_ITEMS`], or the
-///   address overflows.
+/// * [`HsmError::InvalidArg`] — `index` is out of bounds for `oob.len`,
+///   or the descriptor address overflows.
 pub fn entry_addr(oob: &OobPtr, index: usize) -> HsmResult<HsmDmaAddr> {
-    if index >= MAX_OOB_ITEMS {
+    let entry_off = index
+        .checked_mul(SGL_ENTRY_LEN)
+        .ok_or(HsmError::InvalidArg)?;
+    let entry_end = entry_off
+        .checked_add(SGL_ENTRY_LEN)
+        .ok_or(HsmError::InvalidArg)?;
+    if entry_end > oob.len as usize {
         return Err(HsmError::InvalidArg);
     }
-    let off = index
-        .checked_mul(METADATA_ENTRY_LEN)
-        .and_then(|v| v.checked_add(METADATA_ENTRY_OFF))
-        .ok_or(HsmError::InvalidArg)?;
-    addr_offset(oob.prp, off as u64)
+    addr_offset(oob.prp, entry_off as u64)
+}
+
+/// Copy OOB item `index` into the caller-allocated `dst`.
+///
+/// Reads the item's entry at `oob.prp + index*16` — the descriptor of its
+/// first SGL segment — then walks that segment (and any chained
+/// segments), forwarding each Data Block descriptor **verbatim** to the
+/// GDMA ([`HsmGdmaController::copy_mem_from_host_raw`]) so its chunk
+/// lands at the running offset in `dst`.
+///
+/// The item's payload length is not carried in the metadata: it is the
+/// sum of the Data Block lengths, and must come to exactly `dst.len()`.
+/// A short or over-long item is rejected rather than silently
+/// truncating.
+///
+/// # Errors
+/// * [`HsmError::InvalidArg`] — `index` out of bounds, a malformed entry
+///   (null address, unexpected descriptor type, `len` not a multiple of
+///   16), a chain longer than [`MAX_SEGMENTS`], or chunks that do not sum
+///   to `dst.len()`.
+/// * [`HsmError`] — propagated from the GDMA / allocator.
+pub async fn copy_oob<P>(
+    pal: &P,
+    io: &impl HsmIo,
+    oob: &OobPtr,
+    index: usize,
+    dst: &mut DmaBuf,
+) -> HsmResult<()>
+where
+    P: HsmGdmaController + HsmAlloc,
+{
+    // Bounds-check `index` against `oob.len`. The address itself is
+    // recomputed below, aligned down for the padded read.
+    entry_addr(oob, index)?;
+
+    pal.alloc_scoped_async(io, async |scoped| {
+        // Read the item's 16-byte entry. Three hardware/safety
+        // constraints apply, the first two invisible on the emulator
+        // (which never models the GDMA descriptor):
+        //
+        // * `prp = true` — the Metadata Page is plain contiguous host
+        //   memory, so the address goes in a PRP and the length is passed
+        //   separately. The SGL form would take the length from the
+        //   descriptor's second word, which this call site leaves zero,
+        //   and the GDMA rejects the zero-length read with `dma_error(1)`
+        //   (`0x08f08101`).
+        // * the read is padded to `ENTRY_READ_LEN` — the GDMA faults on
+        //   very small transfers.
+        // * the padded read is *aligned down* to `ENTRY_READ_LEN` and the
+        //   entry parsed at the offset within it. SQE validation allows
+        //   `oob_len` up to a full page, so a naive padded read at a high
+        //   index (entry 255 sits at 4080) would run past the end of the
+        //   validated page. Aligning down keeps every read inside it,
+        //   since `ENTRY_READ_LEN` divides the page size.
+        let entry_off = index
+            .checked_mul(SGL_ENTRY_LEN)
+            .ok_or(HsmError::InvalidArg)?;
+        let read_off = entry_off & !(ENTRY_READ_LEN - 1);
+        let inner = entry_off - read_off;
+        let read_addr = addr_offset(oob.prp, read_off as u64)?;
+
+        let entry = scoped.dma_alloc(ENTRY_READ_LEN)?;
+        pal.copy_mem_from_host(io, read_addr, entry, true).await?;
+
+        let mut seg_addr = le_addr(entry, inner)?;
+        let mut seg_len = le_u32(entry, inner + 8)? as usize;
+        let mut seg_type = desc_type(entry, inner)?;
+
+        let mut copied = 0usize;
+        let total = dst.len();
+        let mut tail: &mut DmaBuf = dst;
+
+        // Walk the segment chain. A `LAST_SEGMENT` descriptor's `len` is
+        // the exact byte count of Data Block descriptors; a `SEGMENT`
+        // descriptor covers a full page whose final descriptor chains
+        // onward rather than describing data.
+        let seg = scoped.dma_alloc(SEG_CHUNK_LEN)?;
+
+        for seg_idx in 0..MAX_SEGMENTS {
+            if seg_addr.is_null() {
+                return Err(HsmError::InvalidArg);
+            }
+            let (descriptors, chained) =
+                segment_shape(seg_len, seg_type).ok_or(HsmError::InvalidArg)?;
+
+            let mut next: Option<(HsmDmaAddr, usize, u8)> = None;
+
+            // Read the segment in `SEG_CHUNK_LEN` slices: 16-byte reads
+            // hit the GDMA's small-transfer fault.
+            for chunk_idx in 0..seg_len.div_ceil(SEG_CHUNK_LEN) {
+                let chunk_addr = addr_offset(seg_addr, (chunk_idx * SEG_CHUNK_LEN) as u64)?;
+                // Plain contiguous host memory — read via PRP; the SGL
+                // form would put the length in the descriptor's second
+                // word, which this call site leaves zero, and the GDMA
+                // rejects a zero-length read.
+                pal.copy_mem_from_host(io, chunk_addr, seg, true).await?;
+
+                for i in 0..SEG_CHUNK_DESCRIPTORS {
+                    let desc_idx = chunk_idx * SEG_CHUNK_DESCRIPTORS + i;
+                    let off = i * SGL_ENTRY_LEN;
+
+                    // Past the data descriptors: for a chained segment
+                    // the next one is the segment pointer itself.
+                    if desc_idx == descriptors {
+                        if chained {
+                            next = Some((
+                                le_addr(seg, off)?,
+                                le_u32(seg, off + 8)? as usize,
+                                desc_type(seg, off)?,
+                            ));
+                        }
+                        break;
+                    }
+                    if desc_idx > descriptors {
+                        break;
+                    }
+
+                    if desc_type(seg, off)? != SGL_TYPE_DATA_BLOCK {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    let chunk = le_u32(seg, off + 8)? as usize;
+                    if chunk == 0 || copied + chunk > total {
+                        return Err(HsmError::InvalidArg);
+                    }
+
+                    // Hand the GDMA exactly this chunk's destination
+                    // window; it validates the descriptor length against
+                    // the slice.
+                    let (head, rest) = tail.split_at_mut(chunk);
+                    let raw: &[u8; SGL_ENTRY_LEN] = seg
+                        .get(off..off + SGL_ENTRY_LEN)
+                        .and_then(|s| s.try_into().ok())
+                        .ok_or(HsmError::InternalError)?;
+                    pal.copy_mem_from_host_raw(io, raw, head, false).await?;
+
+                    copied += chunk;
+                    tail = rest;
+                }
+            }
+
+            match next {
+                Some((addr, len, ty)) => {
+                    // A chain that would run past `MAX_SEGMENTS` is
+                    // rejected rather than silently truncated: otherwise
+                    // a page claiming more segments than we walk could
+                    // still succeed whenever the segments we *did* walk
+                    // happened to fill `dst` exactly.
+                    if seg_idx + 1 == MAX_SEGMENTS {
+                        return Err(HsmError::InvalidArg);
+                    }
+                    seg_addr = addr;
+                    seg_len = len;
+                    seg_type = ty;
+                }
+                None => break,
+            }
+        }
+
+        // The chunks must account for the caller's buffer exactly.
+        if copied != total {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// Read a little-endian `u32` from `bytes[off..off + 4]`.
@@ -137,128 +302,39 @@ fn le_addr(bytes: &[u8], off: usize) -> HsmResult<HsmDmaAddr> {
     })
 }
 
-/// Copy OOB item `index` into the caller-allocated `dst`.
+/// NVMe SGL descriptor type — the high nibble of the descriptor's last
+/// byte. The low nibble is `sub_type`, always `SUBTYPE_ADDRESS` (0)
+/// here, and is not inspected.
+fn desc_type(bytes: &[u8], off: usize) -> HsmResult<u8> {
+    let b = bytes
+        .get(off + SGL_ENTRY_LEN - 1)
+        .ok_or(HsmError::InternalError)?;
+    Ok(b >> 4)
+}
+
+/// How many Data Block descriptors a segment contributes, and whether it
+/// chains onward. `None` for a malformed or out-of-contract segment.
 ///
-/// Reads the Metadata Page header and the item's entry, then walks the
-/// item's NVMe SGL segment, forwarding each 16-byte Data Block descriptor
-/// to the GDMA so its chunk lands at the running offset in `dst`.
-///
-/// `dst.len()` must equal the entry's `xfer_length`, and the segment's
-/// descriptor lengths must sum to exactly that — a short or over-long
-/// segment is rejected rather than silently truncating.
-///
-/// # Errors
-/// * [`HsmError::InvalidArg`] — `index` out of range for the page's
-///   `buffer_count`, a `buffer_count` above [`MAX_OOB_ITEMS`],
-///   `xfer_length != dst.len()`, or a segment whose chunks do not sum to
-///   `xfer_length`.
-/// * [`HsmError`] — propagated from the GDMA / allocator.
-pub async fn copy_oob<P>(
-    pal: &P,
-    io: &impl HsmIo,
-    oob: &OobPtr,
-    index: usize,
-    dst: &mut DmaBuf,
-) -> HsmResult<()>
-where
-    P: HsmGdmaController + HsmAlloc,
-{
-    // Bounds the index before any DMA; the page's own `buffer_count`
-    // is checked once the prefix has been read.
-    if index >= MAX_OOB_ITEMS {
-        return Err(HsmError::InvalidArg);
+/// `seg_len` is host-controlled and drives both the read loop and the DMA
+/// reads, so it is bounded for **every** descriptor type: an unbounded
+/// `LAST_SEGMENT` length would spin the loop and read far past the
+/// segment allocation. The driver backs every segment with whole pages
+/// (`coh_mem_sz = seg_cnt * PAGE_SIZE`, `azihsm_dma_io.c`) and rejects
+/// items needing more than one page of descriptors, so a segment can
+/// never legitimately exceed [`SEG_PAGE_LEN`].
+fn segment_shape(seg_len: usize, seg_type: u8) -> Option<(usize, bool)> {
+    if seg_len == 0 || seg_len > SEG_PAGE_LEN || !seg_len.is_multiple_of(SGL_ENTRY_LEN) {
+        return None;
     }
-
-    pal.alloc_scoped_async(io, async |scoped| {
-        // ── Metadata Page prefix: header + entries up to `index` ─────
-        //
-        // Read the header and the wanted entry in a single transfer.
-        // Two separate 4- and 16-byte reads are avoided deliberately:
-        // the GDMA faults on very small transfers, and one read is
-        // cheaper anyway. The prefix is rounded up to `PREFIX_GRAIN` and
-        // always stays inside the 4 KiB page.
-        let want = METADATA_ENTRY_OFF + METADATA_ENTRY_LEN * (index + 1);
-        let prefix_len = want.next_multiple_of(PREFIX_GRAIN).min(METADATA_PAGE_LEN);
-        let hdr = scoped.dma_alloc(prefix_len)?;
-        // `prp = true`: the Metadata Page is a plain contiguous host
-        // buffer, so the address goes in a PRP and the length is passed
-        // separately. The SGL form would put the length in the
-        // descriptor's second word, which this call site leaves zero —
-        // a zero-length SGL read that the GDMA rejects.
-        pal.copy_mem_from_host(io, oob.prp, hdr, true).await?;
-
-        let buffer_count = le_u32(hdr, 0)? as usize;
-        if buffer_count == 0 || buffer_count > MAX_OOB_ITEMS || index >= buffer_count {
-            return Err(HsmError::InvalidArg);
+    match seg_type {
+        SGL_TYPE_LAST_SEGMENT => Some((seg_len / SGL_ENTRY_LEN, false)),
+        // The final descriptor chains to the next segment rather than
+        // describing data, so a chained segment needs at least two.
+        SGL_TYPE_SEGMENT if seg_len >= 2 * SGL_ENTRY_LEN => {
+            Some((seg_len / SGL_ENTRY_LEN - 1, true))
         }
-
-        // ── The item's entry: `xfer_length ‖ rsvd ‖ hw_sgl_mem_paddr` ──
-        let entry_off = METADATA_ENTRY_OFF + METADATA_ENTRY_LEN * index;
-        let xfer_length = le_u32(hdr, entry_off)? as usize;
-        let seg_addr = le_addr(hdr, entry_off + 8)?;
-
-        // The caller sizes `dst` from the TBOR descriptor; the two must
-        // agree or we would copy a different item than was requested.
-        if xfer_length != dst.len() {
-            return Err(HsmError::InvalidArg);
-        }
-        if seg_addr.is_null() {
-            return Err(HsmError::InvalidArg);
-        }
-
-        // ── Walk the item's SGL segment, chunk by chunk ──────────────
-        //
-        // The segment is read in `SEG_CHUNK_LEN` slices rather than one
-        // descriptor at a time: 16-byte reads hit the same GDMA
-        // small-transfer fault as the header. The walk spans the whole
-        // segment page, so an item split across many descriptors is
-        // handled; the driver allocates at least one full page per
-        // segment and rejects items needing more than one segment.
-        let seg = scoped.dma_alloc(SEG_CHUNK_LEN)?;
-        let mut copied = 0usize;
-        let mut tail: &mut DmaBuf = dst;
-
-        'outer: for chunk_idx in 0..SEG_CHUNKS {
-            if copied == xfer_length {
-                break;
-            }
-            let chunk_addr = addr_offset(seg_addr, (chunk_idx * SEG_CHUNK_LEN) as u64)?;
-            // Plain contiguous host memory — read via PRP, as above.
-            pal.copy_mem_from_host(io, chunk_addr, seg, true).await?;
-
-            for i in 0..SEG_CHUNK_DESCRIPTORS {
-                if copied == xfer_length {
-                    break 'outer;
-                }
-                let off = i * SGL_ENTRY_LEN;
-
-                // NVMe SGL Data Block: `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)`.
-                let chunk = le_u32(seg, off + 8)? as usize;
-                if chunk == 0 || copied + chunk > xfer_length {
-                    return Err(HsmError::InvalidArg);
-                }
-
-                // Hand the GDMA exactly this chunk's destination window;
-                // it validates the descriptor length against the slice.
-                let (head, rest) = tail.split_at_mut(chunk);
-                let raw: &[u8; SGL_ENTRY_LEN] = seg
-                    .get(off..off + SGL_ENTRY_LEN)
-                    .and_then(|s| s.try_into().ok())
-                    .ok_or(HsmError::InternalError)?;
-                pal.copy_mem_from_host_raw(io, raw, head, false).await?;
-
-                copied += chunk;
-                tail = rest;
-            }
-        }
-
-        // A segment that never reached `xfer_length` is malformed.
-        if copied != xfer_length {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok(())
-    })
-    .await
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -268,28 +344,97 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entry_addr_skips_the_buffer_count_header() {
+    fn entry_count_divides_by_16() {
         let oob = OobPtr {
             prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
+            len: 48,
         };
-        // Entry 0 sits immediately after the 4-byte header.
+        assert_eq!(oob.entry_count(), 3);
+    }
+
+    /// The padded entry read must stay inside the Metadata Page even for
+    /// the highest index SQE validation permits (a full page of entries).
+    /// Aligning the read down to `ENTRY_READ_LEN` is what guarantees it.
+    #[test]
+    fn padded_entry_read_stays_within_the_page() {
+        const PAGE: usize = 4096;
+        assert!(PAGE.is_multiple_of(ENTRY_READ_LEN));
+        for index in 0..PAGE / SGL_ENTRY_LEN {
+            let entry_off = index * SGL_ENTRY_LEN;
+            let read_off = entry_off & !(ENTRY_READ_LEN - 1);
+            let inner = entry_off - read_off;
+            // The whole padded read is inside the page ...
+            assert!(read_off + ENTRY_READ_LEN <= PAGE, "index {index} overruns");
+            // ... and the entry sits wholly inside the padded read.
+            assert!(inner + SGL_ENTRY_LEN <= ENTRY_READ_LEN);
+            // ... at the address the caller asked for.
+            assert_eq!(read_off + inner, entry_off);
+        }
+    }
+
+    /// A segment length is host-controlled, so it is bounded for every
+    /// descriptor type — an unbounded `LAST_SEGMENT` would drive both an
+    /// enormous read loop and DMA past the segment allocation.
+    #[test]
+    fn segment_length_is_bounded_for_every_type() {
+        for ty in [SGL_TYPE_LAST_SEGMENT, SGL_TYPE_SEGMENT] {
+            assert!(
+                segment_shape(SEG_PAGE_LEN + SGL_ENTRY_LEN, ty).is_none(),
+                "type {ty:#x} accepted an over-page segment"
+            );
+            assert!(segment_shape(0, ty).is_none());
+            assert!(segment_shape(SGL_ENTRY_LEN + 1, ty).is_none());
+            assert!(segment_shape(usize::MAX, ty).is_none());
+        }
+        // A single descriptor is a valid last segment, but a chained
+        // segment needs a second one to hold the chain pointer.
+        assert_eq!(
+            segment_shape(SGL_ENTRY_LEN, SGL_TYPE_LAST_SEGMENT),
+            Some((1, false))
+        );
+        assert!(segment_shape(SGL_ENTRY_LEN, SGL_TYPE_SEGMENT).is_none());
+        assert_eq!(
+            segment_shape(2 * SGL_ENTRY_LEN, SGL_TYPE_SEGMENT),
+            Some((1, true))
+        );
+        // Unknown descriptor types are rejected outright.
+        assert!(segment_shape(SEG_PAGE_LEN, SGL_TYPE_DATA_BLOCK).is_none());
+    }
+
+    #[test]
+    fn desc_type_reads_the_high_nibble() {
+        let mut desc = [0u8; SGL_ENTRY_LEN];
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_DATA_BLOCK);
+        desc[SGL_ENTRY_LEN - 1] = SGL_TYPE_LAST_SEGMENT << 4;
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_LAST_SEGMENT);
+        // A set sub_type nibble must not leak into the type.
+        desc[SGL_ENTRY_LEN - 1] = (SGL_TYPE_SEGMENT << 4) | 0x0F;
+        assert_eq!(desc_type(&desc, 0).unwrap(), SGL_TYPE_SEGMENT);
+    }
+
+    #[test]
+    fn entry_addr_computes_indexed_offset() {
+        let oob = OobPtr {
+            prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
+            len: 48,
+        };
         assert_eq!(
             entry_addr(&oob, 0).unwrap(),
-            HsmDmaAddr { lo: 0x1004, hi: 0 }
+            HsmDmaAddr { lo: 0x1000, hi: 0 }
         );
-        // Entry 2 is at 4 + 2*16 = 0x24.
         assert_eq!(
             entry_addr(&oob, 2).unwrap(),
-            HsmDmaAddr { lo: 0x1024, hi: 0 }
+            HsmDmaAddr { lo: 0x1020, hi: 0 }
         );
     }
 
     #[test]
-    fn entry_addr_rejects_index_beyond_device_max() {
+    fn entry_addr_rejects_out_of_bounds_index() {
         let oob = OobPtr {
             prp: HsmDmaAddr { lo: 0x1000, hi: 0 },
+            len: 48, // 3 entries → valid indices 0..=2
         };
-        assert_eq!(entry_addr(&oob, MAX_OOB_ITEMS), Err(HsmError::InvalidArg));
+        assert_eq!(entry_addr(&oob, 3), Err(HsmError::InvalidArg));
         assert_eq!(entry_addr(&oob, usize::MAX), Err(HsmError::InvalidArg));
     }
 
@@ -297,41 +442,26 @@ mod tests {
     fn entry_addr_crosses_32bit_boundary() {
         let oob = OobPtr {
             prp: HsmDmaAddr {
-                lo: 0xFFFF_FFFC,
+                lo: 0xFFFF_FFF0,
                 hi: 0,
             },
+            len: 32,
         };
-        // Entry 0 at +4 wraps `lo` into `hi`.
-        assert_eq!(entry_addr(&oob, 0).unwrap(), HsmDmaAddr { lo: 0, hi: 1 });
+        // Entry 1 at +16 wraps `lo` into `hi`.
+        assert_eq!(entry_addr(&oob, 1).unwrap(), HsmDmaAddr { lo: 0, hi: 1 });
     }
 
     #[test]
     fn addr_offset_rejects_overflow() {
-        let base = HsmDmaAddr {
-            lo: 0xFFFF_FFFF,
-            hi: 0xFFFF_FFFF,
-        };
-        assert_eq!(addr_offset(base, 1), Err(HsmError::InvalidArg));
-    }
-
-    #[test]
-    fn le_readers_decode_little_endian() {
-        let bytes = [
-            0x78, 0x56, 0x34, 0x12, 0x01, 0x00, 0x00, 0x00, 0xEF, 0xBE, 0, 0, 1, 0, 0, 0,
-        ];
-        assert_eq!(le_u32(&bytes, 0).unwrap(), 0x1234_5678);
         assert_eq!(
-            le_addr(&bytes, 8).unwrap(),
-            HsmDmaAddr {
-                lo: 0x0000_BEEF,
-                hi: 1
-            }
+            addr_offset(
+                HsmDmaAddr {
+                    lo: 0xFFFF_FFFF,
+                    hi: 0xFFFF_FFFF
+                },
+                1
+            ),
+            Err(HsmError::InvalidArg)
         );
-    }
-
-    #[test]
-    fn le_readers_reject_short_input() {
-        let bytes = [0u8; 3];
-        assert_eq!(le_u32(&bytes, 0), Err(HsmError::InternalError));
     }
 }

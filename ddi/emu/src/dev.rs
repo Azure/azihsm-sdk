@@ -72,22 +72,28 @@ const EMU_PART_RES_MASK: u128 = 1u128 << EMU_PID;
 const SCRATCH_LEN: usize = 4096;
 
 /// Size of a per-item SGL segment. The driver allocates segments in
-/// whole pages, and the firmware walks a segment page-wide, so the
-/// emulator must back each one with a full page too.
+/// whole pages; the emulator emits a single `LAST_SEGMENT` descriptor
+/// per item, whose `len` bounds the firmware's walk exactly, but the
+/// backing allocation is still a full page to match the driver.
 const SGL_SEGMENT_LEN: usize = 4096;
 
-/// Size of one OOB Metadata Page entry
-/// (`xfer_length ‖ rsvd ‖ hw_sgl_mem_paddr`).
+/// Size of one OOB Metadata Page entry — an NVMe SGL descriptor
+/// (`addr(8) ‖ len(4) ‖ rsvd(3) ‖ sub_type:4|type:4`).
 const METADATA_ENTRY_LEN: usize = 16;
 
-/// Byte offset of the first Metadata Page entry, past the
-/// `buffer_count` header.
-const METADATA_ENTRY_OFF: usize = 4;
+/// Byte offset of the first Metadata Page entry. The page has no header.
+const METADATA_ENTRY_OFF: usize = 0;
 
-/// Maximum OOB items the device accepts, matching the firmware's
-/// `MAX_OOB_ITEMS` and the driver's
-/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`.
-const MAX_OOB_ITEMS: usize = 16;
+/// NVMe SGL descriptor types used when building the page.
+const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
+
+/// Maximum OOB items the emulator will describe, matching the driver's
+/// `AZIHSM_MAX_DATA_XFER_DEVICE_BUFFERS`. This is a driver/emulator
+/// compatibility cap, not a firmware invariant: firmware SQE validation
+/// bounds `oob_len` by the Metadata Page size, and `copy_oob` bounds the
+/// index against `oob_len`, so the firmware itself accepts any item
+/// count that fits the page.
+const MAX_OOB_ITEMS: usize = 64;
 
 /// Page size enforced by the firmware platform.
 const PAGE_4K: usize = 4096;
@@ -330,16 +336,18 @@ impl DdiDev for DdiEmuDev {
         // ── 1b. Build the out-of-band Metadata Page ─────────────────
         //
         // Mirrors what the Linux driver builds (`azihsm_hsm_data_xfer_
-        // metadata`): a 4 KiB page holding `buffer_count: u32` followed
-        // by one 16-byte entry per item —
-        // `xfer_length(4) ‖ rsvd(4) ‖ hw_sgl_mem_paddr(8)`, all LE.
+        // metadata`): a page holding one 16-byte **NVMe SGL descriptor**
+        // per item — `addr(8) ‖ len(4) ‖ rsvd(3) ‖ sub_type:4|type:4`,
+        // all LE. There is no `buffer_count` header; the item count
+        // travels in the SQE's `oob_len` (DW15) as `count * 16`.
         //
-        // `hw_sgl_mem_paddr` does not point at the data: it points at a
-        // per-item NVMe SGL *segment*. The emulator's host buffers are
-        // virtually contiguous, so each segment holds exactly one Data
-        // Block descriptor `addr(8) ‖ length(4) ‖ rsvd(3) ‖ type(1)=0`
-        // covering the whole item — hardware may split an item across
-        // several descriptors and the firmware walks them all.
+        // Each descriptor's `addr` does not point at the data: it points
+        // at a per-item NVMe SGL *segment*. The emulator's host buffers
+        // are virtually contiguous, so each segment holds exactly one
+        // Data Block descriptor covering the whole item, and the entry is
+        // typed `LAST_SEGMENT` with `len` = 16 (one descriptor) — the
+        // driver's `hw_seg_cnt == 1` case. Hardware may split an item
+        // across several descriptors and the firmware walks them all.
         //
         // Item slices are borrowed (no copy) and stay live for the
         // duration of the blocking `io` below; `sgl_segs` keeps the
@@ -355,31 +363,30 @@ impl DdiDev for DdiEmuDev {
                 // so their addresses are stable before the page records
                 // them.
                 //
-                // Each segment is a full page, matching the driver
-                // (`coh_mem_sz = seg_cnt * PAGE_SIZE`). The firmware
-                // walks a segment page-wide, so a 16-byte allocation
-                // here would be read out of bounds on the std PAL, where
-                // the "DMA" is a raw pointer read.
+                // Each segment is backed by a full page, matching the
+                // driver (`coh_mem_sz = seg_cnt * PAGE_SIZE`), even
+                // though only the first descriptor is meaningful.
                 for item in items.iter() {
                     let mut seg = AlignedBuf::new(SGL_SEGMENT_LEN);
                     let s = seg.as_mut_slice();
                     s[0..8].copy_from_slice(&(item.as_ptr() as u64).to_le_bytes());
                     s[8..12].copy_from_slice(&(item.len() as u32).to_le_bytes());
-                    // [12..16] stay zero: rsvd(3) + SGL type nibble 0
-                    // (Data Block). The rest of the page stays zero, so
-                    // the firmware's walk terminates once the item's
-                    // `xfer_length` is satisfied.
+                    // [12..16] stay zero: rsvd(3) + type nibble 0 (Data
+                    // Block) and sub_type 0 (Address).
                     sgl_segs.push(seg);
                 }
 
                 let page = oob_page.as_mut_slice();
-                page[0..4].copy_from_slice(&(items.len() as u32).to_le_bytes());
-                for (i, item) in items.iter().enumerate() {
+                for (i, _item) in items.iter().enumerate() {
                     let off = METADATA_ENTRY_OFF + i * METADATA_ENTRY_LEN;
                     let seg_addr = sgl_segs[i].as_slice().as_ptr() as u64;
-                    page[off..off + 4].copy_from_slice(&(item.len() as u32).to_le_bytes());
-                    // [off+4..off+8] stay zero: rsvd.
-                    page[off + 8..off + 16].copy_from_slice(&seg_addr.to_le_bytes());
+                    page[off..off + 8].copy_from_slice(&seg_addr.to_le_bytes());
+                    // One Data Block descriptor in this segment.
+                    page[off + 8..off + 12]
+                        .copy_from_slice(&(METADATA_ENTRY_LEN as u32).to_le_bytes());
+                    // [off+12..off+15] stay zero: rsvd.
+                    // Type in the high nibble, sub_type (Address) in the low.
+                    page[off + 15] = SGL_TYPE_LAST_SEGMENT << 4;
                 }
                 true
             }
@@ -389,12 +396,16 @@ impl DdiDev for DdiEmuDev {
         // ── 2. Build SQE with OP_TBOR ──────────────────────────────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_ctrl = req.session_ctrl();
-        // Presence is signalled by a non-null `oob_prp`; `oob_len` (DW15)
-        // is left reserved, matching the driver.
-        let oob_prp = if have_oob {
-            oob_page.as_slice().as_ptr() as u64
+        // `oob_len` (DW15) is the driver's `metadata_size`: the byte size
+        // of the valid entry array, i.e. `item_count * 16`.
+        let (oob_prp, oob_len) = if have_oob {
+            let count = oob_items.map(<[&[u8]]>::len).unwrap_or(0);
+            (
+                oob_page.as_slice().as_ptr() as u64,
+                (count * METADATA_ENTRY_LEN) as u32,
+            )
         } else {
-            0
+            (0, 0)
         };
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(OP_TBOR).with_id(cmd_id))
@@ -402,7 +413,7 @@ impl DdiDev for DdiEmuDev {
             .src_prp1(src.as_slice().as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .oob_prp(oob_prp)
-            .oob_len(0)
+            .oob_len(oob_len)
             .session_flags(
                 SessionFlags::new()
                     .with_ctrl(u8::from(session_ctrl))
