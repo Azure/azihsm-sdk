@@ -92,7 +92,7 @@ pub struct TborAesGenerateKeyReq<'a> {
     pub key_size: AesKeySize,
 
     /// Caller-supplied key label recorded in the masked blob's
-    /// `MaskedKeyMetadata.key_label`, up to [`KEY_LABEL_MAX`] bytes.
+    /// `MaskedKeyMetadata.key_label`, up to 32 bytes.
     /// Empty for an unlabeled key.
     #[tbor(buffer, max_len = 32)]
     pub key_label: &'a [u8],

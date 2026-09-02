@@ -289,7 +289,7 @@ fn aes_bits_to_tbor_size(bits: u32) -> HsmResult<u8> {
     }
 }
 
-/// Runs TBOR `AesGenerateKey`, returning the non-resident `NonResident`
+/// Runs TBOR `AesGenerateKey`, returning the unpinned `Unpinned`
 /// handle and the device-returned masked blob (the key is never stored
 /// on-device; the blob is unmasked on-use by `aes_cbc_encrypt_decrypt`).
 fn aes_generate_key_tbor(
