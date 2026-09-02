@@ -23,5 +23,6 @@
 | 07/08/2026 | Added Security Domain API chapter (`azihsm_sess_ex_open`,        |
 |            | `azihsm_sess_ex_part_init`)                                      |
 |            | Added `azihsm_session_ex_type` enum                              |
+| 08/27/2026 | Added `AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION` error code       |
 
 \pagebreak

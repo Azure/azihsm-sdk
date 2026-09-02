@@ -87,13 +87,6 @@ impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
     }
 }
 
-impl HsmKeyHandleDelOp for ddi::HsmNoKeyHandle {
-    fn delete_key(_session: HsmSession, _handle: Self, _epoch: u64) -> Result<(), HsmError> {
-        // No-op: HsmNoKeyHandle represents a non-resident key with no device handle to delete.
-        Ok(())
-    }
-}
-
 /// Shared state for HSM-backed key wrapper types.
 ///
 /// Many of the typed N-API/Rust wrappers (AES/HMAC/RSA/etc.) are *thin handles* to

@@ -48,9 +48,8 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 /// First non-default CO PSK used by rotation tests.
 const GATE_ROTATED_PSK_A: [u8; PSK_LEN] = [

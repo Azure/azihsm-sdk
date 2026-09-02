@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Backend setup + canonical fixture constants shared by every TBOR
-//! integration test.
+//! Backend setup, role-session bootstrap helpers, and canonical fixture
+//! constants shared by every TBOR integration test.
 //!
 //! Calling [`open_dev`] does three things, in order:
 //!
@@ -30,12 +30,70 @@ use std::ops::Deref;
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
+use azihsm_ddi_tbor_types::SessionType;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 pub use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 pub use azihsm_ddi_tbor_types::PSK_LEN;
 pub use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
+
+use super::ctx::TestCtx;
+use super::session::SessionHandshake;
+use super::session::SessionOpenInitOptions;
+
+/// Crypto-Officer PSK identifier.
+pub const CO_PSK_ID: u8 = 0;
+
+/// Crypto-User PSK identifier.
+pub const CU_PSK_ID: u8 = 1;
+
+/// Non-default CO PSK shared by tests that must bypass the default-PSK gate.
+pub const ROTATED_CO_PSK: [u8; PSK_LEN] = [
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+
+/// Non-default CU PSK shared by tests that must bypass the default-PSK gate.
+pub const ROTATED_CU_PSK: [u8; PSK_LEN] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+];
+
+/// Rotate the default CO PSK and return a fresh authenticated CO session.
+pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+    let bootstrap = ctx
+        .open_session(CO_PSK_ID, SessionType::Authenticated)
+        .expect("open_session must succeed");
+    ctx.psk_change(bootstrap.handshake(), target_psk)
+        .expect("rotate CO PSK");
+    bootstrap.close().expect("close bootstrap CO session");
+
+    let opts =
+        SessionOpenInitOptions::new(CO_PSK_ID, SessionType::Authenticated).with_psk(target_psk);
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("CO session_open_init under rotated PSK");
+    ctx.session_open_finish(pending)
+        .expect("CO session_open_finish under rotated PSK")
+}
+
+/// Rotate the default CU PSK and return a fresh plaintext CU session.
+pub(crate) fn bootstrap_rotated_cu(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+    let bootstrap = ctx
+        .open_session(CU_PSK_ID, SessionType::PlainText)
+        .expect("open_session must succeed");
+    ctx.psk_change(bootstrap.handshake(), target_psk)
+        .expect("rotate CU PSK");
+    bootstrap.close().expect("close bootstrap CU session");
+
+    let opts = SessionOpenInitOptions::new(CU_PSK_ID, SessionType::PlainText).with_psk(target_psk);
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("CU session_open_init under rotated PSK");
+    ctx.session_open_finish(pending)
+        .expect("CU session_open_finish under rotated PSK")
+}
 
 /// Process-global serialisation lock — see module docs.
 ///
