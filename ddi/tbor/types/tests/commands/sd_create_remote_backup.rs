@@ -47,13 +47,12 @@ use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use zerocopy::TryFromBytes;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_chain;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
@@ -62,6 +61,7 @@ use crate::harness::x509_fixture::GeneratedChain;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// `KeyScope::Local` discriminant (wire mirror of the firmware
 /// `HsmKeyScope`).
