@@ -152,7 +152,7 @@ impl HsmSession {
     ///
     /// Used by the DDI layer to route key operations to the TBOR
     /// (masked, non-resident) path vs. the MBOR (device-resident) path.
-    pub(crate) fn is_ex(&self) -> bool {
+    pub(crate) fn is_security_domain(&self) -> bool {
         matches!(self.inner.read().kind, SessionKind::Ver2 { .. })
     }
 

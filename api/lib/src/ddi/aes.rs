@@ -8,12 +8,12 @@
 //! the construction of DDI requests and processing of responses for AES
 //! cryptographic operations.
 
-use azihsm_ddi_tbor_types::AES_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
 use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
 use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
 use itertools::Itertools;
@@ -52,10 +52,10 @@ pub(crate) fn aes_generate_key(
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     // Transport step: run the generate command and get the key handle
-    // plus the device-returned masked blob. A V2 (TBOR) session yields a
-    // non-resident handle (`NonResident`); a V1 (MBOR) session a resident
-    // vault id (`Resident`).
-    let (handle, masked_key) = if session.is_ex() {
+    // plus the device-returned masked blob. A V2 (TBOR) session yields an
+    // unpinned handle (`Unpinned`); a V1 (MBOR) session a pinned vault id
+    // (`Pinned`).
+    let (handle, masked_key) = if session.is_security_domain() {
         aes_generate_key_tbor(session, &props)?
     } else {
         aes_generate_key_mbor(session, &props)?
@@ -236,7 +236,7 @@ fn aes_cbc_encrypt_decrypt(
     input: Vec<u8>,
     output: &mut [u8],
 ) -> HsmResult<usize> {
-    if key.session().is_ex() {
+    if key.session().is_security_domain() {
         aes_cbc_encrypt_decrypt_tbor(key, op, iv, &input, output)
     } else {
         aes_cbc_encrypt_decrypt_mbor(key, op, iv, &input, output)
@@ -297,7 +297,7 @@ fn aes_generate_key_tbor(
     props: &HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, Vec<u8>)> {
     let key_label = props.label();
-    if key_label.len() > AES_KEY_LABEL_MAX_LEN {
+    if key_label.len() > TBOR_KEY_LABEL_MAX_LEN {
         return Err(HsmError::InvalidKeyProps);
     }
     let req = TborAesGenerateKeyReq {

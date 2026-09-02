@@ -39,8 +39,9 @@ pub const AES_KEY_SIZE_192: u8 = 2;
 pub const AES_KEY_SIZE_256: u8 = 3;
 
 /// Maximum caller-supplied key-label length (bytes) recorded in the masked
-/// blob's metadata (`MaskedKeyMetadata.key_label`).
-pub const AES_KEY_LABEL_MAX_LEN: usize = 32;
+/// blob's metadata (`MaskedKeyMetadata.key_label`). Not AES-specific: every
+/// TBOR key kind shares the same 32-byte label cap.
+pub const TBOR_KEY_LABEL_MAX_LEN: usize = 32;
 
 /// Host-facing TBOR `AesGenerateKey` request.
 #[tbor(opcode = TBOR_OP_AES_GENERATE_KEY, session_ctrl = in_session)]
@@ -59,7 +60,7 @@ pub struct TborAesGenerateKeyReq {
     pub key_size: u8,
 
     /// Caller-supplied key label recorded in the masked blob's metadata,
-    /// up to [`AES_KEY_LABEL_MAX_LEN`] (32) bytes.  Empty for an unlabeled
+    /// up to [`TBOR_KEY_LABEL_MAX_LEN`] (32) bytes.  Empty for an unlabeled
     /// key.
     #[tbor(max_len = 32)]
     pub key_label: Vec<u8>,

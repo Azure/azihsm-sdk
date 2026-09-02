@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::aead_envelope;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use zerocopy::little_endian::U16 as Le16;
 use zerocopy::little_endian::U64 as Le64;
 use zerocopy::*;
@@ -13,8 +14,6 @@ const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
 /// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
 const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
-/// Maximum caller-supplied key-label length recorded in the metadata.
-const TBOR_KEY_LABEL_MAX_LEN: usize = 32;
 /// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
 /// Bit offset of the `KeyScope` field packed into `usage_flags`.
