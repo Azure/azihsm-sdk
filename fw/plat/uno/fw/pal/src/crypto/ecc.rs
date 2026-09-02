@@ -761,6 +761,17 @@ impl HsmEcc for UnoHsmPal {
         priv_key: &DmaBuf,
         pub_key: &mut DmaBuf,
     ) -> HsmResult<()> {
+        // Validate `curve` up front rather than leaving it implicit in the
+        // length check below. `ecc_priv_pub_key` re-derives the curve from
+        // the scalar length, so without this an unsupported variant would
+        // never meet the documented `InvalidArg` contract here — it would
+        // either be rejected further down for the wrong reason, or, if a
+        // future variant shared a wire length with a supported one, be
+        // computed on the wrong curve. `wire_priv_key_len` is pairwise
+        // distinct across the supported curves (32 / 48 / 68), which
+        // `wire_priv_key_len_is_unambiguous` in the traits crate pins so a
+        // colliding variant fails CI rather than mis-dispatching here.
+        map_ecc_curve(curve)?;
         let wire_pub_len = curve.wire_pub_key_len();
         if priv_key.len() != curve.wire_priv_key_len() || pub_key.len() < wire_pub_len {
             return Err(HsmError::InvalidArg);

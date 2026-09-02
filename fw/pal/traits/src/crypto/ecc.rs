@@ -515,3 +515,35 @@ pub trait HsmEcc {
         secret: &mut DmaBuf,
     ) -> HsmResult<()>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::HsmEccCurve;
+
+    /// Every supported curve, so adding a variant forces this list to be
+    /// updated rather than silently skipping the checks below.
+    const ALL: [HsmEccCurve; 3] = [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521];
+
+    /// `wire_priv_key_len` must stay pairwise distinct across the
+    /// supported curves.
+    ///
+    /// Callers are allowed to recover the curve from a raw scalar's
+    /// length -- `HsmEcc::ecc_priv_pub_key` does exactly that, and
+    /// `ecc_pub_from_priv` delegates to it. That inference is only sound
+    /// while no two curves share a wire length. If a new variant ever
+    /// collides, this fails instead of the firmware quietly computing on
+    /// the wrong curve.
+    #[test]
+    fn wire_priv_key_len_is_unambiguous() {
+        for (i, a) in ALL.iter().enumerate() {
+            for b in ALL.iter().skip(i + 1) {
+                assert_ne!(
+                    a.wire_priv_key_len(),
+                    b.wire_priv_key_len(),
+                    "{a:?} and {b:?} share a wire scalar length, so recovering \
+                     the curve from a scalar length is no longer sound"
+                );
+            }
+        }
+    }
+}
