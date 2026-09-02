@@ -37,7 +37,7 @@ jobs:
       - name: Build PKCS#11 module against the mock DDI
         run: cargo build -p azihsm_pkcs11 --features mock
 
-      - name: Drive with pkcs11-tool (show-info, slots, login, SHA-256)
+      - name: Drive with pkcs11-tool (show-info, slots, login, digests)
         run: |
           set -euo pipefail
           MOD="$PWD/target/debug/azihsm_pkcs11.so"
@@ -45,12 +45,30 @@ jobs:
           pkcs11-tool --module "$MOD" --list-slots
           pkcs11-tool --module "$MOD" --login --pin 1234 --list-objects
           printf abc > msg
-          pkcs11-tool --module "$MOD" --hash --mechanism SHA256 \
-            --input-file msg --output-file dig
-          got="$(xxd -p -c64 dig)"
-          exp="$(printf abc | sha256sum | cut -d' ' -f1)"
-          echo "module=$got openssl=$exp"
-          test "$got" = "$exp"
+          for pair in SHA-1:sha1sum SHA256:sha256sum SHA384:sha384sum SHA512:sha512sum; do
+            mech="${pair%%:*}"; sum="${pair##*:}"
+            pkcs11-tool --module "$MOD" --hash --mechanism "$mech" \
+              --input-file msg --output-file dig
+            got="$(xxd -p -c130 dig)"
+            exp="$("$sum" < msg | cut -d' ' -f1)"
+            echo "$mech module=$got coreutils=$exp"
+            test "$got" = "$exp"
+          done
 
       # TODO: add pkcs11test as the conformance gate once the key-backed
       # mechanisms land and there is a meaningful conformance surface to check.
+
+  # Digest known-answer tests: a standalone C harness that links the digest
+  # source directly (no device, no libcrypto), so it needs only a compiler.
+  digest-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and run the digest KAT
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          gcc -Wall -Wextra -Werror -I include/pkcs11-v3.1 -I src \
+            tests/digest_kat_test.c src/azihsm_pkcs11_digest.c -o digest_kat_test
+          ./digest_kat_test
