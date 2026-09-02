@@ -20,7 +20,6 @@
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
-#![cfg(feature = "emu")]
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
@@ -109,17 +108,17 @@ fn roundtrip_for_scope(scope: u8) {
 }
 
 #[test]
-fn sd_sealing_key_gen_ephemeral_roundtrip_emu() {
+fn sd_sealing_key_gen_ephemeral_roundtrip() {
     roundtrip_for_scope(SCOPE_EPHEMERAL);
 }
 
 #[test]
-fn sd_sealing_key_gen_local_roundtrip_emu() {
+fn sd_sealing_key_gen_local_roundtrip() {
     roundtrip_for_scope(SCOPE_LOCAL);
 }
 
 #[test]
-fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
+fn sd_sealing_key_gen_rejects_unsupported_scope() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -136,7 +135,7 @@ fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejects_before_finalize_emu() {
+fn sd_sealing_key_gen_rejects_before_finalize() {
     let ctx = TestCtx::new();
     // Rotated CO session but no PartInit/PartFinal → the partition is not
     // Initialized, so the scope's masking key does not exist yet.
@@ -150,7 +149,7 @@ fn sd_sealing_key_gen_rejects_before_finalize_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
+fn sd_sealing_key_gen_rejected_on_cu_session() {
     let ctx = TestCtx::new();
 
     // Rotate the CU PSK out of the default so the dispatcher's default-PSK
@@ -169,7 +168,7 @@ fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejected_on_default_psk_emu() {
+fn sd_sealing_key_gen_rejected_on_default_psk() {
     let ctx = TestCtx::new();
     // Open a CO session WITHOUT rotating the PSK (still the public
     // default) — the dispatcher's default-PSK gate must reject the command
