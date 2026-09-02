@@ -218,9 +218,6 @@ fn test_secure_provision_lm_completed_survives() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
         // Obtain a securely-provisioned + sealed partition. If the device is not
         // already sealed, complete a full secure provisioning + seal here so the
-        // test does not depend on prior firmware/test state.
-        // Obtain a securely-provisioned + sealed partition. If the device is not
-        // already sealed, complete a full secure provisioning + seal here so the
         // test does not depend on prior firmware/test state. An unexpected
         // GetSealedBk3 status fails loudly in bk3_state.
         let sealed_before = match bk3_state(dev) {
