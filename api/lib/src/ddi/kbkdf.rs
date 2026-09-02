@@ -56,7 +56,7 @@ pub(crate) fn kbkdf_derive(
     let req = DdiKbkdfCounterHmacDeriveCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::KbkdfCounterHmacDerive, &shared_secret.session()),
         data: DdiKbkdfCounterHmacDeriveReq {
-            key_id: ddi::get_key_id(shared_secret.handle()),
+            key_id: ddi::get_key_id(shared_secret.handle())?,
             hash_algorithm: hash_algo.into(),
             label: label
                 .map(|label| MborByteArray::from_slice(label).map_hsm_err(HsmError::InternalError))
