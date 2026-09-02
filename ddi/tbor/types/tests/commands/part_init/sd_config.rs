@@ -15,13 +15,15 @@
 //! * [`part_init_with_sapota`] — PartInit additionally carrying a
 //!   SAPOTA thumbprint succeeds.
 
+use azihsm_ddi_tbor_test_harness::assertions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+
 use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
 use super::sata_thumbprint;
 use super::ROTATED_CO_PSK;
-use crate::harness::TestCtx;
 
 /// Verifies that a successful PartInit response contains both PTA artifacts.
 macro_rules! assert_part_init_artifacts_present {
@@ -1056,10 +1058,7 @@ fn second_part_init_without_erase_is_rejected() {
         )
         .expect_err("second PartInit without erase must be rejected");
 
-    crate::harness::assertions::assert_fw_rejects(
-        &err,
-        azihsm_ddi_tbor_types::TborStatus::PtaKeyAlreadySet,
-    );
+    assertions::assert_fw_rejects(&err, azihsm_ddi_tbor_types::TborStatus::PtaKeyAlreadySet);
 }
 
 /// Verifies that a session created before erase cannot be reused for PartInit.
@@ -1081,7 +1080,7 @@ fn part_init_with_stale_session_after_erase_is_rejected() {
         )
         .expect_err("PartInit with a session created before erase must be rejected");
 
-    crate::harness::assertions::assert_fw_rejects(
+    assertions::assert_fw_rejects(
         &err,
         azihsm_ddi_tbor_types::TborStatus::DefaultPskMustRotate,
     );

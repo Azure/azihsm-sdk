@@ -1,0 +1,33 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_tbor_test_harness"
+version = "0.1.0"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor_test_helpers.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+azihsm_ddi_tbor_types.workspace = true
+azihsm_session_ex_crypto.workspace = true
+parking_lot.workspace = true
+x509.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
+
+[features]
+emu = ["azihsm_ddi/emu"]
+mock = ["azihsm_ddi/mock"]
+sock = ["azihsm_ddi/sock"]
+table-4 = ["azihsm_ddi/table-4"]
+table-64 = ["azihsm_ddi/table-64"]
+
+[lints]
+workspace = true

@@ -10,7 +10,7 @@
 //! - [`session`]       session-establishment + per-command crypto helpers
 //! - [`api_rev`]       `ApiRev` request helper
 //!
-//! Anything declared `pub` here is reachable from `crate::harness::…`
+//! Anything declared `pub` here is reachable from `crate::…`
 //! inside the test binary. Nothing in this directory is part of the
 //! `azihsm_ddi_tbor_types` public API.
 //!
@@ -47,16 +47,16 @@ pub mod x509_fixture;
 // import them from `azihsm_ddi_tbor_types` directly when driving
 // negative-path tests through raw `TborSessionOpen*Req` /
 // `TborPskChangeReq` requests.
-// Flat re-exports so test files write `use crate::harness::TestCtx`
-// instead of `crate::harness::ctx::TestCtx`. Only items actually used
+// Flat re-exports so test files write `use crate::TestCtx`
+// instead of `crate::ctx::TestCtx`. Only items actually used
 // from test files are re-exported here; helpers only reached through
 // `TestCtx` methods stay behind their submodule.
-pub(crate) use azihsm_ddi_tbor_types::build_psk_change_aad;
-pub(crate) use azihsm_ddi_tbor_types::TborPskChangeReq;
-pub(crate) use ctx::TestCtx;
-pub(crate) use session::build_mac_fin;
-pub(crate) use session::build_part_init_mach_seed_aad;
-pub(crate) use session::encrypt_mach_seed_envelope;
-pub(crate) use session::encrypt_psk_envelope;
-pub(crate) use session::SessionHandshake;
-pub(crate) use session::SessionOpenInitOptions;
+pub use azihsm_ddi_tbor_types::build_psk_change_aad;
+pub use azihsm_ddi_tbor_types::TborPskChangeReq;
+pub use ctx::TestCtx;
+pub use session::build_mac_fin;
+pub use session::build_part_init_mach_seed_aad;
+pub use session::encrypt_mach_seed_envelope;
+pub use session::encrypt_psk_envelope;
+pub use session::SessionHandshake;
+pub use session::SessionOpenInitOptions;

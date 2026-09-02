@@ -21,6 +21,7 @@
 // module isn't emu-limited); only the emu-gated tests exercise it today.
 #![cfg_attr(not(feature = "emu"), allow(dead_code))]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
 // Test-only imports: the round-trip / reject tests need the emu FW handler
@@ -48,7 +49,6 @@ use crate::commands::aes_generate_key::SCOPE_LOCAL;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 #[cfg(feature = "emu")]
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::TestCtx;
 
 /// AES block / IV length.
 const IV_LEN: usize = 16;

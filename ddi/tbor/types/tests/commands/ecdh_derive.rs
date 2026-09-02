@@ -18,6 +18,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEcdhDeriveReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -26,7 +27,6 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
 
 /// `KeyScope::Session` discriminant.
 const SCOPE_SESSION: u8 = 0b001;

@@ -15,9 +15,8 @@
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
-
-use crate::harness::TestCtx;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
 const DEVICE_KIND_PHYSICAL: u8 = 2;

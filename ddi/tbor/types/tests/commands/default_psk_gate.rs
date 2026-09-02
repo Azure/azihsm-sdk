@@ -35,6 +35,10 @@
 //! [`TestCtx::new`](crate::harness::TestCtx::new), so partition PSKs
 //! begin at their canonical defaults.
 
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::assertions::assert_tbor_decode_error;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
@@ -44,10 +48,6 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::assertions::assert_tbor_decode_error;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
 
 const CO: u8 = 0;
 const CU: u8 = 1;

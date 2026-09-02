@@ -32,7 +32,7 @@ use super::finish::SessionHandshake;
 /// `new_psk` must be exactly [`PSK_LEN`] (32) bytes — anything else
 /// is an immediate [`DdiError::InvalidParameter`] without touching
 /// the device.
-pub(crate) fn psk_change(
+pub fn psk_change(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
     new_psk: &[u8],
@@ -56,7 +56,7 @@ pub(crate) fn psk_change(
 /// Exposed so negative-path tests can mutate the envelope (e.g.
 /// flip a ciphertext byte) before shipping it via a raw
 /// [`TborPskChangeReq`].
-pub(crate) fn encrypt_psk_envelope(
+pub fn encrypt_psk_envelope(
     session: &SessionHandshake,
     new_psk: &[u8],
 ) -> Result<Vec<u8>, DdiError> {

@@ -25,6 +25,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA256;
@@ -34,7 +35,6 @@ use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
 use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 pub(crate) const SCOPE_SESSION: u8 = 0b001;

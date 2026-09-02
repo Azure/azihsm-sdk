@@ -4,7 +4,7 @@
 //! Integration tests for the TBOR `SdSealingKeyGen` command.
 //!
 //! Cross-test isolation comes from `open_dev`'s factory reset; no
-//! per-test cleanup is required (see [`crate::harness::fixture`]).
+//! per-test cleanup is required (see [`azihsm_ddi_tbor_test_harness::fixture`]).
 //!
 //! The command generates a P-384 sealing keypair and returns the
 //! **masked** private key (masked under the requested scope's masking
@@ -22,6 +22,12 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -35,12 +41,6 @@ use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::CO;
 use crate::commands::part_init::ROTATED_CO_PSK;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::SessionHandshake;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_SESSION: u8 = 0b001;
