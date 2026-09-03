@@ -12,6 +12,12 @@
 //! - `test_secure_init_bk3_requires_pin` is the negative case: on a fresh
 //!   partition, `secure_init_bk3` before `set_init_bk3_pin` must be rejected
 //!   with `Bk3PinNotSet`.
+//! - `test_secure_init_bk3_transport_tag_mismatch`,
+//!   `test_secure_init_bk3_pin_tag_mismatch`, and
+//!   `test_secure_init_bk3_pin_already_set` cover the remaining authentication
+//!   and one-shot guards. These are mock-only: they set the one-shot Phase-2 PIN
+//!   without completing Phase 4, which on real HW persists until reboot (NSSR
+//!   won't clear it) and would block the other PIN-setting tests.
 
 #![cfg(not(feature = "emu"))]
 #![cfg(test)]
@@ -88,6 +94,103 @@ fn test_secure_init_bk3_requires_pin() {
         assert!(
             matches!(result, Err(DdiError::DdiStatus(DdiStatus::Bk3PinNotSet))),
             "secure_init before set_pin: {result:?}"
+        );
+    });
+}
+
+/// Negative smoke: a corrupted transport tag must be rejected.
+///
+/// After `set_init_bk3_pin`, flipping a bit in `tag_transport` fails the
+/// transport HMAC check (verified before the PIN tag), so `secure_init_bk3` must
+/// return `Bk3TransportTagMismatch`. The failure happens before the one-shot
+/// state advances, so the partition stays fresh.
+///
+/// Mock-only: it sets the one-shot Phase-2 PIN without completing Phase 4, which
+/// on real HW persists until reboot (NSSR won't clear it) and would block the
+/// other PIN-setting tests.
+#[cfg(feature = "mock")]
+#[test]
+fn test_secure_init_bk3_transport_tag_mismatch() {
+    ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        if bk3_state(dev) != Bk3State::Fresh {
+            return;
+        }
+
+        let mut bk3 = [0u8; 48];
+        Rng::rand_bytes(&mut bk3).expect("rand_bytes failed");
+
+        set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN).expect("set_init_bk3_pin");
+        let (mut eb, pk) = build_secure_init_bk3_payload(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
+            .expect("build payload");
+        eb.tag_transport[0] ^= 1;
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        assert!(
+            matches!(
+                result,
+                Err(DdiError::DdiStatus(DdiStatus::Bk3TransportTagMismatch))
+            ),
+            "corrupted transport tag: {result:?}"
+        );
+    });
+}
+
+/// Negative smoke: a corrupted PIN tag must be rejected.
+///
+/// After `set_init_bk3_pin`, flipping a bit in `tag_pin` (leaving `tag_transport`
+/// valid) passes the transport check and fails the PIN HMAC check, so
+/// `secure_init_bk3` must return `Bk3PinTagMismatch`.
+///
+/// Mock-only: same one-shot Phase-2 PIN reason as
+/// `test_secure_init_bk3_transport_tag_mismatch`.
+#[cfg(feature = "mock")]
+#[test]
+fn test_secure_init_bk3_pin_tag_mismatch() {
+    ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        if bk3_state(dev) != Bk3State::Fresh {
+            return;
+        }
+
+        let mut bk3 = [0u8; 48];
+        Rng::rand_bytes(&mut bk3).expect("rand_bytes failed");
+
+        set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN).expect("set_init_bk3_pin");
+        let (mut eb, pk) = build_secure_init_bk3_payload(dev, TEST_CRED_ID, TEST_CRED_PIN, &bk3)
+            .expect("build payload");
+        eb.tag_pin[0] ^= 1;
+        let result = helper_secure_init_bk3(dev, eb, pk);
+        assert!(
+            matches!(
+                result,
+                Err(DdiError::DdiStatus(DdiStatus::Bk3PinTagMismatch))
+            ),
+            "corrupted pin tag: {result:?}"
+        );
+    });
+}
+
+/// Negative smoke: `set_init_bk3_pin` is one-shot per partition.
+///
+/// A second `set_init_bk3_pin` before `secure_init_bk3` consumes the stored PIN
+/// must be rejected with `Bk3PinAlreadySet`.
+///
+/// Mock-only: the first `set_init_bk3_pin` leaves a one-shot Phase-2 PIN that on
+/// real HW persists until reboot (NSSR won't clear it).
+#[cfg(feature = "mock")]
+#[test]
+fn test_secure_init_bk3_pin_already_set() {
+    ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        if bk3_state(dev) != Bk3State::Fresh {
+            return;
+        }
+
+        set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN).expect("first set_init_bk3_pin");
+        let result = set_init_bk3_pin(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        assert!(
+            matches!(
+                result,
+                Err(DdiError::DdiStatus(DdiStatus::Bk3PinAlreadySet))
+            ),
+            "second set_init_bk3_pin: {result:?}"
         );
     });
 }
