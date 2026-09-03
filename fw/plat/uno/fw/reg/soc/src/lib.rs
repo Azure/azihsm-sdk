@@ -42,3 +42,4 @@ pub mod sha;
 pub mod trace_mailbox;
 pub mod uart;
 pub mod upka;
+pub mod zero;
