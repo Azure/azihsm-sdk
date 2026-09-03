@@ -98,9 +98,12 @@ impl DeviceCredKey {
     ) -> Result<(CredentialEncryptionKey, DdiDerPublicKey), CredEncErr> {
         let client_priv_key =
             EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| CredEncErr::EccKeyGenError)?;
-        let client_priv_key_der = client_priv_key
-            .to_vec()
-            .map_err(|_| CredEncErr::EccKeyExportError)?;
+        // Holds the raw private key; wipe it once the derivation consumes it.
+        let client_priv_key_der = Zeroizing::new(
+            client_priv_key
+                .to_vec()
+                .map_err(|_| CredEncErr::EccKeyExportError)?,
+        );
         self.create_credential_key_from_der(&client_priv_key_der)
     }
 
@@ -147,9 +150,12 @@ impl DeviceCredKey {
     ) -> Result<(Bk3EncryptionKey, DdiDerPublicKey), CredEncErr> {
         let client_priv_key =
             EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| CredEncErr::EccKeyGenError)?;
-        let client_priv_key_der = client_priv_key
-            .to_vec()
-            .map_err(|_| CredEncErr::EccKeyExportError)?;
+        // Holds the raw private key; wipe it once the derivation consumes it.
+        let client_priv_key_der = Zeroizing::new(
+            client_priv_key
+                .to_vec()
+                .map_err(|_| CredEncErr::EccKeyExportError)?,
+        );
         self.create_bk3_key_from_der(&client_priv_key_der)
     }
 

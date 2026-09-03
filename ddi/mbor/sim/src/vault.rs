@@ -14,6 +14,7 @@ use azihsm_ddi_mbor_types::MaskingKeyAlgorithm;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::credentials::*;
 use crate::crypto::aes::AesAlgo;
@@ -782,19 +783,24 @@ impl VaultInner {
             Err(ManticoreError::InternalError)?
         };
         let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
-        let secret_bytes = private_key.derive(&public_key)?;
+        let secret_bytes = Zeroizing::new(private_key.derive(&public_key)?);
         let secret_key = SecretKey::from_bytes(&secret_bytes)?;
         let current_nonce = self.get_nonce();
-        let keys = secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(&current_nonce), 80)?;
+        let keys = Zeroizing::new(secret_key.hkdf_derive(
+            HashAlgorithm::Sha384,
+            None,
+            Some(&current_nonce),
+            80,
+        )?);
 
-        let mut id_pin_iv_nonce = [0; 80];
+        let mut id_pin_iv_nonce = Zeroizing::new([0u8; 80]);
         id_pin_iv_nonce[..16].copy_from_slice(&encrypted_credential.id);
         id_pin_iv_nonce[16..32].copy_from_slice(&encrypted_credential.pin);
         id_pin_iv_nonce[32..48].copy_from_slice(&encrypted_credential.iv);
         id_pin_iv_nonce[48..].copy_from_slice(&current_nonce);
 
         let hmac_key = HmacKey::from_bytes(&keys[32..])?;
-        let calculated_tag = hmac_key.hmac(&id_pin_iv_nonce, HashAlgorithm::Sha384)?;
+        let calculated_tag = hmac_key.hmac(id_pin_iv_nonce.as_slice(), HashAlgorithm::Sha384)?;
         if calculated_tag != encrypted_credential.tag {
             Err(ManticoreError::PinDecryptionFailed)?;
         }
@@ -805,13 +811,13 @@ impl VaultInner {
             AesAlgo::Cbc,
             Some(&encrypted_credential.iv),
         )?;
-        let decrypted_id = aes_result.plain_text;
+        let decrypted_id = Zeroizing::new(aes_result.plain_text);
         let aes_result = aes_key.decrypt(
             &encrypted_credential.pin,
             AesAlgo::Cbc,
             aes_result.iv.as_deref(),
         )?;
-        let decrypted_pin = aes_result.plain_text;
+        let decrypted_pin = Zeroizing::new(aes_result.plain_text);
 
         if decrypted_id.len() != 16 || decrypted_pin.len() != 16 {
             Err(ManticoreError::InvalidAppCredentials)?;
@@ -843,16 +849,25 @@ impl VaultInner {
             return Err(ManticoreError::InternalError);
         };
         let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
-        let secret_bytes = private_key.derive(&public_key)?;
+        let secret_bytes = Zeroizing::new(private_key.derive(&public_key)?);
         let secret_key = SecretKey::from_bytes(&secret_bytes)?;
-        let transport_keys =
-            secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(b"BK3_TRANSPORT_ENC"), 80)?;
+        let transport_keys = Zeroizing::new(secret_key.hkdf_derive(
+            HashAlgorithm::Sha384,
+            None,
+            Some(b"BK3_TRANSPORT_ENC"),
+            80,
+        )?);
 
-        let mut pin_info = [0u8; 33];
+        let mut pin_info = Zeroizing::new([0u8; 33]);
         pin_info[..16].copy_from_slice(pin);
         pin_info[16..32].copy_from_slice(id);
         pin_info[32] = 0x02;
-        let pin_key = secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(&pin_info), 48)?;
+        let pin_key = Zeroizing::new(secret_key.hkdf_derive(
+            HashAlgorithm::Sha384,
+            None,
+            Some(pin_info.as_slice()),
+            48,
+        )?);
 
         let mut message = [0u8; 96];
         message[..16].copy_from_slice(encrypted_bk3.iv.as_slice());
@@ -876,12 +891,13 @@ impl VaultInner {
             AesAlgo::Cbc,
             Some(encrypted_bk3.iv.as_slice()),
         )?;
-        if plaintext.plain_text.len() != 48 {
+        let plaintext = Zeroizing::new(plaintext.plain_text);
+        if plaintext.len() != 48 {
             return Err(ManticoreError::AesDecryptFailed);
         }
 
         let mut bk3 = [0u8; 48];
-        bk3.copy_from_slice(&plaintext.plain_text);
+        bk3.copy_from_slice(&plaintext);
         Ok(bk3)
     }
 
