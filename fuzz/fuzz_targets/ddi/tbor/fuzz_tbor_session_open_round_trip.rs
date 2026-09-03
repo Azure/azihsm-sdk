@@ -39,8 +39,10 @@ fuzz_target!(|input: FuzzInput| {
         pk_init: input.pk_init,
     };
     let mut cookie = None;
+
     // If session open succeeds, finish then close it afterwards.
-    if let Ok(resp) = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie) {
+    let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
+    if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = TborSessionOpenFinishReq {
             session_id: resp.session_id,
@@ -48,13 +50,21 @@ fuzz_target!(|input: FuzzInput| {
             seed_envelope: input.seed_envelope,
         };
         let mut open_finish_cookie = None;
-        let _ = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+        if let Err(error) =
+            dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie)
+        {
+            println!("SessionOpenFinish failed with error code: {error}");
+        }
 
         // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        if let Err(error) = dev.exec_op_tbor(&close_req, None, &mut close_cookie) {
+            println!("SessionClose failed with error code: {error}");
+        }
+    } else if let Err(error) = init_result {
+        println!("SessionOpenInit failed with error code: {error}");
     }
 });
