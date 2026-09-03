@@ -247,7 +247,182 @@ mod round_trips {
             crate::keygen::AzihsmEcKeygen,
             crate::derive::AzihsmEcDerive,
         >(&engine)?;
+        azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
+            &engine,
+        )?;
         Ok((engine, engine_raw))
+    }
+
+    /// Run an HKDF derive on a `NID_hkdf` context against `engine_raw` with
+    /// the given ctrl-string options. Returns the output bytes, or the
+    /// OpenSSL error text if an option or the derive is rejected.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn try_hkdf(
+        engine_raw: *mut ffi::ENGINE,
+        opts: &[(&str, &str)],
+        len_hint: Option<usize>,
+    ) -> Result<Vec<u8>, String> {
+        use std::ffi::CString;
+        use std::ffi::c_int;
+
+        // SAFETY: standard NID_hkdf derive sequence; ctx freed on all paths.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as c_int, engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
+            assert_eq!(ffi::EVP_PKEY_derive_init(ctx), 1, "EVP_PKEY_derive_init");
+            for (k, v) in opts {
+                let key = CString::new(*k).unwrap();
+                let value = CString::new(*v).unwrap();
+                if ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()) != 1 {
+                    let err = openssl::error::ErrorStack::get().to_string();
+                    ffi::EVP_PKEY_CTX_free(ctx);
+                    return Err(format!("option {k} rejected: {err}"));
+                }
+            }
+            // The built-in HKDF has no size query (pkeyutl requires -kdflen),
+            // so software-path callers pass the length; armed callers query.
+            let mut len = match len_hint {
+                Some(n) => n,
+                None => {
+                    let mut len = 0usize;
+                    if ffi::EVP_PKEY_derive(ctx, std::ptr::null_mut(), &mut len) != 1 {
+                        let err = openssl::error::ErrorStack::get().to_string();
+                        ffi::EVP_PKEY_CTX_free(ctx);
+                        return Err(format!("size query failed: {err}"));
+                    }
+                    len
+                }
+            };
+            let mut buf = vec![0u8; len.max(1)];
+            let rc = ffi::EVP_PKEY_derive(ctx, buf.as_mut_ptr(), &mut len);
+            ffi::EVP_PKEY_CTX_free(ctx);
+            if rc != 1 {
+                return Err(openssl::error::ErrorStack::get().to_string());
+            }
+            buf.truncate(len);
+            Ok(buf)
+        }
+    }
+
+    /// Chained ECDH → HKDF round trip: derive a masked shared secret with a
+    /// keyAgreement key, then HKDF it into masked AES and HMAC keys, in
+    /// buffer, file-IKM and output_file modes. Negatives pin the parameter
+    /// validation.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_hkdf(data: EngineData, dir: &Path) -> EngineResult<()> {
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // ECDH: keyAgreement key + software peer → masked shared secret.
+        let agree_blob = dir.join(format!("hkdf-agree-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&agree_blob);
+        let raw = try_armed_keygen(
+            engine_raw,
+            "P-384",
+            &agree_blob,
+            &[("azihsm.key_usage", "keyAgreement")],
+        )
+        .map_err(|e| EngineError::Other(format!("keyAgreement keygen failed: {e}")))?;
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let peer = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let secret_blob = derive_masked(engine_raw, raw, peer.as_ptr().cast(), None);
+        assert!(!secret_blob.is_empty(), "no shared-secret blob");
+        let ikm_path = dir.join(format!("hkdf-ikm-{}.bin", std::process::id()));
+        std::fs::write(&ikm_path, &secret_blob)
+            .map_err(|e| EngineError::wrap("write IKM blob", e))?;
+
+        // HMAC-kind derived key, IKM by file, blob to buffer.
+        let ikm = ikm_path.to_str().unwrap();
+        let hmac_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA384"),
+                ("salt", "test-salt"),
+                ("info", "engine-hkdf"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "384"),
+            ],
+            None,
+        )
+        .expect("hmac-kind HKDF failed");
+        assert!(!hmac_blob.is_empty(), "empty hmac-kind blob");
+
+        // AES-kind derived key with defaults (type aes, 256 bits).
+        let aes_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect("aes-kind HKDF failed");
+        assert!(!aes_blob.is_empty(), "empty aes-kind blob");
+
+        // output_file mode: blob to disk, nothing in the buffer.
+        let out = dir.join(format!("hkdf-derived-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let returned = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "256"),
+                ("output_file", out.to_str().unwrap()),
+            ],
+            None,
+        )
+        .expect("output_file HKDF failed");
+        assert!(returned.is_empty(), "file mode must return no bytes");
+        assert!(
+            std::fs::metadata(&out)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false),
+            "derived blob not written"
+        );
+
+        // Negatives: hmac bits must be a SHA-2 size; md is required; an armed
+        // ctx without any IKM is rejected.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "128"),
+            ],
+            None,
+        )
+        .expect_err("hmac/128 must fail");
+        assert!(err.contains("256, 384 or 512"), "unexpected error: {err}");
+        let err = try_hkdf(engine_raw, &[("azihsm.ikm_file", ikm)], None)
+            .expect_err("missing md must fail");
+        assert!(err.contains("requires md"), "unexpected error: {err}");
+        let err = try_hkdf(
+            engine_raw,
+            &[("md", "SHA256"), ("derived_key_type", "aes")],
+            None,
+        )
+        .expect_err("missing IKM must fail");
+        assert!(err.contains("requires an IKM"), "unexpected error: {err}");
+
+        // Teardown (see run_keygen for the release ordering contract).
+        // SAFETY: raw is the owning key from keygen.
+        let agreed: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        drop(agreed);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        for p in [&agree_blob, &ikm_path, &out] {
+            let _ = std::fs::remove_file(p);
+        }
+        Ok(())
     }
 
     /// Derive through `EVP_PKEY_derive` against our engine: returns the masked
@@ -429,7 +604,7 @@ mod round_trips {
         let _ = slot.take(&mut engine)?;
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         let _ = std::fs::remove_file(&blob_path);
         let _ = std::fs::remove_file(&out);
         Ok(())
@@ -629,7 +804,7 @@ mod round_trips {
         unsafe { ffi::ENGINE_free(engine_raw) };
         // The framework freed this engine's pkey method during ENGINE_free;
         // drop the stale table entry (address-only, nothing dereferenced).
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         let _ = std::fs::remove_file(&blob_path);
         Ok(())
     }
@@ -869,6 +1044,57 @@ mod mock {
         }
     }
 
+    // Chained ECDH → HKDF: masked shared secret in, masked AES/HMAC keys
+    // out, in all modes, plus the parameter negatives (see
+    // round_trips::run_hkdf).
+    #[test]
+    #[serial]
+    fn hkdf_via_pkey_method_derives_masked_keys() {
+        let scratch = Scratch::new("hkdf");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_hkdf(data, &scratch.0).unwrap();
+    }
+
+    // An unarmed NID_hkdf context resolved through the engine must match the
+    // built-in software HKDF byte-for-byte.
+    #[test]
+    #[serial]
+    fn software_hkdf_delegates_unchanged() {
+        let scratch = Scratch::new("hkdf-sw");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
+
+        let opts = [
+            ("md", "SHA256"),
+            ("hexkey", "00112233445566778899aabbccddeeff"),
+            ("salt", "pepper"),
+            ("info", "context"),
+        ];
+        let via_engine = round_trips::try_hkdf(engine_raw, &opts, Some(42)).unwrap();
+        let builtin = round_trips::try_hkdf(std::ptr::null_mut(), &opts, Some(42)).unwrap();
+        assert_eq!(via_engine.len(), 42);
+        assert_eq!(via_engine, builtin, "software HKDF must be unchanged");
+
+        let slot = crate::engine_impl::engine_data_slot().unwrap();
+        let _ = slot.take(&mut engine).unwrap();
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        #[allow(unsafe_code)]
+        unsafe {
+            ffi::ENGINE_free(engine_raw)
+        };
+    }
+
     // With the engine's ASN1 method globally registered, plain software EC
     // keys must serialize and parse exactly as before (the ported built-in
     // fallbacks; byte-exactness is pinned in engine-core's asn1_method tests).
@@ -932,7 +1158,7 @@ mod mock {
 
         let slot = crate::engine_impl::engine_data_slot().unwrap();
         let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
@@ -963,7 +1189,7 @@ mod mock {
 
         let slot = crate::engine_impl::engine_data_slot().unwrap();
         let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
@@ -1131,5 +1357,19 @@ mod hw_tests {
             round_trips::run_derive(data, &std::env::temp_dir(), curve)?;
         }
         Ok(())
+    }
+
+    /// Hardware ECDH → HKDF chain, same flow as the mock test (see
+    /// [`super::round_trips::run_hkdf`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine hkdf_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn hkdf_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_hkdf(data, &std::env::temp_dir())
     }
 }

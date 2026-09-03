@@ -39,7 +39,6 @@
 //! reference for its lifetime, so the stored pointer stays valid until
 //! `cleanup`.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::c_char;
@@ -144,12 +143,6 @@ fn ctx_state() -> &'static Mutex<HashMap<usize, CtxState>> {
     CTX_STATE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-thread_local! {
-    /// The ENGINE that most recently resolved our EC pkey method on this
-    /// thread; consumed by the `init` override. See the module docs.
-    static PENDING_ENGINE: Cell<usize> = const { Cell::new(0) };
-}
-
 /// The built-in EC `EVP_PKEY_METHOD` callbacks captured when the method is
 /// built, used for delegation. Fn pointers are `Send + Sync` and the built-in
 /// method is a process-lifetime constant.
@@ -191,7 +184,7 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
                     return 0;
                 }
             }
-            let engine = PENDING_ENGINE.with(|c| c.take());
+            let engine = crate::method_table::take_pending_engine();
             ctx_state().lock().insert(
                 ctx as usize,
                 CtxState {
@@ -609,16 +602,13 @@ pub fn new_ec_pkey_method<K: EcKeygenHandler, D: EcDeriveHandler>()
     Ok(method)
 }
 
-/// Record `engine` as the pending ENGINE for this thread — called by the
-/// `pkey_meths` callback right before OpenSSL constructs the context (see the
-/// module docs for why this handoff is sound).
-fn note_pending_engine(engine: *mut ffi::ENGINE) {
-    PENDING_ENGINE.with(|c| c.set(engine as usize));
-}
+/// The NIDs this engine's pkey-method callback serves.
+static PKEY_NIDS: [c_int; 2] = [ffi::EVP_PKEY_EC as c_int, ffi::NID_hkdf as c_int];
 
-/// Per-ENGINE method table (see [`method_table`](crate::method_table) for the
-/// ownership rules the engine framework imposes).
-static ENGINE_METHODS: MethodTable<ffi::EVP_PKEY_METHOD> = MethodTable::new();
+/// Per-`(ENGINE, NID)` method table shared by the EC and HKDF pkey methods
+/// (see [`method_table`](crate::method_table) for the ownership rules the
+/// engine framework imposes).
+pub(crate) static ENGINE_METHODS: MethodTable<ffi::EVP_PKEY_METHOD> = MethodTable::new(&PKEY_NIDS);
 
 /// `ENGINE_PKEY_METHS_PTR` callback: NID enumeration and per-ENGINE method
 /// lookup via [`method_table::dispatch`](crate::method_table::dispatch), with
@@ -639,7 +629,14 @@ unsafe extern "C" fn c_pkey_meths(
     catch_panic(
         // SAFETY: forwarding the out-params OpenSSL passed us.
         || unsafe {
-            crate::method_table::dispatch(&ENGINE_METHODS, e, pmeth, nids, nid, note_pending_engine)
+            crate::method_table::dispatch(
+                &ENGINE_METHODS,
+                e,
+                pmeth,
+                nids,
+                nid,
+                crate::method_table::note_pending_engine,
+            )
         },
         0,
     )
@@ -654,7 +651,17 @@ unsafe extern "C" fn c_pkey_meths(
 pub fn register_ec_pkey_method<K: EcKeygenHandler, D: EcDeriveHandler>(
     engine: &Engine,
 ) -> EngineResult<()> {
-    ENGINE_METHODS.register(engine, new_ec_pkey_method::<K, D>)?;
+    ENGINE_METHODS.register(
+        engine,
+        ffi::EVP_PKEY_EC as c_int,
+        new_ec_pkey_method::<K, D>,
+    )?;
+    install_pkey_meths_callback(engine)
+}
+
+/// Install the shared pkey-method lookup callback on `engine` (idempotent;
+/// called by every per-NID registration).
+pub(crate) fn install_pkey_meths_callback(engine: &Engine) -> EngineResult<()> {
     // SAFETY: engine's ptr is valid (from NonNull); c_pkey_meths is a 'static
     // fn item with the ENGINE_PKEY_METHS_PTR signature.
     #[allow(unsafe_code)]
@@ -664,12 +671,12 @@ pub fn register_ec_pkey_method<K: EcKeygenHandler, D: EcDeriveHandler>(
     )
 }
 
-/// Drop the method-table entry for `engine` (address-only, nothing is
+/// Drop all of `engine`'s pkey-method entries (address-only, nothing is
 /// dereferenced). Call from the engine's destroy hook, or in tests before
-/// `ENGINE_free`: the framework frees the method itself during destruction
+/// `ENGINE_free`: the framework frees the methods itself during destruction
 /// (`engine_pkey_meths_free`), where a released entry makes the callback hand
 /// out a throwaway copy instead.
-pub fn release_ec_pkey_method(engine: &Engine) {
+pub fn release_pkey_methods(engine: &Engine) {
     ENGINE_METHODS.release(engine);
 }
 
