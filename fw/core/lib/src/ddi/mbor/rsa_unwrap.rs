@@ -117,8 +117,9 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
         // bulk-crypto backend and stores only the 2-byte handle in the
         // vault (scoped to the creating session so later bulk GCM ops
         // match), returning the backend id.  RSA-unwrap always produces a
-        // bulk key, so `bulk_key_id` is present.
-        let (key_id, bulk_id) = super::bulk::commit_key(
+        // bulk key, so `bulk_key_id` is present.  Scrub the recovered
+        // material if the commit fails, before propagating the error.
+        let (key_id, bulk_id) = match super::bulk::commit_key(
             pal,
             io,
             material,
@@ -126,7 +127,14 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
             HsmSessId::from(sess_id),
             attrs,
         )
-        .await?;
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                material.zeroize();
+                return Err(e);
+            }
+        };
         let bulk_id = bulk_id.ok_or(HsmError::InternalError)?;
 
         // Mask the raw key material directly (the vault holds only the

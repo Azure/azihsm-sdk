@@ -474,6 +474,12 @@ async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<(
     if !header.response() {
         return Err(HsmError::InternalError);
     }
+    // Reject a reply whose opcode is not the AesKeyUpdate we sent: FP echoes
+    // the request opcode on its response, so a mismatch means stale or
+    // unexpected data in the RX ring, not our key-update ack.
+    if header.msg_op() != IpcMessageKeyUpdate::OP as u32 {
+        return Err(HsmError::InternalError);
+    }
     if header.status() != IpcMessageStatusCode::Success as u32 {
         return Err(HsmError::InternalError);
     }

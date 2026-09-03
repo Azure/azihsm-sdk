@@ -118,9 +118,22 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
                 &body.masked_key[layout.plaintext_offset..layout.plaintext_offset + key_len],
             );
 
-            let (handle, bulk_id) =
-                super::bulk::commit_key(pal, io, key_buf, kind, HsmSessId::from(sess_id), attrs)
-                    .await?;
+            let (handle, bulk_id) = match super::bulk::commit_key(
+                pal,
+                io,
+                key_buf,
+                kind,
+                HsmSessId::from(sess_id),
+                attrs,
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    key_buf.zeroize();
+                    return Err(e);
+                }
+            };
             (handle, bulk_id, Some(key_buf))
         } else {
             let key_id = pal
