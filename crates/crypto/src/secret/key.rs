@@ -7,8 +7,9 @@
 //! can be used for various cryptographic operations. The key supports standard
 //! operations including generation, import, and export.
 
-use super::*;
 use zeroize::Zeroize;
+
+use super::*;
 
 /// A generic secret key for symmetric cryptographic operations.
 ///
