@@ -32,22 +32,6 @@ use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 /// Size of one NVMe SGL Data Block descriptor on the wire.
 pub const SGL_ENTRY_LEN: usize = 16;
 
-/// Bytes fetched when reading a Metadata Page entry.
-///
-/// The GDMA faults on very small transfers, so the 16-byte entry read is
-/// padded. It is also aligned down to this size, which keeps the read
-/// inside the page: SQE validation allows `oob_len` up to a full page,
-/// so a naive padded read at a high index (entry 255 sits at 4080) would
-/// run past the end of the validated page, and this divides the page
-/// size exactly.
-const ENTRY_READ_LEN: usize = 32;
-
-/// Size of the host Metadata Page (`METADATA_SIZE` in the driver UAPI,
-/// `static_assert`ed there to 4 KiB and allocated from a `PAGE_SIZE`
-/// pool). Bounds the padded entry read, which may reach past `oob_len` —
-/// that field bounds the valid entries, not the mapping.
-const METADATA_PAGE_LEN: usize = 4096;
-
 /// Reference to the OOB SGL descriptor array carried by the SQE
 /// (`oob_prp` + `oob_len`).
 #[derive(Debug, Clone, Copy)]
@@ -127,52 +111,25 @@ pub async fn copy_oob<P>(
 where
     P: HsmGdmaController + HsmAlloc,
 {
-    // Bounds-check `index` against `oob.len`; the address is recomputed
-    // below, aligned down for the padded read.
-    entry_addr(oob, index)?;
+    let entry_addr = entry_addr(oob, index)?;
 
     pal.alloc_scoped_async(io, async |scoped| {
-        // Read the 16-byte SGL descriptor. Two hardware constraints
-        // apply, both invisible on the emulator (which does not model
-        // the GDMA descriptor), so only silicon shows them:
+        // Read the 16-byte SGL descriptor out of the metadata page.
         //
-        // * `prp = true` — the Metadata Page is plain contiguous host
-        //   memory, so the address goes in a PRP and the length is
-        //   passed separately. The SGL form takes its length from the
-        //   descriptor's second word, which this call site leaves zero,
-        //   and the GDMA rejects that zero-length read with
-        //   `dma_error(1)` (`0x08f08101`).
-        // * the read is padded to `ENTRY_READ_LEN`, and aligned down to
-        //   it so the padding cannot run off the end of the page.
-        //
-        // The padding may reach past `oob.len`, which bounds the *valid
-        // entries*, not the mapping. The mapping is a whole page: the
-        // driver allocates the Metadata Page as exactly `METADATA_SIZE`
-        // (4 KiB, `static_assert`ed, from a `PAGE_SIZE` pool), and SQE
-        // validation independently requires `oob_prp` to be 4K-aligned
-        // and `oob_len <= 4 KiB`. Since `ENTRY_READ_LEN` divides the
-        // page, an aligned-down read of that size always lands inside
-        // it. The check below states that invariant instead of leaving
-        // it implicit, so a future change to either constant fails here
-        // rather than DMA-ing off the end of the page.
-        let entry_off = index
-            .checked_mul(SGL_ENTRY_LEN)
-            .ok_or(HsmError::InvalidArg)?;
-        let read_off = entry_off & !(ENTRY_READ_LEN - 1);
-        let inner = entry_off - read_off;
-        if read_off + ENTRY_READ_LEN > METADATA_PAGE_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        let read_addr = addr_offset(oob.prp, read_off as u64)?;
+        // `prp = true`: the metadata page is plain contiguous host
+        // memory, so the address goes in a PRP and the length is passed
+        // separately. The SGL form instead takes its length from the
+        // descriptor's second word, which this call site leaves zero,
+        // and the GDMA rejects that zero-length read with
+        // `dma_error(1)` (`0x08f08101`). The emulator is in-process and
+        // never models the GDMA descriptor, so only hardware shows this.
+        let entry = scoped.dma_alloc(SGL_ENTRY_LEN)?;
+        pal.copy_mem_from_host(io, entry_addr, entry, true).await?;
 
-        let entry = scoped.dma_alloc(ENTRY_READ_LEN)?;
-        pal.copy_mem_from_host(io, read_addr, entry, true).await?;
-
-        // Borrow the descriptor bytes as a fixed array (no copy).
-        let raw: &[u8; SGL_ENTRY_LEN] = entry
-            .get(inner..inner + SGL_ENTRY_LEN)
-            .and_then(|s| s.try_into().ok())
-            .ok_or(HsmError::InternalError)?;
+        // Borrow the descriptor bytes directly as a fixed array (no
+        // copy) — `entry` derefs to a 16-byte `[u8]`.
+        let bytes: &[u8] = entry;
+        let raw: &[u8; SGL_ENTRY_LEN] = bytes.try_into().map_err(|_| HsmError::InternalError)?;
 
         // Forward the raw descriptor to the GDMA, which interprets it and
         // copies the item into `dst` (validating `length == dst.len()`).
