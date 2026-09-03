@@ -522,6 +522,147 @@ fn capi_derive_roundtrip(e: *mut ffi::ENGINE, dir: &std::path::Path, curve: &str
     }
 }
 
+/// Chained ECDH → HKDF through the C ABI: derive a masked shared secret,
+/// then run a NID_hkdf derive on the engine with the blob as IKM, in buffer
+/// and output_file modes.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn hkdf_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+    let blob = dir.join("hkdf_agree_ec.bin");
+    let ikm = dir.join("hkdf_ikm.bin");
+    let out = dir.join("hkdf_derived.bin");
+
+    let cstr = |s: &str| CString::new(s).unwrap();
+    let e = open_dynamic_engine(&engine_so);
+    // SAFETY: standard keygen/derive/HKDF ABI sequences; all return codes
+    // checked, every ctx freed.
+    unsafe {
+        // keyAgreement keygen + software peer + ECDH (buffer mode).
+        let curve_key = cstr("ec_paramgen_curve");
+        let curve_val = cstr("P-384");
+        let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_EC as std::ffi::c_int, e);
+        assert!(!ctx.is_null());
+        assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1);
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, curve_key.as_ptr(), curve_val.as_ptr()),
+            1
+        );
+        let masked_key = cstr("azihsm.masked_key");
+        let blob_arg = cstr(blob.to_str().unwrap());
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, masked_key.as_ptr(), blob_arg.as_ptr()),
+            1
+        );
+        let usage_key = cstr("azihsm.key_usage");
+        let usage_val = cstr("keyAgreement");
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(ctx, usage_key.as_ptr(), usage_val.as_ptr()),
+            1
+        );
+        let mut pkey = std::ptr::null_mut();
+        assert_eq!(ffi::EVP_PKEY_keygen(ctx, &mut pkey), 1, "EVP_PKEY_keygen");
+        ffi::EVP_PKEY_CTX_free(ctx);
+
+        let pctx =
+            ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_EC as std::ffi::c_int, std::ptr::null_mut());
+        assert!(!pctx.is_null());
+        assert_eq!(ffi::EVP_PKEY_keygen_init(pctx), 1);
+        assert_eq!(
+            ffi::EVP_PKEY_CTX_ctrl_str(pctx, curve_key.as_ptr(), curve_val.as_ptr()),
+            1
+        );
+        let mut peer = std::ptr::null_mut();
+        assert_eq!(ffi::EVP_PKEY_keygen(pctx, &mut peer), 1, "peer keygen");
+        ffi::EVP_PKEY_CTX_free(pctx);
+
+        let dctx = ffi::EVP_PKEY_CTX_new(pkey, std::ptr::null_mut());
+        assert!(!dctx.is_null());
+        assert_eq!(ffi::EVP_PKEY_derive_init(dctx), 1);
+        assert_eq!(ffi::EVP_PKEY_derive_set_peer(dctx, peer), 1);
+        let mut len = 0usize;
+        assert_eq!(
+            ffi::EVP_PKEY_derive(dctx, std::ptr::null_mut(), &mut len),
+            1
+        );
+        let mut secret = vec![0u8; len];
+        assert_eq!(ffi::EVP_PKEY_derive(dctx, secret.as_mut_ptr(), &mut len), 1);
+        secret.truncate(len);
+        ffi::EVP_PKEY_CTX_free(dctx);
+        assert!(!secret.is_empty(), "empty shared-secret blob");
+        write_secret(&ikm, &secret);
+
+        // HKDF on the blob, buffer mode.
+        let kctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
+        assert!(!kctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
+        assert_eq!(ffi::EVP_PKEY_derive_init(kctx), 1);
+        for (k, v) in [
+            ("md", "SHA256"),
+            ("azihsm.ikm_file", ikm.to_str().unwrap()),
+            ("derived_key_type", "hmac"),
+            ("derived_key_bits", "256"),
+        ] {
+            let key = cstr(k);
+            let value = cstr(v);
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(kctx, key.as_ptr(), value.as_ptr()),
+                1,
+                "HKDF option {k}"
+            );
+        }
+        let mut klen = 0usize;
+        assert_eq!(
+            ffi::EVP_PKEY_derive(kctx, std::ptr::null_mut(), &mut klen),
+            1,
+            "HKDF size query"
+        );
+        assert_eq!(klen, 8192, "armed HKDF size query must report the blob max");
+        let mut kbuf = vec![0u8; klen];
+        assert_eq!(ffi::EVP_PKEY_derive(kctx, kbuf.as_mut_ptr(), &mut klen), 1);
+        assert!(klen > 0, "empty derived-key blob");
+        ffi::EVP_PKEY_CTX_free(kctx);
+
+        // output_file mode on a fresh ctx.
+        let fctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
+        assert!(!fctx.is_null());
+        assert_eq!(ffi::EVP_PKEY_derive_init(fctx), 1);
+        for (k, v) in [
+            ("md", "SHA256"),
+            ("azihsm.ikm_file", ikm.to_str().unwrap()),
+            ("derived_key_type", "aes"),
+            ("output_file", out.to_str().unwrap()),
+        ] {
+            let key = cstr(k);
+            let value = cstr(v);
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(fctx, key.as_ptr(), value.as_ptr()),
+                1,
+                "HKDF option {k}"
+            );
+        }
+        let mut n = 0usize;
+        assert_eq!(ffi::EVP_PKEY_derive(fctx, std::ptr::null_mut(), &mut n), 1);
+        assert_eq!(n, 1, "file-mode size query must report 1");
+        let mut one = [0u8; 1];
+        assert_eq!(ffi::EVP_PKEY_derive(fctx, one.as_mut_ptr(), &mut n), 1);
+        assert_eq!(n, 0, "file mode must return no bytes");
+        assert!(
+            out.is_file() && std::fs::metadata(&out).unwrap().len() > 0,
+            "derived blob not written"
+        );
+        ffi::EVP_PKEY_CTX_free(fctx);
+
+        ffi::EVP_PKEY_free(peer);
+        ffi::EVP_PKEY_free(pkey);
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// One ABI derive round trip per supported curve, under a single engine load:
 /// the global ASN1-method registration holds an engine reference until
 /// ENGINE_cleanup, so a dynamic engine loads once per process (a second LOAD
