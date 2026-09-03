@@ -212,8 +212,10 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
     );
 }
 
-/// `ctrl` override: record the standard HKDF parameters, then delegate (the
-/// built-in ctrl_str re-enters here, so string parameters are recorded too).
+/// `ctrl` override: record the standard HKDF parameters for direct-ABI
+/// callers (the EVP_PKEY_CTX_set_hkdf_* macros), then delegate. String
+/// parameters are recorded by our ctrl_str instead, which forwards to the
+/// built-in ctrl directly — never through this override.
 /// # Safety
 /// Called only by OpenSSL's `EVP_PKEY_CTX_ctrl`; arguments per that contract.
 #[allow(unsafe_code)]
@@ -339,19 +341,148 @@ fn ctrl_str_inner(
         };
     }
 
-    // Standard parameters: delegate; the built-in re-enters our ctrl with the
-    // parsed values, which records them.
+    // Standard parameters: parse and record here, then forward to the
+    // built-in's ctrl directly. Do not rely on the built-in ctrl_str
+    // re-entering our ctrl override — patched 1.1.1 builds (e.g. RHEL's
+    // FIPS-reworked 1.1.1k) dispatch internally without it.
+    if value.is_null() {
+        return Err(EngineError::NullParam("ctrl value"));
+    }
+    // SAFETY: as above.
+    let value_str = unsafe { CStr::from_ptr(value) }
+        .to_str()
+        .map_err(|_| EngineError::Other("ctrl value is not valid UTF-8".into()))?;
     let d = defaults()?;
-    let ctrl_str = d
-        .ctrl_str
-        .ok_or(EngineError::Other("built-in ctrl_str missing".into()))?;
-    // SAFETY: delegating the arguments OpenSSL passed us.
-    if unsafe { ctrl_str(ctx, key, value) } <= 0 {
-        return Err(EngineError::Other(format!(
-            "HKDF option rejected: {key_str}"
-        )));
+    match key_str {
+        "md" => {
+            // SAFETY: value is a NUL-terminated digest name; the returned
+            // EVP_MD is a process-lifetime constant (or NULL, checked).
+            let md = unsafe { ffi::EVP_get_digestbyname(value) };
+            if md.is_null() {
+                return Err(EngineError::Other(format!("unknown digest: {value_str}")));
+            }
+            // SAFETY: md is a valid EVP_MD (checked).
+            let nid = unsafe { ffi::EVP_MD_type(md) };
+            record(ctx, |state| state.md_nid = Some(nid))?;
+            builtin_ctrl(
+                &d,
+                ctx,
+                ffi::EVP_PKEY_CTRL_HKDF_MD_CONST,
+                0,
+                md.cast_mut().cast(),
+                "md",
+            )
+        }
+        "salt" | "hexsalt" | "key" | "hexkey" | "info" | "hexinfo" => {
+            let bytes = if key_str.starts_with("hex") {
+                hex_decode(value_str)?
+            } else {
+                Zeroizing::new(value_str.as_bytes().to_vec())
+            };
+            let (cmd, is_info) = match key_str {
+                "salt" | "hexsalt" => (ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST, false),
+                "key" | "hexkey" => (ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST, false),
+                _ => (ffi::EVP_PKEY_CTRL_HKDF_INFO_CONST, true),
+            };
+            record(ctx, |state| {
+                if cmd == ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST {
+                    state.salt = Some(bytes.to_vec());
+                } else if is_info {
+                    // Append, matching the built-in.
+                    state.info.get_or_insert_with(Vec::new).extend(bytes.iter());
+                } else {
+                    state.key = Some(Zeroizing::new(bytes.to_vec()));
+                }
+            })?;
+            let len = c_int::try_from(bytes.len())
+                .map_err(|_| EngineError::Other(format!("{key_str} too large")))?;
+            builtin_ctrl(&d, ctx, cmd, len, bytes.as_ptr().cast_mut().cast(), key_str)
+        }
+        "mode" => {
+            // 0 = EXTRACT_AND_EXPAND (kdf.h); only that mode works armed.
+            let mode: c_int = match value_str {
+                "EXTRACT_AND_EXPAND" => 0,
+                "EXTRACT_ONLY" => 1,
+                "EXPAND_ONLY" => 2,
+                other => {
+                    return Err(EngineError::Other(format!("unknown HKDF mode: {other}")));
+                }
+            };
+            record(ctx, |state| state.mode = mode)?;
+            builtin_ctrl(
+                &d,
+                ctx,
+                ffi::EVP_PKEY_CTRL_HKDF_MODE_CONST,
+                mode,
+                std::ptr::null_mut(),
+                "mode",
+            )
+        }
+        // Anything else: the built-in's ctrl_str decides.
+        _ => {
+            let ctrl_str = d
+                .ctrl_str
+                .ok_or(EngineError::Other("built-in ctrl_str missing".into()))?;
+            // SAFETY: delegating the arguments OpenSSL passed us.
+            if unsafe { ctrl_str(ctx, key, value) } <= 0 {
+                return Err(EngineError::Other(format!(
+                    "HKDF option rejected: {key_str}"
+                )));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Update this ctx's recorded state.
+fn record(ctx: *mut ffi::EVP_PKEY_CTX, f: impl FnOnce(&mut HkdfState)) -> EngineResult<()> {
+    let mut table = ctx_state().lock();
+    let state = table
+        .get_mut(&(ctx as usize))
+        .ok_or(EngineError::Other("HKDF ctx has no azihsm state".into()))?;
+    f(state);
+    Ok(())
+}
+
+/// Forward one parsed parameter to the built-in's ctrl.
+#[allow(unsafe_code)]
+fn builtin_ctrl(
+    d: &Defaults,
+    ctx: *mut ffi::EVP_PKEY_CTX,
+    cmd: c_int,
+    p1: c_int,
+    p2: *mut c_void,
+    what: &str,
+) -> EngineResult<()> {
+    let ctrl = d
+        .ctrl
+        .ok_or(EngineError::Other("built-in ctrl missing".into()))?;
+    // SAFETY: forwarding a well-formed HKDF ctrl to the built-in.
+    if unsafe { ctrl(ctx, cmd, p1, p2) } <= 0 {
+        return Err(EngineError::Other(format!("HKDF option rejected: {what}")));
     }
     Ok(())
+}
+
+/// Decode a hex string (as the built-in's hex parameters accept).
+fn hex_decode(s: &str) -> EngineResult<Zeroizing<Vec<u8>>> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) {
+        return Err(EngineError::Other("odd-length hex value".into()));
+    }
+    let mut out = Zeroizing::new(Vec::with_capacity(s.len() / 2));
+    let bytes = s.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let hi = (pair[0] as char)
+            .to_digit(16)
+            .ok_or(EngineError::Other("invalid hex value".into()))?;
+        let lo = (pair[1] as char)
+            .to_digit(16)
+            .ok_or(EngineError::Other("invalid hex value".into()))?;
+        #[allow(clippy::cast_possible_truncation)]
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Ok(out)
 }
 
 /// `derive` override: unarmed contexts delegate to the built-in software
