@@ -42,6 +42,12 @@ pub const SGL_ENTRY_LEN: usize = 16;
 /// size exactly.
 const ENTRY_READ_LEN: usize = 32;
 
+/// Size of the host Metadata Page (`METADATA_SIZE` in the driver UAPI,
+/// `static_assert`ed there to 4 KiB and allocated from a `PAGE_SIZE`
+/// pool). Bounds the padded entry read, which may reach past `oob_len` —
+/// that field bounds the valid entries, not the mapping.
+const METADATA_PAGE_LEN: usize = 4096;
+
 /// Reference to the OOB SGL descriptor array carried by the SQE
 /// (`oob_prp` + `oob_len`).
 #[derive(Debug, Clone, Copy)]
@@ -138,11 +144,25 @@ where
         //   `dma_error(1)` (`0x08f08101`).
         // * the read is padded to `ENTRY_READ_LEN`, and aligned down to
         //   it so the padding cannot run off the end of the page.
+        //
+        // The padding may reach past `oob.len`, which bounds the *valid
+        // entries*, not the mapping. The mapping is a whole page: the
+        // driver allocates the Metadata Page as exactly `METADATA_SIZE`
+        // (4 KiB, `static_assert`ed, from a `PAGE_SIZE` pool), and SQE
+        // validation independently requires `oob_prp` to be 4K-aligned
+        // and `oob_len <= 4 KiB`. Since `ENTRY_READ_LEN` divides the
+        // page, an aligned-down read of that size always lands inside
+        // it. The check below states that invariant instead of leaving
+        // it implicit, so a future change to either constant fails here
+        // rather than DMA-ing off the end of the page.
         let entry_off = index
             .checked_mul(SGL_ENTRY_LEN)
             .ok_or(HsmError::InvalidArg)?;
         let read_off = entry_off & !(ENTRY_READ_LEN - 1);
         let inner = entry_off - read_off;
+        if read_off + ENTRY_READ_LEN > METADATA_PAGE_LEN {
+            return Err(HsmError::InvalidArg);
+        }
         let read_addr = addr_offset(oob.prp, read_off as u64)?;
 
         let entry = scoped.dma_alloc(ENTRY_READ_LEN)?;

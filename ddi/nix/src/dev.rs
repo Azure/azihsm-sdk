@@ -1042,14 +1042,22 @@ impl DdiDev for DdiNixDev {
                 buf_addr: std::ptr::null(),
             }; AZIHSM_MAX_DATA_XFER_BUFFERS];
             for (slot, item) in buffers.iter_mut().zip(oob.iter()) {
-                slot.xfer_length = item.len() as u32;
+                // Checked: the ioctl's `xfer_length` is a `__u32`, and a
+                // silent truncation here would have the driver DMA-map
+                // fewer bytes than the slice holds -- a short transfer or
+                // a device-side fault, rather than a clean rejection.
+                slot.xfer_length =
+                    u32::try_from(item.len()).map_err(|_| DdiError::InvalidParameter)?;
                 slot.buf_addr = item.as_ptr();
             }
 
             let mut xfer_cmd = AzihsmCtrlDataXferCmd {
                 generic_cmd: cmd,
                 dataxfer_buffers: AzihsmDataXferBuffers {
-                    buffer_cnt: oob.len() as u32,
+                    // Bounded by `AZIHSM_MAX_DATA_XFER_BUFFERS` above, so
+                    // this cannot truncate; checked rather than cast so it
+                    // stays true if that bound changes.
+                    buffer_cnt: u32::try_from(oob.len()).map_err(|_| DdiError::InvalidParameter)?,
                     buffers,
                     rsvd: [0; 128],
                 },
