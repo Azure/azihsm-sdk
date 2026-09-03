@@ -210,6 +210,14 @@ impl HsmGdmaController for UnoHsmPal {
         const SGL_TYPE_SEGMENT: u8 = 0x2;
         const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
 
+        /// One NVMe SGL descriptor on the wire.
+        const SGL_DESC_LEN: u32 = 16;
+        /// The driver backs every SGL segment with whole pages
+        /// (`coh_mem_sz = seg_cnt * PAGE_SIZE`, `azihsm_dma_io.c`) and
+        /// rejects an item needing more than one page of descriptors, so
+        /// a segment can never legitimately exceed this.
+        const SGL_SEGMENT_MAX_LEN: u32 = 4096;
+
         let desc_len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
         let len = match desc[15] >> 4 {
             SGL_TYPE_DATA_BLOCK => {
@@ -218,7 +226,29 @@ impl HsmGdmaController for UnoHsmPal {
                 }
                 desc_len
             }
-            SGL_TYPE_SEGMENT | SGL_TYPE_LAST_SEGMENT => {
+            ty @ (SGL_TYPE_SEGMENT | SGL_TYPE_LAST_SEGMENT) => {
+                // The descriptor is forwarded to the engine verbatim, and
+                // the engine uses `desc_len` to bound how many descriptor
+                // bytes it walks. It comes from host memory, so validate
+                // its shape here rather than letting a malformed value
+                // send the engine reading past the segment page.
+                //
+                // A `SEGMENT` needs at least two descriptors: its last one
+                // chains to the next segment rather than describing data,
+                // so a single-descriptor segment would carry no payload
+                // and leave the engine following a chain pointer that is
+                // really the only entry.
+                let min_len = if ty == SGL_TYPE_SEGMENT {
+                    2 * SGL_DESC_LEN
+                } else {
+                    SGL_DESC_LEN
+                };
+                if desc_len < min_len
+                    || desc_len > SGL_SEGMENT_MAX_LEN
+                    || !desc_len.is_multiple_of(SGL_DESC_LEN)
+                {
+                    return Err(HsmError::InvalidArg);
+                }
                 u32::try_from(dst.len()).map_err(|_| HsmError::InvalidArg)?
             }
             _ => return Err(HsmError::InvalidArg),
