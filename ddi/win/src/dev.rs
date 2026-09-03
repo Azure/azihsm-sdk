@@ -49,20 +49,22 @@ use crate::io_event::IoEvent;
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("The AZIHSM Windows driver ABI requires a 64-bit target");
 
+/// Command-set value used for requests without OOB data-transfer buffers.
 const MCR_CP_CMD_SESSION_GENERIC: u16 = 0x0;
-/// `CP_CMD_SET_DATA_XFER` selects the driver's data-transfer path,
-/// which attaches the OOB Metadata Page to the SQE.
+/// Command-set value that selects the OOB data-transfer path.
 const MCR_CP_CMD_DATA_XFER: u16 = 0x1;
+/// IOCTL function code used for generic session commands.
 const MCR_IOCTL_CONTROL_PATH_CMD_SESSION: u32 = 0x201;
-/// Function code for `MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER`.
+/// IOCTL function code used for OOB data-transfer commands.
 const MCR_IOCTL_CONTROL_PATH_CMD_DATA_XFER: u32 = 0x202;
 /// Maximum number of OOB buffers accepted by the data-transfer IOCTL.
 ///
-/// Matches `AZIHSM_MAX_DATA_XFER_BUFFERS` in `McrDrvIface.h`.
-const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
+/// This application-facing limit determines the IOCTL buffer layout and must
+/// remain synchronized with the loaded driver.
+const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 64;
 /// Maximum size of one OOB buffer accepted by the Windows driver.
 ///
-/// Matches `AZIHSM_MAX_DATA_XFER_PER_BUFFER` in `McrDrvIface.h`.
+/// Requests exceeding this limit are rejected before issuing the IOCTL.
 const AZIHSM_MAX_DATA_XFER_PER_BUFFER: u32 = 64 * 1024;
 
 #[derive(Default)]
@@ -263,9 +265,9 @@ pub struct McrCpGenericIoctlOutData {
     hot_patch_reserved: [usize; 16],
 }
 
-/// One caller-supplied OOB buffer entry.
+/// Describes one caller-supplied OOB buffer for the driver.
 ///
-/// Matches one anonymous `{ XferLen, BufferAddr }` entry in
+/// Its layout matches one anonymous `{ XferLen, BufferAddr }` entry in
 /// `MCR_HSM_DATA_XFER_BUFFERS`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -274,9 +276,9 @@ struct DataXferBuffer {
     buffer_addr: *const u8,
 }
 
-/// Caller-supplied OOB buffer list.
+/// Contains the caller-supplied OOB buffers for one data-transfer IOCTL.
 ///
-/// Matches `MCR_HSM_DATA_XFER_BUFFERS`.
+/// Its layout matches `MCR_HSM_DATA_XFER_BUFFERS`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct DataXferBuffers {
@@ -295,8 +297,9 @@ impl Default for DataXferBuffers {
     }
 }
 
-/// V2 IOCTL extension matching the `uin` union in
-/// `CP_IOCTL_INDATA_DATA_V2`.
+/// Fixed-size V2 IOCTL extension containing the OOB buffer table.
+///
+/// Its layout matches the `uin` union in `CP_IOCTL_INDATA_DATA_V2`.
 #[repr(C)]
 union McrCpDataXferInputData {
     data_xfer: DataXferBuffers,
@@ -311,9 +314,9 @@ impl Default for McrCpDataXferInputData {
     }
 }
 
-/// `CP_IOCTL_INDATA_DATA_V2`: the generic command followed by the
-/// 4-KiB V2 extension. Only the data-transfer IOCTL consumes this
-/// larger layout.
+/// Windows data-transfer IOCTL payload.
+///
+/// It contains the generic command followed by the fixed 4-KiB V2 extension.
 #[repr(C)]
 #[derive(Default)]
 struct McrCpDataXferIoctlIndata {
@@ -325,7 +328,7 @@ struct McrCpDataXferIoctlIndata {
 #[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(mem::size_of::<DataXferBuffer>() == 16);
-    assert!(mem::size_of::<DataXferBuffers>() == 776);
+    assert!(mem::size_of::<DataXferBuffers>() == 1544);
     assert!(mem::size_of::<McrCpGenericIoctlIndata>() == 344);
     assert!(mem::size_of::<McrCpDataXferIoctlIndata>() == 4440);
 };

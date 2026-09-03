@@ -272,7 +272,10 @@ pub struct McrCpGenericCmd {
 
 /// IOCTL type defined by the Linux driver UAPI.
 const MCR_HSM_IOC_MAGIC: u8 = b'B';
+
+/// IOCTL sequence used for generic control-path commands.
 const MCR_HSM_IOC_SEQ: u8 = 0x03;
+
 ioctl_readwrite!(
     mcr_ctrl_cmd_generic_ioctl,
     MCR_HSM_IOC_MAGIC,
@@ -282,19 +285,18 @@ ioctl_readwrite!(
 
 /// Maximum number of OOB buffers accepted by the data-transfer IOCTL.
 ///
-/// Matches `AZIHSM_MAX_DATA_XFER_BUFFERS` in
-/// `azihsm_hsm_dev_ioctl.h`.
-const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 16;
+/// This application-facing limit determines the IOCTL buffer layout and must
+/// remain synchronized with the loaded driver.
+const AZIHSM_MAX_DATA_XFER_BUFFERS: usize = 64;
 
 /// Maximum size of one OOB buffer accepted by the Linux driver.
 ///
-/// Matches `AZIHSM_MAX_DATA_XFER_PER_BUFFER` in
-/// `azihsm_hsm_dev_ioctl.h`.
+/// Requests exceeding this limit are rejected before issuing the IOCTL.
 const AZIHSM_MAX_DATA_XFER_PER_BUFFER: u32 = 64 * 1024;
 
-/// One caller-supplied OOB buffer entry.
+/// Describes one caller-supplied OOB buffer for the driver.
 ///
-/// Matches one anonymous `{ xfer_length, buf_addr }` entry in
+/// Its layout matches one anonymous `{ xfer_length, buf_addr }` entry in
 /// `struct azi_hsm_dataxfer_buffers`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -303,9 +305,9 @@ struct DataXferBuffer {
     buffer_addr: *const u8,
 }
 
-/// Caller-supplied OOB buffer list.
+/// Contains the caller-supplied OOB buffers for one data-transfer IOCTL.
 ///
-/// Matches `struct azi_hsm_dataxfer_buffers`.
+/// Its layout matches `struct azi_hsm_dataxfer_buffers`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct DataXferBuffers {
@@ -324,8 +326,9 @@ impl Default for DataXferBuffers {
     }
 }
 
-/// Wrapper matching `struct azihsm_ctrl_data_xfer_cmd` — the ioctl
-/// buffer for `AZIHSM_CTRL_PATH_DATA_XFER`.
+/// Linux data-transfer IOCTL payload.
+///
+/// Its layout matches `struct azihsm_ctrl_data_xfer_cmd`.
 #[repr(C)]
 #[derive(Default)]
 struct McrCpDataXferCmd {
@@ -1011,10 +1014,9 @@ impl DdiDev for DdiNixDev {
         inner.hdr.app_cmd_id = 0xCD1DDEAD;
         inner.hdr.timeout = 100; // ms
 
-        // The Rust field `rsvd1` aliases the C UAPI `__u16 opc` field
-        // (see drivers/linux/drvsrc/azihsm_hsm_dev_ioctl.h). Writing
-        // OP_TBOR here is THE flag the firmware uses to route the
-        // request through `handle_tbor_op` instead of `handle_mbor_op`.
+        // The Rust field `rsvd1` aliases the driver UAPI's
+        // `__u16 opc` field. OP_TBOR routes the request through
+        // `handle_tbor_op` instead of `handle_mbor_op`.
         inner.in_data.rsvd1 = OP_TBOR;
         // `command_set` (`sqe.cmd.set` on the wire) selects between
         // the legacy session flow (`Generic == 0x0`) and the new
