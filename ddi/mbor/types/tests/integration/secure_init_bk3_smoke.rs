@@ -170,7 +170,7 @@ fn test_secure_init_bk3_pin_tag_mismatch() {
 
 /// Negative smoke: `set_init_bk3_pin` is one-shot per partition.
 ///
-/// A second `set_init_bk3_pin` before `secure_init_bk3` consumes the stored PIN
+/// A second `set_init_bk3_pin`, before `secure_init_bk3` consumes the stored PIN,
 /// must be rejected with `Bk3PinAlreadySet`.
 ///
 /// Mock-only: the first `set_init_bk3_pin` leaves a one-shot Phase-2 PIN that on
