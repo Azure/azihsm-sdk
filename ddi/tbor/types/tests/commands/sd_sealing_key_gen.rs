@@ -20,7 +20,6 @@
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
-
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
