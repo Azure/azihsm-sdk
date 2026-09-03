@@ -28,6 +28,12 @@ pub(crate) const TEST_CRED_ID: [u8; 16] = [
     0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A, 0x3F, 0x76,
 ];
 
+// Deterministic length of a masked BK3 (MOBK): a fixed 48-byte BK3 wrapped in
+// the AesCbc256Hmac384 masked-key envelope with fixed metadata encodes to a
+// single, constant length.
+#[allow(dead_code)]
+pub(crate) const EXPECTED_MASKED_BK3_LEN: usize = 260;
+
 #[allow(dead_code)]
 // DB3DC77F-C22E-4300-80D4-1B31B6F04800
 pub(crate) const TEST_CRED_PIN: [u8; 16] = [
