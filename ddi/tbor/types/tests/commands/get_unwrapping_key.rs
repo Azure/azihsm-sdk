@@ -24,16 +24,14 @@ use azihsm_ddi_tbor_types::UNWRAPPING_PUB_KEY_LEN;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
-
 use crate::harness::CO_PSK_ID;
+use crate::harness::CU_PSK_ID as CU;
 use crate::harness::ROTATED_CO_PSK;
+use crate::harness::ROTATED_CU_PSK;
 
-const CU: u8 = 1;
 const RSA_2048_MODULUS_LEN: usize = 256;
 const RSA_PUBLIC_EXPONENT: u32 = 65_537;
 
-/// Non-default CU PSK used to pass the dispatcher's default-PSK gate.
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
 /// Second non-default CO PSK used to verify credential rotation does not change the key.
 const SECOND_ROTATED_CO_PSK: [u8; PSK_LEN] = [0x5A; PSK_LEN];
 
@@ -62,7 +60,7 @@ fn get_unwrapping_key_returns_rsa_pub_key() {
         modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0,
         "RSA modulus must have exactly 2048 significant bits",
     );
-    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd",);
+    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
 
     let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
     assert_eq!(
@@ -138,7 +136,7 @@ fn get_unwrapping_key_available_to_crypto_user() {
         "RSA modulus must have exactly 2048 significant bits",
     );
 
-    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd",);
+    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
 
     let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
 
