@@ -181,6 +181,8 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     // Provider-parity serialization for HSM-backed keys (-text info block,
     // clean export refusal); software EC keys keep the built-in behavior via
     // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
+    // The global registration holds an engine reference until ENGINE_cleanup,
+    // so a dynamic engine loads at most once per process.
     azihsm_ossl_engine_core::asn1_method::register_ec_asn1_method::<crate::asn1::AzihsmEcAsn1>(
         engine,
     )?;
