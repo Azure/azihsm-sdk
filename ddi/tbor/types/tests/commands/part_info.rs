@@ -9,15 +9,21 @@
 //! `part_info_independent_of_session_state` guard against per-call
 //! or session-scoped state leaking into the out-of-session handler.
 //! `part_info_reflects_part_init_transition` covers the
-//! `Enabled → Initializing` lifecycle transition (emu only, since it
-//! is destructive to partition state).
+//! `Enabled → Initializing` lifecycle transition.
 //!
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
 
+use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 
+use crate::commands::part_init::known_good_part_policy;
+use crate::commands::part_init::mach_seed;
+use crate::commands::part_init::pota_thumbprint;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID;
+use crate::harness::ROTATED_CO_PSK;
 
 /// `DdiDeviceKind::Physical` discriminant — uno is a physical device.
 const DEVICE_KIND_PHYSICAL: u8 = 2;
@@ -84,8 +90,6 @@ fn part_info_repeated_stable() {
 /// session state leak into the out-of-session handler.
 #[test]
 fn part_info_independent_of_session_state() {
-    use azihsm_ddi_tbor_types::SessionType;
-
     let ctx = TestCtx::new();
 
     // No sessions outstanding.
@@ -96,7 +100,7 @@ fn part_info_independent_of_session_state() {
 
     // CO Pending: init only, do not finish yet.
     let pending = ctx
-        .session_open_init(0, SessionType::Authenticated)
+        .session_open_init(CO_PSK_ID, SessionType::Authenticated)
         .expect("SessionOpenInit (CO/Authenticated) for pending-state probe");
     let during_pending = ctx
         .tbor(&TborPartInfoReq::new())
@@ -136,12 +140,6 @@ fn part_info_independent_of_session_state() {
 /// view of the bound partition's posture.
 #[test]
 fn part_info_reflects_part_init_transition() {
-    use crate::commands::part_init::bootstrap_rotated_co;
-    use crate::commands::part_init::known_good_part_policy;
-    use crate::commands::part_init::mach_seed;
-    use crate::commands::part_init::pota_thumbprint;
-    use crate::commands::part_init::ROTATED_CO_PSK;
-
     let ctx = TestCtx::new();
 
     // Before PartInit: default Enabled posture with a materialized

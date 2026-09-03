@@ -4,9 +4,7 @@
 //! Integration tests for the TBOR `PartInit` command.
 //!
 //! `PartInit` is mainline-supported on both `emu` and hardware. Tests
-//! run on both backends by default; only the sim-only
-//! `verify_pta_report` helper in [`happy_path`] (which uses the
-//! `azihsm_ddi_mbor_sim` COSE verifier) stays `#[cfg(feature = "emu")]`.
+//! run on both backends by default.
 //!
 //! Cross-test isolation comes from [`TestCtx::new`] (factory-reset +
 //! process-global lock held for the ctx's lifetime, see
@@ -14,7 +12,7 @@
 //! `Enabled` partition with the canonical default PSKs.
 //!
 //! Submodules group tests by what is being exercised:
-//! * [`happy_path`] — the full `OpenSession → PskChange → PartInit`
+//! * [`success_path`] — the full `OpenSession → PskChange → PartInit`
 //!   flow, plus the cold-restart determinism test.
 //! * [`fw_rejects`] — dispatcher/handler gates that reject **before**
 //!   any partition-state mutation (default PSK, role, malformed
@@ -22,11 +20,10 @@
 //! * [`crypto_rejects`] — `mach_seed_envelope` AEAD-GCM tag and
 //!   AAD-binding rejects.
 //!
-//! Shared bootstrap helpers (`open_co_with`, `bootstrap_rotated_co`,
-//! the wire-correct `known_good_part_policy`/`mach_seed`/
-//! `pota_thumbprint` fixtures, and the rotated CO PSK constant)
-//! live in this module and are `pub(super)` so each submodule can
-//! reach them via `super::*`.
+//! PartInit-specific helpers (`open_co_with`, the wire-correct
+//! `known_good_part_policy`/`mach_seed`/`pota_thumbprint` fixtures)
+//! live in this module. Shared role-session bootstrap helpers and
+//! rotated PSKs live in [`crate::harness::fixture`].
 
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
@@ -39,32 +36,12 @@ use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID as CO;
 
 mod crypto_rejects;
 mod fw_rejects;
 mod sd_config;
 mod success_path;
-
-pub(crate) const CO: u8 = 0;
-
-/// Non-default 32-byte CO PSK used so PartInit clears the
-/// default-PSK-gate.  Pinned to a fixed value so the smoke test is
-/// fully deterministic.
-pub(crate) const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
-    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
-];
-
-pub(super) const CU: u8 = 1;
-
-/// Non-default CU PSK used by tests that must bypass the default-PSK gate.
-///
-/// This value intentionally differs from [`ROTATED_CO_PSK`] so accidental
-/// credential reuse between roles is easy to detect.
-pub(super) const ROTATED_CU_PSK: [u8; PSK_LEN] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
-];
 
 /// Build a 484-byte unified `PartPolicy` blob that passes
 /// `azihsm_fw_hsm_core::ddi::tbor::policy::from_bytes`.  Layout mirrors
@@ -175,18 +152,4 @@ pub(super) fn open_co_with(ctx: &TestCtx, psk: &[u8; PSK_LEN]) -> SessionHandsha
         .expect("session_open_init under PSK");
     ctx.session_open_finish(pending)
         .expect("session_open_finish under PSK")
-}
-
-/// Bootstrap: open CO under the default PSK, rotate to `target_psk`,
-/// drop the bootstrap session, and return a fresh CO session opened
-/// under the rotated PSK — ready for the in-session command under
-/// test.
-pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
-    let bootstrap = ctx
-        .open_session(CO, SessionType::Authenticated)
-        .expect("open_session must succeed");
-    ctx.psk_change(bootstrap.handshake(), target_psk)
-        .expect("rotate CO PSK");
-    bootstrap.close().expect("close bootstrap CO session");
-    open_co_with(ctx, target_psk)
 }
