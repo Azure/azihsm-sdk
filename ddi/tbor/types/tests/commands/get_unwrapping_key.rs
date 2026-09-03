@@ -34,6 +34,8 @@ const RSA_PUBLIC_EXPONENT: u32 = 65_537;
 
 /// Non-default CU PSK used to pass the dispatcher's default-PSK gate.
 const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
+/// Second non-default CO PSK used to verify credential rotation does not change the key.
+const SECOND_ROTATED_CO_PSK: [u8; PSK_LEN] = [0x5A; PSK_LEN];
 
 /// Returns a well-formed RSA-2048 partition unwrapping public key.
 #[test]
@@ -338,5 +340,33 @@ fn get_unwrapping_key_stable_across_cu_sessions() {
     assert_eq!(
         first.pub_key, second.pub_key,
         "partition unwrapping key must remain stable across CU sessions",
+    );
+}
+
+/// Preserves the partition unwrapping key across a CO PSK rotation.
+#[test]
+fn get_unwrapping_key_stable_across_co_psk_rotation() {
+    let ctx = TestCtx::new();
+
+    let session = finalized_co_session(&ctx);
+
+    let before = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey before CO PSK rotation");
+
+    ctx.psk_change(&session, &SECOND_ROTATED_CO_PSK)
+        .expect("rotate CO PSK a second time");
+
+    let after = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey after CO PSK rotation");
+
+    assert_eq!(
+        before.pub_key, after.pub_key,
+        "CO PSK rotation must not change the partition unwrapping key",
     );
 }
