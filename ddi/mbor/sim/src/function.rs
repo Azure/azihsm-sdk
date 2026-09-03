@@ -259,6 +259,9 @@ impl Function {
         client_pub_key: &[u8],
     ) -> Result<(), ManticoreError> {
         let state = self.get_function_state();
+        if state.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
         if state.bk3_prov_cred_is_set() {
             return Err(ManticoreError::Bk3PinAlreadySet);
         }
@@ -976,6 +979,9 @@ impl FunctionState {
             return Err(ManticoreError::InvalidAppCredentials);
         }
         let mut inner = self.inner.write();
+        if inner.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
         if inner.bk3_prov_cred.is_some() {
             return Err(ManticoreError::Bk3PinAlreadySet);
         }
