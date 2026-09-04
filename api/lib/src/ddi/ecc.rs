@@ -13,6 +13,9 @@ use azihsm_crypto::EccCurve;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use resiliency_macro::*;
@@ -69,11 +72,6 @@ pub(crate) fn ecc_generate_key(
     let (dev_priv_key_props, dev_pub_key_props) =
         HsmMaskedKey::to_key_pair_props(&masked_key, &pub_key_der)?;
 
-    // Firmware may grant a superset of the requested ECC capabilities
-    // (TBOR stamps both SIGN and DERIVE). Narrow the returned capabilities
-    // to the caller's request; this only ever removes capabilities.
-    let dev_priv_key_props = narrow_ecc_usage(&dev_priv_key_props, &priv_key_props);
-
     // The public key is a software object whose capabilities follow its
     // private counterpart. TBOR masked metadata only carries the private
     // usage (SIGN/DERIVE), so derive the public VERIFY/DERIVE from it.
@@ -123,10 +121,17 @@ fn ecc_generate_key_tbor(
     //check if curve is present or not
     let curve = props.ecc_curve().ok_or(HsmError::PropertyNotPresent)?;
 
+    let key_label = props.label();
+    if key_label.len() > TBOR_KEY_LABEL_MAX_LEN {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
     let req = TborEccGenerateKeyReq {
         session_id: session.ex_session_id()?,
         scope: props.tbor_scope(),
         curve: ecc_curve_to_tbor(curve),
+        key_usage: ecc_tbor_key_usage(props)?,
+        key_label: key_label.to_vec(),
     };
     let mut cookie = None;
     let resp = session.with_dev(|dev| {
@@ -138,6 +143,26 @@ fn ecc_generate_key_tbor(
     Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key, pub_key_der))
 }
 
+/// Maps the requested ECC private-key usage onto the TBOR `KeyUsage`
+/// bitfield the firmware stamps into the masked metadata.  An ECC private
+/// key is **either** a signing key (ECDSA) **or** a derivation key (ECDH)
+/// — exactly one; both-set, neither-set, or any non-ECC usage (e.g.
+/// encrypt/decrypt) is rejected here rather than silently mapped.
+fn ecc_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u8> {
+    // Exactly one of sign/derive is valid for an ECC private key; both-set,
+    // neither-set, and non-ECC usage (encrypt/decrypt leave both false) are
+    // rejected.
+    if props.can_sign() != props.can_derive() {
+        Ok(if props.can_sign() {
+            KEY_USAGE_SIGN
+        } else {
+            KEY_USAGE_DERIVE
+        })
+    } else {
+        Err(HsmError::InvalidKeyProps)
+    }
+}
+
 /// Maps an [`HsmEccCurve`] to the 1-byte TBOR `EccCurve` discriminant.
 fn ecc_curve_to_tbor(curve: HsmEccCurve) -> u8 {
     match curve {
@@ -147,32 +172,8 @@ fn ecc_curve_to_tbor(curve: HsmEccCurve) -> u8 {
     }
 }
 
-/// Returns a copy of `dev_props` with its ECC capabilities narrowed to the
-/// caller's requested `SIGN` / `DERIVE` subset; capabilities are only ever
-/// removed, never added.
-fn narrow_ecc_usage(dev_props: &HsmKeyProps, requested: &HsmKeyProps) -> HsmKeyProps {
-    let caps = HsmKeyFlags::SIGN | HsmKeyFlags::DERIVE;
-    let narrowed = (dev_props.flags() & !caps) | (dev_props.flags() & requested.flags() & caps);
-
-    let mut props = HsmKeyProps::new(
-        dev_props.class(),
-        dev_props.kind(),
-        dev_props.bits(),
-        dev_props.ecc_curve(),
-        narrowed,
-        dev_props.label().to_vec(),
-    );
-    if let Some(masked_key) = dev_props.masked_key() {
-        props.set_masked_key(masked_key);
-    }
-    if let Some(pub_key_der) = dev_props.pub_key_der() {
-        props.set_pub_key_der(pub_key_der);
-    }
-    props
-}
-
 /// Builds the public key's properties so its capabilities mirror the
-/// private key's narrowed usage: a signing key's public half verifies, a
+/// private key's usage: a signing key's public half verifies, a
 /// derivation key's public half derives.
 fn ecc_public_props_for(dev_pub: &HsmKeyProps, priv_props: &HsmKeyProps) -> HsmKeyProps {
     let caps = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
