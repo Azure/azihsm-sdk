@@ -78,3 +78,9 @@ fn create_ec_key_via_engine() {
 fn sign_ec_key_via_engine() {
     run_cli_suite("sign", "testfiles/sign");
 }
+
+#[test]
+#[serial]
+fn derive_ec_key_via_engine() {
+    run_cli_suite("derive", "testfiles/derive");
+}
