@@ -12,7 +12,14 @@ env:
 jobs:
   create_new_cache_ubuntu:
 
-    runs-on: ubuntu-24.04
+    name: create_new_cache_ubuntu (${{ matrix.runner }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, azihsm-x64-gh-ubuntu2404-pool, azihsm-arm64-gh-ubuntu2404-pool]
+
+    runs-on: ${{ matrix.runner }}
 
     defaults:
       run:
@@ -20,6 +27,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Install arm64 build dependencies
+      if: ${{ runner.arch == 'ARM64' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev
+    - name: Install rustup
+      if: ${{ runner.arch == 'ARM64' }}
+      shell: bash
+      run: |
+        curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+          | sh -s -- -y --default-toolchain none --profile minimal
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
@@ -30,11 +50,18 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ github.sha }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
 
-    runs-on: windows-2025-vs2026
+    name: create_new_cache_windows (${{ matrix.runner }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025-vs2026, azihsm-x64-gh-winserver22-pool]
+
+    runs-on: ${{ matrix.runner }}
 
     defaults:
       run:
@@ -52,4 +79,4 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ github.sha }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ github.sha }}

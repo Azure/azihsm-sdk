@@ -66,6 +66,56 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  coverage_azihsm-x64-gh-ubuntu2404-pool:
+
+    runs-on: azihsm-x64-gh-ubuntu2404-pool
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Free disk space
+      run: |
+        # The two coverage steps below run with --skip-clean, so the
+        # instrumented mock-test artifacts stay on disk while the resiliency
+        # step builds a second, fully instrumented copy of the native
+        # api_tests harness (googletest + cbindgen + a duplicate dependency
+        # tree). Together they can exhaust the runner's disk ("No space left
+        # on device"). Reclaim ~25 GB by removing large preinstalled
+        # toolchains this project does not use.
+        echo "Disk space before cleanup:" && df -h /
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force || true
+        echo "Disk space after cleanup:" && df -h /
+    - name: Run all mock tests with code coverage
+      id: test-mock-coverage
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: coverage-report-azihsm-x64-gh-ubuntu2404-pool
+        path: ./target/reports/
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   coverage_windows:
 
     runs-on: windows-2025-vs2026
@@ -100,5 +150,42 @@ jobs:
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
       run: |
-        echo "One or more tests failed."
+        echo "One or more tests failed in this job."
+        exit 1
+
+  coverage_azihsm-x64-gh-winserver22-pool:
+
+    runs-on: azihsm-x64-gh-winserver22-pool
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/windows-setup
+    - name: Run all mock tests with code coverage
+      id: test-mock-coverage
+      run: cargo xtask precheck --coverage --skip-clean --exclude provider-integration-tests-cli --exclude provider-integration-tests-capi -F mock --profile ci-mock
+      continue-on-error: true
+    - name: Run resiliency fault injection tests with code coverage
+      id: test-res-fault
+      run: cargo xtask precheck --coverage --skip-clean -p azihsm_api_tests -F mock,res-test -E 'test(resiliency::fault_injection::)' --profile ci-mock-res
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: coverage-report-azihsm-x64-gh-winserver22-pool
+        path: ./target/reports/
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-res-fault.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed in this job."
         exit 1
