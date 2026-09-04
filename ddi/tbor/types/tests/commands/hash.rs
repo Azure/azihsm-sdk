@@ -334,7 +334,7 @@ fn hash_default_psk_cu_rejected() {
     let ctx = TestCtx::new();
 
     let session = ctx
-        .open_session(1, SessionType::PlainText)
+        .open_session(crate::harness::CU_PSK_ID, SessionType::PlainText)
         .expect("open default-PSK CU session");
 
     ctx.expect_fw_reject(
