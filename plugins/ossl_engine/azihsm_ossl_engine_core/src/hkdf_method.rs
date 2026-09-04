@@ -212,10 +212,10 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
     );
 }
 
-/// `ctrl` override: record the standard HKDF parameters for direct-ABI
-/// callers (the EVP_PKEY_CTX_set_hkdf_* macros), then delegate. String
-/// parameters are recorded by our ctrl_str instead, which forwards to the
-/// built-in ctrl directly — never through this override.
+/// `ctrl` override: delegate to the built-in first, then mirror the result
+/// into our record ([`record_after`]) — the single recording path for both
+/// direct-ABI callers (the EVP_PKEY_CTX_set_hkdf_* macros) and our ctrl_str,
+/// which forwards parsed parameters through the same built-in ctrl.
 /// # Safety
 /// Called only by OpenSSL's `EVP_PKEY_CTX_ctrl`; arguments per that contract.
 #[allow(unsafe_code)]
@@ -227,39 +227,57 @@ unsafe extern "C" fn c_ctrl(
 ) -> c_int {
     catch_panic(
         || {
-            {
-                let mut table = ctx_state().lock();
-                if let Some(state) = table.get_mut(&(ctx as usize)) {
-                    // SAFETY: p1/p2 shapes per the HKDF ctrl contract; byte
-                    // parameters are length-p1 buffers.
-                    unsafe {
-                        if cmd == ffi::EVP_PKEY_CTRL_HKDF_MD_CONST && !p2.is_null() {
-                            state.md_nid = Some(ffi::EVP_MD_type(p2.cast_const().cast()));
-                        } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_MODE_CONST {
-                            state.mode = p1;
-                        } else if !p2.is_null()
-                            && let Ok(len) = usize::try_from(p1)
-                        {
-                            let bytes = std::slice::from_raw_parts(p2.cast::<u8>(), len);
-                            if cmd == ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST {
-                                state.salt = Some(bytes.to_vec());
-                            } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST {
-                                state.key = Some(Zeroizing::new(bytes.to_vec()));
-                            } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_INFO_CONST {
-                                // Append, matching the built-in.
-                                state.info.get_or_insert_with(Vec::new).extend(bytes);
-                            }
-                        }
-                    }
-                }
-            }
             let Ok(d) = defaults() else { return -2 };
             let Some(ctrl) = d.ctrl else { return -2 };
             // SAFETY: delegating the arguments OpenSSL passed us.
-            unsafe { ctrl(ctx, cmd, p1, p2) }
+            let rc = unsafe { ctrl(ctx, cmd, p1, p2) };
+            record_after(ctx, cmd, p1, p2, rc);
+            rc
         },
         0,
     )
+}
+
+/// Mirror one HKDF ctrl into the record, given the built-in's return code —
+/// matching its exact acceptance semantics: salt/info are set only for a
+/// successful non-empty call (zero-length/NULL are ignored by the built-in);
+/// a failed key set with `p1 >= 0` clears the record, because the built-in
+/// frees the old key before copying the new one.
+#[allow(unsafe_code)]
+fn record_after(ctx: *mut ffi::EVP_PKEY_CTX, cmd: c_int, p1: c_int, p2: *mut c_void, rc: c_int) {
+    let mut table = ctx_state().lock();
+    let Some(state) = table.get_mut(&(ctx as usize)) else {
+        return;
+    };
+    let set = rc == 1 && !p2.is_null() && p1 > 0;
+    // SAFETY: when `set`, p2 points to p1 bytes per the HKDF ctrl contract
+    // (the built-in just copied them); for MD, p2 is the EVP_MD.
+    unsafe {
+        if cmd == ffi::EVP_PKEY_CTRL_HKDF_MD_CONST {
+            if rc == 1 && !p2.is_null() {
+                state.md_nid = Some(ffi::EVP_MD_type(p2.cast_const().cast()));
+            }
+        } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_MODE_CONST {
+            if rc == 1 {
+                state.mode = p1;
+            }
+        } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST {
+            if set {
+                let bytes = std::slice::from_raw_parts(p2.cast::<u8>(), p1 as usize);
+                state.salt = Some(bytes.to_vec());
+            }
+        } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST {
+            if set {
+                let bytes = std::slice::from_raw_parts(p2.cast::<u8>(), p1 as usize);
+                state.key = Some(Zeroizing::new(bytes.to_vec()));
+            } else if p1 >= 0 {
+                state.key = None;
+            }
+        } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_INFO_CONST && set {
+            let bytes = std::slice::from_raw_parts(p2.cast::<u8>(), p1 as usize);
+            state.info.get_or_insert_with(Vec::new).extend(bytes);
+        }
+    }
 }
 
 /// # Safety
@@ -361,9 +379,6 @@ fn ctrl_str_inner(
             if md.is_null() {
                 return Err(EngineError::Other(format!("unknown digest: {value_str}")));
             }
-            // SAFETY: md is a valid EVP_MD (checked).
-            let nid = unsafe { ffi::EVP_MD_type(md) };
-            record(ctx, |state| state.md_nid = Some(nid))?;
             builtin_ctrl(
                 &d,
                 ctx,
@@ -379,21 +394,11 @@ fn ctrl_str_inner(
             } else {
                 Zeroizing::new(value_str.as_bytes().to_vec())
             };
-            let (cmd, is_info) = match key_str {
-                "salt" | "hexsalt" => (ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST, false),
-                "key" | "hexkey" => (ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST, false),
-                _ => (ffi::EVP_PKEY_CTRL_HKDF_INFO_CONST, true),
+            let cmd = match key_str {
+                "salt" | "hexsalt" => ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST,
+                "key" | "hexkey" => ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST,
+                _ => ffi::EVP_PKEY_CTRL_HKDF_INFO_CONST,
             };
-            record(ctx, |state| {
-                if cmd == ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST {
-                    state.salt = Some(bytes.to_vec());
-                } else if is_info {
-                    // Append, matching the built-in.
-                    state.info.get_or_insert_with(Vec::new).extend(bytes.iter());
-                } else {
-                    state.key = Some(Zeroizing::new(bytes.to_vec()));
-                }
-            })?;
             let len = c_int::try_from(bytes.len())
                 .map_err(|_| EngineError::Other(format!("{key_str} too large")))?;
             builtin_ctrl(&d, ctx, cmd, len, bytes.as_ptr().cast_mut().cast(), key_str)
@@ -408,7 +413,6 @@ fn ctrl_str_inner(
                     return Err(EngineError::Other(format!("unknown HKDF mode: {other}")));
                 }
             };
-            record(ctx, |state| state.mode = mode)?;
             builtin_ctrl(
                 &d,
                 ctx,
@@ -434,17 +438,8 @@ fn ctrl_str_inner(
     }
 }
 
-/// Update this ctx's recorded state.
-fn record(ctx: *mut ffi::EVP_PKEY_CTX, f: impl FnOnce(&mut HkdfState)) -> EngineResult<()> {
-    let mut table = ctx_state().lock();
-    let state = table
-        .get_mut(&(ctx as usize))
-        .ok_or(EngineError::Other("HKDF ctx has no azihsm state".into()))?;
-    f(state);
-    Ok(())
-}
-
-/// Forward one parsed parameter to the built-in's ctrl.
+/// Forward one parsed parameter to the built-in's ctrl and mirror the result
+/// into the record.
 #[allow(unsafe_code)]
 fn builtin_ctrl(
     d: &Defaults,
@@ -458,7 +453,9 @@ fn builtin_ctrl(
         .ctrl
         .ok_or(EngineError::Other("built-in ctrl missing".into()))?;
     // SAFETY: forwarding a well-formed HKDF ctrl to the built-in.
-    if unsafe { ctrl(ctx, cmd, p1, p2) } <= 0 {
+    let rc = unsafe { ctrl(ctx, cmd, p1, p2) };
+    record_after(ctx, cmd, p1, p2, rc);
+    if rc <= 0 {
         return Err(EngineError::Other(format!("HKDF option rejected: {what}")));
     }
     Ok(())
@@ -645,4 +642,130 @@ pub fn new_hkdf_pkey_method<H: HkdfHandler>() -> EngineResult<*mut ffi::EVP_PKEY
 pub fn register_hkdf_pkey_method<H: HkdfHandler>(engine: &Engine) -> EngineResult<()> {
     ENGINE_METHODS.register(engine, ffi::NID_hkdf as c_int, new_hkdf_pkey_method::<H>)?;
     crate::pkey_method::install_pkey_meths_callback(engine)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::ptr::null_mut;
+
+    use super::*;
+
+    struct PanicHkdf;
+    impl HkdfHandler for PanicHkdf {
+        fn derive(
+            _engine: &Engine,
+            _params: &HkdfParams,
+            _output_file: Option<&Path>,
+        ) -> EngineResult<Option<Zeroizing<Vec<u8>>>> {
+            unreachable!("derive must not be dispatched for this context")
+        }
+    }
+
+    // The record must mirror the built-in's acceptance semantics: an ignored
+    // zero-length salt keeps the previous record, and a failed key set clears
+    // it (the built-in frees the old key before copying the new one).
+    #[test]
+    #[allow(unsafe_code)]
+    fn ctrl_recording_mirrors_builtin_semantics() {
+        // Capture DEFAULTS; the method itself is not registered.
+        let method = new_hkdf_pkey_method::<PanicHkdf>().unwrap();
+        // SAFETY: ours, unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
+
+        // SAFETY: a built-in NID_hkdf ctx; our trampolines are called
+        // directly with a hand-inserted state entry, and every return code
+        // is checked.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as c_int, null_mut());
+            assert!(!ctx.is_null());
+            assert_eq!(ffi::EVP_PKEY_derive_init(ctx), 1);
+            ctx_state()
+                .lock()
+                .insert(ctx as usize, HkdfState::default());
+
+            let salt = b"pepper";
+            let salt_len = c_int::try_from(salt.len()).unwrap();
+            assert_eq!(
+                c_ctrl(
+                    ctx,
+                    ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST,
+                    salt_len,
+                    salt.as_ptr().cast_mut().cast(),
+                ),
+                1
+            );
+            let recorded = ctx_state()
+                .lock()
+                .get(&(ctx as usize))
+                .unwrap()
+                .salt
+                .clone();
+            assert_eq!(recorded.as_deref(), Some(&salt[..]));
+
+            // Zero-length salt: the built-in ignores it (returns 1 without
+            // touching its state); the record must keep "pepper".
+            assert_eq!(
+                c_ctrl(
+                    ctx,
+                    ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST,
+                    0,
+                    salt.as_ptr().cast_mut().cast(),
+                ),
+                1
+            );
+            let recorded = ctx_state()
+                .lock()
+                .get(&(ctx as usize))
+                .unwrap()
+                .salt
+                .clone();
+            assert_eq!(
+                recorded.as_deref(),
+                Some(&salt[..]),
+                "ignored salt must not clobber"
+            );
+
+            let key = b"secret";
+            let key_len = c_int::try_from(key.len()).unwrap();
+            assert_eq!(
+                c_ctrl(
+                    ctx,
+                    ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST,
+                    key_len,
+                    key.as_ptr().cast_mut().cast(),
+                ),
+                1
+            );
+            assert!(
+                ctx_state()
+                    .lock()
+                    .get(&(ctx as usize))
+                    .unwrap()
+                    .key
+                    .is_some()
+            );
+
+            // NULL key: the built-in frees the old key and errors; the record
+            // must clear too.
+            assert_ne!(
+                c_ctrl(ctx, ffi::EVP_PKEY_CTRL_HKDF_KEY_CONST, 0, null_mut()),
+                1
+            );
+            assert!(
+                ctx_state()
+                    .lock()
+                    .get(&(ctx as usize))
+                    .unwrap()
+                    .key
+                    .is_none(),
+                "failed key set must clear the record"
+            );
+            ffi::ERR_clear_error();
+
+            ctx_state().lock().remove(&(ctx as usize));
+            ffi::EVP_PKEY_CTX_free(ctx);
+        }
+    }
 }
