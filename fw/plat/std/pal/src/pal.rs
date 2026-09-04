@@ -231,6 +231,13 @@ impl Default for StdHsmPal {
     }
 }
 
+/// Platform hook for commands the core does not implement.
+///
+/// The std/emulator PAL adds none, so both entry points keep their
+/// reject-everything defaults and every opcode is answered exactly as it
+/// was before the hook existed.
+impl HsmCustomDispatch for StdHsmPal {}
+
 /// [`HsmPal`] lifecycle implementation for the standard platform.
 ///
 /// - **`init`** — Logs initialization; no hardware to configure.

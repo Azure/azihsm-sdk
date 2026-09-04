@@ -128,7 +128,7 @@ pub(crate) struct DispatchResult<'p> {
 
 impl<'p> DispatchResult<'p> {
     /// Wraps a plain response that carries no session id (the common case).
-    fn from_resp(resp: &'p DmaBuf) -> Self {
+    pub(crate) fn from_resp(resp: &'p DmaBuf) -> Self {
         Self {
             resp,
             session_id: None,
@@ -145,19 +145,28 @@ impl<'p> DispatchResult<'p> {
 ///
 /// This function is `async` because `GetCertificate` calls into
 /// `HsmCertStore::get_cert` which is async.
+/// Dispatch an MBOR command to its core handler.
+///
+/// Returns `Ok(None)` when the opcode is not a core command at all. The
+/// caller then offers the request to the platform — see
+/// [`HsmCustomDispatch`](azihsm_fw_hsm_pal_traits::HsmCustomDispatch).
+/// Signalling this structurally, rather than by returning
+/// `UnsupportedCmd`, is deliberate: `rsa_unwrap` returns that error for
+/// a *known* opcode, so treating it as "not mine" would hand a real
+/// command to the platform and let a hook shadow it.
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
-) -> HsmResult<DispatchResult<'p>> {
+) -> HsmResult<Option<DispatchResult<'p>>> {
     check_api_rev(hdr)?;
 
     // `OpenSession` is the only command that surfaces a session id (for the
     // CQE), so it returns a fully-formed `DispatchResult`; every other command
     // yields just a response slice that is wrapped below.
     if matches!(hdr.op, DdiOp::OpenSession) {
-        return open_session(pal, io, decoder, hdr).await;
+        return open_session(pal, io, decoder, hdr).await.map(Some);
     }
 
     let resp = match hdr.op {
@@ -191,9 +200,12 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
         DdiOp::AttestKey => attest_key(pal, io, decoder, hdr).await,
-        _ => Err(HsmError::UnsupportedCmd),
+        // Not a core command. The core knows nothing further about it —
+        // not the opcode, not the request shape — so it says only "not
+        // mine" and leaves the decision to the caller.
+        _ => return Ok(None),
     }?;
-    Ok(DispatchResult::from_resp(resp))
+    Ok(Some(DispatchResult::from_resp(resp)))
 }
 
 /// Encode a DDI response (header + data) in a single pass.

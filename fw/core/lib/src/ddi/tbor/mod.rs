@@ -434,8 +434,19 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     // Reject unknown opcodes with the canonical error *before*
     // applying any gating logic so the gate cannot leak existence of
     // unsupported opcodes through a different error code.
+    //
+    // A platform may claim an opcode the core does not implement — this
+    // is how test-only commands are added without appearing in the core
+    // opcode table. The hook runs only after `is_known_opcode` has
+    // failed, so it can never shadow a real command, and it sees the
+    // request untouched because nothing has been parsed yet. Its
+    // default is `UnsupportedCmd`, preserving the original behaviour.
     if !is_known_opcode(opcode) {
-        return Err(HsmError::UnsupportedCmd);
+        let resp = pal.tbor_dispatch(io, opcode, req_buf).await?;
+        return Ok(DispatchResult {
+            resp,
+            session_id: None,
+        });
     }
 
     // Pre-dispatch gating work (session-id cross-check, default-PSK

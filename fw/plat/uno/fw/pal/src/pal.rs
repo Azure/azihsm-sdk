@@ -30,6 +30,7 @@
 
 use core::cell::Cell;
 
+use azihsm_fw_hsm_pal_traits::HsmCustomDispatch;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
@@ -721,6 +722,12 @@ impl UnoHsmPal {
         self.ipc.ack_event(channel as u8, value);
     }
 }
+
+/// Platform hook for commands the core does not implement.
+///
+/// uno adds none, so both entry points keep their reject-everything
+/// defaults and the platform answers exactly as it did before.
+impl HsmCustomDispatch for UnoHsmPal {}
 
 impl HsmPal for UnoHsmPal {
     /// Initialises the Uno platform (phase 1 only).

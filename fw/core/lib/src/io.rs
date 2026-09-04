@@ -248,15 +248,34 @@ impl<P: HsmPal> Hsm<P> {
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
-            let dispatch_result = match Self::validate_session(
-                &hdr,
-                session_ctrl,
-                params.session_flags,
-                params.sqe_session_id,
-            )
-            .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
-            {
-                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+            // The decoder borrows the request buffer, so it is scoped:
+            // the borrow has to end before the buffer can be handed to
+            // the platform below.
+            let core_result = {
+                let mut decoder = decoder;
+                match Self::validate_session(
+                    &hdr,
+                    session_ctrl,
+                    params.session_flags,
+                    params.sqe_session_id,
+                )
+                .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
+                {
+                    Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+                    Err(e) => Err(e),
+                }
+            };
+            // `Ok(None)` means the core has no handler for this opcode.
+            // Offer the untouched request to the platform before giving
+            // up. The core never learns whether the platform claimed it
+            // — a test-only command exists entirely below this point.
+            let dispatch_result = match core_result {
+                Ok(Some(out)) => Ok(out),
+                Ok(None) => self
+                    .pal()
+                    .mbor_dispatch(io, &mut req_buf[..params.src_len])
+                    .await
+                    .map(ddi::mbor::DispatchResult::from_resp),
                 Err(e) => Err(e),
             };
 
