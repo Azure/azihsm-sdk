@@ -23,10 +23,12 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::ffi::OsStr;
 use std::ffi::c_char;
 use std::ffi::c_int;
 use std::ffi::c_uchar;
 use std::ffi::c_void;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr::NonNull;
@@ -48,7 +50,7 @@ use crate::pkey_method::ENGINE_METHODS;
 pub enum DerivedKeyType {
     /// AES key (encrypt/decrypt), the default.
     Aes,
-    /// HMAC key (sign/verify); bits select the SHA-2 kind.
+    /// HMAC key (sign/verify); the kind follows the HKDF digest.
     Hmac,
 }
 
@@ -315,23 +317,25 @@ fn ctrl_str_inner(
             return Err(EngineError::NullParam("ctrl value"));
         }
         // SAFETY: as above.
-        let value_str = unsafe { CStr::from_ptr(value) }
-            .to_str()
-            .map_err(|_| EngineError::Other("ctrl value is not valid UTF-8".into()))?;
+        let value_c = unsafe { CStr::from_ptr(value) };
         let mut table = ctx_state().lock();
         let state = table
             .get_mut(&(ctx as usize))
             .ok_or(EngineError::Other("HKDF ctx has no azihsm state".into()))?;
         return match key_str {
+            // Paths are byte strings on Unix; no UTF-8 requirement.
             "azihsm.ikm_file" => {
-                state.ikm_file = Some(PathBuf::from(value_str));
+                state.ikm_file = Some(PathBuf::from(OsStr::from_bytes(value_c.to_bytes())));
                 Ok(())
             }
             "output_file" => {
-                state.output_file = Some(PathBuf::from(value_str));
+                state.output_file = Some(PathBuf::from(OsStr::from_bytes(value_c.to_bytes())));
                 Ok(())
             }
             "derived_key_type" => {
+                let value_str = value_c
+                    .to_str()
+                    .map_err(|_| EngineError::Other("derived_key_type must be UTF-8".into()))?;
                 state.derived_key_type = Some(match value_str {
                     "aes" => DerivedKeyType::Aes,
                     "hmac" => DerivedKeyType::Hmac,
@@ -344,6 +348,9 @@ fn ctrl_str_inner(
                 Ok(())
             }
             "derived_key_bits" => {
+                let value_str = value_c
+                    .to_str()
+                    .map_err(|_| EngineError::Other("derived_key_bits must be UTF-8".into()))?;
                 let bits: u32 = value_str.parse().map_err(|_| {
                     EngineError::Other(format!("invalid derived_key_bits: {value_str}"))
                 })?;
@@ -366,10 +373,9 @@ fn ctrl_str_inner(
     if value.is_null() {
         return Err(EngineError::NullParam("ctrl value"));
     }
-    // SAFETY: as above.
-    let value_str = unsafe { CStr::from_ptr(value) }
-        .to_str()
-        .map_err(|_| EngineError::Other("ctrl value is not valid UTF-8".into()))?;
+    // SAFETY: as above. The byte-valued standard options (salt/key/info)
+    // must accept arbitrary non-NUL bytes, exactly like the built-in.
+    let value_c = unsafe { CStr::from_ptr(value) };
     let d = defaults()?;
     match key_str {
         "md" => {
@@ -377,7 +383,10 @@ fn ctrl_str_inner(
             // EVP_MD is a process-lifetime constant (or NULL, checked).
             let md = unsafe { ffi::EVP_get_digestbyname(value) };
             if md.is_null() {
-                return Err(EngineError::Other(format!("unknown digest: {value_str}")));
+                return Err(EngineError::Other(format!(
+                    "unknown digest: {}",
+                    value_c.to_string_lossy()
+                )));
             }
             builtin_ctrl(
                 &d,
@@ -390,9 +399,12 @@ fn ctrl_str_inner(
         }
         "salt" | "hexsalt" | "key" | "hexkey" | "info" | "hexinfo" => {
             let bytes = if key_str.starts_with("hex") {
-                hex_decode(value_str)?
+                let hex = value_c
+                    .to_str()
+                    .map_err(|_| EngineError::Other("invalid hex value".into()))?;
+                hex_decode(hex)?
             } else {
-                Zeroizing::new(value_str.as_bytes().to_vec())
+                Zeroizing::new(value_c.to_bytes().to_vec())
             };
             let cmd = match key_str {
                 "salt" | "hexsalt" => ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST,
@@ -405,12 +417,15 @@ fn ctrl_str_inner(
         }
         "mode" => {
             // 0 = EXTRACT_AND_EXPAND (kdf.h); only that mode works armed.
-            let mode: c_int = match value_str {
+            let mode: c_int = match value_c.to_str().unwrap_or("") {
                 "EXTRACT_AND_EXPAND" => 0,
                 "EXTRACT_ONLY" => 1,
                 "EXPAND_ONLY" => 2,
-                other => {
-                    return Err(EngineError::Other(format!("unknown HKDF mode: {other}")));
+                _ => {
+                    return Err(EngineError::Other(format!(
+                        "unknown HKDF mode: {}",
+                        value_c.to_string_lossy()
+                    )));
                 }
             };
             builtin_ctrl(
@@ -763,6 +778,41 @@ mod tests {
                 "failed key set must clear the record"
             );
             ffi::ERR_clear_error();
+
+            ctx_state().lock().remove(&(ctx as usize));
+            ffi::EVP_PKEY_CTX_free(ctx);
+        }
+    }
+
+    // Standard byte-valued options must accept arbitrary non-NUL bytes,
+    // exactly like the built-in (control strings are byte strings).
+    #[test]
+    #[allow(unsafe_code)]
+    fn ctrl_str_accepts_non_utf8_byte_values() {
+        let method = new_hkdf_pkey_method::<PanicHkdf>().unwrap();
+        // SAFETY: ours, unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
+
+        // SAFETY: builtin NID_hkdf ctx; c_ctrl_str called directly with a
+        // hand-inserted state entry.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as c_int, null_mut());
+            assert!(!ctx.is_null());
+            assert_eq!(ffi::EVP_PKEY_derive_init(ctx), 1);
+            ctx_state()
+                .lock()
+                .insert(ctx as usize, HkdfState::default());
+
+            let key = std::ffi::CString::new("salt").unwrap();
+            let value = std::ffi::CString::new(vec![0xffu8, 0xfe, 0x01]).unwrap();
+            assert_eq!(c_ctrl_str(ctx, key.as_ptr(), value.as_ptr()), 1);
+            let recorded = ctx_state()
+                .lock()
+                .get(&(ctx as usize))
+                .unwrap()
+                .salt
+                .clone();
+            assert_eq!(recorded.as_deref(), Some(&[0xffu8, 0xfe, 0x01][..]));
 
             ctx_state().lock().remove(&(ctx as usize));
             ffi::EVP_PKEY_CTX_free(ctx);
