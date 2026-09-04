@@ -40,6 +40,7 @@ macro_rules! dispatch_handler {
         match $dispatch_call {
             Ok(response_len) => return Ok(response_len),
             Err(err) => {
+                log::debug!("Dispatch handler encountered an error {:?}", err);
                 if err == ManticoreError::CborEncodeError {
                     Err(err)?;
                 } else {
@@ -711,6 +712,7 @@ impl Dispatcher {
             }
 
             tracing::trace!(opcode = ?hdr.op, "Dispatching request");
+            log::debug!("Dispatching request {:?}",hdr.op);
             match hdr.op {
                 DdiOp::GetApiRev => {
                     dispatch_handler!(
@@ -1969,6 +1971,7 @@ impl Dispatcher {
         hdr: &DdiReqHdr,
         out_data: &mut [u8],
     ) -> Result<SessionInfoResponse, ManticoreError> {
+        log::debug!("-> dispatch_get_establish_cred_encryption_key()");
         let resp_header = DdiRespHdr {
             rev: hdr.rev,
             op: hdr.op,
@@ -1995,26 +1998,67 @@ impl Dispatcher {
         let key_id = vault.get_establish_cred_encryption_key_id()?;
         let entry = vault.get_key_entry(key_id)?;
 
-        let pub_key = if let EccPrivate(private_key) = entry.key() {
-            let mut der = [0u8; 768];
-            let der_vec = private_key.extract_pub_key_der()?;
-            der[..der_vec.len()].copy_from_slice(&der_vec);
-            DdiDerPublicKey {
-                der: MborByteArray::new(der, der_vec.len())
-                    .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: entry.kind().as_pub()?.try_into()?,
+        let (pub_key, pub_key_wire) = if let EccPrivate(private_key) = entry.key() {
+            let (x, y) = private_key.coordinates()?;
+            if x.len() > 48 || y.len() > 48 {
+                Err(ManticoreError::InternalError)?
             }
+
+            // DDI represents P-384 public keys as x_le || y_le, with each
+            // coordinate padded to 48 bytes.
+            let mut raw = [0u8; 96];
+            raw[48 - x.len()..48].copy_from_slice(&x);
+            raw[..48].reverse();
+            raw[96 - y.len()..96].copy_from_slice(&y);
+            raw[48..].reverse();
+
+            (
+                DdiDerPublicKey {
+                    // The MBOR wire representation is raw x_le || y_le.
+                    // Userspace post-decode converts it to DER.
+                    der: MborByteArray::from_slice(&raw)
+                        .map_err(|_| ManticoreError::InternalError)?,
+                    key_kind: entry.kind().as_pub()?.try_into()?,
+                },
+                raw,
+            )
         } else {
             // Implies unwrapping key was initialized incorrectly
             Err(ManticoreError::InternalError)?
         };
 
+        let attestation_key_id = self
+            .function
+            .get_function_state()
+            .get_attestation_key_num()?;
+        let attestation_entry = vault.get_key_entry(attestation_key_id)?;
+        let EccPrivate(attestation_key) = attestation_entry.key() else {
+            tracing::error!("Partition identity key is not an ECC private key");
+            Err(ManticoreError::InternalError)?
+        };
+
+        let digest = sha(HashAlgorithm::Sha384, &pub_key_wire)?;
+        let mut signature = attestation_key.sign(&digest)?;
+        if signature.len() != 96 {
+            tracing::error!(
+                signature_len = signature.len(),
+                "Unexpected P-384 signature length"
+            );
+            Err(ManticoreError::EccSignError)?
+        }
+        // The crypto implementation returns r_be || s_be, while DDI uses
+        // r_le || s_le. Reverse each component independently.
+        signature[..48].reverse();
+        signature[48..].reverse();
+
         let resp = DdiGetEstablishCredEncryptionKeyResp {
             pub_key,
             nonce,
-            pub_key_signature: MborByteArray::from_slice(&[])
+            pub_key_signature: MborByteArray::from_slice(&signature)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
+
+        log::debug!("Sending response: {:?}", resp);
 
         self.send_response(resp_header, resp, None, out_data)
     }
@@ -2098,6 +2142,7 @@ impl Dispatcher {
         hdr: &DdiReqHdr,
         out_data: &mut [u8],
     ) -> Result<SessionInfoResponse, ManticoreError> {
+        log::debug!("Dispatching establish credential");
         let resp_header = DdiRespHdr {
             rev: hdr.rev,
             op: hdr.op,
@@ -2109,6 +2154,7 @@ impl Dispatcher {
         let req = decoder
             .decode_data::<DdiEstablishCredentialReq>()
             .map_err(|_| ManticoreError::CborDecodeError)?;
+        log::debug!("Decoded establish credential request: {:?}", req);
 
         if hdr.sess_id.is_some() {
             tracing::error!("hdr.sess_id should be None");
@@ -2116,6 +2162,7 @@ impl Dispatcher {
         }
         if req.masked_bk3.is_empty() {
             tracing::error!("masked_bk3 is empty in establish_credential request.");
+            log::debug!("masked_bk3 is empty");
             Err(ManticoreError::InvalidArgument)?
         }
 
@@ -2125,18 +2172,22 @@ impl Dispatcher {
             .function
             .get_function_state()
             .get_attestation_key_num()?;
+            log::debug!("Attestation key number: {:?}", attest_key_num);
         let vault = self
             .function
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
 
         if req.pota_pub_key.key_kind != DdiKeyType::Ecc384Public {
+            log::debug!("POTA public key kind: {:?}", req.pota_pub_key.key_kind);
             Err(ManticoreError::InvalidArgument)?
         }
 
         let attest_entry = vault.get_key_entry(attest_key_num)?;
+        log::debug!("Attestation key entry: {:?}", attest_entry);
         let crate::table::entry::key::Key::EccPrivate(attest_key) = attest_entry.key() else {
             tracing::error!("Attestation key is not ECC private key.");
+            log::debug!("Attestation key is not ECC private key.");
             Err(ManticoreError::InternalError)?
         };
         let attest_key_pub_der = attest_key.extract_pub_key_der()?;
@@ -2146,8 +2197,10 @@ impl Dispatcher {
         attest_key_uncomp.extend_from_slice(attest_key_obj.y());
         let hash_algo = HashAlgo::sha384();
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+        log::debug!("Getting POTA pub key");
         let pota_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.pota_pub_key.der.as_slice())
             .map_err(|_| ManticoreError::InvalidArgument)?;
+        log::debug!("POTA public key: {:?}", req.pota_pub_key);
         let verify_result = Verifier::verify(
             &mut ecdsa_algo,
             &pota_pub_key,
@@ -2217,6 +2270,7 @@ impl Dispatcher {
         hdr: &DdiReqHdr,
         out_data: &mut [u8],
     ) -> Result<SessionInfoResponse, ManticoreError> {
+        log::debug!("Dispatching get session encryption key");
         let resp_header = DdiRespHdr {
             rev: hdr.rev,
             op: hdr.op,
@@ -2239,26 +2293,68 @@ impl Dispatcher {
         let key_id = vault.get_session_encryption_key_id()?;
         let entry = vault.get_key_entry(key_id)?;
 
-        let pub_key = if let EccPrivate(private_key) = entry.key() {
-            let mut der = [0u8; 768];
-            let der_vec = private_key.extract_pub_key_der()?;
-            der[..der_vec.len()].copy_from_slice(&der_vec);
-            DdiDerPublicKey {
-                der: MborByteArray::new(der, der_vec.len())
-                    .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: entry.kind().as_pub()?.try_into()?,
+        let (pub_key, pub_key_wire) = if let EccPrivate(private_key) = entry.key() {
+            let (x, y) = private_key.coordinates()?;
+            if x.len() > 48 || y.len() > 48 {
+                Err(ManticoreError::InternalError)?
             }
+
+            // DDI represents P-384 public keys as x_le || y_le, with each
+            // coordinate padded to 48 bytes.
+            let mut raw = [0u8; 96];
+            raw[48 - x.len()..48].copy_from_slice(&x);
+            raw[..48].reverse();
+            raw[96 - y.len()..96].copy_from_slice(&y);
+            raw[48..].reverse();
+
+            (
+                DdiDerPublicKey {
+                    // The MBOR wire representation is raw x_le || y_le.
+                    // Userspace post-decode converts it to DER.
+                    der: MborByteArray::from_slice(&raw)
+                        .map_err(|_| ManticoreError::InternalError)?,
+                    key_kind: entry.kind().as_pub()?.try_into()?,
+                },
+                raw,
+            )
         } else {
             // Implies unwrapping key was initialized incorrectly
             Err(ManticoreError::InternalError)?
         };
 
+        let attestation_key_id = self
+            .function
+            .get_function_state()
+            .get_attestation_key_num()?;
+        let attestation_entry = vault.get_key_entry(attestation_key_id)?;
+        let EccPrivate(attestation_key) = attestation_entry.key() else {
+            tracing::error!("Partition identity key is not an ECC private key");
+            Err(ManticoreError::InternalError)?
+        };
+
+        let digest = sha(HashAlgorithm::Sha384, &pub_key_wire)?;
+        let mut signature = attestation_key.sign(&digest)?;
+        if signature.len() != 96 {
+            tracing::error!(
+                signature_len = signature.len(),
+                "Unexpected P-384 signature length"
+            );
+            Err(ManticoreError::EccSignError)?
+        }
+
+        // The crypto implementation returns r_be || s_be, while DDI uses
+        // r_le || s_le. Reverse each component independently.
+        signature[..48].reverse();
+        signature[48..].reverse();
+
         let resp = DdiGetSessionEncryptionKeyResp {
             pub_key,
             nonce,
-            pub_key_signature: MborByteArray::from_slice(&[])
-                .map_err(|_| ManticoreError::InvalidArgument)?,
+            pub_key_signature: MborByteArray::from_slice(&signature)
+                .map_err(|_| ManticoreError::InternalError)?,
         };
+
+        log::debug!("Sending response: {:?}", resp);
 
         self.send_response(resp_header, resp, None, out_data)
     }
@@ -2676,6 +2772,7 @@ impl Dispatcher {
         hdr: &DdiReqHdr,
         out_data: &mut [u8],
     ) -> Result<SessionInfoResponse, ManticoreError> {
+        log::debug!("dispatch_get_sealed_bk3 request");
         let resp_header = DdiRespHdr {
             rev: hdr.rev,
             op: hdr.op,
@@ -2692,7 +2789,10 @@ impl Dispatcher {
             return Err(ManticoreError::Bk3NotSecurelyProvisioned);
         }
 
+        log::debug!("Getting sealed BK3");
         let sealed_bk3_data = self.function.get_sealed_bk3()?;
+        log::debug!("Sealed BK3 length: {}", sealed_bk3_data.len());
+        log::debug!("Sealed BK3 data: {:x?}", sealed_bk3_data);
 
         let resp = DdiGetSealedBk3Resp {
             sealed_bk3: MborByteArray::from_slice(&sealed_bk3_data)
