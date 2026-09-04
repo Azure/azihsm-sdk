@@ -646,7 +646,7 @@ unsafe extern "C" fn c_pkey_meths(
 /// `EVP_PKEY_CTX_new_id(EVP_PKEY_EC, engine)` — and therefore
 /// `openssl genpkey`/`pkeyutl -engine …` — resolve to a method copy owned by
 /// this ENGINE. Only one handler pair can be registered per process (the
-/// first wins). Pair with [`release_ec_pkey_method`] when the ENGINE is
+/// first wins). Pair with [`release_pkey_methods`] when the ENGINE is
 /// destroyed.
 pub fn register_ec_pkey_method<K: EcKeygenHandler, D: EcDeriveHandler>(
     engine: &Engine,
