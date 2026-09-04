@@ -45,10 +45,12 @@ pub struct TborEccGenerateKeyReq {
     /// [`ECC_CURVE_P256`] / [`ECC_CURVE_P384`] / [`ECC_CURVE_P521`]).
     pub curve: u8,
 
-    /// Requested key-usage permissions, 1-byte `KeyUsage` bitfield (see
-    /// `KEY_USAGE_SIGN` / `KEY_USAGE_DERIVE`).  Exactly one of `SIGN`
-    /// (ECDSA) or `DERIVE` (ECDH) is valid for a generated ECC private key.
-    pub key_usage: u8,
+    /// Requested key-usage permissions as a `KeyUsage` bitfield (see
+    /// `KEY_USAGE_SIGN` / `KEY_USAGE_DERIVE`), carried as a `u64` for
+    /// headroom (mirrors the masked metadata's 64-bit `usage_flags`).
+    /// Exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is valid for a
+    /// generated ECC private key.
+    pub key_usage: u64,
 
     /// Caller-supplied key label recorded in the masked blob's metadata,
     /// up to `TBOR_KEY_LABEL_MAX_LEN` (32) bytes.  Empty for an unlabeled

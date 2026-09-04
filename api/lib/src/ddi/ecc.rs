@@ -148,7 +148,7 @@ fn ecc_generate_key_tbor(
 /// key is **either** a signing key (ECDSA) **or** a derivation key (ECDH)
 /// — exactly one; both-set, neither-set, or any non-ECC usage (e.g.
 /// encrypt/decrypt) is rejected here rather than silently mapped.
-fn ecc_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u8> {
+fn ecc_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
     // Exactly one of sign/derive is valid for an ECC private key; both-set,
     // neither-set, and non-ECC usage (encrypt/decrypt leave both false) are
     // rejected.
