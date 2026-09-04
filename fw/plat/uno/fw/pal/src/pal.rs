@@ -30,10 +30,16 @@
 
 use core::cell::Cell;
 
+#[cfg(feature = "mcr_test_action")]
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmCustomDispatch;
 use azihsm_fw_hsm_pal_traits::HsmError;
+#[cfg(feature = "mcr_test_action")]
+use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
+#[cfg(feature = "mcr_test_action")]
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
@@ -723,11 +729,25 @@ impl UnoHsmPal {
     }
 }
 
-/// Platform hook for commands the core does not implement.
+/// Platform hook for test-only commands.
 ///
-/// uno adds none, so both entry points keep their reject-everything
-/// defaults and the platform answers exactly as it did before.
-impl HsmCustomDispatch for UnoHsmPal {}
+/// Without `mcr_test_action` this is the default (reject-everything)
+/// implementation, so the firmware answers every opcode exactly as it
+/// did before the hook existed. The generated code is not identical —
+/// adding the trait changes core and PAL codegen either way — but the
+/// observable behaviour is.
+///
+/// The `mcr_test_action` build adds the `TestAction` command used to
+/// drive crash-recovery testing -- see `crate::test_dispatch`. uno adds
+/// no TBOR commands, so `tbor_dispatch` keeps its default.
+impl HsmCustomDispatch for UnoHsmPal {
+    #[cfg(feature = "mcr_test_action")]
+    async fn mbor_dispatch(&self, _io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        // `Infallible` — the handler has no success path, so there is
+        // no response to hand back and nothing to match on.
+        crate::test_dispatch::mbor_dispatch(req).map(|never| match never {})
+    }
+}
 
 impl HsmPal for UnoHsmPal {
     /// Initialises the Uno platform (phase 1 only).
