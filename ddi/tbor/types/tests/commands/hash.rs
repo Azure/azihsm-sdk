@@ -56,6 +56,7 @@ fn digest_len(algo: u8) -> usize {
     }
 }
 
+/// Verifies SHA-256, SHA-384, and SHA-512 digests match the host for varied inputs.
 #[test]
 fn hash_matches_host_all_algos() {
     let ctx = TestCtx::new();
@@ -85,6 +86,7 @@ fn hash_matches_host_all_algos() {
     }
 }
 
+/// Rejects an unsupported hash algorithm.
 #[test]
 fn hash_unknown_algo_rejected() {
     let ctx = TestCtx::new();
@@ -101,6 +103,7 @@ fn hash_unknown_algo_rejected() {
     );
 }
 
+/// Rejects a Hash request that references a nonexistent session.
 #[test]
 fn hash_invalid_session_id_rejected() {
     let ctx = TestCtx::new();
@@ -115,6 +118,7 @@ fn hash_invalid_session_id_rejected() {
     );
 }
 
+/// Rejects multiple invalid hash algorithm discriminants.
 #[test]
 fn hash_invalid_algos_rejected() {
     let ctx = TestCtx::new();
@@ -141,6 +145,7 @@ fn hash_invalid_algos_rejected() {
     }
 }
 
+/// Verifies binary input containing arbitrary byte values hashes correctly.
 #[test]
 fn hash_binary_message_matches_host() {
     let ctx = TestCtx::new();
@@ -157,6 +162,7 @@ fn hash_binary_message_matches_host() {
     }
 }
 
+/// Verifies different messages produce different digests for every supported algorithm.
 #[test]
 fn hash_different_messages_produce_different_digests() {
     let ctx = TestCtx::new();
@@ -172,6 +178,8 @@ fn hash_different_messages_produce_different_digests() {
         );
     }
 }
+
+/// Verifies hashing across SHA padding and compression-block boundaries.
 #[test]
 fn hash_block_boundary_lengths_match_host() {
     let ctx = TestCtx::new();
@@ -194,6 +202,7 @@ fn hash_block_boundary_lengths_match_host() {
     }
 }
 
+/// Rejects a Hash request made with a previously closed session.
 #[test]
 fn hash_closed_session_rejected() {
     let ctx = TestCtx::new();
@@ -212,6 +221,7 @@ fn hash_closed_session_rejected() {
     );
 }
 
+/// Verifies the same message hashes correctly with every supported algorithm.
 #[test]
 fn hash_same_message_different_algos() {
     let ctx = TestCtx::new();
@@ -231,6 +241,7 @@ fn hash_same_message_different_algos() {
     assert_eq!(sha512.len(), 64);
 }
 
+/// Verifies a one-bit input change produces a different digest.
 #[test]
 fn hash_one_bit_message_change_changes_digest() {
     let ctx = TestCtx::new();
@@ -254,6 +265,7 @@ fn hash_one_bit_message_change_changes_digest() {
     }
 }
 
+/// Verifies a rotated Crypto-User session can hash with every supported algorithm.
 #[test]
 fn hash_crypto_user_session_matches_host() {
     let ctx = TestCtx::new();
@@ -272,6 +284,7 @@ fn hash_crypto_user_session_matches_host() {
     }
 }
 
+/// Verifies SHA-256, SHA-384, and SHA-512 against known-answer vectors.
 #[test]
 fn hash_known_answer_vectors() {
     let ctx = TestCtx::new();
@@ -315,6 +328,7 @@ fn hash_known_answer_vectors() {
     );
 }
 
+/// Rejects hashing from a Crypto-User session that still uses the default PSK.
 #[test]
 fn hash_default_psk_cu_rejected() {
     let ctx = TestCtx::new();
@@ -333,6 +347,7 @@ fn hash_default_psk_cu_rejected() {
     );
 }
 
+/// Verifies repeated identical Hash requests return the same digest.
 #[test]
 fn hash_same_request_is_deterministic() {
     let ctx = TestCtx::new();
@@ -348,5 +363,80 @@ fn hash_same_request_is_deterministic() {
             first, second,
             "same input must produce same digest for algo {algo}",
         );
+    }
+}
+
+/// Hashing the full range of byte values must match the host implementation.
+#[test]
+fn hash_all_byte_values_matches_host() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let msg: Vec<u8> = (0u8..=u8::MAX).collect();
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "all-byte-values hash mismatch for algo {algo}",
+        );
+    }
+}
+
+/// A rejected Hash request must not invalidate or poison the session.
+#[test]
+fn hash_session_usable_after_invalid_algo() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    ctx.expect_fw_reject(
+        &TborHashReq {
+            session_id: session.session_id,
+            algo: u8::MAX,
+            msg: b"invalid request".to_vec(),
+        },
+        TborStatus::InvalidArg,
+    );
+
+    let msg = b"valid request after rejection".to_vec();
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "session must remain usable after rejected request for algo {algo}",
+        );
+    }
+}
+
+/// Verifies consecutive requests of different lengths do not retain hash state.
+#[test]
+fn hash_consecutive_different_length_messages_match_host() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let messages = [
+        vec![0x5a],
+        vec![0xa5; 1000],
+        Vec::new(),
+        vec![0x3c; 17],
+        vec![0xc3; 513],
+    ];
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        for msg in &messages {
+            let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+            assert_eq!(
+                dev,
+                host_digest(algo, msg),
+                "hash mismatch for algo {algo}, message length {}",
+                msg.len(),
+            );
+        }
     }
 }
