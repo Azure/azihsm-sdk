@@ -38,12 +38,9 @@ use super::*;
 /// # Returns
 ///
 /// Returns a tuple containing:
-/// - `HsmKeyHandle` - Unique identifier for the private key within the HSM. Used for
-///   subsequent cryptographic operations like signing.
-/// - `Vec<u8>` - DER-encoded public key that can be shared with other parties for
-///   signature verification or key agreement.
-/// - `HsmMaskedKey` - Encrypted (masked) representation of the private key. Can be used
-///   for backup, migration, or key wrapping operations while maintaining security.
+/// - `HsmKeyHandle` - Identifier for the private key (`Pinned` on MBOR, `Unpinned` on TBOR).
+/// - `HsmKeyProps` - Device-returned private-key properties (usage, curve, masked key).
+/// - `HsmKeyProps` - Device-returned public-key properties (with the DER public key).
 ///
 /// # Errors
 ///
