@@ -100,11 +100,15 @@ mod round_trips {
     use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccKeyGenAlgo;
     use azihsm_api::HsmEccPrivateKey;
+    use azihsm_api::HsmGenericSecretKeyUnmaskAlgo;
+    use azihsm_api::HsmHmacAlgo;
+    use azihsm_api::HsmHmacKeyUnmaskAlgo;
     use azihsm_api::HsmKeyClass;
     use azihsm_api::HsmKeyCommonProps;
     use azihsm_api::HsmKeyKind;
     use azihsm_api::HsmKeyManager;
     use azihsm_api::HsmKeyPropsBuilder;
+    use azihsm_api::HsmSigner;
     use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
@@ -430,6 +434,41 @@ mod round_trips {
         )
         .expect_err("missing IKM must fail");
         assert!(err.contains("requires an IKM"), "unexpected error: {err}");
+
+        // The blobs' properties are the observable contract: unmask each and
+        // check kind, size and usage flags; prove the HMAC key signs.
+        let data = slot
+            .get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?;
+        data.with_session(|session| {
+            let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+            let k = HsmKeyManager::unmask_key(session, &mut unmask, &hmac_blob)
+                .map_err(|e| EngineError::wrap("unmask hmac blob", e))?;
+            assert_eq!(k.kind(), HsmKeyKind::HmacSha384, "hmac kind follows md");
+            assert_eq!(k.bits(), 384);
+            assert!(k.can_sign() && k.can_verify(), "hmac usage flags");
+            crate::context::delete_hsm_key(k, "hkdf test hmac props key");
+
+            let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+            let k = HsmKeyManager::unmask_key(session, &mut unmask, &aes_blob)
+                .map_err(|e| EngineError::wrap("unmask aes blob", e))?;
+            assert_eq!(k.kind(), HsmKeyKind::Aes);
+            assert_eq!(k.bits(), 256);
+            assert!(k.can_encrypt() && k.can_decrypt(), "aes usage flags");
+            crate::context::delete_hsm_key(k, "hkdf test aes props key");
+
+            // Usability: the derived key produces an HMAC tag of the digest
+            // size.
+            let mut unmask = HsmHmacKeyUnmaskAlgo::default();
+            let hk = HsmKeyManager::unmask_key(session, &mut unmask, &hmac_blob)
+                .map_err(|e| EngineError::wrap("unmask hmac key", e))?;
+            let mut algo = HsmHmacAlgo::new();
+            let tag = HsmSigner::sign_vec(&mut algo, &hk, b"hkdf playground tag");
+            crate::context::delete_hsm_key(hk, "hkdf test hmac sign key");
+            let tag = tag.map_err(|e| EngineError::wrap("hmac sign", e))?;
+            assert_eq!(tag.len(), 48, "hmac-sha384 tag size");
+            Ok(())
+        })?;
 
         // Teardown (see run_keygen for the release ordering contract).
         // SAFETY: raw is the owning key from keygen.
