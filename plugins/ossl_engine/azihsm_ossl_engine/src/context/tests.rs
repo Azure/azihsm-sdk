@@ -399,7 +399,27 @@ mod round_trips {
             None,
         )
         .expect_err("hmac/128 must fail");
-        assert!(err.contains("256, 384 or 512"), "unexpected error: {err}");
+        assert!(
+            err.contains("must match the HKDF digest size"),
+            "unexpected error: {err}"
+        );
+        // Digest/bits mismatch: the HMAC kind follows md, so SHA-256 with
+        // 384-bit keys must be rejected.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "384"),
+            ],
+            None,
+        )
+        .expect_err("md/bits mismatch must fail");
+        assert!(
+            err.contains("must match the HKDF digest size"),
+            "unexpected error: {err}"
+        );
         let err = try_hkdf(engine_raw, &[("azihsm.ikm_file", ikm)], None)
             .expect_err("missing md must fail");
         assert!(err.contains("requires md"), "unexpected error: {err}");
