@@ -49,8 +49,13 @@ fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
 }
 
 /// Derived-key props per the provider's rules: AES (encrypt/decrypt) for any
-/// byte-multiple size, HMAC (sign/verify) with the kind selected by the bits.
-fn derived_props(key_type: DerivedKeyType, bits: u32) -> EngineResult<azihsm_api::HsmKeyProps> {
+/// byte-multiple size; for HMAC the key kind follows the HKDF digest (as the
+/// provider derives it from `md`) and the bits must match the digest size.
+fn derived_props(
+    key_type: DerivedKeyType,
+    bits: u32,
+    hash: HsmHashAlgo,
+) -> EngineResult<azihsm_api::HsmKeyProps> {
     let builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .bits(bits);
@@ -60,16 +65,22 @@ fn derived_props(key_type: DerivedKeyType, bits: u32) -> EngineResult<azihsm_api
             .can_encrypt(true)
             .can_decrypt(true),
         DerivedKeyType::Hmac => {
-            let kind = match bits {
-                256 => HsmKeyKind::HmacSha256,
-                384 => HsmKeyKind::HmacSha384,
-                512 => HsmKeyKind::HmacSha512,
-                other => {
-                    return Err(EngineError::Other(format!(
-                        "derived_key_bits for hmac must be 256, 384 or 512, got: {other}"
-                    )));
+            let (kind, expected_bits) = match hash {
+                HsmHashAlgo::Sha256 => (HsmKeyKind::HmacSha256, 256),
+                HsmHashAlgo::Sha384 => (HsmKeyKind::HmacSha384, 384),
+                HsmHashAlgo::Sha512 => (HsmKeyKind::HmacSha512, 512),
+                _ => {
+                    return Err(EngineError::Other(
+                        "unsupported HKDF digest for an hmac derived key".into(),
+                    ));
                 }
             };
+            if bits != expected_bits {
+                return Err(EngineError::Other(format!(
+                    "derived_key_bits for hmac must match the HKDF digest size \
+                     ({expected_bits} for this md), got: {bits}"
+                )));
+            }
             builder.key_kind(kind).can_sign(true).can_verify(true)
         }
     };
@@ -85,7 +96,7 @@ impl HkdfHandler for AzihsmHkdf {
         output_file: Option<&Path>,
     ) -> EngineResult<Option<Zeroizing<Vec<u8>>>> {
         let hash = hash_from_nid(params.md_nid)?;
-        let props = derived_props(params.derived_key_type, params.derived_key_bits)?;
+        let props = derived_props(params.derived_key_type, params.derived_key_bits, hash)?;
 
         let ikm_blob: Zeroizing<Vec<u8>> = match &params.ikm {
             IkmSource::Bytes(bytes) => Zeroizing::new(bytes.to_vec()),
