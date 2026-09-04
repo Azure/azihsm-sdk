@@ -55,7 +55,7 @@ pub(crate) fn aes_generate_key(
     // plus the device-returned masked blob. A V2 (TBOR) session yields an
     // unpinned handle (`Unpinned`); a V1 (MBOR) session a pinned vault id
     // (`Pinned`).
-    let (handle, masked_key) = if session.is_security_domain() {
+    let (handle, masked_key) = if session.is_ex() {
         aes_generate_key_tbor(session, &props)?
     } else {
         aes_generate_key_mbor(session, &props)?
@@ -236,7 +236,7 @@ fn aes_cbc_encrypt_decrypt(
     input: Vec<u8>,
     output: &mut [u8],
 ) -> HsmResult<usize> {
-    if key.session().is_security_domain() {
+    if key.session().is_ex() {
         aes_cbc_encrypt_decrypt_tbor(key, op, iv, &input, output)
     } else {
         aes_cbc_encrypt_decrypt_mbor(key, op, iv, &input, output)
