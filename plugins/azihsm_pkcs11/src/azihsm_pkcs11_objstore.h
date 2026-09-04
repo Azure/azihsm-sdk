@@ -4,6 +4,7 @@
 #pragma once
 
 #include "azihsm_pkcs11_compat.h"
+#include "azihsm_pkcs11_config.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -20,11 +21,12 @@ extern "C"
  * the opaque AZIHSM masked blob as the key body; it deals in CK_RV only and never
  * calls the HSM.
  *
- * The in-memory backend (azihsm_pkcs11_objstore_mem.c) is the only implementation today. A
- * persistent backend (file/DB, plus the SDK resiliency storage) will implement
- * the same ops and set `persist`; the framework callers do not change when the
- * backend is swapped — construction picks the backend, everything else goes
- * through `ops`/`ctx`.
+ * Two backends implement the seam: the in-memory backend
+ * (azihsm_pkcs11_objstore_mem.c), the default, whose objects do not survive
+ * C_Finalize, and the persistent file backend (azihsm_pkcs11_objstore_file.c),
+ * opt-in via AZIHSM_PKCS11_PERSIST, which writes token objects through to disk.
+ * The framework callers do not change when the backend is swapped —
+ * construction picks the backend, everything else goes through `ops`/`ctx`.
  */
 
 typedef struct azihsm_pkcs11_objstore_ops azihsm_pkcs11_objstore_ops;
@@ -97,12 +99,37 @@ struct azihsm_pkcs11_objstore_ops
      const CK_BYTE *blob,
      CK_ULONG len);
 
+    /*
+     * Retrieve a key object's masked-blob body (the input to azihsm_key_unmask).
+     * Two-call sizing: with blob == NULL, *len receives the body length; a
+     * length of 0 means the object carries no body. The body is internal to the
+     * module and is never exposed through C_GetAttributeValue.
+     */
+    CK_RV(*get_key_body)
+    (void *ctx,
+     CK_SLOT_ID slot,
+     CK_BBOOL user_logged_in,
+     CK_OBJECT_HANDLE h,
+     CK_BYTE *blob,
+     CK_ULONG *len);
+
     void (*teardown)(void *ctx); /* free the whole store (C_Finalize) */
     CK_RV (*persist)(void *ctx); /* NULL on the in-memory backend */
 };
 
 /* Construct the in-memory backend into `out`. */
 CK_RV azihsm_pkcs11_objstore_mem_create(azihsm_pkcs11_objstore *out);
+
+/*
+ * Construct the persistent file backend into `out`, rooted at cfg->store_dir.
+ * Objects are written through to disk so token objects survive a process restart
+ * and are visible to other processes sharing the directory
+ * (azihsm_pkcs11_objstore_file.c).
+ */
+CK_RV azihsm_pkcs11_objstore_file_create(
+    azihsm_pkcs11_objstore *out,
+    const azihsm_pkcs11_config *cfg
+);
 
 #ifdef __cplusplus
 }

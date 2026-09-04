@@ -116,7 +116,16 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     g_azihsm_pkcs11.slot_count = 0;
     g_azihsm_pkcs11.next_session_handle = 1;
 
-    CK_RV rv = azihsm_pkcs11_objstore_mem_create(&g_azihsm_pkcs11.store);
+    /* Load module config (env-driven) before building the store: the persistent
+     * file backend is opt-in via AZIHSM_PKCS11_PERSIST and needs its root dir;
+     * unset keeps the in-memory backend, so the default path is unchanged. */
+    azihsm_pkcs11_config cfg;
+    azihsm_pkcs11_config_load(&cfg);
+    CK_RV rv = cfg.store_persist ? azihsm_pkcs11_objstore_file_create(&g_azihsm_pkcs11.store, &cfg)
+                                 : azihsm_pkcs11_objstore_mem_create(&g_azihsm_pkcs11.store);
+    /* The config carries credential and OBK bytes and is only needed to select
+     * and seed the store; wipe it before any return (error paths included). */
+    azihsm_pkcs11_config_clear(&cfg);
     if (rv != CKR_OK)
     {
         azihsm_pkcs11_unlock();
@@ -177,6 +186,14 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
     azihsm_pkcs11_hsm_close_all();
     if (g_azihsm_pkcs11.store.ctx != NULL)
     {
+        /* Flush the store before tearing it down. Backends that write through
+         * (or hold nothing durable) have nothing to do; persist is NULL on the
+         * in-memory backend. It is a barrier, so its result does not change the
+         * C_Finalize outcome. */
+        if (g_azihsm_pkcs11.store.ops->persist != NULL)
+        {
+            (void)g_azihsm_pkcs11.store.ops->persist(g_azihsm_pkcs11.store.ctx);
+        }
         g_azihsm_pkcs11.store.ops->teardown(g_azihsm_pkcs11.store.ctx);
         g_azihsm_pkcs11.store.ctx = NULL;
     }

@@ -63,6 +63,9 @@ set(AZIHSM_PKCS11_SOURCES
     ./src/azihsm_pkcs11_slot.c
     ./src/azihsm_pkcs11_session.c
     ./src/azihsm_pkcs11_objstore_mem.c
+    ./src/azihsm_pkcs11_objstore_file.c
+    ./src/azihsm_pkcs11_store_io.c
+    ./src/azihsm_pkcs11_store_record.c
     ./src/azihsm_pkcs11_config.c
     ./src/azihsm_pkcs11_status.c
     ./src/azihsm_pkcs11_hsm.c
