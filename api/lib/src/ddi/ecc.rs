@@ -204,7 +204,8 @@ fn ecc_public_props_for(dev_pub: &HsmKeyProps, priv_props: &HsmKeyProps) -> HsmK
 /// curve's component length, so each half is reversed and its leading
 /// zero padding removed.
 fn ecc_wire_pub_key_to_der(curve: HsmEccCurve, wire: &[u8]) -> HsmResult<Vec<u8>> {
-    if wire.is_empty() || wire.len() % 2 != 0 {
+    // Check if the wire length is valid for the curve
+    if !wire.len().is_multiple_of(2) {
         return Err(HsmError::InternalError);
     }
     let coord = curve.component_size();
@@ -358,7 +359,8 @@ fn ecc_sign_tbor(
 /// and zero-padded to the wire coordinate length) into big-endian `r ‖ s`
 /// of the curve's component length, matching the MBOR signature format.
 fn tbor_sig_to_be(curve: HsmEccCurve, wire_sig: &[u8], out: &mut [u8]) -> HsmResult<usize> {
-    if wire_sig.is_empty() || wire_sig.len() % 2 != 0 {
+    // Check if the wire signature length is valid for the curve. Each component (r and s) should be of equal length, and the total length should be even.
+    if !wire_sig.len().is_multiple_of(2) {
         return Err(HsmError::InternalError);
     }
     let coord = curve.component_size();
