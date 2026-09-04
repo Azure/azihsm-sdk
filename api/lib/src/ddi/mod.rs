@@ -96,6 +96,8 @@ const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 ///
 /// All remaining `DdiError` variants are logged and collapsed into
 /// `HsmError::DdiCmdFailure`.
+///
+/// Every `TborStatus::Crypto*`/`CryptoCpt*` CPT (`CryptoController`)/// status is mapped 1:1 to its own `HsmError` variant of the same name,/// mirroring the FW-side range verbatim.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
         match err {
@@ -138,6 +140,78 @@ impl From<DdiError> for HsmError {
             // `InvalidArgument` the host guards return, so callers see a
             // consistent argument-rejection error across transports.
             DdiError::TborStatus(TborStatus::InvalidArg) => HsmError::InvalidArgument,
+            DdiError::TborStatus(TborStatus::CryptoNotInitialized) => {
+                HsmError::CryptoNotInitialized
+            }
+            DdiError::TborStatus(TborStatus::CryptoBufferTooSmall) => {
+                HsmError::CryptoBufferTooSmall
+            }
+            DdiError::TborStatus(TborStatus::CryptoInputTooLarge) => HsmError::CryptoInputTooLarge,
+            DdiError::TborStatus(TborStatus::CryptoInvalidAlg) => HsmError::CryptoInvalidAlg,
+            DdiError::TborStatus(TborStatus::CryptoTimeout) => HsmError::CryptoTimeout,
+            DdiError::TborStatus(TborStatus::CryptoUnalignedCptr) => HsmError::CryptoUnalignedCptr,
+            DdiError::TborStatus(TborStatus::CryptoInvalidArg) => HsmError::CryptoInvalidArg,
+            DdiError::TborStatus(TborStatus::CryptoInvalidIvLength) => {
+                HsmError::CryptoInvalidIvLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidKeyLength) => {
+                HsmError::CryptoInvalidKeyLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidDataLength) => {
+                HsmError::CryptoInvalidDataLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidContextLength) => {
+                HsmError::CryptoInvalidContextLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidPartialContext) => {
+                HsmError::CryptoInvalidPartialContext
+            }
+            DdiError::TborStatus(TborStatus::CryptoUnsupportedMode) => {
+                HsmError::CryptoUnsupportedMode
+            }
+            DdiError::TborStatus(TborStatus::CryptoUnalignedBuffer) => {
+                HsmError::CryptoUnalignedBuffer
+            }
+            DdiError::TborStatus(TborStatus::CryptoNotSupported) => HsmError::CryptoNotSupported,
+            DdiError::TborStatus(TborStatus::CryptoHardwareError) => HsmError::CryptoHardwareError,
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrModLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrModLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrExpLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrExpLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrDataLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrDataLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrDataLenInvalid) => {
+                HsmError::CryptoCptGcUcErrDataLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrCipherUnsupported) => {
+                HsmError::CryptoCptGcUcErrCipherUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrAuthUnsupported) => {
+                HsmError::CryptoCptGcUcErrAuthUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrHashModeUnsupported) => {
+                HsmError::CryptoCptGcUcErrHashModeUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrIcvMiscompare) => {
+                HsmError::CryptoCptGcUcErrIcvMiscompare
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrKeyLenInvalid) => {
+                HsmError::CryptoCptGcUcErrKeyLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrPkcsDecoding) => {
+                HsmError::CryptoCptRsaUcErrPkcsDecoding
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrPkcsSignatureInvalid) => {
+                HsmError::CryptoCptRsaUcErrPkcsSignatureInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptFault) => HsmError::CryptoCptFault,
+            DdiError::TborStatus(TborStatus::CryptoCptSwErr) => HsmError::CryptoCptSwErr,
+            DdiError::TborStatus(TborStatus::CryptoCptHwErr) => HsmError::CryptoCptHwErr,
+            DdiError::TborStatus(TborStatus::CryptoCptInstErr) => HsmError::CryptoCptInstErr,
+            DdiError::TborStatus(TborStatus::CryptoCptSwWarn) => HsmError::CryptoCptSwWarn,
             _ => {
                 tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");
                 HsmError::DdiCmdFailure

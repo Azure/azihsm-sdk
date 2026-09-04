@@ -68,6 +68,47 @@ pub enum HsmError {
     SdAlreadyInitialized = -43,
     SdPeerCloningNotAllowed = -44,
     UnsupportedKeyOperation = -45,
+
+    // -- CPT (CryptoController) host-facing errors ----------
+    // 1:1 mirror of the TborStatus/HsmError (FW) CPT range.
+
+    // Software validation / PAL / runtime errors.
+    CryptoNotInitialized = -46,
+    CryptoBufferTooSmall = -47,
+    CryptoInputTooLarge = -48,
+    CryptoInvalidAlg = -49,
+    CryptoTimeout = -50,
+    CryptoUnalignedCptr = -51,
+    CryptoInvalidArg = -52,
+    CryptoInvalidIvLength = -53,
+    CryptoInvalidKeyLength = -54,
+    CryptoInvalidDataLength = -55,
+    CryptoInvalidContextLength = -56,
+    CryptoInvalidPartialContext = -57,
+    CryptoUnsupportedMode = -58,
+    CryptoUnalignedBuffer = -59,
+    CryptoNotSupported = -60,
+    CryptoHardwareError = -61,
+
+    // CPT hardware completion codes.
+    CryptoCptRsaUcErrModLenInvalid = -62,
+    CryptoCptRsaUcErrExpLenInvalid = -63,
+    CryptoCptRsaUcErrDataLenInvalid = -64,
+    CryptoCptGcUcErrDataLenInvalid = -65,
+    CryptoCptGcUcErrCipherUnsupported = -66,
+    CryptoCptGcUcErrAuthUnsupported = -67,
+    CryptoCptGcUcErrHashModeUnsupported = -68,
+    CryptoCptGcUcErrIcvMiscompare = -69,
+    CryptoCptGcUcErrKeyLenInvalid = -70,
+    CryptoCptRsaUcErrPkcsDecoding = -71,
+    CryptoCptRsaUcErrPkcsSignatureInvalid = -72,
+
+    // CPT completion status errors.
+    CryptoCptFault = -73,
+    CryptoCptSwErr = -74,
+    CryptoCptHwErr = -75,
+    CryptoCptInstErr = -76,
+    CryptoCptSwWarn = -77,
     Panic = i32::MIN,
 }
 
