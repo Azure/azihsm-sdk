@@ -121,11 +121,23 @@ impl<M> MethodTable<M> {
         self.entries().lock().retain(|(k, _), _| *k != e);
     }
 
-    /// Resolve `(e, nid)`. `None` means no builder was registered for the
-    /// NID or building a throwaway failed.
+    /// Resolve `(e, nid)`. `None` means the NID is not available for this
+    /// engine (unregistered, no builder, or building a throwaway failed).
     fn lookup(&self, e: *mut ffi::ENGINE, nid: c_int) -> Option<Lookup<M>> {
-        if let Some(&m) = self.entries().lock().get(&(e as usize, nid)) {
-            return Some(Lookup::Stored(m as *mut M));
+        let e_addr = e as usize;
+        {
+            let entries = self.entries().lock();
+            if let Some(&m) = entries.get(&(e_addr, nid)) {
+                return Some(Lookup::Stored(m as *mut M));
+            }
+            // A live engine (it still has entries) asking for a NID it never
+            // registered gets no method — a throwaway here would leak and
+            // build contexts without the engine handoff. No entries at all
+            // means the destruction free pass (release drops every entry):
+            // hand the framework a throwaway to free.
+            if entries.keys().any(|(k, _)| *k == e_addr) {
+                return None;
+            }
         }
         let builder = *self.builders().lock().get(&nid)?;
         builder().ok().map(Lookup::Throwaway)
@@ -175,4 +187,66 @@ pub(crate) unsafe fn dispatch<M>(
     // framework frees it at this ENGINE's destruction.
     unsafe { *meth = method };
     rc
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::ptr::NonNull;
+
+    use super::*;
+
+    static NIDS: [c_int; 2] = [101, 102];
+
+    fn build() -> EngineResult<*mut u8> {
+        Ok(Box::into_raw(Box::new(0u8)))
+    }
+
+    // A live engine asking for an unregistered NID gets no method; only an
+    // engine with no live entries left (the destruction free pass) receives
+    // a throwaway.
+    #[test]
+    #[allow(unsafe_code)]
+    fn lookup_denies_unregistered_nid_on_live_engine() {
+        let table: MethodTable<u8> = MethodTable::new(&NIDS);
+        // SAFETY: fresh ENGINEs, freed below; methods are dummy heap bytes
+        // reclaimed via Box::from_raw.
+        unsafe {
+            let raw_a = ffi::ENGINE_new();
+            let raw_b = ffi::ENGINE_new();
+            let engine_a = Engine::from_ptr(NonNull::new(raw_a).unwrap());
+            let engine_b = Engine::from_ptr(NonNull::new(raw_b).unwrap());
+
+            // a registers 101 only; b registers 102, making 102's builder
+            // exist process-wide.
+            table.register(&engine_a, 101, build).unwrap();
+            table.register(&engine_b, 102, build).unwrap();
+
+            let Some(Lookup::Stored(stored_a)) = table.lookup(raw_a, 101) else {
+                unreachable!("registered NID must resolve to the stored entry")
+            };
+            assert!(
+                table.lookup(raw_a, 102).is_none(),
+                "live engine must not get a method for an unregistered NID"
+            );
+
+            // Fully released: the free pass gets throwaways for built NIDs.
+            table.release(&engine_a);
+            let Some(Lookup::Throwaway(throwaway)) = table.lookup(raw_a, 101) else {
+                unreachable!("released engine must get a throwaway")
+            };
+            drop(Box::from_raw(throwaway));
+
+            // Reclaim the dummy methods and engines.
+            drop(Box::from_raw(stored_a));
+            let Some(Lookup::Stored(stored_b)) = table.lookup(raw_b, 102) else {
+                unreachable!("b's entry must still be stored")
+            };
+            table.release(&engine_b);
+            drop(Box::from_raw(stored_b));
+            ffi::ENGINE_free(raw_a);
+            ffi::ENGINE_free(raw_b);
+        }
+    }
 }
