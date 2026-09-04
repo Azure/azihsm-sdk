@@ -11,6 +11,11 @@
 //! * [`part_init_determinism`] — across two cold restarts (via
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
+//! * [`part_init_multi_threaded_single_winner`] — concurrent requests
+//!   race the write-once partition commit; exactly one succeeds and
+//!   every loser observes `PtaKeyAlreadySet`.
+
+use std::sync::Barrier;
 
 use azihsm_crypto::DerEccPublicKey;
 use azihsm_ddi_mbor_sim::attestation::KeyAttester;
@@ -19,6 +24,7 @@ use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
 use azihsm_ddi_mbor_sim::report::CoseSign1Object;
 use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
 use azihsm_ddi_tbor_types::PolicyFlags;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -39,6 +45,9 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
+
+/// `PartState::Initializing` discriminant.
+const PART_STATE_INITIALIZING: u8 = 4;
 
 /// Runs the supplied cleanup function when this value goes out of scope,
 /// including during panic unwinding.
@@ -149,6 +158,69 @@ fn part_init_smoke_roundtrip() {
         .part_init(&session2, &seed, &policy, &thumb)
         .expect_err("second PartInit must be rejected by one-shot state guard");
     assert_fw_rejects(&err, TborStatus::PtaKeyAlreadySet);
+}
+
+/// Concurrent requests share the same active CO session. Firmware publishes
+/// the PartInit metadata and lifecycle transition atomically, so only one
+/// request can commit and every later contender observes the PTA as set.
+#[test]
+fn part_init_multi_threaded_single_winner() {
+    const THREAD_COUNT: usize = 16;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let policy = known_good_part_policy();
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+    let barrier = Barrier::new(THREAD_COUNT);
+
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREAD_COUNT)
+            .map(|_| {
+                let barrier = &barrier;
+                let worker_ctx = &ctx;
+                let handshake = &session;
+                let seed = &seed;
+                let policy = &policy;
+                let thumb = &thumb;
+
+                scope.spawn(move || {
+                    barrier.wait();
+                    worker_ctx.part_init(handshake, seed, policy, thumb)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread must not panic"))
+            .collect()
+    });
+
+    let (winners, rejections): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one concurrent PartInit request must succeed",
+    );
+    assert_eq!(
+        rejections.len(),
+        THREAD_COUNT - 1,
+        "every non-winning PartInit request must be rejected",
+    );
+
+    for err in rejections.into_iter().map(Result::unwrap_err) {
+        assert_fw_rejects(&err, TborStatus::PtaKeyAlreadySet);
+    }
+
+    let part_info = ctx
+        .tbor(&TborPartInfoReq::new())
+        .expect("PartInfo after concurrent PartInit race");
+    assert_eq!(
+        part_info.part_state, PART_STATE_INITIALIZING,
+        "the winning PartInit must leave the partition Initializing",
+    );
 }
 
 /// Verify the PTAReport COSE_Sign1 envelope and cross-bind its
