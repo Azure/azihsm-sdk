@@ -48,6 +48,13 @@ pub struct HmacKey {
     key: Vec<u8>,
 }
 
+impl Drop for HmacKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key.zeroize();
+    }
+}
+
 impl KeySerialization<HmacKey> for HmacKey {
     fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
         Ok(self.key.clone())

@@ -31,7 +31,9 @@ mod open_key;
 mod open_session;
 mod reopen_session;
 mod rsa;
+mod secure_init_bk3;
 mod sessctrl;
+mod set_init_bk3_pin;
 mod set_sealed_bk3;
 mod sha_digest;
 
@@ -67,7 +69,9 @@ pub use open_session::*;
 use pastey::paste;
 pub use reopen_session::*;
 pub use rsa::*;
+pub use secure_init_bk3::*;
 pub use sessctrl::*;
+pub use set_init_bk3_pin::*;
 pub use set_sealed_bk3::*;
 pub use sha_digest::*;
 
@@ -174,6 +178,12 @@ pub enum DdiOp {
 
     /// Set Sealed BK3
     SetSealedBk3 = 1113,
+
+    /// Set Init BK3 PIN (FIPS BK3 secure provisioning, Phase 2)
+    SetInitBk3Pin = 1114,
+
+    /// Secure Init BK3 (FIPS BK3 secure provisioning, Phase 4)
+    SecureInitBk3 = 1115,
 
     /// SHA Digest
     ShaDigest = 2006,
@@ -817,6 +827,22 @@ pub enum DdiStatus {
     /// AES Key Wrap unwrap operation failed (IV/AIV mismatch or
     /// underlying AES failure)
     AesUnwrapFailed = 141557977,
+
+    // Note: 141557978..=141557991 (0x087000DA..=0x087000E7) are reserved; do not reuse.
+    /// BK3 PIN already set (Phase 2 is one-shot per partition)
+    Bk3PinAlreadySet = 141557992,
+
+    /// BK3 PIN not set (Phase 4 requires Phase 2 to have completed)
+    Bk3PinNotSet = 141557993,
+
+    /// BK3 PIN credential tag mismatch (Phase 2 / Phase 4 HMAC verification failed)
+    Bk3PinTagMismatch = 141557994,
+
+    /// BK3 transport integrity tag mismatch (Phase 4 K2_hmac verification failed)
+    Bk3TransportTagMismatch = 141557995,
+
+    /// Seal op attempted before a successful secure_init_bk3 (Phase 4)
+    Bk3NotSecurelyProvisioned = 141557996,
 }
 
 /// DDI Key Class
@@ -980,7 +1006,9 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::OpenSession
             | DdiOp::InitBk3
             | DdiOp::GetSealedBk3
-            | DdiOp::SetSealedBk3 => DdiSessionKind::None,
+            | DdiOp::SetSealedBk3
+            | DdiOp::SetInitBk3Pin
+            | DdiOp::SecureInitBk3 => DdiSessionKind::None,
 
             _ => DdiSessionKind::User,
         }
