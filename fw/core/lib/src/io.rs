@@ -248,16 +248,42 @@ impl<P: HsmPal> Hsm<P> {
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
-            let dispatch_result = match Self::validate_session(
-                &hdr,
-                session_ctrl,
-                params.session_flags,
-                params.sqe_session_id,
-            )
-            .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
-            {
-                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
-                Err(e) => Err(e),
+            // The decoder borrows the request buffer, so it is scoped:
+            // the borrow has to end before the buffer can be handed to
+            // the platform below.
+            let core_result = {
+                let mut decoder = decoder;
+                match Self::validate_session(
+                    &hdr,
+                    session_ctrl,
+                    params.session_flags,
+                    params.sqe_session_id,
+                )
+                .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
+                {
+                    Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+                    Err(e) => Err(e),
+                }
+            };
+            // `UnsupportedCmd` means no core handler claimed this
+            // opcode. Offer the untouched request to the platform before
+            // giving up; its answer, including its own `UnsupportedCmd`,
+            // is what the host sees.
+            //
+            // A handler for a *known* opcode can also return this status
+            // — `rsa_unwrap` does for an unsupported key type — so the
+            // hook may occasionally be offered a request the core did
+            // recognise. That is harmless as long as a platform claims
+            // only opcodes the core has no handler for, which is the
+            // documented contract; the alternative, duplicating the
+            // opcode table here to distinguish the two, would rot.
+            let dispatch_result = match core_result {
+                Err(HsmError::UnsupportedCmd) => self
+                    .pal()
+                    .mbor_dispatch(io, &mut req_buf[..params.src_len])
+                    .await
+                    .map(ddi::mbor::DispatchResult::from_resp),
+                other => other,
             };
 
             // Fill the CQE session fields so the host can track the session
