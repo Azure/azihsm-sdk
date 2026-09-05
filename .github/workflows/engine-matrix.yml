@@ -69,18 +69,31 @@ jobs:
           # archive.ubuntu.com is round-robin DNS; retry so a single dead IP
           # doesn't fail the job.
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
-          # Debian 11 oldstable's security pool deletes superseded point-release
-          # .debs as soon as a newer one lands, but CDN edges serving the index
-          # lag, so `apt-get install` can 404 on a version the index still lists.
-          # Wipe the index and retry the whole update+install so a mid-sync
-          # window recovers instead of failing the job.
+          # Debian 11 is oldstable: its bullseye-security pool purges superseded
+          # point-release .debs immediately, and a deb.debian.org Fastly edge can
+          # serve an internally-stale index (the same edge keeps returning
+          # deleted versions -> 404), which same-mirror retry cannot fix. So try
+          # the normal mirror first, then fall back to snapshot.debian.org, which
+          # retains every historical .deb and gives a consistent, 404-free view.
+          # Use http so the fallback does not need ca-certificates pre-installed.
+          use_snapshot() {
+            ts="$(date -u -d 'yesterday' +%Y%m%dT000000Z)"
+            echo "Pinning apt sources to snapshot.debian.org @ ${ts}" >&2
+            {
+              echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${ts}/ bullseye main"
+              echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${ts}/ bullseye-security main"
+              echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${ts}/ bullseye-updates main"
+            } > /etc/apt/sources.list
+          }
           apt_install() {
             for attempt in 1 2 3; do
               rm -rf /var/lib/apt/lists/*
-              apt-get update --error-on=any \
-                && apt-get install -y --no-install-recommends "$@" \
-                && return 0
-              echo "apt attempt ${attempt} failed; refreshing index and retrying" >&2
+              if apt-get update && apt-get install -y --no-install-recommends "$@"; then
+                return 0
+              fi
+              echo "apt attempt ${attempt} failed" >&2
+              # After the first failure, pin to snapshot for a consistent index.
+              use_snapshot
               sleep 15
             done
             return 1
