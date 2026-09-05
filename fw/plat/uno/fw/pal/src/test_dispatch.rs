@@ -16,9 +16,19 @@
 //! Nothing above the PAL knows any of this exists: the opcode is in no
 //! core table, the wire types are in no core crate, and `mcr_test_action`
 //! — the feature that turns the command on — is declared in this crate
-//! alone. Without it the whole module is compiled out and the hook keeps
-//! its default `UnsupportedCmd`, so a production build answers exactly
-//! as it would if the hook had never been added.
+//! alone. Without it this module is compiled out and uno's
+//! `mbor_dispatch` rejects every opcode, so a production build answers
+//! exactly as it would if the hook had never been added.
+//!
+//! # `TestAction` is an in-session command
+//!
+//! The core classifies any opcode it does not know as
+//! `DdiSessionKind::User`, and the IO layer runs session validation
+//! before dispatch. So a `TestAction` sent without a live session fails
+//! that check and never reaches this module — it surfaces as a session
+//! error rather than anything from here. `mcr-hsm`'s host-side callers
+//! already open a session first, so this is a constraint to know about
+//! rather than one to work around.
 //!
 //! # Wire compatibility
 //!

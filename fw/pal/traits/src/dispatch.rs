@@ -38,6 +38,21 @@
 //! signature away from mainline's, and any second copy of the opcode
 //! table needed to distinguish the two cases would rot.
 //!
+//! # The hook sits behind the IO layer's session checks
+//!
+//! For **MBOR** the request has already cleared `validate_session` and
+//! `validate_session_live` by the time the hook is reached, and an
+//! opcode the core does not know is classified
+//! `DdiSessionKind::User` — the fall-through arm of
+//! `From<DdiOp> for DdiSessionKind`. A custom MBOR command is therefore
+//! **an in-session command whether or not it wants to be**: sent without
+//! a live session it fails session validation and surfaces as that
+//! error, never reaching the hook. Host tooling must open a session
+//! first, which is what `mcr-hsm`'s `TestAction` callers already do.
+//!
+//! For **TBOR** the hook is consulted before any gating, so no such
+//! precondition applies.
+//!
 //! # Everything about such a command stays below the PAL
 //!
 //! MBOR and TBOR are host **API contracts**, and the layering runs
