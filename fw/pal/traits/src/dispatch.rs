@@ -40,18 +40,30 @@
 //!
 //! # The hook sits behind the IO layer's session checks
 //!
-//! For **MBOR** the request has already cleared `validate_session` and
-//! `validate_session_live` by the time the hook is reached, and an
-//! opcode the core does not know is classified
-//! `DdiSessionKind::User` — the fall-through arm of
-//! `From<DdiOp> for DdiSessionKind`. A custom MBOR command is therefore
-//! **an in-session command whether or not it wants to be**: sent without
-//! a live session it fails session validation and surfaces as that
-//! error, never reaching the hook. Host tooling must open a session
-//! first, which is what `mcr-hsm`'s `TestAction` callers already do.
+//! Both protocols validate session shape before the hook is reached, and
+//! an unknown opcode is classified by a fall-through arm in each. The
+//! two arms disagree, so the preconditions are **opposite** — this is
+//! the detail most likely to cost an implementer an afternoon.
 //!
-//! For **TBOR** the hook is consulted before any gating, so no such
-//! precondition applies.
+//! **MBOR** — an opcode the core does not know is classified
+//! `DdiSessionKind::User` (the `_` arm of `From<DdiOp> for
+//! DdiSessionKind`), and `validate_session` / `validate_session_live`
+//! run before dispatch. A custom MBOR command is therefore **an
+//! in-session command whether or not it wants to be**: sent without a
+//! live session it fails validation and surfaces as that error, never
+//! reaching the hook. `mcr-hsm`'s `TestAction` callers already open a
+//! session first.
+//!
+//! **TBOR** — an unknown opcode is classified `SessionCtrl::NoSession`
+//! (the `_` arm of `SessionCtrl::from_tbor_opcode`), and
+//! `handle_tbor_op` runs `validate_tbor_session_flags` before
+//! `ddi::tbor::dispatch`. A custom TBOR command must therefore be sent
+//! with **sessionless SQE flags** — `ctrl == NoSession` and
+//! `id_valid` clear — or it is rejected with `InvalidArg` before the
+//! hook. The reverse of the MBOR rule.
+//!
+//! In both cases the failure is misleading: it looks like a session
+//! problem rather than anything to do with the custom command.
 //!
 //! # Everything about such a command stays below the PAL
 //!

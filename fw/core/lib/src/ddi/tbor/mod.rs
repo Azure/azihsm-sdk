@@ -439,9 +439,13 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
     // is how test-only commands are added without appearing in the core
     // opcode table. The hook runs only after `is_known_opcode` has
     // failed, so it can never shadow a real command, and it sees the
-    // request untouched because nothing has been parsed yet. It also
-    // runs ahead of the gating below, so a TBOR hook has no session
-    // precondition — unlike the MBOR one.
+    // request untouched because nothing has been parsed yet.
+    //
+    // It runs ahead of the gating below, but not ahead of
+    // `handle_tbor_op`'s `validate_tbor_session_flags`: an unknown
+    // opcode is classified `SessionCtrl::NoSession`, so a custom TBOR
+    // command must arrive with sessionless SQE flags or it is rejected
+    // before reaching here.
     if !is_known_opcode(opcode) {
         let resp = pal.tbor_dispatch(io, opcode, req_buf).await?;
         return Ok(DispatchResult {
