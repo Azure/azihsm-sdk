@@ -24,6 +24,7 @@ use azihsm_fw_core_crypto_key_masking::aead::masked_blob_len;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::AesKeySize;
+use azihsm_fw_ddi_tbor_types::KeyUsage;
 use azihsm_fw_ddi_tbor_types::TborAesGenerateKeyReq;
 use azihsm_fw_ddi_tbor_types::TborAesGenerateKeyResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -42,9 +43,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
-const AES_KEY_LABEL: &[u8] = b"AesKey";
-
 /// Map the wire [`AesKeySize`] onto the key length (bytes) and the AES
 /// vault kind stamped into the masked blob's metadata.  An unrecognized
 /// discriminant is rejected with [`HsmError::InvalidArg`].
@@ -58,15 +56,19 @@ fn aes_size_kind(size: AesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
 }
 
 /// Attributes recorded in the masked blob's metadata (re-applied on
-/// unmask).  A generated AES key is a `C_Encrypt` / `C_Decrypt` symmetric
-/// key created on-device; `scope` records the lifecycle / visibility
-/// domain selecting the masking key.
-fn aes_key_attrs(scope: HsmKeyScope) -> HsmVaultKeyAttrs {
-    HsmVaultKeyAttrs::new()
+/// unmask), derived from the host-requested [`KeyUsage`].  A generated AES
+/// key carries exactly `ENCRYPT | DECRYPT` (mirrors MBOR
+/// `key_attrs::for_aes`); any other usage is rejected.  `scope` records
+/// the lifecycle / visibility domain selecting the masking key.
+fn aes_key_attrs(scope: HsmKeyScope, usage: KeyUsage) -> HsmResult<HsmVaultKeyAttrs> {
+    if usage.bits() != (KeyUsage::ENCRYPT | KeyUsage::DECRYPT) {
+        return Err(HsmError::InvalidPermissions);
+    }
+    Ok(HsmVaultKeyAttrs::new()
         .with_local(true)
         .with_encrypt(true)
         .with_decrypt(true)
-        .with_scope(scope)
+        .with_scope(scope))
 }
 
 /// Handle a TBOR `AesGenerateKey` request.
@@ -100,6 +102,9 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     }
 
     let (key_len, kind) = aes_size_kind(req.key_size())?;
+    // Caller-supplied label stamped into the masked metadata (≤ 32 B,
+    // bounded by the wire `max_len`); empty for an unlabeled key.
+    let caller_label = req.key_label();
     // The masked-blob length is fixed by the key length (16 / 24 / 32 B →
     // 148 / 156 / 164 B), so the response slot can be reserved up front,
     // before any key material exists.
@@ -109,7 +114,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // re-import): SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
     let svn = part_state::part_mfgr_svn(pal);
     let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
-    let attrs = aes_key_attrs(scope);
+    let attrs = aes_key_attrs(scope, req.key_usage())?;
 
     // Build the response with the masked-key slot reserved (no copy at
     // encode time).
@@ -133,8 +138,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             // contract that scope failures happen before keygen, and so no
             // early return can leave a raw key sitting in DMA scratch.
             let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
-            let key_label = alloc.dma_alloc(AES_KEY_LABEL.len())?;
-            key_label.copy_from_slice(AES_KEY_LABEL);
+            let key_label = alloc.dma_alloc(caller_label.len())?;
+            key_label.copy_from_slice(caller_label);
             let params = MaskParams {
                 key_kind: kind,
                 key_attrs: attrs,

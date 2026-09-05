@@ -34,6 +34,8 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
@@ -71,6 +73,8 @@ pub(crate) fn generate_key(ctx: &TestCtx, session_id: u16, scope: u8, size: u8) 
         session_id,
         scope,
         key_size: size,
+        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        key_label: "AES Key".as_bytes().to_vec(),
     };
     ctx.tbor(&req).expect("AesGenerateKey").masked_key
 }
@@ -140,6 +144,8 @@ fn aes_generate_key_rejects_security_domain_scope_emu() {
         session_id: session.session_id,
         scope: SCOPE_SECURITY_DOMAIN,
         key_size: AES_KEY_SIZE_256,
+        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        key_label: "AES Key".as_bytes().to_vec(),
     };
     ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
 }
@@ -155,6 +161,8 @@ fn aes_generate_key_rejects_ephemeral_before_finalize_emu() {
         session_id: session.session_id,
         scope: SCOPE_EPHEMERAL,
         key_size: AES_KEY_SIZE_256,
+        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        key_label: "AES Key".as_bytes().to_vec(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
@@ -169,6 +177,8 @@ fn aes_generate_key_rejects_unknown_size_emu() {
         scope: SCOPE_EPHEMERAL,
         // 0 is not a valid AesKeySize discriminant.
         key_size: 0,
+        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        key_label: "AES Key".as_bytes().to_vec(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }

@@ -158,6 +158,23 @@ impl HsmKeyProps {
         self.flags
     }
 
+    /// Returns the 1-byte TBOR `KeyScope` discriminant for this key
+    /// (mirror of the firmware `HsmKeyScope`): session keys use the
+    /// per-session masking key; persistent keys use the partition-local
+    /// masking key (requires a finalized partition).
+    pub(crate) fn tbor_scope(&self) -> u8 {
+        /// TBOR `KeyScope::Session` discriminant.
+        const TBOR_SCOPE_SESSION: u8 = 1;
+        /// TBOR `KeyScope::Local` discriminant.
+        const TBOR_SCOPE_LOCAL: u8 = 3;
+
+        if self.is_session() {
+            TBOR_SCOPE_SESSION
+        } else {
+            TBOR_SCOPE_LOCAL
+        }
+    }
+
     /// Returns the key class.
     pub fn class(&self) -> HsmKeyClass {
         self.class
