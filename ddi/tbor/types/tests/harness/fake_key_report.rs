@@ -200,11 +200,11 @@ mod tests {
     fn fake_report_wraps_pk_r() {
         let mut pk = [0u8; SEC1_PUB_LEN];
         pk[0] = 0x04;
-        for i in 1..1 + P384_FE_LEN {
-            pk[i] = i as u8;
+        for (offset, byte) in pk[1..1 + P384_FE_LEN].iter_mut().enumerate() {
+            *byte = (offset + 1) as u8;
         }
-        for i in 1 + P384_FE_LEN..SEC1_PUB_LEN {
-            pk[i] = (0xff - i) as u8;
+        for (offset, byte) in pk[1 + P384_FE_LEN..].iter_mut().enumerate() {
+            *byte = (0xff - (offset + 1 + P384_FE_LEN)) as u8;
         }
 
         let bytes = fake_key_report_bytes(&pk, &[0xA5; POLICY_DIGEST_SIZE]);
