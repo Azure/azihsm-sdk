@@ -10,9 +10,33 @@
 //! injection, and similar.
 //!
 //! [`HsmCustomDispatch`] gives the platform one place to intercept an
-//! otherwise-unsupported opcode. The core calls it only *after* its own
-//! opcode match has failed, so a platform hook can never shadow a real
-//! command: if the core knows the opcode, the core handles it.
+//! otherwise-unsupported opcode.
+//!
+//! # When the hook is called, and what that requires of an implementer
+//!
+//! The two protocols reach the hook by different routes, and only one of
+//! them can promise the opcode was unknown.
+//!
+//! **TBOR** consults the hook only when `is_known_opcode` has already
+//! failed, so a TBOR hook genuinely cannot shadow a core command.
+//!
+//! **MBOR** consults the hook when core dispatch returns
+//! [`UnsupportedCmd`](crate::HsmError::UnsupportedCmd). That is normally
+//! the "no handler matched" answer, but it is not exclusively so: a
+//! handler for a *known* opcode may also return it — `rsa_unwrap` does,
+//! for an unsupported key type. So an MBOR hook can occasionally be
+//! offered a request the core did recognise.
+//!
+//! **An implementer must therefore claim by opcode, and claim only
+//! opcodes the core has no handler for.** Matching on the opcode and
+//! returning `UnsupportedCmd` for everything else — as uno's
+//! `test_dispatch` does — satisfies this. A hook that answered
+//! unconditionally would shadow real commands.
+//!
+//! The alternative, a distinct "unknown opcode" signal out of MBOR
+//! dispatch, was considered and rejected: it changes the core's
+//! signature away from mainline's, and any second copy of the opcode
+//! table needed to distinguish the two cases would rot.
 //!
 //! # Everything about such a command stays below the PAL
 //!

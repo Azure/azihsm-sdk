@@ -5,11 +5,13 @@
 //! [`HsmCustomDispatch`](azihsm_fw_hsm_pal_traits::HsmCustomDispatch)
 //! PAL hook.
 //!
-//! The core matches an incoming opcode against its own handlers first.
-//! Only once that match has failed — and before the core answers
-//! `UnsupportedCmd` — is the request offered here, so a hook can never
-//! shadow a real command. This module is where uno adds commands that
-//! exist purely to drive testing.
+//! The core matches an incoming opcode against its own handlers first,
+//! and offers the request here when that yields `UnsupportedCmd`. That
+//! status usually means "no handler matched", but not always — a handler
+//! for a known opcode can return it too — so this module claims strictly
+//! by opcode and answers `UnsupportedCmd` for anything else, which is
+//! what keeps it from shadowing a real command. This is where uno adds
+//! commands that exist purely to drive testing.
 //!
 //! Nothing above the PAL knows any of this exists: the opcode is in no
 //! core table, the wire types are in no core crate, and `mcr_test_action`
