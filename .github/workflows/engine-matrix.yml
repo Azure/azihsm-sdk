@@ -69,6 +69,17 @@ jobs:
           # archive.ubuntu.com is round-robin DNS; retry so a single dead IP
           # doesn't fail the job.
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+          # Debian 11 is EOL and bullseye is being pruned from deb.debian.org;
+          # switch to the immutable snapshot mirrors the debian:11 image ships
+          # as commented sources.list entries. Snapshot Release files age, so
+          # freshness checks are off for those entries only. No-op for the
+          # Ubuntu cell.
+          if grep -qs 'snapshot.debian.org' /etc/apt/sources.list; then
+            sed -i \
+              -e 's|^# deb http://snapshot.debian.org|deb [check-valid-until=no] http://snapshot.debian.org|' \
+              -e '/snapshot\.debian\.org/!s|^deb |# deb |' \
+              /etc/apt/sources.list
+          fi
           # Fail on an unreachable mirror here instead of as a misleading
           # "no installation candidate" at install time.
           apt-get update --error-on=any
