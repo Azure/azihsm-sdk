@@ -9,10 +9,19 @@
 //! `(index, length)` [`CertDescriptor`]s), and an optional prior
 //! `local_mk` backup to restore.
 //!
-//! Both backends carry the chain out of band. The native path previously
-//! sent a placeholder descriptor with no payload because `ddi/nix` had no
-//! OOB transport; it does now, and the firmware consumes the descriptors,
-//! so a placeholder is rejected.
+//! Both backends carry the chain out of band, and the firmware consumes
+//! the descriptors on either. The native path previously sent a
+//! placeholder descriptor with no payload because `ddi/nix` had no OOB
+//! transport; it does now, so a placeholder is no longer a stand-in for
+//! a real chain.
+//!
+//! One case still sends a placeholder deliberately: an empty `certs`
+//! slice, below. The request schema requires at least one
+//! [`CertDescriptor`], so the helper emits a default one and attaches no
+//! OOB payload. That is only useful for tests whose expected rejection
+//! fires *before* `validate_pta_chain` dereferences the page — see
+//! `commands::part_final::fw_rejects`. Anything that reaches the chain
+//! walk must pass real certificates.
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;

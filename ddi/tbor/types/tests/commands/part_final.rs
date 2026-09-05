@@ -20,12 +20,10 @@
 //! wrong lifecycle state and policy mismatch — pass an empty `certs`
 //! slice.
 //!
-//! Two chain-integrity rejects in this file are still
-//! `#[cfg(feature = "emu")]`: `part_final_reject_unanchored_chain_emu`
-//! and `part_final_reject_pta_mismatch_emu`. That gating is now
-//! redundant rather than a coverage gap — [`chain_path`] runs both
-//! scenarios on hardware. Collapsing the duplicates is left to a
-//! follow-up so this PR does not rewrite tests it did not add.
+//! The two chain-integrity rejects that used to live here behind
+//! `#[cfg(feature = "emu")]` now live in [`chain_path`], un-gated. Those
+//! versions assert the specific `TborStatus` rather than calling bare
+//! `expect_err`, which would also have accepted a transport failure.
 //!
 //! The prior-backup acceptance case is intentionally a smoke test. M1.0 has no
 //! public command that consumes a Local-scope masked artifact, so accepting the
@@ -33,13 +31,11 @@
 //! restored. That stronger continuity test must be added when such an API is
 //! available.
 
-// `chain_path` holds the tests written against the out-of-band
-// transport; `fw_rejects` holds the gates that fire before the chain is
-// ever dereferenced. Both run on hardware.
-//
-// `chain_path` overlaps this file in exactly two places — the unanchored
-// chain and PTA-mismatch rejects, which exist here as `_emu`-gated
-// copies. See the module docs above.
+// `chain_path` holds the two chain-integrity rejects — the only cases
+// that need a *well-formed but wrong* chain to reach
+// `validate_pta_chain`. `fw_rejects` holds the gates that fire before
+// the chain is ever dereferenced. Both run on hardware, and neither
+// duplicates a test in this file.
 mod chain_path;
 mod fw_rejects;
 
@@ -328,53 +324,6 @@ fn part_final_reject_policy_mismatch() {
 
     ctx.part_final(&session, &wrong, &[], &[])
         .expect_err("PartFinal with a mismatched policy must be rejected");
-}
-
-/// A PTA chain that is not anchored to the policy `POTAPubKey` must be
-/// rejected: here the chain is rooted at a different CA than the policy's
-/// POTA key, so the anchor requirement is never met.
-#[cfg(feature = "emu")]
-#[test]
-fn part_final_reject_unanchored_chain_emu() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    let init = ctx
-        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
-        .expect("PartInit roundtrip");
-
-    // Certify the (correct) PTA key under a rogue CA that is not the
-    // policy POTA anchor.
-    let rogue = CaKey::generate();
-    let chain = make_pta_chain(&rogue, &pta_pub_from_csr(&init.pta_csr));
-
-    ctx.part_final(&session, &policy, &[], &chain.der_items())
-        .expect_err("a chain not anchored to the policy POTA must be rejected");
-}
-
-/// A POTA-anchored chain whose terminal (PTA) certificate carries a key
-/// other than the partition PTA key must be rejected
-/// (`PartFinalPtaMismatch`).
-#[cfg(feature = "emu")]
-#[test]
-fn part_final_reject_pta_mismatch_emu() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    ctx.part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
-        .expect("PartInit roundtrip");
-
-    // Correctly anchored to POTA, but the PTA cert certifies the wrong
-    // public key (not the partition's PTA).
-    let wrong_pta = CaKey::generate();
-    let chain = make_pta_chain(&pota, &wrong_pta.sec1_pub());
-
-    ctx.part_final(&session, &policy, &[], &chain.der_items())
-        .expect_err("a PTA cert carrying a non-partition key must be rejected");
 }
 
 /// Regression: after `PartFinal` the partition is `Initialized`, and an

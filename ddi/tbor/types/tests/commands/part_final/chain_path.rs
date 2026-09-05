@@ -1,14 +1,30 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! `PartFinal` tests that supply a real PTA certificate chain.
+//! `PartFinal` chain-integrity rejects.
 //!
-//! Every test here carries certificates **out of band**. Both transports
-//! now implement that: `ddi/emu` writes the Metadata Page directly, and
+//! These are the two cases that need a **well-formed but wrong** PTA
+//! chain, so they are the only tests that must reach
+//! `validate_pta_chain` with something for it to reject: a chain not
+//! anchored to the policy's POTA key, and a chain whose terminal
+//! certificate carries the wrong PTA key.
+//!
+//! They assert the specific `TborStatus` rather than calling bare
+//! `expect_err`. That matters more than it looks: these tests began life
+//! `#[cfg(feature = "emu")]` with a bare `expect_err`, which passed
+//! happily while the out-of-band transport was returning a DMA fault —
+//! failing for a reason that had nothing to do with the chain.
+//!
+//! Certificates travel **out of band**, and both transports now
+//! implement that: `ddi/emu` writes the metadata page directly, and
 //! `ddi/nix` hands the items to the driver's data-transfer ioctl, which
 //! DMA-maps them and builds the page in the kernel. So these run on
-//! `emu` **and hardware**. The gates that fire *before* the chain walk
-//! live in [`super::fw_rejects`].
+//! `emu` **and hardware**.
+//!
+//! Everything else about `PartFinal` — the happy path, backup restore,
+//! lifecycle and role gates — lives in [`super`], which also carries a
+//! real chain on both backends. The gates that fire *before* the chain
+//! walk live in [`super::fw_rejects`].
 
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
@@ -37,112 +53,6 @@ fn issue_pta_chain(
         .part_init(session, seed, policy, thumb)
         .expect("PartInit roundtrip");
     make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr))
-}
-
-/// Happy path: `PartInit` then a first-instantiation `PartFinal`
-/// (no prior backup) with a valid POTA-anchored PTA chain returns a
-/// `local_mk_backup` of the pinned length.
-#[test]
-fn part_final_smoke_roundtrip() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    // The partition owner's POTA trust anchor: its public key is bound
-    // into the policy so the chain can be validated against it.
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    let chain = issue_pta_chain(
-        &ctx,
-        &session,
-        &pota,
-        &mach_seed(),
-        &policy,
-        &pota_thumbprint(),
-    );
-
-    let resp = ctx
-        .part_final(&session, &policy, &[], &chain.der_items())
-        .expect("PartFinal roundtrip");
-
-    assert_eq!(
-        resp.local_mk_backup.len(),
-        LOCAL_MK_BACKUP_LEN,
-        "local_mk_backup must be the masked-envelope length",
-    );
-}
-
-/// Restore path: a `local_mk_backup` minted on one (fresh) device is
-/// accepted on a second device that re-initializes with the same machine
-/// seed/owner.  The PTA key is derived deterministically from the seed +
-/// policy, so the same chain re-validates on the second device.
-#[test]
-fn part_final_restore_prev_backup() {
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    let seed = mach_seed();
-    let thumb = pota_thumbprint();
-
-    // First device: mint a backup, then release the device (drops the
-    // process-global test lock so a second device can be opened).
-    let (backup, chain) = {
-        let ctx1 = TestCtx::new();
-        let session1 = bootstrap_rotated_co(&ctx1, &ROTATED_CO_PSK);
-        let chain = issue_pta_chain(&ctx1, &session1, &pota, &seed, &policy, &thumb);
-        let backup = ctx1
-            .part_final(&session1, &policy, &[], &chain.der_items())
-            .expect("PartFinal roundtrip")
-            .local_mk_backup;
-        (backup, chain)
-    };
-    assert_eq!(backup.len(), LOCAL_MK_BACKUP_LEN);
-
-    // Second device, same seed/owner: restore from the prior backup.
-    let ctx2 = TestCtx::new();
-    let session2 = bootstrap_rotated_co(&ctx2, &ROTATED_CO_PSK);
-    ctx2.part_init(&session2, &seed, &policy, &thumb)
-        .expect("PartInit roundtrip");
-    let resp = ctx2
-        .part_final(&session2, &policy, &backup, &chain.der_items())
-        .expect("PartFinal must restore PartLocalMK from a valid prior backup");
-    assert_eq!(
-        resp.local_mk_backup.len(),
-        LOCAL_MK_BACKUP_LEN,
-        "restored backup must be re-masked to the envelope length",
-    );
-}
-
-/// A tampered `prev_local_mk_backup` must be rejected: flipping a byte in
-/// the tag-bound metadata makes the re-derived `PartLocalBMK` unmask fail
-/// the AEAD tag check, so restore must error rather than mint blindly.
-#[test]
-fn part_final_reject_tampered_backup() {
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    let seed = mach_seed();
-    let thumb = pota_thumbprint();
-
-    // First device: mint a backup, then release the test lock.
-    let (mut backup, chain) = {
-        let ctx1 = TestCtx::new();
-        let session1 = bootstrap_rotated_co(&ctx1, &ROTATED_CO_PSK);
-        let chain = issue_pta_chain(&ctx1, &session1, &pota, &seed, &policy, &thumb);
-        let backup = ctx1
-            .part_final(&session1, &policy, &[], &chain.der_items())
-            .expect("PartFinal roundtrip")
-            .local_mk_backup;
-        (backup, chain)
-    };
-
-    // Corrupt the ciphertext/tag region; AEAD verification must fail.
-    let last = backup.len() - 1;
-    backup[last] ^= 0x01;
-
-    let ctx2 = TestCtx::new();
-    let session2 = bootstrap_rotated_co(&ctx2, &ROTATED_CO_PSK);
-    ctx2.part_init(&session2, &seed, &policy, &thumb)
-        .expect("PartInit roundtrip");
-    ctx2.part_final(&session2, &policy, &backup, &chain.der_items())
-        .expect_err("PartFinal with a tampered backup must fail the AEAD tag check");
 }
 
 /// A PTA chain that is not anchored to the policy `POTAPubKey` must be
@@ -194,43 +104,4 @@ fn part_final_reject_pta_mismatch() {
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a PTA cert carrying a non-partition key must be rejected");
     assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
-}
-
-/// Regression: after `PartFinal` the partition is `Initialized`, and an
-/// `Initialized` partition must continue to serve host IO (the dispatch
-/// enable gate includes `Initialized`).  Before that fix any
-/// post-finalize command — here `PartInfo` — was silently dropped as a
-/// "disabled partition".
-#[test]
-fn part_final_partition_serves_io_when_initialized() {
-    use azihsm_ddi_tbor_types::TborPartInfoReq;
-
-    /// `PartState::Initialized` wire discriminant.
-    const PART_STATE_INITIALIZED: u8 = 5;
-
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
-    let chain = issue_pta_chain(
-        &ctx,
-        &session,
-        &pota,
-        &mach_seed(),
-        &policy,
-        &pota_thumbprint(),
-    );
-
-    ctx.part_final(&session, &policy, &[], &chain.der_items())
-        .expect("PartFinal");
-
-    // The partition is now Initialized; a follow-up command must still be
-    // served rather than dropped as a disabled partition.
-    let info = ctx
-        .tbor(&TborPartInfoReq::new())
-        .expect("PartInfo after PartFinal must be served");
-    assert_eq!(
-        info.part_state, PART_STATE_INITIALIZED,
-        "PartInfo must report Initialized after PartFinal",
-    );
 }
