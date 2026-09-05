@@ -26,8 +26,6 @@
 //! * Tampered `src_remote_backup` → the open's AEAD auth fails → reject.
 //! * Missing OOB evidence → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -203,7 +201,7 @@ fn create_source_backup(
 }
 
 #[test]
-fn sd_reseal_remote_backup_roundtrip_emu() {
+fn sd_reseal_remote_backup_roundtrip() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -211,9 +209,9 @@ fn sd_reseal_remote_backup_roundtrip_emu() {
 
     // Receiver (unseals the source), sender (sealed the source), and
     // destination (the reseal target) SD sealing keys, each attested.
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
 
     // Source backup: BKS3 sealed to the receiver by the sender.
     let src_backup = create_source_backup(
@@ -249,15 +247,15 @@ fn sd_reseal_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_reseal_remote_backup_rerandomizes_emu() {
+fn sd_reseal_remote_backup_rerandomizes() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
 
     let src_backup = create_source_backup(
         &ctx,
@@ -283,15 +281,15 @@ fn sd_reseal_remote_backup_rerandomizes_emu() {
 }
 
 #[test]
-fn sd_reseal_remote_backup_rejects_tampered_src_emu() {
+fn sd_reseal_remote_backup_rejects_tampered_src() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
 
     let mut src_backup = create_source_backup(
         &ctx,
@@ -314,15 +312,15 @@ fn sd_reseal_remote_backup_rejects_tampered_src_emu() {
 }
 
 #[test]
-fn sd_reseal_remote_backup_rejects_missing_oob_emu() {
+fn sd_reseal_remote_backup_rejects_missing_oob() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
 
     let src_backup = create_source_backup(
         &ctx,

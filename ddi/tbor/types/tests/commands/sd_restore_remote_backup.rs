@@ -22,8 +22,6 @@
 //! * One-shot — restore onto an already-initialized SD → `SdAlreadyInitialized`.
 //! * Restore before finalize → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreRemoteBackupReq;
@@ -35,16 +33,15 @@ use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use zerocopy::TryFromBytes;
 
 use crate::commands::part_init::mach_seed;
-use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
 use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
+use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
@@ -69,7 +66,7 @@ struct RemoteBackup {
 
 /// Drive device 1: finalize a backing partition, `CreateSD`, and capture
 /// everything device 2 needs to restore the domain remotely.
-fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> RemoteBackup {
+fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &PotaFixture) -> RemoteBackup {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
@@ -84,15 +81,15 @@ fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> RemoteBackup
     );
 
     let init = ctx
-        .part_init(&session, seed, &policy, &pota_thumbprint())
+        .part_init(&session, seed, &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     let local_mk_backup = ctx
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal")
         .local_mk_backup;
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id, &policy);
     let evidence = build_receiver_evidence(&pid_pub, sata, &report);
     let req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let resp = ctx
@@ -129,10 +126,10 @@ fn restore_remote_req(session_id: u16, backup: &RemoteBackup) -> TborSdRestoreRe
 }
 
 #[test]
-fn sd_restore_remote_backup_roundtrip_emu() {
+fn sd_restore_remote_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
 
     // Device 1: finalize + CreateSD, capturing the remote backup.
     let backup = create_remote_backup(&seed, &sata, &pota);
@@ -142,9 +139,9 @@ fn sd_restore_remote_backup_roundtrip_emu() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let init = ctx
-        .part_init(&session, &seed, &backup.policy, &pota_thumbprint())
+        .part_init(&session, &seed, &backup.policy, pota.thumbprint())
         .expect("PartInit (device 2)");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(
         &session,
         &backup.policy,
@@ -173,10 +170,10 @@ fn sd_restore_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_is_one_shot_emu() {
+fn sd_restore_remote_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
 
     // A single device that has just created its SD is already
     // SD-initialized, so a remote restore on the same incarnation is
@@ -193,13 +190,13 @@ fn sd_restore_remote_backup_is_one_shot_emu() {
         &pota.raw_pub(),
     );
     let init = ctx
-        .part_init(&session, &seed, &policy, &pota_thumbprint())
+        .part_init(&session, &seed, &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id, &policy);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let create_req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let created = ctx
@@ -223,7 +220,7 @@ fn sd_restore_remote_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_rejects_before_finalize_emu() {
+fn sd_restore_remote_backup_rejects_before_finalize() {
     // A partition that has not been finalized is rejected at the lifecycle
     // gate before any evidence or crypto work.
     let ctx = TestCtx::new();

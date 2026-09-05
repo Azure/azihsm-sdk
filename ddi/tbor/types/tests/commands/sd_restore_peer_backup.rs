@@ -77,7 +77,7 @@ fn create_peer_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> PeerBackup {
     let part = finalize_peer_partition(&ctx, seed, sata, pota, true);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
+    let (masked, report) = masked_key_and_report(&ctx, session_id, &part.policy);
     let evidence = build_receiver_evidence(&part.pid_pub, sata, &report);
     let created = ctx
         .tbor_oob(
@@ -184,7 +184,7 @@ fn sd_restore_peer_backup_is_one_shot_emu() {
     let part = finalize_peer_partition(&ctx, &mach_seed(), &sata, &pota, true);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
+    let (masked, report) = masked_key_and_report(&ctx, session_id, &part.policy);
     let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
     let created = ctx
         .tbor_oob(
@@ -234,7 +234,7 @@ fn sd_restore_peer_backup_rejects_without_peer_cloning_emu() {
     let part = finalize_peer_partition(&ctx, &mach_seed(), &sata, &pota, false);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
+    let (masked, report) = masked_key_and_report(&ctx, session_id, &part.policy);
     let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
     let backup = PeerBackup {
         masked_sealing_key: masked,

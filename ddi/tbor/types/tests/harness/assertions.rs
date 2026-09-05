@@ -59,3 +59,23 @@ pub fn assert_fw_rejects(err: &DdiError, expected: TborStatus) {
         other => panic!("expected DdiError::TborStatus({expected:?}), got {other:?}"),
     }
 }
+
+/// Like [`assert_fw_rejects`], but accepts any one of `allowed` as a
+/// match.  Use when a single test drives both emu and hardware backends
+/// and the FW returns a more-specific status on one than the other
+/// (e.g. HW surfaces `EccPointValidationFailed` where emu short-circuits
+/// with `InvalidArg`).
+#[track_caller]
+pub fn assert_fw_rejects_any(err: &DdiError, allowed: &[TborStatus]) {
+    match err {
+        DdiError::TborStatus(status) => {
+            assert!(
+                allowed.contains(status),
+                "FW rejected with unexpected TborStatus: got {status:?} (0x{:08X}), \
+                 expected one of {allowed:?}",
+                status.0,
+            );
+        }
+        other => panic!("expected DdiError::TborStatus one of {allowed:?}, got {other:?}"),
+    }
+}

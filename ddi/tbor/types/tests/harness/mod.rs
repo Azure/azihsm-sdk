@@ -42,6 +42,10 @@ pub mod session;
 pub mod session_guard;
 pub mod x509_fixture;
 
+// Fake report builder for hardware create-sd tests, and also usable
+// from emu tests that want to inject a specific receiver point.
+pub mod fake_key_report;
+
 // Re-export commonly-used schema items so test code doesn't have to
 // import them from `azihsm_ddi_tbor_types` directly when driving
 // negative-path tests through raw `TborSessionOpen*Req` /

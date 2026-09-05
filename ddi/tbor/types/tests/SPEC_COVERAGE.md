@@ -156,6 +156,68 @@ full native certificate-chain validation remains M1.5 work.
 | Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
 | Concurrent valid `PartFinal` requests → exactly one success; every loser gets `InvalidArg` | ✅ | `part_final::part_final_multi_threaded_single_winner` | Runs on emulator and hardware using the same active CO session; the lifecycle transition to `Initialized` is what serialises the race, not any in-FSM flag |
 
+## `SdCreateRemoteBackup` (opcode in-session, gated)
+
+Hardware tests use an unsigned synthetic KeyReport with a structurally valid
+P-384 receiver key. This covers the command contract through report parsing,
+point validation, sealing-key unmasking, HPKE, backup generation, OOB transport,
+and lifecycle/policy gates. Certificate-chain and report-signature authenticity
+remain emulator-only until Manticore enables those checks.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Happy path returns non-zero remote POK, local POK, and SDMK backups at their exact wire lengths | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_roundtrip` | Hardware uses synthetic unsigned KeyReport |
+| One-shot SD creation → `SdAlreadyInitialized` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_is_one_shot` | First create succeeds before retry |
+| Missing OOB report payload → `InvalidArg` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_missing_oob` | Descriptors are present; payload page is absent |
+| Policy does not bind this partition as backup → `InvalidArg` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_non_backing_policy` | Exact initialized policy is replayed |
+| Malformed KeyReport framing → `InvalidArg` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_malformed_report` | Corrupts the report's leading COSE framing byte |
+| Invalid receiver P-384 point → `EccPointValidationFailed` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_invalid_receiver_point` | Valid report structure with zero coordinates |
+| Tampered masked sealing-key authentication tag → `AesGcmDecryptTagDoesNotMatch` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_tampered_sealing_key` | Preserves cleartext metadata and flips the GCM tag |
+| Create before `PartFinal` → `InvalidArg` | ✅ (emu + hw) | `sd_create_remote_backup::sd_create_remote_backup_rejects_before_finalize` | Partition-state gate fires before evidence/key validation |
+| Partition-owner chain is not rooted at policy SATA key → `InvalidArg` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_wrong_sata_anchor_emu` | Authenticity path is not enabled on Manticore |
+| Evidence chains disagree on receiver leaf key → `InvalidArg` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_leaf_key_mismatch_emu` | Authenticity path is not enabled on Manticore |
+| Tampered certificate signature → `X509SignatureInvalid` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_tampered_cert_sig_emu` | Authenticity path is not enabled on Manticore |
+| Tampered KeyReport signature → `InvalidArg` | ✅ (emu) | `sd_create_remote_backup::sd_create_remote_backup_rejects_tampered_report_emu` | Authenticity path is not enabled on Manticore |
+
+## `SdRestoreLocalBackup` (opcode in-session, gated)
+
+The suite is ungated. Restore itself needs no OOB evidence; the setup path uses
+the backend-specific Create Remote Backup fixture to generate the local backups.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Create → reset → restore `PartLocalMK` → local restore returns refreshed non-zero POK and SDMK backups at exact wire lengths | ✅ (emu + hw) | `sd_restore_local_backup::sd_restore_local_backup_roundtrip` | Replays the same machine seed, policy, and `local_mk_backup` after reset |
+| Restore onto an initialized security domain → `SdAlreadyInitialized` | ✅ (emu + hw) | `sd_restore_local_backup::sd_restore_local_backup_is_one_shot` | Create succeeds before restore is rejected |
+| Restore before `PartFinal` → `InvalidArg` | ✅ (emu + hw) | `sd_restore_local_backup::sd_restore_local_backup_rejects_before_finalize` | Lifecycle gate fires before local-backup validation |
+| Tampered local POK backup → `AesGcmDecryptTagDoesNotMatch` | ✅ (emu + hw) | `sd_restore_local_backup::sd_restore_local_backup_rejects_tampered_pok` | Flips the final byte of the masked BKS3 backup |
+
+## `SdRestoreRemoteBackup` (opcode in-session, gated)
+
+The suite is ungated: the emulator uses a real KeyReport, while hardware uses
+the same policy-bound synthetic KeyReport as Create Remote Backup.
+Certificate-chain and report-signature authenticity remain emulator-only until
+Manticore enables those checks.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Create → reset → restore `PartLocalMK` → remote restore returns non-zero local POK and SDMK backups at exact wire lengths | ✅ (emu + hw) | `sd_restore_remote_backup::sd_restore_remote_backup_roundtrip` | Exercises native OOB transport and policy-bound sender report on hardware |
+| Restore onto an initialized security domain → `SdAlreadyInitialized` | ✅ (emu + hw) | `sd_restore_remote_backup::sd_restore_remote_backup_is_one_shot` | Create succeeds before restore is rejected |
+| Restore before `PartFinal` → `InvalidArg` | ✅ (emu + hw) | `sd_restore_remote_backup::sd_restore_remote_backup_rejects_before_finalize` | Lifecycle gate fires before evidence/key validation |
+
+## `SdResealRemoteBackup` (opcode in-session, gated)
+
+The suite is ungated and uses the same backend-specific KeyReport fixture as
+Create Remote Backup. Hardware therefore exercises native OOB transport,
+source HPKE Auth open, destination HPKE Auth seal, and failure handling with
+policy-bound synthetic reports.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Valid source backup is resealed into a distinct, non-zero 161-byte destination backup | ✅ (emu + hw) | `sd_reseal_remote_backup::sd_reseal_remote_backup_roundtrip` | Builds a real source backup with `SdCreateRemoteBackup` before resealing |
+| Repeated reseals of the same source produce different ciphertexts | ✅ (emu + hw) | `sd_reseal_remote_backup::sd_reseal_remote_backup_rerandomizes` | Verifies fresh HPKE ephemeral randomization |
+| Tampered source remote backup is rejected during HPKE Auth open | ✅ (emu + hw) | `sd_reseal_remote_backup::sd_reseal_remote_backup_rejects_tampered_src` | Flips the final source-ciphertext byte while preserving evidence |
+| Missing source and destination OOB evidence payload → `InvalidArg` | ✅ (emu + hw) | `sd_reseal_remote_backup::sd_reseal_remote_backup_rejects_missing_oob` | Descriptors are present; the OOB page is omitted |
+
 ## Default-PSK dispatcher gate (cross-cutting)
 
 The gate (see `fw/core/lib/src/ddi/tbor/mod.rs::dispatch`) rejects
