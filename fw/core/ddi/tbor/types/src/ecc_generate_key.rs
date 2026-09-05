@@ -16,6 +16,11 @@
 //! * `session_id` — TOC-carried session id; cross-checked by the dispatcher.
 //! * `scope` — the [`KeyScope`] whose masking key wraps the private key.
 //! * `curve` — the [`EccCurve`] selecting the NIST curve.
+//! * `key_usage` — the requested `KeyUsage` bitfield, carried as a `u64`
+//!   for headroom; exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is
+//!   valid for a generated ECC private key.
+//! * `key_label` — caller-supplied label recorded in the masked blob's
+//!   metadata (≤ 32 bytes); empty for an unlabeled key.
 //!
 //! Outputs:
 //!
@@ -27,6 +32,7 @@ use azihsm_fw_ddi_tbor_api::tbor;
 use open_enum::open_enum;
 
 use crate::key_props::KeyScope;
+use crate::key_props::KeyUsage;
 
 /// TBOR opcode for `EccGenerateKey`.
 pub const TBOR_OP_ECC_GENERATE_KEY: u8 = 0x17;
@@ -67,7 +73,7 @@ pub enum EccCurve {
 
 /// `EccGenerateKey` request schema.
 #[tbor(opcode = 0x17)]
-pub struct TborEccGenerateKeyReq {
+pub struct TborEccGenerateKeyReq<'a> {
     /// CO/CU session id this request is bound to.
     #[tbor(session_id)]
     pub session_id: SessionId,
@@ -79,6 +85,19 @@ pub struct TborEccGenerateKeyReq {
     /// NIST curve, 1-byte [`EccCurve`].
     #[tbor(U8)]
     pub curve: EccCurve,
+
+    /// Requested key-usage permissions, [`KeyUsage`] bitfield (u64) — see
+    /// the type's `SIGN` / `DERIVE` bits.  Exactly one of `SIGN` (ECDSA)
+    /// or `DERIVE` (ECDH) is valid for a generated ECC private key; the
+    /// handler rejects any other combination.
+    #[tbor(U64)]
+    pub key_usage: KeyUsage,
+
+    /// Caller-supplied key label recorded in the masked blob's
+    /// `MaskedKeyMetadata.key_label`, up to 32 bytes.  Empty for an
+    /// unlabeled key.
+    #[tbor(buffer, max_len = 32)]
+    pub key_label: &'a [u8],
 }
 
 /// `EccGenerateKey` response schema.
@@ -118,10 +137,16 @@ mod tests {
             .unwrap()
             .curve(EccCurve::P384)
             .unwrap()
+            .key_usage(KeyUsage::from_bits(KeyUsage::SIGN))
+            .unwrap()
+            .key_label(b"EccKey")
+            .unwrap()
             .finish();
 
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.curve(), EccCurve::P384);
+        assert_eq!(frame.key_usage(), KeyUsage::from_bits(KeyUsage::SIGN));
+        assert_eq!(frame.key_label(), b"EccKey");
     }
 
     #[test]
