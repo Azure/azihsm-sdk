@@ -69,19 +69,30 @@ jobs:
           # archive.ubuntu.com is round-robin DNS; retry so a single dead IP
           # doesn't fail the job.
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
-          # Fail on an unreachable mirror here instead of as a misleading
-          # "no installation candidate" at install time.
-          apt-get update --error-on=any
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git gnupg \
+          # Debian 11 oldstable's security pool deletes superseded point-release
+          # .debs as soon as a newer one lands, but CDN edges serving the index
+          # lag, so `apt-get install` can 404 on a version the index still lists.
+          # Wipe the index and retry the whole update+install so a mid-sync
+          # window recovers instead of failing the job.
+          apt_install() {
+            for attempt in 1 2 3; do
+              rm -rf /var/lib/apt/lists/*
+              apt-get update --error-on=any \
+                && apt-get install -y --no-install-recommends "$@" \
+                && return 0
+              echo "apt attempt ${attempt} failed; refreshing index and retrying" >&2
+              sleep 15
+            done
+            return 1
+          }
+          apt_install ca-certificates curl git gnupg \
             build-essential pkg-config clang libclang-dev \
             openssl libssl-dev
           curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
             | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
           echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
             > /etc/apt/sources.list.d/nodesource.list
-          apt-get update --error-on=any
-          apt-get install -y --no-install-recommends nodejs
+          apt_install nodejs
 
       # clang + clang-devel provide libclang for bindgen (build.rs).  el8's
       # default nodejs module is Node 10, too old for the JS actions under
