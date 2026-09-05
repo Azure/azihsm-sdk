@@ -290,6 +290,34 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(())
     }
 
+    /// Visits every session-scoped key bound to `session`, passing each
+    /// key's id, kind, and stored material to `f`.
+    ///
+    /// Read-only pre-pass used by callers that must release an external
+    /// mirror of a key (e.g. a bulk-crypto engine slot, addressed by the
+    /// stored handle) before the vault entries are dropped by
+    /// [`delete_by_session`](Self::delete_by_session).
+    pub fn for_each_session_key<F: FnMut(HsmKeyId, HsmVaultKeyKind, &DmaBuf)>(
+        &self,
+        session: u16,
+        mut f: F,
+    ) -> HsmResult<()> {
+        for table in 0..self.storage.table_count() {
+            if !self.storage.is_valid_table(table) {
+                continue;
+            }
+            for slot in 0..ENTRIES_PER_TABLE {
+                let entry = *self.storage.entry(table, slot)?;
+                if !entry.is_free() && entry.session() && entry.session_or_tag() == session {
+                    let key_id = make_key_id(table, slot);
+                    let blob = self.key(key_id)?;
+                    f(key_id, entry.kind(), blob);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Deletes every key in every owned table, zeroing all material.
     pub async fn clear<G: HsmGdmaController>(
         &mut self,
@@ -343,6 +371,18 @@ impl<S: TableStorage> KeyVault<S> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
         Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
+    }
+
+    /// Returns the stored session id for a session-scoped key, or `None`
+    /// for a partition-scoped (tag-addressed) key.
+    ///
+    /// This is the value a session-scoped key was created under; callers
+    /// that mirror the key into an external engine use it to address the
+    /// same key for teardown.
+    pub fn key_session(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry(table, slot)?;
+        Ok(entry.session().then(|| entry.session_or_tag()))
     }
 
     /// Returns the canonical byte length for a key `kind` — the fixed size

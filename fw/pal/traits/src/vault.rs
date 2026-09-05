@@ -471,6 +471,29 @@ pub trait HsmVault {
         attrs: HsmVaultKeyAttrs,
     ) -> HsmResult<HsmKeyId>;
 
+    /// The backend-assigned bulk key id for `key_id`, if it names a bulk key.
+    ///
+    /// Bulk (AES-GCM / XTS) keys are held by a platform bulk-crypto backend
+    /// rather than as material in the vault; the host addresses them by this
+    /// opaque id.  How the id is produced, and how the vault entry relates to
+    /// it, is entirely platform-defined — a platform folds any backend
+    /// registration into its [`vault_key_create`](Self::vault_key_create) /
+    /// [`vault_key_delete`](Self::vault_key_delete) overrides and exposes only
+    /// this lookup to the core.  Platforms without a bulk backend inherit the
+    /// default `Ok(None)`.
+    ///
+    /// # Parameters
+    /// - `io` — caller I/O context (partition scope).
+    /// - `key_id` — the vault handle returned by `vault_key_create`.
+    ///
+    /// # Returns
+    /// - `Ok(Some(bulk_key_id))` — `key_id` is a bulk key.
+    /// - `Ok(None)` — `key_id` is an ordinary vault key, or the platform has
+    ///   no bulk backend.
+    fn bulk_key_id(&self, _io: &impl HsmIo, _key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        Ok(None)
+    }
+
     /// Deletes a single key by ID.
     ///
     /// Idempotent in the sense that a deleted slot becomes available

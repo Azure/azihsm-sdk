@@ -8,6 +8,7 @@
 //     0x2002_F400  DTCM_IO_BUF[32] (64 KB per-IO NonDma scratch)
 //     0x2003_F400  CRASHDUMP_BASE + CORE_RUN_STATUS
 //   0x6100_0000  SRAM              2 MB  (GSRAM: queues, DMA, key vault)
+//   0xA3E0_0000  PSRAM            32 KB  (HSM↔backend IPC rings)
 //   0x4000_2000  TraceMailbox      4 KB  (debug-only)
 //   0xA000_0000  GDMA              4 KB
 //   0xA020_0000  AES               4 KB
@@ -36,6 +37,7 @@
 `include "uart.rdl"
 `include "gsram_map.rdl"
 `include "dtcm_map.rdl"
+`include "psram_map.rdl"
 
 addrmap uno {
     name = "Uno SoC";
@@ -63,6 +65,9 @@ addrmap uno {
 
     // GSRAM — all queues, buffers, stores, vault
     io_gsram IO_GSRAM       @ 0x6100_0000;
+
+    // PSRAM — HSM↔backend IPC rings (Admin-side regions not modelled)
+    psram    PSRAM           @ 0xA3E0_0000;
 
     // DTCM — IO buffers, crashdump, heartbeat
     hsm_dtcm HSM_DTCM      @ 0x2000_0000;
