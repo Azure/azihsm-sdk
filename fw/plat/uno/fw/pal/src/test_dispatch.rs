@@ -243,13 +243,15 @@ fn test_action(req: &DdiTestActionReq) -> HsmResult<Infallible> {
 /// rather than mapped onto a default, so a host asking for something
 /// this firmware does not implement finds out instead of silently
 /// getting a different crash than it asked for.
+///
+/// `empty_loop` is allowed for the whole function rather than on the
+/// `CRASH_HANG` arm: an attribute inside a match arm makes rustfmt brace
+/// that one arm differently from its neighbours, and a spinning core is
+/// the entire point of the hang variant.
+#[allow(clippy::empty_loop)]
 fn trigger_crash(crash_type: u32) -> HsmResult<Infallible> {
     match crash_type {
-        CRASH_HANG =>
-        {
-            #[allow(clippy::empty_loop)]
-            loop {}
-        }
+        CRASH_HANG => loop {},
         CRASH_PANIC | CRASH_EXPLICIT => {
             panic!("crash injected by TestAction::TriggerCrash");
         }

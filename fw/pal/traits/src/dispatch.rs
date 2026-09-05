@@ -4,7 +4,7 @@
 //! Platform hook for commands the core does not implement.
 //!
 //! Both DDI dispatchers reject an opcode they do not recognise with
-//! [`HsmError::UnsupportedCmd`]. That is the right answer for a
+//! [`HsmError::UnsupportedCmd`](crate::HsmError::UnsupportedCmd). That is the right answer for a
 //! production build, but it leaves no way for a platform to add commands
 //! that exist purely to drive testing — crash injection, fault
 //! injection, and similar.
@@ -52,14 +52,20 @@
 //! *inside* the closure is disallowed. Doing the asynchronous work first
 //! and encoding afterwards is therefore the natural shape.
 //!
-//! # Default behaviour
+//! # No default implementations
 //!
-//! Both methods default to [`HsmError::UnsupportedCmd`], so a platform
-//! that adds no test commands — and every production build — behaves
-//! exactly as it did before this hook existed.
+//! Both methods are required. A platform that adds no test commands says
+//! so explicitly by returning [`HsmError::UnsupportedCmd`](crate::HsmError::UnsupportedCmd) — see
+//! `StdHsmPal`, which does exactly that for both protocols.
+//!
+//! Defaults would be shorter, but they make "this platform claims
+//! nothing" the silent outcome of writing no code, which is the wrong
+//! default for a hook whose entire purpose is to let a platform answer
+//! commands the core refuses. Requiring the impl also means adding a
+//! protocol to this trait breaks every platform until each one has
+//! considered it.
 
 use crate::DmaBuf;
-use crate::HsmError;
 use crate::HsmIo;
 use crate::HsmResult;
 
@@ -95,15 +101,7 @@ pub trait HsmCustomDispatch {
     ///   per-IO allocator and valid until the IO completes.
     /// - `Err(HsmError::UnsupportedCmd)` — opcode not handled here
     ///   either; the core surfaces this to the host unchanged.
-    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
-        // The parameters are the trait's contract, not this body's — an
-        // overriding platform uses both. Consumed rather than renamed
-        // to `_io` / `_req` so the documented names survive, and rather
-        // than silenced with `#[allow(unused_variables)]` so static
-        // analysis sees a genuine use.
-        let _ = (io, req);
-        Err(HsmError::UnsupportedCmd)
-    }
+    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf>;
 
     /// Handle a TBOR opcode the core does not implement.
     ///
@@ -128,9 +126,5 @@ pub trait HsmCustomDispatch {
     ///   per-IO allocator and valid until the IO completes.
     /// - `Err(HsmError::UnsupportedCmd)` — opcode not handled here
     ///   either; the core surfaces this to the host unchanged.
-    async fn tbor_dispatch(&self, io: &impl HsmIo, opcode: u8, req: &DmaBuf) -> HsmResult<&DmaBuf> {
-        // See `mbor_dispatch` — consumed, not renamed or silenced.
-        let _ = (io, opcode, req);
-        Err(HsmError::UnsupportedCmd)
-    }
+    async fn tbor_dispatch(&self, io: &impl HsmIo, opcode: u8, req: &DmaBuf) -> HsmResult<&DmaBuf>;
 }

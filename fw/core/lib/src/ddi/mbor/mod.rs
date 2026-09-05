@@ -136,37 +136,33 @@ impl<'p> DispatchResult<'p> {
     }
 }
 
-/// Dispatch a DDI command to its handler.
+/// Dispatch an MBOR command to its handler.
 ///
 /// Returns a [`DispatchResult`] — the encoded response slice plus, for
 /// `OpenSession`, the freshly allocated session id — on success, or a
 /// [`HsmError`] on failure. The slice borrows from `pal`'s per-IO allocator
 /// and is valid until the IO completes.
 ///
+/// An opcode this function does not implement yields
+/// [`HsmError::UnsupportedCmd`]. The caller treats that as its cue to
+/// offer the request to the platform — see
+/// [`HsmCustomDispatch`](azihsm_fw_hsm_pal_traits::HsmCustomDispatch).
+///
 /// This function is `async` because `GetCertificate` calls into
 /// `HsmCertStore::get_cert` which is async.
-/// Dispatch an MBOR command to its core handler.
-///
-/// Returns `Ok(None)` when the opcode is not a core command at all. The
-/// caller then offers the request to the platform — see
-/// [`HsmCustomDispatch`](azihsm_fw_hsm_pal_traits::HsmCustomDispatch).
-/// Signalling this structurally, rather than by returning
-/// `UnsupportedCmd`, is deliberate: `rsa_unwrap` returns that error for
-/// a *known* opcode, so treating it as "not mine" would hand a real
-/// command to the platform and let a hook shadow it.
 pub(crate) async fn dispatch<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
     hdr: &DdiReqHdr,
-) -> HsmResult<Option<DispatchResult<'p>>> {
+) -> HsmResult<DispatchResult<'p>> {
     check_api_rev(hdr)?;
 
     // `OpenSession` is the only command that surfaces a session id (for the
     // CQE), so it returns a fully-formed `DispatchResult`; every other command
     // yields just a response slice that is wrapped below.
     if matches!(hdr.op, DdiOp::OpenSession) {
-        return open_session(pal, io, decoder, hdr).await.map(Some);
+        return open_session(pal, io, decoder, hdr).await;
     }
 
     let resp = match hdr.op {
@@ -200,12 +196,11 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
         DdiOp::AttestKey => attest_key(pal, io, decoder, hdr).await,
-        // Not a core command. The core knows nothing further about it —
-        // not the opcode, not the request shape — so it says only "not
-        // mine" and leaves the decision to the caller.
-        _ => return Ok(None),
+        // Not a core command. The caller offers it to the platform on
+        // seeing this status.
+        _ => Err(HsmError::UnsupportedCmd),
     }?;
-    Ok(Some(DispatchResult::from_resp(resp)))
+    Ok(DispatchResult::from_resp(resp))
 }
 
 /// Encode a DDI response (header + data) in a single pass.
