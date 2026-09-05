@@ -13,11 +13,19 @@
 //! second finalize.
 //!
 //! Backend is selected at compile time by
-//! [`azihsm_ddi::AzihsmDdi::default`]. Emulator runs transfer and validate
-//! each POTA-to-PTA chain; native M1.0 runs send the schema-required
-//! placeholder descriptor because the current firmware intentionally does not
-//! consume certificate OOB data. Tests that specifically validate
-//! certificate-chain integrity are therefore emulator-only until M1.5.
+//! [`azihsm_ddi::AzihsmDdi::default`]. **Both backends now carry the PTA
+//! chain out of band and the firmware consumes it on either**, so the
+//! tests below send real POTA-to-PTA chains on hardware as well as under
+//! the emulator. Only the two rejects that fire before the chain walk —
+//! wrong lifecycle state and policy mismatch — pass an empty `certs`
+//! slice.
+//!
+//! Two chain-integrity rejects in this file are still
+//! `#[cfg(feature = "emu")]`: `part_final_reject_unanchored_chain_emu`
+//! and `part_final_reject_pta_mismatch_emu`. That gating is now
+//! redundant rather than a coverage gap — [`chain_path`] runs both
+//! scenarios on hardware. Collapsing the duplicates is left to a
+//! follow-up so this PR does not rewrite tests it did not add.
 //!
 //! The prior-backup acceptance case is intentionally a smoke test. M1.0 has no
 //! public command that consumes a Local-scope masked artifact, so accepting the
@@ -25,14 +33,13 @@
 //! restored. That stronger continuity test must be added when such an API is
 //! available.
 
-// Hardware out-of-band coverage, kept from the OOB transport work and
-// not yet reconciled with the tests consolidated into this file.
+// `chain_path` holds the tests written against the out-of-band
+// transport; `fw_rejects` holds the gates that fire before the chain is
+// ever dereferenced. Both run on hardware.
 //
-// `chain_path` drives PartFinal with a real certificate chain carried
-// out of band, which the tests below deliberately do not: they send a
-// placeholder descriptor because, until the `ddi/nix` OOB transport
-// landed, no backend could carry a payload. Overlap between the two
-// sets is resolved separately.
+// `chain_path` overlaps this file in exactly two places — the unanchored
+// chain and PTA-mismatch rejects, which exist here as `_emu`-gated
+// copies. See the module docs above.
 mod chain_path;
 mod fw_rejects;
 
