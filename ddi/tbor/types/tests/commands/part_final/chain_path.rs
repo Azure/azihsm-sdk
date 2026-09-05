@@ -27,7 +27,6 @@
 //! walk live in [`super::fw_rejects`].
 
 use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 
 use super::*;
 use crate::commands::part_init::part_policy_with_pota;
