@@ -4,11 +4,15 @@
 //! `PartFinal` handler gates that reject **before** the PTA cert-chain
 //! walk.
 //!
-//! These tests supply an empty `certs` slice, so nothing is carried out
-//! of band and no SGL Data Block is referenced. They therefore exercise
-//! the handler gates in isolation from the OOB transport. The tests that
-//! supply a real chain live in [`super::chain_path`] and now run on
-//! hardware too, via the driver's data-transfer ioctl.
+//! These tests supply an empty `certs` slice. That does not mean no
+//! descriptor is sent — the harness still emits a single placeholder
+//! [`CertDescriptor`], because the request schema requires one — it
+//! means no OOB payload accompanies it. What isolates these tests from
+//! the OOB transport is the *order* of the firmware's checks: every gate
+//! below rejects before `validate_pta_chain` dereferences the OOB page,
+//! so the placeholder is never followed. The tests that supply a real
+//! chain live in [`super::chain_path`] and now run on hardware too, via
+//! the driver's data-transfer ioctl.
 //!
 //! The reachable gates, in the order the firmware applies them
 //! (`fw/core/lib/src/ddi/tbor/part_final.rs`):
