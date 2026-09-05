@@ -24,6 +24,7 @@ use azihsm_fw_core_crypto_key_masking::aead::masked_blob_len;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::AesKeySize;
+use azihsm_fw_ddi_tbor_types::KeyUsage;
 use azihsm_fw_ddi_tbor_types::TborAesGenerateKeyReq;
 use azihsm_fw_ddi_tbor_types::TborAesGenerateKeyResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -55,15 +56,19 @@ fn aes_size_kind(size: AesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
 }
 
 /// Attributes recorded in the masked blob's metadata (re-applied on
-/// unmask).  A generated AES key is a `C_Encrypt` / `C_Decrypt` symmetric
-/// key created on-device; `scope` records the lifecycle / visibility
-/// domain selecting the masking key.
-fn aes_key_attrs(scope: HsmKeyScope) -> HsmVaultKeyAttrs {
-    HsmVaultKeyAttrs::new()
+/// unmask), derived from the host-requested [`KeyUsage`].  A generated AES
+/// key carries exactly `ENCRYPT | DECRYPT` (mirrors MBOR
+/// `key_attrs::for_aes`); any other usage is rejected.  `scope` records
+/// the lifecycle / visibility domain selecting the masking key.
+fn aes_key_attrs(scope: HsmKeyScope, usage: KeyUsage) -> HsmResult<HsmVaultKeyAttrs> {
+    if usage.bits() != (KeyUsage::ENCRYPT | KeyUsage::DECRYPT) {
+        return Err(HsmError::InvalidPermissions);
+    }
+    Ok(HsmVaultKeyAttrs::new()
         .with_local(true)
         .with_encrypt(true)
         .with_decrypt(true)
-        .with_scope(scope)
+        .with_scope(scope))
 }
 
 /// Handle a TBOR `AesGenerateKey` request.
@@ -109,7 +114,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // re-import): SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
     let svn = part_state::part_mfgr_svn(pal);
     let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
-    let attrs = aes_key_attrs(scope);
+    let attrs = aes_key_attrs(scope, req.key_usage())?;
 
     // Build the response with the masked-key slot reserved (no copy at
     // encode time).

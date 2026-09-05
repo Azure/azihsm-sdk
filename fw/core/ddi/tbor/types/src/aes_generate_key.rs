@@ -21,6 +21,8 @@
 //!   key wraps the returned blob.
 //! * `key_size` — the [`AesKeySize`] selecting the AES key length
 //!   (128 / 192 / 256 → 16 / 24 / 32 B).
+//! * `key_usage` — the requested `KeyUsage` bitfield (u64); a generated
+//!   AES key carries exactly `ENCRYPT | DECRYPT`.
 //!
 //! Outputs:
 //!
@@ -33,6 +35,7 @@ use azihsm_fw_ddi_tbor_api::tbor;
 use open_enum::open_enum;
 
 use crate::key_props::KeyScope;
+use crate::key_props::KeyUsage;
 
 /// TBOR opcode for `AesGenerateKey`.
 pub const TBOR_OP_AES_GENERATE_KEY: u8 = 0x15;
@@ -91,6 +94,11 @@ pub struct TborAesGenerateKeyReq<'a> {
     #[tbor(U8)]
     pub key_size: AesKeySize,
 
+    /// Requested key-usage permissions, [`KeyUsage`] bitfield (u64) — a
+    /// generated AES key carries exactly `ENCRYPT | DECRYPT`.
+    #[tbor(U64)]
+    pub key_usage: KeyUsage,
+
     /// Caller-supplied key label recorded in the masked blob's
     /// `MaskedKeyMetadata.key_label`, up to 32 bytes.
     /// Empty for an unlabeled key.
@@ -133,12 +141,18 @@ mod tests {
             .unwrap()
             .key_size(AesKeySize::Aes256)
             .unwrap()
+            .key_usage(KeyUsage::from_bits(KeyUsage::ENCRYPT | KeyUsage::DECRYPT))
+            .unwrap()
             .key_label(label)
             .unwrap()
             .finish();
 
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.key_size(), AesKeySize::Aes256);
+        assert_eq!(
+            frame.key_usage(),
+            KeyUsage::from_bits(KeyUsage::ENCRYPT | KeyUsage::DECRYPT)
+        );
         assert_eq!(frame.key_label(), label);
     }
 

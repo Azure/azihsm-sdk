@@ -59,6 +59,10 @@ pub struct TborAesGenerateKeyReq {
     /// [`AES_KEY_SIZE_128`] / [`AES_KEY_SIZE_192`] / [`AES_KEY_SIZE_256`]).
     pub key_size: u8,
 
+    /// Requested key-usage permissions, `KeyUsage` bitfield (u64) — a
+    /// generated AES key carries exactly `ENCRYPT | DECRYPT`.
+    pub key_usage: u64,
+
     /// Caller-supplied key label recorded in the masked blob's metadata,
     /// up to [`TBOR_KEY_LABEL_MAX_LEN`] (32) bytes.  Empty for an unlabeled
     /// key.
@@ -82,6 +86,8 @@ mod tests {
     use azihsm_ddi_tbor_types::TborOpReq;
 
     use super::*;
+    use crate::KEY_USAGE_DECRYPT;
+    use crate::KEY_USAGE_ENCRYPT;
 
     #[test]
     fn request_encodes_scope_and_size() {
@@ -90,6 +96,7 @@ mod tests {
             // KeyScope::Local discriminant (0b011).
             scope: 0b011,
             key_size: AES_KEY_SIZE_256,
+            key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
             key_label: b"my-aes-key".to_vec(),
         };
 

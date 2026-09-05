@@ -13,6 +13,8 @@ use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
 use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
 use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
@@ -304,6 +306,7 @@ fn aes_generate_key_tbor(
         session_id: session.ex_session_id()?,
         scope: props.tbor_scope(),
         key_size: aes_bits_to_tbor_size(props.bits())?,
+        key_usage: aes_tbor_key_usage(props)?,
         key_label: key_label.to_vec(),
     };
     let mut cookie = None;
@@ -313,6 +316,17 @@ fn aes_generate_key_tbor(
     })?;
 
     Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key))
+}
+
+/// Maps the requested AES key usage onto the TBOR `KeyUsage` bitfield.
+/// A generated AES key is an encrypt/decrypt symmetric key; any other
+/// usage is rejected here rather than silently mapped.
+fn aes_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
+    if props.can_encrypt() && props.can_decrypt() {
+        Ok(KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
+    } else {
+        Err(HsmError::InvalidKeyProps)
+    }
 }
 
 /// AES-CBC transforms one chunk over TBOR `AesEncryptDecrypt` using the

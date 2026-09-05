@@ -96,7 +96,7 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
 
 /// Canonical valid `KeyUsage` for a wrapped-key `class`, used by the test
 /// `unwrap` helper so callers need not spell out permissions.
-fn usage_for_class(class: u8) -> u8 {
+fn usage_for_class(class: u8) -> u64 {
     match class {
         KEY_CLASS_AES => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
         KEY_CLASS_RSA | KEY_CLASS_RSA_CRT => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
@@ -120,7 +120,7 @@ pub(crate) fn unwrap_with_usage(
     ctx: &TestCtx,
     session_id: u16,
     class: u8,
-    usage: u8,
+    usage: u64,
     key: &[u8],
 ) -> TborUnwrapKeyResp {
     let hsm_pub = ctx
