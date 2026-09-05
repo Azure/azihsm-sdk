@@ -34,25 +34,6 @@ use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::PtaChain;
-use crate::harness::SessionHandshake;
-
-/// Run `PartInit` on `session` and issue the resulting PTA chain: read
-/// the PTA public key from the returned CSR and certify it under `pota`
-/// (a POTA root → PTA-intermediate chain).
-fn issue_pta_chain(
-    ctx: &TestCtx,
-    session: &SessionHandshake,
-    pota: &CaKey,
-    seed: &[u8],
-    policy: &[u8],
-    thumb: &[u8],
-) -> PtaChain {
-    let init = ctx
-        .part_init(session, seed, policy, thumb)
-        .expect("PartInit roundtrip");
-    make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr))
-}
 
 /// A PTA chain that is not anchored to the policy `POTAPubKey` must be
 /// rejected: here the chain is rooted at a different CA than the policy's
