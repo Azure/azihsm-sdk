@@ -89,7 +89,7 @@ fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &PotaFixture) -> Remote
         .expect("PartFinal")
         .local_mk_backup;
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id, &policy);
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
     let evidence = build_receiver_evidence(&pid_pub, sata, &report);
     let req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let resp = ctx
@@ -196,7 +196,7 @@ fn sd_restore_remote_backup_is_one_shot() {
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id, &policy);
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let create_req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let created = ctx

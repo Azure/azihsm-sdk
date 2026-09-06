@@ -143,7 +143,7 @@ fn sd_create_peer_backup_roundtrip_emu() {
 
     // Mint + attest a sealing key, then create the security domain to
     // obtain the device-local backup this command re-seals.
-    let (masked, report) = masked_key_and_report(&ctx, session_id, &part.policy);
+    let (masked, report) = masked_key_and_report(&ctx, session_id);
     let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
     let created = ctx
         .tbor_oob(
@@ -183,7 +183,7 @@ fn sd_create_peer_backup_rejects_without_peer_cloning_emu() {
     // A real sealing key + evidence so the request reaches the policy gate;
     // the peer-cloning check fires before any local backup is unmasked, so
     // a zero `pok_local_backup` is sufficient.
-    let (masked, report) = masked_key_and_report(&ctx, session_id, &part.policy);
+    let (masked, report) = masked_key_and_report(&ctx, session_id);
     let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
     let req = create_peer_req(
         session_id,

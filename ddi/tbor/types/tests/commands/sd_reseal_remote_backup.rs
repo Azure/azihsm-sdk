@@ -209,9 +209,9 @@ fn sd_reseal_remote_backup_roundtrip() {
 
     // Receiver (unseals the source), sender (sealed the source), and
     // destination (the reseal target) SD sealing keys, each attested.
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
 
     // Source backup: BKS3 sealed to the receiver by the sender.
     let src_backup = create_source_backup(
@@ -253,9 +253,9 @@ fn sd_reseal_remote_backup_rerandomizes() {
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
 
     let src_backup = create_source_backup(
         &ctx,
@@ -287,9 +287,9 @@ fn sd_reseal_remote_backup_rejects_tampered_src() {
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
 
     let mut src_backup = create_source_backup(
         &ctx,
@@ -318,9 +318,9 @@ fn sd_reseal_remote_backup_rejects_missing_oob() {
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
     let sid = session.session_id;
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid, &policy);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid, &policy);
-    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid, &policy);
+    let (masked_rcvr, report_rcvr) = masked_key_and_report(&ctx, sid);
+    let (masked_sndr, report_sndr) = masked_key_and_report(&ctx, sid);
+    let (_masked_dst, report_dst) = masked_key_and_report(&ctx, sid);
 
     let src_backup = create_source_backup(
         &ctx,
