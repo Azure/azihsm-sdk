@@ -45,6 +45,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 
 use crate::harness::api_rev::helper_api_rev_tbor;
 use crate::harness::assertions::assert_fw_rejects;
+use crate::harness::assertions::assert_fw_rejects_any;
 use crate::harness::assertions::assert_tbor_decode_error;
 use crate::harness::fixture::open_dev;
 use crate::harness::fixture::open_dev_secondary;
@@ -185,6 +186,29 @@ impl TestCtx {
             ),
             Err(err) => {
                 assert_fw_rejects(&err, expected);
+                err
+            }
+        }
+    }
+
+    /// Like [`Self::expect_fw_reject_oob`], but accepts any one of
+    /// `allowed` — useful for tests that drive both emu and hardware
+    /// backends where the two return different (but equally valid)
+    /// status codes for the same input.
+    #[track_caller]
+    pub fn expect_fw_reject_oob_any<R: TborOpReq>(
+        &self,
+        req: &R,
+        oob_items: &[&[u8]],
+        allowed: &[TborStatus],
+    ) -> DdiError
+    where
+        R::OpResp: core::fmt::Debug,
+    {
+        match self.tbor_oob(req, oob_items) {
+            Ok(_resp) => panic!("expected FW reject (one of {allowed:?}), got unexpected success",),
+            Err(err) => {
+                assert_fw_rejects_any(&err, allowed);
                 err
             }
         }

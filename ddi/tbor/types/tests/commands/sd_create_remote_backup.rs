@@ -26,8 +26,15 @@
 //! * Missing OOB evidence → `InvalidArg`.
 //! * Policy that does not name this partition as the backing partition
 //!   (`backup_part_id` / `backup_part_pub_key` absent) → `InvalidArg`.
-
-#![cfg(feature = "emu")]
+//! * Malformed receiver report → `InvalidArg`.
+//! * Invalid receiver P-384 point → `EccPointValidationFailed`.
+//! * Tampered masked sealing key → `AesGcmDecryptTagDoesNotMatch`.
+//! * Create before partition finalization → `InvalidArg`.
+//!
+//! Hardware exercises the externally observable command contract using
+//! the real `KeyReport` command to bind the sealing key to the report.
+//! Certificate-chain, leaf-binding, and report signature authenticity
+//! remain emulator-only until Manticore enables those verification steps.
 
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
@@ -50,14 +57,13 @@ use zerocopy::TryFromBytes;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
-use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_chain;
-use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::GeneratedChain;
+use crate::harness::x509_fixture::PotaFixture;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
@@ -127,7 +133,7 @@ pub(crate) fn finalized_backing_session(
     pid_pub.copy_from_slice(&info.pid_pub_key);
 
     // POTA anchor for the PTA certificate chain `PartFinal` validates.
-    let pota = CaKey::generate();
+    let pota = PotaFixture::generate();
     let policy = backing_part_policy(
         &info.pid,
         &info.pid_pub_key,
@@ -136,19 +142,20 @@ pub(crate) fn finalized_backing_session(
     );
 
     let init = ctx
-        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .part_init(&session, &mach_seed(), &policy, pota.thumbprint())
         .expect("PartInit");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    let chain = pota.chain_for(&pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
     (session, policy, pid_pub)
 }
 
-/// Mint an SD sealing key and attest it, returning
-/// `(masked_sealing_key, key_report_bytes)`.  In the self-backup tests
-/// this key is both the sender's authentication key and (via its report)
-/// the receiver's `RcvrPub` source; the report is signed by the PID key.
+/// Mint an SD sealing key and produce `(masked_sealing_key, report)` for
+/// self-backup tests using the real `KeyReport` command on every backend
+/// — the sealing key is masked by the FW, `KeyReport` returns a signed
+/// (or, on hw, currently-unsigned) attestation envelope carrying the
+/// sealing public key.
 pub(crate) fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {
     let seal = ctx
         .tbor(&TborSdSealingKeyGenReq {
@@ -287,52 +294,73 @@ fn dummy_evidence(report: &[u8]) -> ReceiverEvidence {
     }
 }
 
-#[test]
-fn sd_create_remote_backup_roundtrip_emu() {
-    let ctx = TestCtx::new();
-    let sata_key = CaKey::generate();
-    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
+/// Backend-agnostic fixture: assembles a finalized backing session, a
+/// masked SD sealing key, and the receiver evidence (cert chains + key
+/// report) needed to drive `SdCreateRemoteBackup`.  The sealing-key +
+/// report step goes through the real `KeyReport` command on every
+/// backend.
+struct BackupFixture {
+    session: SessionHandshake,
+    policy: [u8; PART_POLICY_LEN],
+    masked_sealing_key: Vec<u8>,
+    evidence: ReceiverEvidence,
+}
 
-    let req = backup_request(session.session_id, masked, &evidence, &policy);
-    let resp = ctx
-        .tbor_oob(&req, &evidence.oob())
-        .expect("SdCreateRemoteBackup roundtrip");
+impl BackupFixture {
+    fn new(ctx: &TestCtx) -> Self {
+        let sata_key = CaKey::generate();
+        let (session, policy, pid_pub) = finalized_backing_session(ctx, &sata_key);
+        let (masked_sealing_key, report) = masked_key_and_report(ctx, session.session_id);
+        let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
-    // HPKE-Auth seal: enc(97) ‖ ct(64) = 161 B, non-zero.
+        Self {
+            session,
+            policy,
+            masked_sealing_key,
+            evidence,
+        }
+    }
+
+    fn request(&self) -> TborSdCreateRemoteBackupReq {
+        backup_request(
+            self.session.session_id,
+            self.masked_sealing_key.clone(),
+            &self.evidence,
+            &self.policy,
+        )
+    }
+}
+
+fn assert_backup_response(resp: &azihsm_ddi_tbor_types::TborSdCreateRemoteBackupResp) {
     assert_eq!(resp.pok_remote_backup.len(), POK_REMOTE_BACKUP_LEN);
-    assert!(
-        resp.pok_remote_backup.iter().any(|&b| b != 0),
-        "pok_remote_backup must not be all-zero",
-    );
-
-    // Local backup: BKS3 masked under PartLocalMK, 180 B, non-zero.
+    assert!(resp.pok_remote_backup.iter().any(|&byte| byte != 0));
     assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
-    assert!(
-        resp.pok_local_backup.iter().any(|&b| b != 0),
-        "pok_local_backup must not be all-zero",
-    );
-
-    // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
-    // non-zero.
+    assert!(resp.pok_local_backup.iter().any(|&byte| byte != 0));
     assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
-    assert!(
-        resp.sd_mk_backup.iter().any(|&b| b != 0),
-        "sd_mk_backup must not be all-zero",
-    );
+    assert!(resp.sd_mk_backup.iter().any(|&byte| byte != 0));
 }
 
 #[test]
-fn sd_create_remote_backup_is_one_shot_emu() {
+fn sd_create_remote_backup_roundtrip() {
     let ctx = TestCtx::new();
-    let sata_key = CaKey::generate();
-    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
+    let fixture = BackupFixture::new(&ctx);
+    let req = fixture.request();
 
-    let req = backup_request(session.session_id, masked, &evidence, &policy);
-    let first = ctx.tbor_oob(&req, &evidence.oob()).expect("first create");
+    let resp = ctx
+        .tbor_oob(&req, &fixture.evidence.oob())
+        .expect("SdCreateRemoteBackup roundtrip");
+    assert_backup_response(&resp);
+}
+
+#[test]
+fn sd_create_remote_backup_is_one_shot() {
+    let ctx = TestCtx::new();
+    let fixture = BackupFixture::new(&ctx);
+    let req = fixture.request();
+
+    let first = ctx
+        .tbor_oob(&req, &fixture.evidence.oob())
+        .expect("first SdCreateRemoteBackup");
     assert!(
         first.pok_remote_backup.iter().any(|&b| b != 0),
         "first backup must be a real seal",
@@ -340,25 +368,25 @@ fn sd_create_remote_backup_is_one_shot_emu() {
 
     // The security domain is now initialized (SDMK provisioned); a second
     // create on the same partition is rejected by the one-shot gate.
-    ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::SdAlreadyInitialized);
+    ctx.expect_fw_reject_oob(
+        &req,
+        &fixture.evidence.oob(),
+        TborStatus::SdAlreadyInitialized,
+    );
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_missing_oob_emu() {
+fn sd_create_remote_backup_rejects_missing_oob() {
     let ctx = TestCtx::new();
-    let sata_key = CaKey::generate();
-    let (session, policy, _pid_pub) = finalized_backing_session(&ctx, &sata_key);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let fixture = BackupFixture::new(&ctx);
 
     // The receiver evidence descriptors reference OOB items, but no OOB
     // page is supplied → the handler rejects before any crypto.
-    let evidence = dummy_evidence(&report);
-    let req = backup_request(session.session_id, masked, &evidence, &policy);
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    ctx.expect_fw_reject(&fixture.request(), TborStatus::InvalidArg);
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
+fn sd_create_remote_backup_rejects_non_backing_policy() {
     let ctx = TestCtx::new();
 
     // `finalized_co_session` binds `known_good_part_policy` — POTA/SATA
@@ -367,9 +395,8 @@ fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
     // identity binding fails (before any evidence validation) because
     // `backup_part_id` / `backup_part_pub_key` do not name this partition.
     let session = finalized_co_session(&ctx);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-
     let policy = known_good_part_policy();
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
     let evidence = dummy_evidence(&report);
     let req = backup_request(session.session_id, masked, &evidence, &policy);
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
@@ -377,12 +404,14 @@ fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
 
 /// Flip the final byte of a DER/COSE blob — corrupts the trailing ECDSA
 /// signature value without disturbing the outer length-prefixed structure.
+#[cfg(feature = "emu")]
 fn flip_last_byte(mut bytes: Vec<u8>) -> Vec<u8> {
     let n = bytes.len();
     bytes[n - 1] ^= 0xFF;
     bytes
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
     let ctx = TestCtx::new();
@@ -401,6 +430,7 @@ fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
     let ctx = TestCtx::new();
@@ -420,6 +450,7 @@ fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
     let ctx = TestCtx::new();
@@ -439,6 +470,7 @@ fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::X509SignatureInvalid);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_create_remote_backup_rejects_tampered_report_emu() {
     let ctx = TestCtx::new();
@@ -452,5 +484,121 @@ fn sd_create_remote_backup_rejects_tampered_report_emu() {
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &tampered_report);
 
     let req = backup_request(session.session_id, masked, &evidence, &policy);
+    ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
+}
+
+#[test]
+fn sd_create_remote_backup_rejects_malformed_report() {
+    let ctx = TestCtx::new();
+    let mut fixture = BackupFixture::new(&ctx);
+    let report_index = fixture.evidence.report.index as usize;
+    fixture.evidence.oob_items[report_index][0] = 0;
+    let req = fixture.request();
+
+    ctx.expect_fw_reject_oob(&req, &fixture.evidence.oob(), TborStatus::InvalidArg);
+}
+
+/// Overwrite the receiver's P-384 point (X and Y coordinates) inside a
+/// real `KeyReport` envelope with zeros so downstream ECC point
+/// validation rejects it.  The sealing pub key returned by
+/// `SdSealingKeyGen` is stored little-endian; the report embeds it
+/// big-endian (per COSE_Key EC2 encoding), so we reverse each half
+/// before searching.
+fn zero_receiver_point_in_report(mut report: Vec<u8>, sealing_pub_le: &[u8]) -> Vec<u8> {
+    let coord_len = sealing_pub_le.len() / 2;
+    let mut x_be = sealing_pub_le[..coord_len].to_vec();
+    x_be.reverse();
+    let mut y_be = sealing_pub_le[coord_len..].to_vec();
+    y_be.reverse();
+
+    let x_pos = report
+        .windows(coord_len)
+        .position(|w| w == x_be)
+        .expect("sealing X coordinate must appear in the report");
+    let y_pos = report
+        .windows(coord_len)
+        .position(|w| w == y_be)
+        .expect("sealing Y coordinate must appear in the report");
+
+    for byte in &mut report[x_pos..x_pos + coord_len] {
+        *byte = 0;
+    }
+    for byte in &mut report[y_pos..y_pos + coord_len] {
+        *byte = 0;
+    }
+    report
+}
+
+#[test]
+fn sd_create_remote_backup_rejects_invalid_receiver_point() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+
+    // Mint a sealing key and get its real `KeyReport`, then corrupt the
+    // embedded receiver point (X and Y ← 0) inside the report so the FW
+    // rejects the input.
+    let seal = ctx
+        .tbor(&TborSdSealingKeyGenReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+        })
+        .expect("SdSealingKeyGen");
+    let masked = seal.masked_key.to_vec();
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: masked.clone(),
+            report_data: [0u8; KEY_REPORT_DATA_LEN],
+        })
+        .expect("KeyReport")
+        .report;
+    let corrupted = zero_receiver_point_in_report(report, &seal.pub_key);
+    let evidence = build_receiver_evidence(&pid_pub, &sata_key, &corrupted);
+    let req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    // Mutating the report invalidates its outer COSE_Sign1 signature;
+    // the specific reject status depends on whether the FW checks the
+    // signature before reaching ECC point validation.  Emu currently
+    // short-circuits at `InvalidArg` (signature check); hw (which
+    // does not yet verify the report signature) surfaces the specific
+    // `EccPointValidationFailed` from point validation.
+    ctx.expect_fw_reject_oob_any(
+        &req,
+        &evidence.oob(),
+        &[TborStatus::EccPointValidationFailed, TborStatus::InvalidArg],
+    );
+}
+
+#[test]
+fn sd_create_remote_backup_rejects_tampered_sealing_key() {
+    let ctx = TestCtx::new();
+    let mut fixture = BackupFixture::new(&ctx);
+    let last = fixture.masked_sealing_key.len() - 1;
+    fixture.masked_sealing_key[last] ^= 0x01;
+
+    ctx.expect_fw_reject_oob(
+        &fixture.request(),
+        &fixture.evidence.oob(),
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+}
+
+#[test]
+fn sd_create_remote_backup_rejects_before_finalize() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let policy = known_good_part_policy();
+    // The pre-finalize gate fires before the handler parses the report,
+    // so any opaque blob works here.
+    let report = vec![0xABu8; 512];
+    let evidence = dummy_evidence(&report);
+    let req = backup_request(
+        session.session_id,
+        vec![0u8; azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN],
+        &evidence,
+        &policy,
+    );
+
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }

@@ -20,32 +20,42 @@
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
-#![cfg(feature = "emu")]
-
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::SessionType;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::TborStatus;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::harness::bootstrap_rotated_co;
+#[cfg(feature = "emu")]
 use crate::harness::bootstrap_rotated_cu;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
+#[cfg(feature = "emu")]
 use crate::harness::CO_PSK_ID as CO;
 use crate::harness::ROTATED_CO_PSK;
+#[cfg(feature = "emu")]
 use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
+#[cfg(feature = "emu")]
 const SCOPE_SESSION: u8 = 0b001;
+#[cfg(feature = "emu")]
 const SCOPE_EPHEMERAL: u8 = 0b010;
+#[cfg(feature = "emu")]
 const SCOPE_LOCAL: u8 = 0b011;
+#[cfg(feature = "emu")]
 const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
 /// Bring a partition to `Initialized` on a rotated CO session:
@@ -73,6 +83,7 @@ pub(crate) fn finalized_co_session(ctx: &TestCtx) -> SessionHandshake {
 
 /// Happy path for a supported `scope`: the masked key + public key are
 /// full/non-zero, and a second call yields a distinct keypair.
+#[cfg(feature = "emu")]
 fn roundtrip_for_scope(scope: u8) {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
@@ -108,16 +119,19 @@ fn roundtrip_for_scope(scope: u8) {
     );
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_ephemeral_roundtrip_emu() {
     roundtrip_for_scope(SCOPE_EPHEMERAL);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_local_roundtrip_emu() {
     roundtrip_for_scope(SCOPE_LOCAL);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
     let ctx = TestCtx::new();
@@ -135,6 +149,7 @@ fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
     }
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_rejects_before_finalize_emu() {
     let ctx = TestCtx::new();
@@ -149,6 +164,7 @@ fn sd_sealing_key_gen_rejects_before_finalize_emu() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
     let ctx = TestCtx::new();
@@ -168,6 +184,7 @@ fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
 }
 
+#[cfg(feature = "emu")]
 #[test]
 fn sd_sealing_key_gen_rejected_on_default_psk_emu() {
     let ctx = TestCtx::new();
