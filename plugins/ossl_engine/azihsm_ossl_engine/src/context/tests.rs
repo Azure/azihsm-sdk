@@ -367,6 +367,37 @@ mod round_trips {
         .expect("aes-kind HKDF failed");
         assert!(!aes_blob.is_empty(), "empty aes-kind blob");
 
+        // Armed in-memory IKM: the masked shared secret as hexkey bytes.
+        let hex_ikm: String = secret_blob.iter().map(|b| format!("{b:02x}")).collect();
+        let mem_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("hexkey", hex_ikm.as_str()),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect("hexkey-armed HKDF failed");
+        assert!(!mem_blob.is_empty(), "empty blob from in-memory IKM");
+
+        // key/hexkey and azihsm.ikm_file are mutually exclusive.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("hexkey", hex_ikm.as_str()),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect_err("both IKM sources must fail");
+        assert!(
+            err.contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
+
         // output_file mode: blob to disk, nothing in the buffer.
         let out = dir.join(format!("hkdf-derived-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&out);
@@ -1135,7 +1166,8 @@ mod mock {
 
         let opts = [
             ("md", "SHA256"),
-            ("hexkey", "00112233445566778899aabbccddeeff"),
+            // Colon-delimited: OpenSSL's hex grammar must be accepted.
+            ("hexkey", "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff"),
             ("salt", "pepper"),
             ("info", "context"),
         ];
