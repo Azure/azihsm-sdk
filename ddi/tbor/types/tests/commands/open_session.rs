@@ -10,6 +10,9 @@
 //! `Drop`; negative paths drive `session_open_init` /
 //! `session_open_finish` on `TestCtx` directly.
 
+use std::sync::Barrier;
+
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
@@ -20,9 +23,11 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_mac_fin;
+use crate::harness::session::init::PendingHandshake;
 use crate::harness::TestCtx;
 use crate::harness::CO_PSK_ID as CO;
 use crate::harness::CU_PSK_ID as CU;
+use crate::harness::ROTATED_CU_PSK;
 
 // ---------------------------------------------------------------------------
 // Happy paths
@@ -194,6 +199,83 @@ fn open_session_double_finish() {
         .tbor(&req)
         .expect_err("second finish against the same slot must fail");
     assert_fw_rejects(&err, TborStatus::SessionNotPending);
+}
+
+/// Race valid `SessionOpenFinish` requests against one Pending slot.
+///
+/// Exactly one request may promote the slot to Active. Losing FSMs must not
+/// destroy that Active slot during rollback; the winning handshake must still
+/// be able to run a key-dependent in-session command afterward.
+#[test]
+fn session_open_finish_multi_threaded_single_winner_keeps_session_active() {
+    const THREAD_COUNT: usize = 16;
+
+    fn duplicate_pending(pending: &PendingHandshake) -> PendingHandshake {
+        PendingHandshake {
+            session_id: pending.session_id,
+            psk_id: pending.psk_id,
+            session_type: pending.session_type,
+            exported: pending.exported.clone(),
+            pk_init: pending.pk_init,
+            pk_resp: pending.pk_resp,
+            pk_hsm: pending.pk_hsm,
+        }
+    }
+
+    let ctx = TestCtx::new();
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 must succeed");
+    let attempts: Vec<_> = (0..THREAD_COUNT)
+        .map(|_| duplicate_pending(&pending))
+        .collect();
+    let barrier = Barrier::new(THREAD_COUNT);
+
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = attempts
+            .into_iter()
+            .map(|attempt| {
+                let barrier = &barrier;
+                let ctx = &ctx;
+                scope.spawn(move || {
+                    barrier.wait();
+                    ctx.session_open_finish(attempt)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread must not panic"))
+            .collect()
+    });
+
+    let (winners, rejections): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one concurrent SessionOpenFinish must succeed",
+    );
+    assert_eq!(
+        rejections.len(),
+        THREAD_COUNT - 1,
+        "every non-winning SessionOpenFinish must be rejected",
+    );
+
+    for err in rejections.into_iter().map(Result::unwrap_err) {
+        match err {
+            DdiError::TborStatus(status)
+                if status == TborStatus::SessionNotPending
+                    || status == TborStatus::SessionNotFound => {}
+            other => panic!("unexpected SessionOpenFinish rejection: {other:?}"),
+        }
+    }
+
+    let winner = winners.into_iter().next().unwrap().unwrap();
+    ctx.psk_change(&winner, &ROTATED_CU_PSK)
+        .expect("losing finishes must not destroy the winning Active session");
+    ctx.session_close(winner.session_id)
+        .expect("close winning session");
 }
 
 // ---------------------------------------------------------------------------
@@ -729,6 +811,57 @@ fn pk_init_single_byte_tampered_rejected() {
 // clean table-full / winner-takes-slot behaviour real FW produces.
 // The property under test only holds on the native OS backend.
 // ---------------------------------------------------------------------------
+
+/// Race valid `SessionOpenInit` requests on one file handle.
+///
+/// Exactly one request may bind a Pending session to the file handle. Losing
+/// requests must not roll back that Pending slot; completing the winning
+/// handshake afterward proves the survivor remains intact.
+#[cfg(not(feature = "emu"))]
+#[test]
+fn session_open_init_multi_threaded_single_winner_keeps_pending_session_finishable() {
+    const THREAD_COUNT: usize = 16;
+
+    let ctx = TestCtx::new();
+    let barrier = Barrier::new(THREAD_COUNT);
+
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREAD_COUNT)
+            .map(|_| {
+                let barrier = &barrier;
+                let ctx = &ctx;
+                scope.spawn(move || {
+                    barrier.wait();
+                    ctx.session_open_init(CO, SessionType::Authenticated)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread must not panic"))
+            .collect()
+    });
+
+    let (winners, rejections): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one concurrent SessionOpenInit must succeed",
+    );
+    assert_eq!(
+        rejections.len(),
+        THREAD_COUNT - 1,
+        "every non-winning SessionOpenInit must be rejected",
+    );
+
+    let pending = winners.into_iter().next().unwrap().unwrap();
+    let session = ctx
+        .session_open_finish(pending)
+        .expect("losing inits must not destroy the winning Pending session");
+    ctx.session_close(session.session_id)
+        .expect("close winning session");
+}
 
 /// Race exactly `CU_SESSION_LIMIT` concurrent CU opens; all must
 /// succeed with distinct session ids and no rejections. Each racing
