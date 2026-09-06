@@ -374,9 +374,12 @@ fn new_ec_asn1_method<H: EcAsn1Handler>() -> EngineResult<*mut ffi::EVP_PKEY_ASN
     }
 }
 
-/// Per-ENGINE method table (see [`method_table`](crate::method_table) for the
-/// ownership rules the engine framework imposes).
-static ENGINE_METHODS: MethodTable<ffi::EVP_PKEY_ASN1_METHOD> = MethodTable::new();
+/// The NIDs this engine's ASN1-method callback serves.
+static ASN1_NIDS: [c_int; 1] = [ffi::EVP_PKEY_EC as c_int];
+
+/// Per-`(ENGINE, NID)` method table (see [`method_table`](crate::method_table)
+/// for the ownership rules the engine framework imposes).
+static ENGINE_METHODS: MethodTable<ffi::EVP_PKEY_ASN1_METHOD> = MethodTable::new(&ASN1_NIDS);
 
 /// `ENGINE_PKEY_ASN1_METHS_PTR` callback: NID enumeration and per-ENGINE
 /// method lookup via [`method_table::dispatch`](crate::method_table::dispatch)
@@ -406,7 +409,7 @@ unsafe extern "C" fn c_pkey_asn1_meths(
 /// wins). Pair with [`release_ec_asn1_method`] when the ENGINE is destroyed.
 #[allow(unsafe_code)]
 pub fn register_ec_asn1_method<H: EcAsn1Handler>(engine: &Engine) -> EngineResult<()> {
-    ENGINE_METHODS.register(engine, new_ec_asn1_method::<H>)?;
+    ENGINE_METHODS.register(engine, ffi::EVP_PKEY_EC as c_int, new_ec_asn1_method::<H>)?;
     // SAFETY: engine's ptr is valid (from NonNull); c_pkey_asn1_meths is a
     // 'static fn item with the ENGINE_PKEY_ASN1_METHS_PTR signature.
     let rc = unsafe { ffi::ENGINE_set_pkey_asn1_meths(engine.as_ptr(), Some(c_pkey_asn1_meths)) };

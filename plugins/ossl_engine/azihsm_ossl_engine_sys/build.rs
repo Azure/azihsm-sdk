@@ -110,6 +110,7 @@ fn main() {
         .allowlist_function("ASN1_STRING_length")
         .allowlist_function("BIO_write")
         .allowlist_function("CRYPTO_free")
+        .allowlist_function("OPENSSL_hexstr2buf")
         .allowlist_function("ERR_put_error")
         .allowlist_function("ERR_add_error_data")
         .allowlist_function("ERR_get_error")
