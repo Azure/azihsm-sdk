@@ -399,10 +399,7 @@ fn ctrl_str_inner(
         }
         "salt" | "hexsalt" | "key" | "hexkey" | "info" | "hexinfo" => {
             let bytes = if key_str.starts_with("hex") {
-                let hex = value_c
-                    .to_str()
-                    .map_err(|_| EngineError::Other("invalid hex value".into()))?;
-                hex_decode(hex)?
+                hex_decode(value_c)?
             } else {
                 Zeroizing::new(value_c.to_bytes().to_vec())
             };
@@ -476,25 +473,24 @@ fn builtin_ctrl(
     Ok(())
 }
 
-/// Decode a hex string (as the built-in's hex parameters accept).
-fn hex_decode(s: &str) -> EngineResult<Zeroizing<Vec<u8>>> {
-    let s = s.trim();
-    if !s.len().is_multiple_of(2) {
-        return Err(EngineError::Other("odd-length hex value".into()));
+/// Decode hex through OpenSSL's own parser (`OPENSSL_hexstr2buf`), so the
+/// accepted grammar — colon-delimited bytes included — matches the built-in
+/// exactly on every build.
+#[allow(unsafe_code)]
+fn hex_decode(value: &CStr) -> EngineResult<Zeroizing<Vec<u8>>> {
+    let mut len: std::ffi::c_long = 0;
+    // SAFETY: value is NUL-terminated; on success the returned buffer holds
+    // len bytes and is freed here after copying.
+    unsafe {
+        let buf = ffi::OPENSSL_hexstr2buf(value.as_ptr(), &mut len);
+        if buf.is_null() {
+            return Err(EngineError::Other("invalid hex value".into()));
+        }
+        let n = usize::try_from(len).unwrap_or(0);
+        let out = Zeroizing::new(std::slice::from_raw_parts(buf.cast::<u8>(), n).to_vec());
+        ffi::CRYPTO_free(buf.cast(), c"".as_ptr(), 0);
+        Ok(out)
     }
-    let mut out = Zeroizing::new(Vec::with_capacity(s.len() / 2));
-    let bytes = s.as_bytes();
-    for pair in bytes.chunks_exact(2) {
-        let hi = (pair[0] as char)
-            .to_digit(16)
-            .ok_or(EngineError::Other("invalid hex value".into()))?;
-        let lo = (pair[1] as char)
-            .to_digit(16)
-            .ok_or(EngineError::Other("invalid hex value".into()))?;
-        #[allow(clippy::cast_possible_truncation)]
-        out.push(((hi << 4) | lo) as u8);
-    }
-    Ok(out)
 }
 
 /// `derive` override: unarmed contexts delegate to the built-in software
@@ -813,6 +809,40 @@ mod tests {
                 .salt
                 .clone();
             assert_eq!(recorded.as_deref(), Some(&[0xffu8, 0xfe, 0x01][..]));
+
+            ctx_state().lock().remove(&(ctx as usize));
+            ffi::EVP_PKEY_CTX_free(ctx);
+        }
+    }
+
+    // Hex options must accept OpenSSL's grammar, colon-delimited included.
+    #[test]
+    #[allow(unsafe_code)]
+    fn ctrl_str_hex_matches_builtin_grammar() {
+        let method = new_hkdf_pkey_method::<PanicHkdf>().unwrap();
+        // SAFETY: ours, unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
+
+        // SAFETY: builtin NID_hkdf ctx; c_ctrl_str called directly with a
+        // hand-inserted state entry.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as c_int, null_mut());
+            assert!(!ctx.is_null());
+            assert_eq!(ffi::EVP_PKEY_derive_init(ctx), 1);
+            ctx_state()
+                .lock()
+                .insert(ctx as usize, HkdfState::default());
+
+            let key = std::ffi::CString::new("hexsalt").unwrap();
+            let value = std::ffi::CString::new("00:11:ff").unwrap();
+            assert_eq!(c_ctrl_str(ctx, key.as_ptr(), value.as_ptr()), 1);
+            let recorded = ctx_state()
+                .lock()
+                .get(&(ctx as usize))
+                .unwrap()
+                .salt
+                .clone();
+            assert_eq!(recorded.as_deref(), Some(&[0x00u8, 0x11, 0xff][..]));
 
             ctx_state().lock().remove(&(ctx as usize));
             ffi::EVP_PKEY_CTX_free(ctx);
