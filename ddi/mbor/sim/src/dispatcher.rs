@@ -712,7 +712,7 @@ impl Dispatcher {
             }
 
             tracing::trace!(opcode = ?hdr.op, "Dispatching request");
-            log::debug!("Dispatching request {:?}",hdr.op);
+            log::debug!("Dispatching request {:?}", hdr.op);
             match hdr.op {
                 DdiOp::GetApiRev => {
                     dispatch_handler!(
@@ -2172,7 +2172,7 @@ impl Dispatcher {
             .function
             .get_function_state()
             .get_attestation_key_num()?;
-            log::debug!("Attestation key number: {:?}", attest_key_num);
+        log::debug!("Attestation key number: {:?}", attest_key_num);
         let vault = self
             .function
             .get_function_state()
@@ -2205,9 +2205,13 @@ impl Dispatcher {
             &mut ecdsa_algo,
             &pota_pub_key,
             &attest_key_uncomp,
-            req.pota_sig.as_slice(),
+            &pota_signature,
         )
-        .map_err(|_| ManticoreError::EccVerifyError)?;
+        .map_err(|err| {
+            tracing::error!(?err, "POTA signature verification failed");
+            ManticoreError::EccVerifyError
+        })?;
+        log::debug!("POTA signature verification result: {}", verify_result);
 
         if !verify_result {
             tracing::warn!("POTA public key verification failed in establish_credential.");
@@ -2221,10 +2225,12 @@ impl Dispatcher {
             nonce: req.encrypted_credential.nonce,
             tag: req.encrypted_credential.tag,
         };
+        log::debug!("Establishing credential with encrypted credential: {:?}", encrypted_credential);
         vault.establish_credential(
             encrypted_credential,
             &req.pub_key.der.data()[..req.pub_key.der.len()],
         )?;
+        log::debug!("Credential established successfully");
 
         let bmk_result = {
             tracing::debug!(
@@ -2244,12 +2250,14 @@ impl Dispatcher {
                 Some(req.masked_unwrapping_key.as_slice())
             };
 
+            log::debug!("Provisioning partition with masked_bk3: {:?}", req.masked_bk3);
             let bmk = self.function.provision(
                 req.masked_bk3.as_slice(),
                 bmk_option,
                 masked_unwrapping_key_option,
                 req.pota_pub_key.der.as_slice(),
             )?;
+            log::debug!("Provisioning partition resulted in bmk: {:?}", bmk);
 
             tracing::debug!(bmk_size = bmk.len(), "Successfully provisioned partition");
 

@@ -21,6 +21,7 @@ azihsm_ddi_mbor_codec.workspace = true
 bitfield.workspace = true
 bitfield-struct.workspace = true
 minicbor = { features = ["derive"], workspace = true }
+log.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 tracing.workspace = true
