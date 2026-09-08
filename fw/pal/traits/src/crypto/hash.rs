@@ -18,22 +18,27 @@ use super::*;
 
 /// Supported hash algorithms.
 ///
-/// Discriminant values are `u32` for direct mapping to hardware register
-/// selectors on Cortex-M7.
+/// Discriminant values are `u32` and are fixed to match the CPT crypto
+/// hardware's MAC-Select field encoding (`PARAM2[3:0]`; see
+/// `fw/crates/crypto/hash/src/pal/cpt.rs` in tiger-collab). A CPT-backed PAL
+/// can therefore cast `algo as u32` directly into `mac_select` with no
+/// translation table. Platforms whose hardware uses a different encoding
+/// (e.g. the Uno SHA engine's `ShaMode`) still perform an explicit
+/// `From<HsmHashAlgo>` match at the PAL boundary.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HsmHashAlgo {
     /// SHA-1 (160-bit digest). **Not FIPS-approved for signing.**
-    Sha1,
+    Sha1 = 2,
 
     /// SHA-256 (256-bit / 32-byte digest).
-    Sha256,
+    Sha256 = 4,
 
     /// SHA-384 (384-bit / 48-byte digest).
-    Sha384,
+    Sha384 = 5,
 
     /// SHA-512 (512-bit / 64-byte digest).
-    Sha512,
+    Sha512 = 6,
 }
 
 impl HsmHashAlgo {
