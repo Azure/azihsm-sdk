@@ -842,34 +842,52 @@ fn test_attest_kbkdf_derived_aes_key() {
 
 /// Helper function to get certificate chain
 pub(crate) fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<u8>> {
-    tracing::debug!("Getting certificate chain");
-    // Gets the cert chain
-    // 1. Gets the number of certs in the cert chain using DDI command GetCertChainInfo command
-    // 2. Gets all certs in the cert chain using DDI command GetCertificate where
-    //    cert id is 0 to num_certs - 1.
-    // 3. Gets the partition id cert using DDI command GetCertificate which is the last cert in the chain
-
-    let result = helper_get_cert_chain_info(dev);
-    assert!(result.is_ok(), "result {:?}", result);
-
-    let resp = result.unwrap();
-    let num_certs = resp.data.num_certs;
-
-    let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
-    for i in 0..num_certs {
-        let result = helper_get_certificate(dev, i);
-        assert!(result.is_ok(), "result {:?}", result);
-
-        let resp = result.unwrap();
-        let der = &resp.data.certificate.as_slice();
-        print!("cert DER {:?}", der);
-
-        cert_chain.push(der.to_vec());
-    }
-
-    tracing::debug!(len = cert_chain.len(), "Done getting cert chain");
-    cert_chain
-}
+     let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
+     let start = std::time::Instant::now();
+     let retry_window = std::time::Duration::from_secs(15);
+ 
+     loop {
+         let result = helper_get_cert_chain_info(dev);
+         assert!(result.is_ok(), "result {:?}", result);
+ 
+         let resp = result.unwrap();
+         let num_certs = resp.data.num_certs;
+ 
+         let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
+         let mut got_invalid_cert = false;
+ 
+         for i in 0..num_certs {
+             let result = helper_get_certificate(dev, i);
+ 
+             if idfu_enabled {
+                 if let Err(DdiError::DdiStatus(DdiStatus::InvalidCertificate)) = &result {
+                     got_invalid_cert = true;
+                     break;
+                 }
+             }
+ 
+             assert!(result.is_ok(), "result {:?}", result);
+ 
+             let resp = result.unwrap();
+             let der = &resp.data.certificate.as_slice();
+             print!("cert DER {:?}", der);
+ 
+             cert_chain.push(der.to_vec());
+         }
+ 
+         if got_invalid_cert {
+             if start.elapsed() > retry_window {
+                 panic!("get_certificate still returning InvalidCertificate after {:?}", start.elapsed());
+             }
+             println!("InvalidCertificate in attest_key cert chain fetch, retrying...");
+             std::thread::sleep(std::time::Duration::from_millis(500));
+             continue;
+         }
+ 
+         tracing::debug!(len = cert_chain.len(), "Done getting cert chain");
+         return cert_chain;
+     }
+ }
 
 fn import_rsa_key(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -> (u16, Vec<u8>) {
     let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
