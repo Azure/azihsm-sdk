@@ -92,12 +92,12 @@ static int kat_run(CK_MECHANISM_TYPE mech, const kat_vector *v, size_t chunk_len
             azihsm_pkcs11_digest_op_update(op, v->msg + off, take);
         }
     }
-    unsigned char got[64];
+    unsigned char got[AZIHSM_PKCS11_DIGEST_MAX_LEN];
     CK_ULONG len = azihsm_pkcs11_digest_op_len(op);
     azihsm_pkcs11_digest_op_final(op, got);
     azihsm_pkcs11_digest_op_free(op);
 
-    unsigned char want[64];
+    unsigned char want[AZIHSM_PKCS11_DIGEST_MAX_LEN];
     if (len > sizeof(want) || hex_to_bytes(hex, want, len) != 0)
     {
         return 0;
@@ -210,6 +210,36 @@ int main(void)
         snprintf(msg, sizeof(msg), "%s digest length is %lu", g_mech_names[m], want_len[m]);
         CHECK(ok, msg);
     }
+    CHECK(
+        azihsm_pkcs11_digest_op_new(CKM_SHA256, NULL) == CKR_ARGUMENTS_BAD,
+        "NULL out pointer rejected as CKR_ARGUMENTS_BAD"
+    );
+    CHECK(
+        azihsm_pkcs11_digest_mech_len(CKM_SHA_1) == 20 &&
+            azihsm_pkcs11_digest_mech_len(CKM_SHA256) == 32 &&
+            azihsm_pkcs11_digest_mech_len(CKM_SHA384) == 48 &&
+            azihsm_pkcs11_digest_mech_len(CKM_SHA512) == 64 &&
+            azihsm_pkcs11_digest_mech_len(CKM_MD5) == 0,
+        "mechanism length lookup covers the four digests and rejects others"
+    );
+    /* A NULL update is ignored, so the digest must equal the empty message's. */
+    unsigned char empty[AZIHSM_PKCS11_DIGEST_MAX_LEN];
+    unsigned char guarded[AZIHSM_PKCS11_DIGEST_MAX_LEN];
+    int guard_ok = azihsm_pkcs11_digest_op_new(CKM_SHA256, &op) == CKR_OK;
+    if (guard_ok)
+    {
+        azihsm_pkcs11_digest_op_final(op, empty);
+        azihsm_pkcs11_digest_op_free(op);
+    }
+    guard_ok = guard_ok && azihsm_pkcs11_digest_op_new(CKM_SHA256, &op) == CKR_OK;
+    if (guard_ok)
+    {
+        azihsm_pkcs11_digest_op_update(op, NULL, 5);
+        azihsm_pkcs11_digest_op_final(op, guarded);
+        azihsm_pkcs11_digest_op_free(op);
+        guard_ok = memcmp(guarded, empty, 32) == 0;
+    }
+    CHECK(guard_ok, "update with a NULL data pointer absorbs nothing");
     azihsm_pkcs11_digest_op_free(NULL); /* must be a no-op */
     CHECK(1, "freeing a NULL op is a no-op");
 

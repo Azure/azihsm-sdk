@@ -435,24 +435,32 @@ struct azihsm_pkcs11_digest_op
     } st;
 };
 
-CK_RV azihsm_pkcs11_digest_op_new(CK_MECHANISM_TYPE mech, azihsm_pkcs11_digest_op_t **out)
+CK_ULONG azihsm_pkcs11_digest_mech_len(CK_MECHANISM_TYPE mech)
 {
-    CK_ULONG len;
     switch (mech)
     {
     case CKM_SHA_1:
-        len = 20;
-        break;
+        return AZIHSM_PKCS11_SHA1_DIGEST_LEN;
     case CKM_SHA256:
-        len = 32;
-        break;
+        return AZIHSM_PKCS11_SHA256_DIGEST_LEN;
     case CKM_SHA384:
-        len = 48;
-        break;
+        return AZIHSM_PKCS11_SHA384_DIGEST_LEN;
     case CKM_SHA512:
-        len = 64;
-        break;
+        return AZIHSM_PKCS11_SHA512_DIGEST_LEN;
     default:
+        return 0;
+    }
+}
+
+CK_RV azihsm_pkcs11_digest_op_new(CK_MECHANISM_TYPE mech, azihsm_pkcs11_digest_op_t **out)
+{
+    if (out == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    CK_ULONG len = azihsm_pkcs11_digest_mech_len(mech);
+    if (len == 0)
+    {
         return CKR_MECHANISM_INVALID;
     }
     azihsm_pkcs11_digest_op_t *op = malloc(sizeof(*op));
@@ -473,9 +481,12 @@ CK_RV azihsm_pkcs11_digest_op_new(CK_MECHANISM_TYPE mech, azihsm_pkcs11_digest_o
     case CKM_SHA384:
         sha384_init(&op->st.s512);
         break;
-    default:
+    case CKM_SHA512:
         sha512_init(&op->st.s512);
         break;
+    default:
+        free(op); /* unreachable: the mech_len gate above rejects everything else */
+        return CKR_MECHANISM_INVALID;
     }
     *out = op;
     return CKR_OK;
@@ -492,6 +503,12 @@ void azihsm_pkcs11_digest_op_update(
     CK_ULONG len
 )
 {
+    /* The entry points guard (NULL, len > 0) already; never read from a NULL
+     * data pointer regardless. */
+    if (data == NULL || len == 0)
+    {
+        return;
+    }
     switch (op->mech)
     {
     case CKM_SHA_1:
@@ -500,9 +517,12 @@ void azihsm_pkcs11_digest_op_update(
     case CKM_SHA256:
         sha256_update(&op->st.s256, data, len);
         break;
-    default:
+    case CKM_SHA384:
+    case CKM_SHA512:
         sha512_update(&op->st.s512, data, len);
         break;
+    default:
+        break; /* unreachable: op_new only constructs supported mechanisms */
     }
 }
 
@@ -510,7 +530,7 @@ void azihsm_pkcs11_digest_op_final(azihsm_pkcs11_digest_op_t *op, CK_BYTE *out)
 {
     /* The cores emit their full state; SHA-384 is the SHA-512 core truncated
      * to op->len (48) bytes. */
-    uint8_t full[64];
+    uint8_t full[AZIHSM_PKCS11_DIGEST_MAX_LEN];
     switch (op->mech)
     {
     case CKM_SHA_1:
@@ -519,14 +539,29 @@ void azihsm_pkcs11_digest_op_final(azihsm_pkcs11_digest_op_t *op, CK_BYTE *out)
     case CKM_SHA256:
         sha256_final(&op->st.s256, full);
         break;
-    default:
+    case CKM_SHA384:
+    case CKM_SHA512:
         sha512_final(&op->st.s512, full);
         break;
+    default:
+        return; /* unreachable: op_new only constructs supported mechanisms */
     }
     memcpy(out, full, op->len);
 }
 
 void azihsm_pkcs11_digest_op_free(azihsm_pkcs11_digest_op_t *op)
 {
+    if (op == NULL)
+    {
+        return;
+    }
+    /* The op buffers caller message bytes, which may be sensitive; clear via a
+     * volatile pointer so the wipe of about-to-be-freed memory is not elided
+     * (the module links no libcrypto, so OPENSSL_cleanse is unavailable). */
+    volatile unsigned char *p = (volatile unsigned char *)op;
+    for (size_t i = 0; i < sizeof(*op); i++)
+    {
+        p[i] = 0;
+    }
     free(op);
 }

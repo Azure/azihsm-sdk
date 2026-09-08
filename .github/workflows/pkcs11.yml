@@ -95,5 +95,6 @@ jobs:
           set -euo pipefail
           cd plugins/azihsm_pkcs11
           gcc -Wall -Wextra -Werror -I include/pkcs11-v3.1 -I src \
-            tests/digest_kat_test.c src/azihsm_pkcs11_digest.c -o digest_kat_test
-          ./digest_kat_test
+            tests/digest_kat_test.c src/azihsm_pkcs11_digest.c \
+            -o "$RUNNER_TEMP/digest_kat_test"
+          "$RUNNER_TEMP/digest_kat_test"

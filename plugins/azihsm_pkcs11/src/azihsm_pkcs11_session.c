@@ -531,19 +531,23 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_ACTIVE;
     }
+    if (azihsm_pkcs11_digest_mech_len(pMechanism->mechanism) == 0)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_MECHANISM_INVALID;
+    }
+    /* All supported digest mechanisms are parameterless. */
+    if (pMechanism->pParameter != NULL_PTR || pMechanism->ulParameterLen != 0)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
     azihsm_pkcs11_digest_op_t *op = NULL;
     CK_RV rv = azihsm_pkcs11_digest_op_new(pMechanism->mechanism, &op);
     if (rv != CKR_OK)
     {
         azihsm_pkcs11_unlock();
         return rv;
-    }
-    /* All supported digest mechanisms are parameterless. */
-    if (pMechanism->pParameter != NULL_PTR || pMechanism->ulParameterLen != 0)
-    {
-        azihsm_pkcs11_digest_op_free(op);
-        azihsm_pkcs11_unlock();
-        return CKR_MECHANISM_PARAM_INVALID;
     }
     s->op_ctx = op;
     s->op = P11_OP_DIGEST;
