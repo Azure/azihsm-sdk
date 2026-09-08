@@ -271,7 +271,11 @@ fn session_open_finish_multi_threaded_single_winner_keeps_session_active() {
         }
     }
 
-    let winner = winners.into_iter().next().unwrap().unwrap();
+    let winner = winners
+        .into_iter()
+        .next()
+        .expect("winner count was validated above")
+        .expect("winning SessionOpenFinish result must be successful");
     ctx.psk_change(&winner, &ROTATED_CU_PSK)
         .expect("losing finishes must not destroy the winning Active session");
     ctx.session_close(winner.session_id)
@@ -855,7 +859,11 @@ fn session_open_init_multi_threaded_single_winner_keeps_pending_session_finishab
         "every non-winning SessionOpenInit must be rejected",
     );
 
-    let pending = winners.into_iter().next().unwrap().unwrap();
+    let pending = winners
+        .into_iter()
+        .next()
+        .expect("winner count was validated above")
+        .expect("winning SessionOpenInit result must be successful");
     let session = ctx
         .session_open_finish(pending)
         .expect("losing inits must not destroy the winning Pending session");
