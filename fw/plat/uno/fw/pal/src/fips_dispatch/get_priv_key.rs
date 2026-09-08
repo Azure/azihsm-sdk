@@ -10,7 +10,14 @@
 //! private / secret key bytes.
 //!
 //! No `partition_lock` is needed: the handler only performs read-only
-//! vault lookups (`vault_key_kind` / `vault_key`).
+//! vault lookups (`vault_key_kind` / `vault_key_attrs` / `vault_key`).
+//!
+//! Two kinds of keys are deliberately *not* readable back: AES bulk
+//! (fast-path) kinds, whose vault entry is a two-byte bulk-key reference
+//! rather than raw AES material this PAL can recover, and device-internal
+//! keys (e.g. the partition RSA unwrapping key), which are device-owned
+//! and never leave the HSM.  Both are refused with
+//! [`HsmError::InvalidKeyType`].
 
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
@@ -84,9 +91,35 @@ pub(super) fn get_priv_key<'p>(
 
     let key_id = HsmKeyId::from(body.key_id);
 
-    // Resolve the stored kind and map it back to its on-wire type, then
-    // borrow the committed plaintext (exact key length, no padding).
+    // Resolve the stored kind first — an unknown id surfaces as
+    // `KeyNotFound` here.
     let vault_kind = pal.vault_key_kind(io, key_id)?;
+
+    // AES bulk (fast-path) kinds persist a two-byte bulk-key reference,
+    // not the raw AES material, and this PAL exposes no path to recover
+    // the underlying key.  Refuse rather than hand back the reference
+    // bytes as though they were the key.
+    if matches!(
+        vault_kind,
+        HsmVaultKeyKind::AesXtsBulk256
+            | HsmVaultKeyKind::AesGcmBulk256
+            | HsmVaultKeyKind::AesGcmBulk256Unapproved
+    ) {
+        return Err(HsmError::InvalidKeyType);
+    }
+
+    // Device-internal keys — e.g. the partition RSA unwrapping key
+    // imported via `RawKeyImport` — are device-owned and never leave the
+    // HSM.  The validation read-back covers only caller-created key
+    // material, so refuse to export any key carrying the internal
+    // attribute (parity with `DeleteKey`, which likewise refuses to
+    // touch internal keys).
+    if pal.vault_key_attrs(io, key_id)?.internal() {
+        return Err(HsmError::InvalidKeyType);
+    }
+
+    // Map the stored kind back to its on-wire type, then borrow the
+    // committed plaintext (exact key length, no padding).
     let key_kind = vault_kind_ddi(vault_kind)?;
     let plaintext = pal.vault_key(io, key_id)?;
 
@@ -105,9 +138,9 @@ pub(super) fn get_priv_key<'p>(
 }
 
 /// Map a stored vault key kind back to its on-wire [`DdiKeyType`] for
-/// the validation read-back.  Kinds a read-back cannot produce
-/// (public-only, unwrap-only, or otherwise non-exportable) return
-/// [`HsmError::InvalidKeyType`].
+/// validation read-back and masked-key metadata. Kinds a read-back
+/// cannot produce (public-only, unwrap-only, or otherwise non-exportable)
+/// return [`HsmError::InvalidKeyType`].
 ///
 /// # Why this duplicates `core`'s `from_pal::vault_kind_ddi`
 ///
@@ -124,13 +157,11 @@ pub(super) fn get_priv_key<'p>(
 ///   could share is the `DdiKeyType` *types* crate, but a vault-kind
 ///   *conversion policy* belongs with the handlers, not in a pure
 ///   wire-types crate.
-/// * **The duplication is coincidental, not essential.** Core's table
-///   answers "what tag do I stamp into a *production* masked-key blob?";
-///   this one answers "what kind do I label a *test-only* read-back
-///   with?" (a field the host harness does not even inspect).  They are
-///   free to diverge, so this stays a small, self-contained copy gated
-///   behind `fips_validation_hooks` and never ships in production.
-fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
+/// * **The duplication is required by layering, but the mapping must
+///   remain aligned.** Both tables preserve the same vault-kind ↔ wire-type
+///   bijection so a key keeps its type through import, read-back, masking,
+///   and re-import.
+pub(super) fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
     match kind {
         HsmVaultKeyKind::Rsa2kPrivate => Ok(DdiKeyType::Rsa2kPrivate),
         HsmVaultKeyKind::Rsa3kPrivate => Ok(DdiKeyType::Rsa3kPrivate),
@@ -150,6 +181,9 @@ fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
         HsmVaultKeyKind::Secret256 => Ok(DdiKeyType::Secret256),
         HsmVaultKeyKind::Secret384 => Ok(DdiKeyType::Secret384),
         HsmVaultKeyKind::Secret521 => Ok(DdiKeyType::Secret521),
+        HsmVaultKeyKind::_HmacSha256 => Ok(DdiKeyType::HmacSha256),
+        HsmVaultKeyKind::_HmacSha384 => Ok(DdiKeyType::HmacSha384),
+        HsmVaultKeyKind::_HmacSha512 => Ok(DdiKeyType::HmacSha512),
         HsmVaultKeyKind::VarLenHmacSha256 => Ok(DdiKeyType::VarHmac256),
         HsmVaultKeyKind::VarLenHmacSha384 => Ok(DdiKeyType::VarHmac384),
         HsmVaultKeyKind::VarLenHmacSha512 => Ok(DdiKeyType::VarHmac512),

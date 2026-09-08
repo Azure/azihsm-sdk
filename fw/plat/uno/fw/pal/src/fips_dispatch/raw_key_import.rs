@@ -32,7 +32,6 @@ use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
-use azihsm_fw_hsm_pal_traits::HsmPartitionLock;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSeedStore;
@@ -46,6 +45,7 @@ use azihsm_fw_hsm_pal_traits::PartPropId;
 use super::DDI_OP_RAW_KEY_IMPORT;
 use super::FipsReqHdr;
 use super::encode_resp;
+use super::get_priv_key::vault_kind_ddi;
 use super::success_hdr_sess;
 use crate::pal::UnoHsmPal;
 
@@ -98,7 +98,8 @@ struct DdiRawKeyImportResp<'a> {
 /// partition-state mutation is the single self-contained
 /// `vault_key_create`, with no multi-step read-modify-write held across
 /// an await for an interleaved handler to corrupt. The RSA unwrapping-key
-/// path *does* take the lock (see [`raw_import_unwrapping_key`]).
+/// path prepares its response before a final synchronous state commit
+/// (see [`raw_import_unwrapping_key`]).
 pub(super) async fn raw_key_import<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
@@ -133,7 +134,6 @@ pub(super) async fn raw_key_import<'p>(
     // (`Rsa2kPrivate` is handled by the unwrapping-key path above) and
     // any usage the kind may not carry.
     let attrs = raw_import_attrs(body.key_kind, &body.key_properties.key_metadata)?;
-    validate_raw_key_length(body.key_kind, body.raw.len())?;
     let vault_kind = vault_kind_from_ddi(body.key_kind)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
@@ -167,7 +167,7 @@ pub(super) async fn raw_key_import<'p>(
         io,
         HsmSessId::from(sess_id),
         attrs,
-        body.key_kind,
+        vault_kind_ddi(vault_kind)?,
         body.key_properties.key_label,
         key_length,
         plaintext,
@@ -194,14 +194,14 @@ pub(super) async fn raw_key_import<'p>(
 /// `import_raw_key` `Rsa2kPrivate` arm + `import_unwrapping_key`).
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects anything
-/// else with `InvalidPermissions`.  The import runs under the partition
-/// lock; the new key is committed and recorded as the partition
-/// unwrapping key id before any existing key is reclaimed, so a failure
-/// leaves the partition on the still-valid previous key.  The response
-/// carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`] — matching
-/// how the unwrapping key is masked elsewhere — so the host's unmask path
-/// treats it as the partition unwrapping key rather than a general RSA
-/// private key.
+/// else with `InvalidPermissions`. All fallible response preparation
+/// completes before the old key is reclaimed and the partition property
+/// is synchronously committed to the new key. Therefore an error before
+/// the commit leaves the partition on the still-valid previous key. The
+/// response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`] —
+/// matching how the unwrapping key is masked elsewhere — so the host's
+/// unmask path treats it as the partition unwrapping key rather than a
+/// general RSA private key.
 async fn raw_import_unwrapping_key<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
@@ -212,19 +212,8 @@ async fn raw_import_unwrapping_key<'p>(
     // Unwrap-only; SignVerify / EncryptDecrypt -> InvalidPermissions.
     let attrs = for_rsa_unwrap(&body.key_properties.key_metadata)?;
 
-    // On this single-core cooperative PAL the partition lock is a no-op
-    // (`PartitionGuard = ()`); the call is kept to honor the trait
-    // contract that this read-modify-write of the partition-global
-    // unwrapping key is serialized against other handlers.
-    pal.partition_lock(io).await?;
-
-    // Note the current unwrapping key (if any) but do not delete it yet —
-    // it is reclaimed only after the new key id is committed, so a failure
-    // leaves the partition on the still-valid previous key.
-    let old_id = part_unwrapping_key_id(pal, io).ok();
-
     // Copy the raw plaintext into a vault-import scratch buffer and
-    // commit it as the partition-internal unwrapping key.
+    // create an unpublished partition-internal unwrapping key.
     let key_buf = pal.dma_alloc(io, body.raw.len())?;
     key_buf.copy_from_slice(body.raw);
 
@@ -238,40 +227,72 @@ async fn raw_import_unwrapping_key<'p>(
     key_buf.zeroize();
 
     let key_id = key_id?;
-    part_set_unwrapping_key_id(pal, io, key_id)?;
 
-    // New id committed — now reclaim the old vault entry.
+    // Finish every fallible response operation before changing partition
+    // state. If preparation fails, remove the unpublished key and surface
+    // the original error; a cleanup failure takes precedence because it
+    // means the vault is already inconsistent.
+    let resp = match async {
+        let plaintext = pal.vault_key(io, key_id)?;
+        let key_length = plaintext.len() as u16;
+        let masked_key = mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            attrs,
+            DdiKeyType::RsaUnwrap,
+            body.key_properties.key_label,
+            key_length,
+            plaintext,
+        )
+        .await?;
+
+        pal.dma_alloc_var(io, |buf| {
+            encode_resp(
+                &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
+                &DdiRawKeyImportResp {
+                    key_id: key_id.into(),
+                    bulk_key_id: None,
+                    masked_key,
+                },
+                buf,
+            )
+        })
+    }
+    .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            pal.vault_key_delete(io, key_id).await?;
+            return Err(e);
+        }
+    };
+
+    // Read the current key only after response preparation so concurrent
+    // replacements cannot leave a stale snapshot across earlier awaits.
+    let old_id = match part_unwrapping_key_id(pal, io) {
+        Ok(old_id) => Some(old_id),
+        Err(HsmError::PartPropNotFound) => None,
+        Err(e) => {
+            pal.vault_key_delete(io, key_id).await?;
+            return Err(e);
+        }
+    };
+
+    // Reclaim the old entry before the final commit. If deletion fails,
+    // the property still names the old valid key, so deleting the
+    // unpublished replacement restores the pre-call state.
     if let Some(old_id) = old_id {
-        pal.vault_key_delete(io, old_id).await?;
+        if let Err(e) = pal.vault_key_delete(io, old_id).await {
+            pal.vault_key_delete(io, key_id).await?;
+            return Err(e);
+        }
     }
 
-    // Build the host's opaque re-import blob from the committed key,
-    // tagged as the partition unwrapping key.
-    let plaintext = pal.vault_key(io, key_id)?;
-    let key_length = plaintext.len() as u16;
-    let masked_key = mask_blob(
-        pal,
-        io,
-        HsmSessId::from(sess_id),
-        attrs,
-        DdiKeyType::RsaUnwrap,
-        body.key_properties.key_label,
-        key_length,
-        plaintext,
-    )
-    .await?;
-
-    let resp = pal.dma_alloc_var(io, |buf| {
-        encode_resp(
-            &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
-            &DdiRawKeyImportResp {
-                key_id: key_id.into(),
-                bulk_key_id: None,
-                masked_key,
-            },
-            buf,
-        )
-    })?;
+    // Final synchronous commit. Uno's cooperative executor cannot
+    // interleave another task between the old-key deletion above and this
+    // property update because there is no await in between.
+    part_set_unwrapping_key_id(pal, io, key_id)?;
 
     Ok(resp)
 }
@@ -302,34 +323,20 @@ fn raw_import_attrs(
     Ok(attrs.with_local(false))
 }
 
-/// Enforce the canonical lengths carried by the fixed HMAC DDI types.
-///
-/// All HMAC keys use the variable-length vault kinds internally, so the
-/// fixed wire types need an explicit length check before vault creation.
-fn validate_raw_key_length(key_kind: DdiKeyType, key_len: usize) -> HsmResult<()> {
-    match key_kind {
-        DdiKeyType::HmacSha256 if key_len != 32 => Err(HsmError::InvalidKeyLength),
-        DdiKeyType::HmacSha384 if key_len != 48 => Err(HsmError::InvalidKeyLength),
-        DdiKeyType::HmacSha512 if key_len != 64 => Err(HsmError::InvalidKeyLength),
-        _ => Ok(()),
-    }
-}
-
 /// Map an on-wire `DdiKeyType` to the vault kind a raw import creates.
 ///
-/// Mirrors the core `from_ddi::vault_kind_from_ddi`; both fixed and
-/// variable HMAC wire types map onto the variable-length vault kinds
-/// (the fixed lengths are enforced separately by
-/// [`validate_raw_key_length`]).  Kinds that raw import does not accept
-/// return [`HsmError::InvalidKeyType`].
+/// Mirrors the core `from_ddi::vault_kind_from_ddi`; fixed and variable
+/// HMAC wire types map to distinct vault kinds so read-back and masked-key
+/// re-import preserve the original key type. Kinds that raw import does
+/// not accept return [`HsmError::InvalidKeyType`].
 fn vault_kind_from_ddi(key_type: DdiKeyType) -> HsmResult<HsmVaultKeyKind> {
     match key_type {
         DdiKeyType::Secret256 => Ok(HsmVaultKeyKind::Secret256),
         DdiKeyType::Secret384 => Ok(HsmVaultKeyKind::Secret384),
         DdiKeyType::Secret521 => Ok(HsmVaultKeyKind::Secret521),
-        DdiKeyType::HmacSha256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
-        DdiKeyType::HmacSha384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
-        DdiKeyType::HmacSha512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
+        DdiKeyType::HmacSha256 => Ok(HsmVaultKeyKind::_HmacSha256),
+        DdiKeyType::HmacSha384 => Ok(HsmVaultKeyKind::_HmacSha384),
+        DdiKeyType::HmacSha512 => Ok(HsmVaultKeyKind::_HmacSha512),
         DdiKeyType::VarHmac256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
         DdiKeyType::VarHmac384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
         DdiKeyType::VarHmac512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
