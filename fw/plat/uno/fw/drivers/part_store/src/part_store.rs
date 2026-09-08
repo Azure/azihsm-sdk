@@ -473,6 +473,18 @@ impl Partition {
         self.set_ephemeral_mk_key_id(None);
         self.set_sd_mk_key_id(None);
         self.set_unwrapping_key_id(None);
+        // The SD one-shot must follow its key. `set_sd_mk_key_id(None)` above
+        // drops the SDMK handle and the caller wipes the vault material for
+        // *every* reset kind, so leaving `sd_initialized` set would leave the
+        // partition claiming a security domain whose masking key no longer
+        // exists — and `SdCreateRemoteBackup`'s one-shot gate would then
+        // refuse to mint a replacement, permanently. The std PAL clears this
+        // on both `part_enable` and `clear_enabled_state`; uno previously
+        // cleared it only on `Disable`, so an NSSR (`Migrate`) left the flag
+        // stranded. Note `bk3_initialized` is deliberately *not* moved here:
+        // its `sealed_bk3` blob is preserved by `Migrate`, so that flag stays
+        // consistent with its material.
+        self.set_sd_initialized(false);
         // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
         self.clear_bk3_session();
@@ -511,7 +523,6 @@ impl Partition {
             self.clear_sapota_thumbprint();
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
-            self.set_sd_initialized(false);
             // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
             // belongs to a partition that is being deallocated. A later
             // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh

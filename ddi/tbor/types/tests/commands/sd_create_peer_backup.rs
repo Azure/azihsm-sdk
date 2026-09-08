@@ -20,8 +20,6 @@
 //! * Policy without `allow_peer_cloning` → `SdPeerCloningNotAllowed`.
 //! * Not finalized → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
@@ -133,7 +131,7 @@ pub(crate) fn create_peer_req(
 }
 
 #[test]
-fn sd_create_peer_backup_roundtrip_emu() {
+fn sd_create_peer_backup_roundtrip() {
     let ctx = TestCtx::new();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -171,7 +169,7 @@ fn sd_create_peer_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_create_peer_backup_rejects_without_peer_cloning_emu() {
+fn sd_create_peer_backup_rejects_without_peer_cloning() {
     let ctx = TestCtx::new();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -196,7 +194,7 @@ fn sd_create_peer_backup_rejects_without_peer_cloning_emu() {
 }
 
 #[test]
-fn sd_create_peer_backup_rejects_before_finalize_emu() {
+fn sd_create_peer_backup_rejects_before_finalize() {
     // A partition that has not been finalized is rejected at the lifecycle
     // gate before any evidence or crypto work.
     let ctx = TestCtx::new();
