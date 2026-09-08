@@ -11,6 +11,8 @@
 //! each against the MBOR path (same underlying cert store), and confirm
 //! that an out-of-range index or slot is rejected.
 
+#![cfg(feature = "emu")]
+
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborGetCertReq;
 use azihsm_ddi_tbor_types::TborStatus;
