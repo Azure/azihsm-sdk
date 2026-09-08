@@ -59,6 +59,31 @@ where
     }
 }
 
+/// Executes a dual-protocol test with V1/MBOR under `mock`.
+#[cfg(feature = "mock")]
+pub(crate) fn with_dual_session<F>(test: F)
+where
+    F: FnMut(HsmSession),
+{
+    with_session(test);
+}
+
+/// Executes a dual-protocol test with a fresh V2/TBOR session.
+#[allow(unused)]
+#[allow(clippy::expect_used)]
+#[cfg(not(feature = "mock"))]
+pub(crate) fn with_dual_session<F>(mut test: F)
+where
+    F: FnMut(HsmSession),
+{
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+    test(session);
+}
+
 #[session_test]
 fn test_with_session(session: HsmSession) {
     info!("Testing with session: {:?}", session.id());

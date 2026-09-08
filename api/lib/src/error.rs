@@ -67,6 +67,7 @@ pub enum HsmError {
     InvalidSession = -42,
     SdAlreadyInitialized = -43,
     SdPeerCloningNotAllowed = -44,
+    UnsupportedKeyOperation = -45,
     Panic = i32::MIN,
 }
 

@@ -15,13 +15,13 @@
 //! * [`part_init_with_sapota`] — PartInit additionally carrying a
 //!   SAPOTA thumbprint succeeds.
 
-use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
 use super::sata_thumbprint;
-use super::ROTATED_CO_PSK;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// Verifies that a successful PartInit response contains both PTA artifacts.
 macro_rules! assert_part_init_artifacts_present {

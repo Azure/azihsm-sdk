@@ -5,9 +5,23 @@
 //!
 //! Re-supplies the unified `PartPolicy` (so the device can re-derive
 //! `POTAPubKey` and verify `SHA-384(part_policy) == policy_hash`), the PTA
-//! certificate chain (carried out of band as SGL data blocks, described by
+//! certificate chain (carried out of band and described by
 //! `(index, length)` [`CertDescriptor`]s), and an optional prior
 //! `local_mk` backup to restore.
+//!
+//! Both backends carry the chain out of band, and the firmware consumes
+//! the descriptors on either. The native path previously sent a
+//! placeholder descriptor with no payload because `ddi/nix` had no OOB
+//! transport; it does now, so a placeholder is no longer a stand-in for
+//! a real chain.
+//!
+//! One case still sends a placeholder deliberately: an empty `certs`
+//! slice, below. The request schema requires at least one
+//! [`CertDescriptor`], so the helper emits a default one and attaches no
+//! OOB payload. That is only useful for tests whose expected rejection
+//! fires *before* `validate_pta_chain` dereferences the page — see
+//! `commands::part_final::fw_rejects`. Anything that reaches the chain
+//! walk must pass real certificates.
 
 use azihsm_ddi::AzihsmDdi;
 use azihsm_ddi_interface::Ddi;
@@ -25,13 +39,14 @@ use super::finish::SessionHandshake;
 /// Issue `PartFinal` on the CO session represented by `session`.
 ///
 /// `part_policy` must be exactly [`PART_POLICY_LEN`] and match the policy
-/// bound at `PartInit`.  `certs` are the PTA-chain certificate DERs
+/// bound at `PartInit`. `certs` are the PTA-chain certificate DERs
 /// (root → PTA), transferred out of band; each becomes one SGL data block
-/// referenced by a `(index, length)` descriptor.  Callers exercising a
-/// gate that rejects *before* the chain walk pass an empty `certs` slice
-/// (the schema still needs ≥1 descriptor, so a single placeholder with no
-/// OOB region is emitted).  `prev_local_mk_backup` is the optional prior
-/// backup to restore (empty = first instantiation).
+/// referenced by a `(index, length)` descriptor. Callers exercising a gate
+/// that rejects *before* the chain walk pass an empty `certs` slice (the
+/// schema still needs >=1 descriptor, so a single placeholder with no OOB
+/// region is emitted).
+/// `prev_local_mk_backup` is the optional prior backup to restore
+/// (empty = first instantiation).
 pub(crate) fn part_final(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
@@ -72,5 +87,6 @@ pub(crate) fn part_final(
     };
 
     let oob = (!certs.is_empty()).then_some(certs);
+
     dev.exec_op_tbor(&req, oob, &mut None)
 }

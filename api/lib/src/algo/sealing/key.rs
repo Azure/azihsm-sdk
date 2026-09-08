@@ -12,9 +12,9 @@
 use super::*;
 
 // A security-domain sealing key held as a masked (AEAD-GCM-256) blob.
-// Non-resident: not stored on the device or in the vault; the masked
+// Unpinned: not stored on the device or in the vault; the masked
 // blob is cached in props and unmasked on-use.
-define_hsm_key!(pub HsmSealingKey, ddi::HsmNoKeyHandle);
+define_hsm_key!(pub HsmSealingKey, ddi::HsmKeyHandle);
 
 /// Host mirror of the firmware `HsmKeyScope` — a key's lifecycle /
 /// visibility domain. Carried on the wire as its raw `u8` discriminant
@@ -36,7 +36,7 @@ enum KeyScope {
 const SEALING_KEY_BITS: u32 = 384;
 
 impl HsmSealingKey {
-    /// No-op: non-resident, so there is no device handle to restore.
+    /// No-op: unpinned, so there is no device handle to restore.
     /// Kept for `#[resiliency_key_op]` compatibility.
     #[allow(unused)]
     pub(crate) fn restore_from_masked(&self) -> HsmResult<()> {
@@ -81,7 +81,7 @@ impl HsmDerivationKey for HsmSealingKey {}
 impl HsmKeyReportOp for HsmSealingKey {
     type Error = HsmError;
 
-    /// Attests this non-resident sealing key via TBOR `KeyReport`,
+    /// Attests this unpinned sealing key via TBOR `KeyReport`,
     /// routing on its masked-key envelope since there is no device
     /// handle to reference.
     fn generate_key_report(
@@ -103,8 +103,8 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
     type Session = HsmSession;
 
     /// Generates a new security-domain sealing key via TBOR
-    /// `SdSealingKeyGen` (opcode `0x09`). The key is returned as a
-    /// non-resident masked blob cached in `props`, not stored in the
+    /// `SdSealingKeyGen` (opcode `0x09`). The key is returned as an
+    /// unpinned masked blob cached in `props`, not stored in the
     /// partition vault.
     ///
     /// Only valid on a V2 (security-domain) session; a V1 session yields
@@ -118,9 +118,9 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         HsmSealingKey::validate_props(&props)?;
 
         // Cache the masked blob and public key in props. The key is
-        // non-resident (`HsmNoKeyHandle`) until unmasked on-use. Masked
-        // under the partition-local masking key so the blob survives
-        // across launches for unmask-on-use.
+        // unpinned (`Unpinned`) until unmasked on-use. Masked under
+        // the partition-local masking key so the blob survives across
+        // launches for unmask-on-use.
         let (masked_key, pub_key_der) = ddi::sd_sealing_key_gen(session, KeyScope::Local as u8)?;
         let mut props = props;
         props.set_masked_key(&masked_key);
@@ -128,7 +128,7 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         Ok(HsmSealingKey::new(
             session.clone(),
             props,
-            ddi::HsmNoKeyHandle,
+            ddi::HsmKeyHandle::Unpinned,
         ))
     }
 }

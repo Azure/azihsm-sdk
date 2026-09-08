@@ -36,20 +36,20 @@ use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use zerocopy::TryFromBytes;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_create_peer_backup::create_peer_req;
 use crate::commands::sd_create_peer_backup::finalize_peer_partition;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// A peer backup produced by the first device's `CreatePeerBackup`,
 /// replayed on the second (rebooted) device to restore the security domain.

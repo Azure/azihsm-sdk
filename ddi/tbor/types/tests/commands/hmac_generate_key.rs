@@ -31,10 +31,10 @@ use azihsm_ddi_tbor_types::HMAC_HASH_SHA256;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
 
-use crate::commands::part_init::bootstrap_rotated_co;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 pub(crate) const SCOPE_SESSION: u8 = 0b001;

@@ -17,6 +17,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID;
 
 const EXPECTED: azihsm_ddi_tbor_types::TborApiRevResp = azihsm_ddi_tbor_types::TborApiRevResp {
     min_ver: 1,
@@ -69,7 +70,7 @@ fn api_rev_independent_of_session_state() {
 
     // CO Pending: init only, do not finish yet.
     let pending = ctx
-        .session_open_init(0, SessionType::Authenticated)
+        .session_open_init(CO_PSK_ID, SessionType::Authenticated)
         .expect("SessionOpenInit (CO/Authenticated) for pending-state probe");
     let during_pending = ctx
         .tbor(&TborApiRevReq::new())

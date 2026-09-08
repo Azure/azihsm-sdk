@@ -103,7 +103,7 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     let req = DdiRsaUnwrapCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaUnwrap, &key.session()),
         data: DdiRsaUnwrapReq {
-            key_id: ddi::get_key_id(key.handle()),
+            key_id: ddi::get_key_id(key.handle())?,
             wrapped_blob_key_class: key_props.kind().try_into()?,
             wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
             wrapped_blob_hash_algorithm: hash_algo.into(),
@@ -154,7 +154,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     let req = DdiRsaUnwrapCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaUnwrap, &unwrapping_key.session()),
         data: DdiRsaUnwrapReq {
-            key_id: ddi::get_key_id(unwrapping_key.handle()),
+            key_id: ddi::get_key_id(unwrapping_key.handle())?,
             wrapped_blob_key_class: priv_key_props.kind().try_into()?,
             wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
             wrapped_blob_hash_algorithm: hash_algo.into(),
@@ -281,7 +281,7 @@ fn rsa_mod_exp(
     let req = DdiRsaModExpCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaModExp, &key.session()),
         data: DdiRsaModExpReq {
-            key_id: get_key_id(key.handle()),
+            key_id: get_key_id(key.handle())?,
             op_type: op,
             y: MborByteArray::from_slice(input).map_hsm_err(HsmError::InternalError)?,
         },

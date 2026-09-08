@@ -30,15 +30,15 @@ use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 
-use super::bootstrap_rotated_co;
 use super::build_envelope;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
-use super::ROTATED_CO_PSK;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::build_part_init_mach_seed_aad;
 use crate::harness::encrypt_mach_seed_envelope;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
     let mut req = TborPartInitReq {

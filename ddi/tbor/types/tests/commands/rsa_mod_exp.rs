@@ -68,7 +68,7 @@ fn import_rsa(
     session_id: u16,
     modulus_bytes: usize,
     crt: bool,
-    usage: u8,
+    usage: u64,
 ) -> (Vec<u8>, RsaPublicKey, usize) {
     let key = RsaPrivateKey::generate(modulus_bytes).expect("generate host RSA key");
     let modulus_len = key.size();

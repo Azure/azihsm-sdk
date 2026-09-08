@@ -13,6 +13,8 @@ test = false
 [dependencies]
 azihsm_fw_core_crypto_key_derive = { workspace = true }
 azihsm_fw_core_crypto_x509_builder = { workspace = true }
+azihsm_fw_ddi_mbor = { optional = true, workspace = true }
+azihsm_fw_ddi_mbor_derive = { optional = true, workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
@@ -58,3 +60,9 @@ default = []
 # that cannot snoop semihosting (e.g. production) should disable this
 # feature — boot_handshake alone is sufficient.
 semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
+
+# Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
+# rather than the core opcode tables. Adds `TestAction` (DdiOp 2004),
+# which crash-recovery testing uses to inject faults. Never enable in a
+# production build.
+mcr_test_action = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
