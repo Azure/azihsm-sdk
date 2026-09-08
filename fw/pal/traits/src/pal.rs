@@ -60,6 +60,7 @@ pub trait HsmPal:
     HsmAlloc
     + HsmIoController
     + HsmGdmaController
+    + HsmCustomDispatch
     + HsmPartitionManager
     + HsmPartitionLock
     + HsmCertStore
