@@ -19,6 +19,7 @@ mod integration {
     pub mod close_session_smoke;
     pub mod common;
     pub mod cross_session_key_access_smoke;
+    pub mod custom_dispatch;
     pub mod ddi_dev_info;
     pub mod delete_key;
     pub mod delete_key_smoke;
