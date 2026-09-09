@@ -348,7 +348,7 @@ fn hkdf_derive_unknown_hash_rejected() {
     );
 }
 
-/// Rejects an unsupported HKDF hash algorithm.
+/// Rejects an unsupported derived-key type.
 #[test]
 fn hkdf_derive_unknown_key_type_rejected() {
     let ctx = TestCtx::new();
