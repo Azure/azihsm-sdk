@@ -40,6 +40,7 @@ use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC256;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC384;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
@@ -69,6 +70,8 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
             session_id,
             scope: SCOPE_LOCAL,
             curve,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey a");
 
@@ -77,6 +80,8 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
             session_id,
             scope: SCOPE_LOCAL,
             curve,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey b");
 
@@ -555,6 +560,8 @@ fn concat_kdf_non_secret_ikm_rejected() {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
 
