@@ -75,12 +75,12 @@ All test names below are relative to the
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Happy path on Active CU session | ✅ | `session_close::session_close_cu_plaintext_active_emu` |  |
-| Happy path on Active CO session | ✅ | `session_close::session_close_co_authenticated_active_emu` |  |
-| Close a Pending-only slot (between Init and Finish) | ✅ | `session_close::session_close_pending_slot_emu` |  |
-| Unknown `session_id` → FW rejection | 🟡 | `session_close::session_close_unknown_id_emu` | Asserts `DdiError::DdiError(_)` |
-| Double-close of the same id → FW rejection | 🟡 | `session_close::session_close_double_close_emu` | Asserts `DdiError::DdiError(_)` |
-| Slot is freed for subsequent open after close | ✅ | `session_close::session_close_then_reopen_emu` |  |
+| Happy path on Active CU session | ✅ | `session_close::session_close_cu_plaintext_active` |  |
+| Happy path on Active CO session | ✅ | `session_close::session_close_co_authenticated_active` |  |
+| Close a Pending-only slot (between Init and Finish) | ✅ | `session_close::session_close_pending_slot` |  |
+| Unknown `session_id` → FW rejection | 🟡 | `session_close::session_close_unknown_id` | Asserts `DdiError::DdiError(_)` |
+| Double-close of the same id → FW rejection | 🟡 | `session_close::session_close_double_close` | Asserts `DdiError::DdiError(_)` |
+| Slot is freed for subsequent open after close | ✅ | `session_close::session_close_then_reopen` |  |
 | Default-PSK gate bypass (E2, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass_emu` |  |
 
 ## `PskChange` (opcode in-session, allow-listed)
@@ -106,32 +106,55 @@ All test names below are relative to the
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| CO session with default PSK → `DefaultPskMustRotate` (dispatcher gate) | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co_emu` |  |
-| CU session (under rotated PSK) → `InvalidPermissions` (handler role gate) | ✅ | `part_init::fw_rejects::part_init_reject_cu_session_emu` | CU PSK rotated up-front so default-PSK gate doesn't fire first |
-| Rotated CO session with malformed `PartPolicy` (all zeros) → `InvalidArg` (`policy::from_bytes` decode gate) | ✅ | `part_init::fw_rejects::part_init_reject_bad_policy_emu` |  |
-| Second `PartInit` after a successful one → `PtaKeyAlreadySet` (one-shot `part_set_pta_key` guard) | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Verified as step 2 of the smoke roundtrip |
+| CO session with default PSK → `DefaultPskMustRotate` (dispatcher gate) | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co` |  |
+| CU session (under rotated PSK) → `InvalidPermissions` (handler role gate) | ✅ | `part_init::fw_rejects::part_init_reject_cu_session` | CU PSK rotated up-front so default-PSK gate doesn't fire first |
+| Rotated CO session with malformed `PartPolicy` (all zeros) → `InvalidArg` (`policy::from_bytes` decode gate) | ✅ | `part_init::fw_rejects::part_init_reject_bad_policy` |  |
+| Second `PartInit` after a successful one → `PtaKeyAlreadySet` (one-shot `part_set_pta_key` guard) | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Verified as step 2 of the smoke roundtrip |
 
 ### Happy-path invariants
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Returns DER-tagged (`0x30`) PKCS#10 CSR ≤ `PTA_CSR_MAX_LEN` | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| CSR parses with `x509::X509Csr`; ECDSA-P384 self-signature verifies | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| Returns CBOR-tagged (`0xD2` = COSE_Sign1) PTAReport ≤ `PTA_REPORT_MAX_LEN` | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| PTAReport COSE_Sign1 verifies under PID-leaf pubkey (slot-0 cert chain leaf) | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Via `verify_pta_report` helper using `KeyAttester::verify` |
-| PTAReport's embedded COSE_Key `(pk_x, pk_y)` matches CSR SPKI | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Cross-binds report to CSR pubkey |
-| Cold-start determinism: same `(UDS, MachineSeed, Policy, POTA thumb)` → byte-identical PTA pubkey | ✅ | `part_init::happy_path::part_init_determinism_emu` | Uses `ctx.erase()` between runs |
+| Returns DER-tagged (`0x30`) PKCS#10 CSR ≤ `PTA_CSR_MAX_LEN` | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| CSR parses with `x509::X509Csr`; ECDSA-P384 self-signature verifies | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| Returns CBOR-tagged (`0xD2` = COSE_Sign1) PTAReport ≤ `PTA_REPORT_MAX_LEN` | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| PTAReport COSE_Sign1 verifies under PID-leaf pubkey (slot-0 cert chain leaf) | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Via `verify_pta_report` helper using `KeyAttester::verify` |
+| PTAReport's embedded COSE_Key `(pk_x, pk_y)` matches CSR SPKI | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Cross-binds report to CSR pubkey |
+| Cold-start determinism: same `(UDS, MachineSeed, Policy, POTA thumb)` → byte-identical PTA pubkey | ✅ | `part_init::success_path::part_init_determinism` | Uses `ctx.erase()` between runs |
 
 ### `mach_seed_envelope` AEAD bindings
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Ciphertext bit-flip → `AeadEnvelopeAuthFailed` | ✅ | `part_init::crypto_rejects::part_init_envelope_tampered_emu` |  |
-| AAD encodes wrong session id → `AeadEnvelopeAuthFailed` | ✅ | `part_init::crypto_rejects::part_init_wrong_session_id_in_aad_emu` | Constant-compare path in `build_part_init_mach_seed_aad` |
-| Envelope from a different session's `param_key` | ✅ | `part_init::crypto_rejects::part_init_envelope_from_other_session_emu` | Two CO sessions sequentially (close A, open B); CO + Authenticated cannot run concurrent because of `VaultSessionLimitReached` |
-| AAD length ≠ `PART_INIT_MACH_SEED_AAD_LEN` | ✅ | `part_init::crypto_rejects::part_init_wrong_aad_length_emu` | 64-byte AAD; FW length-checks before AAD compare |
-| `mach_seed` plaintext length ≠ `MACH_SEED_LEN` | ✅ 🔁 | `part_init::crypto_rejects::part_init_wrong_mach_seed_length_emu` | Loop over `[MACH_SEED_LEN - 1, MACH_SEED_LEN + 1]`; one rotated-CO session reused across iterations (length check fires before any partition mutation) |
+| Ciphertext bit-flip → `AeadEnvelopeAuthFailed` | ✅ | `part_init::crypto_rejects::part_init_envelope_tampered` |  |
+| AAD encodes wrong session id → `AeadEnvelopeAuthFailed` | ✅ | `part_init::crypto_rejects::part_init_wrong_session_id_in_aad` | Constant-compare path in `build_part_init_mach_seed_aad` |
+| Envelope from a different session's `param_key` | ✅ | `part_init::crypto_rejects::part_init_envelope_from_other_session` | Two CO sessions sequentially (close A, open B); CO + Authenticated cannot run concurrent because of `VaultSessionLimitReached` |
+| AAD length ≠ `PART_INIT_MACH_SEED_AAD_LEN` | ✅ | `part_init::crypto_rejects::part_init_wrong_aad_length` | 64-byte AAD; FW length-checks before AAD compare |
+| `mach_seed` plaintext length ≠ `MACH_SEED_LEN` | ✅ 🔁 | `part_init::crypto_rejects::part_init_wrong_mach_seed_length` | Loop over `[MACH_SEED_LEN - 1, MACH_SEED_LEN + 1]`; one rotated-CO session reused across iterations (length check fires before any partition mutation) |
 | Malformed `pota_thumbprint` length | ⚠️ | — | Wire field is fixed-size; FW reaction not exercised |
+
+## `PartFinal` (opcode in-session, gated)
+
+Backend note: emulator tests transport and validate the real PTA
+certificate chain through OOB descriptors. Native M1.0 tests send one
+schema-required placeholder descriptor with no OOB payload because the
+current hardware firmware intentionally ignores certificate descriptors;
+full native certificate-chain validation remains M1.5 work.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| First instantiation returns a 164-byte `local_mk_backup` | ✅ | `part_final::part_final_smoke_roundtrip` | Original test body |
+| Restore a prior backup with the same provisioning identity | ✅ | `part_final::part_final_restore_prev_backup` | Original test body |
+| Tampered prior backup is rejected | 🟡 | `part_final::part_final_reject_tampered_backup` | Original test body; exact status is not pinned |
+| Command before `PartInit` is rejected | 🟡 | `part_final::part_final_reject_wrong_state` | Original test body; exact status is not pinned |
+| Re-supplied policy must match the `PartInit` policy hash | 🟡 | `part_final::part_final_reject_policy_mismatch` | Original test body; exact status is not pinned |
+| PTA chain must anchor to policy POTA | 🟡 (emu) | `part_final::part_final_reject_unanchored_chain_emu` | Original test body; exact status is not pinned and full native chain validation is planned for M1.5 |
+| PTA certificate key must match the partition PTA key | 🟡 (emu) | `part_final::part_final_reject_pta_mismatch_emu` | Original test body; exact status is not pinned and M1.0 hardware uses the documented surrogate |
+| `Initialized` partition continues serving host IO | ✅ | `part_final::part_final_partition_serves_io_when_initialized` | Original dedicated regression |
+| CU session is rejected with `InvalidPermissions` and CO can retry | ✅ | `part_final::part_final_rejects_cu_and_allows_co_retry` | Rotates the CU PSK first so the role gate is reached |
+| Backup from a different machine-seed identity is rejected | ✅ | `part_final::part_final_rejects_backup_from_different_mach_seed` | Verifies identity/state remain stable and fresh finalization still succeeds |
+| Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
+| Concurrent valid `PartFinal` requests → exactly one success; every loser gets `InvalidArg` | ✅ | `part_final::part_final_multi_threaded_single_winner` | Runs on emulator and hardware using the same active CO session; the lifecycle transition to `Initialized` is what serialises the race, not any in-FSM flag |
 
 ## Default-PSK dispatcher gate (cross-cutting)
 
@@ -144,7 +167,7 @@ role's partition PSK still matches the compiled-in default.
 | E1: `PskChange` is allow-listed (CO) | ✅ | `default_psk_gate::default_psk_gate_psk_change_bypass_emu` | CU implicitly via `psk_change_happy_cu_emu` |
 | E2: `SessionClose` is allow-listed (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass_emu` |  |
 | E3: `SessionOpenInit` is out-of-session (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass_emu` |  |
-| E4: A non-allow-listed in-session command under default PSK is rejected with `DefaultPskMustRotate` | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co_emu` | `PartInit` is currently the only such opcode; this row collapses what `default_psk_gate.rs` calls E4 |
+| E4: A non-allow-listed in-session command under default PSK is rejected with `DefaultPskMustRotate` | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co` | `PartInit` is currently the only such opcode; this row collapses what `default_psk_gate.rs` calls E4 |
 | E5: `ApiRev` is out-of-session | ✅ | `default_psk_gate::default_psk_gate_api_rev_bypass_emu` |  |
 
 ## Host-side TBOR codec (no FW round-trip required)
@@ -170,10 +193,15 @@ The rows marked ⚠️ above, consolidated:
 Indirect coverage (🟡) — these rows assert only `DdiError::DdiError(_)`
 and could be tightened to assert a specific `TborStatus`:
 
-1. `session_close::session_close_unknown_id_emu` — likely `SessionNotFound`.
-2. `session_close::session_close_double_close_emu` — likely `SessionNotFound`.
+1. `session_close::session_close_unknown_id` — likely `SessionNotFound`.
+2. `session_close::session_close_double_close` — likely `SessionNotFound`.
 3. `open_session::session_open_finish_unknown_session_id_emu` — likely `SessionNotFound` or `SessionNotPending`.
 4. `open_session::open_session_double_finish_emu` — likely `SessionNotPending`.
+5. `part_final::part_final_reject_tampered_backup` — expected `AesGcmDecryptTagDoesNotMatch`.
+6. `part_final::part_final_reject_wrong_state` — expected `InvalidArg`.
+7. `part_final::part_final_reject_policy_mismatch` — expected `InvalidArg`.
+8. `part_final::part_final_reject_unanchored_chain_emu` — expected `InvalidArg`.
+9. `part_final::part_final_reject_pta_mismatch_emu` — expected `PartFinalPtaMismatch`.
 
 ---
 

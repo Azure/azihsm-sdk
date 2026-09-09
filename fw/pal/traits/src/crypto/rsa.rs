@@ -302,33 +302,38 @@ pub trait HsmRsa {
     ) -> HsmResult<usize>;
 
     /// Convert a DER-encoded RSA private key (recovered from a
-    /// `CKM_RSA_AES_KEY_WRAP` unwrap) **in place** into the PAL's vault
-    /// representation, also reporting the modulus length used to classify
-    /// the vault key kind (256 / 384 / 512 for RSA-2048 / 3072 / 4096).
+    /// `CKM_RSA_AES_KEY_WRAP` unwrap) into the PAL's vault representation,
+    /// returning a borrow of the vault bytes plus the modulus length used to
+    /// classify the vault key kind (256 / 384 / 512 for RSA-2048 / 3072 / 4096).
     ///
-    /// The conversion overwrites `buf` and returns the vault length: the
-    /// valid vault bytes are `buf[..vault_len]`.  Converting in place lets
-    /// the large recovered RSA material (up to ~2.3 KB for RSA-4096) be
-    /// reused as the vault buffer rather than duplicated — important under
-    /// the PAL's fixed per-slot DMA budget.
+    /// The vault representation is PAL-defined and **layout-dependent on
+    /// `crt`**, and each PAL chooses where the vault bytes live — so no output
+    /// buffer is threaded through the caller:
+    /// - When the vault layout is **no larger** than the source DER, the PAL
+    ///   converts **in place** and returns a prefix of `der`. This is the
+    ///   common case: it reuses the large recovered RSA material (up to
+    ///   ~2.3 KB for RSA-4096) as the vault buffer rather than duplicating it,
+    ///   important under the PAL's fixed per-slot DMA budget. Both std/OpenSSL
+    ///   layouts (non-CRT `n|e|p|q`, CRT `n|e|d|p|q|dp|dq|qinv`) and the Uno
+    ///   non-CRT PKA form (`d|n|e`) are smaller than the DER.
+    /// - When the vault operand is **larger** than the DER (e.g. the Uno CRT
+    ///   PKA form `p|q|dp|dq|n|n1q|n2p|e`, `5k+4` bytes, whose derived
+    ///   `n1q`/`n2p` need async PKA arithmetic), the PAL allocates its own
+    ///   buffer and returns a borrow of it.
     ///
-    /// The vault representation is PAL-defined, is **layout-dependent on
-    /// `crt`**, and is no larger than the source DER (so it always fits in
-    /// `buf`).  Real PKA hardware keeps its own raw non-CRT / custom CRT
-    /// layouts; the std/OpenSSL PAL uses the crypto crate's fixed-size HSM
-    /// byte layout — non-CRT `n || e || p || q`, CRT
-    /// `n || e || d || p || q || dp || dq || qinv` — which is smaller than
-    /// the source DER (so `buf` is overwritten and `vault_len < buf.len()`).
+    /// The implementation is responsible for scrubbing any plaintext key
+    /// material it leaves behind (e.g. the recovered DER when it is not reused
+    /// as the vault buffer).
     ///
     /// # Returns
-    /// - `Ok((vault_len, modulus_len))`.
-    /// - `Err(HsmError::InvalidArg)` — `buf` is not a valid RSA private key.
-    fn rsa_priv_der_to_vault(
-        &self,
+    /// - `Ok((vault, modulus_len))` — `vault` holds the vault-format private key.
+    /// - `Err(HsmError::InvalidArg)` — `der` is not a valid RSA private key.
+    async fn rsa_priv_der_to_vault<'a>(
+        &'a self,
         io: &impl HsmIo,
-        buf: &mut DmaBuf,
+        der: &'a mut DmaBuf,
         crt: bool,
-    ) -> HsmResult<(usize, usize)>;
+    ) -> HsmResult<(&'a DmaBuf, usize)>;
 
     /// PKCS#1 v1.5 encrypt (EME-PKCS1-v1_5).
     ///

@@ -4,13 +4,12 @@
 //! DDI ShaDigest command handler.
 //!
 //! Computes a cryptographic hash of the input message using the
-//! specified algorithm. This is a NoSession command.
+//! specified algorithm. This is an InSession command: it runs within a
+//! live application session, so the SQE must carry a valid `session_id`.
 //!
 //! Uses the encode-frame-then-fill pattern: encodes the response
 //! frame first, then computes the hash directly into the reserved
 //! digest slot — zero intermediate copies.
-//!
-//! TODO: Move to InSession when session support is fully wired.
 
 use azihsm_fw_ddi_mbor_types::sha_digest::DdiShaDigestReq;
 use azihsm_fw_ddi_mbor_types::sha_digest::DdiShaDigestResp;

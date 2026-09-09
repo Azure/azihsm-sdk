@@ -36,6 +36,7 @@
 #![no_std]
 
 mod alloc;
+mod asn1;
 mod cert;
 mod crypto;
 mod dev_id_cblob;
@@ -48,6 +49,9 @@ mod pal;
 mod part;
 mod seed;
 mod session;
+/// Test-only DDI commands, reached through the `HsmCustomDispatch` hook.
+#[cfg(feature = "mcr_test_action")]
+mod test_dispatch;
 mod vault;
 
 /// Re-export of the PAL trait types consumed by uno-PAL users.

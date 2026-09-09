@@ -100,6 +100,7 @@ set(SOURCE
     sd/create_backup_tests.cpp
     sd/create_peer_tests.cpp
     sd/reseal_tests.cpp
+    sd/restore_local_tests.cpp
     sd/restore_peer_tests.cpp
     sd/restore_tests.cpp
     resiliency/init_stress_tests.cpp

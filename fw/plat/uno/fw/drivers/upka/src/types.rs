@@ -59,6 +59,40 @@ pub enum UpkaRsaKeyType {
     Rsa4096Crt,
 }
 
+/// Modular-operand size selector for the RSA CRT parameter (`n1q` / `n2p`)
+/// Montgomery operations.
+///
+/// The CRT parameter computation runs Montgomery / modular-inverse /
+/// modular-multiply commands at both the full modulus width (2k / 3k / 4k) and
+/// the half-prime width (1k / 2k), so this is a standalone size selector
+/// distinct from [`UpkaRsaKeyType`] (which only covers whole keys).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpkaModSize {
+    /// 1024-bit operand (128 bytes).
+    Rsa1k,
+
+    /// 2048-bit operand (256 bytes).
+    Rsa2k,
+
+    /// 3072-bit operand (384 bytes).
+    Rsa3k,
+
+    /// 4096-bit operand (512 bytes).
+    Rsa4k,
+}
+
+impl UpkaModSize {
+    /// Operand length in bytes for this modular size.
+    pub const fn operand_len(self) -> usize {
+        match self {
+            UpkaModSize::Rsa1k => 128,
+            UpkaModSize::Rsa2k => 256,
+            UpkaModSize::Rsa3k => 384,
+            UpkaModSize::Rsa4k => 512,
+        }
+    }
+}
+
 /// Monotonic identifier assigned to each submitted command request.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RequestId(u16);

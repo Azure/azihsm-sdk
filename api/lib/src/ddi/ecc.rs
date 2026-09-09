@@ -128,7 +128,7 @@ pub(crate) fn ecc_sign(
     let req = DdiEccSignCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EccSign, &key.session()),
         data: DdiEccSignReq {
-            key_id: ddi::get_key_id(key.handle()),
+            key_id: ddi::get_key_id(key.handle())?,
             digest: MborByteArray::from_slice(hash).map_hsm_err(HsmError::InternalError)?,
             digest_algo: hash_algo.into(),
         },
@@ -180,7 +180,7 @@ pub(crate) fn ecdh_derive(
     let req = DdiEcdhKeyExchangeCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EcdhKeyExchange, &base_key.session()),
         data: DdiEcdhKeyExchangeReq {
-            priv_key_id: ddi::get_key_id(base_key.handle()),
+            priv_key_id: ddi::get_key_id(base_key.handle())?,
             pub_key_der: MborByteArray::from_slice(peer_pub_der)
                 .map_hsm_err(HsmError::InternalError)?,
             key_tag: None,

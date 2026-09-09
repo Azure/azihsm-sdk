@@ -229,7 +229,7 @@ azihsm_status azihsm_sess_ex_psk_change(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-## azihsm_sess_ex_sd_create_remote_backup
+## azihsm_sd_create_remote_backup
 
 Create a new security domain and its remote backup over a security-domain
 session.
@@ -242,7 +242,7 @@ three backups the firmware produces: the remote partition-owner-key backup
 (180 bytes), and the security-domain masking-key backup (164 bytes).
 
 The inputs are grouped into an
-[`azihsm_sess_ex_sd_create_remote_backup_params`](#azihsm_sess_ex_sd_create_remote_backup_params)
+[`azihsm_sd_create_remote_backup_params`](#azihsm_sd_create_remote_backup_params)
 structure. All three output buffers follow the two-call size-probe contract:
 an undersized buffer (or a NULL `ptr` with `len == 0`) is rejected with
 `AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size, and
@@ -253,9 +253,9 @@ is a once-per-partition operation; a second create on an initialized
 partition returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
 
 ```cpp
-azihsm_status azihsm_sess_ex_sd_create_remote_backup(
+azihsm_status azihsm_sd_create_remote_backup(
     azihsm_handle sess_handle,
-    const struct azihsm_sess_ex_sd_create_remote_backup_params *params,
+    const struct azihsm_sd_create_remote_backup_params *params,
     struct azihsm_buffer *pok_remote_backup,
     struct azihsm_buffer *pok_local_backup,
     struct azihsm_buffer *sd_mk_backup
@@ -267,7 +267,7 @@ azihsm_status azihsm_sess_ex_sd_create_remote_backup(
  | Parameter                   | Name                                                                                                     | Description                                       |
  | --------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
  | [in] sess_handle            | [azihsm_handle](#azihsm_handle)                                                                          | security-domain session handle                    |
- | [in] params                 | [azihsm_sess_ex_sd_create_remote_backup_params*](#azihsm_sess_ex_sd_create_remote_backup_params)         | create-backup input buffers                       |
+ | [in] params                 | [azihsm_sd_create_remote_backup_params*](#azihsm_sd_create_remote_backup_params)         | create-backup input buffers                       |
  | [in, out] pok_remote_backup | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the remote pok backup (161 B)   |
  | [in, out] pok_local_backup  | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the local pok backup (180 B)    |
  | [in, out] sd_mk_backup      | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the sd masking-key backup (164 B) &nbsp; |
@@ -276,13 +276,13 @@ azihsm_status azihsm_sess_ex_sd_create_remote_backup(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_sess_ex_sd_create_remote_backup_params
+### azihsm_sd_create_remote_backup_params
 
 Input buffers for
-[`azihsm_sess_ex_sd_create_remote_backup`](#azihsm_sess_ex_sd_create_remote_backup).
+[`azihsm_sd_create_remote_backup`](#azihsm_sd_create_remote_backup).
 
 ```cpp
-struct azihsm_sess_ex_sd_create_remote_backup_params {
+struct azihsm_sd_create_remote_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *receiver_evidence;
     const struct azihsm_buffer *policy;
@@ -295,7 +295,7 @@ struct azihsm_sess_ex_sd_create_remote_backup_params {
  | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
  | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
 
-## azihsm_sess_ex_sd_reseal_remote_backup
+## azihsm_sd_reseal_remote_backup
 
 Reseal an existing remote backup to a new recipient over a security-domain
 session.
@@ -306,15 +306,15 @@ recovered backup to the destination receiver (`dest_evidence`), returning the
 resealed remote backup (161 bytes).
 
 The inputs are grouped into an
-[`azihsm_sess_ex_sd_reseal_remote_backup_params`](#azihsm_sess_ex_sd_reseal_remote_backup_params)
+[`azihsm_sd_reseal_remote_backup_params`](#azihsm_sd_reseal_remote_backup_params)
 structure. `dst_remote_backup` follows the same two-call size-probe contract
 as the create outputs and is validated **before** the reseal is performed. A
 NULL `params` pointer is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ```cpp
-azihsm_status azihsm_sess_ex_sd_reseal_remote_backup(
+azihsm_status azihsm_sd_reseal_remote_backup(
     azihsm_handle sess_handle,
-    const struct azihsm_sess_ex_sd_reseal_remote_backup_params *params,
+    const struct azihsm_sd_reseal_remote_backup_params *params,
     struct azihsm_buffer *dst_remote_backup
     );
 ```
@@ -324,20 +324,20 @@ azihsm_status azihsm_sess_ex_sd_reseal_remote_backup(
  | Parameter                   | Name                                                                                                     | Description                                       |
  | --------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
  | [in] sess_handle            | [azihsm_handle](#azihsm_handle)                                                                          | security-domain session handle                    |
- | [in] params                 | [azihsm_sess_ex_sd_reseal_remote_backup_params*](#azihsm_sess_ex_sd_reseal_remote_backup_params)         | reseal-backup input buffers                       |
+ | [in] params                 | [azihsm_sd_reseal_remote_backup_params*](#azihsm_sd_reseal_remote_backup_params)         | reseal-backup input buffers                       |
  | [in, out] dst_remote_backup | [azihsm_buffer *](#azihsm_buffer)                                                                        | output buffer for the resealed remote backup (161 B) &nbsp; |
 
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_sess_ex_sd_reseal_remote_backup_params
+### azihsm_sd_reseal_remote_backup_params
 
 Input buffers for
-[`azihsm_sess_ex_sd_reseal_remote_backup`](#azihsm_sess_ex_sd_reseal_remote_backup).
+[`azihsm_sd_reseal_remote_backup`](#azihsm_sd_reseal_remote_backup).
 
 ```cpp
-struct azihsm_sess_ex_sd_reseal_remote_backup_params {
+struct azihsm_sd_reseal_remote_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
     const struct azihsm_sd_evidence *dest_evidence;
@@ -354,7 +354,7 @@ struct azihsm_sess_ex_sd_reseal_remote_backup_params {
  | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | source remote backup to reseal (161 B)             |
 
-## azihsm_sess_ex_sd_restore_remote_backup
+## azihsm_sd_restore_remote_backup
 
 Restore a security domain from a remote backup over a security-domain
 session.
@@ -366,7 +366,7 @@ refreshed device-local backups: the local partition-owner-key backup
 (180 bytes) and the security-domain masking-key backup (164 bytes).
 
 The inputs are grouped into an
-[`azihsm_sess_ex_sd_restore_remote_backup_params`](#azihsm_sess_ex_sd_restore_remote_backup_params)
+[`azihsm_sd_restore_remote_backup_params`](#azihsm_sd_restore_remote_backup_params)
 structure. Both output buffers follow the two-call size-probe contract and
 are validated **before** the restore is performed. A NULL `params` pointer
 is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. Restore is a
@@ -374,9 +374,9 @@ once-per-partition operation; a restore on an already-initialized partition
 returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
 
 ```cpp
-azihsm_status azihsm_sess_ex_sd_restore_remote_backup(
+azihsm_status azihsm_sd_restore_remote_backup(
     azihsm_handle sess_handle,
-    const struct azihsm_sess_ex_sd_restore_remote_backup_params *params,
+    const struct azihsm_sd_restore_remote_backup_params *params,
     struct azihsm_buffer *pok_local_backup,
     struct azihsm_buffer *sd_mk_backup
     );
@@ -387,7 +387,7 @@ azihsm_status azihsm_sess_ex_sd_restore_remote_backup(
  | Parameter                  | Name                                                                                                      | Description                                       |
  | -------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
  | [in] sess_handle           | [azihsm_handle](#azihsm_handle)                                                                           | security-domain session handle                    |
- | [in] params                | [azihsm_sess_ex_sd_restore_remote_backup_params*](#azihsm_sess_ex_sd_restore_remote_backup_params)        | restore-backup input buffers                      |
+ | [in] params                | [azihsm_sd_restore_remote_backup_params*](#azihsm_sd_restore_remote_backup_params)        | restore-backup input buffers                      |
  | [in, out] pok_local_backup | [azihsm_buffer *](#azihsm_buffer)                                                                         | output buffer for the local pok backup (180 B)    |
  | [in, out] sd_mk_backup     | [azihsm_buffer *](#azihsm_buffer)                                                                         | output buffer for the sd masking-key backup (164 B) &nbsp; |
 
@@ -395,13 +395,13 @@ azihsm_status azihsm_sess_ex_sd_restore_remote_backup(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_sess_ex_sd_restore_remote_backup_params
+### azihsm_sd_restore_remote_backup_params
 
 Input buffers for
-[`azihsm_sess_ex_sd_restore_remote_backup`](#azihsm_sess_ex_sd_restore_remote_backup).
+[`azihsm_sd_restore_remote_backup`](#azihsm_sd_restore_remote_backup).
 
 ```cpp
-struct azihsm_sess_ex_sd_restore_remote_backup_params {
+struct azihsm_sd_restore_remote_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *sender_evidence;
     const struct azihsm_buffer *policy;
@@ -418,7 +418,7 @@ struct azihsm_sess_ex_sd_restore_remote_backup_params {
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | remote backup to restore (161 B)                   |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (164 B)|
 
-## azihsm_sess_ex_sd_create_peer_backup
+## azihsm_sd_create_peer_backup
 
 Create a peer-transferable backup of a security domain over a
 security-domain session.
@@ -429,15 +429,15 @@ masked SD-sealing key), returning the peer backup (161 bytes). Peer
 cloning is gated by the security domain's `allow_peer_cloning` policy flag.
 
 The inputs are grouped into an
-[`azihsm_sess_ex_sd_create_peer_backup_params`](#azihsm_sess_ex_sd_create_peer_backup_params)
+[`azihsm_sd_create_peer_backup_params`](#azihsm_sd_create_peer_backup_params)
 structure. The output buffer follows the two-call size-probe contract and
 is validated **before** the peer backup is created. A NULL `params` pointer
 is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ```cpp
-azihsm_status azihsm_sess_ex_sd_create_peer_backup(
+azihsm_status azihsm_sd_create_peer_backup(
     azihsm_handle sess_handle,
-    const struct azihsm_sess_ex_sd_create_peer_backup_params *params,
+    const struct azihsm_sd_create_peer_backup_params *params,
     struct azihsm_buffer *pok_peer_backup
     );
 ```
@@ -447,20 +447,20 @@ azihsm_status azihsm_sess_ex_sd_create_peer_backup(
  | Parameter                | Name                                                                                              | Description                                     |
  | ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
  | [in] sess_handle         | [azihsm_handle](#azihsm_handle)                                                                   | security-domain session handle                  |
- | [in] params              | [azihsm_sess_ex_sd_create_peer_backup_params*](#azihsm_sess_ex_sd_create_peer_backup_params)      | create-peer-backup input buffers                |
+ | [in] params              | [azihsm_sd_create_peer_backup_params*](#azihsm_sd_create_peer_backup_params)      | create-peer-backup input buffers                |
  | [in, out] pok_peer_backup | [azihsm_buffer *](#azihsm_buffer)                                                                | output buffer for the peer backup (161 B) &nbsp; |
 
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_sess_ex_sd_create_peer_backup_params
+### azihsm_sd_create_peer_backup_params
 
 Input buffers for
-[`azihsm_sess_ex_sd_create_peer_backup`](#azihsm_sess_ex_sd_create_peer_backup).
+[`azihsm_sd_create_peer_backup`](#azihsm_sd_create_peer_backup).
 
 ```cpp
-struct azihsm_sess_ex_sd_create_peer_backup_params {
+struct azihsm_sd_create_peer_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *dst_evidence;
     const struct azihsm_buffer *policy;
@@ -475,7 +475,7 @@ struct azihsm_sess_ex_sd_create_peer_backup_params {
  | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_local_backup   | [azihsm_buffer*](#azihsm_buffer)           | device-local partition-owner-key backup (180 B)    |
 
-## azihsm_sess_ex_sd_restore_peer_backup
+## azihsm_sd_restore_peer_backup
 
 Restore a security domain from a peer backup over a security-domain
 session.
@@ -488,7 +488,7 @@ refreshed device-local backups: the local partition-owner-key backup
 cloning is gated by the security domain's `allow_peer_cloning` policy flag.
 
 The inputs are grouped into an
-[`azihsm_sess_ex_sd_restore_peer_backup_params`](#azihsm_sess_ex_sd_restore_peer_backup_params)
+[`azihsm_sd_restore_peer_backup_params`](#azihsm_sd_restore_peer_backup_params)
 structure. Both output buffers follow the two-call size-probe contract and
 are validated **before** the restore is performed. A NULL `params` pointer
 is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. Restore is a
@@ -496,9 +496,9 @@ once-per-partition operation; a restore on an already-initialized partition
 returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
 
 ```cpp
-azihsm_status azihsm_sess_ex_sd_restore_peer_backup(
+azihsm_status azihsm_sd_restore_peer_backup(
     azihsm_handle sess_handle,
-    const struct azihsm_sess_ex_sd_restore_peer_backup_params *params,
+    const struct azihsm_sd_restore_peer_backup_params *params,
     struct azihsm_buffer *pok_local_backup,
     struct azihsm_buffer *sd_mk_backup
     );
@@ -509,7 +509,7 @@ azihsm_status azihsm_sess_ex_sd_restore_peer_backup(
  | Parameter                  | Name                                                                                                  | Description                                       |
  | -------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
  | [in] sess_handle           | [azihsm_handle](#azihsm_handle)                                                                       | security-domain session handle                    |
- | [in] params                | [azihsm_sess_ex_sd_restore_peer_backup_params*](#azihsm_sess_ex_sd_restore_peer_backup_params)        | restore-backup input buffers                      |
+ | [in] params                | [azihsm_sd_restore_peer_backup_params*](#azihsm_sd_restore_peer_backup_params)        | restore-backup input buffers                      |
  | [in, out] pok_local_backup | [azihsm_buffer *](#azihsm_buffer)                                                                     | output buffer for the local pok backup (180 B)    |
  | [in, out] sd_mk_backup     | [azihsm_buffer *](#azihsm_buffer)                                                                     | output buffer for the sd masking-key backup (164 B) &nbsp; |
 
@@ -517,13 +517,13 @@ azihsm_status azihsm_sess_ex_sd_restore_peer_backup(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_sess_ex_sd_restore_peer_backup_params
+### azihsm_sd_restore_peer_backup_params
 
 Input buffers for
-[`azihsm_sess_ex_sd_restore_peer_backup`](#azihsm_sess_ex_sd_restore_peer_backup).
+[`azihsm_sd_restore_peer_backup`](#azihsm_sd_restore_peer_backup).
 
 ```cpp
-struct azihsm_sess_ex_sd_restore_peer_backup_params {
+struct azihsm_sd_restore_peer_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
     const struct azihsm_buffer *policy;
@@ -539,6 +539,65 @@ struct azihsm_sess_ex_sd_restore_peer_backup_params {
  | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_peer_backup    | [azihsm_buffer*](#azihsm_buffer)           | peer backup to restore (161 B)                     |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (164 B)|
+
+## azihsm_sd_restore_local_backup
+
+Restore a security domain from its device-local backups over a
+security-domain session.
+
+Restores the security domain from the device-local partition-owner-key
+backup and security-domain masking-key backup, returning the refreshed
+device-local backups: the local partition-owner-key backup (180 bytes) and
+the security-domain masking-key backup (164 bytes). Unlike the remote/peer
+restores, this carries no attestation evidence — the backups are masked
+under the device-local key.
+
+The inputs are grouped into an
+[`azihsm_sd_restore_local_backup_params`](#azihsm_sd_restore_local_backup_params)
+structure. Both output buffers follow the two-call size-probe contract and
+are validated **before** the restore is performed. A NULL `params` pointer
+is rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. Restore is a
+once-per-partition operation; a restore on an already-initialized partition
+returns `AZIHSM_STATUS_SD_ALREADY_INITIALIZED`.
+
+```cpp
+azihsm_status azihsm_sd_restore_local_backup(
+    azihsm_handle sess_handle,
+    const struct azihsm_sd_restore_local_backup_params *params,
+    struct azihsm_buffer *pok_local_backup,
+    struct azihsm_buffer *sd_mk_backup
+    );
+```
+
+**Parameters**
+
+ | Parameter                  | Name                                                                                                    | Description                                       |
+ | -------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+ | [in] sess_handle           | [azihsm_handle](#azihsm_handle)                                                                         | security-domain session handle                    |
+ | [in] params                | [azihsm_sd_restore_local_backup_params*](#azihsm_sd_restore_local_backup_params)        | restore-backup input buffers                      |
+ | [in, out] pok_local_backup | [azihsm_buffer *](#azihsm_buffer)                                                                       | output buffer for the local pok backup (180 B)    |
+ | [in, out] sd_mk_backup     | [azihsm_buffer *](#azihsm_buffer)                                                                       | output buffer for the sd masking-key backup (164 B) &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_sd_restore_local_backup_params
+
+Input buffers for
+[`azihsm_sd_restore_local_backup`](#azihsm_sd_restore_local_backup).
+
+```cpp
+struct azihsm_sd_restore_local_backup_params {
+    const struct azihsm_buffer *pok_local_backup;
+    const struct azihsm_buffer *sd_mk_backup;
+};
+```
+
+ | Field             | Name                             | Description                                        |
+ | ----------------- | -------------------------------- | -------------------------------------------------- |
+ | pok_local_backup  | [azihsm_buffer*](#azihsm_buffer) | device-local partition-owner-key backup (180 B)    |
+ | sd_mk_backup      | [azihsm_buffer*](#azihsm_buffer) | security-domain masking-key backup (164 B)         |
 
 ### azihsm_sd_evidence
 

@@ -114,10 +114,17 @@ where
     let entry_addr = entry_addr(oob, index)?;
 
     pal.alloc_scoped_async(io, async |scoped| {
-        // Read the 16-byte SGL Data Block descriptor (unaligned address
-        // is fine for an SGL read).
+        // Read the 16-byte SGL descriptor out of the metadata page.
+        //
+        // `prp = true`: the metadata page is plain contiguous host
+        // memory, so the address goes in a PRP and the length is passed
+        // separately. The SGL form instead takes its length from the
+        // descriptor's second word, which this call site leaves zero,
+        // and the GDMA rejects that zero-length read with
+        // `dma_error(1)` (`0x08f08101`). The emulator is in-process and
+        // never models the GDMA descriptor, so only hardware shows this.
         let entry = scoped.dma_alloc(SGL_ENTRY_LEN)?;
-        pal.copy_mem_from_host(io, entry_addr, entry, false).await?;
+        pal.copy_mem_from_host(io, entry_addr, entry, true).await?;
 
         // Borrow the descriptor bytes directly as a fixed array (no
         // copy) — `entry` derefs to a 16-byte `[u8]`.

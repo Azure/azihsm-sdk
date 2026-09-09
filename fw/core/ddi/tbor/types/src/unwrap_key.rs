@@ -105,9 +105,9 @@ pub struct TborUnwrapKeyReq<'a> {
     #[tbor(U8)]
     pub key_class: KeyClass,
 
-    /// Requested key-usage permissions, 1-byte [`KeyUsage`] bitfield.
+    /// Requested key-usage permissions, [`KeyUsage`] bitfield (u64).
     /// The handler enforces which usage(s) are valid for `key_class`.
-    #[tbor(U8)]
+    #[tbor(U64)]
     pub key_usage: KeyUsage,
 
     /// OAEP hash used to wrap the KEK, 1-byte [`HashAlgo`].

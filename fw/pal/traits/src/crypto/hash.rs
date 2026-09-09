@@ -103,9 +103,10 @@ impl HsmHashAlgo {
 ///   fragments; intermediate state lives in a PAL-allocated context.
 ///
 /// All output digests can be requested in either NIST big-endian or
-/// byte-swapped little-endian order via the `big_endian` flag, to
-/// match what the next consumer (DDI response framing, KDF input,
-/// etc.) expects.
+/// little-endian order via the `big_endian` flag, to match what the
+/// next consumer (DDI response framing, KDF input, etc.) expects. The
+/// little-endian form is the full byte reversal of the big-endian
+/// digest.
 pub trait HsmHash {
     /// Platform-specific multi-step hash context.
     ///
@@ -131,7 +132,8 @@ pub trait HsmHash {
     ///   [`HsmHashAlgo::digest_len`] bytes.  Only the leading
     ///   `digest_len` bytes are written.
     /// - `big_endian` — `true` for NIST big-endian output, `false`
-    ///   for byte-swapped little-endian.
+    ///   for little-endian (the full byte reversal of the big-endian
+    ///   digest, i.e. the PKA `ecc_sign` operand order).
     ///
     /// # Returns
     ///
@@ -218,7 +220,8 @@ pub trait HsmHash {
     /// - `digest` — output buffer; must be at least
     ///   [`HsmHashAlgo::digest_len`] bytes.
     /// - `big_endian` — `true` for NIST big-endian output, `false`
-    ///   for byte-swapped little-endian.
+    ///   for little-endian (the full byte reversal of the big-endian
+    ///   digest, i.e. the PKA `ecc_sign` operand order).
     ///
     /// # Returns
     ///

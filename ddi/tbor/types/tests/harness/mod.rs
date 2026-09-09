@@ -40,7 +40,6 @@ pub mod ctx;
 pub mod fixture;
 pub mod session;
 pub mod session_guard;
-#[cfg(feature = "emu")]
 pub mod x509_fixture;
 
 // Re-export commonly-used schema items so test code doesn't have to
@@ -54,6 +53,12 @@ pub mod x509_fixture;
 pub(crate) use azihsm_ddi_tbor_types::build_psk_change_aad;
 pub(crate) use azihsm_ddi_tbor_types::TborPskChangeReq;
 pub(crate) use ctx::TestCtx;
+pub(crate) use fixture::bootstrap_rotated_co;
+pub(crate) use fixture::bootstrap_rotated_cu;
+pub(crate) use fixture::CO_PSK_ID;
+pub(crate) use fixture::CU_PSK_ID;
+pub(crate) use fixture::ROTATED_CO_PSK;
+pub(crate) use fixture::ROTATED_CU_PSK;
 pub(crate) use session::build_mac_fin;
 pub(crate) use session::build_part_init_mach_seed_aad;
 pub(crate) use session::encrypt_mach_seed_envelope;

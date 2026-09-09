@@ -95,6 +95,10 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
 darling = "0.20"
+der = { default-features = false, features = [
+  "derive",
+  "oid",
+], version = "0.8" }
 embassy-executor = "0.10.0"
 embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
@@ -112,6 +116,7 @@ static_assertions = "1.1.0"
 syn = { features = ["full"], version = "2" }
 tock-registers = { git = "https://github.com/tock/tock.git", rev = "release-2.2" }
 zerocopy = "0.8.48"
+zeroize = { default-features = false, version = "1.8.1" }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }

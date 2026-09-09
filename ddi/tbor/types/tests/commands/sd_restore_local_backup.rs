@@ -22,27 +22,25 @@
 //! * Restore before finalize → `InvalidArg`.
 //! * A tampered `pok_local_backup` is rejected (AEAD tag mismatch).
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// Material captured from the first device's `CreateSD`, replayed on the
 /// second (rebooted) device to restore the security domain.
@@ -124,7 +122,7 @@ fn reboot_and_restore_part_local_mk(
 }
 
 #[test]
-fn sd_restore_local_backup_roundtrip_emu() {
+fn sd_restore_local_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -159,7 +157,7 @@ fn sd_restore_local_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_is_one_shot_emu() {
+fn sd_restore_local_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -203,7 +201,7 @@ fn sd_restore_local_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_rejects_before_finalize_emu() {
+fn sd_restore_local_backup_rejects_before_finalize() {
     // A partition that has not been finalized has no PartLocalMK, so the
     // command is rejected at the lifecycle gate before any unmask.
     let ctx = TestCtx::new();
@@ -219,7 +217,7 @@ fn sd_restore_local_backup_rejects_before_finalize_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_rejects_tampered_pok_emu() {
+fn sd_restore_local_backup_rejects_tampered_pok() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();

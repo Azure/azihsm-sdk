@@ -11,7 +11,7 @@
 // restore target — reusing the policy and SATA/POTA anchors and supplying
 // the captured `local_mk_backup` so the sealing key unmasks — and the
 // security domain is restored from the peer backup via
-// `azihsm_sess_ex_sd_restore_peer_backup`. A successful restore is itself
+// `azihsm_sd_restore_peer_backup`. A successful restore is itself
 // the correctness check: the HPKE open only succeeds if the receiver key
 // and the attested source-peer key match those that sealed the backup.
 //
@@ -60,7 +60,7 @@ bool create_sd_capture(
     azihsm_buffer masked_buf{ masked.data(), static_cast<uint32_t>(masked.size()) };
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
-    azihsm_sess_ex_sd_create_remote_backup_params params{
+    azihsm_sd_create_remote_backup_params params{
         &masked_buf,
         &receiver,
         &policy_buf,
@@ -75,13 +75,7 @@ bool create_sd_capture(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_remote_backup(
-            session,
-            &params,
-            &remote_buf,
-            &local_buf,
-            &mk_buf
-        );
+        err = azihsm_sd_create_remote_backup(session, &params, &remote_buf, &local_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -119,7 +113,7 @@ bool create_sd_capture(
 // `dst` to the bytes written.
 azihsm_status create_peer_fill(
     azihsm_handle session,
-    const azihsm_sess_ex_sd_create_peer_backup_params *params,
+    const azihsm_sd_create_peer_backup_params *params,
     std::vector<uint8_t> &dst
 )
 {
@@ -127,7 +121,7 @@ azihsm_status create_peer_fill(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_peer_backup(session, params, &dst_buf);
+        err = azihsm_sd_create_peer_backup(session, params, &dst_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -151,7 +145,7 @@ azihsm_status create_peer_fill(
 // and, on success, sizes `pok_local` / `sd_mk` to the bytes written.
 azihsm_status restore_peer_fill(
     azihsm_handle session,
-    const azihsm_sess_ex_sd_restore_peer_backup_params *params,
+    const azihsm_sd_restore_peer_backup_params *params,
     std::vector<uint8_t> &pok_local,
     std::vector<uint8_t> &sd_mk
 )
@@ -161,7 +155,7 @@ azihsm_status restore_peer_fill(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_restore_peer_backup(session, params, &pok_buf, &mk_buf);
+        err = azihsm_sd_restore_peer_backup(session, params, &pok_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -187,8 +181,8 @@ azihsm_status restore_peer_fill(
 } // namespace
 
 /// Test fixture for security-domain restore-peer-backup
-/// (`azihsm_sess_ex_sd_restore_peer_backup`).
-class azihsm_sd_restore_peer_backup : public ::testing::Test
+/// (`azihsm_sd_restore_peer_backup`).
+class azihsm_sd_restore_peer_backup_test : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -226,7 +220,7 @@ class azihsm_sd_restore_peer_backup : public ::testing::Test
 // rebooted (factory-reset, re-provisioned) incarnation of the same
 // partition; the restore returns non-zero refreshed device-local backups of
 // the pinned lengths.
-TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_roundtrip)
+TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -279,7 +273,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_roundtrip)
         azihsm_buffer masked_buf{ key.masked.data(), static_cast<uint32_t>(key.masked.size()) };
         azihsm_buffer policy_buf{ dev1.policy.data(), static_cast<uint32_t>(dev1.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
-        azihsm_sess_ex_sd_create_peer_backup_params create_params{
+        azihsm_sd_create_peer_backup_params create_params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -314,7 +308,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_roundtrip)
         azihsm_buffer r_policy_buf{ dev2.policy.data(), static_cast<uint32_t>(dev2.policy.size()) };
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
-        azihsm_sess_ex_sd_restore_peer_backup_params restore_params{
+        azihsm_sd_restore_peer_backup_params restore_params{
             &r_masked_buf, &evidence.get(), &r_policy_buf, &peer_buf, &prev_mk_buf,
         };
 
@@ -336,7 +330,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_roundtrip)
 
 // A NULL params pointer is rejected with `INVALID_ARGUMENT` after the
 // session resolves and before the restore is performed.
-TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_null_params)
+TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_null_params)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -356,7 +350,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_null_params)
 
         azihsm_buffer pok_local{ nullptr, 0 };
         azihsm_buffer sd_mk{ nullptr, 0 };
-        auto err = azihsm_sess_ex_sd_restore_peer_backup(ctx.session, nullptr, &pok_local, &sd_mk);
+        auto err = azihsm_sd_restore_peer_backup(ctx.session, nullptr, &pok_local, &sd_mk);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -364,7 +358,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_null_params)
 // One-shot: an incarnation that just created its security domain is already
 // SD-initialized, so a peer restore on that same incarnation is rejected by
 // the firmware's one-shot gate.
-TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_is_one_shot)
+TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -402,7 +396,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_is_one_shot)
         azihsm_buffer masked_buf{ key.masked.data(), static_cast<uint32_t>(key.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
-        azihsm_sess_ex_sd_create_peer_backup_params create_params{
+        azihsm_sd_create_peer_backup_params create_params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -417,7 +411,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_is_one_shot)
         // Restore on the same already-initialized incarnation is rejected.
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
-        azihsm_sess_ex_sd_restore_peer_backup_params restore_params{
+        azihsm_sd_restore_peer_backup_params restore_params{
             &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;
@@ -433,7 +427,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_is_one_shot)
 // rejects the peer restore at the policy gate, which fires before any HPKE
 // work — so a real sealing key and evidence reach the gate but the backup
 // blobs can be zero-filled placeholders.
-TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_rejects_without_peer_cloning)
+TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_rejects_without_peer_cloning)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -463,7 +457,7 @@ TEST_F(azihsm_sd_restore_peer_backup, restore_peer_backup_rejects_without_peer_c
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
-        azihsm_sess_ex_sd_restore_peer_backup_params restore_params{
+        azihsm_sd_restore_peer_backup_params restore_params{
             &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;

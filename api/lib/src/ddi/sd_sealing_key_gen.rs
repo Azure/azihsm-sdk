@@ -13,8 +13,8 @@
 //!   not stored on the device; the masked blob is returned to the host
 //!   and unmasked on-use by the security-domain backup commands.
 //!
-//! It also hosts the companion **`KeyReport`** dispatch, which attests a
-//! non-resident masked key (the sealing key) by its masked-key envelope
+//! It also hosts the companion **`KeyReport`** dispatch, which attests an
+//! unpinned masked key (the sealing key) by its masked-key envelope
 //! rather than a device handle.
 //!
 //! It runs **inside an already-open session** established by
@@ -140,7 +140,7 @@ pub(crate) fn sd_sealing_key_gen(
     Ok((resp.masked_key, pub_key_der))
 }
 
-/// Issue `KeyReport` on the active session to attest a non-resident
+/// Issue `KeyReport` on the active session to attest an unpinned
 /// masked key (such as the sealing key produced by
 /// [`sd_sealing_key_gen`]).
 ///

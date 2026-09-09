@@ -33,15 +33,15 @@ pub(super) async fn decode<'p, P: HsmPal>(
     material: &'p mut DmaBuf,
     crt: bool,
 ) -> HsmResult<DecodedKey<'p>> {
-    // Convert the recovered DER into the PAL's vault representation in place
-    // and classify it by modulus size (the PAL parses the DER — the crate
-    // cannot).  In place avoids duplicating the large RSA material: the PAL
-    // rewrites `material` into its `crt`-dependent vault layout, which is
-    // smaller than the source DER.
-    let (vault_len, modulus_len) = pal.rsa_priv_der_to_vault(io, material, crt)?;
-    // Done mutating — reborrow the converted prefix as the shared vault key.
-    let material: &'p DmaBuf = material;
-    let vault = &material[..vault_len];
+    // Convert the recovered DER into the PAL's vault representation and
+    // classify it by modulus size (the PAL parses the DER — the crate cannot).
+    // The PAL owns the vault buffer: it converts in place and returns a prefix
+    // of `material` when its layout fits the DER (the common case, avoiding a
+    // second large DMA allocation), or allocates its own buffer when the
+    // operand is larger (the Uno CRT PKA form, needing async PKA to derive
+    // `n1q`/`n2p`). Either way it returns the vault bytes and scrubs any
+    // plaintext DER it leaves behind.
+    let (vault, modulus_len) = pal.rsa_priv_der_to_vault(io, material, crt).await?;
 
     let kind = vault_kind(modulus_len, crt)?;
 

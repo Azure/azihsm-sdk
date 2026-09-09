@@ -7,7 +7,7 @@
 // partition (`provision_sd_backing_co_session`), mints an SD sealing key,
 // attests it via the masked-blob `KeyReport`, builds the receiver's
 // three-chain attestation evidence, then calls
-// `azihsm_sess_ex_sd_create_remote_backup` and validates the three returned
+// `azihsm_sd_create_remote_backup` and validates the three returned
 // backups. This is a self-backup (sender == receiver): the partition seals
 // to its own attested identity key.
 //
@@ -48,7 +48,7 @@ constexpr uint32_t kMaskedSealingKeyLen = 180;
 // caller vectors to the bytes written on success.
 azihsm_status create_backup_fill(
     azihsm_handle session,
-    const azihsm_sess_ex_sd_create_remote_backup_params *params,
+    const azihsm_sd_create_remote_backup_params *params,
     std::vector<uint8_t> &remote,
     std::vector<uint8_t> &local,
     std::vector<uint8_t> &mk
@@ -60,13 +60,7 @@ azihsm_status create_backup_fill(
     azihsm_status err = AZIHSM_STATUS_BUFFER_TOO_SMALL;
     for (int attempt = 0; attempt < 4; ++attempt)
     {
-        err = azihsm_sess_ex_sd_create_remote_backup(
-            session,
-            params,
-            &remote_buf,
-            &local_buf,
-            &mk_buf
-        );
+        err = azihsm_sd_create_remote_backup(session, params, &remote_buf, &local_buf, &mk_buf);
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             break;
@@ -98,8 +92,8 @@ azihsm_status create_backup_fill(
 } // namespace
 
 /// Test fixture for security-domain create-remote-backup
-/// (`azihsm_sess_ex_sd_create_remote_backup`).
-class azihsm_sd_create_backup : public ::testing::Test
+/// (`azihsm_sd_create_remote_backup`).
+class azihsm_sd_create_backup_test : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -157,7 +151,7 @@ class azihsm_sd_create_backup : public ::testing::Test
 // Happy path: creating a security domain on a partition that names itself
 // as the backing partition returns three non-zero backups of the pinned
 // wire lengths.
-TEST_F(azihsm_sd_create_backup, create_backup_roundtrip)
+TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -184,7 +178,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_roundtrip)
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
-        azihsm_sess_ex_sd_create_remote_backup_params params{
+        azihsm_sd_create_remote_backup_params params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -215,7 +209,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_roundtrip)
 // One-shot: creating a security domain is a once-per-partition operation,
 // so a second create on the now-initialized partition is rejected by the
 // firmware with `SD_ALREADY_INITIALIZED`.
-TEST_F(azihsm_sd_create_backup, create_backup_is_one_shot)
+TEST_F(azihsm_sd_create_backup_test, create_backup_is_one_shot)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -242,7 +236,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_is_one_shot)
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
-        azihsm_sess_ex_sd_create_remote_backup_params params{
+        azihsm_sd_create_remote_backup_params params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -263,20 +257,15 @@ TEST_F(azihsm_sd_create_backup, create_backup_is_one_shot)
         azihsm_buffer remote_buf{ pok_remote.data(), static_cast<uint32_t>(pok_remote.size()) };
         azihsm_buffer local_buf{ pok_local.data(), static_cast<uint32_t>(pok_local.size()) };
         azihsm_buffer mk_buf{ sd_mk.data(), static_cast<uint32_t>(sd_mk.size()) };
-        auto second = azihsm_sess_ex_sd_create_remote_backup(
-            ctx.session,
-            &params,
-            &remote_buf,
-            &local_buf,
-            &mk_buf
-        );
+        auto second =
+            azihsm_sd_create_remote_backup(ctx.session, &params, &remote_buf, &local_buf, &mk_buf);
         ASSERT_EQ(second, AZIHSM_STATUS_SD_ALREADY_INITIALIZED);
     });
 }
 
 // A NULL params pointer is rejected with `INVALID_ARGUMENT` after the
 // session resolves and before the domain is created.
-TEST_F(azihsm_sd_create_backup, create_backup_null_params)
+TEST_F(azihsm_sd_create_backup_test, create_backup_null_params)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -296,7 +285,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_null_params)
             scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
 
         azihsm_buffer out{ nullptr, 0 };
-        auto err = azihsm_sess_ex_sd_create_remote_backup(sess_handle, nullptr, &out, &out, &out);
+        auto err = azihsm_sd_create_remote_backup(sess_handle, nullptr, &out, &out, &out);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -305,7 +294,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_null_params)
 // pointers is rejected with `INVALID_ARGUMENT` (it would otherwise form two
 // aliasing `&mut` references at the FFI boundary), before the domain is
 // created.
-TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
+TEST_F(azihsm_sd_create_backup_test, create_backup_rejects_aliased_output_buffers)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle part_handle = open_reset_partition(path);
@@ -332,7 +321,7 @@ TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
-        azihsm_sess_ex_sd_create_remote_backup_params params{
+        azihsm_sd_create_remote_backup_params params{
             &masked_buf,
             &evidence.get(),
             &policy_buf,
@@ -343,13 +332,8 @@ TEST_F(azihsm_sd_create_backup, create_backup_rejects_aliased_output_buffers)
         azihsm_buffer shared_buf{ shared.data(), static_cast<uint32_t>(shared.size()) };
         std::vector<uint8_t> mk(kSdMkBackupLen);
         azihsm_buffer mk_buf{ mk.data(), static_cast<uint32_t>(mk.size()) };
-        auto err = azihsm_sess_ex_sd_create_remote_backup(
-            ctx.session,
-            &params,
-            &shared_buf,
-            &shared_buf,
-            &mk_buf
-        );
+        auto err =
+            azihsm_sd_create_remote_backup(ctx.session, &params, &shared_buf, &shared_buf, &mk_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }

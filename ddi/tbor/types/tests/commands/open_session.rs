@@ -21,9 +21,8 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_mac_fin;
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 // ---------------------------------------------------------------------------
 // Happy paths
@@ -257,22 +256,16 @@ fn open_session_multiple_concurrent() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-fd session limit (hw-only)
+// Per-fd session limit
 // ---------------------------------------------------------------------------
 
 /// Guards against a regression to the old "two `open_session` on the
 /// same ctx succeed" behavior. On hw the kernel driver enforces
 /// `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so a second open on the fd that
-/// already owns a live session must be rejected before FW is
-/// dispatched. `exec_op_tbor`'s `map_ioctl_status_tbor` remaps that
-/// driver-layer rejection to a `TborStatus`, so the caller sees a
-/// TBOR-typed error for a TBOR command.
-///
-/// Not applicable on emu: emu's `exec_op_tbor` does not run the
-/// per-fd `validate_session_request` shim, so overlapping opens on a
-/// single Dev succeed there — this is precisely the discrepancy that
-/// motivated the multi-fd rewrite of the other overlap tests.
-#[cfg(not(feature = "emu"))]
+/// already owns a live session must be rejected before firmware is
+/// dispatched. Native backends remap the driver rejection to
+/// `TborStatus`; emu performs the equivalent per-handle validation
+/// directly and returns the same status.
 #[test]
 fn open_session_second_on_same_fd_rejected() {
     let ctx = TestCtx::new();

@@ -50,14 +50,15 @@ include = [
   "AzihsmResiliencyLockOps",
   "AzihsmResiliencyStorageOps",
   "AzihsmSdCertChain",
+  "AzihsmSdCreatePeerBackupParams",
+  "AzihsmSdCreateRemoteBackupParams",
   "AzihsmSdEvidence",
+  "AzihsmSdResealRemoteBackupParams",
+  "AzihsmSdRestoreLocalBackupParams",
+  "AzihsmSdRestorePeerBackupParams",
+  "AzihsmSdRestoreRemoteBackupParams",
   "AzihsmSessExPartFinalParams",
   "AzihsmSessExPartInitParams",
-  "AzihsmSessExSdCreatePeerBackupParams",
-  "AzihsmSessExSdCreateRemoteBackupParams",
-  "AzihsmSessExSdResealRemoteBackupParams",
-  "AzihsmSessExSdRestorePeerBackupParams",
-  "AzihsmSessExSdRestoreRemoteBackupParams",
   "AzihsmSessionPsk",
   "HsmEccCurve",
   "HsmError",
@@ -110,14 +111,15 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmResiliencyLockOps" = "azihsm_resiliency_lock_ops"
 "AzihsmResiliencyStorageOps" = "azihsm_resiliency_storage_ops"
 "AzihsmSdCertChain" = "azihsm_sd_cert_chain"
+"AzihsmSdCreatePeerBackupParams" = "azihsm_sd_create_peer_backup_params"
+"AzihsmSdCreateRemoteBackupParams" = "azihsm_sd_create_remote_backup_params"
 "AzihsmSdEvidence" = "azihsm_sd_evidence"
+"AzihsmSdResealRemoteBackupParams" = "azihsm_sd_reseal_remote_backup_params"
+"AzihsmSdRestoreLocalBackupParams" = "azihsm_sd_restore_local_backup_params"
+"AzihsmSdRestorePeerBackupParams" = "azihsm_sd_restore_peer_backup_params"
+"AzihsmSdRestoreRemoteBackupParams" = "azihsm_sd_restore_remote_backup_params"
 "AzihsmSessExPartFinalParams" = "azihsm_sess_ex_part_final_params"
 "AzihsmSessExPartInitParams" = "azihsm_sess_ex_part_init_params"
-"AzihsmSessExSdCreatePeerBackupParams" = "azihsm_sess_ex_sd_create_peer_backup_params"
-"AzihsmSessExSdCreateRemoteBackupParams" = "azihsm_sess_ex_sd_create_remote_backup_params"
-"AzihsmSessExSdResealRemoteBackupParams" = "azihsm_sess_ex_sd_reseal_remote_backup_params"
-"AzihsmSessExSdRestorePeerBackupParams" = "azihsm_sess_ex_sd_restore_peer_backup_params"
-"AzihsmSessExSdRestoreRemoteBackupParams" = "azihsm_sess_ex_sd_restore_remote_backup_params"
 "AzihsmSessionExType" = "azihsm_session_ex_type"
 "AzihsmSessionProp" = "azihsm_session_prop"
 "AzihsmSessionPropId" = "azihsm_session_prop_id"

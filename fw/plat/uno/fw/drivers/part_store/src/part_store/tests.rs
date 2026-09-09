@@ -79,9 +79,22 @@ fn preserves_provisioning_and_clears_tenant_state() {
 
     let p = Partition(pid);
 
+    // Session PSKs are reset to the well-known defaults, not preserved:
+    // an NSSR returns the partition to its just-allocated state as far as
+    // the PSKs are concerned, so the rotated values seeded above must not
+    // survive.
+    assert_eq!(
+        &p.psk_co()[..],
+        &DEFAULT_PSK_CO[..],
+        "psk_co must be re-baked to the default on migrate"
+    );
+    assert_eq!(
+        &p.psk_cu()[..],
+        &DEFAULT_PSK_CU[..],
+        "psk_cu must be re-baked to the default on migrate"
+    );
+
     // Provisioning preserved.
-    assert_eq!(&p.psk_co()[..], &psk_co[..], "psk_co must survive migrate");
-    assert_eq!(&p.psk_cu()[..], &psk_cu[..], "psk_cu must survive migrate");
     assert_eq!(
         &p.vm_launch_guid()[..],
         &guid[..],

@@ -123,25 +123,6 @@ pub(crate) fn validate_output_handle_ptrs(
     Ok(())
 }
 
-/// Validates that every output-buffer pointer is non-null, aligned, and
-/// pairwise distinct.
-///
-/// Used at the FFI boundary for APIs with multiple `azihsm_buffer` outputs:
-/// two identical pointers would let the callee form two `&mut AzihsmBuffer`
-/// references to the same location, which is undefined behavior. Rejects
-/// null/misaligned or aliasing pointers with `InvalidArgument`.
-pub(crate) fn validate_distinct_output_buffers(
-    buffers: &[*mut crate::AzihsmBuffer],
-) -> Result<(), AzihsmStatus> {
-    for (i, &ptr) in buffers.iter().enumerate() {
-        validate_ptr(ptr)?;
-        if buffers[..i].iter().any(|&other| std::ptr::eq(other, ptr)) {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
-    }
-    Ok(())
-}
-
 /// Validate and prepare the caller-provided output buffer.
 ///
 /// - If the buffer is large enough, returns a mutable slice to write into.
@@ -167,6 +148,48 @@ pub(crate) fn validate_output_buffer(
 
     // Get output buffer slice
     output_buf.try_into()
+}
+
+/// Validates that every output-buffer pointer is non-null, aligned, and
+/// pairwise distinct.
+///
+/// Used at the FFI boundary for APIs with multiple `azihsm_buffer` outputs:
+/// two identical pointers would let the callee form two `&mut AzihsmBuffer`
+/// references to the same location, which is undefined behavior. Rejects
+/// null/misaligned or aliasing pointers with `InvalidArgument`.
+pub(crate) fn validate_distinct_output_buffers(
+    buffers: &[*mut crate::AzihsmBuffer],
+) -> Result<(), AzihsmStatus> {
+    for (i, &ptr) in buffers.iter().enumerate() {
+        validate_ptr(ptr)?;
+        if buffers[..i].iter().any(|&other| std::ptr::eq(other, ptr)) {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+    }
+    Ok(())
+}
+
+/// Size-check already-dereferenced output buffers; if any is too small, sets
+/// **every** buffer's `len` to its required length before returning
+/// `BufferTooSmall`, so one probe advertises all capacities.
+pub(crate) fn validate_output_sizes(
+    buffers: &mut [(&mut crate::AzihsmBuffer, usize)],
+) -> Result<(), AzihsmStatus> {
+    let mut too_small = false;
+    for (buf, required_len) in buffers.iter_mut() {
+        match validate_output_buffer(buf, *required_len) {
+            Ok(_) => {}
+            Err(AzihsmStatus::BufferTooSmall) => too_small = true,
+            Err(other) => return Err(other),
+        }
+    }
+    if too_small {
+        for (buf, required_len) in buffers.iter_mut() {
+            buf.len = *required_len as u32;
+        }
+        Err(AzihsmStatus::BufferTooSmall)?;
+    }
+    Ok(())
 }
 
 /// Cast a raw pointer to a typed reference after validation
