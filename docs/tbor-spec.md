@@ -3,46 +3,73 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -->
 
-# TBOR — Unified Specification
+# Tabular Binary Object Representation (TBOR) Specification
 
-Single-file consolidation of the TBOR wire-encoding specification and the
-TBOR DDI command specifications.
+<a id="enc-version"></a>
 
-| Part | Contents | Source of truth |
-|---|---|---|
-| [Part I](#part-i) | Tabular Binary Object Representation (TBOR) Specification — framing, TOC entries, encodings, schema features | [`fw/core/ddi/tbor/docs/spec.md`](../fw/core/ddi/tbor/docs/spec.md) |
-| [Part II](#part-ii) | TBOR DDI Commands — shared headers, opcode table, session flows | [`docs/tbor-ddi/README.md`](./tbor-ddi/README.md) |
-| [Part III](#part-iii) | Per-command request/response bodies (31 commands) | [`docs/tbor-ddi/commands/`](./tbor-ddi/commands/) |
+## Version
 
-> **Note:** this file is an aggregate. The per-part sources listed above
-> remain the authoritative copies and are reproduced here verbatim — make
-> edits there and re-sync this file, so the two do not drift.
-
----
+0.3
 
 <a id="table-of-contents"></a>
 
 ## Table of Contents
 
-- [Part I — TBOR Encoding Specification](#part-i)
-  - [Version](#enc-version)
-  - [Table of Contents](#enc-table-of-contents)
-  - [Overview](#enc-overview)
+- [Overview](#enc-overview)
+  - [Purpose](#enc-purpose)
+  - [Scope](#enc-scope)
+  - [Terminology](#enc-terminology)
+  - [Byte Ordering](#enc-byte-ordering)
+- [Part I — Wire Encoding](#part-i)
   - [Request Format](#enc-request-format)
+    - [Header Fields](#enc-header-fields)
+    - [Field Details](#enc-field-details)
   - [Response Format](#enc-response-format)
+    - [Header Fields](#enc-header-fields-1)
+    - [Field Details](#enc-field-details-1)
+    - [Well-Known Status Codes](#enc-well-known-status-codes)
   - [TOC Entry Format](#enc-toc-entry-format)
+    - [Fields](#enc-fields)
+    - [Entry Types](#enc-entry-types)
+    - [Encoding: Inline None](#enc-encoding-inline-none)
+    - [Encoding: Inline 8-bit](#enc-encoding-inline-8-bit)
+    - [Encoding: Inline 16-bit](#enc-encoding-inline-16-bit)
+    - [Encoding: Offset/Length](#enc-encoding-offsetlength)
+    - [Data Alignment](#enc-data-alignment)
   - [Protocol Rules](#enc-protocol-rules)
+    - [1. Request-Response Semantics](#enc-1-request-response-semantics)
+    - [2. Ordering and Pipelining](#enc-2-ordering-and-pipelining)
+    - [3. Version Negotiation](#enc-3-version-negotiation)
+    - [4. Maximum TOC Entries](#enc-4-maximum-toc-entries)
+    - [5. Timeouts](#enc-5-timeouts)
+    - [6. Unknown TOC Entry Types](#enc-6-unknown-toc-entry-types)
+    - [7. Maximum Message Size](#enc-7-maximum-message-size)
+    - [8. Malformed Message Handling](#enc-8-malformed-message-handling)
+    - [9. Reserved Fields](#enc-9-reserved-fields)
   - [Schema Features](#enc-schema-features)
+    - [Optional Fields](#enc-optional-fields)
+    - [Alignment Padding](#enc-alignment-padding)
+    - [Typed Slices](#enc-typed-slices)
+    - [Fixed-Size Arrays](#enc-fixed-size-arrays)
+    - [Length Constraints](#enc-length-constraints)
+    - [Field Groups](#enc-field-groups)
+    - [Dispatch Traits](#enc-dispatch-traits)
   - [Security Considerations](#enc-security-considerations)
+    - [FIPS_APPROVED Flag](#enc-fips_approved-flag)
+    - [Sealed Key Handling](#enc-sealed-key-handling)
+    - [Input Validation](#enc-input-validation)
+    - [Transport Security](#enc-transport-security)
   - [Worked Examples](#enc-worked-examples)
-  - [Revision History](#enc-revision-history)
-- [Part II — TBOR DDI Protocol](#part-ii)
+    - [Example 1 — Simple Request](#enc-example-1--simple-request)
+    - [Example 2 — Simple Response](#enc-example-2--simple-response)
+    - [Example 3 — Request with Optional Field](#enc-example-3--request-with-optional-field)
+- [Part II — DDI Protocol](#part-ii)
   - [Request header](#ddi-request-header)
   - [Response header](#ddi-response-header)
   - [Commands](#ddi-commands)
   - [Default-PSK gate](#ddi-default-psk-gate)
   - [Session establishment flows](#ddi-session-establishment-flows)
-- [Part III — TBOR DDI Command Reference](#part-iii)
+- [Part III — Command Reference](#part-iii)
   - [ApiRev (Opcode 0x01)](#cmd-api_rev)
   - [PartInfo (Opcode 0x02)](#cmd-part_info)
   - [SessionOpenInit (Opcode 0x03)](#cmd-session_open_init)
@@ -74,76 +101,23 @@ TBOR DDI command specifications.
   - [ConcatKdfDerive (Opcode 0x1D)](#cmd-concat_kdf_derive)
   - [GetCertChainInfo (Opcode 0x1E)](#cmd-get_cert_chain_info)
   - [GetCertificate (Opcode 0x1F)](#cmd-get_cert)
-
----
-
-<a id="part-i"></a>
-
-## Part I — TBOR Encoding Specification
-
-*Source: [`fw/core/ddi/tbor/docs/spec.md`](../fw/core/ddi/tbor/docs/spec.md) — Tabular Binary Object Representation (TBOR) Specification*
-
-
-<a id="enc-version"></a>
-
-### Version
-
-0.3
-
-<a id="enc-table-of-contents"></a>
-
-### Part I Contents
-
-- [Overview](#enc-overview)
-  - [Purpose](#enc-purpose)
-  - [Scope](#enc-scope)
-  - [Terminology](#enc-terminology)
-  - [Byte Ordering](#enc-byte-ordering)
-- [Request Format](#enc-request-format)
-  - [Header Fields](#enc-header-fields)
-  - [Field Details](#enc-field-details)
-- [Response Format](#enc-response-format)
-  - [Header Fields](#enc-header-fields-1)
-  - [Field Details](#enc-field-details-1)
-  - [Well-Known Status Codes](#enc-well-known-status-codes)
-- [TOC Entry Format](#enc-toc-entry-format)
-  - [Entry Types](#enc-entry-types)
-  - [Encoding: Inline None](#enc-encoding-inline-none)
-  - [Encoding: Inline 8-bit](#enc-encoding-inline-8-bit)
-  - [Encoding: Inline 16-bit](#enc-encoding-inline-16-bit)
-  - [Encoding: Offset/Length](#enc-encoding-offsetlength)
-  - [Data Alignment](#enc-data-alignment)
-- [Protocol Rules](#enc-protocol-rules)
-- [Schema Features](#enc-schema-features)
-  - [Optional Fields](#enc-optional-fields)
-  - [Alignment Padding](#enc-alignment-padding)
-  - [Typed Slices](#enc-typed-slices)
-  - [Fixed-Size Arrays](#enc-fixed-size-arrays)
-  - [Length Constraints](#enc-length-constraints)
-  - [Field Groups](#enc-field-groups)
-  - [Dispatch Traits](#enc-dispatch-traits)
-- [Security Considerations](#enc-security-considerations)
-- [Worked Examples](#enc-worked-examples)
-  - [Example 1 — Simple Request](#enc-example-1--simple-request)
-  - [Example 2 — Simple Response](#enc-example-2--simple-response)
-  - [Example 3 — Request with Optional Field](#enc-example-3--request-with-optional-field)
 - [Revision History](#enc-revision-history)
 
 ---
 
 <a id="enc-overview"></a>
 
-### Overview
+## Overview
 
 <a id="enc-purpose"></a>
 
-#### Purpose
+### Purpose
 
 This document defines the binary request/response protocol used for communication between host software and device hardware. The protocol provides a compact, structured wire format that enables the host to issue commands (requests) to the device and receive structured results (responses). It is designed for low-overhead, deterministic communication in environments where bandwidth and latency are constrained.
 
 <a id="enc-scope"></a>
 
-#### Scope
+### Scope
 
 This specification covers:
 
@@ -153,28 +127,37 @@ This specification covers:
 - The `none` entry type for representing absent optional fields.
 - The `padding` entry type for aligning field data within the variable-length data section.
 - Protocol-level rules for versioning, ordering, error handling, and timeouts.
+- The AZIHSM DDI opcode catalog, the shared DDI request/response headers, and
+  session establishment ([Part II](#part-ii)).
+- The request and response body of every defined command ([Part III](#part-iii)).
 
 This specification does **not** cover:
 
 - The transport layer (e.g., SPI, I2C, USB, shared memory). The protocol is transport-agnostic and assumes a reliable, ordered byte-stream or message-based transport.
-- The application-layer opcode catalog. Opcodes and their semantics are defined by the application layer built on top of this protocol.
-- Session management beyond the `session_id` TOC entry type.
 
 <a id="enc-terminology"></a>
 
-#### Terminology
+### Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 <a id="enc-byte-ordering"></a>
 
-#### Byte Ordering
+### Byte Ordering
 
 All multi-byte integer fields in the header and TOC structures are encoded in **little-endian** byte order. All reserved fields MUST be set to zero by senders and MUST be ignored by receivers.
 
 > **Note:** Inline 16-bit values within TOC entries are an exception — see [Encoding: Inline 16-bit](#enc-encoding-inline-16-bit) for details.
 
 ---
+
+<a id="part-i"></a>
+
+## Part I — Wire Encoding
+
+This part defines the TBOR wire format: message framing, the Table of
+Contents mechanism, entry encodings, and the schema features built on
+them.  It is independent of any particular command catalog.
 
 <a id="enc-request-format"></a>
 
@@ -269,8 +252,6 @@ Identifies the operation to be performed. Opcode values are defined by the appli
 |--------|----------------------------|
 | `0xFF` | Version Not Supported      |
 | Others | Application-defined        |
-
----
 
 <a id="enc-response-format"></a>
 
@@ -399,8 +380,6 @@ The following status codes are defined at the protocol level. Application-layer 
 | `0x00000006`   | Key Not Found        | The `key_id` in the request does not correspond to a known key.              |
 | `0x00000007`   | Permission Denied    | The operation is not permitted in the current context.                        |
 | `0x0000FFFF`   | *(Reserved)*         | Upper bound of the protocol-level status code range.                         |
-
----
 
 <a id="enc-toc-entry-format"></a>
 
@@ -558,8 +537,6 @@ To support aligned access, a sender MAY insert a `padding` TOC entry (Entry Type
 
 Multiple TOC entries MAY reference overlapping regions of the variable-length data section, though this is NOT RECOMMENDED and the behavior is application-defined.
 
----
-
 <a id="enc-protocol-rules"></a>
 
 ### Protocol Rules
@@ -626,8 +603,6 @@ A receiver that cannot parse a request (e.g., the TOC Count implies more TOC ent
 
 All reserved fields and reserved bits MUST be set to zero by the sender. A receiver MUST ignore the values of reserved fields and MUST NOT reject a message solely because a reserved field is non-zero. This allows future protocol extensions to use these fields without breaking existing receivers.
 
----
-
 <a id="enc-schema-features"></a>
 
 ### Schema Features
@@ -678,8 +653,6 @@ Schema fields may be grouped into reusable field group types. A field group cont
 
 Each request schema type exposes its opcode as an associated constant (`OPCODE`), enabling opcode-based dispatch without hardcoding opcode values in match arms.
 
----
-
 <a id="enc-security-considerations"></a>
 
 ### Security Considerations
@@ -715,8 +688,6 @@ Failure to validate inputs can lead to buffer over-reads or other memory safety 
 #### Transport Security
 
 This protocol does not define encryption or authentication at the wire level. If the transport channel is not physically secured (e.g., communication over a shared bus), implementations SHOULD layer appropriate transport security (encryption, message authentication) beneath this protocol.
-
----
 
 <a id="enc-worked-examples"></a>
 
@@ -837,37 +808,22 @@ Total message: 16 bytes, no variable-length data section.
 
 ---
 
-<a id="enc-revision-history"></a>
-
-### Revision History
-
-| Version | Date       | Summary                                                                                       |
-|---------|------------|-----------------------------------------------------------------------------------------------|
-| 0.1     | —          | Initial draft. Defined core request/response framing, TOC structure, and basic entry types.    |
-| 0.2     | —          | Added well-known status codes, security considerations, data alignment rules, and worked examples. Expanded protocol rules (pipelining, unknown TOC types, malformed message handling, maximum message size). Clarified endianness convention and FIPS_APPROVED flag semantics. |
-| 0.3     | —          | Added Entry Type 8 (`none`) for optional fields. Added Entry Type 9 (`padding`) for data alignment. Added Schema Features section describing optional fields, alignment, fixed arrays, length constraints, field groups, and dispatch traits. |
-
-
----
-
 <a id="part-ii"></a>
 
-## Part II — TBOR DDI Protocol
+## Part II — DDI Protocol
 
-*Source: [`docs/tbor-ddi/README.md`](./tbor-ddi/README.md)*
+This part defines the AZIHSM Device Data Interface (DDI) carried over
+TBOR: the shared request and response headers, the opcode catalog, the
+default-PSK gate, and the session establishment handshake.
 
-
-Per-command specifications for the TBOR DDI protocol.
-
-Per-command documents in [`commands/`](#part-iii) describe only the
-request and response **bodies** (the TOC entries that follow the
-shared headers below).  Wire framing, TOC entry layout, alignment, and
-schema features are defined in the
-[TBOR encoding specification](#part-i).
+[Part III](#part-iii) specifies only the request and response **bodies**
+(the TOC entries that follow the shared headers defined below).  Wire
+framing, TOC entry layout, alignment, and schema features are defined in
+[Part I](#part-i).
 
 Every command with a defined wire schema is listed.  Commands whose
 firmware handler has not yet landed are marked **schema-only** in the
-table below (and in their per-command document); they are not yet
+table below (and in their command section); they are not yet
 dispatchable.
 
 <a id="ddi-request-header"></a>
@@ -905,39 +861,39 @@ single `none` TOC placeholder and no typed body fields.
 
 ### Commands
 
-| Opcode | Command | Session | Doc |
+| Opcode | Command | Session | Specification |
 |---|---|---|---|
-| `0x01` | `ApiRev` | NoSession | [`commands/api_rev.md`](#cmd-api_rev) |
-| `0x02` | `PartInfo` | NoSession | [`commands/part_info.md`](#cmd-part_info) |
-| `0x03` | `SessionOpenInit` | NoSession | [`commands/session_open_init.md`](#cmd-session_open_init) |
-| `0x04` | `SessionOpenFinish` | NoSession | [`commands/session_open_finish.md`](#cmd-session_open_finish) |
-| `0x05` | `SessionClose` | InSession | [`commands/session_close.md`](#cmd-session_close) |
-| `0x06` | `PskChange` | InSession | [`commands/psk_change.md`](#cmd-psk_change) |
-| `0x07` | `PartInit` | InSession | [`commands/part_init.md`](#cmd-part_init) |
-| `0x08` | `PartFinal` | InSession | [`commands/part_final.md`](#cmd-part_final) |
-| `0x09` | `SdSealingKeyGen` | InSession | [`commands/sd_sealing_key_gen.md`](#cmd-sd_sealing_key_gen) |
-| `0x0A` | `SdCreateRemoteBackup` | InSession | [`commands/sd_create_remote_backup.md`](#cmd-sd_create_remote_backup) |
-| `0x0B` | `SdResealRemoteBackup` | InSession | [`commands/sd_reseal_remote_backup.md`](#cmd-sd_reseal_remote_backup) |
-| `0x0C` | `SdRestoreRemoteBackup` | InSession | [`commands/sd_restore_remote_backup.md`](#cmd-sd_restore_remote_backup) |
-| `0x0D` | `SdRestoreLocalBackup` | InSession | [`commands/sd_restore_local_backup.md`](#cmd-sd_restore_local_backup) |
-| `0x0E` | `SdCreatePeerBackup` | InSession | [`commands/sd_create_peer_backup.md`](#cmd-sd_create_peer_backup) |
-| `0x0F` | `SdRestorePeerBackup` | InSession | [`commands/sd_restore_peer_backup.md`](#cmd-sd_restore_peer_backup) |
-| `0x10` | `KeyReport` | InSession | [`commands/key_report.md`](#cmd-key_report) |
-| `0x11` | `HmacGenerateKey` | InSession | [`commands/hmac_generate_key.md`](#cmd-hmac_generate_key) |
-| `0x12` | `Hmac` | InSession | [`commands/hmac.md`](#cmd-hmac) |
-| `0x13` | `GetUnwrappingKey` | InSession | [`commands/get_unwrapping_key.md`](#cmd-get_unwrapping_key) |
-| `0x14` | `UnwrapKey` | InSession | [`commands/unwrap_key.md`](#cmd-unwrap_key) |
-| `0x15` | `AesGenerateKey` | InSession | [`commands/aes_generate_key.md`](#cmd-aes_generate_key) |
-| `0x16` | `AesEncryptDecrypt` | InSession | [`commands/aes_encrypt_decrypt.md`](#cmd-aes_encrypt_decrypt) |
-| `0x17` | `EccGenerateKey` | InSession | [`commands/ecc_generate_key.md`](#cmd-ecc_generate_key) |
-| `0x18` | `EccSign` | InSession | [`commands/ecc_sign.md`](#cmd-ecc_sign) |
-| `0x19` | `EcdhDerive` | InSession | [`commands/ecdh_derive.md`](#cmd-ecdh_derive) |
-| `0x1A` | `RsaModExp` | InSession | [`commands/rsa_mod_exp.md`](#cmd-rsa_mod_exp) |
-| `0x1B` | `Hash` | InSession | [`commands/hash.md`](#cmd-hash) |
-| `0x1C` | `HkdfDerive` | InSession | [`commands/hkdf_derive.md`](#cmd-hkdf_derive) |
-| `0x1D` | `ConcatKdfDerive` | InSession | [`commands/concat_kdf_derive.md`](#cmd-concat_kdf_derive) |
-| `0x1E` | `GetCertChainInfo` | NoSession | [`commands/get_cert_chain_info.md`](#cmd-get_cert_chain_info) |
-| `0x1F` | `GetCertificate` | NoSession | [`commands/get_cert.md`](#cmd-get_cert) |
+| `0x01` | `ApiRev` | NoSession | [ApiRev (Opcode 0x01)](#cmd-api_rev) |
+| `0x02` | `PartInfo` | NoSession | [PartInfo (Opcode 0x02)](#cmd-part_info) |
+| `0x03` | `SessionOpenInit` | NoSession | [SessionOpenInit (Opcode 0x03)](#cmd-session_open_init) |
+| `0x04` | `SessionOpenFinish` | NoSession | [SessionOpenFinish (Opcode 0x04)](#cmd-session_open_finish) |
+| `0x05` | `SessionClose` | InSession | [SessionClose (Opcode 0x05)](#cmd-session_close) |
+| `0x06` | `PskChange` | InSession | [PskChange (Opcode 0x06)](#cmd-psk_change) |
+| `0x07` | `PartInit` | InSession | [PartInit (Opcode 0x07)](#cmd-part_init) |
+| `0x08` | `PartFinal` | InSession | [PartFinal (Opcode 0x08)](#cmd-part_final) |
+| `0x09` | `SdSealingKeyGen` | InSession | [SdSealingKeyGen (Opcode 0x09)](#cmd-sd_sealing_key_gen) |
+| `0x0A` | `SdCreateRemoteBackup` | InSession | [SdCreateRemoteBackup (Opcode 0x0A)](#cmd-sd_create_remote_backup) |
+| `0x0B` | `SdResealRemoteBackup` | InSession | [SdResealRemoteBackup (Opcode 0x0B)](#cmd-sd_reseal_remote_backup) |
+| `0x0C` | `SdRestoreRemoteBackup` | InSession | [SdRestoreRemoteBackup (Opcode 0x0C)](#cmd-sd_restore_remote_backup) |
+| `0x0D` | `SdRestoreLocalBackup` | InSession | [SdRestoreLocalBackup (Opcode 0x0D)](#cmd-sd_restore_local_backup) |
+| `0x0E` | `SdCreatePeerBackup` | InSession | [SdCreatePeerBackup (Opcode 0x0E)](#cmd-sd_create_peer_backup) |
+| `0x0F` | `SdRestorePeerBackup` | InSession | [SdRestorePeerBackup (Opcode 0x0F)](#cmd-sd_restore_peer_backup) |
+| `0x10` | `KeyReport` | InSession | [KeyReport (Opcode 0x10)](#cmd-key_report) |
+| `0x11` | `HmacGenerateKey` | InSession | [HmacGenerateKey (Opcode 0x11)](#cmd-hmac_generate_key) |
+| `0x12` | `Hmac` | InSession | [Hmac (Opcode 0x12)](#cmd-hmac) |
+| `0x13` | `GetUnwrappingKey` | InSession | [GetUnwrappingKey (Opcode 0x13)](#cmd-get_unwrapping_key) |
+| `0x14` | `UnwrapKey` | InSession | [UnwrapKey (Opcode 0x14)](#cmd-unwrap_key) |
+| `0x15` | `AesGenerateKey` | InSession | [AesGenerateKey (Opcode 0x15)](#cmd-aes_generate_key) |
+| `0x16` | `AesEncryptDecrypt` | InSession | [AesEncryptDecrypt (Opcode 0x16)](#cmd-aes_encrypt_decrypt) |
+| `0x17` | `EccGenerateKey` | InSession | [EccGenerateKey (Opcode 0x17)](#cmd-ecc_generate_key) |
+| `0x18` | `EccSign` | InSession | [EccSign (Opcode 0x18)](#cmd-ecc_sign) |
+| `0x19` | `EcdhDerive` | InSession | [EcdhDerive (Opcode 0x19)](#cmd-ecdh_derive) |
+| `0x1A` | `RsaModExp` | InSession | [RsaModExp (Opcode 0x1A)](#cmd-rsa_mod_exp) |
+| `0x1B` | `Hash` | InSession | [Hash (Opcode 0x1B)](#cmd-hash) |
+| `0x1C` | `HkdfDerive` | InSession | [HkdfDerive (Opcode 0x1C)](#cmd-hkdf_derive) |
+| `0x1D` | `ConcatKdfDerive` | InSession | [ConcatKdfDerive (Opcode 0x1D)](#cmd-concat_kdf_derive) |
+| `0x1E` | `GetCertChainInfo` | NoSession | [GetCertChainInfo (Opcode 0x1E)](#cmd-get_cert_chain_info) |
+| `0x1F` | `GetCertificate` | NoSession | [GetCertificate (Opcode 0x1F)](#cmd-get_cert) |
 
 <a id="ddi-default-psk-gate"></a>
 
@@ -1067,54 +1023,17 @@ may still be re-presented later via the resume path on a fresh
 
 <a id="part-iii"></a>
 
-## Part III — TBOR DDI Command Reference
+## Part III — Command Reference
 
-*Source: [`docs/tbor-ddi/commands/`](./tbor-ddi/commands/). Commands are
-ordered by opcode. Each section documents only the request and response
-**bodies**; the shared headers are defined in [Part II](#part-ii) and the
-wire framing in [Part I](#part-i).*
-
-| Opcode | Command | Section |
-|---|---|---|
-| `0x01` | `ApiRev` | [ApiRev (Opcode 0x01)](#cmd-api_rev) |
-| `0x02` | `PartInfo` | [PartInfo (Opcode 0x02)](#cmd-part_info) |
-| `0x03` | `SessionOpenInit` | [SessionOpenInit (Opcode 0x03)](#cmd-session_open_init) |
-| `0x04` | `SessionOpenFinish` | [SessionOpenFinish (Opcode 0x04)](#cmd-session_open_finish) |
-| `0x05` | `SessionClose` | [SessionClose (Opcode 0x05)](#cmd-session_close) |
-| `0x06` | `PskChange` | [PskChange (Opcode 0x06)](#cmd-psk_change) |
-| `0x07` | `PartInit` | [PartInit (Opcode 0x07)](#cmd-part_init) |
-| `0x08` | `PartFinal` | [PartFinal (Opcode 0x08)](#cmd-part_final) |
-| `0x09` | `SdSealingKeyGen` | [SdSealingKeyGen (Opcode 0x09)](#cmd-sd_sealing_key_gen) |
-| `0x0A` | `SdCreateRemoteBackup` | [SdCreateRemoteBackup (Opcode 0x0A)](#cmd-sd_create_remote_backup) |
-| `0x0B` | `SdResealRemoteBackup` | [SdResealRemoteBackup (Opcode 0x0B)](#cmd-sd_reseal_remote_backup) |
-| `0x0C` | `SdRestoreRemoteBackup` | [SdRestoreRemoteBackup (Opcode 0x0C)](#cmd-sd_restore_remote_backup) |
-| `0x0D` | `SdRestoreLocalBackup` | [SdRestoreLocalBackup (Opcode 0x0D)](#cmd-sd_restore_local_backup) |
-| `0x0E` | `SdCreatePeerBackup` | [SdCreatePeerBackup (Opcode 0x0E)](#cmd-sd_create_peer_backup) |
-| `0x0F` | `SdRestorePeerBackup` | [SdRestorePeerBackup (Opcode 0x0F)](#cmd-sd_restore_peer_backup) |
-| `0x10` | `KeyReport` | [KeyReport (Opcode 0x10)](#cmd-key_report) |
-| `0x11` | `HmacGenerateKey` | [HmacGenerateKey (Opcode 0x11)](#cmd-hmac_generate_key) |
-| `0x12` | `Hmac` | [Hmac (Opcode 0x12)](#cmd-hmac) |
-| `0x13` | `GetUnwrappingKey` | [GetUnwrappingKey (Opcode 0x13)](#cmd-get_unwrapping_key) |
-| `0x14` | `UnwrapKey` | [UnwrapKey (Opcode 0x14)](#cmd-unwrap_key) |
-| `0x15` | `AesGenerateKey` | [AesGenerateKey (Opcode 0x15)](#cmd-aes_generate_key) |
-| `0x16` | `AesEncryptDecrypt` | [AesEncryptDecrypt (Opcode 0x16)](#cmd-aes_encrypt_decrypt) |
-| `0x17` | `EccGenerateKey` | [EccGenerateKey (Opcode 0x17)](#cmd-ecc_generate_key) |
-| `0x18` | `EccSign` | [EccSign (Opcode 0x18)](#cmd-ecc_sign) |
-| `0x19` | `EcdhDerive` | [EcdhDerive (Opcode 0x19)](#cmd-ecdh_derive) |
-| `0x1A` | `RsaModExp` | [RsaModExp (Opcode 0x1A)](#cmd-rsa_mod_exp) |
-| `0x1B` | `Hash` | [Hash (Opcode 0x1B)](#cmd-hash) |
-| `0x1C` | `HkdfDerive` | [HkdfDerive (Opcode 0x1C)](#cmd-hkdf_derive) |
-| `0x1D` | `ConcatKdfDerive` | [ConcatKdfDerive (Opcode 0x1D)](#cmd-concat_kdf_derive) |
-| `0x1E` | `GetCertChainInfo` | [GetCertChainInfo (Opcode 0x1E)](#cmd-get_cert_chain_info) |
-| `0x1F` | `GetCertificate` | [GetCertificate (Opcode 0x1F)](#cmd-get_cert) |
+This part specifies the request and response **body** of every defined
+command, ordered by opcode.  The opcode catalog is in [Part II — DDI Protocol](#part-ii),
+which also defines the shared headers; the wire framing is in
+[Part I — Wire Encoding](#part-i).
 
 <a id="cmd-api_rev"></a>
 <a id="cmd-api_rev-apirev-opcode-0x01"></a>
 
 ### ApiRev (Opcode 0x01)
-
-*Source: [`docs/tbor-ddi/commands/api_rev.md`](./tbor-ddi/commands/api_rev.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/api_rev.rs`
 **Session:** NoSession
@@ -1169,7 +1088,7 @@ The shipping firmware currently returns `min = max = 1`.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/api_rev.rs`
 
 
@@ -1177,9 +1096,6 @@ The shipping firmware currently returns `min = max = 1`.
 <a id="cmd-part_info-partinfo-opcode-0x02"></a>
 
 ### PartInfo (Opcode 0x02)
-
-*Source: [`docs/tbor-ddi/commands/part_info.md`](./tbor-ddi/commands/part_info.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/part_info.rs`
 **Session:** NoSession
@@ -1244,7 +1160,7 @@ Carries the `generation`/`owner_svn`/`mfgr_svn` values and the `pid`
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/part_info.rs`
 
 
@@ -1252,9 +1168,6 @@ Carries the `generation`/`owner_svn`/`mfgr_svn` values and the `pid`
 <a id="cmd-session_open_init-sessionopeninit-opcode-0x03"></a>
 
 ### SessionOpenInit (Opcode 0x03)
-
-*Source: [`docs/tbor-ddi/commands/session_open_init.md`](./tbor-ddi/commands/session_open_init.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/session_open_init.rs`
 **Session:** NoSession
@@ -1287,7 +1200,7 @@ AEAD-GCM encryption under [`aead_envelope`](
 ../../../fw/core/crypto/aead-envelope/src/lib.rs)) and `masking_key`.
 An `Authenticated` session also derives `mac_tx_key` / `mac_rx_key`
 so subsequent command and response bodies carry an outer per-message
-HMAC envelope (see [`session_open_finish.md`](#cmd-session_open_finish)
+HMAC envelope (see [`SessionOpenFinish`](#cmd-session_open_finish)
 for the full key schedule).
 
 The HPKE suite is `DHKEM(P-384, HKDF-SHA-384) + AES-256-GCM`, with
@@ -1414,18 +1327,15 @@ the correct PSK.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/session_open_init.rs`
-- Phase 2: [`session_open_finish.md`](#cmd-session_open_finish)
+- Phase 2: [`SessionOpenFinish`](#cmd-session_open_finish)
 
 
 <a id="cmd-session_open_finish"></a>
 <a id="cmd-session_open_finish-sessionopenfinish-opcode-0x04"></a>
 
 ### SessionOpenFinish (Opcode 0x04)
-
-*Source: [`docs/tbor-ddi/commands/session_open_finish.md`](./tbor-ddi/commands/session_open_finish.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/session_open_finish.rs`
 **Session:** NoSession
@@ -1645,20 +1555,17 @@ sequence number is needed.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/session_open_finish.rs`
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
-- Phase 1: [`session_open_init.md`](#cmd-session_open_init)
-- Cleanup: [`session_close.md`](#cmd-session_close)
+- Phase 1: [`SessionOpenInit`](#cmd-session_open_init)
+- Cleanup: [`SessionClose`](#cmd-session_close)
 
 
 <a id="cmd-session_close"></a>
 <a id="cmd-session_close-sessionclose-opcode-0x05"></a>
 
 ### SessionClose (Opcode 0x05)
-
-*Source: [`docs/tbor-ddi/commands/session_close.md`](./tbor-ddi/commands/session_close.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/session_close.rs`
 **Session:** InSession
@@ -1711,19 +1618,16 @@ _Empty — `session_id` is carried inline within its TOC entry._
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/session_close.rs`
-- Session lifecycle: [`session_open_init.md`](#cmd-session_open_init),
-  [`session_open_finish.md`](#cmd-session_open_finish)
+- Session lifecycle: [`SessionOpenInit`](#cmd-session_open_init),
+  [`SessionOpenFinish`](#cmd-session_open_finish)
 
 
 <a id="cmd-psk_change"></a>
 <a id="cmd-psk_change-pskchange-opcode-0x06"></a>
 
 ### PskChange (Opcode 0x06)
-
-*Source: [`docs/tbor-ddi/commands/psk_change.md`](./tbor-ddi/commands/psk_change.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/psk_change.rs`
 **Session:** InSession
@@ -1863,29 +1767,26 @@ provisioning; the defaults are public by design.
 Until rotation completes, the TBOR dispatcher refuses to run any
 other in-session command on a session authenticated against the
 default PSK — only `PskChange` and `SessionClose` are permitted.
-See the [Default-PSK gate](#ddi-default-psk-gate) section in
-the TBOR DDI README for the full bootstrap sequence.
+See [Default-PSK gate](#ddi-default-psk-gate) for the full bootstrap
+sequence.
 
 <a id="cmd-psk_change-see-also"></a>
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - FW schema: `fw/core/ddi/tbor/types/src/psk_change.rs`
 - Host wrapper + AAD helper: `ddi/tbor/types/src/psk_change.rs`
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
-- Session lifecycle: [`session_open_init.md`](#cmd-session_open_init),
-  [`session_open_finish.md`](#cmd-session_open_finish),
-  [`session_close.md`](#cmd-session_close)
+- Session lifecycle: [`SessionOpenInit`](#cmd-session_open_init),
+  [`SessionOpenFinish`](#cmd-session_open_finish),
+  [`SessionClose`](#cmd-session_close)
 
 
 <a id="cmd-part_init"></a>
 <a id="cmd-part_init-partinit-opcode-0x07"></a>
 
 ### PartInit (Opcode 0x07)
-
-*Source: [`docs/tbor-ddi/commands/part_init.md`](./tbor-ddi/commands/part_init.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/part_init.rs`
 **Session:** InSession (Crypto Officer only)
@@ -1908,9 +1809,9 @@ follow-up `FinalizePart` handler (TBD) drives `Initializing →
 Initialized` after POTA validates the returned PTACSR / PTAReport.
 
 Only **Crypto Officer** sessions may issue `PartInit`; CU callers
-receive `InvalidPermissions`.  The default-PSK gate ([README →
-Default-PSK gate](#ddi-default-psk-gate)) applies in the
-usual way: the caller's CO PSK must already have been rotated by
+receive `InvalidPermissions`.  The
+[default-PSK gate](#ddi-default-psk-gate) applies in the usual way:
+the caller's CO PSK must already have been rotated by
 [`PskChange`](#cmd-psk_change).
 
 <a id="cmd-part_init-cryptographic-pipeline"></a>
@@ -2077,7 +1978,7 @@ deterministic via RFC 6979 in the PAL) and byte-identical
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - FW schema: `fw/core/ddi/tbor/types/src/part_init.rs`
 - FW handler: `fw/core/lib/src/ddi/tbor/part_init.rs`
 - Host wrapper + AAD re-export: `ddi/tbor/types/src/part_init.rs`
@@ -2085,18 +1986,15 @@ deterministic via RFC 6979 in the PAL) and byte-identical
 - AEAD envelope crate: `fw/core/crypto/aead-envelope/src/lib.rs`
 - Key-report (PTAReport) crate: `fw/core/crypto/key-report/src/lib.rs`
 - X.509 CSR builder (PTACSR): `fw/core/crypto/x509-builder/src/csr_builder.rs`
-- Session lifecycle: [`session_open_init.md`](#cmd-session_open_init),
-  [`session_open_finish.md`](#cmd-session_open_finish),
-  [`psk_change.md`](#cmd-psk_change)
+- Session lifecycle: [`SessionOpenInit`](#cmd-session_open_init),
+  [`SessionOpenFinish`](#cmd-session_open_finish),
+  [`PskChange`](#cmd-psk_change)
 
 
 <a id="cmd-part_final"></a>
 <a id="cmd-part_final-partfinal-opcode-0x08"></a>
 
 ### PartFinal (Opcode 0x08)
-
-*Source: [`docs/tbor-ddi/commands/part_final.md`](./tbor-ddi/commands/part_final.md)*
-
 
 **Handler:** Implemented (`fw/core/lib/src/ddi/tbor/part_final.rs`) —
 manticore `FinalizePart`. The PTA certificate chain is walked and
@@ -2201,18 +2099,15 @@ Carries the 164-byte `local_mk_backup` envelope.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/part_final.rs`
-- Partition setup: [`part_init.md`](#cmd-part_init)
+- Partition setup: [`PartInit`](#cmd-part_init)
 
 
 <a id="cmd-sd_sealing_key_gen"></a>
 <a id="cmd-sd_sealing_key_gen-sdsealingkeygen-opcode-0x09"></a>
 
 ### SdSealingKeyGen (Opcode 0x09)
-
-*Source: [`docs/tbor-ddi/commands/sd_sealing_key_gen.md`](./tbor-ddi/commands/sd_sealing_key_gen.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_sealing_key_gen.rs`
 **Session:** InSession
@@ -2309,7 +2204,7 @@ Carries the 180-byte `masked_key` followed by the 96-byte `pub_key`.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_sealing_key_gen.rs`
 
 
@@ -2317,9 +2212,6 @@ Carries the 180-byte `masked_key` followed by the 96-byte `pub_key`.
 <a id="cmd-sd_create_remote_backup-sdcreateremotebackup-opcode-0x0a"></a>
 
 ### SdCreateRemoteBackup (Opcode 0x0A)
-
-*Source: [`docs/tbor-ddi/commands/sd_create_remote_backup.md`](./tbor-ddi/commands/sd_create_remote_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_create_remote_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -2439,7 +2331,7 @@ Carries the 161-byte `pok_remote_backup` seal, the 180-byte
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_create_remote_backup.rs`
 - Sender flow: [`SdSealingKeyGen`](#cmd-sd_sealing_key_gen) → [`KeyReport`](#cmd-key_report) → `SdCreateRemoteBackup`
 
@@ -2448,9 +2340,6 @@ Carries the 161-byte `pok_remote_backup` seal, the 180-byte
 <a id="cmd-sd_reseal_remote_backup-sdresealremotebackup-opcode-0x0b"></a>
 
 ### SdResealRemoteBackup (Opcode 0x0B)
-
-*Source: [`docs/tbor-ddi/commands/sd_reseal_remote_backup.md`](./tbor-ddi/commands/sd_reseal_remote_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_reseal_remote_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -2571,7 +2460,7 @@ Carries the 161-byte `dst_remote_backup` seal.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_reseal_remote_backup.rs`
 - Source backup: [`SdCreateRemoteBackup`](#cmd-sd_create_remote_backup) produces the `src_remote_backup` this command reseals
 - Key provenance: [`SdSealingKeyGen`](#cmd-sd_sealing_key_gen) → [`KeyReport`](#cmd-key_report) mints and attests each party's SD sealing key
@@ -2581,9 +2470,6 @@ Carries the 161-byte `dst_remote_backup` seal.
 <a id="cmd-sd_restore_remote_backup-sdrestoreremotebackup-opcode-0x0c"></a>
 
 ### SdRestoreRemoteBackup (Opcode 0x0C)
-
-*Source: [`docs/tbor-ddi/commands/sd_restore_remote_backup.md`](./tbor-ddi/commands/sd_restore_remote_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_restore_remote_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -2714,7 +2600,7 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_restore_remote_backup.rs`
 - Shared SD-backup mechanics: `fw/core/lib/src/ddi/tbor/sd_backup.rs`
 - HPKE-open front-end: [`SdResealRemoteBackup`](#cmd-sd_reseal_remote_backup)
@@ -2729,9 +2615,6 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 <a id="cmd-sd_restore_local_backup-sdrestorelocalbackup-opcode-0x0d"></a>
 
 ### SdRestoreLocalBackup (Opcode 0x0D)
-
-*Source: [`docs/tbor-ddi/commands/sd_restore_local_backup.md`](./tbor-ddi/commands/sd_restore_local_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_restore_local_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -2840,7 +2723,7 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_restore_local_backup.rs`
 - Shared SD-backup mechanics: `fw/core/lib/src/ddi/tbor/sd_backup.rs`
 - Producer of the local backups: [`SdCreateRemoteBackup`](#cmd-sd_create_remote_backup)
@@ -2850,9 +2733,6 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 <a id="cmd-sd_create_peer_backup-sdcreatepeerbackup-opcode-0x0e"></a>
 
 ### SdCreatePeerBackup (Opcode 0x0E)
-
-*Source: [`docs/tbor-ddi/commands/sd_create_peer_backup.md`](./tbor-ddi/commands/sd_create_peer_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_create_peer_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -2978,7 +2858,7 @@ Carries the 161-byte `pok_peer_backup` seal.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_create_peer_backup.rs`
 - Shared SD-backup mechanics: `fw/core/lib/src/ddi/tbor/sd_backup.rs`
 - Consumer of the peer backup: [`SdRestorePeerBackup`](#cmd-sd_restore_peer_backup)
@@ -2989,9 +2869,6 @@ Carries the 161-byte `pok_peer_backup` seal.
 <a id="cmd-sd_restore_peer_backup-sdrestorepeerbackup-opcode-0x0f"></a>
 
 ### SdRestorePeerBackup (Opcode 0x0F)
-
-*Source: [`docs/tbor-ddi/commands/sd_restore_peer_backup.md`](./tbor-ddi/commands/sd_restore_peer_backup.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/sd_restore_peer_backup.rs`
 **Session:** InSession (Crypto Officer)
@@ -3124,7 +3001,7 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/sd_restore_peer_backup.rs`
 - Shared SD-backup mechanics: `fw/core/lib/src/ddi/tbor/sd_backup.rs`
 - Remote recovery path: [`SdRestoreRemoteBackup`](#cmd-sd_restore_remote_backup)
@@ -3136,9 +3013,6 @@ Carries the 180-byte `pok_local_backup` blob and the 164-byte
 <a id="cmd-key_report-keyreport-opcode-0x10"></a>
 
 ### KeyReport (Opcode 0x10)
-
-*Source: [`docs/tbor-ddi/commands/key_report.md`](./tbor-ddi/commands/key_report.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/key_report.rs`
 **Session:** InSession
@@ -3247,7 +3121,7 @@ Carries the variable-length COSE_Sign1 `report`.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/key_report.rs`
 - Report format: `fw/core/crypto/key-report/`
 - Masked-key producer: [SdSealingKeyGen](#cmd-sd_sealing_key_gen)
@@ -3257,9 +3131,6 @@ Carries the variable-length COSE_Sign1 `report`.
 <a id="cmd-hmac_generate_key-hmacgeneratekey-opcode-0x11"></a>
 
 ### HmacGenerateKey (Opcode 0x11)
-
-*Source: [`docs/tbor-ddi/commands/hmac_generate_key.md`](./tbor-ddi/commands/hmac_generate_key.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/hmac_generate_key.rs`
 **Session:** InSession
@@ -3363,7 +3234,7 @@ Carries the masked key (`132 + key_length` B).
 #### See also
 
 - [`Hmac`](#cmd-hmac) — compute a MAC with the masked key
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/hmac_generate_key.rs`
 
 
@@ -3371,9 +3242,6 @@ Carries the masked key (`132 + key_length` B).
 <a id="cmd-hmac-hmac-opcode-0x12"></a>
 
 ### Hmac (Opcode 0x12)
-
-*Source: [`docs/tbor-ddi/commands/hmac.md`](./tbor-ddi/commands/hmac.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/hmac.rs`
 **Session:** InSession
@@ -3456,7 +3324,7 @@ Carries the tag.
 #### See also
 
 - [`HmacGenerateKey`](#cmd-hmac_generate_key) — generate the masked HMAC key
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/hmac.rs`
 
 
@@ -3464,9 +3332,6 @@ Carries the tag.
 <a id="cmd-get_unwrapping_key-getunwrappingkey-opcode-0x13"></a>
 
 ### GetUnwrappingKey (Opcode 0x13)
-
-*Source: [`docs/tbor-ddi/commands/get_unwrapping_key.md`](./tbor-ddi/commands/get_unwrapping_key.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/get_unwrapping_key.rs`
 **Session:** InSession
@@ -3543,7 +3408,7 @@ Carries the 260-byte public key.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/get_unwrapping_key.rs`
 
 
@@ -3551,9 +3416,6 @@ Carries the 260-byte public key.
 <a id="cmd-unwrap_key-unwrapkey-opcode-0x14"></a>
 
 ### UnwrapKey (Opcode 0x14)
-
-*Source: [`docs/tbor-ddi/commands/unwrap_key.md`](./tbor-ddi/commands/unwrap_key.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/unwrap_key.rs`
 **Session:** InSession
@@ -3689,7 +3551,7 @@ keys).
 #### See also
 
 - [`GetUnwrappingKey`](#cmd-get_unwrapping_key) — fetch the RSA-2048 unwrapping public key
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/unwrap_key.rs`
 
 
@@ -3697,9 +3559,6 @@ keys).
 <a id="cmd-aes_generate_key-aesgeneratekey-opcode-0x15"></a>
 
 ### AesGenerateKey (Opcode 0x15)
-
-*Source: [`docs/tbor-ddi/commands/aes_generate_key.md`](./tbor-ddi/commands/aes_generate_key.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/aes_generate_key.rs`
 **Session:** InSession
@@ -3799,7 +3658,7 @@ Carries the masked key (148 / 156 / 164 B for AES-128 / 192 / 256).
 
 - [`AesEncryptDecrypt`](#cmd-aes_encrypt_decrypt) — transform data with the masked key
 - [`UnwrapKey`](#cmd-unwrap_key) — import an existing AES key as a masked blob
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/aes_generate_key.rs`
 
 
@@ -3807,9 +3666,6 @@ Carries the masked key (148 / 156 / 164 B for AES-128 / 192 / 256).
 <a id="cmd-aes_encrypt_decrypt-aesencryptdecrypt-opcode-0x16"></a>
 
 ### AesEncryptDecrypt (Opcode 0x16)
-
-*Source: [`docs/tbor-ddi/commands/aes_encrypt_decrypt.md`](./tbor-ddi/commands/aes_encrypt_decrypt.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/aes_encrypt_decrypt.rs`
 **Session:** InSession
@@ -3903,7 +3759,7 @@ Carries the transformed message followed by the 16-byte chaining IV.
 
 - [`AesGenerateKey`](#cmd-aes_generate_key) — generate a masked AES key
 - [`UnwrapKey`](#cmd-unwrap_key) — import an existing AES key as a masked blob
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/aes_encrypt_decrypt.rs`
 
 
@@ -3911,9 +3767,6 @@ Carries the transformed message followed by the 16-byte chaining IV.
 <a id="cmd-ecc_generate_key-eccgeneratekey-opcode-0x17"></a>
 
 ### EccGenerateKey (Opcode 0x17)
-
-*Source: [`docs/tbor-ddi/commands/ecc_generate_key.md`](./tbor-ddi/commands/ecc_generate_key.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/ecc_generate_key.rs`
 **Session:** InSession
@@ -3995,8 +3848,8 @@ scalar).
 
 #### See also
 
-- Sign with the generated key: [`ecc_sign.md`](#cmd-ecc_sign)
-- Derive with the generated key: [`ecdh_derive.md`](#cmd-ecdh_derive)
+- Sign with the generated key: [`EccSign`](#cmd-ecc_sign)
+- Derive with the generated key: [`EcdhDerive`](#cmd-ecdh_derive)
 - Wire schema: `fw/core/ddi/tbor/types/src/ecc_generate_key.rs`
 
 
@@ -4004,9 +3857,6 @@ scalar).
 <a id="cmd-ecc_sign-eccsign-opcode-0x18"></a>
 
 ### EccSign (Opcode 0x18)
-
-*Source: [`docs/tbor-ddi/commands/ecc_sign.md`](./tbor-ddi/commands/ecc_sign.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/ecc_sign.rs`
 **Session:** InSession
@@ -4090,8 +3940,8 @@ Carries the wire-format signature.
 
 #### See also
 
-- Generate a signing key: [`ecc_generate_key.md`](#cmd-ecc_generate_key)
-- Import a signing key: [`unwrap_key.md`](#cmd-unwrap_key)
+- Generate a signing key: [`EccGenerateKey`](#cmd-ecc_generate_key)
+- Import a signing key: [`UnwrapKey`](#cmd-unwrap_key)
 - Wire schema: `fw/core/ddi/tbor/types/src/ecc_sign.rs`
 
 
@@ -4099,9 +3949,6 @@ Carries the wire-format signature.
 <a id="cmd-ecdh_derive-ecdhderive-opcode-0x19"></a>
 
 ### EcdhDerive (Opcode 0x19)
-
-*Source: [`docs/tbor-ddi/commands/ecdh_derive.md`](./tbor-ddi/commands/ecdh_derive.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/ecdh_derive.rs`
 **Session:** InSession
@@ -4190,7 +4037,7 @@ Carries the masked shared secret.  The masked length is
 
 #### See also
 
-- Generate a local key: [`ecc_generate_key.md`](#cmd-ecc_generate_key)
+- Generate a local key: [`EccGenerateKey`](#cmd-ecc_generate_key)
 - Wire schema: `fw/core/ddi/tbor/types/src/ecdh_derive.rs`
 
 
@@ -4198,9 +4045,6 @@ Carries the masked shared secret.  The masked length is
 <a id="cmd-rsa_mod_exp-rsamodexp-opcode-0x1a"></a>
 
 ### RsaModExp (Opcode 0x1A)
-
-*Source: [`docs/tbor-ddi/commands/rsa_mod_exp.md`](./tbor-ddi/commands/rsa_mod_exp.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/rsa_mod_exp.rs`
 **Session:** InSession
@@ -4288,7 +4132,7 @@ Carries the result integer.
 
 #### See also
 
-- Import an RSA key: [`unwrap_key.md`](#cmd-unwrap_key)
+- Import an RSA key: [`UnwrapKey`](#cmd-unwrap_key)
 - Wire schema: `fw/core/ddi/tbor/types/src/rsa_mod_exp.rs`
 
 
@@ -4296,9 +4140,6 @@ Carries the result integer.
 <a id="cmd-hash-hash-opcode-0x1b"></a>
 
 ### Hash (Opcode 0x1B)
-
-*Source: [`docs/tbor-ddi/commands/hash.md`](./tbor-ddi/commands/hash.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/hash.rs`
 **Session:** InSession
@@ -4372,7 +4213,7 @@ Carries the digest.
 
 #### See also
 
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/hash.rs`
 
 
@@ -4380,9 +4221,6 @@ Carries the digest.
 <a id="cmd-hkdf_derive-hkdfderive-opcode-0x1c"></a>
 
 ### HkdfDerive (Opcode 0x1C)
-
-*Source: [`docs/tbor-ddi/commands/hkdf_derive.md`](./tbor-ddi/commands/hkdf_derive.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/hkdf_derive.rs`
 **Session:** InSession
@@ -4480,7 +4318,7 @@ where `okm_len` is the derived key length (16 / 24 / 32 for AES-128/192/256;
 
 #### See also
 
-- Derive the input secret: [`ecdh_derive.md`](#cmd-ecdh_derive)
+- Derive the input secret: [`EcdhDerive`](#cmd-ecdh_derive)
 - Wire schema: `fw/core/ddi/tbor/types/src/hkdf_derive.rs`
 
 
@@ -4488,9 +4326,6 @@ where `okm_len` is the derived key length (16 / 24 / 32 for AES-128/192/256;
 <a id="cmd-concat_kdf_derive-concatkdfderive-opcode-0x1d"></a>
 
 ### ConcatKdfDerive (Opcode 0x1D)
-
-*Source: [`docs/tbor-ddi/commands/concat_kdf_derive.md`](./tbor-ddi/commands/concat_kdf_derive.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/concat_kdf_derive.rs`
 **Session:** InSession
@@ -4596,8 +4431,8 @@ where `okm_len` is the derived key length (16 / 24 / 32 for AES-128/192/256;
 
 #### See also
 
-- Derive the input secret: [`ecdh_derive.md`](#cmd-ecdh_derive)
-- The HKDF alternative: [`hkdf_derive.md`](#cmd-hkdf_derive)
+- Derive the input secret: [`EcdhDerive`](#cmd-ecdh_derive)
+- The HKDF alternative: [`HkdfDerive`](#cmd-hkdf_derive)
 - Wire schema: `fw/core/ddi/tbor/types/src/concat_kdf_derive.rs`
 
 
@@ -4605,9 +4440,6 @@ where `okm_len` is the derived key length (16 / 24 / 32 for AES-128/192/256;
 <a id="cmd-get_cert_chain_info-getcertchaininfo-opcode-0x1e"></a>
 
 ### GetCertChainInfo (Opcode 0x1E)
-
-*Source: [`docs/tbor-ddi/commands/get_cert_chain_info.md`](./tbor-ddi/commands/get_cert_chain_info.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/get_cert_chain_info.rs`
 **Session:** NoSession
@@ -4677,7 +4509,7 @@ carried inline within its TOC entry.
 #### See also
 
 - Companion command: [`GetCertificate`](#cmd-get_cert)
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/get_cert_chain_info.rs`
 
 
@@ -4685,9 +4517,6 @@ carried inline within its TOC entry.
 <a id="cmd-get_cert-getcertificate-opcode-0x1f"></a>
 
 ### GetCertificate (Opcode 0x1F)
-
-*Source: [`docs/tbor-ddi/commands/get_cert.md`](./tbor-ddi/commands/get_cert.md)*
-
 
 **Handler:** `fw/core/lib/src/ddi/tbor/get_cert.rs`
 **Session:** NoSession
@@ -4758,5 +4587,18 @@ Carries the `certificate` buffer (the DER-encoded certificate bytes).
 #### See also
 
 - Companion command: [`GetCertChainInfo`](#cmd-get_cert_chain_info)
-- Wire encoding: [TBOR specification](#part-i)
+- Wire encoding: [Part I — Wire Encoding](#part-i)
 - Wire schema: `fw/core/ddi/tbor/types/src/get_cert.rs`
+
+
+---
+
+<a id="enc-revision-history"></a>
+
+## Revision History
+
+| Version | Date       | Summary                                                                                       |
+|---------|------------|-----------------------------------------------------------------------------------------------|
+| 0.1     | —          | Initial draft. Defined core request/response framing, TOC structure, and basic entry types.    |
+| 0.2     | —          | Added well-known status codes, security considerations, data alignment rules, and worked examples. Expanded protocol rules (pipelining, unknown TOC types, malformed message handling, maximum message size). Clarified endianness convention and FIPS_APPROVED flag semantics. |
+| 0.3     | —          | Added Entry Type 8 (`none`) for optional fields. Added Entry Type 9 (`padding`) for data alignment. Added Schema Features section describing optional fields, alignment, fixed arrays, length constraints, field groups, and dispatch traits. |
