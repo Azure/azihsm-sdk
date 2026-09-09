@@ -42,8 +42,6 @@ pub mod rsa_mod_exp;
 pub mod rsa_unwrap;
 pub mod set_sealed_bk3;
 pub mod sha_digest;
-#[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
-pub mod test_action;
 pub mod unmask_key;
 
 // Re-export codec types.
@@ -97,7 +95,6 @@ pub enum DdiOp {
     InitBk3 = 1111,
     GetSealedBk3 = 1112,
     SetSealedBk3 = 1113,
-    TestAction = 2004,
     ShaDigest = 2006,
 }
 
