@@ -731,7 +731,7 @@ impl UnoHsmPal {
 /// Each enabled test feature contributes one handler, consulted in turn
 /// and claiming strictly by opcode: `mcr_test_action` routes
 /// `TestAction` to `crate::test_dispatch`, and `fips_validation_hooks`
-/// routes `GetPrivKey` / `RawKeyImport` to `crate::fips_dispatch`. A
+/// routes `GetPrivKey` / `RawKeyImport` to `crate::test_hooks`. A
 /// handler that does not recognise the opcode answers `UnsupportedCmd`,
 /// which moves on to the next; with no feature enabled — and for TBOR in
 /// every case — uno claims nothing and the firmware answers every opcode
@@ -749,7 +749,7 @@ impl HsmCustomDispatch for UnoHsmPal {
         }
 
         #[cfg(feature = "fips_validation_hooks")]
-        match crate::fips_dispatch::mbor_dispatch(self, io, req).await {
+        match crate::test_hooks::mbor_dispatch(self, io, req).await {
             Err(HsmError::UnsupportedCmd) => {}
             other => return other,
         }

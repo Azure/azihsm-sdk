@@ -33,9 +33,9 @@ use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 use super::DDI_OP_GET_PRIV_KEY;
-use super::FipsReqHdr;
-use super::encode_resp;
-use super::success_hdr_sess;
+use super::common::ReqHdr;
+use super::common::encode_resp;
+use super::common::success_hdr_sess;
 use crate::pal::UnoHsmPal;
 
 /// DDI `GetPrivKey` request body.
@@ -72,7 +72,7 @@ pub(super) fn get_priv_key<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     decoder: &mut MborDecoder<'_>,
-    hdr: &FipsReqHdr,
+    hdr: &ReqHdr,
     req_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;

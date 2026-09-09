@@ -43,10 +43,10 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 
 use super::DDI_OP_RAW_KEY_IMPORT;
-use super::FipsReqHdr;
-use super::encode_resp;
+use super::common::ReqHdr;
+use super::common::encode_resp;
+use super::common::success_hdr_sess;
 use super::get_priv_key::vault_kind_ddi;
-use super::success_hdr_sess;
 use crate::pal::UnoHsmPal;
 
 /// DDI `RawKeyImport` request body.
@@ -104,7 +104,7 @@ pub(super) async fn raw_key_import<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     decoder: &mut MborDecoder<'_>,
-    hdr: &FipsReqHdr,
+    hdr: &ReqHdr,
     req_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
@@ -205,7 +205,7 @@ pub(super) async fn raw_key_import<'p>(
 async fn raw_import_unwrapping_key<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
-    hdr: &FipsReqHdr,
+    hdr: &ReqHdr,
     sess_id: u16,
     body: DdiRawKeyImportReq<'_>,
 ) -> HsmResult<&'p DmaBuf> {

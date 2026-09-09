@@ -40,10 +40,6 @@ mod asn1;
 mod cert;
 mod crypto;
 mod dev_id_cblob;
-/// FIPS-validation-only DDI commands, reached through the
-/// `HsmCustomDispatch` hook.
-#[cfg(feature = "fips_validation_hooks")]
-mod fips_dispatch;
 mod gdma;
 mod gsram_alias;
 mod io;
@@ -56,6 +52,10 @@ mod session;
 /// Test-only DDI commands, reached through the `HsmCustomDispatch` hook.
 #[cfg(feature = "mcr_test_action")]
 mod test_dispatch;
+/// Below-PAL test / validation-hook DDI commands, reached through the
+/// `HsmCustomDispatch` hook.
+#[cfg(feature = "fips_validation_hooks")]
+mod test_hooks;
 mod vault;
 
 /// Re-export of the PAL trait types consumed by uno-PAL users.
