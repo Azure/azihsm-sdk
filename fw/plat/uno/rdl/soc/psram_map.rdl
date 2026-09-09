@@ -1,0 +1,92 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// PSRAM address map — CP0/CP1↔FP shared SRAM (32 KB, placed at
+// 0xA3E0_0000 by uno.rdl).
+//
+// PSRAM is a small SRAM shared between the Admin (CP0), HSM (CP1), and
+// the bulk-crypto backend cores.  The HSM uses PSRAM only for the
+// HSM-side IPC rings; the Admin-side rings and other regions live at
+// offsets the HSM never touches and are intentionally not modelled
+// here.
+//
+// HSM-visible layout (offsets from PSRAM base):
+//
+//   0x0980  HSM_TO_FP_IPC_TX_RING[16] — HSM→backend request slots (64 B each)
+//   0x0D80  HSM_TO_FP_IPC_RX_RING[16] — backend→HSM response slots (64 B each)
+//   0x3BD4  HSM_TO_FP_IPC_TX_PI       — HSM-writes, backend-reads
+//   0x3BD8  HSM_TO_FP_IPC_TX_CI       — backend-writes, HSM-reads
+//   0x3BDC  HSM_TO_FP_IPC_RX_PI       — backend-writes, HSM-reads
+//   0x3BE0  HSM_TO_FP_IPC_RX_CI       — HSM-writes, backend-reads
+//
+// Slot layout is 16 × u32 (64 B): DW0 is the IPC header (opcode,
+// response bit, status, length); DW1..DW15 are payload.  Layout
+// matches mainline mcr-hsm's PsRamMemMap for wire compatibility with
+// the backend firmware.
+
+
+// ══════════════════════════════════════════════════════════════
+// Primitives (kept local to this file to avoid cross-include type
+// dependencies with gsram_map.rdl)
+// ══════════════════════════════════════════════════════════════
+
+reg psram_ipc_index_t {
+    name = "PSRAM IPC Queue Index";
+    desc = "Producer or consumer index for a PSRAM IPC ring.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+reg psram_ipc_dw_t {
+    name = "PSRAM IPC DWORD";
+    desc = "One 32-bit word of a 64-byte IPC message slot.";
+    field { sw = rw; hw = rw; } VAL[31:0] = 0x0;
+};
+
+// 64-byte IPC message slot (16 × u32).
+regfile psram_ipc_message_t {
+    name = "PSRAM IPC Message";
+    desc = "64-byte IPC message slot (16 × u32).  DW0 is the header
+            (opcode, response bit, status, length); DW1..DW15 are
+            payload.";
+    psram_ipc_dw_t DW0  @ 0x00;
+    psram_ipc_dw_t DW1  @ 0x04;
+    psram_ipc_dw_t DW2  @ 0x08;
+    psram_ipc_dw_t DW3  @ 0x0C;
+    psram_ipc_dw_t DW4  @ 0x10;
+    psram_ipc_dw_t DW5  @ 0x14;
+    psram_ipc_dw_t DW6  @ 0x18;
+    psram_ipc_dw_t DW7  @ 0x1C;
+    psram_ipc_dw_t DW8  @ 0x20;
+    psram_ipc_dw_t DW9  @ 0x24;
+    psram_ipc_dw_t DW10 @ 0x28;
+    psram_ipc_dw_t DW11 @ 0x2C;
+    psram_ipc_dw_t DW12 @ 0x30;
+    psram_ipc_dw_t DW13 @ 0x34;
+    psram_ipc_dw_t DW14 @ 0x38;
+    psram_ipc_dw_t DW15 @ 0x3C;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
+// ══════════════════════════════════════════════════════════════
+
+addrmap psram {
+    name = "PSRAM";
+    desc = "CP0/CP1↔backend shared SRAM.  Only the HSM-visible IPC rings
+             and their producer/consumer indices are modelled here;
+             Admin-side regions are intentionally omitted.";
+
+    default hw = na;
+    default sw = rw;
+
+    // ─── HSM↔backend IPC (depth = 16, msg_len = 16 DWORDs = 64 B) ───
+    // From HSM's perspective: TX = HSM writes / backend reads,
+    //                         RX = backend writes / HSM reads.
+    psram_ipc_message_t HSM_TO_FP_IPC_TX_RING[16] @ 0x0980 += 0x40;
+    psram_ipc_message_t HSM_TO_FP_IPC_RX_RING[16] @ 0x0D80 += 0x40;
+    psram_ipc_index_t   HSM_TO_FP_IPC_TX_PI       @ 0x3BD4;
+    psram_ipc_index_t   HSM_TO_FP_IPC_TX_CI       @ 0x3BD8;
+    psram_ipc_index_t   HSM_TO_FP_IPC_RX_PI       @ 0x3BDC;
+    psram_ipc_index_t   HSM_TO_FP_IPC_RX_CI       @ 0x3BE0;
+};

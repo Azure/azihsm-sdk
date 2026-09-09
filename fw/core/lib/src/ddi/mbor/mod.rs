@@ -4,6 +4,7 @@
 pub(crate) mod aes_encrypt_decrypt;
 pub(crate) mod aes_generate_key;
 pub(crate) mod attest_key;
+pub(crate) mod bulk;
 pub(crate) mod change_pin;
 pub(crate) mod close_session;
 pub(crate) mod delete_key;
