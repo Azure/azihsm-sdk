@@ -13,7 +13,6 @@ use azihsm_crypto::EccCurve;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
@@ -141,20 +140,15 @@ fn ecc_generate_key_tbor(
 }
 
 /// Maps the requested ECC private-key usage onto the TBOR `KeyUsage`
-/// bitfield the firmware stamps into the masked metadata.  An ECC private
-/// key is **either** a signing key (ECDSA) **or** a derivation key (ECDH)
-/// — exactly one; both-set, neither-set, or any non-ECC usage (e.g.
-/// encrypt/decrypt) is rejected here rather than silently mapped.
+/// bitfield the firmware stamps into the masked metadata.
+///
+/// Only `SIGN` is accepted today: the `DERIVE` consumer (ECDH) has no TBOR
+/// path yet, so minting a `DERIVE`-only key here would produce a key the
+/// public ECDH API cannot use.  Reject anything but a signing key until
+/// TBOR ECDH lands.
 fn ecc_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
-    // Exactly one of sign/derive is valid for an ECC private key; both-set,
-    // neither-set, and non-ECC usage (encrypt/decrypt leave both false) are
-    // rejected.
-    if props.can_sign() != props.can_derive() {
-        Ok(if props.can_sign() {
-            KEY_USAGE_SIGN
-        } else {
-            KEY_USAGE_DERIVE
-        })
+    if props.can_sign() && !props.can_derive() {
+        Ok(KEY_USAGE_SIGN)
     } else {
         Err(HsmError::InvalidKeyProps)
     }
@@ -204,13 +198,11 @@ fn ecc_public_props_for(dev_pub: &HsmKeyProps, priv_props: &HsmKeyProps) -> HsmK
 /// curve's component length, so each half is reversed and its leading
 /// zero padding removed.
 fn ecc_wire_pub_key_to_der(curve: HsmEccCurve, wire: &[u8]) -> HsmResult<Vec<u8>> {
-    // Check if the wire length is valid for the curve
-    if !wire.len().is_multiple_of(2) {
-        return Err(HsmError::InternalError);
-    }
+    // TBOR public keys are exactly two word-aligned wire coordinates
+    // (x ‖ y): 64 / 96 / 136 B for P-256 / P-384 / P-521.
     let coord = curve.component_size();
-    let half = wire.len() / 2;
-    if half < coord {
+    let half = coord.next_multiple_of(4);
+    if wire.len() != half * 2 {
         return Err(HsmError::InternalError);
     }
 
@@ -359,13 +351,11 @@ fn ecc_sign_tbor(
 /// and zero-padded to the wire coordinate length) into big-endian `r ‖ s`
 /// of the curve's component length, matching the MBOR signature format.
 fn tbor_sig_to_be(curve: HsmEccCurve, wire_sig: &[u8], out: &mut [u8]) -> HsmResult<usize> {
-    // Check if the wire signature length is valid for the curve. Each component (r and s) should be of equal length, and the total length should be even.
-    if !wire_sig.len().is_multiple_of(2) {
-        return Err(HsmError::InternalError);
-    }
+    // TBOR signatures are exactly two word-aligned wire coordinates (r ‖ s)
+    // of the curve's padded component length.
     let coord = curve.component_size();
-    let half = wire_sig.len() / 2;
-    if half < coord {
+    let half = coord.next_multiple_of(4);
+    if wire_sig.len() != half * 2 {
         return Err(HsmError::InternalError);
     }
     let sig_len = coord * 2;
