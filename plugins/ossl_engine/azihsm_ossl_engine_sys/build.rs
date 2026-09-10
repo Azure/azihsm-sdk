@@ -33,11 +33,11 @@ fn main() {
 
     fn find_pkgconfig_openssl() -> OpensslPaths {
         let lib = pkg_config::Config::new()
-            .atleast_version("1.1.0")
+            .atleast_version("1.1.1")
             .probe("libcrypto")
             .expect(
                 "Could not find libcrypto. \
-                 Set PKG_CONFIG_PATH to an OpenSSL 1.1.x installation.",
+                 Set PKG_CONFIG_PATH to an OpenSSL 1.1.1 installation.",
             );
 
         let major: u32 = lib
