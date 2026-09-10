@@ -334,8 +334,9 @@ mod round_trips {
         let secret_blob = derive_masked(engine_raw, raw, peer.as_ptr().cast(), None);
         assert!(!secret_blob.is_empty(), "no shared-secret blob");
         let ikm_path = dir.join(format!("hkdf-ikm-{}.bin", std::process::id()));
-        std::fs::write(&ikm_path, &secret_blob)
-            .map_err(|e| EngineError::wrap("write IKM blob", e))?;
+        let _ = std::fs::remove_file(&ikm_path);
+        write_key_material(&ikm_path, &secret_blob)
+            .map_err(|e| EngineError::wrap(format!("write IKM blob {}", ikm_path.display()), e))?;
 
         // HMAC-kind derived key, IKM by file, blob to buffer.
         let ikm = ikm_path.to_str().unwrap();
