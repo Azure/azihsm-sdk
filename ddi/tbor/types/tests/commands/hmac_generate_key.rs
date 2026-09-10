@@ -23,6 +23,7 @@
 //! * `Ephemeral` scope before `PartFinal` → `InvalidArg`.
 
 #![cfg(feature = "emu")]
+
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
@@ -30,6 +31,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA256;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
 use crate::commands::common::CO;
 use crate::commands::common::SCOPE_EPHEMERAL;
@@ -398,4 +400,80 @@ fn hmac_generate_key_accepts_non_digest_key_lengths() {
     for (hash, key_len) in cases {
         roundtrip(&ctx, session.session_id, SCOPE_LOCAL, hash, key_len);
     }
+}
+
+/// Accepts an empty key label.
+#[test]
+fn hmac_generate_key_accepts_empty_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+        key_label: Vec::new(),
+    };
+
+    let resp = ctx
+        .tbor(&req)
+        .expect("HmacGenerateKey with empty key label");
+
+    assert_eq!(resp.masked_key.len(), masked_len(32));
+}
+
+/// Accepts arbitrary bytes in the key label.
+#[test]
+fn hmac_generate_key_accepts_binary_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+        key_label: vec![0x00, 0x80, 0xff, 0x41],
+    };
+
+    let resp = ctx
+        .tbor(&req)
+        .expect("HmacGenerateKey with binary key label");
+
+    assert_eq!(resp.masked_key.len(), masked_len(32));
+}
+
+/// Accepts the maximum supported key-label length.
+#[test]
+fn hmac_generate_key_accepts_max_key_label_length() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+        key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+    };
+
+    let resp = ctx
+        .tbor(&req)
+        .expect("HmacGenerateKey with maximum key-label length");
+
+    assert_eq!(resp.masked_key.len(), masked_len(32));
+}
+
+/// Rejects a key label longer than the supported maximum.
+#[test]
+fn hmac_generate_key_rejects_oversized_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+        key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN + 1],
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::TborInvalidFixedLength);
 }
