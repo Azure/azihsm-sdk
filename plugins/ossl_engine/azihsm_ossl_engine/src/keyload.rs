@@ -92,7 +92,7 @@ const MAX_MASKED_KEY_SIZE: u64 = 64 * 1024;
 /// `O_CLOEXEC` keeps the fd from leaking across exec, a non-regular file is
 /// rejected outright, and the read is capped at [`MAX_MASKED_KEY_SIZE`].
 /// Mirrors `read_regular_hardened` in azihsm_ossl_engine_resiliency.
-fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
+pub(crate) fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)

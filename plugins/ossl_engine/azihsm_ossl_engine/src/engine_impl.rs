@@ -81,7 +81,7 @@ impl DestroyHandler for AzihsmDestroy {
         // global ASN1 registration still need cleaning. The framework has
         // already freed the methods themselves (engine_pkey_(asn1_)meths_free
         // run before this hook); only stale pointers are dropped here.
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(engine);
         azihsm_ossl_engine_core::asn1_method::release_ec_asn1_method(engine);
         Ok(())
     }
@@ -178,6 +178,11 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
         crate::keygen::AzihsmEcKeygen,
         crate::derive::AzihsmEcDerive,
     >(engine)?;
+    // HKDF over masked secrets (armed contexts only; software HKDF delegates
+    // to the built-in — see azihsm_ossl_engine_core::hkdf_method).
+    azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
+        engine,
+    )?;
     // Provider-parity serialization for HSM-backed keys (-text info block,
     // clean export refusal); software EC keys keep the built-in behavior via
     // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
