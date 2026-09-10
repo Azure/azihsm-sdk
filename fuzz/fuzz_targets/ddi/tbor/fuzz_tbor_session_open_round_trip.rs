@@ -54,20 +54,8 @@ fuzz_target!(|input: FuzzInput| {
     let dev = common::open_emu_dev();
     let use_valid_init = input.valid_open_init || input.valid_open_finish;
     let (req, ephemeral, pk_hsm) = if use_valid_init {
-        let ephemeral = match generate_vm_ephemeral() {
-            Ok(ephemeral) => ephemeral,
-            Err(error) => {
-                println!("Failed to generate VM ephemeral key: {error}");
-                return;
-            }
-        };
-        let pk_hsm = match fetch_pk_hsm(&dev) {
-            Ok(pk_hsm) => pk_hsm,
-            Err(()) => {
-                println!("Failed to fetch HSM public key");
-                return;
-            }
-        };
+        let Ok(ephemeral) = generate_vm_ephemeral() else { return; };
+        let Ok(pk_hsm) = fetch_pk_hsm(&dev) else { return; };
 
         (
             TborSessionOpenInitReq {
@@ -96,8 +84,6 @@ fuzz_target!(|input: FuzzInput| {
     // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
     if let Ok(resp) = init_result {
-        println!("SessionOpenInit succeeded with session_id: {}", resp.session_id);
-
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
             let (ephemeral, (pk_hsm, pk_hsm_sec1)) = match (ephemeral.as_ref(), pk_hsm.as_ref()) {
@@ -167,26 +153,14 @@ fuzz_target!(|input: FuzzInput| {
             }
         };
         let mut open_finish_cookie = None;
-        if let Err(error) =
-            dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie)
-        {
-            println!("SessionOpenFinish failed with error code: {error}");
-        } else {
-            println!("SessionOpenFinish succeeded for session_id: {}", resp.session_id);
-        }
+        let _ = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
         // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        if let Err(error) = dev.exec_op_tbor(&close_req, None, &mut close_cookie) {
-            println!("SessionClose failed with error code: {error}");
-        } else {
-            println!("SessionClose succeeded for session_id: {}", resp.session_id);
-        }
-    } else if let Err(error) = init_result {
-        println!("SessionOpenInit failed with error code: {error}");
+        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
     }
 });
 
