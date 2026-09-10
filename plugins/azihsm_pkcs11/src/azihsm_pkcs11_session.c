@@ -154,6 +154,10 @@ CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
     {
         free(s->op_ctx);
     }
+    if (((s->op == P11_OP_ENCRYPT) || (s->op == P11_OP_DECRYPT)) && (s->op_ctx != NULL))
+    {
+        azihsm_pkcs11_cipher_op_free(s->op_ctx);
+    }
     s->op_ctx = NULL;
     if (s->op == P11_OP_FIND && s->find_cursor != NULL)
     {
@@ -437,6 +441,18 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
     {
         azihsm_pkcs11_unlock();
         return CKR_USER_NOT_LOGGED_IN;
+    }
+    /* Logout closes the token's device session, and cipher operations hold
+     * device key handles scoped to it: release them first, while the session
+     * they belong to is still alive. */
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
+    {
+        azihsm_pkcs11_session_t *t = &g_azihsm_pkcs11.sessions[i];
+        if (t->in_use && (t->slot == s->slot) &&
+            ((t->op == P11_OP_ENCRYPT) || (t->op == P11_OP_DECRYPT)))
+        {
+            azihsm_pkcs11_session_reset_op(t);
+        }
     }
     /* Login is token-wide, so log the token out regardless of which session
      * calls C_Logout — including one that never called C_Login itself. */

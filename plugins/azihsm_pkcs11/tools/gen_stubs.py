@@ -37,6 +37,8 @@ IMPLEMENTED = {
     "C_CreateObject", "C_DestroyObject", "C_FindObjectsInit",
     "C_FindObjects", "C_FindObjectsFinal", "C_GetAttributeValue",
     "C_DigestInit", "C_Digest", "C_DigestUpdate", "C_DigestFinal",
+    "C_GenerateKey", "C_EncryptInit", "C_Encrypt",
+    "C_DecryptInit", "C_Decrypt",
 }
 # Legacy parallel-function calls return CKR_FUNCTION_NOT_PARALLEL per the spec.
 NOT_PARALLEL = {"C_GetFunctionStatus", "C_CancelFunction"}

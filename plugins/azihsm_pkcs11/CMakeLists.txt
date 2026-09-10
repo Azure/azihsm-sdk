@@ -69,6 +69,8 @@ set(AZIHSM_PKCS11_SOURCES
     ./src/azihsm_pkcs11_config.c
     ./src/azihsm_pkcs11_status.c
     ./src/azihsm_pkcs11_hsm.c
+    ./src/azihsm_pkcs11_key.c
+    ./src/azihsm_pkcs11_crypt.c
     ./src/azihsm_pkcs11_stubs.c
 )
 

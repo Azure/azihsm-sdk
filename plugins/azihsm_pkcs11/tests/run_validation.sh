@@ -62,6 +62,21 @@ if [ -f "$HSMMOD" ]; then
     echo "   (build it with: cargo build -p azihsm_pkcs11 --features mock)"
     AZIHSM_PKCS11_DEBUG=1 pkcs11-tool --module "$HSMMOD" --login --pin 1234 \
         --list-objects 2>&1 | sed 's/^/   /' || echo "   (login harness failed)"
+
+    # The AES checks below are hard gates (real functionality, not the login
+    # ceremony's best-effort diagnostic above), so announce a failure before the
+    # pipefail/errexit abort rather than aborting the script silently.
+    echo; echo "== mock-backed: AES keygen via pkcs11-tool =="
+    # --sensitive is required: this token refuses non-sensitive HSM keys.
+    if ! pkcs11-tool --module "$HSMMOD" --login --pin 1234 --keygen \
+        --key-type aes:32 --label validation --sensitive 2>&1 | sed 's/^/   /'; then
+        echo "   (AES keygen failed)"; exit 1
+    fi
+
+    echo; echo "== mock-backed: AES keygen + CBC round-trip harness =="
+    gcc -Wall -Wextra -Werror -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
+        "$PLUGIN/tests/aes_test.c" -o "$WORK/aes_test" -ldl
+    "$WORK/aes_test" "$HSMMOD" || { echo "   (AES harness failed)"; exit 1; }
 else
     echo; echo "== mock-backed C_Login skipped (no target/debug/azihsm_pkcs11.so) =="
 fi
