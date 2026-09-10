@@ -118,6 +118,7 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, hash: u8, key_len: usize
     );
 }
 
+/// Generates and uses HMAC keys successfully for every supported hash algorithm.
 #[test]
 fn hmac_generate_key_roundtrip_all_hashes() {
     let ctx = TestCtx::new();
@@ -133,6 +134,7 @@ fn hmac_generate_key_roundtrip_all_hashes() {
     }
 }
 
+/// Generates valid HMAC keys across representative minimum, middle, and maximum key lengths.
 #[test]
 fn hmac_generate_key_variable_lengths() {
     let ctx = TestCtx::new();
@@ -150,6 +152,7 @@ fn hmac_generate_key_variable_lengths() {
     }
 }
 
+/// Rejects HMAC key lengths outside each hash algorithm's supported range.
 #[test]
 fn hmac_generate_key_rejects_out_of_range_length() {
     let ctx = TestCtx::new();
@@ -180,6 +183,7 @@ fn hmac_generate_key_rejects_out_of_range_length() {
     }
 }
 
+/// Generates and uses HMAC keys successfully for every supported masking-key scope.
 #[test]
 fn hmac_generate_key_roundtrip_all_scopes() {
     let ctx = TestCtx::new();
@@ -191,6 +195,7 @@ fn hmac_generate_key_roundtrip_all_scopes() {
     }
 }
 
+/// Allows Session-scoped HMAC key generation before the partition is finalized.
 #[test]
 fn hmac_generate_key_session_scope_before_finalize() {
     // Session-scoped keys are masked under the per-session masking key, so
@@ -206,6 +211,7 @@ fn hmac_generate_key_session_scope_before_finalize() {
     );
 }
 
+/// Rejects SecurityDomain-scoped HMAC key generation when no security domain exists.
 #[test]
 fn hmac_generate_key_rejects_security_domain_scope() {
     // The SecurityDomain masking key (SDMK) is only provisioned by
@@ -221,6 +227,7 @@ fn hmac_generate_key_rejects_security_domain_scope() {
     ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
 }
 
+/// Rejects non-Session HMAC key scopes before the partition is finalized.
 #[test]
 fn hmac_generate_key_rejects_non_session_scopes_before_finalize() {
     // Ephemeral / Local masking keys are provisioned at PartFinal, so a
@@ -238,6 +245,7 @@ fn hmac_generate_key_rejects_non_session_scopes_before_finalize() {
     }
 }
 
+/// Rejects unsupported HMAC hash algorithm discriminants.
 #[test]
 fn hmac_generate_key_rejects_unknown_hash() {
     let ctx = TestCtx::new();
@@ -253,6 +261,7 @@ fn hmac_generate_key_rejects_unknown_hash() {
     }
 }
 
+/// Rejects unsupported HMAC key-scope discriminants.
 #[test]
 fn hmac_generate_key_rejects_unknown_scope() {
     let ctx = TestCtx::new();
@@ -268,6 +277,7 @@ fn hmac_generate_key_rejects_unknown_scope() {
     }
 }
 
+/// Generates and uses Session-scoped HMAC keys from a Crypto-User session.
 #[test]
 fn hmac_generate_key_crypto_user_session_scope() {
     let ctx = TestCtx::new();
@@ -283,6 +293,7 @@ fn hmac_generate_key_crypto_user_session_scope() {
     }
 }
 
+/// Rejects HMAC key generation while the Crypto-Officer still uses the default PSK.
 #[test]
 fn hmac_generate_key_rejects_default_psk() {
     let ctx = TestCtx::new();
@@ -297,6 +308,8 @@ fn hmac_generate_key_rejects_default_psk() {
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
 }
+
+/// Rejects HMAC key generation using a session that has already been closed.
 
 #[test]
 fn hmac_generate_key_rejects_closed_session() {
@@ -368,4 +381,185 @@ fn hmac_generate_key_accepts_non_digest_key_lengths() {
     for (hash, key_len) in cases {
         roundtrip(&ctx, session.session_id, SCOPE_LOCAL, hash, key_len);
     }
+}
+
+/// Accepts every supported `(scope, hash_algo)` combination.
+#[test]
+fn hmac_generate_key_all_scope_hash_combinations() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+        for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+            roundtrip(&ctx, session.session_id, scope, hash, default_key_len(hash));
+        }
+    }
+}
+/// Rejects unsupported scope discriminants around the valid wire range.
+#[test]
+fn hmac_generate_key_rejects_invalid_scope_discriminants() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for scope in [0, 5, 6, 7, 0x80, u8::MAX] {
+        let req = TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope,
+            hash_algo: HMAC_HASH_SHA256,
+            key_length: 32,
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
+    }
+}
+
+/// A Session-scoped generated key cannot be used after its session closes.
+#[test]
+fn hmac_generate_key_session_scoped_key_expires_with_session() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let generate_req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+    };
+
+    let generated = ctx
+        .tbor(&generate_req)
+        .expect("generate Session-scoped HMAC key");
+
+    ctx.session_close(session.session_id)
+        .expect("close originating session");
+
+    let mac_req = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key,
+        msg: b"session lifetime".to_vec(),
+    };
+
+    ctx.expect_fw_reject(&mac_req, TborStatus::SessionNotFound);
+}
+
+/// Accepts every valid key length for each supported HMAC algorithm.
+#[test]
+fn hmac_generate_key_accepts_every_valid_key_length() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let cases = [
+        (HMAC_HASH_SHA256, 32u8, 64u8),
+        (HMAC_HASH_SHA384, 48u8, 128u8),
+        (HMAC_HASH_SHA512, 64u8, 128u8),
+    ];
+
+    for (hash_algo, min_len, max_len) in cases {
+        for key_length in min_len..=max_len {
+            let req = TborHmacGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_LOCAL,
+                hash_algo,
+                key_length,
+            };
+
+            let resp = ctx
+                .tbor(&req)
+                .expect("every in-range HMAC key length must succeed");
+
+            assert_eq!(
+                resp.masked_key.len(),
+                masked_len(key_length as usize),
+                "unexpected masked-key length for hash={hash_algo}, key_length={key_length}",
+            );
+        }
+    }
+}
+
+/// Increasing key_length by one byte increases the masked-key envelope by one byte.
+#[test]
+fn hmac_generate_key_masked_length_tracks_requested_length() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req_32 = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+    };
+
+    let req_33 = TborHmacGenerateKeyReq {
+        key_length: 33,
+        ..req_32
+    };
+
+    let key_32 = ctx.tbor(&req_32).expect("generate 32-byte key");
+    let key_33 = ctx.tbor(&req_33).expect("generate 33-byte key");
+
+    assert_eq!(key_33.masked_key.len(), key_32.masked_key.len() + 1);
+}
+/// Generated HMAC keys can authenticate an empty message.
+#[test]
+fn hmac_generate_key_generated_key_works_with_empty_message() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for hash_algo in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        let req = TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            hash_algo,
+            key_length: default_key_len(hash_algo) as u8,
+        };
+
+        let generated = ctx.tbor(&req).expect("generate HMAC key");
+
+        let mac_req = TborHmacReq {
+            session_id: session.session_id,
+            masked_key: generated.masked_key,
+            msg: Vec::new(),
+        };
+
+        let resp = ctx.tbor(&mac_req).expect("HMAC empty message");
+
+        assert_eq!(
+            resp.tag.len(),
+            default_key_len(hash_algo),
+            "unexpected tag length for hash={hash_algo}",
+        );
+    }
+}
+
+/// A generated HMAC key produces different tags for different messages.
+#[test]
+fn hmac_generate_key_same_key_different_messages() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+    };
+
+    let generated = ctx.tbor(&req).expect("generate HMAC key");
+
+    let mac_a = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key.clone(),
+        msg: b"message A".to_vec(),
+    };
+
+    let mac_b = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key,
+        msg: b"message B".to_vec(),
+    };
+
+    let tag_a = ctx.tbor(&mac_a).expect("MAC message A").tag;
+    let tag_b = ctx.tbor(&mac_b).expect("MAC message B").tag;
+
+    assert_ne!(tag_a, tag_b);
 }
