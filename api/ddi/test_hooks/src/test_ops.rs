@@ -307,7 +307,52 @@ pub struct DdiTestActionPinPolicyConfig {
     pub lockout_delay: Option<u32>,
 }
 
-/// DDI Test Action request
+/// Maximum size, in bytes, of a `TestAction` opaque payload — the MBOR
+/// encoding of an action's own request-info body.
+///
+/// Sized with generous headroom over the current largest body
+/// ([`DdiTestActionPinPolicyConfig`]); this is only the buffer capacity,
+/// and just the significant bytes travel on the wire, so the ceiling is
+/// free. Because every action shares this one container, growing it here
+/// is the only change a larger action needs — the opcode's wire schema is
+/// unaffected.
+pub const TEST_ACTION_PAYLOAD_MAX: usize = 64;
+
+/// Opaque, action-specific `TestAction` payload.
+///
+/// Carries the MBOR encoding of an action's own request-info struct as a
+/// byte string, so the `TestAction` request map stays fixed at
+/// `{1: action, 2: payload?}` regardless of the action. Build one with
+/// [`encode_test_action_payload`].
+pub type DdiTestActionPayload = MborByteArray<TEST_ACTION_PAYLOAD_MAX>;
+
+/// MBOR-encode an action-specific body into the opaque payload container.
+///
+/// `body` is any of the per-action request-info types (for example
+/// [`DdiTestActionCrashReqInfo`]) or a bare scalar the action expects; it
+/// is encoded exactly as it would have been as a typed map entry, then
+/// wrapped as the opaque byte string the firmware re-decodes.
+pub fn encode_test_action_payload<T: MborEncode>(
+    body: &T,
+) -> Result<DdiTestActionPayload, MborEncodeError> {
+    let mut buf = [0u8; TEST_ACTION_PAYLOAD_MAX];
+    // The workspace pins `azihsm_ddi_mbor_types` (hence the codec) with
+    // `pre_encode` on, so `MborEncoder::new` always takes this flag here.
+    // `false`: an opaque payload is plain bytes and needs no pre-encode
+    // transform.
+    let mut encoder = MborEncoder::new(&mut buf, false);
+    body.mbor_encode(&mut encoder)?;
+    let len = encoder.position();
+    DdiTestActionPayload::from_slice(&buf[..len]).map_err(|_| MborEncodeError::BufferOverflow)
+}
+
+/// DDI Test Action request.
+///
+/// Uses the opaque-payload shape `{1: action, 2: payload?}`: every action's
+/// parameters travel in the single [`DdiTestActionPayload`] byte string, so
+/// adding an action never changes this opcode's wire schema. `payload` is
+/// `None` for actions that take no parameters (for example
+/// `ClearUserCredentials`).
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
 #[ddi(map)]
@@ -316,51 +361,15 @@ pub struct DdiTestActionReq {
     #[ddi(id = 1)]
     pub action: DdiTestAction,
 
-    /// Crash type.
+    /// Opaque, action-specific payload — the MBOR encoding of the action's
+    /// request-info body. See [`encode_test_action_payload`].
+    ///
+    /// Spelled as `MborByteArray<..>` rather than the [`DdiTestActionPayload`]
+    /// alias because the `Ddi` derive recognises a byte-array field by that
+    /// type name; an alias would be treated as an ordinary field and fail to
+    /// compile.
     #[ddi(id = 2)]
-    pub crash_info: Option<DdiTestActionCrashReqInfo>,
-
-    /// Negative Self test ID.
-    #[ddi(id = 3)]
-    pub neg_test_id: Option<u32>,
-
-    /// Pin policy override.
-    /// This is used to override the pin policy context.
-    #[ddi(id = 4)]
-    pub pin_policy_config: Option<DdiTestActionPinPolicyConfig>,
-
-    /// Force PKA instance to a fixed instance ID or reset it by supplying None.
-    /// This is used for FIPS validation only with the device fw is built with validation hooks.
-    #[ddi(id = 5)]
-    pub force_pka_instance: Option<u8>,
-
-    /// Count of FSMs to skip before triggering the negative PCT action.
-    #[ddi(id = 6)]
-    pub neg_pct_skip_cnt: Option<u8>,
-
-    /// ECC Error Info
-    #[ddi(id = 7)]
-    pub ecc_error_info: Option<DdiTestActionEccErrorInfo>,
-
-    /// Trigger Tdisp Interrupt Type
-    #[ddi(id = 8)]
-    pub tdisp_interrupt_type: Option<DdiTestActionInterruptSimulationType>,
-
-    /// SVN value to be updated
-    #[ddi(id = 9)]
-    pub updated_svn: Option<u64>,
-
-    /// GDMA Error Type
-    #[ddi(id = 10)]
-    pub gdma_error_type: Option<DdiTestActionGDMAErrorType>,
-
-    /// Stack Validation Info
-    #[ddi(id = 11)]
-    pub stack_validation_info: Option<DdiTestActionStackValidationReqInfo>,
-
-    /// UCD Error Type
-    #[ddi(id = 12)]
-    pub ucd_error_type: Option<DdiTestActionUCDErrorType>,
+    pub payload: Option<MborByteArray<TEST_ACTION_PAYLOAD_MAX>>,
 }
 
 /// DDI Test Action response

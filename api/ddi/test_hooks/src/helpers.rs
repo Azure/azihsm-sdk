@@ -47,42 +47,43 @@ pub enum DdiTestActionContext {
 }
 
 impl DdiTestActionContext {
-    /// Build the request body for `action`, placing this context in its
-    /// matching optional field and leaving the rest `None`.
-    fn into_req(self, action: DdiTestAction) -> DdiTestActionReq {
-        let mut req = DdiTestActionReq {
-            action,
-            crash_info: None,
-            neg_test_id: None,
-            pin_policy_config: None,
-            force_pka_instance: None,
-            neg_pct_skip_cnt: None,
-            ecc_error_info: None,
-            tdisp_interrupt_type: None,
-            updated_svn: None,
-            gdma_error_type: None,
-            stack_validation_info: None,
-            ucd_error_type: None,
-        };
-        match self {
-            DdiTestActionContext::None => {}
-            DdiTestActionContext::CrashInfo(info) => req.crash_info = Some(info),
-            DdiTestActionContext::NegTestId(id) => req.neg_test_id = Some(id),
-            DdiTestActionContext::PinPolicyConfig(config) => req.pin_policy_config = config,
+    /// Build the request for `action`, encoding this context into the
+    /// opaque payload.
+    ///
+    /// Each variant's body is MBOR-encoded into the single
+    /// [`DdiTestActionPayload`] byte string via
+    /// [`encode_test_action_payload`]; [`DdiTestActionContext::None`] sends
+    /// no payload. Encoding a body that overflows the payload capacity is a
+    /// caller error, so it maps to `DdiError::InvalidParameter`.
+    ///
+    /// `PinPolicyConfig(None)` (the "clear pin policy" case) also sends no
+    /// payload — the action alone carries the intent, matching the firmware
+    /// that reads a bodyless clear.
+    fn into_req(self, action: DdiTestAction) -> DdiResult<DdiTestActionReq> {
+        let payload = match self {
+            DdiTestActionContext::None => None,
+            DdiTestActionContext::CrashInfo(info) => Some(encode_test_action_payload(&info)),
+            DdiTestActionContext::NegTestId(id) => Some(encode_test_action_payload(&id)),
+            DdiTestActionContext::PinPolicyConfig(config) => {
+                config.map(|c| encode_test_action_payload(&c))
+            }
             DdiTestActionContext::ForcePkaInstance(instance) => {
-                req.force_pka_instance = Some(instance)
+                Some(encode_test_action_payload(&instance))
             }
-            DdiTestActionContext::NegPctSkipCnt(cnt) => req.neg_pct_skip_cnt = Some(cnt),
-            DdiTestActionContext::EccErrorInfo(info) => req.ecc_error_info = Some(info),
-            DdiTestActionContext::TdispInterruptType(ty) => req.tdisp_interrupt_type = Some(ty),
-            DdiTestActionContext::UpdatedSvn(svn) => req.updated_svn = Some(svn),
-            DdiTestActionContext::GdmaErrorType(ty) => req.gdma_error_type = Some(ty),
+            DdiTestActionContext::NegPctSkipCnt(cnt) => Some(encode_test_action_payload(&cnt)),
+            DdiTestActionContext::EccErrorInfo(info) => Some(encode_test_action_payload(&info)),
+            DdiTestActionContext::TdispInterruptType(ty) => Some(encode_test_action_payload(&ty)),
+            DdiTestActionContext::UpdatedSvn(svn) => Some(encode_test_action_payload(&svn)),
+            DdiTestActionContext::GdmaErrorType(ty) => Some(encode_test_action_payload(&ty)),
             DdiTestActionContext::StackValidationInfo(info) => {
-                req.stack_validation_info = Some(info)
+                Some(encode_test_action_payload(&info))
             }
-            DdiTestActionContext::UcdErrorInfo(ty) => req.ucd_error_type = Some(ty),
+            DdiTestActionContext::UcdErrorInfo(ty) => Some(encode_test_action_payload(&ty)),
         }
-        req
+        .transpose()
+        .map_err(|_| DdiError::InvalidParameter)?;
+
+        Ok(DdiTestActionReq { action, payload })
     }
 }
 
@@ -104,7 +105,7 @@ pub fn helper_test_action_cmd(
             sess_id: Some(session_id),
             rev: Some(DdiApiRev { major: 1, minor: 0 }),
         },
-        data: context.into_req(action),
+        data: context.into_req(action)?,
         ext: None,
     };
     dev.exec_op_mbor(&req, &mut None)
