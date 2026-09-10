@@ -17,22 +17,51 @@
 //!   tag (proving the key material survives wrap/unwrap).
 //! * Tampered masked key → `AesGcmDecryptTagDoesNotMatch`.
 //! * Empty message is accepted.
+//! * Imported keys match host HMACs for every hash at padding/block
+//!   boundaries and the maximum message length, including binary data.
+//! * Session-scoped MAC before partition finalization.
+//! * Crypto-User MACs for every hash and provisioned scope; distinct keys
+//!   produce distinct tags for the same message.
+//! * Variable key lengths under Session / Ephemeral / Local scopes.
+//! * Non-HMAC keys and invalid sessions are rejected.
+//! * Session keys are isolated; Local / Ephemeral keys work across sessions.
+//! * Oversized messages and out-of-range masked-key lengths are rejected.
+//! * IV and ciphertext tampering fail authentication without damaging the key.
 
 #![cfg(feature = "emu")]
 
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HmacAlgo;
+use azihsm_crypto::HmacKey;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::Signer;
+use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA256;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
+use azihsm_ddi_tbor_types::HMAC_MSG_MAX_LEN;
+use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
+use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
+use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
+use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MAX_LEN;
+use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MIN_LEN;
 
 use crate::commands::hmac_generate_key::SCOPE_EPHEMERAL;
+use crate::commands::hmac_generate_key::SCOPE_LOCAL;
 use crate::commands::hmac_generate_key::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
+use crate::harness::bootstrap_rotated_co;
+use crate::harness::bootstrap_rotated_cu;
+use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID;
+use crate::harness::ROTATED_CO_PSK;
+use crate::harness::ROTATED_CU_PSK;
 
 /// Expected tag length (bytes) for a wire hash discriminant.
 fn tag_len_for_hash(hash: u8) -> usize {
@@ -158,4 +187,252 @@ fn hmac_rejects_tampered_key_emu() {
         msg: b"whatever".to_vec(),
     };
     ctx.expect_fw_reject(&req, TborStatus::AesGcmDecryptTagDoesNotMatch);
+}
+
+/// Compare full tags with a host computation, including the
+/// SHA-2 padding transitions, block boundaries, and the wire message cap.
+#[test]
+fn hmac_matches_host_at_message_boundaries_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for (class, hash, key_len) in [
+        (KEY_CLASS_HMAC_SHA256, HashAlgo::sha256(), 32),
+        (KEY_CLASS_HMAC_SHA384, HashAlgo::sha384(), 48),
+        (KEY_CLASS_HMAC_SHA512, HashAlgo::sha512(), 64),
+    ] {
+        let key_bytes: Vec<u8> = (0..key_len).map(|i| i as u8).collect();
+        let masked = unwrap(&ctx, session.session_id, class, &key_bytes).masked_key;
+        let key = HmacKey::from_bytes(&key_bytes).expect("host HMAC key");
+        let mut algo = HmacAlgo::new(hash);
+        for len in [
+            0,
+            1,
+            55,
+            56,
+            63,
+            64,
+            65,
+            111,
+            112,
+            127,
+            128,
+            129,
+            HMAC_MSG_MAX_LEN,
+        ] {
+            let msg: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let expected = Signer::sign_vec(&mut algo, &key, &msg).expect("host HMAC");
+            assert_eq!(
+                mac(&ctx, session.session_id, &masked, &msg),
+                expected,
+                "key class {class}, message length {len}",
+            );
+        }
+    }
+}
+
+#[test]
+fn hmac_session_scope_before_finalize_emu() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        let masked = generate_key(&ctx, session.session_id, SCOPE_SESSION, hash);
+        let tag = mac(&ctx, session.session_id, &masked, b"before finalize");
+        assert_eq!(tag.len(), tag_len_for_hash(hash));
+        assert_eq!(
+            tag,
+            mac(&ctx, session.session_id, &masked, b"before finalize")
+        );
+    }
+}
+
+#[test]
+fn hmac_rejects_non_hmac_key_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    // AES-256 has the same envelope length as HMAC-SHA-256, so this
+    // reaches the key-kind check after successfully decoding and unmasking.
+    let masked = unwrap(&ctx, session.session_id, KEY_CLASS_AES, &[0x37; 32]).masked_key;
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: session.session_id,
+            masked_key: masked,
+            msg: b"wrong key type".to_vec(),
+        },
+        TborStatus::InvalidKeyType,
+    );
+}
+
+#[test]
+fn hmac_variable_key_lengths_all_scopes_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for (hash, lengths) in [
+        (HMAC_HASH_SHA256, [32, 48, 64]),
+        (HMAC_HASH_SHA384, [48, 96, 128]),
+        (HMAC_HASH_SHA512, [64, 96, 128]),
+    ] {
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            for key_length in lengths {
+                let masked = ctx
+                    .tbor(&TborHmacGenerateKeyReq {
+                        session_id: session.session_id,
+                        scope,
+                        hash_algo: hash,
+                        key_length,
+                    })
+                    .expect("generate variable-length HMAC key")
+                    .masked_key;
+                let msg = b"variable-length key";
+                let tag = mac(&ctx, session.session_id, &masked, msg);
+                assert_eq!(
+                    tag.len(),
+                    tag_len_for_hash(hash),
+                    "hash {hash}, scope {scope}, key length {key_length}"
+                );
+                assert_eq!(tag, mac(&ctx, session.session_id, &masked, msg));
+            }
+        }
+    }
+}
+
+#[test]
+fn hmac_rejects_invalid_session_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: u16::MAX,
+            masked_key: masked,
+            msg: b"invalid session".to_vec(),
+        },
+        TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+}
+
+#[test]
+fn hmac_scope_behavior_after_session_reopen_emu() {
+    let ctx = TestCtx::new();
+    let first = finalized_co_session(&ctx);
+    let msg = b"cross-session HMAC";
+    let keys: Vec<_> = [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL]
+        .into_iter()
+        .map(|scope| {
+            let masked = generate_key(&ctx, first.session_id, scope, HMAC_HASH_SHA256);
+            let expected = mac(&ctx, first.session_id, &masked, msg);
+            (scope, masked, expected)
+        })
+        .collect();
+    // The transport permits one session per file handle. Reopening also
+    // proves that Session keys expire while partition-scoped keys survive.
+    ctx.session_close(first.session_id)
+        .expect("close first session");
+    let pending = ctx
+        .session_open_init_with_options(
+            SessionOpenInitOptions::new(CO_PSK_ID, SessionType::Authenticated)
+                .with_psk(&ROTATED_CO_PSK),
+        )
+        .expect("open second session");
+    let second = ctx
+        .session_open_finish(pending)
+        .expect("finish second session");
+    for (scope, masked, expected) in keys {
+        if scope == SCOPE_SESSION {
+            ctx.expect_fw_reject(
+                &TborHmacReq {
+                    session_id: second.session_id,
+                    masked_key: masked.clone(),
+                    msg: msg.to_vec(),
+                },
+                TborStatus::AesGcmDecryptTagDoesNotMatch,
+            );
+        } else {
+            assert_eq!(mac(&ctx, second.session_id, &masked, msg), expected);
+        }
+    }
+    ctx.session_close(second.session_id)
+        .expect("close second session");
+}
+
+#[test]
+fn hmac_rejects_oversized_message_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: session.session_id,
+            masked_key: masked,
+            msg: vec![0xA5; HMAC_MSG_MAX_LEN + 1],
+        },
+        TborStatus::TborInvalidFixedLength,
+    );
+}
+
+#[test]
+fn hmac_rejects_out_of_range_masked_key_lengths_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for len in [0, MASKED_HMAC_KEY_MIN_LEN - 1, MASKED_HMAC_KEY_MAX_LEN + 1] {
+        // Host encoding allows these lengths; the firmware schema rejects
+        // them before interpreting the envelope contents.
+        ctx.expect_fw_reject(
+            &TborHmacReq {
+                session_id: session.session_id,
+                masked_key: vec![0; len],
+                msg: b"invalid envelope length".to_vec(),
+            },
+            TborStatus::TborInvalidFixedLength,
+        );
+    }
+}
+
+#[test]
+fn hmac_rejects_tampered_iv_and_ciphertext_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+    let msg = b"authenticated key envelope";
+    let expected = mac(&ctx, session.session_id, &masked, msg);
+    // Envelope: header(8), IV(12), AAD(96), ciphertext, tag(16).
+    // Preserve the cleartext metadata so the correct masking key is selected.
+    for offset in [8, 8 + 12 + 96] {
+        let mut tampered = masked.clone();
+        tampered[offset] ^= 1;
+        ctx.expect_fw_reject(
+            &TborHmacReq {
+                session_id: session.session_id,
+                masked_key: tampered,
+                msg: msg.to_vec(),
+            },
+            TborStatus::AesGcmDecryptTagDoesNotMatch,
+        );
+        assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
+    }
+}
+
+#[test]
+fn hmac_crypto_user_all_hashes_and_scopes_emu() {
+    let ctx = TestCtx::new();
+    let co = finalized_co_session(&ctx);
+    ctx.session_close(co.session_id).expect("close CO session");
+    let cu = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let msg = b"Crypto-User HMAC";
+    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            let first = generate_key(&ctx, cu.session_id, scope, hash);
+            let second = generate_key(&ctx, cu.session_id, scope, hash);
+            let first_tag = mac(&ctx, cu.session_id, &first, msg);
+            let second_tag = mac(&ctx, cu.session_id, &second, msg);
+            assert_eq!(first_tag.len(), tag_len_for_hash(hash));
+            assert_eq!(second_tag.len(), tag_len_for_hash(hash));
+            assert_ne!(
+                first_tag, second_tag,
+                "distinct keys must produce distinct tags: hash {hash}, scope {scope}"
+            );
+            // Alternating keys must not leave stale key material in use.
+            assert_eq!(first_tag, mac(&ctx, cu.session_id, &first, msg));
+        }
+    }
+    ctx.session_close(cu.session_id).expect("close CU session");
 }
