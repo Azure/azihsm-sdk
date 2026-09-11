@@ -13,8 +13,8 @@
 //! * Happy path per key size (128/192/256) — the masked key has the
 //!   expected length (148/156/164 B) and is non-zero; a second call yields
 //!   a distinct key.
-//! * Every masking-key scope: `Session` (works pre-finalize), `Ephemeral`
-//!   / `Local` (provisioned by `PartFinal`).
+//! * Every masking-key scope provisioned by `PartFinal`: `Session`, `Ephemeral`,
+//!   and `Local`; `Session` also works before finalization.
 //! * `SecurityDomain` scope before `CreateSD` → `UnsupportedKeyScope`.
 //! * `Ephemeral` scope before `PartFinal` → `InvalidArg`.
 //! * Unknown key size → `InvalidArg`.
@@ -109,9 +109,9 @@ mod emu_tests {
     use super::*;
     use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
-    /// Generates every supported AES size under every supported masking-key scope.
+    /// Generates every supported AES size under each masking scope provisioned by `PartFinal`.
     #[test]
-    fn aes_generate_key_roundtrip_all_sizes_all_supported_scopes() {
+    fn aes_generate_key_roundtrip_all_sizes_part_final_scopes() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
@@ -213,9 +213,9 @@ mod emu_tests {
         }
     }
 
-    /// Rejects an invalid AES key size consistently across every supported scope.
+    /// Rejects an invalid AES key size across every masking scope provisioned by `PartFinal`.
     #[test]
-    fn aes_generate_key_rejects_invalid_size_for_all_supported_scopes() {
+    fn aes_generate_key_rejects_invalid_size_for_part_final_scopes() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
@@ -252,20 +252,20 @@ mod emu_tests {
         }
     }
 
-    /// Rejects an unknown session ID.
+    /// Rejects a request whose session ID does not match the active file-handle session.
     #[test]
-    fn aes_generate_key_rejects_unknown_session() {
+    fn aes_generate_key_rejects_session_id_mismatch() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
-        let unknown_session_id = session.session_id.wrapping_add(1);
+        let mismatched_session_id = session.session_id.wrapping_add(1);
 
         assert_ne!(
-            unknown_session_id, session.session_id,
-            "unknown session ID must differ from the active session",
+            mismatched_session_id, session.session_id,
+            "mismatched session ID must differ from the active session",
         );
 
-        let req = generate_key_req(unknown_session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
+        let req = generate_key_req(mismatched_session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
 
         ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
     }
@@ -303,10 +303,10 @@ mod emu_tests {
         }
     }
 
-    /// Verifies AES keys generated under each supported masking scope can be
+    /// Verifies AES keys generated under each `PartFinal`-provisioned masking scope can be
     /// consumed successfully by `AesEncryptDecrypt`.
     #[test]
-    fn aes_generate_key_all_scopes_usable_by_aes_encrypt_decrypt() {
+    fn aes_generate_key_part_final_scopes_usable_by_aes_encrypt_decrypt() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
