@@ -51,7 +51,7 @@ struct FuzzInput {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let dev = common::open_emu_dev();
+    let Ok(dev) = common::open_emu_dev() else { return; };
     let use_valid_init = input.valid_open_init || input.valid_open_finish;
     let (req, ephemeral, pk_hsm) = if use_valid_init {
         let Ok(ephemeral) = generate_vm_ephemeral() else { return; };
@@ -125,10 +125,7 @@ fuzz_target!(|input: FuzzInput| {
                 Ok(param_key) => param_key,
                 Err(_) => return,
             };
-            let mut seed = [0u8; SESSION_SEED_LEN];
-            if Rng::rand_bytes(&mut seed).is_err() {
-                return;
-            }
+            let seed = [0u8; SESSION_SEED_LEN];
             let seed_envelope = match seal_seed_envelope(&param_key, &seed)
                 .and_then(|envelope| {
                     envelope
