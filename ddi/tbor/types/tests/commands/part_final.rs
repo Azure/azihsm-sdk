@@ -48,6 +48,7 @@ use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 
+use crate::commands::part_info::PART_STATE_INITIALIZING;
 use crate::commands::part_init::known_good_part_policy;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::open_co_with;
@@ -68,7 +69,6 @@ use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
 
-const PART_STATE_INITIALIZING: u8 = 4;
 const PART_STATE_INITIALIZED: u8 = 5;
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
