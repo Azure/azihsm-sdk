@@ -19,6 +19,13 @@
 //! * Before finalize (partition not `Initialized`) → `InvalidArg`.
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
+//!
+//! `SdSealingKeyGen` itself carries no out-of-band data — the request is a
+//! session id plus a 1-byte scope, and the response is a 180-byte masked
+//! key plus a 96-byte public key — so the command runs on any transport.
+//! The *setup* is what needs OOB: [`finalized_co_session`] drives
+//! `PartFinal`, whose PTA chain travels out of band, so the tests that
+//! need a finalized partition also need the driver's data-transfer path.
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
