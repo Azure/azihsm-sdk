@@ -13,8 +13,8 @@
 //! * Happy path per key size (128/192/256) — the masked key has the
 //!   expected length (148/156/164 B) and is non-zero; a second call yields
 //!   a distinct key.
-//! * Every masking-key scope provisioned by `PartFinal`: `Session`, `Ephemeral`,
-//!   and `Local`; `Session` also works before finalization.
+//! * Every AES masking scope exercised after `PartFinal`: `Session`, `Ephemeral`,
+//!   and `Local`; `Session` is also available before finalization.
 //! * `SecurityDomain` scope before `CreateSD` → `UnsupportedKeyScope`.
 //! * `Ephemeral` scope before `PartFinal` → `InvalidArg`.
 //! * Unknown key size → `InvalidArg`.
@@ -109,9 +109,9 @@ mod emu_tests {
     use super::*;
     use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
-    /// Generates every supported AES size under each masking scope provisioned by `PartFinal`.
+    /// Generates every supported AES size under each masking scope exercised after `PartFinal`.
     #[test]
-    fn aes_generate_key_roundtrip_all_sizes_part_final_scopes() {
+    fn aes_generate_key_roundtrip_all_sizes_after_part_final() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
@@ -213,9 +213,9 @@ mod emu_tests {
         }
     }
 
-    /// Rejects an invalid AES key size across every masking scope provisioned by `PartFinal`.
+    /// Rejects an invalid AES key size across every masking scope exercised after `PartFinal`.
     #[test]
-    fn aes_generate_key_rejects_invalid_size_for_part_final_scopes() {
+    fn aes_generate_key_rejects_invalid_size_after_part_final_scopes() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
@@ -303,10 +303,10 @@ mod emu_tests {
         }
     }
 
-    /// Verifies AES keys generated under each `PartFinal`-provisioned masking scope can be
+    /// Verifies AES keys generated under each masking scope exercised after `PartFinal` can be
     /// consumed successfully by `AesEncryptDecrypt`.
     #[test]
-    fn aes_generate_key_part_final_scopes_usable_by_aes_encrypt_decrypt() {
+    fn aes_generate_key_after_part_final_scopes_usable_by_aes_encrypt_decrypt() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
