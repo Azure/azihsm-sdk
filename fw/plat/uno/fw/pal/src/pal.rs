@@ -728,19 +728,17 @@ impl UnoHsmPal {
 
 /// Platform hook for test-only commands.
 ///
-/// With `mcr_test_action` this routes `TestAction` to
-/// `crate::test_dispatch`; without it, and for TBOR in either case, uno
+/// With `mcr_test_hooks` this routes `TestAction` to
+/// `crate::test_hooks`; without it, and for TBOR in either case, uno
 /// claims nothing and the firmware answers every opcode exactly as it
 /// did before the hook existed.
 impl HsmCustomDispatch for UnoHsmPal {
-    #[cfg(feature = "mcr_test_action")]
-    async fn mbor_dispatch(&self, _io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
-        // `Infallible` — the handler has no success path, so there is
-        // no response to hand back and nothing to match on.
-        crate::test_dispatch::mbor_dispatch(req).map(|never| match never {})
+    #[cfg(feature = "mcr_test_hooks")]
+    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        crate::test_hooks::mbor_dispatch(self, io, req)
     }
 
-    #[cfg(not(feature = "mcr_test_action"))]
+    #[cfg(not(feature = "mcr_test_hooks"))]
     async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
         Err(HsmError::UnsupportedCmd)
     }

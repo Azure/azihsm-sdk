@@ -36,6 +36,14 @@ embassy-time = { workspace = true }
 #default = ["trace-uart"]
 default = []
 
+# CP0 and CP1 share one `--cp_features` list: `cp/make_cp.sh` forwards it
+# verbatim to both firmwares, so a name passed there must exist on both.
+# CP0's legacy `mcr_test_hooks` gates `TestAction` in the HSM core; on CP1
+# that command lives below the PAL, so map the shared flag onto the uno
+# PAL's `mcr_test_hooks` dispatch feature. This lets
+# `make_manticore.sh --cp_features mcr_test_hooks` build both cores.
+mcr_test_hooks = ["azihsm_fw_uno_pal/mcr_test_hooks"]
+
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the
 #     emulator host loop (which snoops the semihosting trap) learns the

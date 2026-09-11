@@ -50,8 +50,8 @@ mod part;
 mod seed;
 mod session;
 /// Test-only DDI commands, reached through the `HsmCustomDispatch` hook.
-#[cfg(feature = "mcr_test_action")]
-mod test_dispatch;
+#[cfg(feature = "mcr_test_hooks")]
+mod test_hooks;
 mod vault;
 
 /// Re-export of the PAL trait types consumed by uno-PAL users.
