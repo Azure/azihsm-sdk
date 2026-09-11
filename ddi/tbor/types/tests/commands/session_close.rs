@@ -23,9 +23,8 @@
 use azihsm_ddi_tbor_types::SessionType;
 
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 // ---------------------------------------------------------------------------
 // Happy paths — close an Active session

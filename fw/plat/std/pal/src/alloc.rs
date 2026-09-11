@@ -241,9 +241,11 @@ impl HsmAlloc for StdHsmPal {
             Ok(len) => {
                 if len > buf.len() {
                     // Closure overran the buffer it was handed; refuse to
-                    // expose a longer slice than we actually own.
+                    // expose a longer slice than we actually own. This is a
+                    // firmware bug (an encoder mis-reporting its length), not
+                    // a malformed request, hence the dedicated status.
                     mark_cell.set(saved_mark);
-                    return Err(HsmError::InvalidArg);
+                    return Err(HsmError::DmaAllocLenOverrun);
                 }
                 let final_end = aligned + len;
                 mark_cell.set(final_end);
@@ -274,8 +276,10 @@ impl HsmAlloc for StdHsmPal {
         match f(buf) {
             Ok((len, extra)) => {
                 if len > buf.len() {
+                    // See `dma_alloc_var`: a firmware bug, not a malformed
+                    // request.
                     mark_cell.set(saved_mark);
-                    return Err(HsmError::InvalidArg);
+                    return Err(HsmError::DmaAllocLenOverrun);
                 }
                 let final_end = aligned + len;
                 mark_cell.set(final_end);

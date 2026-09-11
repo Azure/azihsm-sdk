@@ -99,6 +99,7 @@ fn evp_digest_sign(pkey: *mut ffi::EVP_PKEY, msg: &[u8], md: *const ffi::EVP_MD)
 mod round_trips {
     use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccKeyGenAlgo;
+    use azihsm_api::HsmEccPrivateKey;
     use azihsm_api::HsmKeyClass;
     use azihsm_api::HsmKeyCommonProps;
     use azihsm_api::HsmKeyKind;
@@ -112,9 +113,9 @@ mod round_trips {
 
     use super::*;
 
-    /// Generate a persistent EC P-384 key pair on the open HSM and return its
-    /// masked blob plus the public-key DER.
-    fn generate_masked_p384(data: &EngineData) -> EngineResult<(Vec<u8>, Vec<u8>)> {
+    /// Generate a persistent EC P-384 signing key pair on the open HSM and
+    /// return the private-key handle.
+    pub(super) fn generate_p384_key(data: &EngineData) -> EngineResult<HsmEccPrivateKey> {
         data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Private)
@@ -133,18 +134,25 @@ mod round_trips {
                 .build()
                 .map_err(|e| EngineError::wrap("build public key props", e))?;
             let mut algo = HsmEccKeyGenAlgo::default();
-            let (priv_key, _pub) =
-                HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
-                    .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-            Ok((
-                priv_key
-                    .masked_key_vec()
-                    .map_err(|e| EngineError::wrap("export masked key", e))?,
-                priv_key
-                    .pub_key_der_vec()
-                    .map_err(|e| EngineError::wrap("read public key DER", e))?,
-            ))
+            HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+                .map(|(private, _public)| private)
+                .map_err(|e| EngineError::wrap("generate EC key pair", e))
         })
+    }
+
+    /// Generate a persistent EC P-384 key pair on the open HSM and return its
+    /// masked blob plus the public-key DER. The generator handle is deleted
+    /// after export (the blob unmasks into a fresh handle later).
+    fn generate_masked_p384(data: &EngineData) -> EngineResult<(Vec<u8>, Vec<u8>)> {
+        let key = generate_p384_key(data)?;
+        let masked = key
+            .masked_key_vec()
+            .map_err(|e| EngineError::wrap("export masked key", e));
+        let der = key
+            .pub_key_der_vec()
+            .map_err(|e| EngineError::wrap("read public key DER", e));
+        crate::context::delete_hsm_key(key, "test generator key");
+        Ok((masked?, der?))
     }
 
     /// A transient masked-blob path for a round trip (removed by the caller).
@@ -447,6 +455,9 @@ mod mock {
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
+    use azihsm_api::HsmEccPrivateKey;
+    use azihsm_api::HsmEccSignAlgo;
+    use azihsm_api::HsmSigner;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
     use openssl::nid::Nid;
@@ -548,6 +559,72 @@ mod mock {
         )
         .unwrap();
         round_trips::run_load(&data).unwrap();
+    }
+
+    /// Whether `key` can still sign on the device — the observation channel
+    /// for the deletion tests. Signing is a real HSM round trip, unlike e.g.
+    /// masked_key_vec, which returns a blob cached at key creation.
+    fn hsm_sign_works(key: &HsmEccPrivateKey) -> bool {
+        let mut algo = HsmEccSignAlgo::default();
+        HsmSigner::sign_vec(&mut algo, key, &[0u8; 48]).is_ok()
+    }
+
+    // release_loaded_key must delete the key from the HSM, not merely drop
+    // the Rust handle: signing through a surviving clone (Arc-shared device
+    // handle) must fail after the release.
+    #[test]
+    #[serial]
+    fn release_loaded_key_deletes_key_from_hsm() {
+        let scratch = Scratch::new("release-del");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+
+        let key = round_trips::generate_p384_key(&data).unwrap();
+        let observer = key.clone();
+        assert!(
+            hsm_sign_works(&observer),
+            "key must be usable before release"
+        );
+
+        let ptr = data.retain_loaded_key(key);
+        data.release_loaded_key(ptr);
+        assert!(
+            !hsm_sign_works(&observer),
+            "release_loaded_key must delete the key from the HSM"
+        );
+    }
+
+    // EngineData teardown must delete every retained key (the Drop impl).
+    // The observer's cloned session keeps the session alive, so the failure
+    // is attributable to deletion, not to the session closing.
+    #[test]
+    #[serial]
+    fn engine_teardown_deletes_retained_keys() {
+        let scratch = Scratch::new("teardown-del");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+
+        let key = round_trips::generate_p384_key(&data).unwrap();
+        let observer = key.clone();
+        assert!(
+            hsm_sign_works(&observer),
+            "key must be usable before teardown"
+        );
+
+        let _ = data.retain_loaded_key(key);
+        drop(data);
+        assert!(
+            !hsm_sign_works(&observer),
+            "EngineData teardown must delete retained keys from the HSM"
+        );
     }
 
     // A signature produced through a loaded key (HSM sign via our EC_KEY_METHOD,

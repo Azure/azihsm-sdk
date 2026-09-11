@@ -279,6 +279,20 @@ pub struct UnoHsmPal {
 
     /// Per-IO bump allocator state (watermarks for Local + Global heaps).
     pub(crate) io_alloc: IoAllocTable,
+
+    /// Per-IO *peak* (high-water) allocator state, same shape as
+    /// [`io_alloc`](Self::io_alloc). `io_alloc` rewinds on every scope exit,
+    /// so this is what bounds the region the teardown scrub must wipe.
+    ///
+    /// Starts at zero, so each slot's first scrub after boot covers only what
+    /// this boot wrote. That relies on the IO heaps arriving clean: on a warm
+    /// boot 1SP wipes GSRAM apart from the regions it must preserve to restore
+    /// the IO queues and the persistent store, neither of which overlaps these
+    /// heaps. A 1SP change that stopped clearing them would leave the previous
+    /// incarnation's scratch unwiped until an allocation happened to reach past
+    /// it; initialise this table saturated (any value `>= ` capacity) to make
+    /// the first scrub cover the whole slot instead.
+    pub(crate) io_peak: IoAllocTable,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -366,6 +380,7 @@ impl Default for UnoHsmPal {
             ipc: unsafe { static_init!(Ipc, Ipc::new(ipc_config)) },
             boot_phase: Cell::new(BootPhase::WaitNormalBoot),
             io_alloc: IO_ALLOC_INIT,
+            io_peak: IO_ALLOC_INIT,
         }
     }
 }

@@ -36,12 +36,12 @@ use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 
 #[cfg(feature = "emu")]
-use crate::commands::part_init::bootstrap_rotated_co;
-#[cfg(feature = "emu")]
-use crate::commands::part_init::ROTATED_CO_PSK;
-#[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+#[cfg(feature = "emu")]
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+#[cfg(feature = "emu")]
+use crate::harness::ROTATED_CO_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 pub(crate) const SCOPE_SESSION: u8 = 0b001;

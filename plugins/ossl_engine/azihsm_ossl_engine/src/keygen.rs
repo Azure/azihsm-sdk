@@ -172,22 +172,36 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .build()
                 .map_err(|e| EngineError::wrap("build public key props", e))?;
             let mut algo = HsmEccKeyGenAlgo::default();
+            // The public half is a software wrapper without a device-side
+            // handle (its delete_key is a documented no-op).
             let (priv_key, _pub) =
                 HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
                     .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-            let masked = priv_key
+            let exported = priv_key
                 .masked_key_vec()
-                .map_err(|e| EngineError::wrap("export masked key", e))?;
-            let pub_der = priv_key
-                .pub_key_der_vec()
-                .map_err(|e| EngineError::wrap("read public key DER", e))?;
-            Ok((priv_key, masked, pub_der))
+                .map_err(|e| EngineError::wrap("export masked key", e))
+                .and_then(|masked| {
+                    priv_key
+                        .pub_key_der_vec()
+                        .map(|pub_der| (masked, pub_der))
+                        .map_err(|e| EngineError::wrap("read public key DER", e))
+                });
+            match exported {
+                Ok((masked, pub_der)) => Ok((priv_key, masked, pub_der)),
+                Err(e) => {
+                    crate::context::delete_hsm_key(priv_key, "generated EC private key");
+                    Err(e)
+                }
+            }
         })?;
 
         // Persist the blob before touching `pkey`, so a write failure surfaces
         // cleanly. (The blob stays valid independently of this key handle: a
         // later unmask imports it as a fresh handle.)
-        write_masked_blob(&params.masked_key_path, &masked)?;
+        if let Err(e) = write_masked_blob(&params.masked_key_path, &masked) {
+            crate::context::delete_hsm_key(priv_key, "generated EC private key");
+            return Err(e);
+        }
 
         // Same engine-bound EC_KEY + retained-HSM-key construction as the
         // loader, then hand it to the caller's EVP_PKEY. set1 up-refs `ec`.

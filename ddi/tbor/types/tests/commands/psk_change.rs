@@ -45,9 +45,8 @@ use crate::harness::encrypt_psk_envelope;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TborPskChangeReq;
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 /// Distinct, non-default 32-byte PSK used by the happy-path tests.
 const ROTATED_PSK: [u8; PSK_LEN] = [

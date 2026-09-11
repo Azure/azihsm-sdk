@@ -21,9 +21,8 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::build_mac_fin;
 use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::CU_PSK_ID as CU;
 
 // ---------------------------------------------------------------------------
 // Happy paths
