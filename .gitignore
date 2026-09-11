@@ -379,3 +379,9 @@ api/tests/cpp/build-release/
 _codeql_detected_source_root
 _codeql_build_dir/
 .github/instructions/fw.instructions.md
+
+# Fuzzing artifacts
+fuzz/target
+fuzz/corpus
+fuzz/artifacts
+fuzz/coverage
