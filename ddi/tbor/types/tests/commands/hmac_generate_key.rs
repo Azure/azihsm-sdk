@@ -563,3 +563,61 @@ fn hmac_generate_key_same_key_different_messages() {
 
     assert_ne!(tag_a, tag_b);
 }
+
+/// Rejects a generated HMAC key when its masked-key envelope is corrupted.
+#[test]
+fn hmac_generate_key_tampered_masked_key_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+    };
+
+    let mut generated = ctx.tbor(&req).expect("generate HMAC key");
+
+    // Corrupt the authenticated masked-key envelope.
+    let last = generated
+        .masked_key
+        .last_mut()
+        .expect("masked key must not be empty");
+    *last ^= 0x01;
+
+    let mac_req = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key,
+        msg: b"tampered generated key".to_vec(),
+    };
+
+    // Replace InvalidArg if firmware exposes a more-specific integrity error.
+    ctx.expect_fw_reject(&mac_req, TborStatus::AesGcmDecryptTagDoesNotMatch);
+}
+
+/// Rejects a generated HMAC key whose masked-key envelope is truncated.
+#[test]
+fn hmac_generate_key_truncated_masked_key_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+    };
+
+    let mut generated = ctx.tbor(&req).expect("generate HMAC key");
+    generated.masked_key.pop();
+
+    let mac_req = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key,
+        msg: b"truncated generated key".to_vec(),
+    };
+
+    // Adjust if the firmware returns a dedicated masked-key decode error.
+    ctx.expect_fw_reject(&mac_req, TborStatus::TborInvalidFixedLength);
+}
