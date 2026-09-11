@@ -368,7 +368,7 @@ fn hkdf_derive_unknown_key_type_rejected() {
     );
 }
 
-/// Rejects an unsupported derived-key type.
+/// Rejects an unsupported key scope.
 #[test]
 fn hkdf_derive_unsupported_scope_rejected() {
     let ctx = TestCtx::new();
