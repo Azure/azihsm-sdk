@@ -32,6 +32,8 @@ use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 
+#[cfg(feature = "emu")]
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
 #[cfg(feature = "emu")]
 use crate::harness::ROTATED_CO_PSK;
@@ -60,13 +62,7 @@ pub(crate) fn key_len_for_size(size: u8) -> usize {
 
 /// Generate a masked AES key of `(scope, size)` on `session_id`.
 pub(crate) fn generate_key(ctx: &TestCtx, session_id: u16, scope: u8, size: u8) -> Vec<u8> {
-    let req = TborAesGenerateKeyReq {
-        session_id,
-        scope,
-        key_size: size,
-        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
-        key_label: "AES Key".as_bytes().to_vec(),
-    };
+    let req = generate_key_req(session_id, scope, size);
     ctx.tbor(&req).expect("AesGenerateKey").masked_key
 }
 
@@ -92,13 +88,22 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, size: u8) {
     );
 }
 
+/// Builds a standard AES key-generation request for tests.
+fn generate_key_req(session_id: u16, scope: u8, key_size: u8) -> TborAesGenerateKeyReq {
+    TborAesGenerateKeyReq {
+        session_id,
+        scope,
+        key_size,
+        key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+        key_label: b"AES Key".to_vec(),
+    }
+}
+
 #[cfg(feature = "emu")]
 mod emu_tests {
     use azihsm_ddi_tbor_types::TborStatus;
 
     use super::*;
-    use crate::commands::part_init::bootstrap_rotated_co;
-    use crate::commands::part_init::ROTATED_CO_PSK;
     use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
     /// Generates every supported AES size under every supported masking-key scope.
@@ -132,11 +137,7 @@ mod emu_tests {
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
         for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope: SCOPE_EPHEMERAL,
-                key_size,
-            };
+            let req = generate_key_req(session.session_id, SCOPE_EPHEMERAL, key_size);
 
             ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
         }
@@ -149,11 +150,7 @@ mod emu_tests {
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
         for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope: SCOPE_LOCAL,
-                key_size,
-            };
+            let req = generate_key_req(session.session_id, SCOPE_LOCAL, key_size);
 
             ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
         }
@@ -166,11 +163,7 @@ mod emu_tests {
         let session = finalized_co_session(&ctx);
 
         for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope: SCOPE_SECURITY_DOMAIN,
-                key_size,
-            };
+            let req = generate_key_req(session.session_id, SCOPE_SECURITY_DOMAIN, key_size);
 
             ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
         }
@@ -183,11 +176,7 @@ mod emu_tests {
         let session = finalized_co_session(&ctx);
 
         for key_size in [0, u8::MAX] {
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope: SCOPE_EPHEMERAL,
-                key_size,
-            };
+            let req = generate_key_req(session.session_id, SCOPE_EPHEMERAL, key_size);
 
             ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
         }
@@ -215,11 +204,7 @@ mod emu_tests {
                 continue;
             }
 
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope: SCOPE_EPHEMERAL,
-                key_size,
-            };
+            let req = generate_key_req(session.session_id, SCOPE_EPHEMERAL, key_size);
 
             ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
         }
@@ -232,11 +217,7 @@ mod emu_tests {
         let session = finalized_co_session(&ctx);
 
         for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
-            let req = TborAesGenerateKeyReq {
-                session_id: session.session_id,
-                scope,
-                key_size: 0,
-            };
+            let req = generate_key_req(session.session_id, scope, 0);
 
             ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
         }
@@ -248,11 +229,7 @@ mod emu_tests {
         let ctx = TestCtx::new();
         let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-        let req = TborAesGenerateKeyReq {
-            session_id: session.session_id,
-            scope: SCOPE_SESSION,
-            key_size: 0,
-        };
+        let req = generate_key_req(session.session_id, SCOPE_SESSION, 0);
 
         ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
     }
@@ -265,11 +242,7 @@ mod emu_tests {
 
         for scope in [0, u8::MAX] {
             for key_size in [AES_KEY_SIZE_128, AES_KEY_SIZE_192, AES_KEY_SIZE_256] {
-                let req = TborAesGenerateKeyReq {
-                    session_id: session.session_id,
-                    scope,
-                    key_size,
-                };
+                let req = generate_key_req(session.session_id, scope, key_size);
 
                 ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
             }
@@ -289,11 +262,7 @@ mod emu_tests {
             "unknown session ID must differ from the active session",
         );
 
-        let req = TborAesGenerateKeyReq {
-            session_id: unknown_session_id,
-            scope: SCOPE_SESSION,
-            key_size: AES_KEY_SIZE_256,
-        };
+        let req = generate_key_req(unknown_session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
 
         ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
     }
@@ -367,11 +336,7 @@ mod emu_tests {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
-        let req = TborAesGenerateKeyReq {
-            session_id: session.session_id,
-            scope: 0,
-            key_size: 0,
-        };
+        let req = generate_key_req(session.session_id, 0, 0);
 
         ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
     }
@@ -382,11 +347,11 @@ mod emu_tests {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
-        let req = TborAesGenerateKeyReq {
-            session_id: session.session_id,
-            scope: SCOPE_SECURITY_DOMAIN + 1,
-            key_size: AES_KEY_SIZE_256,
-        };
+        let req = generate_key_req(
+            session.session_id,
+            SCOPE_SECURITY_DOMAIN + 1,
+            AES_KEY_SIZE_256,
+        );
 
         ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
     }
