@@ -41,13 +41,11 @@ use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
 use super::pota_thumbprint;
+use crate::commands::part_info::PART_STATE_INITIALIZING;
 use crate::harness::assertions::assert_fw_rejects;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
-
-/// `PartState::Initializing` discriminant.
-const PART_STATE_INITIALIZING: u8 = 4;
 
 /// Runs the supplied cleanup function when this value goes out of scope,
 /// including during panic unwinding.
