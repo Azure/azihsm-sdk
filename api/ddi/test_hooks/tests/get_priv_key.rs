@@ -23,6 +23,7 @@ use azihsm_ddi_mbor_types::DdiKeyUsage;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_test_hooks::helper_get_priv_key;
 use common::*;
+use test_with_tracing::test;
 
 #[test]
 fn test_ecc_get_privkey_no_session() {

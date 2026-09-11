@@ -36,6 +36,7 @@ azihsm_ddi_mbor_test_helpers.workspace = true
 azihsm_ddi_mock.workspace = true
 azihsm_ddi_nix.workspace = true
 azihsm_ddi_mbor_types.workspace = true
+test_with_tracing.workspace = true
 x509.workspace = true
 
 [lib]

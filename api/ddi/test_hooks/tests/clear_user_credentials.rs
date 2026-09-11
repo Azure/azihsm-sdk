@@ -23,6 +23,7 @@ use azihsm_ddi_test_hooks::DdiTestActionContext;
 use common::common_cleanup;
 use common::common_setup;
 use common::ddi_dev_test;
+use test_with_tracing::test;
 
 #[test]
 fn clear_user_credentials_succeeds() {

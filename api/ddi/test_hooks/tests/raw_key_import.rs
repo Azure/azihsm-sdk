@@ -27,6 +27,7 @@ use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_test_hooks::helper_raw_key_import;
 use azihsm_ddi_test_hooks::retrieve_shared_raw_key;
 use common::*;
+use test_with_tracing::test;
 
 const SECRET_256_SIZE: usize = 32;
 const RAW_KEY_BUFFER_SIZE: usize = 3072;
