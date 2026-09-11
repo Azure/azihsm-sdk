@@ -174,6 +174,30 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  test_azihsm-arm64-gh-ubuntu2404-pool_emu_ddi:
+
+    runs-on: azihsm-arm64-gh-ubuntu2404-pool
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Run emu DDI tests
+      id: test-emu-ddi
+      run: cargo xtask precheck --nextest --package azihsm_ddi_mbor_types --features emu --test azihsm_ddi_tests --profile ci-emu-ddi
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-emu-ddi.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   build_windows:
 
     runs-on: windows-2025-vs2026

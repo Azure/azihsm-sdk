@@ -7,6 +7,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install arm64 build dependencies
+      if: ${{ runner.arch == 'ARM64' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev
+    # Arm64 images ship no rustup.  Install it with no default
+    # toolchain so rust-toolchain.toml stays the single source of the
+    # toolchain version (rustup auto-installs it on the first cargo call).
+    - name: Install rustup
+      if: ${{ runner.arch == 'ARM64' }}
+      shell: bash
+      run: |
+        curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+          | sh -s -- -y --default-toolchain none --profile minimal
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
     - name: Install apt packages
       shell: bash
       run: |
@@ -21,7 +37,7 @@ runs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.CACHE_KEY_ID }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
       shell: bash
