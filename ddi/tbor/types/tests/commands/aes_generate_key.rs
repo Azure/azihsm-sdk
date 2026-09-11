@@ -101,7 +101,10 @@ fn generate_key_req(session_id: u16, scope: u8, key_size: u8) -> TborAesGenerate
 
 #[cfg(feature = "emu")]
 mod emu_tests {
+    use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
     use azihsm_ddi_tbor_types::TborStatus;
+    use azihsm_ddi_tbor_types::AES_OP_DECRYPT;
+    use azihsm_ddi_tbor_types::AES_OP_ENCRYPT;
 
     use super::*;
     use crate::commands::sd_sealing_key_gen::finalized_co_session;
@@ -300,34 +303,55 @@ mod emu_tests {
         }
     }
 
-    /// Verifies different masking scopes return distinct masked-key blobs.
+    /// Verifies AES keys generated under each supported masking scope can be
+    /// consumed successfully by `AesEncryptDecrypt`.
     #[test]
-    fn aes_generate_key_different_scopes_return_distinct_masked_blobs() {
+    fn aes_generate_key_all_scopes_usable_by_aes_encrypt_decrypt() {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
 
-        let session_masked =
-            generate_key(&ctx, session.session_id, SCOPE_SESSION, AES_KEY_SIZE_256);
+        let plaintext = vec![0xA5u8; 32];
+        let iv = [0x11u8; 16];
 
-        let ephemeral_masked =
-            generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, AES_KEY_SIZE_256);
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            let masked_key = generate_key(&ctx, session.session_id, scope, AES_KEY_SIZE_256);
 
-        let local_masked = generate_key(&ctx, session.session_id, SCOPE_LOCAL, AES_KEY_SIZE_256);
+            let encrypt_req = TborAesEncryptDecryptReq {
+                session_id: session.session_id,
+                masked_key: masked_key.clone(),
+                op: AES_OP_ENCRYPT,
+                msg: plaintext.clone(),
+                iv,
+            };
 
-        assert_ne!(
-            session_masked, ephemeral_masked,
-            "Session and Ephemeral scopes must not return identical masked blobs",
-        );
+            let encrypted = ctx.tbor(&encrypt_req).expect("AesEncryptDecrypt encrypt");
 
-        assert_ne!(
-            session_masked, local_masked,
-            "Session and Local scopes must not return identical masked blobs",
-        );
+            assert_eq!(
+                encrypted.msg.len(),
+                plaintext.len(),
+                "ciphertext length must match plaintext length for scope {scope}",
+            );
 
-        assert_ne!(
-            ephemeral_masked, local_masked,
-            "Ephemeral and Local scopes must not return identical masked blobs",
-        );
+            assert_ne!(
+                encrypted.msg, plaintext,
+                "encryption must transform plaintext for scope {scope}",
+            );
+
+            let decrypt_req = TborAesEncryptDecryptReq {
+                session_id: session.session_id,
+                masked_key,
+                op: AES_OP_DECRYPT,
+                msg: encrypted.msg,
+                iv,
+            };
+
+            let decrypted = ctx.tbor(&decrypt_req).expect("AesEncryptDecrypt decrypt");
+
+            assert_eq!(
+                decrypted.msg, plaintext,
+                "AES key generated under scope {scope} must decrypt correctly",
+            );
+        }
     }
 
     /// Verifies invalid key size takes precedence when both size and scope are invalid.
