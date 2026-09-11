@@ -171,6 +171,17 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     unsafe {
         engine.set_ec_method(crate::sign::ecdsa_method()?)?;
     }
+    // Bind RSA to the engine so RSA_new_method produces engine-bound keys that
+    // hold a functional engine reference (keeping EngineData alive while a
+    // loaded key lives) and carry ex_data. The default RSA method drives the
+    // public operations; HSM private-key operations land on the RSA
+    // EVP_PKEY_METHOD in later work.
+    // SAFETY: RSA_get_default_method returns libcrypto's process-lifetime
+    // const method, which outlives the engine.
+    #[allow(unsafe_code)]
+    unsafe {
+        engine.set_rsa_method(ffi::RSA_get_default_method())?;
+    }
     // Advertise the engine's EC EVP_PKEY_METHOD: HSM keygen for armed
     // contexts, HSM ECDH derive for HSM-backed keys; everything else
     // delegates to the built-ins (see azihsm_ossl_engine_core::pkey_method).
@@ -183,6 +194,12 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
         engine,
     )?;
+    // RSA import: genpkey -algorithm RSA wraps/unwraps an external key into the
+    // HSM (the HSM cannot generate RSA natively); unarmed contexts delegate to
+    // software keygen (see azihsm_ossl_engine_core::rsa_pkey_method).
+    azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
+        crate::rsaimport::AzihsmRsaImport,
+    >(engine)?;
     // Provider-parity serialization for HSM-backed keys (-text info block,
     // clean export refusal); software EC keys keep the built-in behavior via
     // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
