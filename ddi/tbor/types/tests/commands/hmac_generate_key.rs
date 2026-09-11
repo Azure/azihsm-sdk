@@ -350,20 +350,27 @@ fn hmac_generate_key_rejects_closed_session() {
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
-/// Rejects session IDs that do not identify an active session.
+/// Rejects a request whose session id does not match the active session.
 #[test]
 fn hmac_generate_key_rejects_invalid_session_id() {
     let ctx = TestCtx::new();
-    for session_id in [0, u16::MAX] {
-        let req = TborHmacGenerateKeyReq {
-            session_id,
-            scope: SCOPE_SESSION,
-            hash_algo: HMAC_HASH_SHA256,
-            key_length: 32,
-            key_label: Vec::new(),
-        };
-        ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
-    }
+    let session = finalized_co_session(&ctx);
+
+    assert_ne!(
+        session.session_id,
+        u16::MAX,
+        "test requires an unused session id",
+    );
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: u16::MAX,
+        scope: SCOPE_SESSION,
+        hash_algo: HMAC_HASH_SHA256,
+        key_length: 32,
+        key_label: Vec::new(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
 }
 
 /// Accepts the exact minimum and maximum key length for every HMAC variant.
@@ -489,6 +496,7 @@ fn hmac_generate_key_tampered_masked_key_rejected() {
         scope: SCOPE_LOCAL,
         hash_algo: HMAC_HASH_SHA256,
         key_length: 32,
+        key_label: Vec::new(),
     };
 
     let mut generated = ctx.tbor(&req).expect("generate HMAC key");
@@ -506,7 +514,6 @@ fn hmac_generate_key_tampered_masked_key_rejected() {
         msg: b"tampered generated key".to_vec(),
     };
 
-    // Replace InvalidArg if firmware exposes a more-specific integrity error.
     ctx.expect_fw_reject(&mac_req, TborStatus::AesGcmDecryptTagDoesNotMatch);
 }
 
@@ -521,6 +528,7 @@ fn hmac_generate_key_truncated_masked_key_rejected() {
         scope: SCOPE_LOCAL,
         hash_algo: HMAC_HASH_SHA256,
         key_length: 32,
+        key_label: Vec::new(),
     };
 
     let mut generated = ctx.tbor(&req).expect("generate HMAC key");
@@ -532,6 +540,5 @@ fn hmac_generate_key_truncated_masked_key_rejected() {
         msg: b"truncated generated key".to_vec(),
     };
 
-    // Adjust if the firmware returns a dedicated masked-key decode error.
     ctx.expect_fw_reject(&mac_req, TborStatus::TborInvalidFixedLength);
 }
