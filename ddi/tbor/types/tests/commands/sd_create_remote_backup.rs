@@ -26,8 +26,23 @@
 //! * Missing OOB evidence → `InvalidArg`.
 //! * Policy that does not name this partition as the backing partition
 //!   (`backup_part_id` / `backup_part_pub_key` absent) → `InvalidArg`.
-
-#![cfg(feature = "emu")]
+//!
+//! # The SD one-shot
+//!
+//! The command provisions the SDMK behind a one-shot gate (see
+//! `HsmError::SdAlreadyInitialized`), so a second create on an
+//! already-initialized partition is rejected — that is the behaviour
+//! `sd_create_remote_backup_is_one_shot` asserts.
+//!
+//! The gate is cleared by `clear_state` on every partition reset kind,
+//! including the `Migrate` driven by the harness factory reset, so each
+//! test starts from an uninitialized security domain and the file is
+//! self-isolating on hardware. That was not always true: uno previously
+//! cleared the flag only on `Disable`, so it survived an NSSR while the
+//! same reset dropped the SDMK handle — leaving the partition claiming a
+//! security domain whose key was gone, permanently. Emulator builds never
+//! saw it because the std PAL clears the flag on `part_enable` and
+//! `clear_enabled_state`.
 
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
@@ -288,7 +303,7 @@ fn dummy_evidence(report: &[u8]) -> ReceiverEvidence {
 }
 
 #[test]
-fn sd_create_remote_backup_roundtrip_emu() {
+fn sd_create_remote_backup_roundtrip() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -324,7 +339,7 @@ fn sd_create_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_is_one_shot_emu() {
+fn sd_create_remote_backup_is_one_shot() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -344,7 +359,7 @@ fn sd_create_remote_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_missing_oob_emu() {
+fn sd_create_remote_backup_rejects_missing_oob() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, _pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -358,7 +373,7 @@ fn sd_create_remote_backup_rejects_missing_oob_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_non_backing_policy_emu() {
+fn sd_create_remote_backup_rejects_non_backing_policy() {
     let ctx = TestCtx::new();
 
     // `finalized_co_session` binds `known_good_part_policy` — POTA/SATA
@@ -384,7 +399,7 @@ fn flip_last_byte(mut bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
+fn sd_create_remote_backup_rejects_wrong_sata_anchor() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -402,7 +417,7 @@ fn sd_create_remote_backup_rejects_wrong_sata_anchor_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
+fn sd_create_remote_backup_rejects_leaf_key_mismatch() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -421,7 +436,7 @@ fn sd_create_remote_backup_rejects_leaf_key_mismatch_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
+fn sd_create_remote_backup_rejects_tampered_cert_sig() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
@@ -440,7 +455,7 @@ fn sd_create_remote_backup_rejects_tampered_cert_sig_emu() {
 }
 
 #[test]
-fn sd_create_remote_backup_rejects_tampered_report_emu() {
+fn sd_create_remote_backup_rejects_tampered_report() {
     let ctx = TestCtx::new();
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
