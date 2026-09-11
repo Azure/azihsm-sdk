@@ -354,7 +354,17 @@ fn hmac_generate_key_rejects_closed_session() {
 #[test]
 fn hmac_generate_key_rejects_invalid_session_id() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+
+    // Rotate the CO PSK, then close the session so the CU session can open.
+    let co_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    ctx.session_close(co_session.session_id)
+        .expect("close rotated CO session");
+
+    // Rotate the CU PSK as well. Both role PSKs must be non-default so the
+    // dispatcher reaches active-session validation instead of the default-PSK gate.
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    ctx.session_close(cu_session.session_id)
+        .expect("close rotated CU session");
 
     assert_ne!(
         session.session_id,
