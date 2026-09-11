@@ -16,9 +16,9 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-06-08):
-* emu: 50 tests
-* mock: 6 tests
+Test names are backend-neutral unless a row explicitly says otherwise.
+The command suite runs against both emu and hardware where supported;
+backend-specific tests are gated in source with `#[cfg(...)]`.
 
 ## Legend
 
@@ -40,35 +40,46 @@ All test names below are relative to the
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Round-trip returns wire-correct `TborApiRevResp` | ✅ | `api_rev::round_trip_emu` |  |
-| Repeated calls return stable values | ✅ | `api_rev::api_rev_repeated_stable_emu` | Smoke for transport idempotence |
-| Independent of session state (no session open, then open, then close — all succeed) | ✅ | `api_rev::api_rev_independent_of_session_state_emu` | Proves the dispatcher does not gate `ApiRev` on session presence |
-| Default-PSK gate bypass (E5) | ✅ | `default_psk_gate::default_psk_gate_api_rev_bypass_emu` | Out-of-session opcodes are never default-PSK-gated |
+| Round-trip returns wire-correct `TborApiRevResp` | ✅ | `api_rev::round_trip` |  |
+| Repeated calls return stable values | ✅ | `api_rev::api_rev_repeated_stable` | Smoke for transport idempotence |
+| Independent of session state (no session open, then open, then close — all succeed) | ✅ | `api_rev::api_rev_independent_of_session_state` | Proves the dispatcher does not gate `ApiRev` on session presence |
+| Default-PSK gate bypass (E5) | ✅ | `default_psk_gate::default_psk_gate_api_rev_bypass` | Out-of-session opcodes are never default-PSK-gated |
 | Mock backend rejects the opcode at the transport layer | ✅ (mock) | `api_rev::unsupported_on_mock` | Mock has no TBOR-capable transport |
 
 ## `SessionOpenInit` (opcode out-of-session, phase 1 of handshake)
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Happy path (CO + Authenticated) | ✅ | `open_session::open_session_co_authenticated_happy_emu` |  |
-| Happy path (CU + PlainText) | ✅ | `open_session::open_session_cu_plaintext_happy_emu` |  |
-| Role gate: CO + PlainText → `InvalidSessionType` | ✅ | `open_session::open_session_co_plaintext_rejected_emu` |  |
-| Role gate: CU + Authenticated → `InvalidSessionType` | ✅ | `open_session::open_session_cu_authenticated_rejected_emu` |  |
-| `psk_id` not in `{0, 1}` → `InvalidPskId` | ✅ 🔁 | `open_session::open_session_invalid_psk_id_emu` | Loop over `[2, 0x7F, 0xFF]` |
-| `session_type` byte not in `{0, 1}` → `InvalidSessionType` | ✅ | `open_session::open_session_invalid_session_type_byte_emu` | Bypasses typed enum; ships raw byte `42` |
-| `suite_id` not in `{0x01}` → `UnsupportedSessionSuite` | ✅ 🔁 | `open_session::open_session_unsupported_suite_id_emu` | Loop over `[0x00, 0x02, 0xff]` |
-| Default-PSK gate bypass (E3, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass_emu` |  |
-| Multiple concurrent sessions return distinct session ids | ✅ | `open_session::open_session_multiple_concurrent_emu` |  |
-| Malformed `pk_init` (length / curve) | ⚠️ | — | Spec arm exists in handler; no negative test |
+| Happy path (CO + Authenticated) | ✅ | `open_session::open_session_co_authenticated_happy` | Emu + hardware |
+| Happy path (CU + PlainText) | ✅ | `open_session::open_session_cu_plaintext_happy` | Emu + hardware |
+| Role gate: CO + PlainText → `InvalidSessionType` | ✅ | `open_session::open_session_co_plaintext_rejected` | Emu + hardware |
+| Role gate: CU + Authenticated → `InvalidSessionType` | ✅ | `open_session::open_session_cu_authenticated_rejected` | Emu + hardware |
+| `psk_id` not in `{0, 1}` → `InvalidPskId` | ✅ 🔁 | `open_session::open_session_invalid_psk_id` | Loop over `[2, 0x7F, 0xFF]` |
+| `session_type` byte not in `{0, 1}` → `InvalidSessionType` | ✅ | `open_session::open_session_invalid_session_type_byte` | Bypasses typed enum; ships raw byte `42` |
+| `suite_id` not in `{0x01}` → `UnsupportedSessionSuite` | ✅ 🔁 | `open_session::open_session_unsupported_suite_id` | Loop over `[0x00, 0x02, 0xff]` |
+| Default-PSK gate bypass (E3, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass` | Emu + hardware |
+| Multiple concurrent sessions return distinct session ids | ✅ | `open_session::open_session_multiple_concurrent` | Uses separate file handles; emu + hardware |
+| Second open on the same file handle → `FileHandleSessionLimitReached` | ✅ | `open_session::open_session_second_on_same_fd_rejected` | Emu performs the same per-handle validation as the native driver |
+| CU table limit (7), rejection, and slot recovery | ✅ | `open_session::open_session_fills_cu_table_then_recovers` | Emu + hardware |
+| CO slot limit (1), rejection, and slot recovery | ✅ | `open_session::open_session_fills_co_slot_then_recovers` | Emu + hardware |
+| Full table (1 CO + 7 CU), per-role rejection, and recovery | ✅ | `open_session::open_session_fills_full_table_then_recovers` | Emu + hardware |
+| Concurrent CU opens on separate file handles all succeed with unique ids | ✅ (hw) | `open_session::open_session_multi_threaded_all_should_open` | Native-only because it specifically exercises concurrent OS file handles |
+| Concurrent valid inits on one file handle → exactly one success; losers preserve the winning Pending session | ✅ (hw) | `open_session::session_open_init_multi_threaded_single_winner_keeps_pending_session_finishable` | Native-only; completes `SessionOpenFinish` after all losing Init requests return |
+| All-zero `pk_init` → `InvalidArg` | ✅ | `open_session::pk_init_all_zero_rejected` | Emu + hardware |
+| Off-curve `pk_init` → `EccPublicKeyValidationFailed` | ✅ | `open_session::pk_init_not_on_curve_rejected` | Emu + hardware |
+| X or Y equal to the P-384 field prime → `EccPublicKeyValidationFailed` | ✅ 🔁 | `open_session::pk_init_x_as_prime_rejected`, `open_session::pk_init_y_as_prime_rejected` | Pins coordinate range validation |
+| Single-bit corruption of a valid `pk_init` → `EccPointValidationFailed` | ✅ | `open_session::pk_init_single_byte_tampered_rejected` | Pins on-curve validation |
+| Malformed `pk_init` length | ⚠️ | — | Fixed-size host type prevents constructing this case without bypassing the typed encoder |
 
 ## `SessionOpenFinish` (opcode out-of-session, phase 2 of handshake)
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Phase-2 MAC bit-flip → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_mac_tampered_emu` | Also: FW destroys the pending slot on MAC mismatch |
-| Phase-2 `seed_envelope` tamper → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_seed_envelope_tampered_emu` | Syntactically valid header, bogus IV/CT/tag |
-| Unknown `session_id` → FW rejection | 🟡 | `open_session::session_open_finish_unknown_session_id_emu` | Asserts `DdiError::DdiError(_)`; specific status not pinned |
-| Second `Finish` against an already-completed slot → FW rejection | 🟡 | `open_session::open_session_double_finish_emu` | Asserts `DdiError::DdiError(_)` |
+| Phase-2 MAC bit-flip → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_mac_tampered` | Also verifies FW destroys the pending slot on MAC mismatch |
+| Phase-2 `seed_envelope` tamper → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_seed_envelope_tampered` | Syntactically valid header, bogus IV/ciphertext/tag |
+| Unknown `session_id` → `SessionNotFound` | ✅ | `open_session::session_open_finish_unknown_session_id` | Specific `TborStatus` is pinned |
+| Second `Finish` against an already-Active slot → `SessionNotPending` | ✅ | `open_session::open_session_double_finish` | Specific `TborStatus` is pinned |
+| Concurrent valid finishes for one Pending slot → exactly one success; losers preserve the winning Active session | ✅ | `open_session::session_open_finish_multi_threaded_single_winner_keeps_session_active` | Emu + hardware; uses the winner for `PskChange` after loser rollback |
 | Finish against a pending slot whose Init was for a different role | ⚠️ | — | Spec arm exists; not exercised |
 
 ## `SessionClose` (opcode in-session, allow-listed)
@@ -81,24 +92,24 @@ All test names below are relative to the
 | Unknown `session_id` → FW rejection | 🟡 | `session_close::session_close_unknown_id` | Asserts `DdiError::DdiError(_)` |
 | Double-close of the same id → FW rejection | 🟡 | `session_close::session_close_double_close` | Asserts `DdiError::DdiError(_)` |
 | Slot is freed for subsequent open after close | ✅ | `session_close::session_close_then_reopen` |  |
-| Default-PSK gate bypass (E2, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass_emu` |  |
+| Default-PSK gate bypass (E2, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass` |  |
 
 ## `PskChange` (opcode in-session, allow-listed)
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Happy path (CU); rotation took effect (reopen under rotated bytes succeeds) | ✅ | `psk_change::psk_change_happy_cu_emu` | Shared body via `run_psk_change_happy` |
-| Happy path (CO); rotation took effect | ✅ | `psk_change::psk_change_happy_co_emu` |  |
-| Reopen with old default PSK fails after rotation | ✅ | `psk_change::psk_change_reopen_with_old_psk_fails_emu` | Either host- or FW-side rejection accepted |
-| One-shot per session: second `PskChange` on same session → `InvalidPermissions` | ✅ | `psk_change::psk_change_second_attempt_same_session_fails_emu` |  |
-| Envelope ciphertext bit-flip → `AeadEnvelopeAuthFailed` | ✅ 🔁 | `psk_change::psk_change_envelope_tampered_emu` | Loop over `[ct_flip, aad_flip]` |
-| Envelope AAD bit-flip → `AeadEnvelopeAuthFailed` | ✅ 🔁 | `psk_change::psk_change_envelope_tampered_emu` | Same test, second sub-case |
-| Empty `psk_envelope` → `InvalidArg` | ✅ | `psk_change::psk_change_empty_envelope_emu` |  |
-| AAD encodes wrong session id (rest of envelope is valid) → `AeadEnvelopeAuthFailed` | ✅ | `psk_change::psk_change_wrong_session_id_in_aad_emu` | FW recomputes AEAD-GCM tag over caller-supplied AAD, then constant-compares against `build_psk_change_aad(req.session_id)` |
-| Envelope encrypted under a different session's `param_key` → `AeadEnvelopeAuthFailed` | ✅ | `psk_change::psk_change_envelope_from_other_session_emu` | Session A's `param_key` + session B's id |
-| Plaintext length ≠ `PSK_LEN` → `InvalidArg` | ✅ 🔁 | `psk_change::psk_change_wrong_plaintext_length_emu` | Loop over `[PSK_LEN - 1, PSK_LEN + 1]` |
-| AAD length ≠ `PSK_CHANGE_AAD_LEN` → `InvalidArg` | ✅ | `psk_change::psk_change_wrong_aad_length_emu` | 64-byte AAD: AEAD-open succeeds but FW length-checks before AAD compare |
-| Default-PSK gate bypass (E1, CO) | ✅ | `default_psk_gate::default_psk_gate_psk_change_bypass_emu` | CU bypass implicitly exercised by `psk_change_happy_cu_emu` |
+| Happy path (CU); rotation took effect (reopen under rotated bytes succeeds) | ✅ | `psk_change::psk_change_happy_cu` | Shared body via `run_psk_change_happy` |
+| Happy path (CO); rotation took effect | ✅ | `psk_change::psk_change_happy_co` |  |
+| Reopen with old default PSK fails after rotation | ✅ | `psk_change::psk_change_reopen_with_old_psk_fails` | Either host- or FW-side rejection accepted |
+| One-shot per session: second `PskChange` on same session → `InvalidPermissions` | ✅ | `psk_change::psk_change_second_attempt_same_session_fails` |  |
+| Envelope ciphertext bit-flip → `AeadEnvelopeAuthFailed` | ✅ 🔁 | `psk_change::psk_change_envelope_tampered` | Loop over `[ct_flip, aad_flip]` |
+| Envelope AAD bit-flip → `AeadEnvelopeAuthFailed` | ✅ 🔁 | `psk_change::psk_change_envelope_tampered` | Same test, second sub-case |
+| Empty `psk_envelope` → `InvalidArg` | ✅ | `psk_change::psk_change_empty_envelope` |  |
+| AAD encodes wrong session id (rest of envelope is valid) → `AeadEnvelopeAuthFailed` | ✅ | `psk_change::psk_change_wrong_session_id_in_aad` | FW recomputes AEAD-GCM tag over caller-supplied AAD, then constant-compares against `build_psk_change_aad(req.session_id)` |
+| Envelope encrypted under a different session's `param_key` → `AeadEnvelopeAuthFailed` | ✅ | `psk_change::psk_change_envelope_from_other_session` | Session A's `param_key` + session B's id |
+| Plaintext length ≠ `PSK_LEN` → `InvalidArg` | ✅ 🔁 | `psk_change::psk_change_wrong_plaintext_length` | Loop over `[PSK_LEN - 1, PSK_LEN + 1]` |
+| AAD length ≠ `PSK_CHANGE_AAD_LEN` → `InvalidArg` | ✅ | `psk_change::psk_change_wrong_aad_length` | 64-byte AAD: AEAD-open succeeds but FW length-checks before AAD compare |
+| Default-PSK gate bypass (E1, CO) | ✅ | `default_psk_gate::default_psk_gate_psk_change_bypass` | CU bypass implicitly exercised by `psk_change::psk_change_happy_cu` |
 
 ## `PartInit` (opcode in-session, gated)
 
@@ -164,11 +175,11 @@ role's partition PSK still matches the compiled-in default.
 
 | Spec arm | Status | Test | Notes |
 |---|---|---|---|
-| E1: `PskChange` is allow-listed (CO) | ✅ | `default_psk_gate::default_psk_gate_psk_change_bypass_emu` | CU implicitly via `psk_change_happy_cu_emu` |
-| E2: `SessionClose` is allow-listed (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass_emu` |  |
-| E3: `SessionOpenInit` is out-of-session (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass_emu` |  |
+| E1: `PskChange` is allow-listed (CO) | ✅ | `default_psk_gate::default_psk_gate_psk_change_bypass` | CU implicitly via `psk_change::psk_change_happy_cu` |
+| E2: `SessionClose` is allow-listed (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_close_bypass` |  |
+| E3: `SessionOpenInit` is out-of-session (both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass` |  |
 | E4: A non-allow-listed in-session command under default PSK is rejected with `DefaultPskMustRotate` | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co` | `PartInit` is currently the only such opcode; this row collapses what `default_psk_gate.rs` calls E4 |
-| E5: `ApiRev` is out-of-session | ✅ | `default_psk_gate::default_psk_gate_api_rev_bypass_emu` |  |
+| E5: `ApiRev` is out-of-session | ✅ | `default_psk_gate::default_psk_gate_api_rev_bypass` |  |
 
 ## Host-side TBOR codec (no FW round-trip required)
 
@@ -186,7 +197,7 @@ role's partition PSK still matches the compiled-in default.
 
 The rows marked ⚠️ above, consolidated:
 
-1. **`SessionOpenInit`**: malformed `pk_init` (length / curve) — no negative test.
+1. **`SessionOpenInit`**: malformed `pk_init` length requires bypassing the fixed-size typed request encoder. Curve and coordinate validation are covered.
 2. **`SessionOpenFinish`**: Finish against a pending slot opened for a different role — no test.
 3. **`PartInit` wire fields**: `pota_thumbprint` is fixed-size on the wire so the FW reaction to a malformed value is not exercised; would require host-side encoding bypass.
 
@@ -195,13 +206,11 @@ and could be tightened to assert a specific `TborStatus`:
 
 1. `session_close::session_close_unknown_id` — likely `SessionNotFound`.
 2. `session_close::session_close_double_close` — likely `SessionNotFound`.
-3. `open_session::session_open_finish_unknown_session_id_emu` — likely `SessionNotFound` or `SessionNotPending`.
-4. `open_session::open_session_double_finish_emu` — likely `SessionNotPending`.
-5. `part_final::part_final_reject_tampered_backup` — expected `AesGcmDecryptTagDoesNotMatch`.
-6. `part_final::part_final_reject_wrong_state` — expected `InvalidArg`.
-7. `part_final::part_final_reject_policy_mismatch` — expected `InvalidArg`.
-8. `part_final::part_final_reject_unanchored_chain_emu` — expected `InvalidArg`.
-9. `part_final::part_final_reject_pta_mismatch_emu` — expected `PartFinalPtaMismatch`.
+3. `part_final::part_final_reject_tampered_backup` — expected `AesGcmDecryptTagDoesNotMatch`.
+4. `part_final::part_final_reject_wrong_state` — expected `InvalidArg`.
+5. `part_final::part_final_reject_policy_mismatch` — expected `InvalidArg`.
+6. `part_final::part_final_reject_unanchored_chain_emu` — expected `InvalidArg`.
+7. `part_final::part_final_reject_pta_mismatch_emu` — expected `PartFinalPtaMismatch`.
 
 ---
 
