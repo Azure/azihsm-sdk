@@ -14,6 +14,7 @@ use azihsm_ddi_mbor_codec::MborEncode;
 use azihsm_ddi_mbor_codec::MborLen;
 use azihsm_ddi_mbor_codec::MborLenAccumulator;
 use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiEncryptedBk3;
 use azihsm_ddi_mbor_types::DdiKeyType;
 use azihsm_ddi_mbor_types::DdiMaskedKeyAttributes;
 use azihsm_ddi_mbor_types::DdiMaskedKeyMetadata;
@@ -24,10 +25,13 @@ use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
 use zerocopy::FromBytes;
+use zeroize::Zeroize;
 
+use crate::credentials::EncryptedCredential;
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::aeshmac::AesHmacOp;
 use crate::crypto::ecc::EccPrivateOp;
+use crate::crypto::rand::rand_bytes;
 use crate::crypto_env::CryptEnv;
 use crate::errors::ManticoreError;
 use crate::lmkey_derive::LMKeyDerive;
@@ -51,6 +55,26 @@ use crate::vault::APP_ID_FOR_INTERNAL_KEYS;
 use crate::vault::DEFAULT_VAULT_ID;
 
 pub(crate) const METADATA_MAX_SIZE_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FipsProvisioningStatus {
+    NotApproved,
+    SecureApproved,
+    LegacyUnapproved,
+}
+
+#[derive(Debug)]
+pub(crate) struct Bk3ProvCred {
+    id: [u8; 16],
+    pin: [u8; 16],
+}
+
+impl Drop for Bk3ProvCred {
+    fn drop(&mut self) {
+        self.id.zeroize();
+        self.pin.zeroize();
+    }
+}
 
 // Hard coded BK_BOOT. used to mask bk3.
 pub(crate) const BK_BOOT: [u8; BK_AES_CBC_256_HMAC384_SIZE_BYTES] = [
@@ -226,6 +250,77 @@ impl Function {
     /// Init the BK3
     pub(crate) fn init_bk3(&self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<Vec<u8>, ManticoreError> {
         self.inner.write().init_bk3(bk3)
+    }
+
+    /// Store the volatile Phase-2 BK3 provisioning credential.
+    pub(crate) fn set_init_bk3_pin(
+        &self,
+        encrypted_credential: EncryptedCredential,
+        client_pub_key: &[u8],
+    ) -> Result<(), ManticoreError> {
+        let state = self.get_function_state();
+        if state.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
+        if state.bk3_prov_cred_is_set() {
+            return Err(ManticoreError::Bk3PinAlreadySet);
+        }
+
+        let vault = state.get_vault(DEFAULT_VAULT_ID)?;
+        let (id, pin) = vault.decrypt_establish_credential(encrypted_credential, client_pub_key)?;
+
+        state.set_bk3_prov_cred(id, pin)?;
+        vault.complete_establish_credential()?;
+        Ok(())
+    }
+
+    pub(crate) fn secure_init_bk3(
+        &self,
+        encrypted_bk3: &DdiEncryptedBk3,
+        client_pub_key: &[u8],
+    ) -> Result<(Vec<u8>, [u8; 16]), ManticoreError> {
+        let state = self.get_function_state();
+        if state.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
+
+        let vault = state.get_vault(DEFAULT_VAULT_ID)?;
+
+        // Fail fast on the tunnel nonce before the PIN check, mirroring firmware
+        // (`secure_init_bk3::on_start`). A stale/replayed payload (e.g. built
+        // before an NSSR/live-migration reset regenerated the nonce) is rejected
+        // as `NonceMismatch` here, so the mock and firmware return the same
+        // status regardless of prov-cred state.
+        if encrypted_bk3.nonce != vault.get_nonce() {
+            return Err(ManticoreError::NonceMismatch);
+        }
+
+        let bk3 = state
+            .with_bk3_prov_cred(|cred| {
+                vault.decrypt_secure_bk3(encrypted_bk3, client_pub_key, &cred.id, &cred.pin)
+            })
+            .ok_or(ManticoreError::Bk3PinNotSet)??;
+
+        let metadata = DdiMaskedKeyMetadata {
+            svn: Some(0),
+            key_type: DdiKeyType::Secret384,
+            key_attributes: DdiMaskedKeyAttributes { blob: [0u8; 32] },
+            bks2_index: None,
+            key_tag: None,
+            key_label: MborByteArray::from_slice(b"BK3")
+                .map_err(|_| ManticoreError::InternalError)?,
+            key_length: BK3_SIZE_BYTES as u16,
+        };
+        let masked = encode_masked_key(&bk3, &BK_BOOT, &metadata)?;
+
+        let mut vm_launch_guid = [0u8; 16];
+        rand_bytes(&mut vm_launch_guid)?;
+
+        vault.complete_establish_credential()?;
+        state.clear_bk3_prov_cred();
+        state.set_bk3_initialized()?;
+        state.set_fips_status(FipsProvisioningStatus::SecureApproved);
+        Ok((masked, vm_launch_guid))
     }
 
     #[allow(dead_code)]
@@ -545,6 +640,8 @@ impl FunctionInner {
 
         let masked = encode_masked_key(&bk3, &BK_BOOT, &metadata)?;
         self.state.set_bk3_initialized()?;
+        self.state
+            .set_fips_status(FipsProvisioningStatus::LegacyUnapproved);
         Ok(masked)
     }
 
@@ -861,10 +958,49 @@ impl FunctionState {
         self.inner.read().is_bk3_initialized()
     }
 
+    pub(crate) fn bk3_prov_cred_is_set(&self) -> bool {
+        self.inner.read().bk3_prov_cred.is_some()
+    }
+
+    pub(crate) fn clear_bk3_prov_cred(&self) {
+        self.inner.write().bk3_prov_cred.take();
+    }
+
+    pub(crate) fn with_bk3_prov_cred<R>(&self, f: impl FnOnce(&Bk3ProvCred) -> R) -> Option<R> {
+        self.inner.read().bk3_prov_cred.as_ref().map(f)
+    }
+
+    pub(crate) fn set_bk3_prov_cred(
+        &self,
+        id: [u8; 16],
+        pin: [u8; 16],
+    ) -> Result<(), ManticoreError> {
+        if id == [0u8; 16] || pin == [0u8; 16] {
+            return Err(ManticoreError::InvalidAppCredentials);
+        }
+        let mut inner = self.inner.write();
+        if inner.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
+        if inner.bk3_prov_cred.is_some() {
+            return Err(ManticoreError::Bk3PinAlreadySet);
+        }
+        inner.bk3_prov_cred = Some(Bk3ProvCred { id, pin });
+        Ok(())
+    }
+
     /// Marks BK3 as initialized. Returns
     /// [`ManticoreError::Bk3AlreadyInitialized`] if it was already set.
     pub(crate) fn set_bk3_initialized(&self) -> Result<(), ManticoreError> {
         self.inner.write().set_bk3_initialized()
+    }
+
+    pub(crate) fn set_fips_status(&self, status: FipsProvisioningStatus) {
+        self.inner.write().fips_status = status;
+    }
+
+    pub(crate) fn fips_approved(&self) -> bool {
+        self.inner.read().fips_status == FipsProvisioningStatus::SecureApproved
     }
 
     /// Get backup key for the partition
@@ -1033,6 +1169,8 @@ struct FunctionStateInner {
     /// per power cycle; emulate that here so callers exercise the
     /// same error path.
     bk3_initialized: bool,
+    bk3_prov_cred: Option<Bk3ProvCred>,
+    fips_status: FipsProvisioningStatus,
 }
 
 impl Drop for FunctionStateInner {
@@ -1059,6 +1197,8 @@ impl FunctionStateInner {
             sealed_bk3_actual_len: None,
             bk_partition: None,
             bk3_initialized: false,
+            bk3_prov_cred: None,
+            fips_status: FipsProvisioningStatus::NotApproved,
         })
     }
 
@@ -1489,6 +1629,7 @@ impl FunctionStateInner {
         // does not clear that state. The SDK must reuse a cached MOBK
         // after reset.
         let bk3_initialized = self.bk3_initialized;
+        let fips_status = self.fips_status;
 
         // Reset to new state
         *self = Self::new(tables_max)?;
@@ -1497,6 +1638,7 @@ impl FunctionStateInner {
         self.sealed_bk3_data = sealed_bk3_data;
         self.sealed_bk3_actual_len = sealed_bk3_actual_len;
         self.bk3_initialized = bk3_initialized;
+        self.fips_status = fips_status;
 
         Ok(())
     }
