@@ -1,0 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_core_crypto_ml_dsa"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+test = true
+
+[dependencies]
+ml-dsa = { workspace = true }
+
+[lints]
+workspace = true

@@ -43,6 +43,7 @@ members = [
   "fw/core/crypto/key-derive",
   "fw/core/crypto/key-masking",
   "fw/core/crypto/key-report",
+  "fw/core/crypto/ml-dsa",
   "fw/core/crypto/x509-builder",
   "fw/core/crypto/x509-builder/gen",
   "fw/core/crypto/x509-chain",
@@ -141,6 +142,7 @@ azihsm_fw_core_crypto_hpke = { path = "fw/core/crypto/hpke" }
 azihsm_fw_core_crypto_key_derive = { path = "fw/core/crypto/key-derive" }
 azihsm_fw_core_crypto_key_masking = { path = "fw/core/crypto/key-masking" }
 azihsm_fw_core_crypto_key_report = { path = "fw/core/crypto/key-report" }
+azihsm_fw_core_crypto_ml_dsa = { path = "fw/core/crypto/ml-dsa" }
 azihsm_fw_core_crypto_x509_builder = { path = "fw/core/crypto/x509-builder" }
 azihsm_fw_core_crypto_x509_builder_gen = { path = "fw/core/crypto/x509-builder/gen" }
 azihsm_fw_core_crypto_x509_chain = { path = "fw/core/crypto/x509-chain" }
@@ -197,6 +199,7 @@ lit = "1.0.4"
 log = "0.4"
 memmap2 = "0.9.11"
 minicbor = "0.19.1"
+ml-dsa = { default-features = false, version = "0.1.1" }
 nix = "0.26"
 num-bigint = "0.4"
 open-enum = "0.3.0"
