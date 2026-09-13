@@ -36,6 +36,13 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::error::EngineResult;
 
+/// Buffer size an armed size query reports for a masked-key-blob output (the
+/// blob length is unknown until the operation runs). Shared by every method
+/// whose output is a masked blob — the ECDH derive and HKDF today — mirroring
+/// the 3.x provider's `MASKED_KEY_MAX_BUFFER`. Callers pass at least this many
+/// bytes (e.g. `pkeyutl -kdf … -kdflen`) so the copy always fits.
+pub(crate) const MASKED_KEY_MAX_BUFFER: usize = 8192;
+
 thread_local! {
     /// The ENGINE that most recently resolved one of our methods on this
     /// thread; consumed by the method's `init` override. Sound because

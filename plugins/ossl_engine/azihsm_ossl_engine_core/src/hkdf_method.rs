@@ -90,10 +90,6 @@ pub trait HkdfHandler {
     ) -> EngineResult<Option<Zeroizing<Vec<u8>>>>;
 }
 
-/// Buffer-mode size reported by an armed size query (blob length is unknown
-/// until the derive runs; mirrors the keyexch constant).
-const MASKED_KEY_MAX_BUFFER: usize = 8192;
-
 /// Per-context state. `armed` is implied by any azihsm-specific field.
 #[derive(Clone, Default)]
 struct HkdfState {
@@ -542,7 +538,7 @@ fn derive_inner<H: HkdfHandler>(
             *keylen = if state.output_file.is_some() {
                 1
             } else {
-                MASKED_KEY_MAX_BUFFER
+                crate::method_table::MASKED_KEY_MAX_BUFFER
             };
         }
         return Ok(());

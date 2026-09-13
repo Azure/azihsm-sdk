@@ -502,6 +502,49 @@ mod round_trips {
             Ok(())
         })?;
 
+        // Matrix coverage: derive across digests (HMAC kind follows the digest)
+        // and AES key sizes, unmask each and confirm the kind and bit length.
+        // SHA-384/HMAC and AES-256 are already covered above.
+        //
+        // Each derive is driven through the engine (try_hkdf → EVP_PKEY_derive
+        // → the handler's own with_session), so the blobs are collected first
+        // and unmasked afterwards: unmasking inside a with_session that also
+        // drove a derive would re-enter the session lock and deadlock.
+        let matrix = [
+            ("SHA256", "hmac", 256u32, HsmKeyKind::HmacSha256),
+            ("SHA512", "hmac", 512, HsmKeyKind::HmacSha512),
+            ("SHA256", "aes", 128, HsmKeyKind::Aes),
+            ("SHA256", "aes", 192, HsmKeyKind::Aes),
+        ];
+        let mut derived = Vec::new();
+        for (md, ktype, bits, kind) in matrix {
+            let bits_s = bits.to_string();
+            let blob = try_hkdf(
+                engine_raw,
+                &[
+                    ("md", md),
+                    ("azihsm.ikm_file", ikm),
+                    ("derived_key_type", ktype),
+                    ("derived_key_bits", bits_s.as_str()),
+                ],
+                None,
+            )
+            .map_err(|e| EngineError::Other(format!("hkdf {md}/{ktype}/{bits} failed: {e}")))?;
+            assert!(!blob.is_empty(), "empty {ktype}/{bits} blob");
+            derived.push((blob, bits, kind, md, ktype));
+        }
+        data.with_session(|session| {
+            for (blob, bits, kind, md, ktype) in &derived {
+                let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+                let k = HsmKeyManager::unmask_key(session, &mut unmask, blob)
+                    .map_err(|e| EngineError::wrap("unmask matrix blob", e))?;
+                assert_eq!(k.kind(), *kind, "kind for {md}/{ktype}/{bits}");
+                assert_eq!(k.bits(), *bits, "bits for {md}/{ktype}/{bits}");
+                crate::context::delete_hsm_key(k, "hkdf matrix key");
+            }
+            Ok(())
+        })?;
+
         // Teardown (see run_keygen for the release ordering contract).
         // SAFETY: raw is the owning key from keygen.
         let agreed: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
