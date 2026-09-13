@@ -19,20 +19,30 @@ use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 use azihsm_ddi_tbor_types::TborSessionCloseReq;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
+use azihsm_crypto::aead_envelope;
+use azihsm_crypto::aead_envelope::AeadAlg;
+use azihsm_crypto::AesKey;
+use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::ImportableKey;
+use azihsm_crypto::PrivateKey;
 use azihsm_session_ex_crypto::build_hpke_info;
 use azihsm_session_ex_crypto::build_phase2_mac;
 use azihsm_session_ex_crypto::default_psk;
 use azihsm_session_ex_crypto::derive_param_key;
 use azihsm_session_ex_crypto::ec_pub_to_sec1;
-use azihsm_session_ex_crypto::generate_vm_ephemeral;
 use azihsm_session_ex_crypto::receive_exported;
-use azihsm_session_ex_crypto::seal_seed_envelope;
+use azihsm_session_ex_crypto::SessionExCryptoError;
+use azihsm_session_ex_crypto::SessionExCryptoResult;
+use azihsm_session_ex_crypto::VmEphemeralKey;
 use x509::X509CertificateOp;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
+
+/// P-384 coordinate length in bytes.
+const P384_COORD_LEN: usize = 48;
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
@@ -41,19 +51,64 @@ struct FuzzInput {
     psk_id: u8,
     session_type: u8,
     suite_id: u8,
-    pk_init: [u8; PK_INIT_LEN],
+    pk_init_scalar: [u8; P384_COORD_LEN],
 
     // input for SessionOpenFinish
     valid_open_finish: bool,
     mac_fin: [u8; MAC_FIN_LEN],
     seed_envelope: [u8; SEED_ENVELOPE_LEN],
+    seed_iv: Vec<u8>,
+}
+
+/// Build a deterministic P-384 keypair from a fixed scalar, so the
+/// fuzzer's mutations to `pk_init_scalar` reproduce the same keypair.
+fn generate_deterministic_ephemeral(
+    scalar: &[u8; P384_COORD_LEN],
+) -> SessionExCryptoResult<VmEphemeralKey> {
+    let sk = EccPrivateKey::from_scalar(EccCurve::P384, scalar)
+        .map_err(|_| SessionExCryptoError::Crypto)?;
+    let pk = sk.public_key().map_err(|_| SessionExCryptoError::Crypto)?;
+    let pk_sec1 = ec_pub_to_sec1(&pk)?;
+    Ok(VmEphemeralKey { sk, pk_sec1, pk })
+}
+
+/// Same as `session_ex_crypto::seal_seed_envelope`, but takes the
+/// 12-byte AEAD-GCM IV as an input rather than generating it randomly.
+fn seal_seed_envelope_with_iv(
+    param_key: &AesKey,
+    seed: &[u8],
+    iv: &[u8],
+) -> SessionExCryptoResult<Vec<u8>> {
+    if seed.len() != SESSION_SEED_LEN || iv.len() != 12 {
+        return Err(SessionExCryptoError::InvalidInput);
+    }
+
+    let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, iv, &[], seed, None)
+        .map_err(|_| SessionExCryptoError::Crypto)?;
+    if total != SEED_ENVELOPE_LEN {
+        return Err(SessionExCryptoError::Crypto);
+    }
+    let mut envelope = vec![0u8; SEED_ENVELOPE_LEN];
+    let written = aead_envelope::seal(
+        AeadAlg::AesGcm256,
+        param_key,
+        iv,
+        &[],
+        seed,
+        Some(&mut envelope),
+    )
+    .map_err(|_| SessionExCryptoError::Crypto)?;
+    if written != SEED_ENVELOPE_LEN {
+        return Err(SessionExCryptoError::Crypto);
+    }
+    Ok(envelope)
 }
 
 fuzz_target!(|input: FuzzInput| {
     let Ok(dev) = common::open_emu_dev() else { return; };
     let use_valid_init = input.valid_open_init || input.valid_open_finish;
-    let (req, ephemeral, pk_hsm) = if use_valid_init {
-        let Ok(ephemeral) = generate_vm_ephemeral() else { return; };
+    let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
+    let (req, pk_hsm) = if use_valid_init {
         let Ok(pk_hsm) = fetch_pk_hsm(&dev) else { return; };
 
         (
@@ -63,7 +118,6 @@ fuzz_target!(|input: FuzzInput| {
                 suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
                 pk_init: ephemeral.pk_sec1,
             },
-            Some(ephemeral),
             Some(pk_hsm),
         )
     } else {
@@ -72,9 +126,8 @@ fuzz_target!(|input: FuzzInput| {
                 psk_id: input.psk_id,
                 session_type: input.session_type,
                 suite_id: input.suite_id,
-                pk_init: input.pk_init,
+                pk_init: ephemeral.pk_sec1,
             },
-            None,
             None,
         )
     };
@@ -85,8 +138,8 @@ fuzz_target!(|input: FuzzInput| {
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
-            let (ephemeral, (pk_hsm, pk_hsm_sec1)) = match (ephemeral.as_ref(), pk_hsm.as_ref()) {
-                (Some(ephemeral), Some(pk_hsm)) => (ephemeral, pk_hsm),
+            let (pk_hsm, pk_hsm_sec1) = match pk_hsm.as_ref() {
+                Some(pk_hsm) => pk_hsm,
                 _ => return,
             };
             let info = build_hpke_info(
@@ -125,7 +178,7 @@ fuzz_target!(|input: FuzzInput| {
                 Err(_) => return,
             };
             let seed = [0u8; SESSION_SEED_LEN];
-            let seed_envelope = match seal_seed_envelope(&param_key, &seed)
+            let seed_envelope = match seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv)
                 .and_then(|envelope| {
                     envelope
                         .as_slice()
