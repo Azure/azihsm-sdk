@@ -109,92 +109,67 @@ fn seal_seed_envelope_with_iv(
 
 fuzz_target!(|input: FuzzInput| {
     let Ok(dev) = common::open_emu_dev() else { return; };
-    let use_valid_init = input.valid_open_init || input.valid_open_finish;
     let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
-    let (req, pk_hsm) = if use_valid_init {
-        let Ok(pk_hsm) = fetch_pk_hsm(&dev) else { return; };
+    let Ok((pk_hsm_key, pk_hsm_sec1)) = fetch_pk_hsm(&dev) else { return; };
 
-        (
-            TborSessionOpenInitReq {
-                psk_id: 1,
-                session_type: SessionType::PlainText.to_u8(),
-                suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
-                pk_init: ephemeral.pk_sec1,
-            },
-            Some(pk_hsm),
-        )
+    let req = if input.valid_open_init || input.valid_open_finish {
+        TborSessionOpenInitReq {
+            psk_id: 1,
+            session_type: SessionType::PlainText.to_u8(),
+            suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
+            pk_init: ephemeral.pk_sec1,
+        }
     } else {
-        (
-            TborSessionOpenInitReq {
-                psk_id: input.psk_id,
-                session_type: input.session_type,
-                suite_id: input.suite_id,
-                pk_init: ephemeral.pk_sec1,
-            },
-            None,
-        )
+        TborSessionOpenInitReq {
+            psk_id: input.psk_id,
+            session_type: input.session_type,
+            suite_id: input.suite_id,
+            pk_init: ephemeral.pk_sec1,
+        }
     };
+
     let mut cookie = None;
-
-    // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
-
-    // DEBUG REMOVE ME: print result from TborSessionOpenInitReq
     println!("TborSessionOpenInitReq result: {:?}", init_result);
 
     if let Ok(resp) = init_result {
-        // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
-            let (pk_hsm, pk_hsm_sec1) = match pk_hsm.as_ref() {
-                Some(pk_hsm) => pk_hsm,
-                _ => return,
-            };
-            let info = build_hpke_info(
-                req.psk_id,
-                req.session_type,
-                req.suite_id,
-            );
-            let psk = match default_psk(req.psk_id) {
-                Ok(psk) => psk,
-                Err(_) => return,
-            };
-            let exported = match receive_exported(
+            let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
+            let Ok(psk) = default_psk(req.psk_id) else { return; };
+            let Ok(exported) = receive_exported(
                 &ephemeral.sk,
                 &ephemeral.pk,
-                pk_hsm,
+                &pk_hsm_key,
                 &resp.pk_resp,
                 &info,
                 psk,
                 &[req.psk_id],
-            ) {
-                Ok(exported) => exported,
-                Err(_) => return,
-            };
-            let mac_fin = match build_phase2_mac(
+            ) else { return; };
+
+            // Verify phase 1 MAC to ensure exported key material matches firmware before Phase 2
+            if azihsm_session_ex_crypto::verify_phase1_mac(
                 &exported,
                 resp.session_id,
                 &req.pk_init,
-                pk_hsm_sec1,
+                &pk_hsm_sec1,
                 &resp.pk_resp,
-            ) {
-                Ok(mac_fin) => mac_fin,
-                Err(_) => return,
-            };
-            let param_key = match derive_param_key(&exported) {
-                Ok(param_key) => param_key,
-                Err(_) => return,
-            };
+                &resp.mac_resp,
+            ).is_err() {
+                return;
+            }
+
+            let Ok(mac_fin) = build_phase2_mac(
+                &exported,
+                resp.session_id,
+                &req.pk_init,
+                &pk_hsm_sec1,
+                &resp.pk_resp,
+            ) else { return; };
+
+            let Ok(param_key) = derive_param_key(&exported) else { return; };
             let seed = [0u8; SESSION_SEED_LEN];
-            let seed_envelope = match seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv)
-                .and_then(|envelope| {
-                    envelope
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| azihsm_session_ex_crypto::SessionExCryptoError::InvalidInput)
-                }) {
-                Ok(seed_envelope) => seed_envelope,
-                Err(_) => return,
-            };
+            let Ok(seed_envelope_vec) = seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv) else { return; };
+            let Ok(seed_envelope) = seed_envelope_vec.as_slice().try_into() else { return; };
 
             TborSessionOpenFinishReq {
                 session_id: resp.session_id,
@@ -208,21 +183,20 @@ fuzz_target!(|input: FuzzInput| {
                 seed_envelope: input.seed_envelope,
             }
         };
-        let mut open_finish_cookie = None;
-        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
-        // DEBUG REMOVE ME: print result from TborSessionOpenFinishReq
+        let mut open_finish_cookie = None;
+        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(
+            &open_finish_req,
+            None,
+            &mut open_finish_cookie,
+        );
         println!("TborSessionOpenFinishReq result: {:?}", finish_result);
 
-        // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let close_result = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
-
-        // DEBUG REMOVE ME: print result from TborSessionCloseReq
-        println!("TborSessionCloseReq result: {:?}", close_result);
+        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
     }
 });
 
