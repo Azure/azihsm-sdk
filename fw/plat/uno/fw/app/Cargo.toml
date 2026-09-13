@@ -13,12 +13,12 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_ml_dsa = { optional = true, workspace = true }
-azihsm_fw_uno_drivers_uart = { optional = true, workspace = true }
 azihsm_fw_hsm_core = { workspace = true }
 azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_uno_drivers_profile = { workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
+azihsm_fw_uno_drivers_uart = { optional = true, workspace = true }
 azihsm_fw_uno_fault = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_pal = { workspace = true }
@@ -50,7 +50,6 @@ mldsa-selftest = [
   "dep:azihsm_fw_core_crypto_ml_dsa",
   "dep:azihsm_fw_uno_drivers_uart",
 ]
-
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the

@@ -196,6 +196,10 @@ async fn poll_ipc(spawner: Spawner) -> ! {
 /// - Initializes PAL platform services.
 /// - Spawns IPC loop task and enters main NVIC polling loop.
 
+/// Maximum `TX_READY` polls tolerated per byte before giving up on the UART.
+#[cfg(feature = "mldsa-selftest")]
+const UART_SPIN_LIMIT: u32 = 100_000;
+
 /// Runs the ML-DSA-65 known-answer self-test on CP1 and reports the result.
 ///
 /// Phase 1 of the PQC proof-of-concept: proves ML-DSA-65 import, deterministic
@@ -222,14 +226,21 @@ fn mldsa_selftest() {
     // facade: compiling in a trace level costs ~70 KiB because it enables
     // every `error!` site in the tree, which does not fit alongside ML-DSA.
     // This is the same port and driver the `backend-uart` trace backend uses.
+    // Bounded write: the UART is only configured when the platform enables
+    // console logging, and an unconfigured peripheral never asserts TX_READY.
+    // An unbounded write would hang the core here, before it signals ready,
+    // which the host sees as an ETIMEDOUT controller probe.
     let mut uart = azihsm_fw_uno_drivers_uart::Uart::new();
-    uart.write(match result {
-        SelfTestResult::Pass => "\r\nML-DSA-65 self-test: PASS\r\n",
-        SelfTestResult::ImportFailed => "\r\nML-DSA-65 self-test: FAIL import\r\n",
-        SelfTestResult::SignFailed => "\r\nML-DSA-65 self-test: FAIL sign\r\n",
-        SelfTestResult::SignatureMismatch => "\r\nML-DSA-65 self-test: FAIL kat-mismatch\r\n",
-        SelfTestResult::VerifyFailed => "\r\nML-DSA-65 self-test: FAIL verify\r\n",
-    });
+    uart.try_write(
+        match result {
+            SelfTestResult::Pass => "\r\nML-DSA-65 self-test: PASS\r\n",
+            SelfTestResult::ImportFailed => "\r\nML-DSA-65 self-test: FAIL import\r\n",
+            SelfTestResult::SignFailed => "\r\nML-DSA-65 self-test: FAIL sign\r\n",
+            SelfTestResult::SignatureMismatch => "\r\nML-DSA-65 self-test: FAIL kat-mismatch\r\n",
+            SelfTestResult::VerifyFailed => "\r\nML-DSA-65 self-test: FAIL verify\r\n",
+        },
+        UART_SPIN_LIMIT,
+    );
 }
 
 /// Result of [`mldsa_selftest`]: 0 = not run, 1 = pass, >1 = the failing stage.
@@ -244,6 +255,10 @@ async fn main(spawner: Spawner) {
     let hsm = HSM.get().await;
     hsm.pal().init();
 
+    // Run before any task is spawned. The self-test is a long synchronous
+    // computation (software Keccak), and Embassy's executor is cooperative
+    // and single-threaded, so running it from a task starves the IPC boot
+    // handshake and the controller never reaches ready.
     #[cfg(feature = "mldsa-selftest")]
     mldsa_selftest();
 

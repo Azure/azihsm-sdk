@@ -86,6 +86,40 @@ impl Uart {
         REGS.tx_hold.set(byte as u32);
     }
 
+    /// Writes a string, giving up if the UART never becomes ready.
+    ///
+    /// [`write`](Self::write) spins on `STATUS.TX_READY` indefinitely, which
+    /// deadlocks the caller if the peripheral was never configured — on the
+    /// HSM core that manifests as the controller failing to reach ready and
+    /// the host seeing an `ETIMEDOUT` probe failure. This variant bounds the
+    /// wait so an unconfigured UART costs a bounded delay instead of a hang.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` — the string to write.
+    /// * `spin_limit` — maximum `TX_READY` polls to tolerate per byte.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the whole string was written, `false` if the UART stalled.
+    pub fn try_write(&mut self, s: &str, spin_limit: u32) -> bool {
+        for byte in s.bytes() {
+            let byte = match byte {
+                0x20..=0x7e | b'\n' | b'\t' => byte,
+                _ => 0xfe,
+            };
+            let mut spins = 0u32;
+            while REGS.status.read(STATUS::TX_READY) == 0 {
+                spins += 1;
+                if spins >= spin_limit {
+                    return false;
+                }
+            }
+            REGS.tx_hold.set(byte as u32);
+        }
+        true
+    }
+
     /// Writes a raw byte buffer to the UART.
     ///
     /// # Arguments
