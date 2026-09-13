@@ -13,6 +13,7 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_ml_dsa = { optional = true, workspace = true }
+azihsm_fw_uno_drivers_uart = { optional = true, workspace = true }
 azihsm_fw_hsm_core = { workspace = true }
 azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
@@ -45,7 +46,11 @@ mbor = ["azihsm_fw_hsm_core/mbor"]
 # boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
 # pinned vector data, so it does not fit alongside both DDI transports —
 # build it with MBOR disabled. Never enable in a production build.
-mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
+mldsa-selftest = [
+  "dep:azihsm_fw_core_crypto_ml_dsa",
+  "dep:azihsm_fw_uno_drivers_uart",
+]
+
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the

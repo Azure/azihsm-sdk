@@ -218,11 +218,18 @@ fn mldsa_selftest() {
         MLDSA_SELFTEST_RESULT = result as u32 + 1;
     }
 
-    if result == SelfTestResult::Pass {
-        info!("app", "ML-DSA-65 self-test: PASS");
-    } else {
-        info!("app", "ML-DSA-65 self-test: FAIL");
-    }
+    // Written straight to the HSM UART rather than through the tracing
+    // facade: compiling in a trace level costs ~70 KiB because it enables
+    // every `error!` site in the tree, which does not fit alongside ML-DSA.
+    // This is the same port and driver the `backend-uart` trace backend uses.
+    let mut uart = azihsm_fw_uno_drivers_uart::Uart::new();
+    uart.write(match result {
+        SelfTestResult::Pass => "\r\nML-DSA-65 self-test: PASS\r\n",
+        SelfTestResult::ImportFailed => "\r\nML-DSA-65 self-test: FAIL import\r\n",
+        SelfTestResult::SignFailed => "\r\nML-DSA-65 self-test: FAIL sign\r\n",
+        SelfTestResult::SignatureMismatch => "\r\nML-DSA-65 self-test: FAIL kat-mismatch\r\n",
+        SelfTestResult::VerifyFailed => "\r\nML-DSA-65 self-test: FAIL verify\r\n",
+    });
 }
 
 /// Result of [`mldsa_selftest`]: 0 = not run, 1 = pass, >1 = the failing stage.
