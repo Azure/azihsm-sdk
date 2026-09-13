@@ -129,10 +129,15 @@ fuzz_target!(|input: FuzzInput| {
     };
 
     let mut cookie = None;
+
+    // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
+
+    // DEBUG REMOVE ME: print result from TborSessionOpenInitReq
     println!("TborSessionOpenInitReq result: {:?}", init_result);
 
     if let Ok(resp) = init_result {
+        // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
             let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
             let Ok(psk) = default_psk(req.psk_id) else { return; };
@@ -185,18 +190,20 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let mut open_finish_cookie = None;
-        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(
-            &open_finish_req,
-            None,
-            &mut open_finish_cookie,
-        );
+        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+
+        // DEBUG REMOVE ME: print result from TborSessionOpenFinishReq
         println!("TborSessionOpenFinishReq result: {:?}", finish_result);
 
+        // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        let close_result = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+
+        // DEBUG REMOVE ME: print result from TborSessionCloseReq
+        println!("TborSessionCloseReq result: {:?}", close_result);
     }
 });
 
