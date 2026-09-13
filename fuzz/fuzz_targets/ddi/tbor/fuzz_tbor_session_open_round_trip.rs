@@ -44,6 +44,9 @@ use libfuzzer_sys::fuzz_target;
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
 
+/// AEAD-GCM IV length in bytes.
+const AES_GCM_IV_LEN: usize = 12;
+
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     // input for SessionOpenInit
@@ -57,7 +60,7 @@ struct FuzzInput {
     valid_open_finish: bool,
     mac_fin: [u8; MAC_FIN_LEN],
     seed_envelope: [u8; SEED_ENVELOPE_LEN],
-    seed_iv: Vec<u8>,
+    seed_iv: [u8; AES_GCM_IV_LEN],
 }
 
 /// Build a deterministic P-384 keypair from a fixed scalar, so the
@@ -77,9 +80,9 @@ fn generate_deterministic_ephemeral(
 fn seal_seed_envelope_with_iv(
     param_key: &AesKey,
     seed: &[u8],
-    iv: &[u8],
+    iv: &[u8; AES_GCM_IV_LEN],
 ) -> SessionExCryptoResult<Vec<u8>> {
-    if seed.len() != SESSION_SEED_LEN || iv.len() != 12 {
+    if seed.len() != SESSION_SEED_LEN {
         return Err(SessionExCryptoError::InvalidInput);
     }
 
@@ -135,6 +138,10 @@ fuzz_target!(|input: FuzzInput| {
 
     // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
+
+    // DEBUG REMOVE ME: print result from TborSessionOpenInitReq
+    println!("TborSessionOpenInitReq result: {:?}", init_result);
+
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
@@ -202,14 +209,20 @@ fuzz_target!(|input: FuzzInput| {
             }
         };
         let mut open_finish_cookie = None;
-        let _ = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+
+        // DEBUG REMOVE ME: print result from TborSessionOpenFinishReq
+        println!("TborSessionOpenFinishReq result: {:?}", finish_result);
 
         // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        let close_result = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+
+        // DEBUG REMOVE ME: print result from TborSessionCloseReq
+        println!("TborSessionCloseReq result: {:?}", close_result);
     }
 });
 
