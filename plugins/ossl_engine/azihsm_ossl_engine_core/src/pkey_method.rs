@@ -120,10 +120,6 @@ pub trait EcDeriveHandler {
     ) -> EngineResult<Option<zeroize::Zeroizing<Vec<u8>>>>;
 }
 
-/// Buffer-mode size reported by a derive size query, mirroring the provider's
-/// `MASKED_KEY_MAX_BUFFER` (the blob length is unknown until the derive runs).
-const MASKED_KEY_MAX_BUFFER: usize = 8192;
-
 /// Per-context side-table entry.
 #[derive(Clone, Default)]
 struct CtxState {
@@ -510,7 +506,7 @@ fn derive_inner<D: EcDeriveHandler>(
             *keylen = if state.output_file.is_some() {
                 1
             } else {
-                MASKED_KEY_MAX_BUFFER
+                crate::method_table::MASKED_KEY_MAX_BUFFER
             };
         }
         return Ok(());

@@ -594,35 +594,43 @@ fn hkdf_via_engine_capi() {
         assert!(!secret.is_empty(), "empty shared-secret blob");
         write_secret(&ikm, &secret);
 
-        // HKDF on the blob, buffer mode.
-        let kctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
-        assert!(!kctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
-        assert_eq!(ffi::EVP_PKEY_derive_init(kctx), 1);
-        for (k, v) in [
-            ("md", "SHA256"),
-            ("azihsm.ikm_file", ikm.to_str().unwrap()),
-            ("derived_key_type", "hmac"),
-            ("derived_key_bits", "256"),
-        ] {
-            let key = cstr(k);
-            let value = cstr(v);
+        // HKDF on the blob, buffer mode, across digests (the HMAC kind follows
+        // the digest). The armed size query reports the shared masked-blob
+        // buffer size (MASKED_KEY_MAX_BUFFER = 8192), which the buffer must fit.
+        for (md, bits) in [("SHA256", "256"), ("SHA384", "384"), ("SHA512", "512")] {
+            let kctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
+            assert!(!kctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
+            assert_eq!(ffi::EVP_PKEY_derive_init(kctx), 1);
+            for (k, v) in [
+                ("md", md),
+                ("azihsm.ikm_file", ikm.to_str().unwrap()),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", bits),
+            ] {
+                let key = cstr(k);
+                let value = cstr(v);
+                assert_eq!(
+                    ffi::EVP_PKEY_CTX_ctrl_str(kctx, key.as_ptr(), value.as_ptr()),
+                    1,
+                    "HKDF option {k} ({md})"
+                );
+            }
+            let mut klen = 0usize;
             assert_eq!(
-                ffi::EVP_PKEY_CTX_ctrl_str(kctx, key.as_ptr(), value.as_ptr()),
+                ffi::EVP_PKEY_derive(kctx, std::ptr::null_mut(), &mut klen),
                 1,
-                "HKDF option {k}"
+                "HKDF size query ({md})"
             );
+            assert_eq!(klen, 8192, "size query must report the blob max ({md})");
+            let mut kbuf = vec![0u8; klen];
+            assert_eq!(
+                ffi::EVP_PKEY_derive(kctx, kbuf.as_mut_ptr(), &mut klen),
+                1,
+                "HKDF derive ({md})"
+            );
+            assert!(klen > 0, "empty derived-key blob ({md})");
+            ffi::EVP_PKEY_CTX_free(kctx);
         }
-        let mut klen = 0usize;
-        assert_eq!(
-            ffi::EVP_PKEY_derive(kctx, std::ptr::null_mut(), &mut klen),
-            1,
-            "HKDF size query"
-        );
-        assert_eq!(klen, 8192, "armed HKDF size query must report the blob max");
-        let mut kbuf = vec![0u8; klen];
-        assert_eq!(ffi::EVP_PKEY_derive(kctx, kbuf.as_mut_ptr(), &mut klen), 1);
-        assert!(klen > 0, "empty derived-key blob");
-        ffi::EVP_PKEY_CTX_free(kctx);
 
         // output_file mode on a fresh ctx.
         let fctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
