@@ -79,6 +79,7 @@ azihsm_fw_core_crypto_gcm_buf = { path = "../../../core/crypto/gcm-buf" }
 azihsm_fw_core_crypto_hpke = { path = "../../../core/crypto/hpke" }
 azihsm_fw_core_crypto_key_derive = { path = "../../../core/crypto/key-derive" }
 azihsm_fw_core_crypto_key_masking = { path = "../../../core/crypto/key-masking" }
+azihsm_fw_core_crypto_ml_dsa = { path = "../../../core/crypto/ml-dsa" }
 azihsm_fw_core_crypto_x509_builder = { path = "../../../core/crypto/x509-builder" }
 azihsm_fw_core_crypto_x509_chain = { path = "../../../core/crypto/x509-chain" }
 azihsm_fw_ddi_mbor = { path = "../../../core/ddi/mbor/codec" }

@@ -35,6 +35,12 @@ azihsm_fw_hsm_undo.workspace = true
 zerocopy.workspace = true
 
 [features]
-default = ["std"]
+default = ["mbor", "std"]
 std = []
+
+# The MBOR wire codec and its command handlers. Enabled by default; a
+# build that only needs TBOR can turn this off to reclaim the MBOR
+# dispatch tree (~90 KiB of .text). `OP_MBOR` then reports an
+# unsupported opcode.
+mbor = []
 tracing = []

@@ -42,8 +42,11 @@
 //! `session_id`; `CloseSession` is classified as `Close` so the CQE
 //! reflects the slot teardown.
 
+#[cfg(feature = "mbor")]
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
+#[cfg(feature = "mbor")]
 use azihsm_fw_ddi_mbor_types::DdiOp;
+#[cfg(feature = "mbor")]
 use azihsm_fw_ddi_mbor_types::DdiReqHdr;
 use azihsm_fw_ddi_tbor::RequestView as TborRequestView;
 use azihsm_fw_hsm_oob::OobPtr;
@@ -81,6 +84,7 @@ impl<P: HsmPal> Hsm<P> {
         let op_result = match validated {
             Err(e) => Err(e),
             Ok(()) => match op {
+                #[cfg(feature = "mbor")]
                 OP_MBOR => self.handle_mbor_op(&mut io).await,
                 OP_TBOR => match self.bind_undo(&io) {
                     Ok(log) => self.handle_tbor_op(&mut io, undo.insert(log)).await,
@@ -218,6 +222,7 @@ impl<P: HsmPal> Hsm<P> {
     ///
     /// **Phase 2 (post-decode)** — Session validation, DDI dispatch.
     /// Errors → DDI error response DMA'd to host, CQE Success.
+    #[cfg(feature = "mbor")]
     async fn handle_mbor_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
         let params = Self::decode_io_sqe(io)?;
         let split = params.src_len.next_multiple_of(4);
@@ -501,6 +506,7 @@ impl<P: HsmPal> Hsm<P> {
 
     /// Validate SQE session flags against the decoded DDI header.
     #[inline(always)]
+    #[cfg(feature = "mbor")]
     fn validate_session(
         hdr: &DdiReqHdr,
         expected: SessionCtrl,
@@ -554,6 +560,7 @@ impl<P: HsmPal> Hsm<P> {
     /// the protocol status.
     ///
     /// Mirrors the mcr-hsm central check in `validate_req_hdr`.
+    #[cfg(feature = "mbor")]
     fn validate_session_live(
         &self,
         io: &P::Io,
@@ -624,6 +631,7 @@ struct IoSqeParams {
 ///   [`DdiOp::ReopenSession`], which is classified `InSession` but by
 ///   design re-keys a renegotiation-pending (non-Active) slot and
 ///   validates that state in its own handler.
+#[cfg(feature = "mbor")]
 fn session_ctrl_requires_live_session(session_ctrl: SessionCtrl, op: DdiOp) -> bool {
     match session_ctrl {
         SessionCtrl::InSession => op != DdiOp::ReopenSession,
@@ -641,6 +649,7 @@ fn session_ctrl_requires_live_session(session_ctrl: SessionCtrl, op: DdiOp) -> b
 ///   first ([`HsmError::SessionNeedsRenegotiation`]).
 /// - `Pending` / `Invalid` → [`HsmError::SessionNotFound`] (the slot is
 ///   free, destroyed, forged, or mid-handshake — not a usable session).
+#[cfg(feature = "mbor")]
 fn classify_session_state(session_ctrl: SessionCtrl, state: HsmSessionState) -> HsmResult<()> {
     match state {
         HsmSessionState::Active => Ok(()),
@@ -650,7 +659,7 @@ fn classify_session_state(session_ctrl: SessionCtrl, state: HsmSessionState) -> 
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mbor"))]
 mod session_gate_tests {
     use super::*;
 

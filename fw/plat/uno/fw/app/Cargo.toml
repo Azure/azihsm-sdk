@@ -12,6 +12,7 @@ name = "azihsm_fw_uno_app"
 test = false
 
 [dependencies]
+azihsm_fw_core_crypto_ml_dsa = { optional = true, workspace = true }
 azihsm_fw_hsm_core = { workspace = true }
 azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
@@ -34,7 +35,17 @@ embassy-time = { workspace = true }
 
 [features]
 #default = ["trace-uart"]
-default = []
+default = ["mbor"]
+
+# Forwards to `azihsm_fw_hsm_core/mbor`. On by default; build with
+# `--no-default-features` to produce a TBOR-only image.
+mbor = ["azihsm_fw_hsm_core/mbor"]
+
+# Phase 1: run an ML-DSA-65 import/sign/verify known-answer self-test at
+# boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
+# pinned vector data, so it does not fit alongside both DDI transports —
+# build it with MBOR disabled. Never enable in a production build.
+mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
 
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the

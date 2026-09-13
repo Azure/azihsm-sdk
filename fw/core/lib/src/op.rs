@@ -215,6 +215,7 @@ pub(crate) enum SessionCtrl {
 
 impl SessionCtrl {
     /// Map a DDI opcode to its session control kind.
+    #[cfg(feature = "mbor")]
     pub fn from_op(op: azihsm_fw_ddi_mbor_types::DdiOp) -> Self {
         use azihsm_fw_ddi_mbor_types::DdiOp;
         match op {

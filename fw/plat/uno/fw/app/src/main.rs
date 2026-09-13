@@ -195,12 +195,50 @@ async fn poll_ipc(spawner: Spawner) -> ! {
 /// - Initializes global singleton state.
 /// - Initializes PAL platform services.
 /// - Spawns IPC loop task and enters main NVIC polling loop.
+
+/// Runs the ML-DSA-65 known-answer self-test on CP1 and reports the result.
+///
+/// Phase 1 of the PQC proof-of-concept: proves ML-DSA-65 import, deterministic
+/// signing and verification execute correctly on this core, checked against a
+/// pinned FIPS 204 vector rather than against itself. Deliberately independent
+/// of the DDI surface, which is Phase 2.
+///
+/// The outcome is published in [`MLDSA_SELFTEST_RESULT`] so it is observable
+/// from a debugger on builds without a trace backend.
+#[cfg(feature = "mldsa-selftest")]
+#[inline(never)]
+fn mldsa_selftest() {
+    use azihsm_fw_core_crypto_ml_dsa::SelfTestResult;
+
+    let result = azihsm_fw_core_crypto_ml_dsa::selftest();
+
+    // SAFETY: single-threaded boot path, written once before any task runs.
+    #[allow(unsafe_code)]
+    unsafe {
+        MLDSA_SELFTEST_RESULT = result as u32 + 1;
+    }
+
+    if result == SelfTestResult::Pass {
+        info!("app", "ML-DSA-65 self-test: PASS");
+    } else {
+        info!("app", "ML-DSA-65 self-test: FAIL");
+    }
+}
+
+/// Result of [`mldsa_selftest`]: 0 = not run, 1 = pass, >1 = the failing stage.
+#[cfg(feature = "mldsa-selftest")]
+#[unsafe(no_mangle)]
+pub static mut MLDSA_SELFTEST_RESULT: u32 = 0;
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("app", "Azure Integrate HSM firmware starting up...");
     let _ = HSM.init(Hsm::new(UnoHsmPal::default()));
     let hsm = HSM.get().await;
     hsm.pal().init();
+
+    #[cfg(feature = "mldsa-selftest")]
+    mldsa_selftest();
 
     if let Ok(token) = poll_ipc(spawner) {
         spawner.spawn(token);

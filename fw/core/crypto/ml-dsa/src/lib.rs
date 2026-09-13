@@ -199,3 +199,106 @@ mod tests {
         assert_eq!(validate_encoded_signing_key(&k), Ok(()));
     }
 }
+
+// ── On-device self-test (Phase 1) ──────────────────────────────────
+
+/// Outcome of [`selftest`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfTestResult {
+    /// Import, sign and verify all succeeded and the signature matched
+    /// the pinned FIPS 204 known-answer vector.
+    Pass,
+
+    /// The pinned signing key failed validation — should be impossible.
+    ImportFailed,
+
+    /// Signing returned an error.
+    SignFailed,
+
+    /// The produced signature did not match the known-answer vector.
+    SignatureMismatch,
+
+    /// The produced signature failed verification against the pinned
+    /// verifying key.
+    VerifyFailed,
+}
+
+/// Pinned FIPS 204 ML-DSA-65 known-answer vector.
+///
+/// Source: Wycheproof `mldsa_65_sign_noseed_test.json`, group 0 ("baseline"),
+/// tcId 1 — a deterministic signature over an 11-byte message with an empty
+/// context.
+mod kat {
+    /// Encoded signing key (`skDecode` input).
+    pub const SK: &[u8] = include_bytes!("../testdata/kat_sk.bin");
+    /// Encoded verifying key.
+    pub const PK: &[u8] = include_bytes!("../testdata/kat_pk.bin");
+    /// Message signed by the vector.
+    pub const MSG: &[u8] = include_bytes!("../testdata/kat_msg.bin");
+    /// Expected deterministic signature.
+    pub const SIG: &[u8] = include_bytes!("../testdata/kat_sig.bin");
+}
+
+/// Runs ML-DSA-65 import, sign and verify against a pinned known-answer
+/// vector, entirely on-device.
+///
+/// This is the Phase 1 proof that ML-DSA-65 executes correctly on CP1: it
+/// exercises the Milestone 1 code path (import an externally generated key,
+/// then sign) without needing any DDI plumbing, and checks the result against
+/// a vector rather than against itself.
+///
+/// Signing is deterministic (empty context), so the output is compared
+/// byte-for-byte with the vector; the signature is then verified with the
+/// pinned verifying key as an independent check.
+///
+/// # Returns
+///
+/// [`SelfTestResult::Pass`] on success, otherwise the stage that failed.
+pub fn selftest() -> SelfTestResult {
+    use ml_dsa::signature::Verifier;
+    use ml_dsa::EncodedSignature;
+    use ml_dsa::EncodedVerifyingKey;
+    use ml_dsa::Signature;
+    use ml_dsa::VerifyingKey;
+
+    let Ok(sk) = import_signing_key(kat::SK) else {
+        return SelfTestResult::ImportFailed;
+    };
+
+    let Ok(sig) = sk.sign_deterministic(kat::MSG, &[]) else {
+        return SelfTestResult::SignFailed;
+    };
+
+    let produced = sig.encode();
+    if produced.as_slice() != kat::SIG {
+        return SelfTestResult::SignatureMismatch;
+    }
+
+    let Ok(pk_enc): Result<&EncodedVerifyingKey<MlDsa65>, _> = kat::PK.try_into() else {
+        return SelfTestResult::VerifyFailed;
+    };
+    let vk = VerifyingKey::<MlDsa65>::decode(pk_enc);
+
+    let Ok(sig_enc): Result<&EncodedSignature<MlDsa65>, _> = kat::SIG.try_into() else {
+        return SelfTestResult::VerifyFailed;
+    };
+    let Some(decoded) = Signature::<MlDsa65>::decode(sig_enc) else {
+        return SelfTestResult::VerifyFailed;
+    };
+
+    if vk.verify(kat::MSG, &decoded).is_err() {
+        return SelfTestResult::VerifyFailed;
+    }
+
+    SelfTestResult::Pass
+}
+
+#[cfg(test)]
+mod selftest_tests {
+    use super::*;
+
+    #[test]
+    fn selftest_passes_against_pinned_vector() {
+        assert_eq!(selftest(), SelfTestResult::Pass);
+    }
+}

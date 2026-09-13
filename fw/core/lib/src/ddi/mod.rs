@@ -13,6 +13,7 @@
 //! a per-codec error encoder used when post-decode failures need to be
 //! surfaced as a typed response body rather than a CQE status code.
 
+#[cfg(feature = "mbor")]
 pub(crate) mod mbor;
 pub(crate) mod tbor;
 
