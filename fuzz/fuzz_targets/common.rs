@@ -105,6 +105,7 @@ pub fn run_response_view(data: &[u8]) {
     if let Ok(view) = ResponseView::parse(data) {
         let _ = view.version();
         let _ = view.status();
+        let _ = view.flags();
         let _ = view.fips_approved();
         let _ = view.toc_count();
         let _ = view.data_start();
