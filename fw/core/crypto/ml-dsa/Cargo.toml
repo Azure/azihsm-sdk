@@ -18,6 +18,7 @@ default = []
 # smaller key and matrix separate a stack-capacity failure from an
 # algorithmic one on hardware.
 param-mldsa44 = []
+verify-only = []
 
 [dependencies]
 ml-dsa = { workspace = true }

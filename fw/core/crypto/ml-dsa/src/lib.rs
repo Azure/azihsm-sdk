@@ -342,8 +342,13 @@ pub mod stage {
 /// frame at entry, which overflows the stack on this target before a single
 /// instruction runs. Keeping them in separate frames makes the peak the
 /// larger of the two rather than their sum.
+#[cfg(not(feature = "verify-only"))]
 #[inline(never)]
 fn kat_sign(mark: &mut dyn FnMut(u32)) -> Result<EncodedSignature<Param>, SelfTestResult> {
+    // Import and sign share one frame deliberately. Splitting them so the key
+    // is returned across a call boundary makes the compiler materialise it
+    // twice - once in the callee, once in the caller - which measured worse
+    // on this target than the single larger frame.
     let sk = import_signing_key(kat::SK).map_err(|_| SelfTestResult::ImportFailed)?;
     mark(stage::IMPORT_DONE);
 
@@ -357,7 +362,9 @@ fn kat_sign(mark: &mut dyn FnMut(u32)) -> Result<EncodedSignature<Param>, SelfTe
 
 /// Verifies the pinned signature with the pinned verifying key.
 ///
-/// Separate frame, for the reason described on [`kat_sign`].
+/// Separate frame from [`kat_sign`] so the signing key and verifying key are
+/// never live at once; kept as a single frame internally for the reason noted
+/// in [`kat_sign`].
 #[inline(never)]
 fn kat_verify() -> bool {
     use ml_dsa::signature::Verifier;
@@ -376,16 +383,25 @@ fn kat_verify() -> bool {
         .is_ok()
 }
 
+/// Runs the self-test.
+///
+/// With the `verify-only` feature the signing half is skipped: ML-DSA-65's
+/// signing path needs a ~322 KiB stack frame on this target (measured), which
+/// does not fit the 163.4 KiB stack region, while verification needs 150 KiB
+/// and does fit. Verify-only therefore exercises the "host signs, firmware
+/// verifies" direction at the full ML-DSA-65 parameter set.
 pub fn selftest_staged(mark: &mut dyn FnMut(u32)) -> SelfTestResult {
-    let produced = match kat_sign(mark) {
-        Ok(sig) => sig,
-        Err(e) => return e,
-    };
-
-    if produced.as_slice() != kat::SIG {
-        return SelfTestResult::SignatureMismatch;
+    #[cfg(not(feature = "verify-only"))]
+    {
+        let sig = match kat_sign(mark) {
+            Ok(sig) => sig,
+            Err(e) => return e,
+        };
+        if sig.as_slice() != kat::SIG {
+            return SelfTestResult::SignatureMismatch;
+        }
+        mark(stage::KAT_MATCH);
     }
-    mark(stage::KAT_MATCH);
 
     if !kat_verify() {
         return SelfTestResult::VerifyFailed;

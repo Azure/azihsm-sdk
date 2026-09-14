@@ -50,6 +50,7 @@ mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
 
 # Diagnostic: run the self-test at ML-DSA-44 (see the crate feature).
 param-mldsa44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44"]
+mldsa-verify-only = ["azihsm_fw_core_crypto_ml_dsa?/verify-only"]
 
 # UART trace with only the error level compiled in. Uses the platform's
 # known-good trace backend instead of writing to the UART directly, and
