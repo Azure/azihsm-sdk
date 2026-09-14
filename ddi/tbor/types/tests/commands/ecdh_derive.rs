@@ -39,16 +39,18 @@ use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
-use crate::commands::part_init::bootstrap_rotated_co;
-use crate::commands::part_init::CO;
-use crate::commands::part_init::CU;
-use crate::commands::part_init::ROTATED_CO_PSK;
-use crate::commands::part_init::ROTATED_CU_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
+use crate::harness::ROTATED_CU_PSK;
+
+const CO: u8 = 0;
+const CU: u8 = 1;
+
 /// Expected masked shared-secret envelope length per curve:
 /// `header(8) ‖ iv(12) ‖ aad(96) ‖ secret(raw_coord) ‖ tag(16)` = 132 + raw.
 fn masked_secret_len(curve: u8) -> usize {
