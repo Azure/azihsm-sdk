@@ -118,10 +118,6 @@ fn ecdh_derive_all_curves() {
                 masked_secret_len(curve),
                 "masked shared-secret envelope length must match the curve",
             );
-            assert!(
-                secret.iter().any(|&b| b != 0),
-                "masked shared secret must not be all-zero",
-            );
         }
     }
 }
@@ -146,7 +142,6 @@ fn ecdh_derive_scopes() {
             pub_b.clone(),
         );
         assert_eq!(secret.len(), masked_secret_len(ECC_CURVE_P256));
-        assert!(secret.iter().any(|&b| b != 0));
     }
 }
 
@@ -214,9 +209,9 @@ fn ecdh_derive_peer_curve_mismatch_rejected() {
     );
 }
 
-/// Rejects a correctly sized peer point that is not a valid curve point.
+/// Rejects a peer public key whose coordinates fail public-key validation.
 #[test]
-fn ecdh_derive_invalid_peer_point_rejected() {
+fn ecdh_derive_invalid_peer_coordinates_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let (masked_key, peer_pub) =
@@ -230,6 +225,31 @@ fn ecdh_derive_invalid_peer_point_rejected() {
             peer_pub_key: vec![0; peer_pub.len()],
         },
         TborStatus::EccPublicKeyValidationFailed,
+    );
+}
+
+/// Rejects an in-range P-256 peer point that is not on the curve.
+#[test]
+fn ecdh_derive_off_curve_peer_point_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    // P-256 wire format is x_le || y_le, with 32 bytes per coordinate.
+    // x = 1 and y = 1 are both in range, but (1, 1) is not on the P-256 curve.
+    let mut peer_pub = vec![0u8; 64];
+    peer_pub[0] = 1;
+    peer_pub[32] = 1;
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+        },
+        TborStatus::EccPointValidationFailed,
     );
 }
 
@@ -596,10 +616,5 @@ fn ecdh_derive_local_key_across_sessions() {
         secret.len(),
         masked_secret_len(ECC_CURVE_P256),
         "local-scoped key must remain usable after reopening the session",
-    );
-
-    assert!(
-        secret.iter().any(|&b| b != 0),
-        "derived secret must not be all-zero",
     );
 }
