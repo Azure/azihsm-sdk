@@ -165,6 +165,20 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_get_cert_chain_info"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_cert_chain_info.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_get_cert"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_cert.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_get_unwrapping_key"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_unwrapping_key.rs"
 test = false
@@ -195,6 +209,13 @@ bench = false
 doc = false
 name = "fuzz_tbor_hmac"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_hmac.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_key_report"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_key_report.rs"
 test = false
 
 [[bin]]
