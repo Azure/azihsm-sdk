@@ -24,8 +24,9 @@
 //!   spawns the IO receive loop, then enters the NVIC polling loop.
 //! - **`poll_io`** (single instance): Awaits IOs from the IIC driver
 //!   and spawns a `handle_io` task for each one.
-//! - **`handle_io`** (pool of 32): Owns one IO for its lifetime,
-//!   delegating to the HSM core for SQE parsing, DMA, and CQE delivery.
+//! - **`handle_io`** (pool of 32, or 8 in ML-DSA builds): Owns one IO
+//!   for its lifetime, delegating to the HSM core for SQE parsing, DMA,
+//!   and CQE delivery.
 //!
 //! # Interrupt handling
 //!
@@ -77,8 +78,9 @@ static HSM: OnceLock<Hsm<UnoHsmPal>> = OnceLock::new();
 /// IO receive loop — runs forever as a single Embassy task.
 ///
 /// Awaits [`HsmIoController::poll_io`] for the next inbound IO from
-/// the IIC driver, then spawns a [`handle_io`] task from the 32-slot
-/// pool. If no pool slots are available, the IO token is silently
+/// the IIC driver, then spawns a [`handle_io`] task from its pool
+/// (32 slots, or 8 in builds carrying ML-DSA — see [`handle_io`]).
+/// If no pool slots are available, the IO token is silently
 /// dropped and the loop retries on the next iteration.
 ///
 /// # Parameters
@@ -123,10 +125,15 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// - Triggers DMA activity and CQE completion for that IO.
 // 32 concurrent IO futures cost 68,608 B of .bss - over 90% of the image's
 // static RAM - leaving only a 113.5 KiB stack. ML-DSA needs far more than
-// that: signing peaks at ~122 KiB of frame even after splitting expansion
-// from the signing rounds. Builds that run ML-DSA - the boot self-test, or
-// the TBOR MlDsaSign/MlDsaVerify commands - cap concurrency at 8, which
-// moves the end of .bss down and grows the stack region to 163.4 KiB.
+// that: signing peaks at ~107.5 KiB of frame. Builds that run ML-DSA - the
+// boot self-test, or the TBOR MlDsaSign/MlDsaVerify commands - cap
+// concurrency at 8, which moves the end of .bss down and grows the stack
+// region to 163.4 KiB.
+//
+// The cost is concurrency: `poll_io` silently drops an IO when the pool is
+// full, so this lowers the depth at which that starts by 4x. An ML-DSA
+// command also occupies its slot for milliseconds without yielding, so a
+// build carrying PQC both has fewer slots and holds them longer.
 #[cfg_attr(
     any(feature = "mldsa-selftest", feature = "tbor-ml-dsa-44"),
     embassy_executor::task(pool_size = 8)
