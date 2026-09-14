@@ -65,6 +65,10 @@ struct FuzzInput {
     // `seed_envelope` so the Phase-2 MAC still verifies but the AEAD-open
     // of the envelope fails, exercising that distinct failure path.
     corrupt_seed_envelope: bool,
+    // When building a valid request, pick the CO/`Authenticated` psk_id +
+    // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
+    // key-derivation branch in `derive_remaining_keys` gets exercised.
+    valid_use_authenticated: bool,
 }
 
 /// Build a deterministic P-384 keypair from a fixed scalar, so the
@@ -117,9 +121,14 @@ fuzz_target!(|input: FuzzInput| {
     let Ok((pk_hsm_key, pk_hsm_sec1)) = fetch_pk_hsm(&dev) else { return; };
 
     let req = if input.valid_open_init || input.valid_open_finish {
+        let (psk_id, session_type) = if input.valid_use_authenticated {
+            (0, SessionType::Authenticated.to_u8())
+        } else {
+            (1, SessionType::PlainText.to_u8())
+        };
         TborSessionOpenInitReq {
-            psk_id: 1,
-            session_type: SessionType::PlainText.to_u8(),
+            psk_id,
+            session_type,
             suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
             pk_init: ephemeral.pk_sec1,
         }
