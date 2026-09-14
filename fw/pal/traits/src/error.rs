@@ -436,6 +436,20 @@ pub enum HsmError {
     /// `x963_kdf` / `sp800_56a_kdf`.
     ConcatKdfError = 0x0870010B,
 
+    /// A variable-length DMA allocation callback
+    /// ([`HsmAlloc::dma_alloc_var`](crate::HsmAlloc::dma_alloc_var) /
+    /// [`dma_alloc_var_with`](crate::HsmAlloc::dma_alloc_var_with)) reported
+    /// having written more bytes than the buffer it was handed.  The
+    /// allocator refuses to expose a slice longer than it owns, so the
+    /// command fails instead of over-reading the heap.  Like
+    /// [`UndoLogFull`](Self::UndoLogFull) this indicates a **firmware bug** —
+    /// an encoder mis-reporting its output length — and should never occur;
+    /// it is distinct from [`InvalidArg`](Self::InvalidArg), which blames a
+    /// malformed request, and from
+    /// [`NotEnoughSpace`](Self::NotEnoughSpace), which signals genuine
+    /// exhaustion.
+    DmaAllocLenOverrun = 0x0870010C,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

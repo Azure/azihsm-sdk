@@ -134,14 +134,20 @@ fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
 fn load_ec(engine: &Engine, data: &EngineData, masked: &[u8]) -> EngineResult<*mut ffi::EVP_PKEY> {
     let priv_key = data.with_session(|session| {
         let mut algo = HsmEccKeyUnmaskAlgo {};
+        // The public half is a software wrapper without a device-side handle
+        // (its delete_key is a documented no-op).
         HsmKeyManager::unmask_key_pair(session, &mut algo, masked)
             .map(|(private, _public)| private)
             .map_err(|e| EngineError::wrap("EC key unmask", e))
     })?;
 
-    let der = priv_key
-        .pub_key_der_vec()
-        .map_err(|e| EngineError::wrap("read EC public key DER", e))?;
+    let der = match priv_key.pub_key_der_vec() {
+        Ok(der) => der,
+        Err(e) => {
+            crate::context::delete_hsm_key(priv_key, "unmasked EC private key");
+            return Err(EngineError::wrap("read EC public key DER", e));
+        }
+    };
 
     build_ec_pkey(engine, data, &der, priv_key)
 }
@@ -157,6 +163,27 @@ pub(crate) fn build_bound_ec_key(
     der: &[u8],
     key: HsmEccPrivateKey,
 ) -> EngineResult<*mut ffi::EC_KEY> {
+    // Pre-attach failures must delete the HSM key (attach_ec's rollback
+    // covers post-attach ones).
+    let ec = match bound_public_ec_key(engine, der) {
+        Ok(ec) => ec,
+        Err(e) => {
+            crate::context::delete_hsm_key(key, "EC private key");
+            return Err(e);
+        }
+    };
+    if let Err(e) = attach_ec(data, ec, key) {
+        // SAFETY: ec is ours and not yet handed out.
+        unsafe { ffi::EC_KEY_free(ec) };
+        return Err(e);
+    }
+    Ok(ec)
+}
+
+/// Parse the SPKI `der` and build an engine-bound `EC_KEY` carrying its group
+/// and public point.
+#[allow(unsafe_code)]
+fn bound_public_ec_key(engine: &Engine, der: &[u8]) -> EngineResult<*mut ffi::EC_KEY> {
     // Parse the SPKI DER into a temporary key just to recover the curve group
     // and public point.
     let parsed =
@@ -198,13 +225,6 @@ pub(crate) fn build_bound_ec_key(
         ));
     }
 
-    // Stash the HSM key in the ex_data (attach_ec rolls the retain back on
-    // failure).
-    if let Err(e) = attach_ec(data, ec, key) {
-        // SAFETY: ec is ours and not yet handed out.
-        unsafe { ffi::EC_KEY_free(ec) };
-        return Err(e);
-    }
     Ok(ec)
 }
 

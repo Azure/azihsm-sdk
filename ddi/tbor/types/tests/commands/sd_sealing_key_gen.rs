@@ -19,44 +19,39 @@
 //! * Before finalize (partition not `Initialized`) → `InvalidArg`.
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
-
-#![cfg(feature = "emu")]
+//!
+//! `SdSealingKeyGen` itself carries no out-of-band data — the request is a
+//! session id plus a 1-byte scope, and the response is a 180-byte masked
+//! key plus a 96-byte public key — so the command runs on any transport.
+//! The *setup* is what needs OOB: [`finalized_co_session`] drives
+//! `PartFinal`, whose PTA chain travels out of band, so the tests that
+//! need a finalized partition also need the driver's data-transfer path.
 
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::CO;
-use crate::commands::part_init::ROTATED_CO_PSK;
+use crate::harness::bootstrap_rotated_co;
+use crate::harness::bootstrap_rotated_cu;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::SessionHandshake;
-use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::CO_PSK_ID as CO;
+use crate::harness::ROTATED_CO_PSK;
+use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_SESSION: u8 = 0b001;
 const SCOPE_EPHEMERAL: u8 = 0b010;
 const SCOPE_LOCAL: u8 = 0b011;
 const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
-
-/// Crypto-User PSK id.
-const CU: u8 = 1;
-
-/// Non-default 32-byte CU PSK, used to clear the default-PSK gate so the
-/// CU-role reject path — not the default-PSK gate — is exercised.
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
-];
 
 /// Bring a partition to `Initialized` on a rotated CO session:
 /// bootstrap → `PartInit` → `PartFinal`.  Post-condition: the
@@ -119,17 +114,17 @@ fn roundtrip_for_scope(scope: u8) {
 }
 
 #[test]
-fn sd_sealing_key_gen_ephemeral_roundtrip_emu() {
+fn sd_sealing_key_gen_ephemeral_roundtrip() {
     roundtrip_for_scope(SCOPE_EPHEMERAL);
 }
 
 #[test]
-fn sd_sealing_key_gen_local_roundtrip_emu() {
+fn sd_sealing_key_gen_local_roundtrip() {
     roundtrip_for_scope(SCOPE_LOCAL);
 }
 
 #[test]
-fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
+fn sd_sealing_key_gen_rejects_unsupported_scope() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -146,7 +141,7 @@ fn sd_sealing_key_gen_rejects_unsupported_scope_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejects_before_finalize_emu() {
+fn sd_sealing_key_gen_rejects_before_finalize() {
     let ctx = TestCtx::new();
     // Rotated CO session but no PartInit/PartFinal → the partition is not
     // Initialized, so the scope's masking key does not exist yet.
@@ -160,27 +155,14 @@ fn sd_sealing_key_gen_rejects_before_finalize_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
+fn sd_sealing_key_gen_rejected_on_cu_session() {
     let ctx = TestCtx::new();
 
     // Rotate the CU PSK out of the default so the dispatcher's default-PSK
     // gate does not fire first; then reopen a CU session under the rotated
     // PSK.  CU sessions are pinned to `SessionType::PlainText` (CO-only is
     // `Authenticated`).
-    let bootstrap = ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("open_session must succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-    bootstrap.close().expect("close bootstrap CU session");
-
-    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("CU session_open_init under rotated PSK");
-    let session = ctx
-        .session_open_finish(pending)
-        .expect("CU session_open_finish under rotated PSK");
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
 
     // SdSealingKeyGen is Crypto-Officer-only: the handler's role gate
     // (checked before the scope/state gates) rejects a CU session.
@@ -192,7 +174,7 @@ fn sd_sealing_key_gen_rejected_on_cu_session_emu() {
 }
 
 #[test]
-fn sd_sealing_key_gen_rejected_on_default_psk_emu() {
+fn sd_sealing_key_gen_rejected_on_default_psk() {
     let ctx = TestCtx::new();
     // Open a CO session WITHOUT rotating the PSK (still the public
     // default) — the dispatcher's default-PSK gate must reject the command

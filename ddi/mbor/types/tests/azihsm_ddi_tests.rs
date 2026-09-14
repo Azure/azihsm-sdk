@@ -19,6 +19,7 @@ mod integration {
     pub mod close_session_smoke;
     pub mod common;
     pub mod cross_session_key_access_smoke;
+    pub mod custom_dispatch;
     pub mod ddi_dev_info;
     pub mod delete_key;
     pub mod delete_key_smoke;
@@ -88,6 +89,8 @@ mod integration {
     pub mod sealed_bk3_smoke;
     pub mod secret_hkdf_derive;
     pub mod secret_kbkdf_derive;
+    pub mod secure_init_bk3_smoke;
+    pub mod secure_provision_lm_sim;
     pub mod sha_digest_smoke;
     pub mod unmask_key_smoke;
 }

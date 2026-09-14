@@ -182,6 +182,20 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
     assert!(!pub_der.is_empty());
 }
 
+/// Explicit deletion exercises the `Unpinned` no-op instead of relying on
+/// `Drop`, which intentionally ignores deletion errors.
+#[test]
+fn sealing_key_explicit_delete_succeeds() {
+    let _guard = PARTITION_LOCK.lock();
+    let session = crate::utils::sd_provision::finalized_co_session();
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
+        .expect("generate sealing key on a provisioned partition");
+
+    HsmKeyManager::delete_key(key).expect("delete unpinned sealing key");
+}
+
 /// Each `SdSealingKeyGen` call produces fresh key material: two keys
 /// generated on the same provisioned session have distinct masked blobs
 /// and distinct public keys.

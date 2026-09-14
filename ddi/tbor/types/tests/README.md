@@ -24,7 +24,14 @@ table.
 
 * `--features emu` — canonical configuration, runs the full suite.
 * `--features mock` — transport-contract probes only.
-* No backend feature — pure host-side codec tests only.
+* No backend feature — native OS backend (`nix` on Linux / `win` on
+  Windows); hardware-eligible command tests run against real silicon.
+
+For `PartFinal`, emulator tests transport the real PTA certificate chain
+through OOB descriptors and exercise full chain validation. Native M1.0
+tests send one schema-required placeholder descriptor with no OOB payload
+because the current hardware firmware intentionally ignores certificate
+descriptors; native certificate-chain validation remains M1.5 work.
 
 The canonical command is:
 

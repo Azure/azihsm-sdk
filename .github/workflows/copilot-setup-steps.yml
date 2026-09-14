@@ -34,21 +34,21 @@ jobs:
     # If you do not check out your code, Copilot will do this for you.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Linux packages
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-format-18 libbsd-dev libssl-dev pkg-config
       - name: Restore Cargo cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+          key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.CACHE_KEY_ID }}
           fail-on-cache-miss: false # If the cache is missing, we can still proceed as copilot can always do cargo xtask precheck --setup.
       - name: Install nightly rustfmt
         run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly

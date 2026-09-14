@@ -99,6 +99,7 @@
 mod alloc;
 mod cert;
 mod crypto;
+mod dispatch;
 mod error;
 mod gdma;
 mod io;
@@ -113,6 +114,7 @@ pub use alloc::*;
 
 pub use cert::*;
 pub use crypto::*;
+pub use dispatch::*;
 pub use error::*;
 pub use gdma::*;
 pub use io::*;

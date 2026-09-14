@@ -88,6 +88,7 @@ fn main() {
         .allowlist_function("OBJ_nid2obj")
         .allowlist_function("OBJ_obj2nid")
         .allowlist_function("OBJ_length")
+        .allowlist_function("i2d_PUBKEY")
         .allowlist_function("i2d_ECPrivateKey")
         .allowlist_function("d2i_ECPrivateKey")
         .allowlist_function("i2d_ECParameters")

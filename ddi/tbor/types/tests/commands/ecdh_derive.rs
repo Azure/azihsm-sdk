@@ -40,13 +40,13 @@ use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
-use crate::commands::part_init::bootstrap_rotated_co;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 const CO: u8 = 0;
 const CU: u8 = 1;
@@ -72,6 +72,8 @@ fn generate_in_scope(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (V
             session_id,
             scope,
             curve,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
     (resp.masked_key, resp.pub_key)
