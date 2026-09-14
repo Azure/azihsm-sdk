@@ -436,3 +436,128 @@ fn hmac_crypto_user_all_hashes_and_scopes_emu() {
     }
     ctx.session_close(cu.session_id).expect("close CU session");
 }
+
+/// Hmac rejects use of a masked key after its owning session is closed.
+#[test]
+fn hmac_rejects_closed_session_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let masked = generate_key(&ctx, session.session_id, SCOPE_SESSION, HMAC_HASH_SHA256);
+
+    let session_id = session.session_id;
+
+    // Prove the key works before closing the session.
+    let tag = mac(&ctx, session_id, &masked, b"before close");
+    assert_eq!(tag.len(), 32);
+
+    ctx.session_close(session_id).expect("close HMAC session");
+
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id,
+            masked_key: masked,
+            msg: b"after close".to_vec(),
+        },
+        TborStatus::SessionNotFound,
+    );
+}
+
+/// Repeated Hmac calls do not consume or mutate the masked HMAC key.
+#[test]
+fn hmac_masked_key_reusable_after_multiple_calls_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+    let original = masked.clone();
+
+    let messages: [&[u8]; 5] = [b"one", b"two", b"three", b"", b"final message"];
+
+    for msg in messages {
+        let first = mac(&ctx, session.session_id, &masked, msg);
+        let second = mac(&ctx, session.session_id, &masked, msg);
+
+        assert_eq!(first, second, "masked key must remain reusable");
+        assert_eq!(
+            masked, original,
+            "host-side masked key bytes must remain unchanged"
+        );
+    }
+}
+
+/// Hmac accepts arbitrary binary input containing every possible byte value.
+#[test]
+fn hmac_all_byte_values_matches_host_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key_bytes = [0x5Au8; 32];
+    let masked = unwrap(&ctx, session.session_id, KEY_CLASS_HMAC_SHA256, &key_bytes).masked_key;
+
+    let msg: Vec<u8> = (0u8..=u8::MAX).collect();
+
+    let key = HmacKey::from_bytes(&key_bytes).expect("host HMAC key");
+    let mut algo = HmacAlgo::new(HashAlgo::sha256());
+    let expected = Signer::sign_vec(&mut algo, &key, &msg).expect("host HMAC");
+
+    let actual = mac(&ctx, session.session_id, &masked, &msg);
+
+    assert_eq!(actual, expected);
+}
+
+/// Corrupting the masked-key envelope header must never produce a valid MAC.
+#[test]
+fn hmac_rejects_corrupted_masked_key_header_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+
+    // Exercise each byte in the cleartext envelope header independently.
+    for offset in 0..8 {
+        let mut corrupted = masked.clone();
+        corrupted[offset] ^= 0x80;
+
+        let req = TborHmacReq {
+            session_id: session.session_id,
+            masked_key: corrupted,
+            msg: b"header corruption".to_vec(),
+        };
+
+        // Do not use mac(), because rejection is expected.
+        assert!(
+            ctx.tbor(&req).is_err(),
+            "corrupted masked-key header byte {offset} unexpectedly succeeded"
+        );
+    }
+
+    // Original key must still work after all rejected attempts.
+    let tag = mac(&ctx, session.session_id, &masked, b"header corruption");
+    assert_eq!(tag.len(), 32);
+}
+
+/// Alternating HMAC algorithms does not retain stale hash or key state.
+#[test]
+fn hmac_alternating_hashes_do_not_leak_state_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let msg = b"algorithm state isolation";
+
+    let key256 = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+    let key384 = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA384);
+    let key512 = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA512);
+
+    let tag256 = mac(&ctx, session.session_id, &key256, msg);
+    let tag384 = mac(&ctx, session.session_id, &key384, msg);
+    let tag512 = mac(&ctx, session.session_id, &key512, msg);
+
+    assert_eq!(tag256.len(), 32);
+    assert_eq!(tag384.len(), 48);
+    assert_eq!(tag512.len(), 64);
+
+    // Go back to earlier algorithms after SHA-512.
+    assert_eq!(mac(&ctx, session.session_id, &key256, msg), tag256);
+    assert_eq!(mac(&ctx, session.session_id, &key384, msg), tag384);
+    assert_eq!(mac(&ctx, session.session_id, &key512, msg), tag512);
+}
