@@ -112,3 +112,10 @@ doc = false
 name = "fuzz_tbor_part_final"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_final.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_part_info"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_info.rs"
+test = false
