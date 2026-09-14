@@ -137,6 +137,14 @@ impl UnoHsmPal {
 /// Returns the base pointer and capacity for a given heap region.
 /// Uses raw pointers to avoid creating aliasing `&mut` references.
 ///
+/// The NonDma heap reports **zero capacity**: the `DTCM_IO_BUF` region that
+/// backed it has been reclaimed by the linker to grow the stack (see
+/// `memory.x`), because ML-DSA needs the depth and nothing allocated from
+/// this heap. Reporting zero makes any future NonDma request fail with
+/// `NotEnoughSpace` instead of handing out memory that is now the stack.
+/// Restoring the heap means shrinking `RAM` in `memory.x` back to 187K and
+/// returning `DTCM_IO_BUF_SIZE` here, in the same change.
+///
 /// # Parameters
 /// - `io_index`: IO slot index selecting the per-IO buffer region.
 /// - `heap`: Heap selector (`NONDMA` or `DMA`).
@@ -144,13 +152,13 @@ impl UnoHsmPal {
 /// # Returns
 /// Tuple `(base_ptr, cap)` where:
 /// - `base_ptr`: start address of the slot-local heap.
-/// - `cap`: total capacity in bytes for that heap.
+/// - `cap`: total capacity in bytes for that heap — always 0 for `NONDMA`.
 #[inline(always)]
 fn heap_base_cap(io_index: u16, heap: usize) -> (*mut u8, usize) {
     let index = io_index as usize;
     if heap == NONDMA {
         let addr = DTCM_IO_BUF_BASE as usize + index * DTCM_IO_BUF_STRIDE as usize;
-        (addr as *mut u8, DTCM_IO_BUF_SIZE as usize)
+        (addr as *mut u8, 0)
     } else {
         let addr = IO_GSRAM_BASE as usize
             + SRAM_IO_BUF_OFFSET as usize

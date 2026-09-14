@@ -33,15 +33,51 @@
 use azihsm_ddi_tbor_types::TborMlDsaSignReq;
 use azihsm_ddi_tbor_types::TborMlDsaVerifyReq;
 use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::ML_DSA_44_SIGNATURE_LEN;
-use azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN;
-use azihsm_ddi_tbor_types::ML_DSA_44_VERIFYING_KEY_LEN;
+#[cfg(not(feature = "mldsa-65"))]
+use azihsm_ddi_tbor_types::ML_DSA_44_SIGNATURE_LEN as SIGNATURE_LEN;
+#[cfg(not(feature = "mldsa-65"))]
+use azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN as SIGNING_KEY_LEN;
+#[cfg(not(feature = "mldsa-65"))]
+use azihsm_ddi_tbor_types::ML_DSA_44_VERIFYING_KEY_LEN as VERIFYING_KEY_LEN;
+#[cfg(feature = "mldsa-65")]
+use azihsm_ddi_tbor_types::ML_DSA_65_SIGNATURE_LEN as SIGNATURE_LEN;
+#[cfg(feature = "mldsa-65")]
+use azihsm_ddi_tbor_types::ML_DSA_65_SIGNING_KEY_LEN as SIGNING_KEY_LEN;
+#[cfg(feature = "mldsa-65")]
+use azihsm_ddi_tbor_types::ML_DSA_65_VERIFYING_KEY_LEN as VERIFYING_KEY_LEN;
 use ml_dsa::signature::Keypair;
 use ml_dsa::signature::Verifier;
+#[cfg(not(feature = "mldsa-65"))]
 use ml_dsa::MlDsa44;
+#[cfg(feature = "mldsa-65")]
+use ml_dsa::MlDsa65;
 use ml_dsa::Signature;
 use ml_dsa::SigningKey;
 use ml_dsa::VerifyingKey;
+
+/// Parameter set the device under test speaks.
+///
+/// A firmware image links exactly one, so the test must match it. Default
+/// is ML-DSA-44 (what the emulator selects); `--features mldsa-65` targets
+/// an ML-DSA-65 image.
+#[cfg(not(feature = "mldsa-65"))]
+type Param = MlDsa44;
+/// See [`Param`].
+#[cfg(feature = "mldsa-65")]
+type Param = MlDsa65;
+
+/// A signing-key length this device must reject.
+///
+/// Inside the schema's 2560..=4032 range — so the request encodes and the
+/// rejection comes from firmware, not the host encoder — but deliberately
+/// near the bottom of that range: the firmware caps an inbound request at
+/// one 4K page (`MAX_SRC_LEN`), so a 4032 B probe would be refused for its
+/// length rather than its parameter set, testing the wrong thing.
+#[cfg(not(feature = "mldsa-65"))]
+const WRONG_SIGNING_KEY_LEN: usize = azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN + 1;
+/// See [`WRONG_SIGNING_KEY_LEN`].
+#[cfg(feature = "mldsa-65")]
+const WRONG_SIGNING_KEY_LEN: usize = azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN;
 
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
@@ -60,7 +96,7 @@ const SEED: [u8; 32] = [
 /// not the 32-byte seed — expanding a seed means re-running key generation,
 /// which is exactly what does not fit in the device's RAM.
 fn host_keypair() -> (Vec<u8>, Vec<u8>) {
-    let sk = SigningKey::<MlDsa44>::from_seed(&SEED.into());
+    let sk = SigningKey::<Param>::from_seed(&SEED.into());
     // `to_expanded` is deprecated in favour of `to_seed`, but the seed is
     // exactly what this device cannot consume: expanding it means running
     // key generation, which does not fit in its RAM.
@@ -74,7 +110,7 @@ fn host_keypair() -> (Vec<u8>, Vec<u8>) {
 /// Sign `msg` on the host with the same deterministic variant the device
 /// uses, returning the encoded signature.
 fn host_sign(msg: &[u8]) -> Vec<u8> {
-    let sk = SigningKey::<MlDsa44>::from_seed(&SEED.into());
+    let sk = SigningKey::<Param>::from_seed(&SEED.into());
     sk.expanded_key()
         .sign_deterministic(msg, &[])
         .expect("host ML-DSA sign")
@@ -90,10 +126,10 @@ fn host_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     let Ok(sig_enc) = sig.try_into() else {
         return false;
     };
-    let Some(decoded) = Signature::<MlDsa44>::decode(sig_enc) else {
+    let Some(decoded) = Signature::<Param>::decode(sig_enc) else {
         return false;
     };
-    VerifyingKey::<MlDsa44>::decode(pk_enc)
+    VerifyingKey::<Param>::decode(pk_enc)
         .verify(msg, &decoded)
         .is_ok()
 }
@@ -103,8 +139,8 @@ fn ml_dsa_sign_verifies_on_host() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (sk, pk) = host_keypair();
-    assert_eq!(sk.len(), ML_DSA_44_SIGNING_KEY_LEN);
-    assert_eq!(pk.len(), ML_DSA_44_VERIFYING_KEY_LEN);
+    assert_eq!(sk.len(), SIGNING_KEY_LEN);
+    assert_eq!(pk.len(), VERIFYING_KEY_LEN);
 
     let msg = b"post-quantum signature over the DDI".to_vec();
     let resp = ctx
@@ -115,7 +151,7 @@ fn ml_dsa_sign_verifies_on_host() {
         })
         .expect("MlDsaSign");
 
-    assert_eq!(resp.signature.len(), ML_DSA_44_SIGNATURE_LEN);
+    assert_eq!(resp.signature.len(), SIGNATURE_LEN);
     assert!(
         host_verify(&pk, &msg, &resp.signature),
         "the device signature must verify under the host verifying key",
@@ -133,6 +169,11 @@ fn ml_dsa_sign_verifies_on_host() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "mldsa-65",
+    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
+              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
+)]
 fn ml_dsa_verify_accepts_host_signature() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -151,6 +192,11 @@ fn ml_dsa_verify_accepts_host_signature() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "mldsa-65",
+    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
+              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
+)]
 fn ml_dsa_verify_rejects_tampered_message() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -170,6 +216,11 @@ fn ml_dsa_verify_rejects_tampered_message() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "mldsa-65",
+    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
+              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
+)]
 fn ml_dsa_verify_rejects_tampered_signature() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -179,7 +230,7 @@ fn ml_dsa_verify_rejects_tampered_signature() {
     let mut sig = host_sign(&msg);
     // Flip a bit in the middle of the signature: still the right length and
     // so still schema-valid, but no longer a valid signature.
-    sig[ML_DSA_44_SIGNATURE_LEN / 2] ^= 0x01;
+    sig[SIGNATURE_LEN / 2] ^= 0x01;
 
     ctx.expect_fw_reject(
         &TborMlDsaVerifyReq {
@@ -209,7 +260,7 @@ fn ml_dsa_sign_rejects_wrong_key_length() {
     ctx.expect_fw_reject(
         &TborMlDsaSignReq {
             session_id: session.session_id,
-            signing_key: vec![0xAB; 2561],
+            signing_key: vec![0xAB; WRONG_SIGNING_KEY_LEN],
             msg: Vec::new(),
         },
         TborStatus::InvalidArg,

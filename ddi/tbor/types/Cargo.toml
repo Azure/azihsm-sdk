@@ -39,6 +39,11 @@ path = "tests/azihsm_ddi_tbor_tests.rs"
 # test binary picks up the right backend. The same tests run across every
 # transport — choose one with `--features emu` / `mock` / `sock`.
 emu = ["azihsm_ddi/emu"]
+
+# Target a device built for ML-DSA-65 rather than the default ML-DSA-44.
+# A firmware image links exactly one parameter set, so the ml_dsa tests must
+# be told which one the device under test speaks.
+mldsa-65 = []
 mock = ["azihsm_ddi/mock"]
 sock = ["azihsm_ddi/sock"]
 table-4 = ["azihsm_ddi/table-4"]
