@@ -55,6 +55,10 @@ struct FuzzInput {
     session_type: u8,
     suite_id: u8,
     pk_init_scalar: [u8; P384_COORD_LEN],
+    // When building a valid request, pick the CO/`Authenticated` psk_id +
+    // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
+    // key-derivation branch in `derive_remaining_keys` gets exercised.
+    valid_use_authenticated: bool,
 
     // input for SessionOpenFinish
     valid_open_finish: bool,
@@ -65,10 +69,6 @@ struct FuzzInput {
     // `seed_envelope` so the Phase-2 MAC still verifies but the AEAD-open
     // of the envelope fails, exercising that distinct failure path.
     corrupt_seed_envelope: bool,
-    // When building a valid request, pick the CO/`Authenticated` psk_id +
-    // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
-    // key-derivation branch in `derive_remaining_keys` gets exercised.
-    valid_use_authenticated: bool,
 }
 
 /// Build a deterministic P-384 keypair from a fixed scalar, so the
@@ -146,9 +146,6 @@ fuzz_target!(|input: FuzzInput| {
     // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
 
-    // DEBUG REMOVE ME: print result from TborSessionOpenInitReq
-    println!("TborSessionOpenInitReq result: {:?}", init_result);
-
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
@@ -210,20 +207,14 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let mut open_finish_cookie = None;
-        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
-
-        // DEBUG REMOVE ME: print result from TborSessionOpenFinishReq
-        println!("TborSessionOpenFinishReq result: {:?}", finish_result);
+        let _ = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
         // SessionClose afterwards to clean up
         let close_req = TborSessionCloseReq {
             session_id: resp.session_id,
         };
         let mut close_cookie = None;
-        let close_result = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
-
-        // DEBUG REMOVE ME: print result from TborSessionCloseReq
-        println!("TborSessionCloseReq result: {:?}", close_result);
+        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
     }
 });
 
