@@ -598,14 +598,16 @@ fn sd_create_remote_backup_trusted_sa_rejects_evidence_leaf_mismatch() {
     let sapota_key = CaKey::generate();
     let (session, policy, pid_pub) =
         finalized_backing_session_trusted(&ctx, &sata_key, &sapota_key);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
 
     // Under `require_trusted_sa_key` the three-chain evidence is validated
     // (partition-owner chain anchored to SAPOTA).  The owner chain certifies
     // a *different* leaf key, so the chains do not agree on a single leaf →
-    // reject.  The receiver chain itself is valid (SATA-anchored).
+    // reject.  The receiver chain is valid and certifies the attested
+    // sealing key (`RcvrPub`), so this case isolates the evidence-leaf
+    // disagreement rather than the `report_pk == pk_r` binding.
     let other_pub = CaKey::generate().raw_pub();
-    let receiver = make_chain(&sata_key, &pid_pub);
+    let receiver = make_chain(&sata_key, &rcvr_pub);
     let mfgr = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &other_pub);
     let part_owner = make_chain(&sapota_key, &pid_pub);
@@ -646,13 +648,14 @@ fn sd_create_remote_backup_trusted_sa_rejects_tampered_report() {
     let sapota_key = CaKey::generate();
     let (session, policy, pid_pub) =
         finalized_backing_session_trusted(&ctx, &sata_key, &sapota_key);
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
 
-    // Under `require_trusted_sa_key`, all chains are valid and share the
-    // leaf key, but the report's signature no longer verifies against that
-    // leaf key → reject.
+    // Under `require_trusted_sa_key`, all chains are valid and the receiver
+    // chain certifies the attested sealing key (`RcvrPub`), so the
+    // `report_pk == pk_r` binding holds; the report's signature no longer
+    // verifies against its leaf key → reject, isolating the tampered report.
     let tampered_report = flip_last_byte(report);
-    let receiver = make_chain(&sata_key, &pid_pub);
+    let receiver = make_chain(&sata_key, &rcvr_pub);
     let mfgr = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &pid_pub);
     let part_owner = make_chain(&sapota_key, &pid_pub);

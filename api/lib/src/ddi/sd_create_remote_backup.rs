@@ -74,7 +74,17 @@ pub(crate) fn sd_create_remote_backup_ex(
     // descriptor indices precede the evidence items.
     let mut oob: Vec<&[u8]> = Vec::new();
     let receiver_chain = push_cert_chain(receiver_cert_chain, &mut oob, EVIDENCE_CHAIN_MAX_CERTS)?;
-    let receiver = push_evidence(receiver_evidence, &mut oob)?;
+
+    // The three-chain attestation evidence is verified by the firmware
+    // only when the policy sets `require_trusted_sa_key`; otherwise it is
+    // ignored.  Pack (and validate) it only in that case, and pack empty
+    // descriptors — shipping no DER bytes — when the flag is clear, so the
+    // documented flag-clear contract (empty evidence) is expressible.
+    let receiver = if policy.flags.require_trusted_sa_key() {
+        push_evidence(receiver_evidence, &mut oob)?
+    } else {
+        EvidenceDescriptors::empty()
+    };
 
     let req = TborSdCreateRemoteBackupReq {
         session_id,

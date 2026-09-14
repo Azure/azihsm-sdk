@@ -93,3 +93,40 @@ fn sd_create_remote_backup_is_one_shot() {
          SdAlreadyInitialized, got {second:?}",
     );
 }
+
+/// Flag-clear contract: when the policy does not set
+/// `require_trusted_sa_key`, the firmware ignores the three-chain
+/// attestation evidence, so a caller may omit it entirely. Supplying only
+/// the mandatory receiver certificate chain (SATA-anchored, leaf =
+/// `RcvrPub`) with empty evidence chains and an empty report must still
+/// create the security domain — exercising the host/FFI allow-empty path.
+#[test]
+fn sd_create_remote_backup_roundtrip_empty_evidence() {
+    let _guard = PARTITION_LOCK.lock();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
+
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    // Reuse the evidence builder only to mint the mandatory receiver chain;
+    // the three attestation chains and report are passed empty below.
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+    let receiver = evidence.receiver_certs();
+    let empty = HsmSdEvidence {
+        mfgr_cert_chain: &[],
+        owner_cert_chain: &[],
+        part_owner_cert_chain: &[],
+        report: &[],
+    };
+
+    let result = session
+        .sd_create_remote_backup(&masked, &receiver, &empty, &policy)
+        .expect("create remote backup with empty evidence");
+
+    assert_eq!(result.pok_remote_backup.len(), POK_REMOTE_BACKUP_LEN);
+    assert!(
+        result.pok_remote_backup.iter().any(|&b| b != 0),
+        "pok_remote_backup must not be all-zero",
+    );
+    assert_eq!(result.pok_local_backup.len(), MASKED_SD_LEN);
+    assert_eq!(result.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+}

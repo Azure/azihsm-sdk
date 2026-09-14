@@ -37,6 +37,26 @@ pub(crate) struct EvidenceDescriptors {
     pub(crate) report: ReportDescriptor,
 }
 
+impl EvidenceDescriptors {
+    /// Empty evidence: no cert chains and a zero-length report descriptor,
+    /// referencing nothing in the out-of-band list.
+    ///
+    /// Used for `SdCreateRemoteBackup` when the policy's
+    /// `require_trusted_sa_key` flag is clear: the firmware ignores the
+    /// evidence group entirely in that case, so no DER bytes are shipped.
+    pub(crate) fn empty() -> Self {
+        Self {
+            mfgr: Vec::new(),
+            owner: Vec::new(),
+            part_owner: Vec::new(),
+            report: ReportDescriptor {
+                index: 0,
+                length: tbor_int::U16::new(0),
+            },
+        }
+    }
+}
+
 /// Flattens one [`HsmSdEvidence`] party into its wire descriptors,
 /// appending all referenced DER bytes (the three cert chains, then the
 /// report) to the shared `oob` list so their descriptor indices are

@@ -198,7 +198,8 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_roundtrip)
         ASSERT_FALSE(sndr.report.empty());
         ASSERT_FALSE(dst.report.empty());
 
-        std::vector<uint8_t> src_backup = create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
+        std::vector<uint8_t> src_backup =
+            create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
         ASSERT_EQ(src_backup.size(), kPokRemoteBackupLen);
 
         // Reseal: open with the receiver key (auth = sender), reseal to the
@@ -252,7 +253,8 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_rerandomizes)
         ASSERT_FALSE(sndr.report.empty());
         ASSERT_FALSE(dst.report.empty());
 
-        std::vector<uint8_t> src_backup = create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
+        std::vector<uint8_t> src_backup =
+            create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
         ASSERT_EQ(src_backup.size(), kPokRemoteBackupLen);
 
         SdEvidenceHolder src_ev = build_receiver_evidence(ctx, sndr.pub, sndr.report);
