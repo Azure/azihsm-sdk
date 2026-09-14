@@ -450,6 +450,22 @@ pub enum HsmError {
     /// exhaustion.
     DmaAllocLenOverrun = 0x0870010C,
 
+    /// `MlDsaSign` was handed an encoded signing key that is structurally
+    /// invalid — a correct-length key whose unpacked `s1`/`s2` coefficients
+    /// fall outside the parameter set's range.  Such a key would panic the
+    /// decoder, so it is rejected up front.
+    MlDsaInvalidSigningKey = 0x0870010D,
+
+    /// `MlDsaSign` failed to produce a signature.
+    MlDsaSignFailed = 0x0870010E,
+
+    /// `MlDsaVerify` completed and the signature did **not** verify under
+    /// the supplied verifying key.  Reported as an error rather than as a
+    /// boolean in a successful response so a caller that checks only for
+    /// transport success cannot mistake a bad signature for a good one
+    /// (mirrors [`EccVerifyFailed`](Self::EccVerifyFailed)).
+    MlDsaVerifyFailed = 0x0870010F,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

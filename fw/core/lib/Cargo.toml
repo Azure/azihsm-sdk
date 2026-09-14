@@ -16,6 +16,7 @@ azihsm_fw_core_crypto_hpke.workspace = true
 azihsm_fw_core_crypto_key_derive.workspace = true
 azihsm_fw_core_crypto_key_masking.workspace = true
 azihsm_fw_core_crypto_key_report.workspace = true
+azihsm_fw_core_crypto_ml_dsa = { optional = true, workspace = true }
 azihsm_fw_core_crypto_x509_builder.workspace = true
 azihsm_fw_core_crypto_x509_chain.workspace = true
 azihsm_fw_core_evidence.workspace = true
@@ -48,4 +49,19 @@ mbor = []
 # does not import wrapped keys can turn it off to reclaim ~13.8 KiB of
 # .text. The opcode then reports an unsupported command.
 tbor-unwrap-key = []
+
+# The TBOR MlDsaSign / MlDsaVerify commands (FIPS 204 post-quantum
+# signatures). Off by default: the ML-DSA implementation costs ~73 KiB of
+# .text, which does not fit alongside the MBOR dispatch tree, so a build
+# enabling it must disable `mbor`. The opcodes report an unsupported
+# command when it is off.
+tbor-ml-dsa = ["dep:azihsm_fw_core_crypto_ml_dsa"]
+
+# Select ML-DSA-44 for the TBOR PQC commands. A build links exactly one
+# parameter set (carrying both would roughly double the ~73 KiB cost), and
+# ML-DSA-44 is the only set whose *signing* path fits this part's stack:
+# signing measures 108 KiB of frame at ML-DSA-44 against 322 KiB at
+# ML-DSA-65, versus a 163.4 KiB stack region. The emulator selects the same
+# set so one test binary covers both emu and silicon.
+tbor-ml-dsa-44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44", "tbor-ml-dsa"]
 tracing = []

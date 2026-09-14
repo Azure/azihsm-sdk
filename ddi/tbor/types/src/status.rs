@@ -323,6 +323,18 @@ pub enum TborStatus {
     /// policy does not permit peer cloning (mirror of
     /// `HsmError::SdPeerCloningNotAllowed`).
     SdPeerCloningNotAllowed = 0x0870010A,
+
+    /// `MlDsaSign` was handed a structurally invalid encoded signing key
+    /// (mirror of `HsmError::MlDsaInvalidSigningKey`).
+    MlDsaInvalidSigningKey = 0x0870010D,
+
+    /// `MlDsaSign` failed to produce a signature (mirror of
+    /// `HsmError::MlDsaSignFailed`).
+    MlDsaSignFailed = 0x0870010E,
+
+    /// `MlDsaVerify` ran and the signature did not verify (mirror of
+    /// `HsmError::MlDsaVerifyFailed`).
+    MlDsaVerifyFailed = 0x0870010F,
 }
 
 impl core::fmt::Debug for TborStatus {

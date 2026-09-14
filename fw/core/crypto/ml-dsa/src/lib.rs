@@ -54,16 +54,27 @@ pub const SIGNING_KEY_LEN: usize = 4032;
 #[cfg(feature = "param-mldsa44")]
 pub const SIGNING_KEY_LEN: usize = 2560;
 
-/// Encoded ML-DSA-65 verifying-key length in bytes.
+/// Encoded verifying-key length in bytes (FIPS 204 Table 2).
+#[cfg(not(feature = "param-mldsa44"))]
 pub const VERIFYING_KEY_LEN: usize = 1952;
+/// See [`VERIFYING_KEY_LEN`].
+#[cfg(feature = "param-mldsa44")]
+pub const VERIFYING_KEY_LEN: usize = 1312;
 
-/// ML-DSA-65 signature length in bytes.
+/// Signature length in bytes (FIPS 204 Table 2).
+#[cfg(not(feature = "param-mldsa44"))]
 pub const SIGNATURE_LEN: usize = 3309;
+/// See [`SIGNATURE_LEN`].
+#[cfg(feature = "param-mldsa44")]
+pub const SIGNATURE_LEN: usize = 2420;
 
 /// Private-key coefficient bound (FIPS 204 Table 1): eta = 4 for ML-DSA-65,
 /// eta = 2 for ML-DSA-44.
 #[cfg(not(feature = "param-mldsa44"))]
 const ETA: u8 = 4;
+/// See [`ETA`].
+#[cfg(feature = "param-mldsa44")]
+const ETA: u8 = 2;
 
 /// Length in bytes of the `rho ‖ K ‖ tr` prefix that precedes `s1` in an
 /// encoded signing key: 32 + 32 + 64.
@@ -112,12 +123,23 @@ pub enum MlDsaKeyError {
     CoefficientOutOfRange,
 }
 
-/// Validates an encoded ML-DSA-65 signing key without decoding it.
+/// Validates an encoded ML-DSA signing key without decoding it.
 ///
 /// Checks the length, then verifies that every packed `s1` and `s2`
-/// coefficient decodes to a value within `[-ETA, ETA]`.  FIPS 204 packs each
-/// coefficient as `eta - c`, so a valid nibble is in `0..=2 * ETA`; anything
-/// larger is out of range.
+/// coefficient is a value the decoder will accept.  FIPS 204 `BitUnPack`
+/// reads each coefficient as an `ETA_BITS`-bit field and asserts that it is
+/// at most `2 * ETA` before mapping it to `eta - z`; a larger field value
+/// trips that assertion and **panics**
+/// [`ml_dsa::ExpandedSigningKey::from_expanded`].
+///
+/// Both parameter sets need this check, because neither packing is
+/// saturated: eta = 2 is carried in 3 bits (0..=7, of which only 0..=4 are
+/// legal) and eta = 4 in 4 bits (0..=15, of which only 0..=8 are legal).
+///
+/// The `t0` region needs no such check and is deliberately not examined:
+/// it is range-encoded over `(-2^12, 2^12]` in exactly 13 bits, so every
+/// 13-bit value is a legal encoding and the decoder's assertion there can
+/// never fire.
 ///
 /// # Errors
 ///
@@ -131,18 +153,26 @@ pub fn validate_encoded_signing_key(enc: &[u8]) -> Result<(), MlDsaKeyError> {
     let packed_len = (L + K) * POLY_LEN;
     let s = &enc[PREFIX_LEN..PREFIX_LEN + packed_len];
 
-    // With 4-bit packing each nibble is one coefficient and must satisfy
-    // `nibble <= 2 * ETA`. The 3-bit packing used when eta = 2 straddles byte
-    // boundaries, and every 3-bit value is already within range, so only the
-    // length check applies there.
-    #[cfg(not(feature = "param-mldsa44"))]
-    for byte in s {
-        if (byte & 0x0f) > 2 * ETA || (byte >> 4) > 2 * ETA {
-            return Err(MlDsaKeyError::CoefficientOutOfRange);
+    // Walk the packed region as a little-endian bit stream. Each polynomial
+    // occupies a whole number of bytes (256 * ETA_BITS / 8), so polynomial
+    // boundaries fall on byte boundaries and the whole region can be decoded
+    // as one continuous stream even when a coefficient straddles a byte, as
+    // it does for the 3-bit eta = 2 packing.
+    let max = u32::from(2 * ETA);
+    let mask = (1u32 << ETA_BITS) - 1;
+    let mut acc: u32 = 0;
+    let mut acc_bits = 0usize;
+    for &byte in s {
+        acc |= u32::from(byte) << acc_bits;
+        acc_bits += 8;
+        while acc_bits >= ETA_BITS {
+            if (acc & mask) > max {
+                return Err(MlDsaKeyError::CoefficientOutOfRange);
+            }
+            acc >>= ETA_BITS;
+            acc_bits -= ETA_BITS;
         }
     }
-    #[cfg(feature = "param-mldsa44")]
-    let _ = s;
 
     Ok(())
 }
@@ -167,6 +197,114 @@ pub fn import_signing_key(enc: &[u8]) -> Result<ExpandedSigningKey<Param>, MlDsa
     // that makes `from_expanded` panic.
     #[allow(deprecated)]
     Ok(ExpandedSigningKey::<Param>::from_expanded(bytes))
+}
+
+/// Reasons a signing or verification request is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlDsaOpError {
+    /// The supplied signing key was rejected — see [`MlDsaKeyError`].
+    Key(MlDsaKeyError),
+
+    /// A supplied buffer was not the length this parameter set requires.
+    BadLength,
+
+    /// Signing failed.
+    SignFailed,
+
+    /// The signature did not verify under the supplied verifying key.
+    VerifyFailed,
+}
+
+impl From<MlDsaKeyError> for MlDsaOpError {
+    fn from(e: MlDsaKeyError) -> Self {
+        Self::Key(e)
+    }
+}
+
+/// Signs `msg` with the encoded signing key `enc_sk`, writing the encoded
+/// signature into `out`.
+///
+/// Uses the FIPS 204 **deterministic** variant, so no entropy source is
+/// required and the signature is a pure function of key and message — which
+/// is also what makes the on-device result checkable against a pinned
+/// known-answer vector.
+///
+/// `out` must be exactly [`SIGNATURE_LEN`] bytes; the signature is written
+/// into it in place rather than returned, so the caller's buffer (a DMA
+/// response slot) is the only copy.
+///
+/// # Stack
+///
+/// This is `#[inline(never)]` on purpose, and deliberately does **not**
+/// split expansion from the signing rounds. LLVM merges inlined callees
+/// into a single frame and does not reuse slots across scopes, so letting
+/// this inline into a command handler would add its whole working set to
+/// the caller's frame. Splitting it further is worse, not better: measured
+/// on ARM, importing and signing in one frame costs 108 KiB, whereas
+/// handing the expanded key to a separate `#[inline(never)]` signer costs
+/// 163 + 14 KiB, because the key is then materialised on both sides of the
+/// call. The 163.4 KiB stack region admits the former and not the latter.
+///
+/// # Errors
+///
+/// - [`MlDsaOpError::Key`] if the signing key is malformed.
+/// - [`MlDsaOpError::BadLength`] if `out` is not [`SIGNATURE_LEN`] bytes.
+/// - [`MlDsaOpError::SignFailed`] if signing fails.
+#[inline(never)]
+pub fn sign_into(enc_sk: &[u8], msg: &[u8], out: &mut [u8]) -> Result<(), MlDsaOpError> {
+    if out.len() != SIGNATURE_LEN {
+        return Err(MlDsaOpError::BadLength);
+    }
+
+    // Construct the expanded key directly rather than calling
+    // `import_signing_key`: returning it through a `Result` across a call
+    // boundary makes the compiler materialise the ~57 KiB key twice, once
+    // as the callee's return temporary and once as the local. Measured on
+    // ARM that is the difference between a 163 KiB and a 108 KiB frame.
+    validate_encoded_signing_key(enc_sk)?;
+    let bytes: &ExpandedSigningKeyBytes<Param> = enc_sk
+        .try_into()
+        .map_err(|_| MlDsaOpError::Key(MlDsaKeyError::BadLength))?;
+
+    // Safe: `validate_encoded_signing_key` has ruled out the only input
+    // class that makes `from_expanded` panic.
+    #[allow(deprecated)]
+    let sk = ExpandedSigningKey::<Param>::from_expanded(bytes);
+
+    let sig = sk
+        .sign_deterministic(msg, &[])
+        .map_err(|_| MlDsaOpError::SignFailed)?;
+    out.copy_from_slice(sig.encode().as_slice());
+    Ok(())
+}
+
+/// Verifies `sig` over `msg` under the encoded verifying key `enc_pk`.
+///
+/// # Stack
+///
+/// `#[inline(never)]` for the same reason as [`sign_into`]; this path peaks
+/// at 92.5 KiB at ML-DSA-44 and 146 KiB at ML-DSA-65, measured on ARM.
+///
+/// # Errors
+///
+/// - [`MlDsaOpError::BadLength`] if either buffer is the wrong length.
+/// - [`MlDsaOpError::VerifyFailed`] if the signature does not verify.
+#[inline(never)]
+pub fn verify(enc_pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<(), MlDsaOpError> {
+    use ml_dsa::signature::Verifier;
+
+    let pk_enc: &EncodedVerifyingKey<Param> =
+        enc_pk.try_into().map_err(|_| MlDsaOpError::BadLength)?;
+    let sig_enc: &EncodedSignature<Param> = sig.try_into().map_err(|_| MlDsaOpError::BadLength)?;
+
+    // A signature that is the right length but not a well-formed encoding is
+    // a failed verification, not a malformed request: the encoding is
+    // attacker-supplied and carries no separate integrity guarantee.
+    let decoded = Signature::<Param>::decode(sig_enc).ok_or(MlDsaOpError::VerifyFailed)?;
+
+    VerifyingKey::<Param>::decode(pk_enc)
+        .verify(msg, &decoded)
+        .map_err(|_| MlDsaOpError::VerifyFailed)
 }
 
 #[cfg(test)]

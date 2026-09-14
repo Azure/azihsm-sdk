@@ -42,6 +42,11 @@ default = ["mbor", "tbor-unwrap-key"]
 mbor = ["azihsm_fw_hsm_core/mbor"]
 tbor-unwrap-key = ["azihsm_fw_hsm_core/tbor-unwrap-key"]
 
+# The TBOR MlDsaSign / MlDsaVerify commands at ML-DSA-44. Forwards to
+# `azihsm_fw_hsm_core/tbor-ml-dsa-44`. Costs ~73 KiB of .text, so build it
+# with `--no-default-features` (MBOR off) to stay inside the 512 KiB FLASH.
+tbor-ml-dsa-44 = ["azihsm_fw_hsm_core/tbor-ml-dsa-44"]
+
 # Phase 1: run an ML-DSA-65 import/sign/verify known-answer self-test at
 # boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
 # pinned vector data, so it does not fit alongside both DDI transports —
@@ -49,8 +54,8 @@ tbor-unwrap-key = ["azihsm_fw_hsm_core/tbor-unwrap-key"]
 mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
 
 # Diagnostic: run the self-test at ML-DSA-44 (see the crate feature).
-param-mldsa44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44"]
 mldsa-verify-only = ["azihsm_fw_core_crypto_ml_dsa?/verify-only"]
+param-mldsa44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44"]
 
 # UART trace with only the error level compiled in. Uses the platform's
 # known-good trace backend instead of writing to the UART directly, and

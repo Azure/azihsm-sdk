@@ -121,11 +121,17 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// - Advances the HSM request pipeline for one IO.
 /// - Triggers DMA activity and CQE completion for that IO.
 // 32 concurrent IO futures cost 68,608 B of .bss - over 90% of the image's
-// static RAM - which directly reduces the stack available to the ML-DSA
-// self-test. The self-test build caps concurrency at 8 to buy that back.
-#[cfg_attr(feature = "mldsa-selftest", embassy_executor::task(pool_size = 8))]
+// static RAM - leaving only a 113.5 KiB stack. ML-DSA needs far more than
+// that: signing peaks at ~122 KiB of frame even after splitting expansion
+// from the signing rounds. Builds that run ML-DSA - the boot self-test, or
+// the TBOR MlDsaSign/MlDsaVerify commands - cap concurrency at 8, which
+// moves the end of .bss down and grows the stack region to 163.4 KiB.
 #[cfg_attr(
-    not(feature = "mldsa-selftest"),
+    any(feature = "mldsa-selftest", feature = "tbor-ml-dsa-44"),
+    embassy_executor::task(pool_size = 8)
+)]
+#[cfg_attr(
+    not(any(feature = "mldsa-selftest", feature = "tbor-ml-dsa-44")),
     embassy_executor::task(pool_size = 32)
 )]
 async fn handle_io(io: UnoHsmIo) {

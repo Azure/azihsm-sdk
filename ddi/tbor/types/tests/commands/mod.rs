@@ -23,6 +23,7 @@ pub mod hkdf_derive;
 pub mod hmac;
 pub mod hmac_generate_key;
 pub mod key_report;
+pub mod ml_dsa;
 pub mod open_session;
 pub mod part_final;
 pub mod part_info;

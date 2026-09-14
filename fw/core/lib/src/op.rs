@@ -284,7 +284,9 @@ impl SessionCtrl {
             | opcode::RSA_MOD_EXP
             | opcode::HASH
             | opcode::HKDF_DERIVE
-            | opcode::CONCAT_KDF_DERIVE => Self::InSession,
+            | opcode::CONCAT_KDF_DERIVE
+            | opcode::ML_DSA_SIGN
+            | opcode::ML_DSA_VERIFY => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

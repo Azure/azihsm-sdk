@@ -36,6 +36,10 @@ pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod hmac_generate_key;
 pub(crate) mod key_report;
+#[cfg(feature = "tbor-ml-dsa")]
+pub(crate) mod ml_dsa_sign;
+#[cfg(feature = "tbor-ml-dsa")]
+pub(crate) mod ml_dsa_verify;
 pub(crate) mod part_final;
 pub mod part_info;
 pub mod part_init;
@@ -270,6 +274,20 @@ pub(crate) mod opcode {
     /// `(slot_id, cert_id)`.  TBOR analogue of MBOR `GetCertificate`.  See
     /// [`super::get_cert`].
     pub(crate) const GET_CERTIFICATE: u8 = 0x1F;
+
+    /// `MlDsaSign` — produce an ML-DSA (FIPS 204) signature over a
+    /// host-supplied message using a host-supplied encoded signing key.
+    /// Proof-of-concept: the key is carried in the clear because ML-DSA
+    /// keygen does not fit in RAM and the masking layer has no ML-DSA key
+    /// kind yet.  See [`super::ml_dsa_sign`].
+    pub(crate) const ML_DSA_SIGN: u8 = 0x20;
+
+    /// `MlDsaVerify` — verify an ML-DSA (FIPS 204) signature under a
+    /// host-supplied encoded verifying key.  All inputs are public.  A
+    /// signature that does not verify is reported as `MlDsaVerifyFailed`,
+    /// not as a flag in a successful response.  See
+    /// [`super::ml_dsa_verify`].
+    pub(crate) const ML_DSA_VERIFY: u8 = 0x21;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -538,6 +556,10 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::CONCAT_KDF_DERIVE => concat_kdf_derive::handle(pal, io, req_buf).await,
         opcode::GET_CERT_CHAIN_INFO => get_cert_chain_info::handle(pal, io, req_buf).await,
         opcode::GET_CERTIFICATE => get_cert::handle(pal, io, req_buf).await,
+        #[cfg(feature = "tbor-ml-dsa")]
+        opcode::ML_DSA_SIGN => ml_dsa_sign::handle(pal, io, req_buf).await,
+        #[cfg(feature = "tbor-ml-dsa")]
+        opcode::ML_DSA_VERIFY => ml_dsa_verify::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }?;
 
@@ -582,7 +604,26 @@ fn is_known_opcode(opcode: u8) -> bool {
             | opcode::CONCAT_KDF_DERIVE
             | opcode::GET_CERT_CHAIN_INFO
             | opcode::GET_CERTIFICATE
-    )
+    ) || is_known_ml_dsa_opcode(opcode)
+}
+
+/// Returns `true` iff `opcode` is one of the ML-DSA opcodes and this build
+/// actually links them.
+///
+/// Split out because [`is_known_opcode`] is a single `matches!` pattern and
+/// a `#[cfg]` cannot be applied to an individual `|` alternative within one.
+/// When `tbor-ml-dsa` is off these opcodes are genuinely unknown, which is
+/// what makes the dispatcher answer `UnsupportedCmd` for them.
+fn is_known_ml_dsa_opcode(opcode: u8) -> bool {
+    #[cfg(feature = "tbor-ml-dsa")]
+    {
+        matches!(opcode, opcode::ML_DSA_SIGN | opcode::ML_DSA_VERIFY)
+    }
+    #[cfg(not(feature = "tbor-ml-dsa"))]
+    {
+        let _ = opcode;
+        false
+    }
 }
 
 /// Returns `true` iff `opcode` is an in-session command (i.e. requires
@@ -630,7 +671,9 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::RSA_MOD_EXP
         | opcode::HASH
         | opcode::HKDF_DERIVE
-        | opcode::CONCAT_KDF_DERIVE => true,
+        | opcode::CONCAT_KDF_DERIVE
+        | opcode::ML_DSA_SIGN
+        | opcode::ML_DSA_VERIFY => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -689,7 +732,9 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::RSA_MOD_EXP
         | opcode::HASH
         | opcode::HKDF_DERIVE
-        | opcode::CONCAT_KDF_DERIVE => true,
+        | opcode::CONCAT_KDF_DERIVE
+        | opcode::ML_DSA_SIGN
+        | opcode::ML_DSA_VERIFY => true,
         _ => true,
     }
 }
