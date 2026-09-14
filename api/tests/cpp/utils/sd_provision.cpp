@@ -1246,6 +1246,31 @@ SealingKeyMaterial sealing_key_and_report(azihsm_handle session)
         return {};
     }
 
+    // Public-key SubjectPublicKeyInfo DER (probe/fill); the raw P-384
+    // point (`RcvrPub`) is its trailing SEC1 uncompressed point, so take
+    // the last `kRawPubLen` bytes (`X ‖ Y`, dropping the `0x04` tag).
+    azihsm_key_prop pub_prop{ AZIHSM_KEY_PROP_ID_PUB_KEY_INFO, nullptr, 0 };
+    auto pub_probe = azihsm_key_get_prop(key, &pub_prop);
+    if (pub_probe != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ADD_FAILURE() << "public key size probe unexpected status: " << pub_probe;
+        return {};
+    }
+    std::vector<uint8_t> pub_der(pub_prop.len);
+    pub_prop.val = pub_der.data();
+    auto pub_err = azihsm_key_get_prop(key, &pub_prop);
+    if (pub_err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "public key fetch failed: " << pub_err;
+        return {};
+    }
+    if (pub_der.size() < kRawPubLen)
+    {
+        ADD_FAILURE() << "public key DER shorter than a P-384 point";
+        return {};
+    }
+    material.pub.assign(pub_der.end() - kRawPubLen, pub_der.end());
+
     // COSE_Sign1 KeyReport over 128 zero report-data bytes (probe/fill).
     std::array<uint8_t, 128> report_data{};
     azihsm_buffer report_data_buf{ report_data.data(), static_cast<uint32_t>(report_data.size()) };
@@ -1277,16 +1302,20 @@ void SdEvidenceHolder::wire()
     owner_bufs_[1] = { owner_leaf_.data(), static_cast<uint32_t>(owner_leaf_.size()) };
     po_bufs_[0] = { po_root_.data(), static_cast<uint32_t>(po_root_.size()) };
     po_bufs_[1] = { po_leaf_.data(), static_cast<uint32_t>(po_leaf_.size()) };
+    rcvr_bufs_[0] = { rcvr_root_.data(), static_cast<uint32_t>(rcvr_root_.size()) };
+    rcvr_bufs_[1] = { rcvr_leaf_.data(), static_cast<uint32_t>(rcvr_leaf_.size()) };
     report_buf_ = { report_.data(), static_cast<uint32_t>(report_.size()) };
 
     ev_.mfgr_cert_chain = { mfgr_bufs_, 2 };
     ev_.owner_cert_chain = { owner_bufs_, 2 };
     ev_.part_owner_cert_chain = { po_bufs_, 2 };
     ev_.report = &report_buf_;
+    rcvr_chain_ = { rcvr_bufs_, 2 };
 }
 
 SdEvidenceHolder build_receiver_evidence(
     const SdBackingContext &ctx,
+    const std::vector<uint8_t> &rcvr_pub,
     const std::vector<uint8_t> &report
 )
 {
@@ -1294,6 +1323,11 @@ SdEvidenceHolder build_receiver_evidence(
     if (ctx.pid_pub.size() != kRawPubLen)
     {
         ADD_FAILURE() << "backing context PID public key must be " << kRawPubLen << " bytes";
+        return holder;
+    }
+    if (rcvr_pub.size() != kRawPubLen)
+    {
+        ADD_FAILURE() << "receiver public key must be " << kRawPubLen << " bytes";
         return holder;
     }
 
@@ -1311,6 +1345,10 @@ SdEvidenceHolder build_receiver_evidence(
     GeneratedChain mfgr = make_chain(*mfgr_ca, ctx.pid_pub.data());
     GeneratedChain owner = make_chain(*owner_ca, ctx.pid_pub.data());
     GeneratedChain part_owner = make_chain(*ctx.sata_key, ctx.pid_pub.data());
+    // Receiver key certificate chain (spec `RcvrCertChain`): anchored to
+    // the same SATA key, its leaf certifies the receiver public key
+    // (`RcvrPub`) the remote backup is sealed to.
+    GeneratedChain receiver = make_chain(*ctx.sata_key, rcvr_pub.data());
 
     holder.mfgr_root_ = std::move(mfgr.root_der);
     holder.mfgr_leaf_ = std::move(mfgr.leaf_der);
@@ -1318,6 +1356,8 @@ SdEvidenceHolder build_receiver_evidence(
     holder.owner_leaf_ = std::move(owner.leaf_der);
     holder.po_root_ = std::move(part_owner.root_der);
     holder.po_leaf_ = std::move(part_owner.leaf_der);
+    holder.rcvr_root_ = std::move(receiver.root_der);
+    holder.rcvr_leaf_ = std::move(receiver.leaf_der);
     holder.report_ = report;
     holder.wire();
 

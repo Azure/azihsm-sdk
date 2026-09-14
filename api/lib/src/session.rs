@@ -241,6 +241,7 @@ impl HsmSession {
     pub fn sd_create_remote_backup(
         &self,
         masked_sealing_key: &[u8],
+        receiver_cert_chain: &[HsmCert<'_>],
         receiver_evidence: &HsmSdEvidence<'_>,
         policy: &[u8],
     ) -> HsmResult<HsmSdRemoteBackupResult> {
@@ -250,6 +251,7 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 masked_sealing_key,
+                receiver_cert_chain,
                 receiver_evidence,
                 policy,
             ),

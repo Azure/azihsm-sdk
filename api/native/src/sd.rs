@@ -40,7 +40,13 @@ pub struct AzihsmSdCreateRemoteBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
-    /// Receiver attestation evidence.
+    /// Receiver key certificate chain (spec `RcvrCertChain`): validated
+    /// and anchored to the policy SATA key, its leaf is the recipient key
+    /// the remote backup is sealed to.  Always required.
+    pub receiver_cert_chain: AzihsmSdCertChain,
+    /// Receiver attestation evidence.  Verified only when the policy sets
+    /// `require_trusted_sa_key`; pass empty chains and an empty report
+    /// otherwise.
     pub receiver_evidence: *const AzihsmSdEvidence,
     /// Unified partition-policy image (484 B) describing the domain.
     pub policy: *const AzihsmBuffer,
@@ -151,6 +157,8 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
         let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
 
+        let receiver_cert_chain = unpack_cert_chain(&params.receiver_cert_chain)?;
+
         let receiver = deref_ptr(params.receiver_evidence)?;
         let receiver = SdEvidence::try_from(receiver)?;
         let receiver = api::HsmSdEvidence::from(&receiver);
@@ -167,7 +175,12 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
-        let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
+        let result = session.sd_create_remote_backup(
+            masked_sealing_key,
+            &receiver_cert_chain,
+            &receiver,
+            policy,
+        )?;
 
         copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
         copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;

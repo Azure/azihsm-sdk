@@ -50,6 +50,7 @@ constexpr uint32_t kSdMkBackupLen = 164;
 bool create_backup_capture(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_remote,
@@ -61,6 +62,7 @@ bool create_backup_capture(
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
         &masked_buf,
+        receiver_chain,
         &receiver,
         &policy_buf,
     };
@@ -221,13 +223,14 @@ TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
         ASSERT_FALSE(key.report.empty());
 
         // Self-backup: the same attested key is both sender and receiver.
-        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.pub, key.report);
 
         std::vector<uint8_t> remote_backup;
         std::vector<uint8_t> prev_sd_mk;
         ASSERT_TRUE(create_backup_capture(
             dev1.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             dev1.policy,
             remote_backup,

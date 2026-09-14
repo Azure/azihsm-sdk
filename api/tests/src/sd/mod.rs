@@ -7,6 +7,7 @@
 
 mod create_backup_tests;
 mod create_peer_tests;
+mod require_trusted_sa_tests;
 mod reseal_tests;
 mod restore_local_tests;
 mod restore_peer_tests;

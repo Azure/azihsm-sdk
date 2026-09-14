@@ -18,12 +18,18 @@
 //!   [`SdSealingKeyGen`](crate::sd_sealing_key_gen)), exactly
 //!   [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover
 //!   the sender's private ECDH key (`SndrPriv`); never a vault handle.
-//! * `receiver_evidence` — receiver side-band attestation evidence
-//!   ([`Evidence`](crate::evidence::Evidence) field group: manufacturer /
-//!   owner / partition-owner certificate-chain descriptors plus the
-//!   attestation-report descriptor).  The report descriptor indexes the
-//!   receiver's `KeyReport` in the out-of-band SGL page; its COSE_Key
-//!   supplies the recipient public key (`RcvrPub`).
+//! * `receiver_cert_chain` — the receiver key certificate chain (spec
+//!   `RcvrCertChain`), carried out of band.  Always present; validated
+//!   and anchored to the policy **SATA** key, its leaf public key is the
+//!   recipient public key (`RcvrPub`) the remote backup is sealed to.
+//! * `receiver_evidence` — **optional** receiver side-band attestation
+//!   evidence ([`Evidence`](crate::evidence::Evidence) field group:
+//!   manufacturer / owner / partition-owner certificate-chain descriptors
+//!   plus the attestation-report descriptor).  Required and verified only
+//!   when the policy sets `require_trusted_sa_key`: the partition-owner
+//!   chain is then anchored to the policy **SAPOTA** key and the report
+//!   must attest the same `RcvrPub` recovered from `receiver_cert_chain`.
+//!   When the flag is clear the group is sent empty and ignored.
 //! * `policy` — the unified [`PartPolicy`] describing the security domain
 //!   to create.  Length pinned to [`PART_POLICY_LEN`] (484 B).
 //!
@@ -118,11 +124,27 @@ pub struct TborSdCreateRemoteBackupReq<'a> {
     #[tbor(buffer, len = 180, mutable)]
     pub masked_sealing_key: &'a [u8],
 
+    /// Receiver key certificate-chain descriptors (root→leaf), carried
+    /// out of band.  **Always present** (spec `RcvrCertChain`): the chain
+    /// is validated and anchored to the policy **SATA** key, and its leaf
+    /// public key is the receiver public key (`RcvrPub`) the remote backup
+    /// is HPKE-sealed to.
+    #[tbor(buffer, max_len = 24)]
+    pub receiver_cert_chain: &'a [CertDescriptor],
+
     /// Side-band attestation evidence (manufacturer / owner /
     /// partition-owner certificate-chain descriptors plus the attestation
     /// report descriptor).  Spliced in as the
     /// [`Evidence`](crate::evidence::Evidence) field group's four TOC
     /// entries.
+    ///
+    /// **Optional** (spec `Option<RcvrEvidence>`): required and verified
+    /// only when the policy sets `require_trusted_sa_key`.  When the flag
+    /// is clear, send the group empty (empty cert chains and a
+    /// zero-length report descriptor); the handler ignores it.  When the
+    /// flag is set, the partition-owner chain is anchored to the policy
+    /// **SAPOTA** key and the report must attest the same `RcvrPub`
+    /// recovered from `receiver_cert_chain`.
     #[tbor(include)]
     pub receiver_evidence: Evidence<'a>,
 
@@ -191,6 +213,8 @@ mod tests {
             .session_id(SessionId(7))
             .unwrap()
             .masked_sealing_key(&masked)
+            .unwrap()
+            .receiver_cert_chain(&chain)
             .unwrap()
             .receiver_evidence(|e| {
                 e.mfgr_cert_chain(&chain)?

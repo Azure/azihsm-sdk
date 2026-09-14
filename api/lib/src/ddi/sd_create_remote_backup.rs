@@ -41,8 +41,13 @@ impl From<TborSdCreateRemoteBackupResp> for HsmSdRemoteBackupResult {
 /// * `session_id` - The active session id this request binds to.
 /// * `masked_sealing_key` - The sender's masked SD-sealing key (from
 ///   `SdSealingKeyGen`), exactly [`MASKED_SEALING_KEY_LEN`] bytes.
+/// * `receiver_cert_chain` - The receiver key certificate chain (spec
+///   `RcvrCertChain`), transmitted out of band; validated and anchored to
+///   the policy SATA key, its leaf is the recipient public key.
 /// * `receiver_evidence` - Receiver attestation evidence (cert chains and
-///   report), transmitted out of band.
+///   report), transmitted out of band.  Verified only when the policy sets
+///   `require_trusted_sa_key`; pass empty chains and an empty report
+///   otherwise.
 /// * `policy` - Unified [`PartPolicy`] image ([`PART_POLICY_LEN`] bytes).
 ///
 /// # Errors
@@ -54,6 +59,7 @@ pub(crate) fn sd_create_remote_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     masked_sealing_key: &[u8],
+    receiver_cert_chain: &[HsmCert<'_>],
     receiver_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
 ) -> HsmResult<HsmSdRemoteBackupResult> {
@@ -63,13 +69,17 @@ pub(crate) fn sd_create_remote_backup_ex(
         .map_err(|_| HsmError::InvalidArgument)?;
     let policy = decode_policy(policy)?;
 
-    // Flatten the receiver evidence into descriptors + shared OOB items.
+    // Flatten the receiver cert chain and evidence into descriptors +
+    // shared OOB items.  The receiver chain is pushed first so its
+    // descriptor indices precede the evidence items.
     let mut oob: Vec<&[u8]> = Vec::new();
+    let receiver_chain = push_cert_chain(receiver_cert_chain, &mut oob, EVIDENCE_CHAIN_MAX_CERTS)?;
     let receiver = push_evidence(receiver_evidence, &mut oob)?;
 
     let req = TborSdCreateRemoteBackupReq {
         session_id,
         masked_sealing_key,
+        receiver_cert_chain: receiver_chain,
         receiver_mfgr_cert_chain: receiver.mfgr,
         receiver_owner_cert_chain: receiver.owner,
         receiver_part_owner_cert_chain: receiver.part_owner,

@@ -40,7 +40,7 @@ use crate::commands::sd_create_peer_backup::create_peer_req;
 use crate::commands::sd_create_peer_backup::finalize_peer_partition;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
-use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::commands::sd_create_remote_backup::masked_key_report_and_pub;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
@@ -75,8 +75,8 @@ fn create_peer_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> PeerBackup {
     let part = finalize_peer_partition(&ctx, seed, sata, pota, true);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
-    let evidence = build_receiver_evidence(&part.pid_pub, sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session_id);
+    let evidence = build_receiver_evidence(&part.pid_pub, &rcvr_pub, sata, &report);
     let created = ctx
         .tbor_oob(
             &backup_request(session_id, masked.clone(), &evidence, &part.policy),
@@ -182,8 +182,8 @@ fn sd_restore_peer_backup_is_one_shot() {
     let part = finalize_peer_partition(&ctx, &mach_seed(), &sata, &pota, true);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
-    let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session_id);
+    let evidence = build_receiver_evidence(&part.pid_pub, &rcvr_pub, &sata, &report);
     let created = ctx
         .tbor_oob(
             &backup_request(session_id, masked.clone(), &evidence, &part.policy),
@@ -232,8 +232,8 @@ fn sd_restore_peer_backup_rejects_without_peer_cloning() {
     let part = finalize_peer_partition(&ctx, &mach_seed(), &sata, &pota, false);
     let session_id = part.session.session_id;
 
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
-    let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session_id);
+    let evidence = build_receiver_evidence(&part.pid_pub, &rcvr_pub, &sata, &report);
     let backup = PeerBackup {
         masked_sealing_key: masked,
         evidence,

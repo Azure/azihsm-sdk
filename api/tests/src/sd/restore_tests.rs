@@ -36,10 +36,12 @@ fn sd_restore_remote_backup_roundtrip() {
     // Device 1: finalize + create, capturing the remote backup and the
     // local_mk backup needed to restore PartLocalMK after reboot.
     let (session1, policy, pid_pub, local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session1);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session1);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session1.sd_create_remote_backup(&masked, rcvr_chain, ev, &policy)
+        })
         .expect("create remote backup");
     drop(session1);
 
@@ -83,10 +85,12 @@ fn sd_restore_remote_backup_is_one_shot() {
     let pota = CaKey::generate();
 
     let (session, policy, pid_pub, _local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session.sd_create_remote_backup(&masked, rcvr_chain, ev, &policy)
+        })
         .expect("create remote backup");
 
     let restored = evidence.with_hsm_evidence(|ev| {

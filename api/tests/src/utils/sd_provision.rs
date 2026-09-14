@@ -32,6 +32,7 @@ use azihsm_crypto::x509_builder::root_cert;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_BACKUP_PART_ID_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
@@ -534,12 +535,79 @@ fn backing_part_policy(
     bytes
 }
 
+/// Build a backing-partition policy that additionally **requires a trusted
+/// Sealing Authority key** (`require_trusted_sa_key` set).
+///
+/// Like [`backing_part_policy`] it names **this** partition as the backing
+/// partition and anchors the domain to `sata_pub`, but it also populates
+/// the `sapota_pub_key` anchor and sets `require_trusted_sa_key`. Under this
+/// policy `SdCreateRemoteBackup` verifies the three-chain receiver evidence
+/// (partition-owner chain anchored to SAPOTA) in addition to the receiver
+/// certificate chain.
+fn backing_part_policy_trusted(
+    pid: &[u8],
+    pid_pub: &[u8],
+    sata_pub: &[u8; RAW_PUB_LEN],
+    sapota_pub: &[u8; RAW_PUB_LEN],
+    pota_pub: &[u8; RAW_PUB_LEN],
+) -> [u8; PART_POLICY_LEN] {
+    let mut backup_id = [0u8; POLICY_BACKUP_PART_ID_LEN];
+    backup_id.copy_from_slice(pid);
+    let mut backup_pub = [0u8; POLICY_MAX_KEY_LEN];
+    backup_pub.copy_from_slice(pid_pub);
+
+    let policy = PartPolicy {
+        version: PolicyVer { major: 1, minor: 0 },
+        pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_pub),
+        sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *sata_pub),
+        sapota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *sapota_pub),
+        backup_part_id: backup_id,
+        backup_part_pub_key: PolicyPubKey::new(
+            PolicyKeyKind::Ecc384,
+            RAW_PUB_LEN as u16,
+            backup_pub,
+        ),
+        info: [0xAB; POLICY_INFO_LEN],
+        flags: PolicyFlags::new()
+            .with_allow_peer_cloning(true)
+            .with_require_trusted_sa_key(true),
+        ..PartPolicy::zeroed()
+    };
+
+    let mut bytes = [0u8; PART_POLICY_LEN];
+    bytes.copy_from_slice(policy.as_bytes());
+    bytes
+}
+
+/// Provision a backing partition under a **trusted-SA-key** policy
+/// (`require_trusted_sa_key` set, anchored to `sapota` for attestation and
+/// `sata_key` for the receiver chain). Returns the live CO session, the
+/// exact policy image, and the partition-identity public key.
+pub(crate) fn finalized_backing_session_trusted(
+    sata_key: &CaKey,
+    sapota_key: &CaKey,
+) -> (HsmSession, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
+    let pota = CaKey::generate();
+    let (session, policy, pid_pub, _local_mk) =
+        provision_backing_core(&pota, None, None, |pid, pid_pub| {
+            backing_part_policy_trusted(
+                pid,
+                pid_pub,
+                &sata_key.raw_pub(),
+                &sapota_key.raw_pub(),
+                &pota.raw_pub(),
+            )
+        });
+    (session, policy, pid_pub)
+}
+
 /// Owns the DER bytes for the receiver's three evidence chains and the
 /// attestation report, so a borrowed [`HsmSdEvidence`] can reference them.
 pub(crate) struct SdEvidence {
     mfgr: GeneratedChain,
     owner: GeneratedChain,
     part_owner: GeneratedChain,
+    receiver: GeneratedChain,
     report: Vec<u8>,
 }
 
@@ -585,6 +653,20 @@ impl SdEvidence {
         &self.report
     }
 
+    /// Receiver key certificate chain (spec `RcvrCertChain`) as an ordered
+    /// `[root, leaf]` cert list. Rooted at the policy SATA key; its leaf
+    /// certifies `RcvrPub` — the key the remote backup is sealed to.
+    pub(crate) fn receiver_certs(&self) -> [HsmCert<'_>; 2] {
+        [
+            HsmCert {
+                cert: &self.receiver.root_der,
+            },
+            HsmCert {
+                cert: &self.receiver.leaf_der,
+            },
+        ]
+    }
+
     /// Build a borrowed [`HsmSdEvidence`] over this party's three cert
     /// chains and report and pass it to `f`. The cert arrays live only for
     /// the call, so the evidence is delivered through a closure.
@@ -599,14 +681,45 @@ impl SdEvidence {
             report: self.report(),
         })
     }
+
+    /// Build the receiver key certificate chain (spec `RcvrCertChain`)
+    /// together with the borrowed [`HsmSdEvidence`], and pass both to `f`
+    /// — the exact argument shape [`HsmSession::sd_create_remote_backup`]
+    /// takes. The cert arrays live only for the call, so they are
+    /// delivered through a closure.
+    pub(crate) fn with_create_backup<R>(
+        &self,
+        f: impl FnOnce(&[HsmCert<'_>], &HsmSdEvidence<'_>) -> R,
+    ) -> R {
+        let mfgr = self.mfgr_certs();
+        let owner = self.owner_certs();
+        let part_owner = self.part_owner_certs();
+        let receiver = self.receiver_certs();
+        f(
+            &receiver,
+            &HsmSdEvidence {
+                mfgr_cert_chain: &mfgr,
+                owner_cert_chain: &owner,
+                part_owner_cert_chain: &part_owner,
+                report: self.report(),
+            },
+        )
+    }
 }
 
-/// Build the receiver's three-chain evidence for `pid_pub`: manufacturer
-/// and owner chains rooted at fresh CAs, and a partition-owner chain rooted
-/// at the policy `sata_key`. Every leaf certifies `pid_pub` (the report
-/// signer), so all three share one leaf key.
+/// Build the receiver's three-chain evidence and the receiver key
+/// certificate chain for a security-domain backup.
+///
+/// The manufacturer and owner chains root at fresh CAs and the
+/// partition-owner chain roots at the policy `sata_key`; every evidence
+/// leaf certifies `pid_pub` (the report signer), so all three share one
+/// leaf key. The receiver key certificate chain (spec `RcvrCertChain`)
+/// roots at the same `sata_key`, and its leaf certifies `rcvr_pub` — the
+/// receiver sealing key `RcvrPub` the remote backup is sealed to, and the
+/// key the report attests.
 pub(crate) fn build_receiver_evidence(
     pid_pub: &[u8; RAW_PUB_LEN],
+    rcvr_pub: &[u8; RAW_PUB_LEN],
     sata_key: &CaKey,
     report: &[u8],
 ) -> SdEvidence {
@@ -614,25 +727,47 @@ pub(crate) fn build_receiver_evidence(
         mfgr: make_chain(&CaKey::generate(), pid_pub),
         owner: make_chain(&CaKey::generate(), pid_pub),
         part_owner: make_chain(sata_key, pid_pub),
+        receiver: make_chain(sata_key, rcvr_pub),
         report: report.to_vec(),
     }
 }
 
-/// Provision a factory-reset backing partition anchored to the shared
-/// `sata_key`/`pota`. When `policy_in` is `None` the policy is built from
-/// this partition's `PartInfo` identity; on the restore path the caller
-/// reuses the first incarnation's policy so both agree on the domain image.
-/// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
-/// recovery step that lets a captured masked sealing key unmask.
-/// `allow_peer_cloning` sets that flag in the built policy (ignored when
-/// `policy_in` is supplied). Returns the CO session, the policy image, the
-/// PID public key, and the `local_mk_backup` that finalize produced.
-pub(crate) fn provision_backing_ex(
+/// Build the receiver evidence for the **trusted Sealing Authority key**
+/// path (policy `require_trusted_sa_key` set).
+///
+/// Identical to [`build_receiver_evidence`] except the partition-owner
+/// evidence chain roots at the policy **SAPOTA** anchor (`sapota_key`),
+/// matching the firmware's attestation-anchor for that path. The receiver
+/// key certificate chain (spec `RcvrCertChain`) still roots at the SATA
+/// anchor (`sata_key`) and its leaf certifies `rcvr_pub`, the key the
+/// report attests.
+pub(crate) fn build_receiver_evidence_trusted(
+    pid_pub: &[u8; RAW_PUB_LEN],
+    rcvr_pub: &[u8; RAW_PUB_LEN],
     sata_key: &CaKey,
+    sapota_key: &CaKey,
+    report: &[u8],
+) -> SdEvidence {
+    SdEvidence {
+        mfgr: make_chain(&CaKey::generate(), pid_pub),
+        owner: make_chain(&CaKey::generate(), pid_pub),
+        part_owner: make_chain(sapota_key, pid_pub),
+        receiver: make_chain(sata_key, rcvr_pub),
+        report: report.to_vec(),
+    }
+}
+
+/// Provisioning core shared by [`provision_backing_ex`] and the
+/// trusted-SA-key provisioner. When `policy_in` is `None` the policy is
+/// built from this partition's `PartInfo` identity via `build_policy(pid,
+/// pid_pub)`; otherwise `policy_in` is used verbatim. Returns the CO
+/// session, the policy image, the PID public key, and the `local_mk_backup`
+/// that finalize produced.
+fn provision_backing_core(
     pota: &CaKey,
     policy_in: Option<[u8; PART_POLICY_LEN]>,
     prev_local_mk: Option<&[u8]>,
-    allow_peer_cloning: bool,
+    build_policy: impl FnOnce(&[u8], &[u8]) -> [u8; PART_POLICY_LEN],
 ) -> (
     HsmSession,
     [u8; PART_POLICY_LEN],
@@ -680,15 +815,7 @@ pub(crate) fn provision_backing_ex(
     let mut pid_pub = [0u8; RAW_PUB_LEN];
     pid_pub.copy_from_slice(&pid_pub_vec);
 
-    let policy = policy_in.unwrap_or_else(|| {
-        backing_part_policy(
-            &pid,
-            &pid_pub_vec,
-            &sata_key.raw_pub(),
-            &pota.raw_pub(),
-            allow_peer_cloning,
-        )
-    });
+    let policy = policy_in.unwrap_or_else(|| build_policy(&pid, &pid_pub_vec));
 
     let init = session
         .part_init_ex(
@@ -714,6 +841,38 @@ pub(crate) fn provision_backing_ex(
         .expect("part_final_ex");
 
     (session, policy, pid_pub, result.local_mk_backup)
+}
+
+/// Provision a factory-reset backing partition anchored to the shared
+/// `sata_key`/`pota`. When `policy_in` is `None` the policy is built from
+/// this partition's `PartInfo` identity; on the restore path the caller
+/// reuses the first incarnation's policy so both agree on the domain image.
+/// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
+/// recovery step that lets a captured masked sealing key unmask.
+/// `allow_peer_cloning` sets that flag in the built policy (ignored when
+/// `policy_in` is supplied). Returns the CO session, the policy image, the
+/// PID public key, and the `local_mk_backup` that finalize produced.
+pub(crate) fn provision_backing_ex(
+    sata_key: &CaKey,
+    pota: &CaKey,
+    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    prev_local_mk: Option<&[u8]>,
+    allow_peer_cloning: bool,
+) -> (
+    HsmSession,
+    [u8; PART_POLICY_LEN],
+    [u8; RAW_PUB_LEN],
+    Vec<u8>,
+) {
+    provision_backing_core(pota, policy_in, prev_local_mk, |pid, pid_pub| {
+        backing_part_policy(
+            pid,
+            pid_pub,
+            &sata_key.raw_pub(),
+            &pota.raw_pub(),
+            allow_peer_cloning,
+        )
+    })
 }
 
 /// Provision a backing partition with peer cloning enabled — the common
@@ -759,14 +918,27 @@ pub(crate) fn sealing_props() -> HsmKeyProps {
         .expect("build sealing props")
 }
 
-/// Mint an SD sealing key on `session` and return its masked blob and a
-/// COSE_Sign1 `KeyReport` attesting it (signed by the PID key).
-pub(crate) fn masked_key_and_report(session: &HsmSession) -> (Vec<u8>, Vec<u8>) {
+/// Mint an SD sealing key on `session` and return its masked blob, the
+/// sealing key's raw public coordinates (`X ‖ Y`, the recipient public key
+/// `RcvrPub` the remote backup is sealed to), and a COSE_Sign1 `KeyReport`
+/// attesting it (signed by the PID key).
+pub(crate) fn masked_key_and_report(session: &HsmSession) -> (Vec<u8>, [u8; RAW_PUB_LEN], Vec<u8>) {
     let mut algo = HsmSealingKeyGenAlgo::default();
     let key = HsmKeyManager::generate_key(session, &mut algo, sealing_props())
         .expect("generate sealing key");
 
     let masked = key.masked_key_vec().expect("masked key");
+
+    // The sealing key's public point (`RcvrPub`) is the trailing SEC1
+    // uncompressed point of its SubjectPublicKeyInfo DER; take the raw
+    // `X ‖ Y` coordinates (dropping the `0x04` tag).
+    let pub_der = key.pub_key_der_vec().expect("sealing key public DER");
+    assert!(
+        pub_der.len() >= RAW_PUB_LEN,
+        "sealing key public DER shorter than a P-384 point",
+    );
+    let mut rcvr_pub = [0u8; RAW_PUB_LEN];
+    rcvr_pub.copy_from_slice(&pub_der[pub_der.len() - RAW_PUB_LEN..]);
 
     let report_data = [0u8; KEY_REPORT_DATA_LEN];
     let report_len = key
@@ -778,5 +950,5 @@ pub(crate) fn masked_key_and_report(session: &HsmSession) -> (Vec<u8>, Vec<u8>) 
         .expect("key report");
     report.truncate(written);
 
-    (masked, report)
+    (masked, rcvr_pub, report)
 }
