@@ -61,6 +61,10 @@ struct FuzzInput {
     mac_fin: [u8; MAC_FIN_LEN],
     seed_envelope: [u8; SEED_ENVELOPE_LEN],
     seed_iv: [u8; AES_GCM_IV_LEN],
+    // When `valid_open_finish` is true, corrupt the otherwise-valid
+    // `seed_envelope` so the Phase-2 MAC still verifies but the AEAD-open
+    // of the envelope fails, exercising that distinct failure path.
+    corrupt_seed_envelope: bool,
 }
 
 /// Build a deterministic P-384 keypair from a fixed scalar, so the
@@ -173,7 +177,14 @@ fuzz_target!(|input: FuzzInput| {
 
             let Ok(param_key) = derive_param_key(&exported) else { return; };
             let seed = [0u8; SESSION_SEED_LEN];
-            let Ok(seed_envelope_vec) = seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv) else { return; };
+            let Ok(mut seed_envelope_vec) = seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv) else { return; };
+            if input.corrupt_seed_envelope {
+                // Flip a byte in the ciphertext/tag so the Phase-2 MAC
+                // (computed from `exported`/`pk_*`, not the envelope) still
+                // verifies, but the AEAD-open of `seed_envelope` fails.
+                let idx = seed_envelope_vec.len() - 1;
+                seed_envelope_vec[idx] ^= 0x01;
+            }
             let Ok(seed_envelope) = seed_envelope_vec.as_slice().try_into() else { return; };
 
             TborSessionOpenFinishReq {
