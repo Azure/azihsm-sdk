@@ -20,7 +20,7 @@
 //!   for headroom; exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is
 //!   valid for a generated ECC private key.
 //! * `key_label` — caller-supplied label recorded in the masked blob's
-//!   metadata (≤ 32 bytes); empty for an unlabeled key.
+//!   metadata (≤ 128 bytes); empty for an unlabeled key.
 //!
 //! Outputs:
 //!

@@ -102,7 +102,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     }
 
     let (key_len, kind) = aes_size_kind(req.key_size())?;
-    // Caller-supplied label stamped into the masked metadata (≤ 32 B,
+    // Caller-supplied label stamped into the masked metadata (≤ 128 B,
     // bounded by the wire `max_len`); empty for an unlabeled key.
     let caller_label = req.key_label();
     // The masked-blob length is fixed by the key length (16 / 24 / 32 B →
