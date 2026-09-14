@@ -94,9 +94,9 @@ pub struct TborEccGenerateKeyReq<'a> {
     pub key_usage: KeyUsage,
 
     /// Caller-supplied key label recorded in the masked blob's
-    /// `MaskedKeyMetadata.key_label`, up to 32 bytes.  Empty for an
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
     /// unlabeled key.
-    #[tbor(buffer, max_len = 32)]
+    #[tbor(buffer, max_len = 128)]
     pub key_label: &'a [u8],
 }
 

@@ -89,7 +89,7 @@ pub struct TborRsaModExpReq<'a> {
     pub session_id: SessionId,
 
     /// The masked RSA private key (from `UnwrapKey`), an AEAD-GCM-256
-    /// envelope of 164..=3072 B.  Its kind recovers the modulus size and
+    /// envelope of 260..=3168 B.  Its kind recovers the modulus size and
     /// CRT form.
     #[tbor(buffer, min_len = 260, max_len = 3168, mutable)]
     pub masked_key: &'a [u8],

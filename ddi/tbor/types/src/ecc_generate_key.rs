@@ -53,9 +53,9 @@ pub struct TborEccGenerateKeyReq {
     pub key_usage: u64,
 
     /// Caller-supplied key label recorded in the masked blob's metadata,
-    /// up to `TBOR_KEY_LABEL_MAX_LEN` (32) bytes.  Empty for an unlabeled
+    /// up to `TBOR_KEY_LABEL_MAX_LEN` (128) bytes.  Empty for an unlabeled
     /// key.
-    #[tbor(max_len = 32)]
+    #[tbor(max_len = 128)]
     pub key_label: Vec<u8>,
 }
 
