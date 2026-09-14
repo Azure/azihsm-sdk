@@ -17,7 +17,7 @@
 //!   in-session commands).
 //! * `masked_sealing_key` — the masked SD-sealing key (from
 //!   [`SdSealingKeyGen`](crate::sd_sealing_key_gen)), exactly
-//!   [`MASKED_SEALING_KEY_LEN`] (180 B). Unmasked on-device to recover the
+//!   [`MASKED_SEALING_KEY_LEN`] (276 B). Unmasked on-device to recover the
 //!   receiver's private HPKE key; the same key both unseals the source and
 //!   authenticates the reseal to the destination (never a vault handle).
 //! * `policy` — the unified [`PartPolicy`] the source and destination must
@@ -56,7 +56,7 @@ const _: () = assert!(PART_POLICY_LEN == 484);
 // `masked_sealing_key` is a masked SD-sealing key; the derive needs an
 // integer literal on the field, so the length is spelled out as `180` and
 // pinned against the canonical `MASKED_SEALING_KEY_LEN` here.
-const _: () = assert!(MASKED_SEALING_KEY_LEN == 180);
+const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
 // `src_remote_backup` / `dst_remote_backup` are HPKE-Auth seals; the derive
 // needs an integer literal on the field, so the length is spelled out as
@@ -73,10 +73,10 @@ pub struct TborSdResealRemoteBackupReq<'a> {
     pub session_id: SessionId,
 
     /// The masked SD-sealing key (from `SdSealingKeyGen`), exactly
-    /// [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover
+    /// [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to recover
     /// the receiver's private HPKE key (used to both unseal the source and
     /// authenticate the reseal to the destination); never a vault handle.
-    #[tbor(buffer, len = 180)]
+    #[tbor(buffer, len = 276)]
     pub masked_sealing_key: &'a [u8],
 
     /// Caller-asserted unified [`PartPolicy`] the source and destination

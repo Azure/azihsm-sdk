@@ -117,11 +117,6 @@ azihsm_algo sealing_algo()
     algo.len = 0;
     return algo;
 }
-
-// Pinned masked sealing-key blob length (header 8 + iv 12 + meta 96 + scalar
-// 48 + tag 16). Mirrors `azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN`, which
-// is not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
 } // namespace
 
 // ── FFI boundary (backend-agnostic) ─────────────────────────────────────────

@@ -30,15 +30,6 @@
 
 namespace
 {
-// Pinned wire lengths of the create-backup outputs. Mirror the
-// `azihsm_ddi_tbor_types` constants (`POK_REMOTE_BACKUP_LEN`,
-// `MASKED_SD_LEN`, `SD_MK_BACKUP_LEN`, `MASKED_SEALING_KEY_LEN`), which are
-// not exposed in the C header.
-constexpr uint32_t kPokRemoteBackupLen = 161;
-constexpr uint32_t kPokLocalBackupLen = 180;
-constexpr uint32_t kSdMkBackupLen = 164;
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-
 // Run the create-backup call, sizing the three output buffers via the
 // probe/fill convention. The FFI validates each output buffer in sequence
 // and reports the first that is too small, so a single len=0 probe only
@@ -194,12 +185,12 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
         ASSERT_EQ(pok_remote.size(), kPokRemoteBackupLen);
         ASSERT_TRUE(any_nonzero(pok_remote)) << "pok_remote_backup must not be all-zero";
 
-        // Local backup: BKS3 masked under the partition-local key, 180 B,
+        // Local backup: BKS3 masked under the partition-local key, 276 B,
         // non-zero.
         ASSERT_EQ(pok_local.size(), kPokLocalBackupLen);
         ASSERT_TRUE(any_nonzero(pok_local)) << "pok_local_backup must not be all-zero";
 
-        // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
+        // Masking-key backup: SDMK masked under the derived SDBMK, 260 B,
         // non-zero.
         ASSERT_EQ(sd_mk.size(), kSdMkBackupLen);
         ASSERT_TRUE(any_nonzero(sd_mk)) << "sd_mk_backup must not be all-zero";

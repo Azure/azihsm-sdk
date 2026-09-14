@@ -44,12 +44,12 @@ fn wire_pub_len(curve: u8) -> usize {
 }
 
 /// Expected masked private-key envelope length per curve:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(wire_priv) ‖ tag(16)` = 132 + priv.
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(wire_priv) ‖ tag(16)` = 228 + priv.
 fn masked_key_len(curve: u8) -> usize {
     match curve {
-        ECC_CURVE_P256 => 132 + 32,
-        ECC_CURVE_P384 => 132 + 48,
-        ECC_CURVE_P521 => 132 + 68,
+        ECC_CURVE_P256 => 228 + 32,
+        ECC_CURVE_P384 => 228 + 48,
+        ECC_CURVE_P521 => 228 + 68,
         _ => unreachable!(),
     }
 }

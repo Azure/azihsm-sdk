@@ -13,7 +13,7 @@ use super::*;
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
 /// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
-const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
+const TBOR_MASKED_KEY_METADATA_LEN: usize = 192;
 /// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
 /// Bit offset of the `KeyScope` field packed into `usage_flags`.

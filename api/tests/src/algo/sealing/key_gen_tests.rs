@@ -152,7 +152,7 @@ fn sealing_key_gen_valid_props_pass_host_guards() {
 }
 
 /// Full round trip: on a fully provisioned partition, generating a sealing
-/// key succeeds and yields a usable key — the pinned 180-byte masked blob
+/// key succeeds and yields a usable key — the pinned 276-byte masked blob
 /// plus a P-384 public key — with the expected typed properties.
 #[test]
 fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {

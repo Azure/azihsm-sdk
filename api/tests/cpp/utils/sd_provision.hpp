@@ -10,6 +10,17 @@
 #include <utility>
 #include <vector>
 
+// Pinned TBOR masked-blob wire lengths, mirroring the host / firmware
+// `azihsm_ddi_tbor_types` constants (which are not exposed in the C
+// header). Each masked blob is an AEAD-GCM-256 envelope:
+// `header(8) + iv(12) + MaskedKeyMetadata aad(192) + plaintext + tag(16)`.
+inline constexpr uint32_t kMaskedSealingKeyLen = 276; ///< sealing priv scalar (48 B)
+inline constexpr uint32_t kMaskedSdLen = 276;         ///< masked BKS3 (48 B)
+inline constexpr uint32_t kPokLocalBackupLen = 276;   ///< device-local BKS3 backup (48 B)
+inline constexpr uint32_t kSdMkBackupLen = 260;       ///< masked SDMK / local_mk (32 B)
+/// Remote partition-owner-key backup: an HPKE-Auth seal (`enc(97) + ct(64)`).
+inline constexpr uint32_t kPokRemoteBackupLen = 161;
+
 // Security-domain provisioning helper for the sealing round-trip test.
 //
 // `SdSealingKeyGen` needs a partition in the `Initialized` state on a CO
@@ -91,13 +102,13 @@ SdBackingContext provision_sd_restore_target(
 /// `KeyReport` attesting it.
 struct SealingKeyMaterial
 {
-    /// Masked sealing-key blob (180 B).
+    /// Masked sealing-key blob (276 B).
     std::vector<uint8_t> masked;
     /// COSE_Sign1 `KeyReport` DER bytes.
     std::vector<uint8_t> report;
 };
 
-/// Mint an SD sealing key on `session` and return its 180-byte masked blob
+/// Mint an SD sealing key on `session` and return its 276-byte masked blob
 /// plus a `KeyReport` built over 128 zero report-data bytes. Records a
 /// gtest failure and returns empty vectors on error.
 SealingKeyMaterial sealing_key_and_report(azihsm_handle session);
