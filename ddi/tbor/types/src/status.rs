@@ -335,6 +335,10 @@ pub enum TborStatus {
     /// `MlDsaVerify` ran and the signature did not verify (mirror of
     /// `HsmError::MlDsaVerifyFailed`).
     MlDsaVerifyFailed = 0x0870010F,
+
+    /// `MlDsaKeyGen` failed to produce a keypair (mirror of
+    /// `HsmError::MlDsaKeyGenFailed`).
+    MlDsaKeyGenFailed = 0x08700110,
 }
 
 impl core::fmt::Debug for TborStatus {

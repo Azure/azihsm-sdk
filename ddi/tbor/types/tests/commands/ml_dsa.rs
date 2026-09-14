@@ -30,6 +30,7 @@
 //! [`TborStatus::MlDsaVerifyFailed`], not as a flag inside a successful
 //! response, so the negative tests assert on the status.
 
+use azihsm_ddi_tbor_types::TborMlDsaKeyGenReq;
 use azihsm_ddi_tbor_types::TborMlDsaSignReq;
 use azihsm_ddi_tbor_types::TborMlDsaVerifyReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -302,4 +303,77 @@ fn ml_dsa_sign_rejects_out_of_range_coefficients() {
         })
         .expect("device must remain usable after a malformed key");
     assert!(host_verify(&pk2, &msg, &resp.signature));
+}
+
+#[test]
+#[cfg_attr(
+    feature = "mldsa-65",
+    ignore = "on-device keygen is ML-DSA-44 only: the ML-DSA-65 chain is \
+              235.5 KiB against a 212.9 KiB stack"
+)]
+fn ml_dsa_keygen_on_device_then_sign() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    // Generate on the device: the private half is the device's own choice
+    // and never crossed the wire inbound.
+    let kp = ctx
+        .tbor(&TborMlDsaKeyGenReq {
+            session_id: session.session_id,
+        })
+        .expect("MlDsaKeyGen");
+    assert_eq!(kp.signing_key.len(), SIGNING_KEY_LEN);
+    assert_eq!(kp.verifying_key.len(), VERIFYING_KEY_LEN);
+
+    // A generated key must actually be usable: sign with it and check the
+    // signature against the verifying key the device returned alongside it.
+    // This is what proves the two halves correspond — a keygen that emitted
+    // a well-formed but mismatched pair would pass a length check.
+    let msg = b"generated on device".to_vec();
+    let sig = ctx
+        .tbor(&TborMlDsaSignReq {
+            session_id: session.session_id,
+            signing_key: kp.signing_key,
+            msg: msg.clone(),
+        })
+        .expect("MlDsaSign with a device-generated key");
+
+    assert!(
+        host_verify(&kp.verifying_key, &msg, &sig.signature),
+        "a device-generated keypair must produce verifiable signatures",
+    );
+}
+
+#[test]
+#[cfg_attr(
+    feature = "mldsa-65",
+    ignore = "on-device keygen is ML-DSA-44 only: the ML-DSA-65 chain is \
+              235.5 KiB against a 212.9 KiB stack"
+)]
+fn ml_dsa_keygen_is_not_deterministic() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    // Two calls must not return the same key: keygen is seeded from the
+    // hardware DRBG, so a repeat would mean the entropy source is stuck —
+    // the failure mode that matters most for a key generator.
+    let a = ctx
+        .tbor(&TborMlDsaKeyGenReq {
+            session_id: session.session_id,
+        })
+        .expect("MlDsaKeyGen");
+    let b = ctx
+        .tbor(&TborMlDsaKeyGenReq {
+            session_id: session.session_id,
+        })
+        .expect("MlDsaKeyGen");
+
+    assert_ne!(
+        a.signing_key, b.signing_key,
+        "two keygen calls must not return the same signing key",
+    );
+    assert_ne!(
+        a.verifying_key, b.verifying_key,
+        "two keygen calls must not return the same verifying key",
+    );
 }

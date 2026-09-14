@@ -63,5 +63,20 @@ tbor-ml-dsa = ["dep:azihsm_fw_core_crypto_ml_dsa"]
 # signing measures 108 KiB of frame at ML-DSA-44 against 322 KiB at
 # ML-DSA-65, versus a 163.4 KiB stack region. The emulator selects the same
 # set so one test binary covers both emu and silicon.
-tbor-ml-dsa-44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44", "tbor-ml-dsa"]
+tbor-ml-dsa-44 = [
+  "azihsm_fw_core_crypto_ml_dsa?/param-mldsa44",
+  "tbor-ml-dsa",
+  "tbor-ml-dsa-keygen",
+]
+
+# On-device ML-DSA key generation. Enabled at ML-DSA-44 only: measured on
+# ARM, keygen's worst-case call chain is 149.3 KiB at ML-DSA-44 but
+# 235.5 KiB at ML-DSA-65, against a 212.9 KiB stack. The 65 chain is
+# dominated by `keygen_into` holding the whole `SigningKey` (179 KiB) live
+# across a call to `VerifyingKey::new` (54 KiB); fitting it needs in-place
+# construction inside the ml-dsa crate, the same change ML-DSA-65 wants
+# elsewhere. Keygen is *cheaper* than signing in compute — one
+# matrix-vector product versus one per rejection round — but it is the
+# larger of the two in stack, which is what bounds it here.
+tbor-ml-dsa-keygen = ["tbor-ml-dsa"]
 tracing = []

@@ -36,6 +36,8 @@ pub(crate) mod hkdf_derive;
 pub(crate) mod hmac;
 pub(crate) mod hmac_generate_key;
 pub(crate) mod key_report;
+#[cfg(feature = "tbor-ml-dsa-keygen")]
+pub(crate) mod ml_dsa_keygen;
 #[cfg(feature = "tbor-ml-dsa")]
 pub(crate) mod ml_dsa_sign;
 #[cfg(feature = "tbor-ml-dsa")]
@@ -288,6 +290,11 @@ pub(crate) mod opcode {
     /// not as a flag in a successful response.  See
     /// [`super::ml_dsa_verify`].
     pub(crate) const ML_DSA_VERIFY: u8 = 0x21;
+
+    /// `MlDsaKeyGen` — generate an ML-DSA keypair on the device from
+    /// hardware entropy and return both halves. No private key crosses the
+    /// wire inbound. See [`super::ml_dsa_keygen`].
+    pub(crate) const ML_DSA_KEY_GEN: u8 = 0x22;
 }
 
 /// Validate that `sess_id` belongs to an active Crypto-Officer session.
@@ -560,6 +567,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::ML_DSA_SIGN => ml_dsa_sign::handle(pal, io, req_buf).await,
         #[cfg(feature = "tbor-ml-dsa")]
         opcode::ML_DSA_VERIFY => ml_dsa_verify::handle(pal, io, req_buf).await,
+        #[cfg(feature = "tbor-ml-dsa-keygen")]
+        opcode::ML_DSA_KEY_GEN => ml_dsa_keygen::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),
     }?;
 
@@ -618,6 +627,7 @@ fn is_known_ml_dsa_opcode(opcode: u8) -> bool {
     #[cfg(feature = "tbor-ml-dsa")]
     {
         matches!(opcode, opcode::ML_DSA_SIGN | opcode::ML_DSA_VERIFY)
+            || (cfg!(feature = "tbor-ml-dsa-keygen") && opcode == opcode::ML_DSA_KEY_GEN)
     }
     #[cfg(not(feature = "tbor-ml-dsa"))]
     {
@@ -673,7 +683,8 @@ fn is_in_session(opcode: u8) -> bool {
         | opcode::HKDF_DERIVE
         | opcode::CONCAT_KDF_DERIVE
         | opcode::ML_DSA_SIGN
-        | opcode::ML_DSA_VERIFY => true,
+        | opcode::ML_DSA_VERIFY
+        | opcode::ML_DSA_KEY_GEN => true,
         // Default-deny: any future opcode is treated as in-session
         // until classified, so the default-PSK gate applies to it.
         _ => true,
@@ -734,7 +745,8 @@ fn needs_session_id_cross_check(opcode: u8) -> bool {
         | opcode::HKDF_DERIVE
         | opcode::CONCAT_KDF_DERIVE
         | opcode::ML_DSA_SIGN
-        | opcode::ML_DSA_VERIFY => true,
+        | opcode::ML_DSA_VERIFY
+        | opcode::ML_DSA_KEY_GEN => true,
         _ => true,
     }
 }

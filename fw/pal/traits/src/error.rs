@@ -459,6 +459,9 @@ pub enum HsmError {
     /// `MlDsaSign` failed to produce a signature.
     MlDsaSignFailed = 0x0870010E,
 
+    /// `MlDsaKeyGen` failed to produce a keypair.
+    MlDsaKeyGenFailed = 0x08700110,
+
     /// `MlDsaVerify` completed and the signature did **not** verify under
     /// the supplied verifying key.  Reported as an error rather than as a
     /// boolean in a successful response so a caller that checks only for

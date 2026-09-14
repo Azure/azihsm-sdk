@@ -286,7 +286,8 @@ impl SessionCtrl {
             | opcode::HKDF_DERIVE
             | opcode::CONCAT_KDF_DERIVE
             | opcode::ML_DSA_SIGN
-            | opcode::ML_DSA_VERIFY => Self::InSession,
+            | opcode::ML_DSA_VERIFY
+            | opcode::ML_DSA_KEY_GEN => Self::InSession,
             opcode::SESSION_CLOSE => Self::Close,
             _ => Self::NoSession,
         }

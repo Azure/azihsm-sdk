@@ -24,6 +24,7 @@
 //! [`import_signing_key`] is the safe entry point that callers should use in
 //! place of `from_expanded`.
 
+use ml_dsa::signature::Keypair;
 use ml_dsa::EncodedSignature;
 use ml_dsa::EncodedVerifyingKey;
 use ml_dsa::ExpandedSigningKey;
@@ -33,6 +34,7 @@ use ml_dsa::MlDsa44;
 #[cfg(not(feature = "param-mldsa44"))]
 use ml_dsa::MlDsa65;
 use ml_dsa::Signature;
+use ml_dsa::SigningKey;
 use ml_dsa::VerifyingKey;
 
 /// Parameter set under test.
@@ -219,6 +221,45 @@ impl From<MlDsaKeyError> for MlDsaOpError {
     fn from(e: MlDsaKeyError) -> Self {
         Self::Key(e)
     }
+}
+
+/// Generates a keypair from `seed`, writing the encoded signing key into
+/// `out_sk` and the encoded verifying key into `out_pk`.
+///
+/// This is FIPS 204 `ML-DSA.KeyGen_internal`: the caller supplies the
+/// 32-byte seed (on-device that is hardware entropy), and both halves are
+/// emitted in their wire encodings so the key never has to be re-derived.
+///
+/// # Stack
+///
+/// `#[inline(never)]`, and the keypair is built directly into locals rather
+/// than being returned through a `Result` — the same discipline
+/// [`sign_into`] relies on, and for the same reason: a value of this size
+/// returned across a call boundary is materialised twice.
+///
+/// Keygen is *cheaper* than signing, not more expensive. It performs one
+/// matrix-vector product; signing performs one per rejection round, and
+/// expands the same matrix first. So a build whose signing path fits has
+/// already paid for the larger of the two.
+///
+/// # Errors
+///
+/// - [`MlDsaOpError::BadLength`] if either output buffer is the wrong size.
+#[inline(never)]
+pub fn keygen_into(
+    seed: &[u8; 32],
+    out_sk: &mut [u8],
+    out_pk: &mut [u8],
+) -> Result<(), MlDsaOpError> {
+    if out_sk.len() != SIGNING_KEY_LEN || out_pk.len() != VERIFYING_KEY_LEN {
+        return Err(MlDsaOpError::BadLength);
+    }
+
+    let sk = SigningKey::<Param>::from_seed(seed.into());
+    #[allow(deprecated)]
+    out_sk.copy_from_slice(sk.expanded_key().to_expanded().as_slice());
+    out_pk.copy_from_slice(sk.verifying_key().encode().as_slice());
+    Ok(())
 }
 
 /// Signs `msg` with the encoded signing key `enc_sk`, writing the encoded
