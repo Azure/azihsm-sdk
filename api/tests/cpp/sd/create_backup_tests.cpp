@@ -173,13 +173,14 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
             &masked_buf,
+            evidence.receiver_chain(),
             &evidence.get(),
             &policy_buf,
         };
@@ -231,13 +232,14 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_is_one_shot)
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
             &masked_buf,
+            evidence.receiver_chain(),
             &evidence.get(),
             &policy_buf,
         };
@@ -316,13 +318,14 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_rejects_aliased_output_buffer
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
             &masked_buf,
+            evidence.receiver_chain(),
             &evidence.get(),
             &policy_buf,
         };

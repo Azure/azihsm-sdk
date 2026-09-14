@@ -34,7 +34,7 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
-use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::commands::sd_create_remote_backup::masked_key_report_and_pub;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
@@ -141,8 +141,8 @@ fn sd_create_peer_backup_roundtrip() {
 
     // Mint + attest a sealing key, then create the security domain to
     // obtain the device-local backup this command re-seals.
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
-    let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session_id);
+    let evidence = build_receiver_evidence(&part.pid_pub, &rcvr_pub, &sata, &report);
     let created = ctx
         .tbor_oob(
             &backup_request(session_id, masked.clone(), &evidence, &part.policy),
@@ -181,8 +181,8 @@ fn sd_create_peer_backup_rejects_without_peer_cloning() {
     // A real sealing key + evidence so the request reaches the policy gate;
     // the peer-cloning check fires before any local backup is unmasked, so
     // a zero `pok_local_backup` is sufficient.
-    let (masked, report) = masked_key_and_report(&ctx, session_id);
-    let evidence = build_receiver_evidence(&part.pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session_id);
+    let evidence = build_receiver_evidence(&part.pid_pub, &rcvr_pub, &sata, &report);
     let req = create_peer_req(
         session_id,
         &masked,

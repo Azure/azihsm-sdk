@@ -37,7 +37,7 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
-use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::commands::sd_create_remote_backup::masked_key_report_and_pub;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
@@ -90,8 +90,8 @@ fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> RemoteBackup
         .expect("PartFinal")
         .local_mk_backup;
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, sata, &report);
     let req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let resp = ctx
         .tbor_oob(&req, &evidence.oob())
@@ -197,8 +197,8 @@ fn sd_restore_remote_backup_is_one_shot() {
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let create_req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let created = ctx
         .tbor_oob(&create_req, &evidence.oob())

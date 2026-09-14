@@ -51,6 +51,8 @@ constexpr uint32_t kSdMkBackupLen = 164;
 bool create_sd_capture(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
+
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_local,
@@ -62,6 +64,7 @@ bool create_sd_capture(
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
         &masked_buf,
+        receiver_chain,
         &receiver,
         &policy_buf,
     };
@@ -254,13 +257,14 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
 
         // Self-peer backup: the same attested key is both source and
         // receiver.
-        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.pub, key.report);
 
         std::vector<uint8_t> local_backup;
         std::vector<uint8_t> prev_sd_mk;
         ASSERT_TRUE(create_sd_capture(
             dev1.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             dev1.policy,
             local_backup,
@@ -379,7 +383,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         SealingKeyMaterial key = sealing_key_and_report(ctx.session);
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         // Create the SD (initializing this incarnation) and a peer backup of
         // it, sealed to our own attested identity.
@@ -388,6 +392,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         ASSERT_TRUE(create_sd_capture(
             ctx.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             ctx.policy,
             local_backup,
@@ -449,7 +454,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_rejects_without_p
         SealingKeyMaterial key = sealing_key_and_report(ctx.session);
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         std::vector<uint8_t> peer_backup(kPokRemoteBackupLen, 0);
         std::vector<uint8_t> prev_sd_mk(kSdMkBackupLen, 0);

@@ -28,12 +28,15 @@ fn create_source_backup(
     sata_key: &CaKey,
     pid_pub: &[u8; RAW_PUB_LEN],
     masked_sender_key: &[u8],
+    receiver_pub: &[u8; RAW_PUB_LEN],
     receiver_report: &[u8],
     policy: &[u8],
 ) -> Vec<u8> {
-    let receiver = build_receiver_evidence(pid_pub, sata_key, receiver_report);
+    let receiver = build_receiver_evidence(pid_pub, receiver_pub, sata_key, receiver_report);
     receiver
-        .with_hsm_evidence(|rcvr| session.sd_create_remote_backup(masked_sender_key, rcvr, policy))
+        .with_create_backup(|rcvr_chain, rcvr| {
+            session.sd_create_remote_backup(masked_sender_key, rcvr_chain, rcvr, policy)
+        })
         .expect("source backup")
         .pok_remote_backup
 }
@@ -48,23 +51,24 @@ fn sd_reseal_remote_backup_roundtrip() {
 
     // Receiver (unseals the source), sender (sealed the source), and
     // destination (the reseal target) SD sealing keys, each attested.
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&session);
-    let (_masked_dst, report_dst) = masked_key_and_report(&session);
+    let (masked_rcvr, rcvr_pub_rcvr, report_rcvr) = masked_key_and_report(&session);
+    let (masked_sndr, rcvr_pub_sndr, report_sndr) = masked_key_and_report(&session);
+    let (_masked_dst, rcvr_pub_dst, report_dst) = masked_key_and_report(&session);
 
     let src_backup = create_source_backup(
         &session,
         &sata_key,
         &pid_pub,
         &masked_sndr,
+        &rcvr_pub_rcvr,
         &report_rcvr,
         &policy,
     );
 
     // Reseal: open with the receiver key (auth = sender), reseal to the
     // destination receiver.
-    let src_ev = build_receiver_evidence(&pid_pub, &sata_key, &report_sndr);
-    let dst_ev = build_receiver_evidence(&pid_pub, &sata_key, &report_dst);
+    let src_ev = build_receiver_evidence(&pid_pub, &rcvr_pub_sndr, &sata_key, &report_sndr);
+    let dst_ev = build_receiver_evidence(&pid_pub, &rcvr_pub_dst, &sata_key, &report_dst);
     let dst_backup = src_ev
         .with_hsm_evidence(|src| {
             dst_ev.with_hsm_evidence(|dest| {
@@ -94,21 +98,22 @@ fn sd_reseal_remote_backup_rerandomizes() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked_rcvr, report_rcvr) = masked_key_and_report(&session);
-    let (masked_sndr, report_sndr) = masked_key_and_report(&session);
-    let (_masked_dst, report_dst) = masked_key_and_report(&session);
+    let (masked_rcvr, rcvr_pub_rcvr, report_rcvr) = masked_key_and_report(&session);
+    let (masked_sndr, rcvr_pub_sndr, report_sndr) = masked_key_and_report(&session);
+    let (_masked_dst, rcvr_pub_dst, report_dst) = masked_key_and_report(&session);
 
     let src_backup = create_source_backup(
         &session,
         &sata_key,
         &pid_pub,
         &masked_sndr,
+        &rcvr_pub_rcvr,
         &report_rcvr,
         &policy,
     );
 
-    let src_ev = build_receiver_evidence(&pid_pub, &sata_key, &report_sndr);
-    let dst_ev = build_receiver_evidence(&pid_pub, &sata_key, &report_dst);
+    let src_ev = build_receiver_evidence(&pid_pub, &rcvr_pub_sndr, &sata_key, &report_sndr);
+    let dst_ev = build_receiver_evidence(&pid_pub, &rcvr_pub_dst, &sata_key, &report_dst);
     let reseal = || {
         src_ev
             .with_hsm_evidence(|src| {

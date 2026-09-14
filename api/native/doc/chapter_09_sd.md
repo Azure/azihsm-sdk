@@ -236,10 +236,21 @@ session.
 
 Creates a security domain under the calling session's partition from the
 unified partition policy, using the sender's masked SD-sealing key (from
-`azihsm_key_gen`) and the receiver's attestation evidence, and returns the
-three backups the firmware produces: the remote partition-owner-key backup
-(an HPKE-Auth seal of BKS3, 161 bytes), the local partition-owner-key backup
-(180 bytes), and the security-domain masking-key backup (164 bytes).
+`azihsm_key_gen`), the receiver key certificate chain (spec `RcvrCertChain`),
+and — when the policy requires it — the receiver's attestation evidence, and
+returns the three backups the firmware produces: the remote
+partition-owner-key backup (an HPKE-Auth seal of BKS3, 161 bytes), the local
+partition-owner-key backup (180 bytes), and the security-domain masking-key
+backup (164 bytes).
+
+The `receiver_cert_chain` is always validated and anchored to the policy SATA
+key; its leaf is the recipient public key (`RcvrPub`) the remote backup is
+sealed to. The `receiver_evidence` three-chain attestation is verified only
+when the policy sets `require_trusted_sa_key`: its partition-owner chain is
+anchored to the policy SAPOTA key and its report must attest the same
+`RcvrPub` recovered from `receiver_cert_chain`, otherwise the create is
+rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. When the flag is clear the
+evidence is ignored (pass empty chains and an empty report).
 
 The inputs are grouped into an
 [`azihsm_sd_create_remote_backup_params`](#azihsm_sd_create_remote_backup_params)
@@ -284,6 +295,7 @@ Input buffers for
 ```cpp
 struct azihsm_sd_create_remote_backup_params {
     const struct azihsm_buffer *masked_sealing_key;
+    struct azihsm_sd_cert_chain receiver_cert_chain;
     const struct azihsm_sd_evidence *receiver_evidence;
     const struct azihsm_buffer *policy;
 };
@@ -292,7 +304,8 @@ struct azihsm_sd_create_remote_backup_params {
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (180 B)             |
- | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
+ | receiver_cert_chain | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | receiver key chain (spec `RcvrCertChain`), SATA-anchored; always required |
+ | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence; verified only when policy sets `require_trusted_sa_key` |
  | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
 
 ## azihsm_sd_reseal_remote_backup

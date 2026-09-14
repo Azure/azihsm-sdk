@@ -196,7 +196,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                         report: ev.evidence(),
                     },
                     &TrustAnchors {
-                        sata: &sata.data[..POLICY_MAX_KEY_LEN],
+                        part_owner_anchor: &sata.data[..POLICY_MAX_KEY_LEN],
                     },
                     pk_sndr,
                     Some(src_hash),

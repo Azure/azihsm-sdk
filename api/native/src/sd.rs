@@ -40,7 +40,13 @@ pub struct AzihsmSdCreateRemoteBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (180 B).
     pub masked_sealing_key: *const AzihsmBuffer,
-    /// Receiver attestation evidence.
+    /// Receiver key certificate chain (spec `RcvrCertChain`): validated
+    /// and anchored to the policy SATA key, its leaf is the recipient key
+    /// the remote backup is sealed to.  Always required.
+    pub receiver_cert_chain: AzihsmSdCertChain,
+    /// Receiver attestation evidence.  Verified only when the policy sets
+    /// `require_trusted_sa_key`; pass empty chains and an empty report
+    /// otherwise.
     pub receiver_evidence: *const AzihsmSdEvidence,
     /// Unified partition-policy image (484 B) describing the domain.
     pub policy: *const AzihsmBuffer,
@@ -68,6 +74,20 @@ fn unpack_cert_chain(chain: &AzihsmSdCertChain) -> Result<Vec<api::HsmCert<'_>>,
     Ok(certs)
 }
 
+/// Borrows one C [`AzihsmSdCertChain`] into a `Vec<HsmCert>`, permitting a
+/// fully-empty chain (`len == 0` yields an empty vec).  Used only for the
+/// optional `receiver_evidence`, whose chains may be absent when the policy
+/// does not set `require_trusted_sa_key`; the host layer gates the
+/// non-empty validation on that flag.
+fn unpack_cert_chain_allow_empty(
+    chain: &AzihsmSdCertChain,
+) -> Result<Vec<api::HsmCert<'_>>, AzihsmStatus> {
+    if chain.len == 0 {
+        return Ok(Vec::new());
+    }
+    unpack_cert_chain(chain)
+}
+
 /// Owned, validated decode of one C [`AzihsmSdEvidence`]: the three cert
 /// chains materialized as `HsmCert` vectors plus the report slice (the DER
 /// bytes stay borrowed from the caller's buffers). Convert a reference
@@ -80,6 +100,31 @@ struct SdEvidence<'a> {
     owner: Vec<api::HsmCert<'a>>,
     part_owner: Vec<api::HsmCert<'a>>,
     report: &'a [u8],
+}
+
+impl<'a> SdEvidence<'a> {
+    /// Decode allowing a fully-empty evidence party: empty cert chains and
+    /// a null or zero-length report.
+    ///
+    /// Used for the optional `receiver_evidence` of
+    /// `SdCreateRemoteBackup`.  The firmware verifies that evidence only
+    /// when the policy sets `require_trusted_sa_key`, and the host
+    /// `sd_create_remote_backup` gates its packing on the same flag, so an
+    /// empty party is valid when the flag is clear (and is rejected by the
+    /// host packer when it is set).
+    fn try_from_optional(ev: &'a AzihsmSdEvidence) -> Result<Self, AzihsmStatus> {
+        let report = if ev.report.is_null() {
+            &[][..]
+        } else {
+            deref_ptr(ev.report)?.try_into()?
+        };
+        Ok(Self {
+            mfgr: unpack_cert_chain_allow_empty(&ev.mfgr_cert_chain)?,
+            owner: unpack_cert_chain_allow_empty(&ev.owner_cert_chain)?,
+            part_owner: unpack_cert_chain_allow_empty(&ev.part_owner_cert_chain)?,
+            report,
+        })
+    }
 }
 
 impl<'a> TryFrom<&'a AzihsmSdEvidence> for SdEvidence<'a> {
@@ -151,8 +196,15 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
         let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
 
+        let receiver_cert_chain = unpack_cert_chain(&params.receiver_cert_chain)?;
+
+        // `receiver_evidence` is optional: the firmware verifies it only
+        // when the policy sets `require_trusted_sa_key`, and the host layer
+        // gates its packing on that flag.  Accept an empty party here so a
+        // C caller can honor the documented flag-clear contract; the host
+        // packer still rejects empty evidence when the flag is set.
         let receiver = deref_ptr(params.receiver_evidence)?;
-        let receiver = SdEvidence::try_from(receiver)?;
+        let receiver = SdEvidence::try_from_optional(receiver)?;
         let receiver = api::HsmSdEvidence::from(&receiver);
 
         // Validate all outputs up-front (aliasing on raw pointers, then
@@ -167,7 +219,12 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
-        let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
+        let result = session.sd_create_remote_backup(
+            masked_sealing_key,
+            &receiver_cert_chain,
+            &receiver,
+            policy,
+        )?;
 
         copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
         copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;

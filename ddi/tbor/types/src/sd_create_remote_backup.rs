@@ -62,6 +62,13 @@ pub struct TborSdCreateRemoteBackupReq {
     /// derive's exact-length form, mirroring the firmware `len = 180`.
     pub masked_sealing_key: [u8; MASKED_SEALING_KEY_LEN],
 
+    /// Receiver key certificate-chain descriptors (spec `RcvrCertChain`).
+    /// Always present; validated and anchored to the policy **SATA** key,
+    /// its leaf public key is the recipient public key (`RcvrPub`) the
+    /// remote backup is sealed to.  The DER bytes travel out of band.
+    #[tbor(max_len = 24)]
+    pub receiver_cert_chain: Vec<CertDescriptor>,
+
     /// Receiver manufacturer certificate-chain descriptors.  Flattened
     /// from the firmware `receiver_evidence` field group (first of its
     /// four TOC entries); the DER bytes travel out of band.
@@ -118,6 +125,7 @@ mod tests {
         let req = TborSdCreateRemoteBackupReq {
             session_id: 9,
             masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
+            receiver_cert_chain: Vec::new(),
             receiver_mfgr_cert_chain: Vec::new(),
             receiver_owner_cert_chain: Vec::new(),
             receiver_part_owner_cert_chain: Vec::new(),
