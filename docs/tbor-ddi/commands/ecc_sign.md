@@ -36,7 +36,7 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8 | `masked_key` | `buffer` (164..=200 B) | The masked ECC private key; unmasked in place.  Its kind recovers the curve. |
+| 8 | `masked_key` | `buffer` (260..=296 B) | The masked ECC private key; unmasked in place.  Its kind recovers the curve. |
 | — | `digest` | `buffer` (32 / 48 / 64 B) | The pre-computed message digest in wire little-endian order. Its length must be a supported SHA-2 digest length (32 / 48 / 64 B); the hash algorithm is inferred from that length, so no separate algorithm selector is carried on the wire. |
 
 ### Data section

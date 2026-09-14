@@ -53,8 +53,8 @@ const HASH_SHA384: u8 = 2;
 const HASH_SHA512: u8 = 3;
 
 /// AEAD-GCM-256 masked-key envelope overhead:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ tag(16)` = 132 B around the plaintext.
-const MASK_OVERHEAD: usize = 8 + 12 + 96 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ tag(16)` = 228 B around the plaintext.
+const MASK_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
 /// Derive a fresh masked ECDH shared secret (the HKDF IKM) on-device:
 /// generate two P-256 keypairs and ECDH one against the other's public

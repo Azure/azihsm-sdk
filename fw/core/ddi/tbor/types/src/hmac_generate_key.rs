@@ -30,8 +30,8 @@
 //!
 //! * `masked_key` — the freshly generated HMAC key, masked (AEAD-GCM-256)
 //!   under the requested scope's masking key.  Its length depends on the
-//!   requested `key_length`: [`MASKED_HMAC_KEY_MIN_LEN`] (164 B, 32-byte
-//!   key) … [`MASKED_HMAC_KEY_MAX_LEN`] (260 B, 128-byte key).
+//!   requested `key_length`: [`MASKED_HMAC_KEY_MIN_LEN`] (260 B, 32-byte
+//!   key) … [`MASKED_HMAC_KEY_MAX_LEN`] (356 B, 128-byte key).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
@@ -43,15 +43,15 @@ pub const TBOR_OP_HMAC_GENERATE_KEY: u8 = 0x11;
 
 /// Minimum masked HMAC-key envelope length (32-byte key, the SHA-256
 /// minimum): an AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖
-/// aad(96) ‖ pt(32) ‖ tag(16)`.  Lower bound of the `#[tbor(buffer,
-/// max_len = 260)]` masked-key output.
-pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+/// aad(192) ‖ pt(32) ‖ tag(16)`.  Lower bound of the `#[tbor(buffer,
+/// max_len = 356)]` masked-key output.
+pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked HMAC-key envelope length (128-byte key, the SHA-384 /
 /// SHA-512 maximum): the same envelope with a 128-byte plaintext.  Pinned
-/// into the `#[tbor(buffer, max_len = 260)]` literal on
+/// into the `#[tbor(buffer, max_len = 356)]` literal on
 /// [`TborHmacGenerateKeyResp::masked_key`].
-pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `HmacGenerateKey` request schema.
 ///
@@ -92,10 +92,10 @@ pub struct TborHmacGenerateKeyReq {
 #[tbor(response)]
 pub struct TborHmacGenerateKeyResp<'a> {
     /// The freshly generated HMAC key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  `132 + key_length` B (164 … 260 B
+    /// requested scope's masking key.  `228 + key_length` B (260 … 356 B
     /// for a 32 … 128-byte key).  The key is not stored on the device;
     /// the caller passes this blob back to `Hmac`.
-    #[tbor(buffer, max_len = 260, mutable)]
+    #[tbor(buffer, max_len = 356, mutable)]
     pub masked_key: &'a [u8],
 }
 
@@ -143,8 +143,8 @@ mod tests {
     fn masked_key_lengths_match_pinned_values() {
         // The `#[tbor(buffer, max_len = N)]` attribute must remain a
         // numeric literal; pin it against the exported const.
-        const _: () = assert!(260 == MASKED_HMAC_KEY_MAX_LEN);
-        assert_eq!(MASKED_HMAC_KEY_MIN_LEN, 164);
-        assert_eq!(MASKED_HMAC_KEY_MAX_LEN, 260);
+        const _: () = assert!(356 == MASKED_HMAC_KEY_MAX_LEN);
+        assert_eq!(MASKED_HMAC_KEY_MIN_LEN, 260);
+        assert_eq!(MASKED_HMAC_KEY_MAX_LEN, 356);
     }
 }

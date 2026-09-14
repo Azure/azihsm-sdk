@@ -41,12 +41,12 @@ pub const TBOR_OP_RSA_MOD_EXP: u8 = 0x1A;
 /// floor (an RSA-2048 masked key is far larger — its modulus alone is
 /// 256 B); the authoritative gate is `unmask` (AEAD-tag verification) plus
 /// the key-kind check in the handler.  Pinned into the `#[tbor(buffer,
-/// min_len = 164)]` literal on [`TborRsaModExpReq::masked_key`].
-pub const RSA_MASKED_KEY_MIN_LEN: usize = 164;
+/// min_len = 260)]` literal on [`TborRsaModExpReq::masked_key`].
+pub const RSA_MASKED_KEY_MIN_LEN: usize = 260;
 
 /// Maximum accepted masked RSA private-key envelope length — the largest
 /// masked key [`UnwrapKey`](crate::unwrap_key) can produce (RSA-4096-CRT).
-/// Pinned into the `#[tbor(buffer, max_len = 3072)]` literal on
+/// Pinned into the `#[tbor(buffer, max_len = 3168)]` literal on
 /// [`TborRsaModExpReq::masked_key`].
 pub const RSA_MASKED_KEY_MAX_LEN: usize = UNWRAP_MASKED_KEY_MAX_LEN;
 
@@ -57,7 +57,7 @@ pub const RSA_MOD_EXP_MAX_LEN: usize = 512;
 
 // Keep the schema-literal bounds in sync with the named constants (the
 // tbor derive requires integer literals in the attributes).
-const _: () = assert!(RSA_MASKED_KEY_MAX_LEN == 3072);
+const _: () = assert!(RSA_MASKED_KEY_MAX_LEN == 3168);
 
 /// RSA private-key operation selector on the TBOR wire.
 ///
@@ -89,9 +89,9 @@ pub struct TborRsaModExpReq<'a> {
     pub session_id: SessionId,
 
     /// The masked RSA private key (from `UnwrapKey`), an AEAD-GCM-256
-    /// envelope of 164..=3072 B.  Its kind recovers the modulus size and
+    /// envelope of 260..=3168 B.  Its kind recovers the modulus size and
     /// CRT form.
-    #[tbor(buffer, min_len = 164, max_len = 3072, mutable)]
+    #[tbor(buffer, min_len = 260, max_len = 3168, mutable)]
     pub masked_key: &'a [u8],
 
     /// The private-key operation, 1-byte [`RsaOp`] (gates on `decrypt` /
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn lengths_match_pinned_values() {
         assert_eq!(RSA_MOD_EXP_MAX_LEN, 512);
-        assert_eq!(RSA_MASKED_KEY_MAX_LEN, 3072);
-        assert_eq!(RSA_MASKED_KEY_MIN_LEN, 164);
+        assert_eq!(RSA_MASKED_KEY_MAX_LEN, 3168);
+        assert_eq!(RSA_MASKED_KEY_MIN_LEN, 260);
     }
 }

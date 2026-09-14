@@ -46,13 +46,13 @@ _Empty._
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_key` | `buffer` (164 / 180 / 200 B) | The private key, masked (AEAD-GCM-256) under the scope's masking key. |
+| 8 | `masked_key` | `buffer` (260 / 276 / 296 B) | The private key, masked (AEAD-GCM-256) under the scope's masking key. |
 | — | `pub_key` | `buffer` (64 / 96 / 136 B) | The wire public key `x_le ‖ y_le` (little-endian, P-521 padded). |
 
 ### Data section
 
 Carries the masked private key followed by the wire public key.  The
-masked-key length is `132 + wire_priv_len` (P-521 uses a 68-byte padded
+masked-key length is `228 + wire_priv_len` (P-521 uses a 68-byte padded
 scalar).
 
 ## Errors

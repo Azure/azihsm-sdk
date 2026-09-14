@@ -37,12 +37,12 @@ const SCOPE_EPHEMERAL: u8 = 0b010;
 const SCOPE_LOCAL: u8 = 0b011;
 
 /// Expected masked shared-secret envelope length per curve:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ secret(raw_coord) ‖ tag(16)` = 132 + raw.
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ secret(raw_coord) ‖ tag(16)` = 228 + raw.
 fn masked_secret_len(curve: u8) -> usize {
     match curve {
-        ECC_CURVE_P256 => 132 + 32,
-        ECC_CURVE_P384 => 132 + 48,
-        ECC_CURVE_P521 => 132 + 66,
+        ECC_CURVE_P256 => 228 + 32,
+        ECC_CURVE_P384 => 228 + 48,
+        ECC_CURVE_P521 => 228 + 66,
         _ => unreachable!(),
     }
 }

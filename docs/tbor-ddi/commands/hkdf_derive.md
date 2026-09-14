@@ -45,7 +45,7 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | — | `hash_algo` | `u8` (inline) | [`HashAlgo`] HKDF hash / HMAC PRF (`1` = SHA-256, `2` = SHA-384, `3` = SHA-512). |
 | — | `key_type` | `u8` (inline) | [`KdfKeyType`] output key type (AES-128/192/256 = `10`/`11`/`12`; HMAC-SHA-256/384/512 = `25`/`26`/`27`; variable HMAC-256/384/512 = `30`/`31`/`32`). |
 | — | `key_length` | `u8` (inline) | Output length in bytes for the `VarHmac*` types; `0` means absent (required for `VarHmac*`, ignored otherwise). |
-| 8 | `masked_secret` | `buffer` (164..=198 B) | The masked ECDH shared secret IKM; unmasked in place. |
+| 8 | `masked_secret` | `buffer` (260..=294 B) | The masked ECDH shared secret IKM; unmasked in place. |
 | — | `salt` | `buffer` (0..=256 B) | Optional HKDF-Extract salt; empty selects the RFC 5869 default salt. |
 | — | `info` | `buffer` (0..=256 B) | Optional HKDF-Expand context/application info; empty means none. |
 
@@ -59,11 +59,11 @@ Carries the masked secret, followed by the salt, followed by the info.
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_key` | `buffer` (148..=260 B) | The derived key, masked (AEAD-GCM-256) under the scope's masking key. |
+| 8 | `masked_key` | `buffer` (244..=356 B) | The derived key, masked (AEAD-GCM-256) under the scope's masking key. |
 
 ### Data section
 
-Carries the masked derived key.  The masked length is `132 + okm_len`,
+Carries the masked derived key.  The masked length is `228 + okm_len`,
 where `okm_len` is the derived key length (16 / 24 / 32 for AES-128/192/256;
 32 / 48 / 64 for HMAC-SHA-256/384/512; `key_length` for `VarHmac*`).
 

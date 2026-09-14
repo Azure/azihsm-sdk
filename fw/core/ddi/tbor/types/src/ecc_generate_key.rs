@@ -20,7 +20,7 @@
 //!   for headroom; exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is
 //!   valid for a generated ECC private key.
 //! * `key_label` — caller-supplied label recorded in the masked blob's
-//!   metadata (≤ 32 bytes); empty for an unlabeled key.
+//!   metadata (≤ 128 bytes); empty for an unlabeled key.
 //!
 //! Outputs:
 //!
@@ -38,13 +38,13 @@ use crate::key_props::KeyUsage;
 pub const TBOR_OP_ECC_GENERATE_KEY: u8 = 0x17;
 
 /// Minimum masked ECC private-key envelope length (P-256, 32-byte scalar):
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(32) ‖ tag(16)`.
-pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(32) ‖ tag(16)`.
+pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked ECC private-key envelope length (P-521, 68-byte
-/// wire scalar).  Pinned into the `#[tbor(buffer, max_len = 200)]` literal
+/// wire scalar).  Pinned into the `#[tbor(buffer, max_len = 296)]` literal
 /// on [`TborEccGenerateKeyResp::masked_key`].
-pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 68 + 16;
+pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 68 + 16;
 
 /// Maximum wire public-key length (`x ‖ y`, P-521 padded coordinates).
 /// Pinned into the `#[tbor(buffer, max_len = 136)]` literal on
@@ -94,9 +94,9 @@ pub struct TborEccGenerateKeyReq<'a> {
     pub key_usage: KeyUsage,
 
     /// Caller-supplied key label recorded in the masked blob's
-    /// `MaskedKeyMetadata.key_label`, up to 32 bytes.  Empty for an
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
     /// unlabeled key.
-    #[tbor(buffer, max_len = 32)]
+    #[tbor(buffer, max_len = 128)]
     pub key_label: &'a [u8],
 }
 
@@ -108,8 +108,8 @@ pub struct TborEccGenerateKeyReq<'a> {
 #[tbor(response)]
 pub struct TborEccGenerateKeyResp<'a> {
     /// The generated private key, masked (AEAD-GCM-256) under the scope's
-    /// masking key.  164 / 180 / 200 B for P-256 / P-384 / P-521.
-    #[tbor(buffer, max_len = 200, mutable)]
+    /// masking key.  260 / 276 / 296 B for P-256 / P-384 / P-521.
+    #[tbor(buffer, max_len = 296, mutable)]
     pub masked_key: &'a [u8],
 
     /// The wire public key `x ‖ y` (little-endian, P-521 padded):
@@ -167,9 +167,9 @@ mod tests {
 
     #[test]
     fn lengths_match_pinned_values() {
-        const _: () = assert!(200 == MASKED_ECC_KEY_MAX_LEN);
+        const _: () = assert!(296 == MASKED_ECC_KEY_MAX_LEN);
         const _: () = assert!(136 == ECC_PUB_KEY_MAX_LEN);
-        assert_eq!(MASKED_ECC_KEY_MIN_LEN, 164);
-        assert_eq!(MASKED_ECC_KEY_MAX_LEN, 200);
+        assert_eq!(MASKED_ECC_KEY_MIN_LEN, 260);
+        assert_eq!(MASKED_ECC_KEY_MAX_LEN, 296);
     }
 }
