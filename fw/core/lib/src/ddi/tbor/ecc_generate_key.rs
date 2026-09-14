@@ -18,6 +18,7 @@ use azihsm_fw_core_crypto_key_masking::aead::masked_blob_len;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_ddi_tbor_types::EccCurve;
+use azihsm_fw_ddi_tbor_types::KeyUsage;
 use azihsm_fw_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_fw_ddi_tbor_types::TborEccGenerateKeyResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -37,9 +38,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
-const ECC_KEY_LABEL: &[u8] = b"EccKey";
-
 /// Map the wire [`EccCurve`] onto the PAL's NIST curve selector.  Kept
 /// local (single-use, wire→PAL direction) per the TBOR convention that
 /// per-handler wire mappings live with their handler.
@@ -53,14 +51,22 @@ fn curve_from_wire(curve: EccCurve) -> HsmResult<HsmEccCurve> {
 }
 
 /// Attributes recorded in the masked blob's metadata (re-applied on
-/// unmask).  A generated ECC private key can `sign` (ECDSA) and `derive`
-/// (ECDH); `scope` records the lifecycle / visibility domain.
-fn ecc_key_attrs(scope: HsmKeyScope) -> HsmVaultKeyAttrs {
-    HsmVaultKeyAttrs::new()
+/// unmask), derived from the host-requested [`KeyUsage`].  A generated ECC
+/// private key is either a signing key (ECDSA) or a derivation key (ECDH)
+/// — exactly one, matching the host contract; any other usage is rejected.
+/// `scope` records the lifecycle / visibility domain.
+fn ecc_key_attrs(scope: HsmKeyScope, usage: KeyUsage) -> HsmResult<HsmVaultKeyAttrs> {
+    let sign = usage.sign();
+    let derive = usage.derive();
+    // Exactly one of sign/derive, and no other usage bit, is valid.
+    if sign == derive || usage.bits() & !(KeyUsage::SIGN | KeyUsage::DERIVE) != 0 {
+        return Err(HsmError::InvalidPermissions);
+    }
+    Ok(HsmVaultKeyAttrs::new()
         .with_local(true)
-        .with_sign(true)
-        .with_derive(true)
-        .with_scope(scope)
+        .with_sign(sign)
+        .with_derive(derive)
+        .with_scope(scope))
 }
 
 /// Handle a TBOR `EccGenerateKey` request.
@@ -89,7 +95,10 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let kind = ecc_private(curve);
     let svn = part_state::part_mfgr_svn(pal);
     let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
-    let attrs = ecc_key_attrs(scope);
+    let attrs = ecc_key_attrs(scope, req.key_usage())?;
+    // Caller-supplied label stamped into the masked metadata (≤ 32 B,
+    // bounded by the wire `max_len`); empty for an unlabeled key.
+    let caller_label = req.key_label();
 
     // Generate the keypair into IO-scoped buffers sized from the curve's
     // wire lengths (the single source of truth for PAL-boundary buffers).
@@ -137,8 +146,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             let out = TborEccGenerateKeyResp::decode_mut(resp)?;
             pal.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
                 let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
-                let key_label = alloc.dma_alloc(ECC_KEY_LABEL.len())?;
-                key_label.copy_from_slice(ECC_KEY_LABEL);
+                let key_label = alloc.dma_alloc(caller_label.len())?;
+                key_label.copy_from_slice(caller_label);
                 let params = MaskParams {
                     key_kind: kind,
                     key_attrs: attrs,

@@ -32,7 +32,7 @@ pub const ECC_CURVE_P521: u8 = 3;
 
 /// Host-facing TBOR `EccGenerateKey` request.
 #[tbor(opcode = TBOR_OP_ECC_GENERATE_KEY, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborEccGenerateKeyReq {
     /// Session id this request is bound to.
     #[tbor(session_id)]
@@ -44,6 +44,19 @@ pub struct TborEccGenerateKeyReq {
     /// NIST curve as the 1-byte `EccCurve` discriminant (see
     /// [`ECC_CURVE_P256`] / [`ECC_CURVE_P384`] / [`ECC_CURVE_P521`]).
     pub curve: u8,
+
+    /// Requested key-usage permissions as a `KeyUsage` bitfield (see
+    /// `KEY_USAGE_SIGN` / `KEY_USAGE_DERIVE`), carried as a `u64` for
+    /// headroom (mirrors the masked metadata's 64-bit `usage_flags`).
+    /// Exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is valid for a
+    /// generated ECC private key.
+    pub key_usage: u64,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to `TBOR_KEY_LABEL_MAX_LEN` (32) bytes.  Empty for an unlabeled
+    /// key.
+    #[tbor(max_len = 32)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `EccGenerateKey` response.
@@ -64,6 +77,7 @@ mod tests {
     use azihsm_ddi_tbor_types::TborOpReq;
 
     use super::*;
+    use crate::KEY_USAGE_SIGN;
 
     #[test]
     fn request_encodes_scope_and_curve() {
@@ -71,6 +85,8 @@ mod tests {
             session_id: 5,
             scope: 0b011,
             curve: ECC_CURVE_P384,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: b"lbl".to_vec(),
         };
         let mut buf = [0u8; 256];
         let frame = req.encode_request(&mut buf).expect("encode");
