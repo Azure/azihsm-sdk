@@ -25,9 +25,11 @@ const MACH_SEED_ENVELOPE_LEN: usize = ENVELOPE_HEADER_LEN
     + ENVELOPE_CIPHERTEXT_LEN
     + ENVELOPE_TAG_LEN;
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::build_part_init_mach_seed_aad;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -37,8 +39,6 @@ use super::build_envelope;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
     let mut req = TborPartInitReq {

@@ -28,6 +28,7 @@
 use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -35,8 +36,6 @@ use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
-
-use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 
 mod crypto_rejects;
 mod fw_rejects;

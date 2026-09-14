@@ -13,6 +13,8 @@
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::build_mac_fin;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
@@ -20,9 +22,6 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
-
-use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
-use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 
 // ---------------------------------------------------------------------------
 // Happy paths

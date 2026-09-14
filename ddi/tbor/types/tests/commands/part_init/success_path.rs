@@ -19,7 +19,9 @@ use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
 use azihsm_ddi_mbor_sim::report::CoseSign1Object;
 use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -37,8 +39,6 @@ use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
 use super::pota_thumbprint;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 /// Runs the supplied cleanup function when this value goes out of scope,
 /// including during panic unwinding.
