@@ -45,8 +45,8 @@ use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
 
-const CO: u8 = 0;
-const CU: u8 = 1;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 
 /// Distinct, non-default 32-byte PSK used by the happy-path tests.
 const ROTATED_PSK: [u8; PSK_LEN] = [

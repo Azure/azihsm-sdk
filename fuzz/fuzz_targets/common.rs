@@ -105,6 +105,7 @@ pub fn run_response_view(data: &[u8]) {
     if let Ok(view) = ResponseView::parse(data) {
         let _ = view.version();
         let _ = view.status();
+        let _ = view.flags();
         let _ = view.fips_approved();
         let _ = view.toc_count();
         let _ = view.data_start();
@@ -124,6 +125,7 @@ pub fn run_response_view(data: &[u8]) {
 use azihsm_ddi_emu::DdiEmu;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
+use azihsm_ddi_interface::DdiResult;
 use std::sync::LazyLock;
 
 /// Lazily-initialized emulator DDI and device for fuzz targets that
@@ -131,9 +133,9 @@ use std::sync::LazyLock;
 static EMU: LazyLock<DdiEmu> = LazyLock::new(DdiEmu::default);
 
 /// Open a fresh emulator device handle for fuzz targets.
-pub fn open_emu_dev() -> <DdiEmu as Ddi>::Dev {
+pub fn open_emu_dev() -> DdiResult<<DdiEmu as Ddi>::Dev> {
     let devs = EMU.dev_info_list();
-    EMU.open_dev(&devs[0].path).expect("open emu device")
+    EMU.open_dev(&devs[0].path)
 }
 
 /// Issue a TBOR request against the emulator, discarding the result.

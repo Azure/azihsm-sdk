@@ -33,12 +33,12 @@ use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 
-use super::bootstrap_rotated_co;
 use super::build_envelope;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
-use super::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 fn make_part_init_req(session_id: u16, mach_seed_envelope: Vec<u8>) -> TborPartInitReq {
     let mut req = TborPartInitReq {

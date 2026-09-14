@@ -52,7 +52,7 @@ pub(crate) fn hkdf_derive(
     let req = DdiHkdfDeriveCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::HkdfDerive, &shared_secret.session()),
         data: DdiHkdfDeriveReq {
-            key_id: ddi::get_key_id(shared_secret.handle()),
+            key_id: ddi::get_key_id(shared_secret.handle())?,
             hash_algorithm: hash_algo.into(),
             salt: salt
                 .map(|salt| MborByteArray::from_slice(salt).map_hsm_err(HsmError::InternalError))

@@ -155,7 +155,10 @@ impl UnoHsmPal {
             return;
         };
         if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
+            self.with_admin_io(pid, async |admin_io, _alloc| {
+                self.delete_key(admin_io, key_id).await;
+            })
+            .await;
         }
         part.clear_identity();
         part.clear_masked_bk_boot();
@@ -177,11 +180,11 @@ impl UnoHsmPal {
     /// (survives enable/disable; cleared on free).
     async fn provision_masked_bk_boot(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
-        let admin_io = UnoHsmIo::admin(pid);
-        // Rewind the admin slot's bump heap before the masking sequence.
-        let _alloc = UnoScopedAlloc::for_admin(self);
-        let masked = azihsm_fw_core_crypto_key_derive::mask_bk_boot(self, &admin_io).await?;
-        part.set_masked_bk_boot(masked)
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            let masked = azihsm_fw_core_crypto_key_derive::mask_bk_boot(self, admin_io).await?;
+            part.set_masked_bk_boot(masked)
+        })
+        .await
     }
 
     /// Frees partition `pid` (mirrors `part_free`):
@@ -198,13 +201,17 @@ impl UnoHsmPal {
             return Ok(());
         }
 
-        // Disable: clear enable-time keys/state (no-op if not enabled).
-        self.clear_enabled_state(pid).await;
+        // Disable: clear enable-time keys/state (no-op if not enabled), then
+        // delete the identity key. One admin session covers every vault
+        // delete below, so the slot is scrubbed once instead of once per key.
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            self.clear_enabled_state(admin_io, pid).await;
+            if let Some(key_id) = part.id_key_id() {
+                self.delete_key(admin_io, key_id).await;
+            }
+        })
+        .await;
 
-        // Dealloc: delete the identity key and zeroize identity material.
-        if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
-        }
         part.clear_identity();
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
@@ -231,65 +238,65 @@ impl UnoHsmPal {
         pct: HsmEccPct,
     ) -> HsmResult<HsmKeyId> {
         let part = PartStore::partition(pid)?;
-        let admin_io = UnoHsmIo::admin(pid);
-        let alloc = UnoScopedAlloc::for_admin(self);
+        self.with_admin_io(pid, async |admin_io, alloc| {
+            // Generate the key pair into transient admin-slot DMA scratch
+            // buffers. The public key is *not* written straight into its
+            // part_store field: doing so would hold a `&mut` borrow into the
+            // GSRAM-backed PartStore across the keygen `.await`, which the
+            // PartStore driver forbids (no yielding while a slot is mutably
+            // borrowed). The store is updated synchronously after the await.
+            let priv_buf = alloc.dma_alloc(P384_PRIV_LEN)?;
+            let pub_buf = alloc.dma_alloc(ID_PUB_KEY_LEN)?;
+            let (_priv_len, pub_len) = self
+                .ecc_gen_keypair(
+                    admin_io,
+                    alloc,
+                    HsmEccCurve::P384,
+                    Some((priv_buf, pub_buf)),
+                    pct,
+                )
+                .await?;
 
-        // Generate the key pair into transient admin-slot DMA scratch
-        // buffers. The public key is *not* written straight into its
-        // part_store field: doing so would hold a `&mut` borrow into the
-        // GSRAM-backed PartStore across the keygen `.await`, which the
-        // PartStore driver forbids (no yielding while a slot is mutably
-        // borrowed). The store is updated synchronously after the await.
-        let priv_buf = alloc.dma_alloc(P384_PRIV_LEN)?;
-        let pub_buf = alloc.dma_alloc(ID_PUB_KEY_LEN)?;
-        let (_priv_len, pub_len) = self
-            .ecc_gen_keypair(
-                &admin_io,
-                &alloc,
-                HsmEccCurve::P384,
-                Some((priv_buf, pub_buf)),
-                pct,
-            )
-            .await?;
-
-        if pub_len != ID_PUB_KEY_LEN {
-            return Err(HsmError::InternalError);
-        }
-
-        // Persist the freshly generated public key into its part_store
-        // field (selected by `kind`). This borrow of the PartStore slot is
-        // strictly synchronous — no `.await` is reached while it is held.
-        match kind {
-            HsmVaultKeyKind::Ecc384Private => {
-                // The PKA emits the public key little-endian; store the identity
-                // key big-endian (natural SEC1/DER order) so every host-facing
-                // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
-                // reads `part_id_pub_key` directly without per-handler swaps.
-                pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
-                pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
-                part.set_id_pub_key(pub_buf)?
+            if pub_len != ID_PUB_KEY_LEN {
+                return Err(HsmError::InternalError);
             }
-            HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
-            HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
-            _ => return Err(HsmError::InternalError),
-        }
 
-        // Assemble the stored blob to the format the vault expects for
-        // `kind`: the identity key stores the bare 48-byte private scalar,
-        // while the establish-credential and session-encryption keys store
-        // the 144-byte `pub(96) ‖ priv(48)` blob (matching the reference
-        // firmware's on-storage layout), using the scratch public key.
-        let key_buf: &DmaBuf = match kind {
-            HsmVaultKeyKind::Ecc384Private => priv_buf,
-            HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
-                self.build_enable_key_blob(&alloc, pub_buf, priv_buf)?
+            // Persist the freshly generated public key into its part_store
+            // field (selected by `kind`). This borrow of the PartStore slot is
+            // strictly synchronous — no `.await` is reached while it is held.
+            match kind {
+                HsmVaultKeyKind::Ecc384Private => {
+                    // The PKA emits the public key little-endian; store the identity
+                    // key big-endian (natural SEC1/DER order) so every host-facing
+                    // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
+                    // reads `part_id_pub_key` directly without per-handler swaps.
+                    pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
+                    pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
+                    part.set_id_pub_key(pub_buf)?
+                }
+                HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
+                HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
+                _ => return Err(HsmError::InternalError),
             }
-            _ => return Err(HsmError::InternalError),
-        };
 
-        crate::vault::vault(&admin_io)
-            .create(self, &admin_io, u8::from(pid), key_buf, kind, None, attrs)
-            .await
+            // Assemble the stored blob to the format the vault expects for
+            // `kind`: the identity key stores the bare 48-byte private scalar,
+            // while the establish-credential and session-encryption keys store
+            // the 144-byte `pub(96) ‖ priv(48)` blob (matching the reference
+            // firmware's on-storage layout), using the scratch public key.
+            let key_buf: &DmaBuf = match kind {
+                HsmVaultKeyKind::Ecc384Private => priv_buf,
+                HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
+                    self.build_enable_key_blob(alloc, pub_buf, priv_buf)?
+                }
+                _ => return Err(HsmError::InternalError),
+            };
+
+            crate::vault::vault(admin_io)
+                .create(self, admin_io, u8::from(pid), key_buf, kind, None, attrs)
+                .await
+        })
+        .await
     }
 
     /// Builds the enable-key blob (`pub(96) ‖ priv(48)`, the
@@ -371,18 +378,28 @@ impl UnoHsmPal {
             }
             Err(e) => {
                 // Roll back the establish-credential key.
-                self.delete_key(pid, ec_id).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| {
+                    self.delete_key(admin_io, ec_id).await;
+                })
+                .await;
                 part.clear_enabled_keys();
                 Err(e)
             }
         }
     }
 
-    /// Best-effort deletion of one vault key for partition `pid`.
-    async fn delete_key(&self, pid: HsmPartId, key_id: HsmKeyId) {
-        let admin_io = UnoHsmIo::admin(pid);
-        let _ = crate::vault::vault(&admin_io)
-            .delete(self, &admin_io, key_id)
+    /// Best-effort deletion of one vault key, on the caller's admin session.
+    ///
+    /// Takes the caller's `admin_io` instead of opening its own session:
+    /// [`KeyVault::delete`](azihsm_fw_uno_key_vault::KeyVault::delete) takes
+    /// only a GDMA controller and an IO — no allocator — so it writes nothing
+    /// to the admin slot's bump heaps. A session per key would scrub the full
+    /// 16 KiB slot once per deletion for no benefit, and
+    /// [`clear_enabled_state`](Self::clear_enabled_state) deletes one key per
+    /// provisioning slot *and* per live session.
+    async fn delete_key(&self, admin_io: &UnoHsmIo, key_id: HsmKeyId) {
+        let _ = crate::vault::vault(admin_io)
+            .delete(self, admin_io, key_id)
             .await;
     }
 
@@ -397,7 +414,7 @@ impl UnoHsmPal {
     /// are torn down only on free. Best-effort and idempotent: keys are
     /// deleted only if present, so it is safe to call regardless of the
     /// current lifecycle state.
-    async fn clear_enabled_state(&self, pid: HsmPartId) {
+    async fn clear_enabled_state(&self, admin_io: &UnoHsmIo, pid: HsmPartId) {
         let Ok(part) = PartStore::partition(pid) else {
             return;
         };
@@ -416,14 +433,14 @@ impl UnoHsmPal {
         .into_iter()
         .flatten()
         {
-            self.delete_key(pid, key_id).await;
+            self.delete_key(admin_io, key_id).await;
         }
         // Delete every session-blob vault key (Active, NeedsRenegotiation,
         // or Pending) mapped by the session table, so none are orphaned in
         // the vault when the table is zeroized below.
         if let Ok(sessions) = SessionStore::partition(pid) {
             for key_id in sessions.occupied_physical_ids().into_iter().flatten() {
-                self.delete_key(pid, key_id).await;
+                self.delete_key(admin_io, key_id).await;
             }
         }
         part.clear_state(PartResetKind::Disable);
@@ -479,7 +496,10 @@ impl UnoHsmPal {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Enabled => {
-                self.clear_enabled_state(pid).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| {
+                    self.clear_enabled_state(admin_io, pid).await;
+                })
+                .await;
                 part.set_state(PartState::Disabled);
                 Ok(())
             }
@@ -565,11 +585,14 @@ impl UnoHsmPal {
         // because the session slots were never freed.
 
         // Wipe every vault key (app + session + internal) so no prior
-        // tenant key material survives the reset.
-        let admin_io = UnoHsmIo::admin(pid);
-        crate::vault::vault(&admin_io)
-            .clear(self, &admin_io)
-            .await?;
+        // tenant key material survives the reset. Runs inside a
+        // `with_admin_io` session so the per-IO scratch the clear touches
+        // is scrubbed on exit — an admin IO obtained any other way would
+        // bypass the teardown wipe.
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            crate::vault::vault(admin_io).clear(self, admin_io).await
+        })
+        .await?;
         // Clear the per-tenant persistent state (including the session
         // table), preserving the partition's provisioning material.
         part.clear_state(PartResetKind::Migrate);
@@ -629,7 +652,13 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
-        let admin_io = UnoHsmIo::admin(pid);
+        // Raw admin IO rather than a `with_admin_io` session: this path is
+        // synchronous (it must not yield, so it cannot await a scrub) and it
+        // allocates no scratch — `create_sync` copies straight from the
+        // `&'static` GSRAM slot into vault storage, so the admin slot is never
+        // dirtied and there is nothing to wipe. The handle is only used to
+        // select the partition's vault.
+        let admin_io = UnoHsmIo::admin_no_scrub(pid);
         let kid = crate::vault::vault(&admin_io).create_sync(
             u8::from(pid),
             bk,

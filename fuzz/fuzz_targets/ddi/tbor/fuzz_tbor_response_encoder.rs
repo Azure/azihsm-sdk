@@ -24,5 +24,5 @@ struct FuzzInput {
 fuzz_target!(|input: FuzzInput| {
     let mut buf = [0u8; FUZZ_RESP_BUF_SIZE];
     let encoder = ResponseEncoder::new(&mut buf, input.version, input.status, input.fips_approved);
-    common::run_encoder(encoder, &input.ops);
+    let _ = common::run_encoder(encoder, &input.ops);
 });
