@@ -23,6 +23,8 @@
 //! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
 //! ```
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_core::Hsm;
@@ -56,16 +58,16 @@ async fn run_core(spawner: embassy_executor::Spawner) {
     hsm.pal().deinit();
 }
 
-/// IO receive loop — runs forever as a single Embassy task.
+/// IO receive loop — runs until the submission channel is closed.
 ///
 /// Awaits the next IO from the PAL submission queue, then spawns a
 /// `handle_io` task from the 32-slot pool. If no pool slots are
 /// available, the IO is silently skipped and the loop continues.
 #[embassy_executor::task]
-async fn poll_io(spawner: embassy_executor::Spawner) -> ! {
+async fn poll_io(spawner: embassy_executor::Spawner) {
     loop {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
-            continue;
+            break;
         };
 
         let Ok(token) = handle_io(io) else {
@@ -174,6 +176,8 @@ impl StdHsmBuilder {
         let (ipc_tx, ipc_rx) = async_channel::bounded(4);
 
         let pool_handle = handle.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let executor_shutdown = shutdown.clone();
 
         // Embassy + Hsm task frames in debug builds are large enough
         // to overflow Linux's default 2 MiB thread stack — every
@@ -195,23 +199,27 @@ impl StdHsmBuilder {
                 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
                 let executor = EXECUTOR.init(Executor::new());
 
-                executor.run(|spawner| {
-                    let pal = StdHsmPal::new(io_rx, pool_handle);
+                executor.run_until(
+                    |spawner| {
+                        let pal = StdHsmPal::new(io_rx, pool_handle);
 
-                    let _ = HSM.init(Hsm::new(pal));
+                        let _ = HSM.init(Hsm::new(pal));
 
-                    let token = run_core(spawner).expect("run_core spawn failed");
-                    spawner.spawn(token);
+                        let token = run_core(spawner).expect("run_core spawn failed");
+                        spawner.spawn(token);
 
-                    let token = ipc_task(ipc_rx).expect("part_cmd_task spawn failed");
-                    spawner.spawn(token);
-                });
+                        let token = ipc_task(ipc_rx).expect("part_cmd_task spawn failed");
+                        spawner.spawn(token);
+                    },
+                    || executor_shutdown.load(Ordering::Acquire),
+                );
             })
             .expect("failed to spawn Embassy thread");
 
         StdHsm {
             io_tx,
             ipc_tx,
+            shutdown,
             embassy_thread: Some(embassy_thread),
             tokio_rt: owned_rt,
             tokio_handle: handle,
@@ -240,6 +248,7 @@ impl StdHsmBuilder {
 pub struct StdHsm {
     io_tx: async_channel::Sender<HsmIoRequest>,
     ipc_tx: async_channel::Sender<PartCommand>,
+    shutdown: Arc<AtomicBool>,
     embassy_thread: Option<JoinHandle<()>>,
     /// Owned tokio runtime (None if caller provided a handle).
     /// Kept alive for the lifetime of StdHsm; dropped on shutdown.
@@ -388,6 +397,7 @@ impl StdHsm {
 /// after the Embassy thread exits, shutting down the worker pool.
 impl Drop for StdHsm {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
         self.io_tx.close();
         self.ipc_tx.close();
         if let Some(thread) = self.embassy_thread.take() {
