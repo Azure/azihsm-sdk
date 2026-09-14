@@ -17,11 +17,18 @@
 //! assert byte equality against a host-computed signature rather than
 //! settling for "it verifies".
 //!
+//! These run on every backend: in-process on the emulator, and over the
+//! native OS backend against real silicon.
+//!
+//! Both commands persist nothing and touch no partition state, so they
+//! need only an open session whose PSK has been rotated off the public
+//! default -- `bootstrap_rotated_co`, not the heavier
+//! `finalized_co_session`. Requiring a finalized partition would pull in
+//! `PartFinal` PTA-chain validation, which these commands do not use.
+//!
 //! A signature that does not verify comes back as
 //! [`TborStatus::MlDsaVerifyFailed`], not as a flag inside a successful
 //! response, so the negative tests assert on the status.
-
-#![cfg(feature = "emu")]
 
 use azihsm_ddi_tbor_types::TborMlDsaSignReq;
 use azihsm_ddi_tbor_types::TborMlDsaVerifyReq;
@@ -36,8 +43,9 @@ use ml_dsa::Signature;
 use ml_dsa::SigningKey;
 use ml_dsa::VerifyingKey;
 
-use crate::commands::sd_sealing_key_gen::finalized_co_session;
+use crate::harness::bootstrap_rotated_co;
 use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// A deterministic 32-byte seed, so a failing run is reproducible.
 const SEED: [u8; 32] = [
@@ -91,9 +99,9 @@ fn host_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
 }
 
 #[test]
-fn ml_dsa_sign_verifies_on_host_emu() {
+fn ml_dsa_sign_verifies_on_host() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (sk, pk) = host_keypair();
     assert_eq!(sk.len(), ML_DSA_44_SIGNING_KEY_LEN);
     assert_eq!(pk.len(), ML_DSA_44_VERIFYING_KEY_LEN);
@@ -125,9 +133,9 @@ fn ml_dsa_sign_verifies_on_host_emu() {
 }
 
 #[test]
-fn ml_dsa_verify_accepts_host_signature_emu() {
+fn ml_dsa_verify_accepts_host_signature() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (_sk, pk) = host_keypair();
 
     let msg = b"host signs, device verifies".to_vec();
@@ -143,9 +151,9 @@ fn ml_dsa_verify_accepts_host_signature_emu() {
 }
 
 #[test]
-fn ml_dsa_verify_rejects_tampered_message_emu() {
+fn ml_dsa_verify_rejects_tampered_message() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (_sk, pk) = host_keypair();
 
     let sig = host_sign(b"the original message");
@@ -162,9 +170,9 @@ fn ml_dsa_verify_rejects_tampered_message_emu() {
 }
 
 #[test]
-fn ml_dsa_verify_rejects_tampered_signature_emu() {
+fn ml_dsa_verify_rejects_tampered_signature() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (_sk, pk) = host_keypair();
 
     let msg = b"a message whose signature gets corrupted".to_vec();
@@ -185,9 +193,9 @@ fn ml_dsa_verify_rejects_tampered_signature_emu() {
 }
 
 #[test]
-fn ml_dsa_sign_rejects_wrong_key_length_emu() {
+fn ml_dsa_sign_rejects_wrong_key_length() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     // The wire schema admits 2560..=4032 B so it covers both parameter
     // sets, but this device is built for ML-DSA-44 and must accept only
@@ -209,9 +217,9 @@ fn ml_dsa_sign_rejects_wrong_key_length_emu() {
 }
 
 #[test]
-fn ml_dsa_sign_rejects_out_of_range_coefficients_emu() {
+fn ml_dsa_sign_rejects_out_of_range_coefficients() {
     let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (mut sk, _pk) = host_keypair();
 
     // Saturate the packed `s1`/`s2` region. FIPS 204 carries an eta = 2

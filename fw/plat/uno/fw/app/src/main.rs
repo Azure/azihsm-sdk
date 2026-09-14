@@ -41,6 +41,7 @@
 mod trampoline;
 
 use azihsm_fw_hsm_core::Hsm;
+#[cfg(feature = "mldsa-selftest")]
 use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_hsm_core_tracing::info;
 use azihsm_fw_hsm_pal_traits::*;
