@@ -47,6 +47,9 @@ tbor-unwrap-key = ["azihsm_fw_hsm_core/tbor-unwrap-key"]
 # with `--no-default-features` (MBOR off) to stay inside the 512 KiB FLASH.
 tbor-ml-dsa-44 = ["azihsm_fw_hsm_core/tbor-ml-dsa-44"]
 
+# Same commands at ML-DSA-65. Measurement/diagnostic only: see plan C15/C16.
+tbor-ml-dsa-65 = ["azihsm_fw_hsm_core/tbor-ml-dsa"]
+
 # Phase 1: run an ML-DSA-65 import/sign/verify known-answer self-test at
 # boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
 # pinned vector data, so it does not fit alongside both DDI transports —

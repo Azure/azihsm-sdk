@@ -135,11 +135,19 @@ async fn poll_io(spawner: Spawner) -> ! {
 // command also occupies its slot for milliseconds without yielding, so a
 // build carrying PQC both has fewer slots and holds them longer.
 #[cfg_attr(
-    any(feature = "mldsa-selftest", feature = "tbor-ml-dsa-44"),
+    any(
+        feature = "mldsa-selftest",
+        feature = "tbor-ml-dsa-44",
+        feature = "tbor-ml-dsa-65"
+    ),
     embassy_executor::task(pool_size = 8)
 )]
 #[cfg_attr(
-    not(any(feature = "mldsa-selftest", feature = "tbor-ml-dsa-44")),
+    not(any(
+        feature = "mldsa-selftest",
+        feature = "tbor-ml-dsa-44",
+        feature = "tbor-ml-dsa-65"
+    )),
     embassy_executor::task(pool_size = 32)
 )]
 async fn handle_io(io: UnoHsmIo) {

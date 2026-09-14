@@ -101,4 +101,37 @@ mod tests {
             "encoded frame must carry the message bytes",
         );
     }
+
+    /// Both parameter sets must fit the transport's request buffer.
+    ///
+    /// The backends encode into an 8 KiB buffer (`REQ_BUF_LEN`), and the
+    /// firmware DMA slot is 16 KiB, so the binding limit is this 8 KiB
+    /// encode buffer. Pinned as a test because the ML-DSA-65 payloads are
+    /// the largest this schema admits and it is not obvious by inspection
+    /// that the worst case clears it: a maximal `MlDsaVerify` request
+    /// carries 1952 + 3309 B of key and signature before any message.
+    #[test]
+    fn worst_case_requests_fit_the_transport_buffer() {
+        const REQ_BUF_LEN: usize = 8192;
+
+        let sign = TborMlDsaSignReq {
+            session_id: 1,
+            signing_key: alloc::vec![0xAAu8; ML_DSA_65_SIGNING_KEY_LEN],
+            msg: alloc::vec![0xBBu8; ML_DSA_MSG_MAX_LEN],
+        };
+        let mut buf = [0u8; REQ_BUF_LEN];
+        sign.encode_request(&mut buf)
+            .expect("a maximal ML-DSA-65 MlDsaSign request must fit REQ_BUF_LEN");
+
+        let verify = crate::TborMlDsaVerifyReq {
+            session_id: 1,
+            verifying_key: alloc::vec![0xCCu8; ML_DSA_65_VERIFYING_KEY_LEN],
+            msg: alloc::vec![0xDDu8; ML_DSA_MSG_MAX_LEN],
+            signature: alloc::vec![0xEEu8; ML_DSA_65_SIGNATURE_LEN],
+        };
+        let mut buf = [0u8; REQ_BUF_LEN];
+        verify
+            .encode_request(&mut buf)
+            .expect("a maximal ML-DSA-65 MlDsaVerify request must fit REQ_BUF_LEN");
+    }
 }
