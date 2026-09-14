@@ -119,3 +119,94 @@ doc = false
 name = "fuzz_tbor_part_info"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_info.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_encrypt_decrypt"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_encrypt_decrypt.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_generate_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_concat_kdf_derive"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_concat_kdf_derive.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecc_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_generate_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecc_sign"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_sign.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecdh_derive"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecdh_derive.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_get_unwrapping_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_unwrapping_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hash"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hash.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hkdf_derive"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hkdf_derive.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hmac_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hmac_generate_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hmac"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hmac.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_rsa_mod_exp"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_rsa_mod_exp.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_unwrap_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_unwrap_key.rs"
+test = false
