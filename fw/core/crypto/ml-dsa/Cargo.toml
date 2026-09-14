@@ -11,6 +11,14 @@ bench = false
 doctest = false
 test = true
 
+[features]
+default = []
+
+# Run the self-test at ML-DSA-44 instead of ML-DSA-65. Diagnostic only: the
+# smaller key and matrix separate a stack-capacity failure from an
+# algorithmic one on hardware.
+param-mldsa44 = []
+
 [dependencies]
 ml-dsa = { workspace = true }
 

@@ -41,6 +41,7 @@
 mod trampoline;
 
 use azihsm_fw_hsm_core::Hsm;
+use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_hsm_core_tracing::info;
 use azihsm_fw_hsm_pal_traits::*;
 use azihsm_fw_uno_drivers_profile as _;
@@ -119,7 +120,14 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// # Side Effects
 /// - Advances the HSM request pipeline for one IO.
 /// - Triggers DMA activity and CQE completion for that IO.
-#[embassy_executor::task(pool_size = 32)]
+// 32 concurrent IO futures cost 68,608 B of .bss - over 90% of the image's
+// static RAM - which directly reduces the stack available to the ML-DSA
+// self-test. The self-test build caps concurrency at 8 to buy that back.
+#[cfg_attr(feature = "mldsa-selftest", embassy_executor::task(pool_size = 8))]
+#[cfg_attr(
+    not(feature = "mldsa-selftest"),
+    embassy_executor::task(pool_size = 32)
+)]
 async fn handle_io(io: UnoHsmIo) {
     HSM.get().await.handle_io(io).await;
 }
@@ -137,6 +145,40 @@ async fn handle_io(io: UnoHsmIo) {
 #[embassy_executor::task]
 async fn heartbeat() -> ! {
     let hsm = HSM.get().await;
+
+    // Run once, from a task rather than from `main`: the trace backend only
+    // produces console output after the platform has finished bringing up
+    // IO, so an earlier call is silent. Waiting for BootPhase::Running keeps
+    // this long synchronous computation out of the boot handshake, which the
+    // cooperative single-threaded executor would otherwise stall.
+    #[cfg(feature = "mldsa-selftest")]
+    {
+        error!("app", "mldsa: waiting for BootPhase::Running");
+        while hsm.pal().boot_phase() != BootPhase::Running {
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(50)).await;
+        }
+        error!("app", "mldsa: boot running, starting self-test");
+        // Report stack headroom first: the host-measured peak for import+sign is
+        // ~91 KiB, so if far less than that is left below the current frame the
+        // run cannot complete and will fault rather than return.
+        let probe = 0u8;
+        let sp = core::ptr::addr_of!(probe) as usize;
+        // `.bss` ends just under 0x2001_3000 in this image; the stack grows down
+        // from the top of the 187 KiB DTCM region.
+        let headroom = sp.saturating_sub(0x2001_3000);
+        if headroom >= 96 * 1024 {
+            error!("app", "mldsa: stack headroom >= 96 KiB");
+        } else if headroom >= 64 * 1024 {
+            error!("app", "mldsa: stack headroom 64-96 KiB");
+        } else if headroom >= 32 * 1024 {
+            error!("app", "mldsa: stack headroom 32-64 KiB");
+        } else {
+            error!("app", "mldsa: stack headroom < 32 KiB");
+        }
+
+        mldsa_selftest();
+        error!("app", "mldsa: self-test returned");
+    }
     loop {
         embassy_time::Timer::after(embassy_time::Duration::from_millis(250)).await;
         hsm.pal().update_liveliness();
@@ -196,10 +238,6 @@ async fn poll_ipc(spawner: Spawner) -> ! {
 /// - Initializes PAL platform services.
 /// - Spawns IPC loop task and enters main NVIC polling loop.
 
-/// Maximum `TX_READY` polls tolerated per byte before giving up on the UART.
-#[cfg(feature = "mldsa-selftest")]
-const UART_SPIN_LIMIT: u32 = 100_000;
-
 /// Runs the ML-DSA-65 known-answer self-test on CP1 and reports the result.
 ///
 /// Phase 1 of the PQC proof-of-concept: proves ML-DSA-65 import, deterministic
@@ -214,7 +252,17 @@ const UART_SPIN_LIMIT: u32 = 100_000;
 fn mldsa_selftest() {
     use azihsm_fw_core_crypto_ml_dsa::SelfTestResult;
 
-    let result = azihsm_fw_core_crypto_ml_dsa::selftest();
+    error!("app", "mldsa: import+sign+verify begin");
+    let mut mark = |stage: u32| match stage {
+        azihsm_fw_core_crypto_ml_dsa::stage::IMPORT_DONE => {
+            error!("app", "mldsa: stage import done")
+        }
+        azihsm_fw_core_crypto_ml_dsa::stage::SIGN_DONE => error!("app", "mldsa: stage sign done"),
+        azihsm_fw_core_crypto_ml_dsa::stage::KAT_MATCH => error!("app", "mldsa: stage kat match"),
+        _ => error!("app", "mldsa: stage verify done"),
+    };
+    let result = azihsm_fw_core_crypto_ml_dsa::selftest_staged(&mut mark);
+    error!("app", "mldsa: import+sign+verify end");
 
     // SAFETY: single-threaded boot path, written once before any task runs.
     #[allow(unsafe_code)]
@@ -222,25 +270,21 @@ fn mldsa_selftest() {
         MLDSA_SELFTEST_RESULT = result as u32 + 1;
     }
 
-    // Written straight to the HSM UART rather than through the tracing
-    // facade: compiling in a trace level costs ~70 KiB because it enables
-    // every `error!` site in the tree, which does not fit alongside ML-DSA.
-    // This is the same port and driver the `backend-uart` trace backend uses.
-    // Bounded write: the UART is only configured when the platform enables
-    // console logging, and an unconfigured peripheral never asserts TX_READY.
-    // An unbounded write would hang the core here, before it signals ready,
-    // which the host sees as an ETIMEDOUT controller probe.
-    let mut uart = azihsm_fw_uno_drivers_uart::Uart::new();
-    uart.try_write(
-        match result {
-            SelfTestResult::Pass => "\r\nML-DSA-65 self-test: PASS\r\n",
-            SelfTestResult::ImportFailed => "\r\nML-DSA-65 self-test: FAIL import\r\n",
-            SelfTestResult::SignFailed => "\r\nML-DSA-65 self-test: FAIL sign\r\n",
-            SelfTestResult::SignatureMismatch => "\r\nML-DSA-65 self-test: FAIL kat-mismatch\r\n",
-            SelfTestResult::VerifyFailed => "\r\nML-DSA-65 self-test: FAIL verify\r\n",
-        },
-        UART_SPIN_LIMIT,
-    );
+    // Reported through the platform tracing facade rather than by poking the
+    // UART directly: the facade owns backend setup, which is what actually
+    // makes output appear on the console. Emitted at error level so it
+    // survives a build that compiles in only that level, and as one literal
+    // per outcome so the two-argument macro arm is selected and no runtime
+    // formatting is pulled in.
+    match result {
+        SelfTestResult::Pass => error!("app", "ML-DSA-65 self-test: PASS"),
+        SelfTestResult::ImportFailed => error!("app", "ML-DSA-65 self-test: FAIL import"),
+        SelfTestResult::SignFailed => error!("app", "ML-DSA-65 self-test: FAIL sign"),
+        SelfTestResult::SignatureMismatch => {
+            error!("app", "ML-DSA-65 self-test: FAIL kat-mismatch")
+        }
+        SelfTestResult::VerifyFailed => error!("app", "ML-DSA-65 self-test: FAIL verify"),
+    }
 }
 
 /// Result of [`mldsa_selftest`]: 0 = not run, 1 = pass, >1 = the failing stage.
@@ -255,12 +299,10 @@ async fn main(spawner: Spawner) {
     let hsm = HSM.get().await;
     hsm.pal().init();
 
-    // Run before any task is spawned. The self-test is a long synchronous
-    // computation (software Keccak), and Embassy's executor is cooperative
-    // and single-threaded, so running it from a task starves the IPC boot
-    // handshake and the controller never reaches ready.
+    // Diagnostic markers are emitted at error level so they survive a build
+    // that compiles in only that level.
     #[cfg(feature = "mldsa-selftest")]
-    mldsa_selftest();
+    error!("app", "mldsa: main reached, pal init done");
 
     if let Ok(token) = poll_ipc(spawner) {
         spawner.spawn(token);

@@ -35,7 +35,7 @@ azihsm_fw_hsm_undo.workspace = true
 zerocopy.workspace = true
 
 [features]
-default = ["mbor", "std"]
+default = ["mbor", "std", "tbor-unwrap-key"]
 std = []
 
 # The MBOR wire codec and its command handlers. Enabled by default; a
@@ -43,4 +43,9 @@ std = []
 # dispatch tree (~90 KiB of .text). `OP_MBOR` then reports an
 # unsupported opcode.
 mbor = []
+
+# The TBOR UnwrapKey command. Enabled by default; a diagnostic build that
+# does not import wrapped keys can turn it off to reclaim ~13.8 KiB of
+# .text. The opcode then reports an unsupported command.
+tbor-unwrap-key = []
 tracing = []

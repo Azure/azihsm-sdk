@@ -18,7 +18,6 @@ azihsm_fw_hsm_core_tracing = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_uno_drivers_profile = { workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
-azihsm_fw_uno_drivers_uart = { optional = true, workspace = true }
 azihsm_fw_uno_fault = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_pal = { workspace = true }
@@ -36,19 +35,30 @@ embassy-time = { workspace = true }
 
 [features]
 #default = ["trace-uart"]
-default = ["mbor"]
+default = ["mbor", "tbor-unwrap-key"]
 
 # Forwards to `azihsm_fw_hsm_core/mbor`. On by default; build with
 # `--no-default-features` to produce a TBOR-only image.
 mbor = ["azihsm_fw_hsm_core/mbor"]
+tbor-unwrap-key = ["azihsm_fw_hsm_core/tbor-unwrap-key"]
 
 # Phase 1: run an ML-DSA-65 import/sign/verify known-answer self-test at
 # boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
 # pinned vector data, so it does not fit alongside both DDI transports —
 # build it with MBOR disabled. Never enable in a production build.
-mldsa-selftest = [
-  "dep:azihsm_fw_core_crypto_ml_dsa",
-  "dep:azihsm_fw_uno_drivers_uart",
+mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
+
+# Diagnostic: run the self-test at ML-DSA-44 (see the crate feature).
+param-mldsa44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44"]
+
+# UART trace with only the error level compiled in. Uses the platform's
+# known-good trace backend instead of writing to the UART directly, and
+# costs a fraction of `trace-uart`, which also compiles in every info!
+# call site in the tree.
+trace-uart-min = [
+  "azihsm_fw_uno_trace/backend-uart",
+  "azihsm_fw_uno_trace/level-error",
+  "azihsm_fw_uno_trace/tracing",
 ]
 
 # Enable ARM semihosting integration for the emulator:

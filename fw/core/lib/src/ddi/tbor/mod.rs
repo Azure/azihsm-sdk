@@ -53,6 +53,7 @@ pub(crate) mod sd_sealing_key_gen;
 pub(crate) mod session_close;
 pub(crate) mod session_open_finish;
 pub(crate) mod session_open_init;
+#[cfg(feature = "tbor-unwrap-key")]
 pub(crate) mod unwrap_key;
 
 use azihsm_fw_ddi_tbor::RequestView;
@@ -524,6 +525,7 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::HMAC_GENERATE_KEY => hmac_generate_key::handle(pal, io, req_buf).await,
         opcode::HMAC => hmac::handle(pal, io, req_buf).await,
         opcode::GET_UNWRAPPING_KEY => get_unwrapping_key::handle(pal, io, req_buf).await,
+        #[cfg(feature = "tbor-unwrap-key")]
         opcode::UNWRAP_KEY => unwrap_key::handle(pal, io, req_buf, undo).await,
         opcode::AES_GENERATE_KEY => aes_generate_key::handle(pal, io, req_buf).await,
         opcode::AES_ENCRYPT_DECRYPT => aes_encrypt_decrypt::handle(pal, io, req_buf).await,
