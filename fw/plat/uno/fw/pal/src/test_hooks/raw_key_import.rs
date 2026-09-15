@@ -144,6 +144,10 @@ pub(super) async fn raw_key_import<'p>(
     // commit it, session-scoped iff requested.
     let key_buf = pal.dma_alloc(io, body.raw.len())?;
     key_buf.copy_from_slice(body.raw);
+    // The plaintext now lives only in `key_buf`; scrub the host-supplied
+    // copy from the request DMA so it does not linger there. `DmaBuf::
+    // zeroize` is a volatile, un-elidable wipe.
+    body.raw.zeroize();
 
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
     let key_handle = pal
@@ -195,9 +199,11 @@ pub(super) async fn raw_key_import<'p>(
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects anything
 /// else with `InvalidPermissions`. All fallible response preparation
-/// completes before the old key is reclaimed and the partition property
-/// is synchronously committed to the new key. Therefore an error before
-/// the commit leaves the partition on the still-valid previous key. The
+/// completes before the partition property is committed to the new key
+/// and the old key is reclaimed. The commit happens before the old key is
+/// deleted, so no failure can leave the property naming a deleted key, and
+/// an error before the commit leaves the partition on the still-valid
+/// previous key. The
 /// response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`] —
 /// matching how the unwrapping key is masked elsewhere — so the host's
 /// unmask path treats it as the partition unwrapping key rather than a
@@ -216,6 +222,9 @@ async fn raw_import_unwrapping_key<'p>(
     // create an unpublished partition-internal unwrapping key.
     let key_buf = pal.dma_alloc(io, body.raw.len())?;
     key_buf.copy_from_slice(body.raw);
+    // The plaintext now lives only in `key_buf`; scrub the host-supplied
+    // copy from the request DMA so it does not linger there.
+    body.raw.zeroize();
 
     let key_id = pal
         .vault_key_create(io, key_buf, HsmVaultKeyKind::Rsa2kPrivate, None, attrs)
@@ -279,20 +288,25 @@ async fn raw_import_unwrapping_key<'p>(
         }
     };
 
-    // Reclaim the old entry before the final commit. If deletion fails,
-    // the property still names the old valid key, so deleting the
-    // unpublished replacement restores the pre-call state.
-    if let Some(old_id) = old_id {
-        if let Err(e) = pal.vault_key_delete(io, old_id).await {
-            pal.vault_key_delete(io, key_id).await?;
-            return Err(e);
-        }
+    // Commit the property to the new key BEFORE reclaiming the old one, so
+    // no failure can leave the property naming a deleted key. Nothing has
+    // been destroyed yet, so a failed commit only drops the unpublished
+    // replacement; the partition stays on the still-valid old key.
+    if let Err(e) = part_set_unwrapping_key_id(pal, io, key_id) {
+        pal.vault_key_delete(io, key_id).await?;
+        return Err(e);
     }
 
-    // Final synchronous commit. Uno's cooperative executor cannot
-    // interleave another task between the old-key deletion above and this
-    // property update because there is no await in between.
-    part_set_unwrapping_key_id(pal, io, key_id)?;
+    // The property now names the new, valid key. Reclaim the old entry; on
+    // a delete failure roll the property back to the still-present old key
+    // and drop the replacement, restoring the exact pre-call state.
+    if let Some(old_id) = old_id
+        && let Err(e) = pal.vault_key_delete(io, old_id).await
+    {
+        part_set_unwrapping_key_id(pal, io, old_id)?;
+        pal.vault_key_delete(io, key_id).await?;
+        return Err(e);
+    }
 
     Ok(resp)
 }
