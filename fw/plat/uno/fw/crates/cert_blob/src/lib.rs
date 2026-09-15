@@ -263,7 +263,7 @@ impl<'a> CertBlob<'a> {
                 if !offset.is_multiple_of(CBLOB_ALIGN) || offset < prev_end || offset > total_size {
                     return None;
                 }
-                if length > MAX_DEVID_CERT_LEN || length > total_size - offset {
+                if length == 0 || length > MAX_DEVID_CERT_LEN || length > total_size - offset {
                     return None;
                 }
                 prev_end = offset.checked_add(length)?;
@@ -718,6 +718,17 @@ mod tests {
         let meta0_offset = u32::from_le_bytes(buf[META0_OFF..META0_OFF + 4].try_into().unwrap());
         let meta1_off_field = META0_OFF + CBLOB_META_SIZE;
         buf[meta1_off_field..meta1_off_field + 4].copy_from_slice(&meta0_offset.to_le_bytes());
+        assert!(CertBlob::parse(&buf).is_none());
+    }
+
+    // A zero-length cert is rejected (a descriptor with offset == total_size and length == 0 must
+    // not be served as an empty certificate).
+    #[test]
+    fn rejects_zero_length_cert() {
+        let mut buf = [0u8; DEV_ID_CERT_BLOB_REGION_SIZE];
+        let c = [9u8; 20];
+        CertBlob::build(&mut buf, &[&c], &sample_thumb()).unwrap();
+        buf[META0_OFF + 4..META0_OFF + 8].copy_from_slice(&0u32.to_le_bytes());
         assert!(CertBlob::parse(&buf).is_none());
     }
 
