@@ -469,7 +469,6 @@ fn ecc_generate_key_session_scope_after_reopen() {
 }
 
 /// Rejects a key label longer than the TBOR maximum.
-/// Rejects a key label longer than the TBOR maximum.
 #[test]
 fn ecc_generate_key_label_too_long_rejected() {
     let ctx = TestCtx::new();
