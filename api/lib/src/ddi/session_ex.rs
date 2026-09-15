@@ -576,4 +576,24 @@ mod tests {
             "unknown psk_id must not produce a pending handshake"
         );
     }
+
+    /// The partition cert path is api_rev-gated: 1.0 uses MBOR, 1.1 uses
+    /// TBOR. Both must yield the identical PID public key against the emu
+    /// (which speaks both transports at every advertised revision).
+    #[test]
+    fn cert_transport_gated_by_api_rev_emu() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let inner = part.inner().read();
+        let dev = inner.dev();
+
+        let mbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 0 })
+            .expect("MBOR pub key at api_rev 1.0");
+        let tbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 1 })
+            .expect("TBOR pub key at api_rev 1.1");
+        assert_eq!(
+            mbor, tbor,
+            "MBOR (1.0) and TBOR (1.1) cert paths must return the same PID public key"
+        );
+    }
 }

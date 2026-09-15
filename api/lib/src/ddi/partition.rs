@@ -16,6 +16,11 @@ use x509::*;
 
 use super::*;
 
+/// Negotiated api revision at or above which the partition cert commands
+/// (`GetCertChainInfo` / `GetCertificate`) are issued over TBOR instead of
+/// MBOR. Firmware advertising >= 1.1 speaks the TBOR cert commands.
+const TBOR_CERT_MIN_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 1 };
+
 /// Result of a successful [`init_part`] call.
 ///
 /// Carries the BMK plus the POTA endorsement that was actually sent to
@@ -764,7 +769,20 @@ pub(super) fn fetch_cert_chain_checked(
 /// # Returns
 ///
 /// Returns a tuple containing the number of certificates and the thumbprint.
+///
+/// Dispatches to [`get_cert_chain_info_tbor`] when the negotiated revision
+/// is at least [`TBOR_CERT_MIN_API_REV`], otherwise to
+/// [`get_cert_chain_info_mbor`].
 fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
+    if rev >= TBOR_CERT_MIN_API_REV {
+        get_cert_chain_info_tbor(dev, slot_id)
+    } else {
+        get_cert_chain_info_mbor(dev, rev, slot_id)
+    }
+}
+
+/// MBOR `GetCertChainInfo`: returns the certificate count and thumbprint.
+fn get_cert_chain_info_mbor(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
     let req = DdiGetCertChainInfoCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::GetCertChainInfo, Some(rev), None),
         data: DdiGetCertChainInfoReq { slot_id },
@@ -790,7 +808,20 @@ fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(
 /// # Returns
 ///
 /// Returns a vector containing the certificate bytes.
+///
+/// Dispatches to [`get_cert_tbor`] when the negotiated revision is at
+/// least [`TBOR_CERT_MIN_API_REV`], otherwise to [`get_cert_mbor`].
 fn get_cert(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
+    if rev >= TBOR_CERT_MIN_API_REV {
+        get_cert_tbor(dev, slot_id, cert_id)
+    } else {
+        get_cert_mbor(dev, rev, slot_id, cert_id)
+    }
+}
+
+/// MBOR `GetCertificate`: returns the DER-encoded certificate at
+/// `(slot_id, cert_id)`.
+fn get_cert_mbor(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
     let req = DdiGetCertificateCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::GetCertificate, Some(rev), None),
         data: DdiGetCertificateReq { slot_id, cert_id },

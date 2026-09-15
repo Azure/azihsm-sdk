@@ -358,7 +358,7 @@ pub(super) fn fetch_cert_chain_checked_tbor(
 
 /// TBOR `GetCertChainInfo` (opcode `0x1E`, out-of-session): returns the
 /// certificate count and chain thumbprint for `slot_id`.
-fn get_cert_chain_info_tbor(dev: &HsmDev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
+pub(super) fn get_cert_chain_info_tbor(dev: &HsmDev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
     let mut cookie = None;
     let resp = dev
         .exec_op_tbor(&TborGetCertChainInfoReq::new(slot_id), None, &mut cookie)
@@ -368,7 +368,7 @@ fn get_cert_chain_info_tbor(dev: &HsmDev, slot_id: u8) -> HsmResult<(u8, Vec<u8>
 
 /// TBOR `GetCertificate` (opcode `0x1F`, out-of-session): returns the
 /// DER-encoded certificate at `(slot_id, cert_id)`.
-fn get_cert_tbor(dev: &HsmDev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
+pub(super) fn get_cert_tbor(dev: &HsmDev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
     let mut cookie = None;
     let resp = dev
         .exec_op_tbor(&TborGetCertReq::new(slot_id, cert_id), None, &mut cookie)

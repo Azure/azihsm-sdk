@@ -42,6 +42,10 @@ fn test_get_api_rev() {
         assert_eq!(resp.data.min.major, 1);
         assert_eq!(resp.data.min.minor, 0);
         assert_eq!(resp.data.max.major, 1);
+        // The emu runs fw/core, which advertises 1.1; the sim stays 1.0.
+        #[cfg(feature = "emu")]
+        assert_eq!(resp.data.max.minor, 1);
+        #[cfg(not(feature = "emu"))]
         assert_eq!(resp.data.max.minor, 0);
     });
 }
