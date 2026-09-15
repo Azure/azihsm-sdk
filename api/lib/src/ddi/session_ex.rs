@@ -88,7 +88,8 @@ struct PendingHandshake {
     /// Wire `pk_resp` (SEC1 uncompressed, 97 B).
     pub pk_resp: [u8; PK_RESP_LEN],
     /// Wire `pk_hsm` (SEC1 uncompressed, 97 B) — partition identity
-    /// public key fetched out-of-band via the MBOR cert chain.
+    /// public key fetched out-of-band via the TBOR cert chain
+    /// (`GetCertChainInfo` / `GetCertificate`).
     pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
@@ -114,18 +115,17 @@ pub(crate) struct OpenSessionExResult {
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
-/// production cert chain. Reuses [`fetch_cert_chain_checked`], whose
-/// leaf cert is the partition-ID cert; its SubjectPublicKeyInfo carries
-/// the P-384 key the FW uses as `pk_s` in HPKE `auth_psk`.
+/// production cert chain. Uses [`fetch_cert_chain_checked_tbor`] — the
+/// out-of-session TBOR `GetCertChainInfo` / `GetCertificate` commands,
+/// so the whole handshake stays on the TBOR transport — whose leaf cert
+/// is the partition-ID cert; its SubjectPublicKeyInfo carries the P-384
+/// key the FW uses as `pk_s` in HPKE `auth_psk`.
 ///
 /// The SD handshake authenticates the entire session against this key,
 /// so the partition cert chain is cryptographically verified (via
 /// [`validate_part_cert_chain`]) before the leaf key is trusted.
-pub(super) fn fetch_pk_hsm(
-    dev: &HsmDev,
-    rev: HsmApiRev,
-) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
-    let (chain_pem, leaf_der) = fetch_cert_chain_checked(dev, rev, 0)?;
+pub(super) fn fetch_pk_hsm(dev: &HsmDev) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
+    let (chain_pem, leaf_der) = fetch_cert_chain_checked_tbor(dev, 0)?;
     validate_part_cert_chain(&chain_pem)?;
 
     let leaf = X509Certificate::from_der(&leaf_der).map_err(|_| HsmError::InternalError)?;
@@ -142,7 +142,7 @@ pub(super) fn fetch_pk_hsm(
 /// before its leaf key is trusted as `pk_hsm`.
 ///
 /// `chain_pem` is the leaf->root PEM stack returned by
-/// [`fetch_cert_chain_checked`]. [`X509CertificateOp::validate_chain`]
+/// [`fetch_cert_chain_checked_tbor`]. [`X509CertificateOp::validate_chain`]
 /// verifies internal consistency, not a pinned trust anchor. A single
 /// self-signed cert (e.g. the sim backend) has no ordering to verify,
 /// so chains shorter than two certs are accepted as-is.
@@ -184,8 +184,8 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle.
-/// * `rev` - The negotiated API revision (used for the `pk_hsm`
-///   cert-chain fetch).
+/// * `rev` - The negotiated API revision, threaded through the handshake
+///   (reserved for future revision-gated behavior).
 /// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
 ///   1 = CU).
 /// * `session_type` - Channel integrity profile to pin for the session.
@@ -224,9 +224,9 @@ pub(crate) fn open_session_ex(
 /// Uses the caller-supplied PSK when present, otherwise the partition
 /// default PSK for `psk_id` (CO = 0, CU = 1).
 ///
-/// `rev` is the negotiated API revision selected by the caller
-/// ([`open_session_ex`]); it is used for the `pk_hsm` cert-chain
-/// fetch so gating and retrieval observe a single revision.
+/// The negotiated API revision (`_rev`) is threaded through the handshake
+/// and reserved for future revision-gated behavior; the TBOR `pk_hsm`
+/// cert fetch is revision-agnostic, so it is currently unused.
 ///
 /// # Errors
 ///
@@ -236,7 +236,7 @@ pub(crate) fn open_session_ex(
 /// handshake-crypto failures (e.g. a Phase-1 confirm MAC mismatch).
 fn open_session_ex_init(
     partition: &HsmPartition,
-    rev: HsmApiRev,
+    _rev: HsmApiRev,
     psk_id: u8,
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: SessionType,
@@ -250,7 +250,7 @@ fn open_session_ex_init(
 
     // Partition identity key (`pk_hsm`, HPKE sender) from the leaf
     // cert in the production cert chain.
-    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev, rev)?;
+    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev)?;
 
     let suite_id = SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
     let req = TborSessionOpenInitReq {
@@ -569,10 +569,31 @@ mod tests {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
         let rev = part.inner().read().api_rev();
+
         let result = open_session_ex_init(&part, rev, 2, None, SessionType::Authenticated);
         assert!(
             result.is_err(),
             "unknown psk_id must not produce a pending handshake"
+        );
+    }
+
+    /// The partition cert path is api_rev-gated: 1.0 uses MBOR, 1.1 uses
+    /// TBOR. Both must yield the identical PID public key against the emu
+    /// (which speaks both transports at every advertised revision).
+    #[test]
+    fn cert_transport_gated_by_api_rev_emu() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let inner = part.inner().read();
+        let dev = inner.dev();
+
+        let mbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 0 })
+            .expect("MBOR pub key at api_rev 1.0");
+        let tbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 1 })
+            .expect("TBOR pub key at api_rev 1.1");
+        assert_eq!(
+            mbor, tbor,
+            "MBOR (1.0) and TBOR (1.1) cert paths must return the same PID public key"
         );
     }
 }

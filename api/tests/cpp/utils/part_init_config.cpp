@@ -3,6 +3,7 @@
 
 #include "part_init_config.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -22,6 +23,7 @@
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/evp.h>
+#include <unistd.h>
 #endif
 
 // clang-format off
@@ -402,15 +404,30 @@ std::string get_mobk_path()
         return result;
     }
     free(val);
-    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
 #else
     const char *val = std::getenv("AZIHSM_MOBK_PATH");
     if (val != nullptr)
     {
         return std::string(val);
     }
-    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
 #endif
+    // Each nextest process owns an independent simulator instance, so a
+    // shared cache path lets one process observe another's partially-
+    // written file. Compute a per-process (pid + nanos) path once.
+    static const std::string default_path = [] {
+        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::system_clock::now().time_since_epoch()
+        )
+                         .count();
+#ifdef _WIN32
+        auto pid = static_cast<unsigned long long>(GetCurrentProcessId());
+#else
+        auto pid = static_cast<unsigned long long>(getpid());
+#endif
+        auto name = "azihsm-mobk-" + std::to_string(pid) + "-" + std::to_string(nanos) + ".bin";
+        return (std::filesystem::temp_directory_path() / name).string();
+    }();
+    return default_path;
 }
 
 std::vector<uint8_t> load_mobk_file(const std::string &path)
