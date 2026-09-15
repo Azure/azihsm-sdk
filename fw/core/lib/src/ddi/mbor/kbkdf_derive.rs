@@ -81,17 +81,22 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
         .await?;
     }
 
-    // Commit the derived key to the vault, session-scoped iff requested.
-    let key_id: u16 = pal
-        .vault_key_create(
-            io,
-            out,
-            target.kind,
-            attrs.session().then_some(HsmSessId::from(sess_id)),
-            attrs,
-        )
-        .await?
-        .into();
+    // Commit the derived key: AES-GCM bulk keys are handed to the
+    // bulk-crypto backend (the vault records only the returned
+    // `bulk_key_id` handle, carried in the response for later bulk GCM
+    // ops); every other kind is stored directly in the vault.  Scrub the
+    // derived material if the commit fails, before propagating the error.
+    let (key_handle, bulk_key_id) =
+        match super::bulk::commit_key(pal, io, out, target.kind, HsmSessId::from(sess_id), attrs)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                out.zeroize();
+                return Err(e);
+            }
+        };
+    let key_id: u16 = key_handle.into();
 
     // Envelope the derived key into the host's opaque re-import blob.
     let masked_key = super::masking::mask_blob(
@@ -106,7 +111,14 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
         },
         &out[..],
     )
-    .await?;
+    .await;
+
+    // Scrub the derived key material now that the vault (or fast-path engine,
+    // for bulk keys) owns it and masking has consumed it.  Wipe on all paths
+    // — including a masking error — since per-IO DMA arenas are not reliably
+    // cleared on teardown.
+    out.zeroize();
+    let masked_key = masked_key?;
 
     let resp = pal.dma_alloc_var(io, |buf| {
         super::encode_resp(
@@ -114,7 +126,7 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
             &DdiKbkdfCounterHmacDeriveResp {
                 key_id,
                 masked_key,
-                bulk_key_id: None,
+                bulk_key_id,
             },
             buf,
         )

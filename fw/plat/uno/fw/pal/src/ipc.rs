@@ -685,3 +685,151 @@ pub fn encode_pfn_enable_disable_ack(
     out[0] = ack_header.into_bits();
     out
 }
+
+// ---------------------------------------------------------------------------
+// IpcMessageKeyUpdate (opcode 0x7) — HSM → FP bulk AES key push
+// ---------------------------------------------------------------------------
+
+/// AES bulk key type carried in [`AesKeyFlag`].
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AesBulkKeyType {
+    /// AES-XTS bulk key.
+    Xts = 0,
+
+    /// AES-GCM bulk key (FIPS-approved).
+    Gcm = 1,
+
+    /// AES-GCM bulk key (unapproved — host-supplied IV).
+    GcmUnapproved = 2,
+}
+
+impl AesBulkKeyType {
+    /// 2-bit encoding used by [`AesKeyFlag::key_type`].
+    const fn into_bits(self) -> u8 {
+        self.0
+    }
+
+    /// Decode from the 2-bit [`AesKeyFlag::key_type`] field.
+    const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+}
+
+/// Key-update action for [`KeyUpdateInfo::action`].
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum KeyUpdateAction {
+    /// Delete a single bulk key.
+    Delete = 0,
+
+    /// Delete all ephemeral (session-scoped) bulk keys.
+    DeleteEphemeral = 1,
+
+    /// Delete all bulk keys.
+    DeleteAll = 2,
+
+    /// Create (import) a bulk key.
+    Create = 3,
+}
+
+/// Per-key flags for a [`KeyUpdateInfo`].
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, FromBytes)]
+pub struct AesKeyFlag {
+    /// Whether the key is session-scoped.
+    pub session_only: bool,
+
+    /// Bulk key type (`AesBulkKeyType`).
+    #[bits(2)]
+    pub key_type: AesBulkKeyType,
+
+    /// Reserved.
+    #[bits(5)]
+    _rsvd: u8,
+}
+
+/// `AesKeyUpdate` payload: push (or delete) an AES-256 bulk key on FP.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
+pub struct KeyUpdateInfo {
+    /// FP key slot index within `resource_id` (0..=6).
+    pub key_index: u8,
+
+    /// FP vault (resource-group / table) id owning the key.
+    pub resource_id: u8,
+
+    /// Target partition (PCIe function).
+    pub pfn: u8,
+
+    /// Action (`KeyUpdateAction`).
+    pub action: u8,
+
+    /// Owning session id.
+    pub session_id: u16,
+
+    /// Owning application (short app) id.
+    pub app_id: u8,
+
+    /// Per-key flags (`AesKeyFlag`).
+    pub flag: u8,
+
+    /// Raw 32-byte AES-256 key material (zero for delete actions).
+    pub key_data: [u8; 32],
+}
+
+/// `AesKeyUpdate` IPC message body (opcode `AesKeyUpdate`, 0x7).
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessageKeyUpdate {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Key update payload.
+    pub info: KeyUpdateInfo,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageKeyUpdate>() == core::mem::size_of::<IpcMessage>());
+
+// Lock the wire layout to the reference firmware's 40-byte body.
+const _: () = assert!(core::mem::size_of::<KeyUpdateInfo>() == 40);
+
+impl IpcMessageType for IpcMessageKeyUpdate {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::AesKeyUpdate;
+    const LEN: usize = core::mem::size_of::<KeyUpdateInfo>();
+
+    fn validate(&self) -> IpcResult<()> {
+        Ok(())
+    }
+}
+
+impl IpcMessageEncoderTrait for IpcMessageKeyUpdate {
+    fn encode(self) -> IpcMessage {
+        IpcMessageEncoder::encode(self)
+    }
+}
+
+/// FP-addressable AES-256 bulk key id, returned to the host as
+/// `bulk_key_id`.  Packs a 3-bit slot index and 7-bit vault id into a
+/// `u16` (matching the reference firmware's `AesBulk256KeyId`).
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, FromBytes)]
+pub struct AesBulk256KeyId {
+    /// FP key slot index within the vault (0..=6).
+    #[bits(3)]
+    pub key_index: u8,
+
+    /// FP vault (resource-group / table) id.
+    #[bits(7)]
+    pub vault_id: u8,
+
+    /// Reserved.
+    #[bits(6)]
+    _rsvd: u8,
+}
