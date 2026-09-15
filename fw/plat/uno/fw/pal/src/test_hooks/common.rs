@@ -71,17 +71,21 @@ pub(super) struct RespHdr {
     pub(super) fips_approved: bool,
 }
 
-/// Build a success response header echoing the request's revision and
-/// opcode.
+/// Build a success response header echoing the request's revision,
+/// opcode, and session id.
 ///
-/// `sess_id` is `None`: a `TestAction` neither opens nor closes a session,
-/// so its response carries no session id — matching the core's
-/// `success_hdr`.
+/// `TestAction` is an unknown opcode to the core, which classifies it as
+/// an in-session command: the request must arrive on a session-bearing
+/// queue with a valid `sess_id`. Every in-session core handler echoes
+/// that id back via `success_hdr_sess`, so this mirror does the same —
+/// returning `None` here would make `TestAction` the lone session-bearing
+/// command that drops its id, a latent divergence from the MBOR response
+/// contract.
 pub(super) fn success_hdr(hdr: &ReqHdr) -> RespHdr {
     RespHdr {
         rev: hdr.rev,
         op: hdr.op,
-        sess_id: None,
+        sess_id: hdr.sess_id,
         status: DDI_STATUS_SUCCESS,
         fips_approved: false,
     }
