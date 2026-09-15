@@ -118,7 +118,6 @@ fn seal_seed_envelope_with_iv(
 fuzz_target!(|input: FuzzInput| {
     let Ok(dev) = common::open_emu_dev() else { return; };
     let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
-    let Ok((pk_hsm_key, pk_hsm_sec1)) = fetch_pk_hsm(&dev) else { return; };
 
     let req = if input.valid_open_init || input.valid_open_finish {
         let (psk_id, session_type) = if input.valid_use_authenticated {
@@ -149,6 +148,7 @@ fuzz_target!(|input: FuzzInput| {
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
+            let Ok((pk_hsm_key, pk_hsm_sec1)) = fetch_pk_hsm(&dev) else { return; };
             let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
             let Ok(psk) = default_psk(req.psk_id) else { return; };
             let Ok(exported) = receive_exported(
