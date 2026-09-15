@@ -31,12 +31,6 @@
 
 namespace
 {
-// Pinned wire lengths. Mirror the `azihsm_ddi_tbor_types` constants
-// (`POK_REMOTE_BACKUP_LEN`, `MASKED_SEALING_KEY_LEN`), which are not
-// exposed in the C header.
-constexpr uint32_t kPokRemoteBackupLen = 161;
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-
 // Create a real source backup: a fresh BKS3 sealed to the receiver's
 // attested public key (`receiver_report`) by `masked_sender`. Returns the
 // 161-byte remote backup, or an empty vector on failure (recording a gtest

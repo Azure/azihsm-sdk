@@ -40,13 +40,13 @@ pub const TBOR_OP_ECDH_DERIVE: u8 = 0x19;
 pub const ECDH_PEER_PUB_MAX_LEN: usize = 136;
 
 /// Minimum masked derived-secret envelope length (P-256, 32-byte secret):
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(32) ‖ tag(16)`.
-pub const MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(32) ‖ tag(16)`.
+pub const MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked derived-secret envelope length (P-521, 66-byte secret).
-/// Pinned into the `#[tbor(buffer, max_len = 198)]` literal on
+/// Pinned into the `#[tbor(buffer, max_len = 294)]` literal on
 /// [`TborEcdhDeriveResp::masked_secret`].
-pub const MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 
 /// `EcdhDerive` request schema.
 ///
@@ -64,9 +64,9 @@ pub struct TborEcdhDeriveReq<'a> {
     pub scope: KeyScope,
 
     /// The masked local ECC private key (from `EccGenerateKey` /
-    /// `UnwrapKey`), an AEAD-GCM-256 envelope of 164..=200 B.  Its kind
+    /// `UnwrapKey`), an AEAD-GCM-256 envelope of 260..=296 B.  Its kind
     /// recovers the curve.
-    #[tbor(buffer, min_len = 164, max_len = 200, mutable)]
+    #[tbor(buffer, min_len = 260, max_len = 296, mutable)]
     pub masked_key: &'a [u8],
 
     /// The peer's wire public key `x ‖ y` (little-endian, P-521 padded),
@@ -82,8 +82,8 @@ pub struct TborEcdhDeriveReq<'a> {
 #[tbor(response)]
 pub struct TborEcdhDeriveResp<'a> {
     /// The derived ECDH shared secret, masked (AEAD-GCM-256) under the
-    /// scope's masking key.  164 / 180 / 198 B for P-256 / P-384 / P-521.
-    #[tbor(buffer, max_len = 198, mutable)]
+    /// scope's masking key.  260 / 276 / 294 B for P-256 / P-384 / P-521.
+    #[tbor(buffer, max_len = 294, mutable)]
     pub masked_secret: &'a [u8],
 }
 
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn response_round_trips_masked_secret() {
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; 512];
         let masked = [0x33u8; MASKED_SECRET_MAX_LEN];
         let frame = TborEcdhDeriveResp::encode(&mut buf, 0, true)
             .unwrap()
@@ -130,8 +130,8 @@ mod tests {
     #[test]
     fn lengths_match_pinned_values() {
         const _: () = assert!(136 == ECDH_PEER_PUB_MAX_LEN);
-        const _: () = assert!(198 == MASKED_SECRET_MAX_LEN);
-        assert_eq!(MASKED_SECRET_MIN_LEN, 164);
-        assert_eq!(MASKED_SECRET_MAX_LEN, 198);
+        const _: () = assert!(294 == MASKED_SECRET_MAX_LEN);
+        assert_eq!(MASKED_SECRET_MIN_LEN, 260);
+        assert_eq!(MASKED_SECRET_MAX_LEN, 294);
     }
 }

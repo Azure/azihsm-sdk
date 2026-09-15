@@ -64,53 +64,55 @@ pub enum HashAlgo {
     Sha512 = 3,
 }
 
-/// Requested key-usage permissions on the TBOR wire — a compact 1-byte
-/// bitfield carried by key-creating / key-import commands (e.g.
-/// `UnwrapKey`) so the host, not the firmware, selects which operations
-/// the imported/created key may perform.
+/// Requested key-usage permissions on the TBOR wire — a bitfield carried
+/// by key-creating / key-import commands (e.g. `UnwrapKey`,
+/// `EccGenerateKey`) so the host, not the firmware, selects which
+/// operations the imported/created key may perform.
 ///
 /// The bits mirror the usage semantics of the MBOR
 /// `DdiTargetKeyMetadata` flags (minus the `session`/`modifiable` bits,
 /// which TBOR carries out of band via the key scope): `sign`+`verify`
 /// and `encrypt`+`decrypt` are matched pairs, and each handler enforces
-/// which usage(s) are valid for the key's class.  Sent inline as a raw
-/// `u8` (`#[tbor(U8)]`); an out-of-range/invalid combination is rejected
-/// on-device rather than failing to decode.
+/// which usage(s) are valid for the key's class.  Sent inline as a `u64`
+/// (`#[tbor(U64)]`) for headroom beyond the seven currently-defined bits
+/// (mirrors the masked metadata's 64-bit `usage_flags`); an
+/// out-of-range/invalid combination is rejected on-device rather than
+/// failing to decode.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct KeyUsage(pub u8);
+pub struct KeyUsage(pub u64);
 
 impl KeyUsage {
     /// Key may encrypt.
-    pub const ENCRYPT: u8 = 1 << 0;
+    pub const ENCRYPT: u64 = 1 << 0;
     /// Key may decrypt.
-    pub const DECRYPT: u8 = 1 << 1;
+    pub const DECRYPT: u64 = 1 << 1;
     /// Key may sign / compute a MAC.
-    pub const SIGN: u8 = 1 << 2;
+    pub const SIGN: u64 = 1 << 2;
     /// Key may verify a signature / MAC.
-    pub const VERIFY: u8 = 1 << 3;
+    pub const VERIFY: u64 = 1 << 3;
     /// Key may derive other keys.
-    pub const DERIVE: u8 = 1 << 4;
+    pub const DERIVE: u64 = 1 << 4;
     /// Key may wrap other keys.
-    pub const WRAP: u8 = 1 << 5;
+    pub const WRAP: u64 = 1 << 5;
     /// Key may unwrap other keys.
-    pub const UNWRAP: u8 = 1 << 6;
+    pub const UNWRAP: u64 = 1 << 6;
 
     /// Build a `KeyUsage` from its raw wire bits.
     #[inline]
-    pub const fn from_bits(bits: u8) -> Self {
+    pub const fn from_bits(bits: u64) -> Self {
         Self(bits)
     }
 
     /// The raw wire bits.
     #[inline]
-    pub const fn bits(self) -> u8 {
+    pub const fn bits(self) -> u64 {
         self.0
     }
 
     /// Whether `flag` (one of the `KeyUsage::*` bit constants) is set.
     #[inline]
-    pub const fn has(self, flag: u8) -> bool {
+    pub const fn has(self, flag: u64) -> bool {
         self.0 & flag != 0
     }
 

@@ -50,9 +50,9 @@ pub const TBOR_OP_UNWRAP_KEY: u8 = 0x14;
 pub const UNWRAP_WRAPPED_BLOB_MAX_LEN: usize = 3072;
 
 /// Max masked recovered-key envelope length.  Pinned into the
-/// `#[tbor(buffer, max_len = 3072)]` literal on
+/// `#[tbor(buffer, max_len = 3168)]` literal on
 /// [`TborUnwrapKeyResp::masked_key`].
-pub const UNWRAP_MASKED_KEY_MAX_LEN: usize = 3072;
+pub const UNWRAP_MASKED_KEY_MAX_LEN: usize = 3168;
 
 /// Max recovered public-key length (RSA-4096 `n_le(512) ‖ e_le(4)`).
 /// Pinned into the `#[tbor(buffer, max_len = 520)]` literal on
@@ -63,7 +63,7 @@ pub const UNWRAP_PUB_KEY_MAX_LEN: usize = 520;
 // `#[tbor(buffer, max_len = ...)]` literals below (the derive requires
 // integer literals, so the two cannot share a symbol).
 const _: () = assert!(UNWRAP_WRAPPED_BLOB_MAX_LEN == 3072);
-const _: () = assert!(UNWRAP_MASKED_KEY_MAX_LEN == 3072);
+const _: () = assert!(UNWRAP_MASKED_KEY_MAX_LEN == 3168);
 const _: () = assert!(UNWRAP_PUB_KEY_MAX_LEN == 520);
 
 /// Class of the wrapped key on the TBOR wire — selects the decode path.
@@ -105,9 +105,9 @@ pub struct TborUnwrapKeyReq<'a> {
     #[tbor(U8)]
     pub key_class: KeyClass,
 
-    /// Requested key-usage permissions, 1-byte [`KeyUsage`] bitfield.
+    /// Requested key-usage permissions, [`KeyUsage`] bitfield (u64).
     /// The handler enforces which usage(s) are valid for `key_class`.
-    #[tbor(U8)]
+    #[tbor(U64)]
     pub key_usage: KeyUsage,
 
     /// OAEP hash used to wrap the KEK, 1-byte [`HashAlgo`].
@@ -134,7 +134,7 @@ pub struct TborUnwrapKeyResp<'a> {
     /// recovered key straight into it (`decode_mut`) — avoiding a separate
     /// MAX-sized scratch buffer that would otherwise coexist with the
     /// (multi-KB, for RSA) unwrap material and blow the per-IO DMA budget.
-    #[tbor(buffer, max_len = 3072, mutable)]
+    #[tbor(buffer, max_len = 3168, mutable)]
     pub masked_key: &'a [u8],
 
     /// The recovered key's wire public key for RSA / ECC; empty for

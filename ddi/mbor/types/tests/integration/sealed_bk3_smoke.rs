@@ -24,9 +24,17 @@ pub fn cleanup(
 ) {
 }
 
+fn ensure_bk3_provisioned(dev: &<DdiTest as Ddi>::Dev) {
+    match helper_init_bk3(dev, vec![0u8; 48]) {
+        Ok(_) | Err(DdiError::DdiStatus(DdiStatus::Bk3AlreadyInitialized)) => {}
+        Err(err) => panic!("InitBk3 must provision BK3 or report it already initialized: {err:?}"),
+    }
+}
+
 #[test]
 fn test_set_then_get_sealed_bk3() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        ensure_bk3_provisioned(dev);
         let blob: Vec<u8> = (10..73u8).collect();
 
         let set_resp = helper_set_sealed_bk3(dev, blob.clone()).unwrap();
@@ -42,6 +50,7 @@ fn test_set_then_get_sealed_bk3() {
 #[test]
 fn test_set_sealed_bk3_twice_fails() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        ensure_bk3_provisioned(dev);
         let blob: Vec<u8> = (10..73u8).collect();
 
         let set_resp = helper_set_sealed_bk3(dev, blob.clone()).unwrap();
@@ -59,6 +68,7 @@ fn test_set_sealed_bk3_twice_fails() {
 #[test]
 fn test_get_sealed_bk3_before_set_fails() {
     ddi_dev_test(setup, cleanup, |dev, _ddi, _path, _| {
+        ensure_bk3_provisioned(dev);
         let err = helper_get_sealed_bk3(dev).unwrap_err();
         assert!(matches!(
             err,

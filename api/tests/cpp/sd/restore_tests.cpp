@@ -34,16 +34,8 @@
 
 namespace
 {
-// Pinned wire lengths. Mirror the `azihsm_ddi_tbor_types` constants
-// (`MASKED_SEALING_KEY_LEN`, `POK_REMOTE_BACKUP_LEN`, `MASKED_SD_LEN`,
-// `SD_MK_BACKUP_LEN`), which are not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-constexpr uint32_t kPokRemoteBackupLen = 161;
-constexpr uint32_t kMaskedSdLen = 180;
-constexpr uint32_t kSdMkBackupLen = 164;
-
 // Create a real remote backup sealed to `receiver`'s attested key by
-// `masked`, capturing both the 161-byte remote backup and the 164-byte
+// `masked`, capturing both the 161-byte remote backup and the 260-byte
 // masking-key backup needed to drive a later restore. Sizes the three output
 // buffers via the probe/fill convention. Records a gtest failure and returns
 // false on error.
@@ -267,8 +259,8 @@ TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
         std::vector<uint8_t> sd_mk;
         ASSERT_EQ(restore_fill(dev2.session, &params, pok_local, sd_mk), AZIHSM_STATUS_SUCCESS);
 
-        // Refreshed device-local backups: 180-byte local pok backup and
-        // 164-byte masking-key backup, both non-zero.
+        // Refreshed device-local backups: 276-byte local pok backup and
+        // 260-byte masking-key backup, both non-zero.
         ASSERT_EQ(pok_local.size(), kMaskedSdLen);
         ASSERT_TRUE(any_nonzero(pok_local)) << "pok_local_backup must not be all-zero";
         ASSERT_EQ(sd_mk.size(), kSdMkBackupLen);

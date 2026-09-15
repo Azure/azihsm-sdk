@@ -33,6 +33,7 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
@@ -62,6 +63,8 @@ fn generate(ctx: &TestCtx, session_id: u16, curve: u8) -> (Vec<u8>, Vec<u8>) {
             session_id,
             scope: SCOPE_LOCAL,
             curve,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
     (resp.masked_key, resp.pub_key)

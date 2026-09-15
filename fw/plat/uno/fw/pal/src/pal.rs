@@ -30,9 +30,13 @@
 
 use core::cell::Cell;
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmCustomDispatch;
 use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
@@ -719,6 +723,35 @@ impl UnoHsmPal {
     /// Acknowledges the event in the IPC block for `channel`.
     fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
         self.ipc.ack_event(channel as u8, value);
+    }
+}
+
+/// Platform hook for test-only commands.
+///
+/// With `mcr_test_action` this routes `TestAction` to
+/// `crate::test_dispatch`; without it, and for TBOR in either case, uno
+/// claims nothing and the firmware answers every opcode exactly as it
+/// did before the hook existed.
+impl HsmCustomDispatch for UnoHsmPal {
+    #[cfg(feature = "mcr_test_action")]
+    async fn mbor_dispatch(&self, _io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        // `Infallible` — the handler has no success path, so there is
+        // no response to hand back and nothing to match on.
+        crate::test_dispatch::mbor_dispatch(req).map(|never| match never {})
+    }
+
+    #[cfg(not(feature = "mcr_test_action"))]
+    async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+
+    async fn tbor_dispatch(
+        &self,
+        _io: &impl HsmIo,
+        _opcode: u8,
+        _req: &DmaBuf,
+    ) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
     }
 }
 

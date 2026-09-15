@@ -24,11 +24,11 @@ as the variable-length `VarLenHmacSha*` kind, so `key_length` must fall in
 the variant's `[min, max]` range — matching the reference firmware's
 `VarLenHmacSha*` bounds — else the command returns `InvalidKeyLength`:
 
-| `hash_algo` | key length (min–max) | masked blob (`132 + key_length`) |
+| `hash_algo` | key length (min–max) | masked blob (`228 + key_length`) |
 |---|---|---|
-| SHA-256 | 32–64 | 164–196 B |
-| SHA-384 | 48–128 | 180–260 B |
-| SHA-512 | 64–128 | 196–260 B |
+| SHA-256 | 32–64 | 260–292 B |
+| SHA-384 | 48–128 | 276–356 B |
+| SHA-512 | 64–128 | 292–356 B |
 
 Scope → masking key (resolved on-device):
 
@@ -69,11 +69,11 @@ _Empty — all fields are carried inline within their TOC entries._
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_key` | `buffer` (164–260 B) | The generated HMAC key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
+| 8 | `masked_key` | `buffer` (260–356 B) | The generated HMAC key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
 
 ### Data section
 
-Carries the masked key (`132 + key_length` B).
+Carries the masked key (`228 + key_length` B).
 
 ## Errors
 

@@ -15,7 +15,7 @@
 //!   key.
 //! * Variable key lengths across each variant's `[min, max]` range
 //!   (SHA-256: 32–64, SHA-384: 48–128, SHA-512: 64–128), incl. the 128 B
-//!   maximum → 260 B masked blob.
+//!   maximum → 356 B masked blob.
 //! * Out-of-range `key_length` (below min / above max) → `InvalidKeyLength`.
 //! * Every masking-key scope: `Session` (masked under the per-session
 //!   key, works pre-finalize), `Ephemeral` / `Local` (provisioned by
@@ -43,9 +43,9 @@ pub(crate) const SCOPE_LOCAL: u8 = 0b011;
 pub(crate) const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
-/// iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`.
+/// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
 fn masked_len(key_len: usize) -> usize {
-    8 + 12 + 96 + key_len + 16
+    8 + 12 + 192 + key_len + 16
 }
 
 /// A representative in-range key length for a wire hash discriminant (the

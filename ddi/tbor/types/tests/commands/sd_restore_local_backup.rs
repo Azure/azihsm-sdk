@@ -22,8 +22,6 @@
 //! * Restore before finalize → `InvalidArg`.
 //! * A tampered `pok_local_backup` is rejected (AEAD tag mismatch).
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -124,7 +122,7 @@ fn reboot_and_restore_part_local_mk(
 }
 
 #[test]
-fn sd_restore_local_backup_roundtrip_emu() {
+fn sd_restore_local_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -144,13 +142,13 @@ fn sd_restore_local_backup_roundtrip_emu() {
         })
         .expect("SdRestoreLocalBackup roundtrip");
 
-    // Refreshed local backup (BKS3 re-masked under PartLocalMK), 180 B.
+    // Refreshed local backup (BKS3 re-masked under PartLocalMK), 276 B.
     assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         resp.pok_local_backup.iter().any(|&b| b != 0),
         "refreshed pok_local_backup must not be all-zero",
     );
-    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 164 B.
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
     assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
         resp.sd_mk_backup.iter().any(|&b| b != 0),
@@ -159,7 +157,7 @@ fn sd_restore_local_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_is_one_shot_emu() {
+fn sd_restore_local_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -203,7 +201,7 @@ fn sd_restore_local_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_rejects_before_finalize_emu() {
+fn sd_restore_local_backup_rejects_before_finalize() {
     // A partition that has not been finalized has no PartLocalMK, so the
     // command is rejected at the lifecycle gate before any unmask.
     let ctx = TestCtx::new();
@@ -219,7 +217,7 @@ fn sd_restore_local_backup_rejects_before_finalize_emu() {
 }
 
 #[test]
-fn sd_restore_local_backup_rejects_tampered_pok_emu() {
+fn sd_restore_local_backup_rejects_tampered_pok() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
