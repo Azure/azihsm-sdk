@@ -83,6 +83,7 @@ fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
         scope: SCOPE_LOCAL,
         masked_key: key_a.masked_key,
         peer_pub_key: key_b.pub_key,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret

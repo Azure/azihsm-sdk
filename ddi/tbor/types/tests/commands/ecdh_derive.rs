@@ -76,6 +76,7 @@ fn derive(
         scope,
         masked_key,
         peer_pub_key: peer_pub,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret
@@ -151,6 +152,7 @@ fn ecdh_derive_bad_peer_pub_len_rejected_emu() {
             scope: SCOPE_LOCAL,
             masked_key: masked_a,
             peer_pub_key: truncated,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );

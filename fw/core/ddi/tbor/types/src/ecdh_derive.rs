@@ -116,6 +116,8 @@ mod tests {
             .unwrap()
             .peer_pub_key(&peer)
             .unwrap()
+            .key_label(&[])
+            .unwrap()
             .finish();
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.peer_pub_key(), &peer[..]);

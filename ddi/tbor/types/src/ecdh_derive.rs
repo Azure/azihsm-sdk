@@ -73,6 +73,7 @@ mod tests {
             scope: 0b011,
             masked_key: alloc::vec![0x11u8; 164],
             peer_pub_key: alloc::vec![0x22u8; 64],
+            key_label: alloc::vec![],
         };
         let mut buf = [0u8; 512];
         let frame = req.encode_request(&mut buf).expect("encode");
