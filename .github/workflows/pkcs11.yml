@@ -18,13 +18,13 @@ on:
   workflow_dispatch:
 
 env:
-  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+  CACHE_KEY_ID: dd2c2bcffcf0cd62b538fdeaa31c7b89c4d42815
 
 jobs:
   build-and-drive:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Shared setup: apt packages + Cargo cache. The Rust toolchain comes from
       # rust-toolchain.toml (rustup installs it on the first cargo call) — the
@@ -63,7 +63,7 @@ jobs:
   objstore-unit-tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build and run the object-store unit tests
         run: |
@@ -88,7 +88,7 @@ jobs:
   digest-unit-tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build and run the digest KAT
         run: |
