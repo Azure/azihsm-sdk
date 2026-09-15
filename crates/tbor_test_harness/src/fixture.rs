@@ -61,7 +61,7 @@ pub const ROTATED_CU_PSK: [u8; PSK_LEN] = [
 ];
 
 /// Rotate the default CO PSK and return a fresh authenticated CO session.
-pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+pub fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx
         .open_session(CO_PSK_ID, SessionType::Authenticated)
         .expect("open_session must succeed");
@@ -79,7 +79,7 @@ pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) ->
 }
 
 /// Rotate the default CU PSK and return a fresh plaintext CU session.
-pub(crate) fn bootstrap_rotated_cu(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+pub fn bootstrap_rotated_cu(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx
         .open_session(CU_PSK_ID, SessionType::PlainText)
         .expect("open_session must succeed");
