@@ -73,6 +73,12 @@ pub struct TborEcdhDeriveReq<'a> {
     /// exactly the curve's wire public-key length (64 / 96 / 136 B).
     #[tbor(buffer, max_len = 136)]
     pub peer_pub_key: &'a [u8],
+
+    /// Caller-supplied key label recorded in the derived secret's
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
+    /// unlabeled secret.
+    #[tbor(buffer, max_len = 128)]
+    pub key_label: &'a [u8],
 }
 
 /// `EcdhDerive` response schema.
@@ -110,9 +116,12 @@ mod tests {
             .unwrap()
             .peer_pub_key(&peer)
             .unwrap()
+            .key_label(b"ecdh-label")
+            .unwrap()
             .finish();
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.peer_pub_key(), &peer[..]);
+        assert_eq!(frame.key_label(), b"ecdh-label");
     }
 
     #[test]
