@@ -415,7 +415,7 @@ fn hmac_rejects_tampered_iv() {
     assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
 }
 
-/// Tampering with the encoded masked-key body must fail decoding.
+/// Tampering with the masked-key ciphertext invalidates the authenticated envelope.
 #[test]
 fn hmac_rejects_tampered_ciphertext() {
     let ctx = TestCtx::new();
@@ -427,8 +427,8 @@ fn hmac_rejects_tampered_ciphertext() {
 
     let mut tampered = masked.clone();
 
-    // Current encoded-key body offset.
-    tampered[8 + 12 + 96] ^= 1;
+    // Envelope: header(8) + IV(12) + metadata/AAD(192) + ciphertext.
+    tampered[8 + 12 + 192] ^= 1;
 
     ctx.expect_fw_reject(
         &TborHmacReq {
@@ -439,7 +439,6 @@ fn hmac_rejects_tampered_ciphertext() {
         TborStatus::AesGcmDecryptTagDoesNotMatch,
     );
 
-    // Rejected input must not affect the original masked key.
     assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
 }
 
