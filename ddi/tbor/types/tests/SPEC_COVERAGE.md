@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-06-08):
-* emu: 50 tests
+Test counts (last updated 2026-09-14):
+* emu: 71 tests
 * mock: 6 tests
 
 ## Legend
@@ -175,12 +175,13 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
-**## `EcdhDerive` (opcode in-session, gated)
+## `EcdhDerive` (opcode in-session, gated)
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 | Derive succeeds for P-256, P-384, and P-521 | ✅ 🔁 | `ecdh_derive::ecdh_derive_all_curves` | Loops over all three supported curves and validates the returned masked-secret envelope length |
 | Derived result can be returned under Session, Ephemeral, and Local scopes | ✅ 🔁 | `ecdh_derive::ecdh_derive_scopes` | Loops over all provisioned output scopes |
+| CO session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_psk` | Verifies the dispatcher gate before ECDH field validation |
 | Peer public key shorter than the required wire length → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_bad_peer_pub_len_rejected` | P-256 peer key truncated by one byte |
 | Peer public key with trailing bytes → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_peer_pub_trailing_byte_rejected` | Correct P-256 point plus one trailing byte |
 | Peer public key wire size belongs to a different curve → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_peer_curve_mismatch_rejected` | P-256 private key with P-384 peer public key |

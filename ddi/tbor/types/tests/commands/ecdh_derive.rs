@@ -118,6 +118,7 @@ fn ecdh_derive_all_curves() {
                 masked_secret_len(curve),
                 "masked shared-secret envelope length must match the curve",
             );
+            assert!(secret.iter().any(|&b| b != 0));
         }
     }
 }
@@ -142,6 +143,7 @@ fn ecdh_derive_scopes() {
             pub_b.clone(),
         );
         assert_eq!(secret.len(), masked_secret_len(ECC_CURVE_P256));
+        assert!(secret.iter().any(|&b| b != 0));
     }
 }
 
@@ -330,6 +332,24 @@ fn ecdh_derive_unknown_session_rejected() {
             peer_pub_key: peer_pub,
         },
         TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+}
+
+/// Rejects ECDH derive while the CO PSK is still the default.
+#[test]
+fn ecdh_derive_rejects_default_psk() {
+    let ctx = TestCtx::new();
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("open CO session under default PSK");
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id(),
+            scope: SCOPE_SESSION,
+            masked_key: Vec::new(),
+            peer_pub_key: Vec::new(),
+        },
+        TborStatus::DefaultPskMustRotate,
     );
 }
 
