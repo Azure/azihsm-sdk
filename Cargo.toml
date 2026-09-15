@@ -321,3 +321,6 @@ bad_bit_mask = "allow"
 # doesn't provide value. If a developer gets their type wrong they'll notice and fix it.
 # Sometimes you do want a list of a single range.
 single_range_in_vec_init = "allow"
+
+[patch.crates-io]
+ml-dsa = { path = "fw/core/crypto/ml-dsa/vendor/ml-dsa" }

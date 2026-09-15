@@ -218,3 +218,6 @@ debug = true
 lto = true
 opt-level = 3
 panic = "abort"
+
+[patch.crates-io]
+ml-dsa = { path = "../../../core/crypto/ml-dsa/vendor/ml-dsa" }

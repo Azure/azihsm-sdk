@@ -1,0 +1,69 @@
+--- a/src/signing.rs
++++ b/src/signing.rs
+@@ -3,7 +3,8 @@
+ //! These types implement signature generation.
+ 
+ use crate::{
+-    B32, B64, ExpandedSigningKeyBytes, MlDsaParams, MuBuilder, Seed, Signature, VerifyingKey,
++    B32, B64, EncodedVerifyingKey, ExpandedSigningKeyBytes, MlDsaParams, MuBuilder, Seed,
++    Signature, VerifyingKey,
+     algebra::{AlgebraExt, NttMatrix, NttVector, Vector},
+     crypto::H,
+     hint::Hint,
+@@ -90,6 +91,56 @@
+         }
+     }
+ 
++    /// Key generation writing the encoded signing key into `out_sk` and
++    /// returning the encoded verifying key.
++    ///
++    /// Cheaper than `from_seed` followed by `verifying_key()`. Key
++    /// generation already computes the encoded verifying key -- it is the
++    /// input to the `tr` hash -- and then drops it, so recovering it
++    /// afterwards repeats the whole `A * s1 + s2` product and its
++    /// `power2round`. On a constrained target that costs a large stack
++    /// frame as well as the time.
++    ///
++    /// Writing the signing key through `&mut` also keeps it off the call
++    /// boundary, where a value that size is materialised twice.
++    ///
++    /// Serialises the signing key from the components directly rather than
++    /// building an `ExpandedSigningKey` and calling `to_expanded`: the
++    /// encoding is the same, and it avoids both the intermediate NTT forms
++    /// that the expanded form would compute and a rustc 1.93 ICE triggered
++    /// by calling `to_expanded` from a new generic context.
++    pub fn keygen_encoded_into(
++        xi: &Seed,
++        out_sk: &mut ExpandedSigningKeyBytes<P>,
++    ) -> EncodedVerifyingKey<P> {
++        let mut h = H::default()
++            .absorb(xi)
++            .absorb(&[P::K::U8])
++            .absorb(&[P::L::U8]);
++
++        let rho: B32 = h.squeeze_new();
++        let rhop: B64 = h.squeeze_new();
++        let K: B32 = h.squeeze_new();
++
++        let A_hat = expand_a::<P::K, P::L>(&rho);
++        let s1 = expand_s::<P::L>(&rhop, P::Eta::ETA, 0);
++        let s2 = expand_s::<P::K>(&rhop, P::Eta::ETA, P::L::USIZE);
++
++        let As1_hat = &A_hat * &s1.ntt();
++        let t = &As1_hat.ntt_inverse() + &s2;
++        let (t1, t0) = t.power2round();
++
++        let enc = VerifyingKey::<P>::encode_internal(&rho, &t1);
++        let tr: B64 = H::default().absorb(&enc).squeeze_new();
++
++        let s1_enc = P::encode_s1(&s1);
++        let s2_enc = P::encode_s2(&s2);
++        let t0_enc = P::encode_t0(&t0);
++        *out_sk = P::concat_sk(rho, K, tr, s1_enc, s2_enc, t0_enc);
++
++        enc
++    }
++
+     /// Borrow the [`Seed`] value: 32-bytes which can be used to reconstruct the [`SigningKey`].
+     ///
+     /// <div class="warning">
