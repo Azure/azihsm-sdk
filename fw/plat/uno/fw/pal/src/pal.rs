@@ -728,20 +728,35 @@ impl UnoHsmPal {
 
 /// Platform hook for test-only commands.
 ///
-/// With `mcr_test_action` this routes `TestAction` to
-/// `crate::test_dispatch`; without it, and for TBOR in either case, uno
-/// claims nothing and the firmware answers every opcode exactly as it
-/// did before the hook existed.
+/// Each enabled test feature contributes one handler, consulted in turn
+/// and claiming strictly by opcode: `mcr_test_action` routes
+/// `TestAction` to `crate::test_dispatch`, and `fips_validation_hooks`
+/// routes `GetPrivKey` / `RawKeyImport` to `crate::test_hooks`. A
+/// handler that does not recognise the opcode answers `UnsupportedCmd`,
+/// which moves on to the next; with no feature enabled — and for TBOR in
+/// every case — uno claims nothing and the firmware answers every opcode
+/// exactly as it did before the hook existed.
 impl HsmCustomDispatch for UnoHsmPal {
-    #[cfg(feature = "mcr_test_action")]
-    async fn mbor_dispatch(&self, _io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
-        // `Infallible` — the handler has no success path, so there is
-        // no response to hand back and nothing to match on.
-        crate::test_dispatch::mbor_dispatch(req).map(|never| match never {})
-    }
+    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        // `TestAction` (crash injection) has no success path, so an `Ok`
+        // is uninhabited; only `UnsupportedCmd` falls through to the
+        // next handler.
+        #[cfg(feature = "mcr_test_action")]
+        match crate::test_dispatch::mbor_dispatch(req) {
+            Ok(never) => match never {},
+            Err(HsmError::UnsupportedCmd) => {}
+            Err(e) => return Err(e),
+        }
 
-    #[cfg(not(feature = "mcr_test_action"))]
-    async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        #[cfg(feature = "fips_validation_hooks")]
+        match crate::test_hooks::mbor_dispatch(self, io, req).await {
+            Err(HsmError::UnsupportedCmd) => {}
+            other => return other,
+        }
+
+        // Referenced so the parameters are not flagged unused when no
+        // handler above consumes them (e.g. a production build).
+        let _ = (io, req);
         Err(HsmError::UnsupportedCmd)
     }
 

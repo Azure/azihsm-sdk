@@ -12,9 +12,11 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_key_derive = { workspace = true }
+azihsm_fw_core_crypto_key_masking = { optional = true, workspace = true }
 azihsm_fw_core_crypto_x509_builder = { workspace = true }
 azihsm_fw_ddi_mbor = { optional = true, workspace = true }
 azihsm_fw_ddi_mbor_derive = { optional = true, workspace = true }
+azihsm_fw_ddi_mbor_types = { optional = true, workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
@@ -66,3 +68,24 @@ semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
 # which crash-recovery testing uses to inject faults. Never enable in a
 # production build.
 mcr_test_action = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
+
+# FIPS-validation-only DDI commands, routed through the
+# `HsmCustomDispatch` PAL hook rather than the core opcode tables. Adds
+# `GetPrivKey` (DdiOp 2005) and `RawKeyImport` (DdiOp 2008), which a host
+# Known-Answer-Test suite uses to import raw key vectors and read them
+# back. The opcodes live in no core table and no core crate knows them;
+# the request/response envelope is redeclared below the PAL. Importing a
+# key produces a masked re-import blob, so this pulls in the shared
+# key-masking crate (and the `DdiMaskedKeyMetadata` wire type it
+# requires). Never enable in a production build.
+fips_validation_hooks = [
+  "dep:azihsm_fw_core_crypto_key_masking",
+  "dep:azihsm_fw_ddi_mbor",
+  "dep:azihsm_fw_ddi_mbor_derive",
+  "dep:azihsm_fw_ddi_mbor_types",
+]
+
+# General MCR test hooks, reserved for below-PAL test commands that do
+# not need the MBOR codec. Currently a placeholder. Never enable in a
+# production build.
+mcr_test_hooks = []
