@@ -135,9 +135,16 @@ async fn poll_io(spawner: Spawner) -> ! {
 // command also occupies its slot for milliseconds without yielding, so a
 // build carrying PQC both has fewer slots and holds them longer.
 //
-// Dropping further to 2 was measured: it buys 12.6 KiB of stack, which is
-// not enough to fit ML-DSA-65 keygen (10.1 KiB short) and costs another 4x
-// in concurrency, so 8 stands.
+// Shrinking the pool further was measured and does not unlock anything:
+//
+//     pool  stack      ML-DSA-65 keygen (235.5 KiB chain)
+//        8  212.9 KiB  22.6 KiB short
+//        2  225.4 KiB  10.1 KiB short
+//        1  227.5 KiB   8.0 KiB short
+//
+// The whole task arena is only ~17 KiB, so there is no configuration of it
+// that fits keygen, and each step costs concurrency on a path that silently
+// drops IOs when full. 8 stands.
 #[cfg_attr(
     any(
         feature = "mldsa-selftest",
