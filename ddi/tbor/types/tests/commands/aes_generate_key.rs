@@ -34,9 +34,9 @@ use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 
 #[cfg(feature = "emu")]
-use crate::commands::part_init::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 #[cfg(feature = "emu")]
-use crate::commands::part_init::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 /// `KeyScope` discriminants matching the firmware `HsmKeyScope`.
 pub(crate) const SCOPE_SESSION: u8 = 0b001;
