@@ -61,31 +61,40 @@ pub const ML_DSA_65_SIGNATURE_LEN: usize = 3309;
 
 /// Maximum message length (bytes) accepted by `MlDsaSign` / `MlDsaVerify`.
 ///
-/// Bounded by the 4 KiB TBOR request buffer rather than by the algorithm.
-/// `MlDsaVerify` is the binding case: at ML-DSA-44 its verifying key and
-/// signature alone occupy 1312 + 2420 = 3732 B, leaving roughly 300 B for
-/// the message and the TOC. A larger message must ride out of band, or be
-/// pre-hashed by the caller (HashML-DSA, FIPS 204 5.4).
-pub const ML_DSA_MSG_MAX_LEN: usize = 256;
+/// Bounded by the firmware's 4 KiB inbound limit (`MAX_SRC_LEN`) rather than
+/// by the algorithm. With the large payloads moved out of band — the signing
+/// key here, the signature in `MlDsaVerify` — the binding inline case is
+/// `MlDsaVerify` at ML-DSA-65: 1952 B of verifying key leaves ample room for
+/// 1 KiB of message plus the TOC.
+pub const ML_DSA_MSG_MAX_LEN: usize = 1024;
 
 /// `MlDsaSign` request schema.
 ///
-/// `signing_key` is `#[tbor(mutable)]` so the handler can zeroize the
-/// imported key in place in the request buffer before returning — the
-/// cleartext private key must not outlive the call.
+/// The signing key rides **out of band** as OOB SGL descriptor 0, not in
+/// this frame. Inline it does not fit: the firmware caps an inbound request
+/// at one 4 KiB page (`MAX_SRC_LEN`) and an ML-DSA-65 key is 4032 B of that
+/// on its own, leaving no room for a message. Its length is implied by the
+/// parameter set the firmware was built for, so no descriptor table is
+/// needed — the handler allocates exactly that many bytes and lets the GDMA
+/// length-check the transfer.
 #[tbor(opcode = 0x20)]
 pub struct TborMlDsaSignReq<'a> {
     /// CO/CU session id this request is bound to.
     #[tbor(session_id)]
     pub session_id: SessionId,
 
-    /// The FIPS 204 encoded signing key (`sk`).  Its length selects the
-    /// parameter set: 2560 B → ML-DSA-44, 4032 B → ML-DSA-65.
-    #[tbor(buffer, min_len = 2560, max_len = 4032, mutable)]
-    pub signing_key: &'a [u8],
+    /// Length in bytes of the signing key carried in OOB descriptor 0.
+    ///
+    /// Declared inline so the firmware can reject a key sized for another
+    /// parameter set with `InvalidArg` *before* starting the transfer. The
+    /// GDMA independently length-checks the descriptor, so a caller that
+    /// declares one length and supplies another is still caught — this
+    /// field buys a clean status, not safety.
+    #[tbor(U32)]
+    pub signing_key_len: u32,
 
     /// The message to sign, up to [`ML_DSA_MSG_MAX_LEN`] bytes.
-    #[tbor(buffer, max_len = 256)]
+    #[tbor(buffer, max_len = 1024)]
     pub msg: &'a [u8],
 }
 
@@ -112,18 +121,19 @@ mod tests {
     #[test]
     fn request_round_trips_fields() {
         let mut buf = [0u8; 8192];
-        let sk = [0x11u8; ML_DSA_44_SIGNING_KEY_LEN];
         let msg = [0x22u8; 64];
         let frame = TborMlDsaSignReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(7))
             .unwrap()
-            .signing_key(&sk)
+            .signing_key_len(ML_DSA_44_SIGNING_KEY_LEN as u32)
             .unwrap()
             .msg(&msg)
             .unwrap()
             .finish();
-        assert_eq!(frame.signing_key().len(), ML_DSA_44_SIGNING_KEY_LEN);
+        // The key itself rides out of band; only its declared length is on
+        // the wire.
+        assert_eq!(frame.signing_key_len(), ML_DSA_44_SIGNING_KEY_LEN as u32);
         assert_eq!(frame.msg(), &msg[..]);
     }
 

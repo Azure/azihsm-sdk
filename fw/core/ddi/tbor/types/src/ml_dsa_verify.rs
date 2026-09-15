@@ -25,7 +25,11 @@
 //! * `session_id` — TOC-carried session id; cross-checked by the dispatcher.
 //! * `verifying_key` — the FIPS 204 encoded verifying key (`pk`).
 //! * `msg` — the message that was signed.
-//! * `signature` — the encoded signature to check.
+//!
+//! The signature rides **out of band** as OOB SGL descriptor 0. Inline it
+//! does not fit: at ML-DSA-65 the verifying key and signature together are
+//! 1952 + 3309 = 5261 B, over the firmware's 4 KiB `MAX_SRC_LEN`. Its length
+//! is implied by the parameter set, so no descriptor table is needed.
 //!
 //! Outputs: none — success *is* the verification result.
 
@@ -52,13 +56,17 @@ pub struct TborMlDsaVerifyReq<'a> {
     #[tbor(buffer, min_len = 1312, max_len = 1952)]
     pub verifying_key: &'a [u8],
 
-    /// The message that was signed, up to [`ML_DSA_MSG_MAX_LEN`] bytes.
-    #[tbor(buffer, max_len = 256)]
-    pub msg: &'a [u8],
+    /// Length in bytes of the signature carried in OOB descriptor 0.
+    ///
+    /// Declared inline so a signature sized for another parameter set is
+    /// rejected with `InvalidArg` before the transfer starts; the GDMA
+    /// length-checks the descriptor independently.
+    #[tbor(U32)]
+    pub signature_len: u32,
 
-    /// The FIPS 204 encoded signature to check.
-    #[tbor(buffer, min_len = 2420, max_len = 3309)]
-    pub signature: &'a [u8],
+    /// The message that was signed, up to [`ML_DSA_MSG_MAX_LEN`] bytes.
+    #[tbor(buffer, max_len = 1024)]
+    pub msg: &'a [u8],
 }
 
 /// `MlDsaVerify` response schema — a bare acknowledgement.
@@ -82,20 +90,21 @@ mod tests {
         let mut buf = [0u8; 8192];
         let pk = [0x11u8; ML_DSA_44_VERIFYING_KEY_LEN];
         let msg = [0x22u8; 64];
-        let sig = [0x33u8; ML_DSA_44_SIGNATURE_LEN];
         let frame = TborMlDsaVerifyReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(7))
             .unwrap()
             .verifying_key(&pk)
             .unwrap()
-            .msg(&msg)
+            .signature_len(ML_DSA_44_SIGNATURE_LEN as u32)
             .unwrap()
-            .signature(&sig)
+            .msg(&msg)
             .unwrap()
             .finish();
         assert_eq!(frame.verifying_key().len(), ML_DSA_44_VERIFYING_KEY_LEN);
         assert_eq!(frame.msg(), &msg[..]);
-        assert_eq!(frame.signature().len(), ML_DSA_44_SIGNATURE_LEN);
+        // The signature itself rides out of band; only its declared length
+        // is on the wire.
+        assert_eq!(frame.signature_len(), ML_DSA_44_SIGNATURE_LEN as u32);
     }
 }

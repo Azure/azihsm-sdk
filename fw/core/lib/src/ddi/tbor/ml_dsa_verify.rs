@@ -9,6 +9,12 @@
 //! needs no scrubbing.  Nothing is persisted and no partition state is read
 //! or written.
 //!
+//! The signature arrives **out of band** as OOB SGL descriptor 0: at
+//! ML-DSA-65 the verifying key and signature together are 1952 + 3309 =
+//! 5261 B, over the firmware's 4 KiB inbound limit. Its length is fixed by
+//! the parameter set, so the handler allocates exactly that and the GDMA
+//! length-checks the descriptor.
+//!
 //! A signature that does not verify is returned as
 //! [`HsmError::MlDsaVerifyFailed`] rather than as a flag in a successful
 //! response, mirroring [`EccVerifyFailed`](HsmError::EccVerifyFailed): a
@@ -22,6 +28,8 @@ use azihsm_fw_core_crypto_ml_dsa::SIGNATURE_LEN;
 use azihsm_fw_core_crypto_ml_dsa::VERIFYING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaVerifyReq;
 use azihsm_fw_ddi_tbor_types::TborMlDsaVerifyResp;
+use azihsm_fw_hsm_oob::copy_oob;
+use azihsm_fw_hsm_oob::OobPtr;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -36,18 +44,30 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     req_buf: &DmaBuf,
+    oob: Option<OobPtr>,
 ) -> HsmResult<&'p DmaBuf> {
     let req = TborMlDsaVerifyReq::decode(req_buf)?;
     let sess_id = HsmSessId::from(u16::from(req.session_id()));
     validate_active_session(pal, io, sess_id)?;
 
     // The wire schema admits every parameter set; this build links exactly
-    // one. Reject inputs sized for another rather than misreading them.
-    if req.verifying_key().len() != VERIFYING_KEY_LEN || req.signature().len() != SIGNATURE_LEN {
+    // one. Reject a verifying key sized for another rather than misreading
+    // it. The signature is length-checked by the GDMA against the buffer
+    // below, so it needs no separate check here.
+    if req.verifying_key().len() != VERIFYING_KEY_LEN
+        || req.signature_len() as usize != SIGNATURE_LEN
+    {
         return Err(HsmError::InvalidArg);
     }
 
-    azihsm_fw_core_crypto_ml_dsa::verify(req.verifying_key(), req.msg(), req.signature()).map_err(
+    let oob = oob.ok_or(HsmError::InvalidArg)?;
+    if oob.entry_count() < 1 {
+        return Err(HsmError::InvalidArg);
+    }
+    let sig = pal.dma_alloc(io, SIGNATURE_LEN)?;
+    copy_oob(pal, io, &oob, 0, sig).await?;
+
+    azihsm_fw_core_crypto_ml_dsa::verify(req.verifying_key(), req.msg(), sig).map_err(
         |e| match e {
             MlDsaOpError::VerifyFailed => HsmError::MlDsaVerifyFailed,
             _ => HsmError::InvalidArg,

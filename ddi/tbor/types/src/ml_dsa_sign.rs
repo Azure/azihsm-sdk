@@ -51,7 +51,7 @@ pub const ML_DSA_65_SIGNATURE_LEN: usize = 3309;
 /// signature alone occupy 1312 + 2420 = 3732 B, leaving roughly 300 B for
 /// the message and the TOC. A larger message must ride out of band, or be
 /// pre-hashed by the caller (HashML-DSA, FIPS 204 5.4).
-pub const ML_DSA_MSG_MAX_LEN: usize = 256;
+pub const ML_DSA_MSG_MAX_LEN: usize = 1024;
 
 /// Host-facing TBOR `MlDsaSign` request.
 #[tbor(opcode = TBOR_OP_ML_DSA_SIGN, session_ctrl = in_session)]
@@ -61,13 +61,15 @@ pub struct TborMlDsaSignReq {
     #[tbor(session_id)]
     pub session_id: u16,
 
-    /// The FIPS 204 encoded signing key (`sk`).  Its length selects the
-    /// parameter set: 2560 B → ML-DSA-44, 4032 B → ML-DSA-65.
-    #[tbor(min_len = 2560, max_len = 4032)]
-    pub signing_key: Vec<u8>,
+    /// Length in bytes of the signing key passed as OOB SGL item 0.
+    pub signing_key_len: u32,
 
     /// The message to sign, up to [`ML_DSA_MSG_MAX_LEN`] bytes.
-    #[tbor(max_len = 256)]
+    ///
+    /// The signing key is **not** carried here — pass it as OOB SGL item 0
+    /// (`TestCtx::tbor_oob`). Inline it would not fit the device's 4 KiB
+    /// inbound limit.
+    #[tbor(max_len = 1024)]
     pub msg: Vec<u8>,
 }
 
@@ -91,7 +93,7 @@ mod tests {
     fn request_encodes_message() {
         let req = TborMlDsaSignReq {
             session_id: 7,
-            signing_key: alloc::vec![0x11u8; ML_DSA_44_SIGNING_KEY_LEN],
+            signing_key_len: ML_DSA_44_SIGNING_KEY_LEN as u32,
             msg: alloc::vec![0x22u8; 32],
         };
         let mut buf = [0u8; 8192];
@@ -102,21 +104,22 @@ mod tests {
         );
     }
 
-    /// Both parameter sets must fit the transport's request buffer.
+    /// The worst-case **inline** request must fit the firmware's inbound
+    /// limit of one 4 KiB page (`MAX_SRC_LEN`), which is stricter than the
+    /// backends' 8 KiB encode buffer and is what actually rejects an
+    /// oversized request on hardware.
     ///
-    /// The backends encode into an 8 KiB buffer (`REQ_BUF_LEN`), and the
-    /// firmware DMA slot is 16 KiB, so the binding limit is this 8 KiB
-    /// encode buffer. Pinned as a test because the ML-DSA-65 payloads are
-    /// the largest this schema admits and it is not obvious by inspection
-    /// that the worst case clears it: a maximal `MlDsaVerify` request
-    /// carries 1952 + 3309 B of key and signature before any message.
+    /// This is why the signing key and signature ride out of band: with
+    /// them inline, ML-DSA-65 `MlDsaVerify` alone is 1952 + 3309 B and
+    /// cannot pass. Pinned so that moving a payload back inline fails here
+    /// rather than on silicon.
     #[test]
-    fn worst_case_requests_fit_the_transport_buffer() {
-        const REQ_BUF_LEN: usize = 8192;
+    fn worst_case_inline_requests_fit_max_src_len() {
+        const REQ_BUF_LEN: usize = 4096;
 
         let sign = TborMlDsaSignReq {
             session_id: 1,
-            signing_key: alloc::vec![0xAAu8; ML_DSA_65_SIGNING_KEY_LEN],
+            signing_key_len: ML_DSA_65_SIGNING_KEY_LEN as u32,
             msg: alloc::vec![0xBBu8; ML_DSA_MSG_MAX_LEN],
         };
         let mut buf = [0u8; REQ_BUF_LEN];
@@ -125,9 +128,9 @@ mod tests {
 
         let verify = crate::TborMlDsaVerifyReq {
             session_id: 1,
+            signature_len: ML_DSA_65_SIGNATURE_LEN as u32,
             verifying_key: alloc::vec![0xCCu8; ML_DSA_65_VERIFYING_KEY_LEN],
             msg: alloc::vec![0xDDu8; ML_DSA_MSG_MAX_LEN],
-            signature: alloc::vec![0xEEu8; ML_DSA_65_SIGNATURE_LEN],
         };
         let mut buf = [0u8; REQ_BUF_LEN];
         verify

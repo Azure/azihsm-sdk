@@ -564,9 +564,9 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         opcode::GET_CERT_CHAIN_INFO => get_cert_chain_info::handle(pal, io, req_buf).await,
         opcode::GET_CERTIFICATE => get_cert::handle(pal, io, req_buf).await,
         #[cfg(feature = "tbor-ml-dsa")]
-        opcode::ML_DSA_SIGN => ml_dsa_sign::handle(pal, io, req_buf).await,
+        opcode::ML_DSA_SIGN => ml_dsa_sign::handle(pal, io, req_buf, oob).await,
         #[cfg(feature = "tbor-ml-dsa")]
-        opcode::ML_DSA_VERIFY => ml_dsa_verify::handle(pal, io, req_buf).await,
+        opcode::ML_DSA_VERIFY => ml_dsa_verify::handle(pal, io, req_buf, oob).await,
         #[cfg(feature = "tbor-ml-dsa-keygen")]
         opcode::ML_DSA_KEY_GEN => ml_dsa_keygen::handle(pal, io, req_buf).await,
         _ => Err(HsmError::UnsupportedCmd),

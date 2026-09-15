@@ -34,13 +34,16 @@ pub struct TborMlDsaVerifyReq {
     #[tbor(min_len = 1312, max_len = 1952)]
     pub verifying_key: Vec<u8>,
 
-    /// The message that was signed.
-    #[tbor(max_len = 256)]
-    pub msg: Vec<u8>,
+    /// Length in bytes of the signature passed as OOB SGL item 0.
+    pub signature_len: u32,
 
-    /// The FIPS 204 encoded signature to check.
-    #[tbor(min_len = 2420, max_len = 3309)]
-    pub signature: Vec<u8>,
+    /// The message that was signed.
+    ///
+    /// The signature is **not** carried here — pass it as OOB SGL item 0
+    /// (`TestCtx::tbor_oob`). Inline it would not fit the device's 4 KiB
+    /// inbound limit at ML-DSA-65.
+    #[tbor(max_len = 1024)]
+    pub msg: Vec<u8>,
 }
 
 /// Host-facing TBOR `MlDsaVerify` response — a bare acknowledgement.

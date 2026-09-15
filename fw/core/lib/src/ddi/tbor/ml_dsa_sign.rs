@@ -7,6 +7,12 @@
 //! host-supplied message using a host-supplied **encoded signing key**.
 //! Nothing is persisted and no partition state is read or written.
 //!
+//! The signing key arrives **out of band** as OOB SGL descriptor 0, because
+//! an ML-DSA-65 key is 4032 B against a 4 KiB inbound limit and would leave
+//! no room for a message. Its length is fixed by the parameter set, so the
+//! handler allocates exactly that and lets the GDMA length-check the
+//! transfer — a descriptor whose length disagrees is rejected there.
+//!
 //! Unlike [`EccSign`](super::ecc_sign), the key arrives in the clear
 //! rather than as a masked blob: ML-DSA key generation does not fit in
 //! this part's RAM, so the keypair is generated on the host and imported
@@ -23,6 +29,8 @@ use azihsm_fw_core_crypto_ml_dsa::SIGNATURE_LEN;
 use azihsm_fw_core_crypto_ml_dsa::SIGNING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaSignReq;
 use azihsm_fw_ddi_tbor_types::TborMlDsaSignResp;
+use azihsm_fw_hsm_oob::copy_oob;
+use azihsm_fw_hsm_oob::OobPtr;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -51,25 +59,34 @@ fn map_err(e: MlDsaOpError) -> HsmError {
 /// Handle a TBOR `MlDsaSign` request.
 ///
 /// No partition lock or undo log is required: the command reads no mutable
-/// partition state and persists nothing.  Takes `req_buf: &mut DmaBuf` so
-/// the imported signing key can be zeroized in place (`decode_mut`).
+/// partition state and persists nothing.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    req_buf: &mut DmaBuf,
+    req_buf: &DmaBuf,
+    oob: Option<OobPtr>,
 ) -> HsmResult<&'p DmaBuf> {
-    let req = TborMlDsaSignReq::decode_mut(req_buf)?;
-    let sess_id = HsmSessId::from(u16::from(req.session_id));
+    let req = TborMlDsaSignReq::decode(req_buf)?;
+    let sess_id = HsmSessId::from(u16::from(req.session_id()));
     validate_active_session(pal, io, sess_id)?;
 
-    // The wire schema admits every parameter set so the format does not
-    // change when another is enabled, but a given firmware build links
-    // exactly one.  Reject a key sized for a parameter set this build does
-    // not implement rather than misreading it as the one it does.
-    if req.signing_key.len() != SIGNING_KEY_LEN {
-        req.signing_key.zeroize();
+    // Reject a key sized for another parameter set here, so the caller sees
+    // `InvalidArg` rather than the GDMA's descriptor-length error.
+    if req.signing_key_len() as usize != SIGNING_KEY_LEN {
         return Err(HsmError::InvalidArg);
     }
+
+    let oob = oob.ok_or(HsmError::InvalidArg)?;
+    if oob.entry_count() < 1 {
+        return Err(HsmError::InvalidArg);
+    }
+
+    // Pull the signing key in from OOB descriptor 0. The buffer is exactly
+    // the parameter set's key length, which is what the GDMA checks the
+    // descriptor against, so a key sized for another parameter set is
+    // refused by the transfer rather than misread.
+    let key = pal.dma_alloc(io, SIGNING_KEY_LEN)?;
+    copy_oob(pal, io, &oob, 0, key).await?;
 
     // Reserve the signature slot and sign straight into it — the response
     // buffer is the only copy of the signature.
@@ -82,14 +99,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         })?;
         {
             let out = TborMlDsaSignResp::decode_mut(resp)?;
-            azihsm_fw_core_crypto_ml_dsa::sign_into(req.signing_key, req.msg, out.signature)
+            azihsm_fw_core_crypto_ml_dsa::sign_into(key, req.msg(), out.signature)
                 .map_err(map_err)?;
         }
         let resp: &'p DmaBuf = resp;
         Ok(resp)
     })();
 
-    // Scrub the caller's private key from the request buffer on every path.
-    req.signing_key.zeroize();
+    // Scrub the caller's private key on every path.
+    key.zeroize();
     outcome
 }

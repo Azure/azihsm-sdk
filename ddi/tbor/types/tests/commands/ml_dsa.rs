@@ -145,11 +145,14 @@ fn ml_dsa_sign_verifies_on_host() {
 
     let msg = b"post-quantum signature over the DDI".to_vec();
     let resp = ctx
-        .tbor(&TborMlDsaSignReq {
-            session_id: session.session_id,
-            signing_key: sk,
-            msg: msg.clone(),
-        })
+        .tbor_oob(
+            &TborMlDsaSignReq {
+                session_id: session.session_id,
+                signing_key_len: SIGNING_KEY_LEN as u32,
+                msg: msg.clone(),
+            },
+            &[&sk],
+        )
         .expect("MlDsaSign");
 
     assert_eq!(resp.signature.len(), SIGNATURE_LEN);
@@ -170,11 +173,6 @@ fn ml_dsa_sign_verifies_on_host() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "mldsa-65",
-    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
-              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
-)]
 fn ml_dsa_verify_accepts_host_signature() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -183,21 +181,19 @@ fn ml_dsa_verify_accepts_host_signature() {
     let msg = b"host signs, device verifies".to_vec();
     let sig = host_sign(&msg);
 
-    ctx.tbor(&TborMlDsaVerifyReq {
-        session_id: session.session_id,
-        verifying_key: pk,
-        msg,
-        signature: sig,
-    })
+    ctx.tbor_oob(
+        &TborMlDsaVerifyReq {
+            session_id: session.session_id,
+            verifying_key: pk,
+            signature_len: SIGNATURE_LEN as u32,
+            msg,
+        },
+        &[&sig],
+    )
     .expect("MlDsaVerify must accept a valid host signature");
 }
 
 #[test]
-#[cfg_attr(
-    feature = "mldsa-65",
-    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
-              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
-)]
 fn ml_dsa_verify_rejects_tampered_message() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -205,23 +201,19 @@ fn ml_dsa_verify_rejects_tampered_message() {
 
     let sig = host_sign(b"the original message");
 
-    ctx.expect_fw_reject(
+    ctx.expect_fw_reject_oob(
         &TborMlDsaVerifyReq {
             session_id: session.session_id,
             verifying_key: pk,
+            signature_len: SIGNATURE_LEN as u32,
             msg: b"the tampered message".to_vec(),
-            signature: sig,
         },
+        &[&sig],
         TborStatus::MlDsaVerifyFailed,
     );
 }
 
 #[test]
-#[cfg_attr(
-    feature = "mldsa-65",
-    ignore = "ML-DSA-65 verify needs 1952 + 3309 B inbound, over the firmware's \
-              MAX_SRC_LEN of one 4K page; needs the OOB SGL path"
-)]
 fn ml_dsa_verify_rejects_tampered_signature() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -233,39 +225,65 @@ fn ml_dsa_verify_rejects_tampered_signature() {
     // so still schema-valid, but no longer a valid signature.
     sig[SIGNATURE_LEN / 2] ^= 0x01;
 
-    ctx.expect_fw_reject(
+    ctx.expect_fw_reject_oob(
         &TborMlDsaVerifyReq {
             session_id: session.session_id,
             verifying_key: pk,
+            signature_len: SIGNATURE_LEN as u32,
             msg,
-            signature: sig,
         },
+        &[&sig],
         TborStatus::MlDsaVerifyFailed,
     );
 }
 
 #[test]
-fn ml_dsa_sign_rejects_wrong_key_length() {
+fn ml_dsa_sign_rejects_wrong_declared_key_length() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
-    // The wire schema admits 2560..=4032 B so it covers both parameter
-    // sets, but this device is built for ML-DSA-44 and must accept only
-    // exactly 2560 B rather than misreading a differently-sized key.
-    //
-    // Note this uses 2561 B, not a real 4032 B ML-DSA-65 key: a full
-    // ML-DSA-65 signing key does not fit the 4 KiB TBOR request buffer at
-    // all, even with an empty message, so it cannot be put on the wire in
-    // the first place. That transport limit — not just the 322 KiB signing
-    // stack frame — is a second, independent blocker for ML-DSA-65 signing.
-    ctx.expect_fw_reject(
+    // A key sized for the parameter set this device was *not* built for.
+    // The declared length is what the firmware checks before starting the
+    // transfer, so this is refused cleanly with `InvalidArg` rather than
+    // surfacing as a DMA diagnostic.
+    ctx.expect_fw_reject_oob(
         &TborMlDsaSignReq {
             session_id: session.session_id,
-            signing_key: vec![0xAB; WRONG_SIGNING_KEY_LEN],
+            signing_key_len: WRONG_SIGNING_KEY_LEN as u32,
             msg: Vec::new(),
         },
+        &[&vec![0xAB; WRONG_SIGNING_KEY_LEN]],
         TborStatus::InvalidArg,
     );
+}
+
+#[test]
+fn ml_dsa_sign_rejects_key_shorter_than_declared() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    // Declare the right length but supply a shorter key out of band. The
+    // firmware's own check passes, so this exercises the second line of
+    // defence: the transfer itself length-checks the SGL descriptor against
+    // the buffer the handler reserved. A caller cannot talk the device into
+    // reading a short key as a whole one.
+    //
+    // The status is deliberately not pinned. Where the rejection comes from
+    // is backend-specific — on silicon the GDMA fails the descriptor
+    // (`0x08F08101`), while the emulator never models the descriptor and
+    // refuses it in software (`InvalidArg`). What matters, and what holds
+    // on both, is that the request does not succeed.
+    let err = ctx
+        .tbor_oob(
+            &TborMlDsaSignReq {
+                session_id: session.session_id,
+                signing_key_len: SIGNING_KEY_LEN as u32,
+                msg: Vec::new(),
+            },
+            &[&vec![0xAB; SIGNING_KEY_LEN - 1]],
+        )
+        .expect_err("a short OOB key must not be accepted");
+    let _ = err;
 }
 
 #[test]
@@ -283,12 +301,13 @@ fn ml_dsa_sign_rejects_out_of_range_coefficients() {
         *b = 0xFF;
     }
 
-    ctx.expect_fw_reject(
+    ctx.expect_fw_reject_oob(
         &TborMlDsaSignReq {
             session_id: session.session_id,
-            signing_key: sk,
+            signing_key_len: SIGNING_KEY_LEN as u32,
             msg: b"saturated key".to_vec(),
         },
+        &[&sk],
         TborStatus::MlDsaInvalidSigningKey,
     );
 
@@ -296,11 +315,14 @@ fn ml_dsa_sign_rejects_out_of_range_coefficients() {
     let (sk2, pk2) = host_keypair();
     let msg = b"still alive".to_vec();
     let resp = ctx
-        .tbor(&TborMlDsaSignReq {
-            session_id: session.session_id,
-            signing_key: sk2,
-            msg: msg.clone(),
-        })
+        .tbor_oob(
+            &TborMlDsaSignReq {
+                session_id: session.session_id,
+                signing_key_len: SIGNING_KEY_LEN as u32,
+                msg: msg.clone(),
+            },
+            &[&sk2],
+        )
         .expect("device must remain usable after a malformed key");
     assert!(host_verify(&pk2, &msg, &resp.signature));
 }
@@ -331,11 +353,14 @@ fn ml_dsa_keygen_on_device_then_sign() {
     // a well-formed but mismatched pair would pass a length check.
     let msg = b"generated on device".to_vec();
     let sig = ctx
-        .tbor(&TborMlDsaSignReq {
-            session_id: session.session_id,
-            signing_key: kp.signing_key,
-            msg: msg.clone(),
-        })
+        .tbor_oob(
+            &TborMlDsaSignReq {
+                session_id: session.session_id,
+                signing_key_len: SIGNING_KEY_LEN as u32,
+                msg: msg.clone(),
+            },
+            &[&kp.signing_key],
+        )
         .expect("MlDsaSign with a device-generated key");
 
     assert!(
