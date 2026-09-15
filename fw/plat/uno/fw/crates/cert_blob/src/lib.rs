@@ -19,7 +19,7 @@ use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 
 /// CBLOB magic: ASCII `"CERT"`.
-pub const CBLOB_MAGIC: [u8; 4] = [b'C', b'E', b'R', b'T'];
+pub const CBLOB_MAGIC: [u8; 4] = *b"CERT";
 
 /// Container format version.
 pub const CBLOB_VERSION: u8 = 1;
