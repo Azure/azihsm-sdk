@@ -16,13 +16,13 @@
 //!   *must* fail host-side TBOR decoding, panicking otherwise.
 //!
 //! Test files therefore never reach for the bare `Dev` handle or the
-//! `assert_*` helpers in [`crate::harness::assertions`] directly; the
+//! `assert_*` helpers in [`crate::assertions`] directly; the
 //! ctx is the single funnel that future cross-cutting changes (tracing,
 //! retry policy, fault injection) can hook into without touching every
 //! test.
 //!
 //! Cross-test isolation (process-global lock + factory reset) lives
-//! in [`crate::harness::fixture::open_dev`], which this type calls
+//! in [`crate::fixture::open_dev`], which this type calls
 //! through. Tests that mix-and-match raw [`open_dev`] calls and
 //! [`TestCtx`] both get the same guarantee.
 //!
@@ -43,24 +43,24 @@ use azihsm_ddi_tbor_types::TborPartFinalResp;
 use azihsm_ddi_tbor_types::TborPartInitResp;
 use azihsm_ddi_tbor_types::TborStatus;
 
-use crate::harness::api_rev::helper_api_rev_tbor;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::assertions::assert_tbor_decode_error;
-use crate::harness::fixture::open_dev;
-use crate::harness::fixture::open_dev_secondary;
-use crate::harness::fixture::TestDev;
-use crate::harness::session::part_final as part_final_helper;
-use crate::harness::session::part_init as part_init_helper;
-use crate::harness::session::psk_change as psk_change_helper;
-use crate::harness::session::session_close as session_close_helper;
-use crate::harness::session::session_open as session_open_helper;
-use crate::harness::session::session_open_finish as session_open_finish_helper;
-use crate::harness::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
-use crate::harness::session::session_open_init as session_open_init_helper;
-use crate::harness::session::session_open_init_with_options as session_open_init_with_options_helper;
-use crate::harness::session::PendingHandshake;
-use crate::harness::session::SessionHandshake;
-use crate::harness::session::SessionOpenInitOptions;
+use crate::api_rev::helper_api_rev_tbor;
+use crate::assertions::assert_fw_rejects;
+use crate::assertions::assert_tbor_decode_error;
+use crate::fixture::open_dev;
+use crate::fixture::open_dev_secondary;
+use crate::fixture::TestDev;
+use crate::session::part_final as part_final_helper;
+use crate::session::part_init as part_init_helper;
+use crate::session::psk_change as psk_change_helper;
+use crate::session::session_close as session_close_helper;
+use crate::session::session_open as session_open_helper;
+use crate::session::session_open_finish as session_open_finish_helper;
+use crate::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
+use crate::session::session_open_init as session_open_init_helper;
+use crate::session::session_open_init_with_options as session_open_init_with_options_helper;
+use crate::session::PendingHandshake;
+use crate::session::SessionHandshake;
+use crate::session::SessionOpenInitOptions;
 
 /// Fixed default 48-byte SATA thumbprint used by the convenience
 /// [`TestCtx::part_init`] wrapper, whose callers don't exercise the

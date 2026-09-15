@@ -19,6 +19,12 @@
 //! * Crypto-User session → `InvalidPermissions`.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
@@ -26,12 +32,6 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_EPHEMERAL: u8 = 0b010;

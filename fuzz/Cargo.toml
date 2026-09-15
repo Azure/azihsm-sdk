@@ -15,6 +15,9 @@ azihsm_ddi_emu = { path = "../ddi/emu" }
 azihsm_ddi_interface = { path = "../ddi/interface" }
 azihsm_ddi_mbor_types = { path = "../ddi/mbor/types" }
 azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
+azihsm_ddi_tbor_test_harness = { features = [
+  "emu",
+], path = "../crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
 azihsm_session_ex_crypto = { path = "../crates/session_ex_crypto" }
 x509 = { path = "../crates/x509" }
@@ -69,4 +72,11 @@ bench = false
 doc = false
 name = "fuzz_tbor_session_open_round_trip"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_round_trip.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_psk_change"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_psk_change.rs"
 test = false
