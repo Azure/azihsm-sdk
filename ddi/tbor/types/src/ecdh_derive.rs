@@ -42,6 +42,12 @@ pub struct TborEcdhDeriveReq {
     /// The peer's wire public key `x ‖ y` (little-endian, P-521 padded).
     #[tbor(max_len = 136)]
     pub peer_pub_key: Vec<u8>,
+
+    /// Caller-supplied key label recorded in the derived secret's masked
+    /// metadata, up to `TBOR_KEY_LABEL_MAX_LEN` (128) bytes.  Empty for an
+    /// unlabeled secret.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `EcdhDerive` response.

@@ -13,6 +13,7 @@ use azihsm_crypto::EccCurve;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
@@ -143,15 +144,13 @@ fn ecc_generate_key_tbor(
 /// Maps the requested ECC private-key usage onto the TBOR `KeyUsage`
 /// bitfield the firmware stamps into the masked metadata.
 ///
-/// Only `SIGN` is accepted today: the `DERIVE` consumer (ECDH) has no TBOR
-/// path yet, so minting a `DERIVE`-only key here would produce a key the
-/// public ECDH API cannot use.  Reject anything but a signing key until
-/// TBOR ECDH lands.
+/// Exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is valid for a
+/// generated ECC private key; the firmware rejects any other combination.
 fn ecc_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
-    if props.can_sign() && !props.can_derive() {
-        Ok(KEY_USAGE_SIGN)
-    } else {
-        Err(HsmError::InvalidKeyProps)
+    match (props.can_sign(), props.can_derive()) {
+        (true, false) => Ok(KEY_USAGE_SIGN),
+        (false, true) => Ok(KEY_USAGE_DERIVE),
+        _ => Err(HsmError::InvalidKeyProps),
     }
 }
 
@@ -376,22 +375,23 @@ fn tbor_sig_to_be(curve: HsmEccCurve, wire_sig: &[u8], out: &mut [u8]) -> HsmRes
     Ok(sig_len)
 }
 
-/// Performs ECDH key agreement and creates a derived secret key in the HSM.
+/// Performs ECDH key agreement and returns the derived shared secret.
 ///
-/// This is a low-level DDI wrapper that executes the `EcdhKeyExchange` operation using an
-/// existing ECC private key (`base_key`) and a peer public key provided as DER bytes.
+/// A V2 (TBOR) session derives with the caller-held masked base key and
+/// returns a non-resident `Unpinned` secret; a V1 (MBOR) session derives
+/// with the device-resident base key and returns a `Pinned` secret.
 ///
 /// # Arguments
 ///
 /// * `base_key` - The local ECC private key used as the ECDH base key.
 /// * `peer_pub_der` - DER-encoded peer public key.
-/// * `derived_key_props` - Properties for the derived key to be created in the HSM.
+/// * `derived_key_props` - Properties requested for the derived secret.
 ///
 /// # Returns
 ///
 /// Returns a tuple containing:
-/// - `HsmKeyHandle` - Handle of the newly created derived key.
-/// - `HsmKeyProps` - Properties for the derived key, updated with masked key material.
+/// - `HsmKeyHandle` - `Pinned` on MBOR (device-resident), `Unpinned` on TBOR.
+/// - `HsmKeyProps` - Device-returned properties of the derived secret.
 ///
 /// # Errors
 ///
@@ -466,11 +466,20 @@ fn ecdh_derive_tbor(
     let masked = base_key.masked_key_vec()?;
     let peer_pub_key = ecc_der_pub_key_to_wire(curve, peer_pub_der)?;
 
+    // The caller-supplied label round-trips into the derived-secret's masked
+    // metadata (parity with the MBOR path, which carries it via
+    // `key_properties`); the firmware stamps this exact label.
+    let key_label = derived_key_props.label();
+    if key_label.len() > TBOR_KEY_LABEL_MAX_LEN {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
     let req = TborEcdhDeriveReq {
         session_id: base_key.session().ex_session_id()?,
         scope: derived_key_props.tbor_scope(),
         masked_key: masked,
         peer_pub_key,
+        key_label: key_label.to_vec(),
     };
     let mut cookie = None;
     let resp = base_key.with_dev(|dev| {
@@ -484,7 +493,7 @@ fn ecdh_derive_tbor(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((ddi::HsmKeyHandle::NoKeyId, dev_key_props))
+    Ok((ddi::HsmKeyHandle::Unpinned, dev_key_props))
 }
 
 /// Converts a DER SPKI peer public key into the TBOR wire form: `x ‖ y`,
