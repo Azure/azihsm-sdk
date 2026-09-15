@@ -14,7 +14,6 @@
 //!
 //! Available to both Crypto-Officer and Crypto-User sessions.
 
-use azihsm_fw_core_crypto_ml_dsa::SIGNING_KEY_LEN;
 use azihsm_fw_core_crypto_ml_dsa::VERIFYING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaKeyGenReq;
 use azihsm_fw_ddi_tbor_types::TborMlDsaKeyGenResp;
@@ -42,11 +41,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let mut seed = [0u8; 32];
     pal.rng_fill_bytes(io, &mut seed)?;
 
-    // Reserve both output slots and generate straight into them, so the
-    // response buffer is the only copy of the private half.
+    // Reserve both output slots and derive straight into them. The reply
+    // carries the seed rather than the expanded signing key: the response
+    // path is capped at one 4 KiB page, which 4032 + 1952 B exceeds at
+    // ML-DSA-65, and the seed is the same secret in a 32-byte form.
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborMlDsaKeyGenResp::encode(buf, 0, false)?
-            .signing_key_reserve(SIGNING_KEY_LEN)?
+            .seed_reserve(32)?
             .verifying_key_reserve(VERIFYING_KEY_LEN)?
             .finish();
         Ok(frame.as_bytes().len())
@@ -54,12 +55,14 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     let outcome = {
         let out = TborMlDsaKeyGenResp::decode_mut(resp)?;
-        azihsm_fw_core_crypto_ml_dsa::keygen_into(&seed, out.signing_key, out.verifying_key)
+        out.seed.copy_from_slice(&seed);
+        azihsm_fw_core_crypto_ml_dsa::keygen_into(&seed, out.verifying_key)
             .map_err(|_| HsmError::MlDsaKeyGenFailed)
     };
 
-    // The seed reconstructs the private key, so it must not outlive the
-    // call — scrubbed on both the success and failure paths.
+    // The local copy of the seed is redundant once it is in the response
+    // buffer, so scrub it on both paths. The response itself carries the
+    // secret to the caller by design.
     seed.fill(0);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 

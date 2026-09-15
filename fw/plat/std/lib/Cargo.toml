@@ -10,6 +10,7 @@ async-channel.workspace = true
 azihsm_fw_ddi_mbor_types.workspace = true
 azihsm_fw_hsm_core = { features = [
   "tbor-ml-dsa-44",
+  "tbor-ml-dsa-keygen",
   "tracing",
 ], workspace = true }
 azihsm_fw_hsm_core_tracing = { features = ["level-debug"], workspace = true }

@@ -71,6 +71,16 @@ const EMU_PART_RES_MASK: u128 = 1u128 << EMU_PID;
 /// 4-KiB page bound, so we allocate one full page per direction.
 const SCRATCH_LEN: usize = 4096;
 
+/// Size of the scratch buffer used for the DDI **response**.
+///
+/// The real backends advertise an 8 KiB response buffer (`RESP_BUF_LEN` in
+/// `ddi/nix` and `ddi/win`) and the firmware's own limit is `MAX_DST_LEN`,
+/// also 8 KiB. Sizing this at 4 KiB made the emulator the strictest link in
+/// the chain: a reply between 4 and 8 KiB — `MlDsaKeyGen` at ML-DSA-65
+/// returns 4032 + 1952 B — overran this buffer and corrupted the host heap
+/// instead of being rejected or handled.
+const RESP_SCRATCH_LEN: usize = 8192;
+
 /// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
 const OOB_ENTRY_LEN: usize = 16;
 
@@ -201,7 +211,7 @@ impl DdiDev for DdiEmuDev {
 
         // ── 2. Encode DDI request via host MBOR (wire-compat with fw) ─
         let mut src = AlignedBuf::new(SCRATCH_LEN);
-        let mut dst = AlignedBuf::new(SCRATCH_LEN);
+        let mut dst = AlignedBuf::new(RESP_SCRATCH_LEN);
 
         let req_len = {
             let mut enc = MborEncoder::new(src.as_mut_slice(), pre_encode);
@@ -216,7 +226,7 @@ impl DdiDev for DdiEmuDev {
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(OP_MBOR).with_id(cmd_id))
-            .buf_lens(req_len as u32, SCRATCH_LEN as u32)
+            .buf_lens(req_len as u32, RESP_SCRATCH_LEN as u32)
             .src_prp1(req_buf.as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .session_flags(
@@ -299,7 +309,7 @@ impl DdiDev for DdiEmuDev {
 
         // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
         let mut src = AlignedBuf::new(SCRATCH_LEN);
-        let mut dst = AlignedBuf::new(SCRATCH_LEN);
+        let mut dst = AlignedBuf::new(RESP_SCRATCH_LEN);
 
         let req_len = {
             let bytes = req.encode_request(src.as_mut_slice())?;
@@ -351,7 +361,7 @@ impl DdiDev for DdiEmuDev {
         };
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(OP_TBOR).with_id(cmd_id))
-            .buf_lens(req_len as u32, SCRATCH_LEN as u32)
+            .buf_lens(req_len as u32, RESP_SCRATCH_LEN as u32)
             .src_prp1(src.as_slice().as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
             .oob_prp(oob_prp)

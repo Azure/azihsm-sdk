@@ -24,7 +24,6 @@
 //! [`import_signing_key`] is the safe entry point that callers should use in
 //! place of `from_expanded`.
 
-use ml_dsa::signature::Keypair;
 use ml_dsa::EncodedSignature;
 use ml_dsa::EncodedVerifyingKey;
 use ml_dsa::ExpandedSigningKey;
@@ -242,47 +241,33 @@ impl From<MlDsaKeyError> for MlDsaOpError {
     }
 }
 
-/// Generates a keypair from `seed`, writing the encoded signing key into
-/// `out_sk` and the encoded verifying key into `out_pk`.
+/// Derives the encoded verifying key for `seed`, writing it into `out_pk`.
 ///
-/// This is FIPS 204 `ML-DSA.KeyGen_internal`: the caller supplies the
-/// 32-byte seed (on-device that is hardware entropy), and both halves are
-/// emitted in their wire encodings so the key never has to be re-derived.
+/// The signing key is not produced: the DDI returns the seed itself, which
+/// is the private key in FIPS 204's seed form, so the expanded key is never
+/// needed on-device at generation time.
 ///
 /// # Stack
 ///
-/// Deliberately a **single** frame. Emitting the two halves from separate
-/// `#[inline(never)]` helpers was measured and is worse, not better: the
-/// key derivation is then instantiated in both, and the chain grew from
-/// 235.5 KiB to 294.6 KiB at ML-DSA-65 (149.3 -> 190.9 KiB at ML-DSA-44).
-/// Splitting only pays when it stops something large being live across the
-/// boundary, which is not the case here.
-///
-/// Worst-case chain: 149.3 KiB at ML-DSA-44, which fits the 212.9 KiB
-/// stack, and 235.5 KiB at ML-DSA-65, which does not — hence
-/// `tbor-ml-dsa-keygen` being ML-DSA-44 only. The residual cost at
-/// ML-DSA-65 is `VerifyingKey::new` (54 KiB) running while the whole
-/// `SigningKey` is still live; `SigningKey` caches the verifying key only
-/// under the crate's `alloc` feature, which a no-std firmware build cannot
-/// enable. Fitting it needs in-place construction inside the ml-dsa crate.
+/// `#[inline(never)]`. Uses the crate's combined entry point, which returns
+/// the encoded verifying key that key generation already computed as the
+/// input to the `tr` hash. Recovering it afterwards via `verifying_key()`
+/// instead repeats the whole `A * s1 + s2` product in a 54 KiB frame on top
+/// of this one — measured, that is the difference between a 137.1 KiB and a
+/// 235.5 KiB chain at ML-DSA-65, against a 212.9 KiB stack.
 ///
 /// # Errors
 ///
-/// - [`MlDsaOpError::BadLength`] if either output buffer is the wrong size.
+/// - [`MlDsaOpError::BadLength`] if `out_pk` is the wrong length.
 #[inline(never)]
-pub fn keygen_into(
-    seed: &[u8; 32],
-    out_sk: &mut [u8],
-    out_pk: &mut [u8],
-) -> Result<(), MlDsaOpError> {
-    if out_sk.len() != SIGNING_KEY_LEN || out_pk.len() != VERIFYING_KEY_LEN {
+pub fn keygen_into(seed: &[u8; 32], out_pk: &mut [u8]) -> Result<(), MlDsaOpError> {
+    if out_pk.len() != VERIFYING_KEY_LEN {
         return Err(MlDsaOpError::BadLength);
     }
 
-    let sk = SigningKey::<Param>::from_seed(seed.into());
-    #[allow(deprecated)]
-    out_sk.copy_from_slice(sk.expanded_key().to_expanded().as_slice());
-    out_pk.copy_from_slice(sk.verifying_key().encode().as_slice());
+    let mut sk_enc = ExpandedSigningKeyBytes::<Param>::default();
+    let pk_enc = SigningKey::<Param>::keygen_encoded_into(seed.into(), &mut sk_enc);
+    out_pk.copy_from_slice(pk_enc.as_slice());
     Ok(())
 }
 

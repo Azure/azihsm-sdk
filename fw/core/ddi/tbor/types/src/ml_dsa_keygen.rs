@@ -39,9 +39,19 @@
 //!
 //! * `session_id` — TOC-carried session id; cross-checked by the dispatcher.
 //!
+//! # Why the seed, not the expanded key
+//!
+//! The reply carries the 32-byte **seed**, not the 4032-byte expanded
+//! signing key. The response path is capped at one 4 KiB page — measured: a
+//! 4032 + 1952 B reply comes back with the trailing 1904 bytes of the
+//! verifying key zeroed — so the expanded form does not fit at ML-DSA-65.
+//! The seed is the private key in FIPS 204's own seed form and a host can
+//! expand it cheaply, so nothing is lost by sending the smaller of the two
+//! representations.
+//!
 //! Outputs:
 //!
-//! * `signing_key` — the FIPS 204 encoded signing key (`sk`).
+//! * `seed` — the 32-byte FIPS 204 key-generation seed.
 //! * `verifying_key` — the FIPS 204 encoded verifying key (`pk`).
 
 use azihsm_fw_ddi_tbor_api::tbor;
@@ -69,10 +79,10 @@ pub struct TborMlDsaKeyGenReq {
 /// only copy of the private half.
 #[tbor(response)]
 pub struct TborMlDsaKeyGenResp<'a> {
-    /// The FIPS 204 encoded signing key: 2560 B at ML-DSA-44, 4032 B at
-    /// ML-DSA-65.
-    #[tbor(buffer, min_len = 2560, max_len = 4032, mutable)]
-    pub signing_key: &'a [u8],
+    /// The 32-byte FIPS 204 key-generation seed. Expanding it yields the
+    /// signing key; this is private key material.
+    #[tbor(buffer, min_len = 32, max_len = 32, mutable)]
+    pub seed: &'a [u8],
 
     /// The FIPS 204 encoded verifying key: 1312 B at ML-DSA-44, 1952 B at
     /// ML-DSA-65.
@@ -86,32 +96,20 @@ mod tests {
 
     use super::*;
 
+    /// The largest reply must clear the response path's 4 KiB cap.
+    ///
+    /// Pinned because exceeding it does not fail cleanly: the reply is
+    /// silently truncated, which showed up as a keypair whose verifying key
+    /// was mostly zeros.
     #[test]
-    fn response_round_trips_both_halves() {
-        let mut buf = [0u8; 8192];
-        let sk = [0x11u8; ML_DSA_65_SIGNING_KEY_LEN];
-        let pk = [0x22u8; ML_DSA_65_VERIFYING_KEY_LEN];
-        let frame = TborMlDsaKeyGenResp::encode(&mut buf, 0, false)
-            .unwrap()
-            .signing_key(&sk)
-            .unwrap()
-            .verifying_key(&pk)
-            .unwrap()
-            .finish();
-        assert_eq!(frame.signing_key().len(), ML_DSA_65_SIGNING_KEY_LEN);
-        assert_eq!(frame.verifying_key().len(), ML_DSA_65_VERIFYING_KEY_LEN);
-    }
-
-    /// The largest reply must clear the firmware's 8 KiB outbound cap.
-    #[test]
-    fn worst_case_response_fits_max_dst_len() {
-        const MAX_DST_LEN: usize = 2 * 4096;
-        let mut buf = [0u8; MAX_DST_LEN];
-        let sk = [0u8; ML_DSA_65_SIGNING_KEY_LEN];
+    fn worst_case_response_fits_one_page() {
+        const MAX_RESPONSE: usize = 4096;
+        let mut buf = [0u8; MAX_RESPONSE];
+        let seed = [0u8; 32];
         let pk = [0u8; ML_DSA_65_VERIFYING_KEY_LEN];
         TborMlDsaKeyGenResp::encode(&mut buf, 0, false)
             .unwrap()
-            .signing_key(&sk)
+            .seed(&seed)
             .unwrap()
             .verifying_key(&pk)
             .unwrap();

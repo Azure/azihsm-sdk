@@ -108,6 +108,17 @@ fn host_keypair() -> (Vec<u8>, Vec<u8>) {
     )
 }
 
+/// Expand a 32-byte seed into the encoded signing key.
+///
+/// This is what a caller does with the seed `MlDsaKeyGen` returns: the
+/// device sends the seed because the expanded form does not fit its
+/// response path, and expanding it is free on a host.
+fn expand_seed(seed: &[u8; 32]) -> Vec<u8> {
+    let sk = SigningKey::<Param>::from_seed(&(*seed).into());
+    #[allow(deprecated)]
+    sk.expanded_key().to_expanded().to_vec()
+}
+
 /// Sign `msg` on the host with the same deterministic variant the device
 /// uses, returning the encoded signature.
 fn host_sign(msg: &[u8]) -> Vec<u8> {
@@ -328,11 +339,6 @@ fn ml_dsa_sign_rejects_out_of_range_coefficients() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "mldsa-65",
-    ignore = "on-device keygen is ML-DSA-44 only: the ML-DSA-65 chain is \
-              235.5 KiB against a 212.9 KiB stack"
-)]
 fn ml_dsa_keygen_on_device_then_sign() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -344,8 +350,15 @@ fn ml_dsa_keygen_on_device_then_sign() {
             session_id: session.session_id,
         })
         .expect("MlDsaKeyGen");
-    assert_eq!(kp.signing_key.len(), SIGNING_KEY_LEN);
+    assert_eq!(kp.seed.len(), 32);
     assert_eq!(kp.verifying_key.len(), VERIFYING_KEY_LEN);
+
+    // The device returns the seed; expand it here to get the signing key.
+    // That is the whole point of returning the seed — the expanded form is
+    // 4032 B at ML-DSA-65 and does not fit the response path, while a host
+    // can expand it for nothing.
+    let seed: [u8; 32] = kp.seed.clone().try_into().expect("32-byte seed");
+    let expanded = expand_seed(&seed);
 
     // A generated key must actually be usable: sign with it and check the
     // signature against the verifying key the device returned alongside it.
@@ -359,7 +372,7 @@ fn ml_dsa_keygen_on_device_then_sign() {
                 signing_key_len: SIGNING_KEY_LEN as u32,
                 msg: msg.clone(),
             },
-            &[&kp.signing_key],
+            &[&expanded],
         )
         .expect("MlDsaSign with a device-generated key");
 
@@ -370,11 +383,6 @@ fn ml_dsa_keygen_on_device_then_sign() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "mldsa-65",
-    ignore = "on-device keygen is ML-DSA-44 only: the ML-DSA-65 chain is \
-              235.5 KiB against a 212.9 KiB stack"
-)]
 fn ml_dsa_keygen_is_not_deterministic() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
@@ -394,11 +402,89 @@ fn ml_dsa_keygen_is_not_deterministic() {
         .expect("MlDsaKeyGen");
 
     assert_ne!(
-        a.signing_key, b.signing_key,
-        "two keygen calls must not return the same signing key",
+        a.seed, b.seed,
+        "two keygen calls must not return the same seed",
     );
     assert_ne!(
         a.verifying_key, b.verifying_key,
         "two keygen calls must not return the same verifying key",
+    );
+}
+
+/// Per-operation turnaround time, as a caller sees it.
+///
+/// Ignored by default: it is a measurement, not an assertion, and it is only
+/// meaningful against real silicon. Run with
+/// `--features mldsa-65 -- --ignored --nocapture ml_dsa_timing`.
+///
+/// Times the DDI round trip — encode, transfer, firmware work, response —
+/// which is the number that matters to an integrator, not the isolated
+/// crypto cost. Session setup is excluded.
+#[test]
+#[ignore = "measurement; run explicitly against hardware"]
+fn ml_dsa_timing() {
+    use std::time::Instant;
+
+    const ITERS: u32 = 40;
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (sk, pk) = host_keypair();
+    let msg = b"turnaround measurement".to_vec();
+    let sig = host_sign(&msg);
+
+    // Each iteration gets a distinct message. That matters for signing:
+    // ML-DSA uses rejection sampling, so the number of rounds — and hence
+    // the time — depends on the (key, message) pair. Repeating one fixed
+    // message would time a single draw from that distribution N times over
+    // and report it as an average.
+    let timed = |name: &str, f: &mut dyn FnMut(u32)| {
+        f(0);
+        let t = Instant::now();
+        for i in 0..ITERS {
+            f(i + 1);
+        }
+        let per = t.elapsed() / ITERS;
+        println!("TIMING {name:>8}: {:>8.3} ms", per.as_secs_f64() * 1e3);
+    };
+
+    timed("keygen", &mut |_| {
+        ctx.tbor(&TborMlDsaKeyGenReq {
+            session_id: session.session_id,
+        })
+        .expect("keygen");
+    });
+
+    timed("sign", &mut |i| {
+        let mut m = msg.clone();
+        m.extend_from_slice(&i.to_le_bytes());
+        ctx.tbor_oob(
+            &TborMlDsaSignReq {
+                session_id: session.session_id,
+                signing_key_len: SIGNING_KEY_LEN as u32,
+                msg: m,
+            },
+            &[&sk],
+        )
+        .expect("sign");
+    });
+
+    // Verification has no rejection loop, so its cost does not vary with the
+    // message; a fixed valid pair is representative.
+    timed("verify", &mut |_| {
+        ctx.tbor_oob(
+            &TborMlDsaVerifyReq {
+                session_id: session.session_id,
+                verifying_key: pk.clone(),
+                signature_len: SIGNATURE_LEN as u32,
+                msg: msg.clone(),
+            },
+            &[&sig],
+        )
+        .expect("verify");
+    });
+
+    println!(
+        "TIMING sizes: sk={} pk={} sig={} seed=32",
+        SIGNING_KEY_LEN, VERIFYING_KEY_LEN, SIGNATURE_LEN
     );
 }

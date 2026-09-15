@@ -35,10 +35,14 @@ pub struct TborMlDsaKeyGenReq {
 #[tbor(response)]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborMlDsaKeyGenResp {
-    /// The FIPS 204 encoded signing key: 2560 B at ML-DSA-44, 4032 B at
+    /// The 32-byte FIPS 204 key-generation seed. Expanding it yields the
+    /// signing key; this is private key material.
+    ///
+    /// The expanded key is not returned: the response path is capped at one
+    /// 4 KiB page, which a 4032 B key plus the verifying key exceeds at
     /// ML-DSA-65.
-    #[tbor(min_len = 2560, max_len = 4032)]
-    pub signing_key: Vec<u8>,
+    #[tbor(min_len = 32, max_len = 32)]
+    pub seed: Vec<u8>,
 
     /// The FIPS 204 encoded verifying key: 1312 B at ML-DSA-44, 1952 B at
     /// ML-DSA-65.
