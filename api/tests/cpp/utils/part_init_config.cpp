@@ -424,8 +424,7 @@ std::string get_mobk_path()
 #else
         auto pid = static_cast<unsigned long long>(getpid());
 #endif
-        auto name = "azihsm-mobk-" + std::to_string(pid) + "-" +
-                    std::to_string(nanos) + ".bin";
+        auto name = "azihsm-mobk-" + std::to_string(pid) + "-" + std::to_string(nanos) + ".bin";
         return (std::filesystem::temp_directory_path() / name).string();
     }();
     return default_path;
