@@ -59,13 +59,13 @@ fn sd_restore_remote_backup_roundtrip() {
         })
         .expect("restore remote backup");
 
-    // Local backup (BKS3 re-masked under PartLocalMK), 180 B, non-zero.
+    // Local backup (BKS3 re-masked under PartLocalMK), 276 B, non-zero.
     assert_eq!(restored.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         restored.pok_local_backup.iter().any(|&b| b != 0),
         "pok_local_backup must not be all-zero",
     );
-    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 164 B.
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
     assert_eq!(restored.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
         restored.sd_mk_backup.iter().any(|&b| b != 0),

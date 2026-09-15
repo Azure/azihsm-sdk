@@ -13,7 +13,7 @@ use super::*;
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
 /// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
-const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
+const TBOR_MASKED_KEY_METADATA_LEN: usize = 192;
 /// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
 /// Bit offset of the `KeyScope` field packed into `usage_flags`.
@@ -230,11 +230,11 @@ impl HsmMaskedKey {
             TborMaskedKeyKind::Aes256 => (HsmKeyKind::Aes, 256, None),
         };
 
-        // The masked payload is the raw AES key or the ECC private scalar, so
-        // its length follows from the key kind (P-521 rounds up to 66 bytes,
-        // not `bits / 8`).
+        // The masked payload is the raw AES key or the ECC private scalar.
+        // ECC scalars are zero-padded to a 4-byte-aligned wire length
+        // (P-521: 66 -> 68).
         let payload_len = match curve {
-            Some(curve) => curve.component_size(),
+            Some(curve) => curve.component_size().next_multiple_of(4),
             None => usize::from(bits) / 8,
         };
         if envelope.payload.len() != payload_len {

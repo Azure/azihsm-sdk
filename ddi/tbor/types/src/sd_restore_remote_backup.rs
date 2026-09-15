@@ -40,7 +40,7 @@ pub struct TborSdRestoreRemoteBackupReq {
     pub session_id: u16,
 
     /// The receiver's masked SD-sealing key (from `SdSealingKeyGen`),
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to
     /// recover the receiver's private HPKE key (`RcvrPriv`).
     pub masked_sealing_key: [u8; MASKED_SEALING_KEY_LEN],
 
@@ -71,7 +71,7 @@ pub struct TborSdRestoreRemoteBackupReq {
     pub src_remote_backup: [u8; POK_REMOTE_BACKUP_LEN],
 
     /// Previous security-domain masking-key backup (SDMK masked under the
-    /// derived SDBMK), exactly [`SD_MK_BACKUP_LEN`] (164 B), from which
+    /// derived SDBMK), exactly [`SD_MK_BACKUP_LEN`] (260 B), from which
     /// `SDMK` is recovered.
     pub prev_sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
@@ -81,14 +81,14 @@ pub struct TborSdRestoreRemoteBackupReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborSdRestoreRemoteBackupResp {
     /// Partition-owner-key backup re-wrapped under the device-local key
-    /// (exactly 180 B on the wire; the firmware schema is the length
+    /// (exactly 276 B on the wire; the firmware schema is the length
     /// authority).
-    #[tbor(max_len = 180)]
+    #[tbor(max_len = 276)]
     pub pok_local_backup: Vec<u8>,
 
-    /// Security-domain masking-key backup envelope (exactly 164 B on the
+    /// Security-domain masking-key backup envelope (exactly 260 B on the
     /// wire; the firmware schema is the length authority).
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub sd_mk_backup: Vec<u8>,
 }
 

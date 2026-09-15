@@ -22,8 +22,6 @@
 //! * One-shot — restore onto an already-initialized SD → `SdAlreadyInitialized`.
 //! * Restore before finalize → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreRemoteBackupReq;
@@ -129,7 +127,7 @@ fn restore_remote_req(session_id: u16, backup: &RemoteBackup) -> TborSdRestoreRe
 }
 
 #[test]
-fn sd_restore_remote_backup_roundtrip_emu() {
+fn sd_restore_remote_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -158,13 +156,13 @@ fn sd_restore_remote_backup_roundtrip_emu() {
         .tbor_oob(&req, &backup.evidence.oob())
         .expect("SdRestoreRemoteBackup roundtrip");
 
-    // Local backup (BKS3 masked under PartLocalMK), 180 B, non-zero.
+    // Local backup (BKS3 masked under PartLocalMK), 276 B, non-zero.
     assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         resp.pok_local_backup.iter().any(|&b| b != 0),
         "pok_local_backup must not be all-zero",
     );
-    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 164 B.
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
     assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
         resp.sd_mk_backup.iter().any(|&b| b != 0),
@@ -173,7 +171,7 @@ fn sd_restore_remote_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_is_one_shot_emu() {
+fn sd_restore_remote_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -223,14 +221,14 @@ fn sd_restore_remote_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_remote_backup_rejects_before_finalize_emu() {
+fn sd_restore_remote_backup_rejects_before_finalize() {
     // A partition that has not been finalized is rejected at the lifecycle
     // gate before any evidence or crypto work.
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let req = TborSdRestoreRemoteBackupReq {
         session_id: session.session_id,
-        masked_sealing_key: [0u8; 180],
+        masked_sealing_key: [0u8; 276],
         policy: PartPolicy::zeroed(),
         sender_mfgr_cert_chain: Vec::new(),
         sender_owner_cert_chain: Vec::new(),

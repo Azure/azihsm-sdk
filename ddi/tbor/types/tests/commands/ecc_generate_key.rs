@@ -21,6 +21,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
@@ -43,12 +44,12 @@ fn wire_pub_len(curve: u8) -> usize {
 }
 
 /// Expected masked private-key envelope length per curve:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(wire_priv) ‖ tag(16)` = 132 + priv.
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(wire_priv) ‖ tag(16)` = 228 + priv.
 fn masked_key_len(curve: u8) -> usize {
     match curve {
-        ECC_CURVE_P256 => 132 + 32,
-        ECC_CURVE_P384 => 132 + 48,
-        ECC_CURVE_P521 => 132 + 68,
+        ECC_CURVE_P256 => 228 + 32,
+        ECC_CURVE_P384 => 228 + 48,
+        ECC_CURVE_P521 => 228 + 68,
         _ => unreachable!(),
     }
 }
@@ -60,6 +61,8 @@ fn generate(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) {
             session_id,
             scope,
             curve,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
 
@@ -113,6 +116,8 @@ fn ecc_generate_key_unknown_curve_rejected_emu() {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
             curve: 0,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );

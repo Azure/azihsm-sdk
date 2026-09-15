@@ -23,13 +23,13 @@ use crate::tbor;
 pub const TBOR_OP_HMAC_GENERATE_KEY: u8 = 0x11;
 
 /// Minimum masked HMAC-key envelope length (SHA-256, 32-byte key): an
-/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖
+/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖
 /// pt(32) ‖ tag(16)`.
-pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked HMAC-key envelope length (128-byte key): an AEAD-GCM-256
-/// masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(128) ‖ tag(16)`.
-pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+/// masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(128) ‖ tag(16)`.
+pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `HashAlgo` discriminant for HMAC-SHA-256 (mirror of the firmware
 /// `HsmHashAlgo` / TBOR `HashAlgo` value).
@@ -68,9 +68,9 @@ pub struct TborHmacGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborHmacGenerateKeyResp {
     /// The freshly generated HMAC key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  `132 + key_length` B (164 … 260 B
+    /// requested scope's masking key.  `228 + key_length` B (260 … 356 B
     /// for a 32 … 128-byte key); not stored on-device.
-    #[tbor(max_len = 260)]
+    #[tbor(max_len = 356)]
     pub masked_key: Vec<u8>,
 }
 

@@ -28,8 +28,8 @@
 //!
 //! * `masked_key` — the freshly generated AES key, masked (AEAD-GCM-256)
 //!   under the requested scope's masking key.  Its length depends on the
-//!   key size: [`MASKED_AES_KEY_MIN_LEN`] (148 B, AES-128) …
-//!   [`MASKED_AES_KEY_MAX_LEN`] (164 B, AES-256).
+//!   key size: [`MASKED_AES_KEY_MIN_LEN`] (244 B, AES-128) …
+//!   [`MASKED_AES_KEY_MAX_LEN`] (260 B, AES-256).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 use open_enum::open_enum;
@@ -41,14 +41,14 @@ use crate::key_props::KeyUsage;
 pub const TBOR_OP_AES_GENERATE_KEY: u8 = 0x15;
 
 /// Minimum masked AES-key envelope length (AES-128, 16-byte key): an
-/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖
+/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖
 /// pt(16) ‖ tag(16)`.  Lower bound of the masked-key output.
-pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 96 + 16 + 16;
+pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 192 + 16 + 16;
 
 /// Maximum masked AES-key envelope length (AES-256, 32-byte key): the same
 /// envelope with a 32-byte plaintext.  Pinned into the `#[tbor(buffer,
-/// max_len = 164)]` literal on [`TborAesGenerateKeyResp::masked_key`].
-pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 96 + 32 + 16;
+/// max_len = 260)]` literal on [`TborAesGenerateKeyResp::masked_key`].
+pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// AES key-size selector on the TBOR wire.
 ///
@@ -100,9 +100,9 @@ pub struct TborAesGenerateKeyReq<'a> {
     pub key_usage: KeyUsage,
 
     /// Caller-supplied key label recorded in the masked blob's
-    /// `MaskedKeyMetadata.key_label`, up to 32 bytes.
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.
     /// Empty for an unlabeled key.
-    #[tbor(buffer, max_len = 32)]
+    #[tbor(buffer, max_len = 128)]
     pub key_label: &'a [u8],
 }
 
@@ -114,10 +114,10 @@ pub struct TborAesGenerateKeyReq<'a> {
 #[tbor(response)]
 pub struct TborAesGenerateKeyResp<'a> {
     /// The freshly generated AES key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  148 / 156 / 164 B for
+    /// requested scope's masking key.  244 / 252 / 260 B for
     /// AES-128 / 192 / 256.  The key is not stored on the device; the
     /// caller passes this blob back to `AesEncryptDecrypt`.
-    #[tbor(buffer, max_len = 164, mutable)]
+    #[tbor(buffer, max_len = 260, mutable)]
     pub masked_key: &'a [u8],
 }
 
@@ -172,8 +172,8 @@ mod tests {
     fn masked_key_lengths_match_pinned_values() {
         // The `#[tbor(buffer, max_len = N)]` attribute must remain a
         // numeric literal; pin it against the exported const.
-        const _: () = assert!(164 == MASKED_AES_KEY_MAX_LEN);
-        assert_eq!(MASKED_AES_KEY_MIN_LEN, 148);
-        assert_eq!(MASKED_AES_KEY_MAX_LEN, 164);
+        const _: () = assert!(260 == MASKED_AES_KEY_MAX_LEN);
+        assert_eq!(MASKED_AES_KEY_MIN_LEN, 244);
+        assert_eq!(MASKED_AES_KEY_MAX_LEN, 260);
     }
 }
