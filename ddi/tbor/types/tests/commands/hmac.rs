@@ -97,7 +97,7 @@ fn mac(ctx: &TestCtx, session_id: u16, masked_key: &[u8], msg: &[u8]) -> Vec<u8>
 }
 
 #[test]
-fn hmac_roundtrip_all_hashes_emu() {
+fn hmac_roundtrip_all_hashes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let msg = b"the quick brown fox";
@@ -121,7 +121,7 @@ fn hmac_roundtrip_all_hashes_emu() {
 }
 
 #[test]
-fn hmac_session_scope_roundtrip_emu() {
+fn hmac_session_scope_roundtrip() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_SESSION, HMAC_HASH_SHA256);
@@ -138,7 +138,7 @@ fn hmac_session_scope_roundtrip_emu() {
 /// reproduce the tag, proving the key material survives wrap → unwrap →
 /// mask → unmask intact.
 #[test]
-fn hmac_unwrapped_key_roundtrip_emu() {
+fn hmac_unwrapped_key_roundtrip() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -158,7 +158,7 @@ fn hmac_unwrapped_key_roundtrip_emu() {
 }
 
 #[test]
-fn hmac_empty_message_emu() {
+fn hmac_empty_message() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
@@ -171,7 +171,7 @@ fn hmac_empty_message_emu() {
 }
 
 #[test]
-fn hmac_rejects_tampered_key_emu() {
+fn hmac_rejects_tampered_key() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let mut masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
@@ -192,7 +192,7 @@ fn hmac_rejects_tampered_key_emu() {
 /// Compare full tags with a host computation, including the
 /// SHA-2 padding transitions, block boundaries, and the wire message cap.
 #[test]
-fn hmac_matches_host_at_message_boundaries_emu() {
+fn hmac_matches_host_at_message_boundaries() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for (class, hash, key_len) in [
@@ -231,7 +231,7 @@ fn hmac_matches_host_at_message_boundaries_emu() {
 }
 
 #[test]
-fn hmac_session_scope_before_finalize_emu() {
+fn hmac_session_scope_before_finalize() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
@@ -246,7 +246,7 @@ fn hmac_session_scope_before_finalize_emu() {
 }
 
 #[test]
-fn hmac_rejects_non_hmac_key_emu() {
+fn hmac_rejects_non_hmac_key() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     // AES-256 has the same envelope length as HMAC-SHA-256, so this
@@ -263,7 +263,7 @@ fn hmac_rejects_non_hmac_key_emu() {
 }
 
 #[test]
-fn hmac_variable_key_lengths_all_scopes_emu() {
+fn hmac_variable_key_lengths_all_scopes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for (hash, lengths) in [
@@ -296,7 +296,7 @@ fn hmac_variable_key_lengths_all_scopes_emu() {
 }
 
 #[test]
-fn hmac_rejects_invalid_session_emu() {
+fn hmac_rejects_invalid_session() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
@@ -311,7 +311,7 @@ fn hmac_rejects_invalid_session_emu() {
 }
 
 #[test]
-fn hmac_scope_behavior_after_session_reopen_emu() {
+fn hmac_scope_behavior_after_session_reopen() {
     let ctx = TestCtx::new();
     let first = finalized_co_session(&ctx);
     let msg = b"cross-session HMAC";
@@ -355,7 +355,7 @@ fn hmac_scope_behavior_after_session_reopen_emu() {
 }
 
 #[test]
-fn hmac_rejects_oversized_message_emu() {
+fn hmac_rejects_oversized_message() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
@@ -370,7 +370,7 @@ fn hmac_rejects_oversized_message_emu() {
 }
 
 #[test]
-fn hmac_rejects_out_of_range_masked_key_lengths_emu() {
+fn hmac_rejects_out_of_range_masked_key_lengths() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for len in [0, MASKED_HMAC_KEY_MIN_LEN - 1, MASKED_HMAC_KEY_MAX_LEN + 1] {
@@ -387,32 +387,64 @@ fn hmac_rejects_out_of_range_masked_key_lengths_emu() {
     }
 }
 
+/// Tampering with the masked-key IV must be rejected.
 #[test]
-fn hmac_rejects_tampered_iv_and_ciphertext_emu() {
+fn hmac_rejects_tampered_iv() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+
     let msg = b"authenticated key envelope";
     let expected = mac(&ctx, session.session_id, &masked, msg);
-    // Envelope: header(8), IV(12), AAD(96), ciphertext, tag(16).
-    // Preserve the cleartext metadata so the correct masking key is selected.
-    for offset in [8, 8 + 12 + 96] {
-        let mut tampered = masked.clone();
-        tampered[offset] ^= 1;
-        ctx.expect_fw_reject(
-            &TborHmacReq {
-                session_id: session.session_id,
-                masked_key: tampered,
-                msg: msg.to_vec(),
-            },
-            TborStatus::AesGcmDecryptTagDoesNotMatch,
-        );
-        assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
-    }
+
+    let mut tampered = masked.clone();
+
+    // Envelope starts with header(8), followed by IV.
+    tampered[8] ^= 1;
+
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: session.session_id,
+            masked_key: tampered,
+            msg: msg.to_vec(),
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+
+    // Rejected input must not affect the original masked key.
+    assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
+}
+
+/// Tampering with the encoded masked-key body must fail decoding.
+#[test]
+fn hmac_rejects_tampered_ciphertext() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
+
+    let msg = b"authenticated key envelope";
+    let expected = mac(&ctx, session.session_id, &masked, msg);
+
+    let mut tampered = masked.clone();
+
+    // Current encoded-key body offset.
+    tampered[8 + 12 + 96] ^= 1;
+
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: session.session_id,
+            masked_key: tampered,
+            msg: msg.to_vec(),
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+
+    // Rejected input must not affect the original masked key.
+    assert_eq!(mac(&ctx, session.session_id, &masked, msg), expected);
 }
 
 #[test]
-fn hmac_crypto_user_all_hashes_and_scopes_emu() {
+fn hmac_crypto_user_all_hashes_and_scopes() {
     let ctx = TestCtx::new();
     let co = finalized_co_session(&ctx);
     ctx.session_close(co.session_id).expect("close CO session");
@@ -439,7 +471,7 @@ fn hmac_crypto_user_all_hashes_and_scopes_emu() {
 
 /// Hmac rejects use of a masked key after its owning session is closed.
 #[test]
-fn hmac_rejects_closed_session_emu() {
+fn hmac_rejects_closed_session() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -465,7 +497,7 @@ fn hmac_rejects_closed_session_emu() {
 
 /// Repeated Hmac calls do not consume or mutate the masked HMAC key.
 #[test]
-fn hmac_masked_key_reusable_after_multiple_calls_emu() {
+fn hmac_masked_key_reusable_after_multiple_calls() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -488,7 +520,7 @@ fn hmac_masked_key_reusable_after_multiple_calls_emu() {
 
 /// Hmac accepts arbitrary binary input containing every possible byte value.
 #[test]
-fn hmac_all_byte_values_matches_host_emu() {
+fn hmac_all_byte_values_matches_host() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -508,7 +540,7 @@ fn hmac_all_byte_values_matches_host_emu() {
 
 /// Corrupting the masked-key envelope header must never produce a valid MAC.
 #[test]
-fn hmac_rejects_corrupted_masked_key_header_emu() {
+fn hmac_rejects_corrupted_masked_key_header() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -539,7 +571,7 @@ fn hmac_rejects_corrupted_masked_key_header_emu() {
 
 /// Alternating HMAC algorithms does not retain stale hash or key state.
 #[test]
-fn hmac_alternating_hashes_do_not_leak_state_emu() {
+fn hmac_alternating_hashes_do_not_leak_state() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let msg = b"algorithm state isolation";
