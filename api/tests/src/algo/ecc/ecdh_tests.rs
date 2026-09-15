@@ -572,6 +572,9 @@ fn test_ecdh_derive_tbor_all_curves() {
 
         // Session-scoped shared secret: the un-finalized session has no
         // partition-local masking key.
+        // A non-empty label proves end-to-end label propagation: the
+        // firmware must stamp this exact label into the derived-secret
+        // metadata, else `validate_dev_props` rejects the mismatch.
         let derived_props = || {
             HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Secret)
@@ -579,6 +582,7 @@ fn test_ecdh_derive_tbor_all_curves() {
                 .bits(curve.key_size_bits() as u32)
                 .can_derive(true)
                 .is_session(true)
+                .label(b"ecdh-shared-secret")
                 .build()
                 .expect("build shared-secret props")
         };

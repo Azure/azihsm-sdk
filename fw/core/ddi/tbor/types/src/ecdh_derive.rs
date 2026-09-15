@@ -116,11 +116,12 @@ mod tests {
             .unwrap()
             .peer_pub_key(&peer)
             .unwrap()
-            .key_label(&[])
+            .key_label(b"ecdh-label")
             .unwrap()
             .finish();
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.peer_pub_key(), &peer[..]);
+        assert_eq!(frame.key_label(), b"ecdh-label");
     }
 
     #[test]
