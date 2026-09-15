@@ -162,6 +162,31 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
     cleanup_temp_files();
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        // Parent and child are separate processes that must share the MOBK
+        // cache: on a warm (real-hardware) device the child's init hits
+        // BK3_ALREADY_INITIALIZED and loads the MOBK the parent derived.
+        // Pin an explicit shared path (the default is per-process); the
+        // child inherits it through the environment via run_child_test.
+        auto mobk_path =
+            (get_test_tmp_dir() /
+             ("azihsm-multiproc-mobk-" +
+              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin"))
+                .string();
+#if defined(_WIN32)
+        _putenv_s("AZIHSM_MOBK_PATH", mobk_path.c_str());
+#else
+        setenv("AZIHSM_MOBK_PATH", mobk_path.c_str(), 1);
+#endif
+        auto mobk_env_guard = scope_guard::make_scope_exit([&mobk_path] {
+#if defined(_WIN32)
+            _putenv_s("AZIHSM_MOBK_PATH", "");
+#else
+            unsetenv("AZIHSM_MOBK_PATH");
+#endif
+            std::error_code ec;
+            std::filesystem::remove(mobk_path, ec);
+        });
+
         azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
         azihsm_handle part_handle = 0;
         auto api_rev = test_api_rev();
