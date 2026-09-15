@@ -18,6 +18,10 @@ default = []
 # smaller key and matrix separate a stack-capacity failure from an
 # algorithmic one on hardware.
 param-mldsa44 = []
+
+# Select ML-DSA-87. Mutually exclusive with `param-mldsa44`; with neither,
+# the crate builds ML-DSA-65.
+param-mldsa87 = []
 verify-only = []
 
 [dependencies]

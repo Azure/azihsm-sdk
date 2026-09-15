@@ -134,6 +134,10 @@ async fn poll_io(spawner: Spawner) -> ! {
 // full, so this lowers the depth at which that starts by 4x. An ML-DSA
 // command also occupies its slot for milliseconds without yielding, so a
 // build carrying PQC both has fewer slots and holds them longer.
+//
+// Dropping further to 2 was measured: it buys 12.6 KiB of stack, which is
+// not enough to fit ML-DSA-65 keygen (10.1 KiB short) and costs another 4x
+// in concurrency, so 8 stands.
 #[cfg_attr(
     any(
         feature = "mldsa-selftest",

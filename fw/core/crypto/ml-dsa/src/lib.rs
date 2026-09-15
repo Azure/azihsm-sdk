@@ -31,51 +31,64 @@ use ml_dsa::ExpandedSigningKey;
 use ml_dsa::ExpandedSigningKeyBytes;
 #[cfg(feature = "param-mldsa44")]
 use ml_dsa::MlDsa44;
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 use ml_dsa::MlDsa65;
+#[cfg(feature = "param-mldsa87")]
+use ml_dsa::MlDsa87;
 use ml_dsa::Signature;
 use ml_dsa::SigningKey;
 use ml_dsa::VerifyingKey;
 
 /// Parameter set under test.
 ///
-/// ML-DSA-65 is the Milestone 1 target. The `param-mldsa44` feature switches
-/// to ML-DSA-44, whose keys and matrix are markedly smaller; it exists to
-/// separate a stack-capacity failure from an algorithmic one on hardware,
-/// where the two look identical (a silent hang).
-#[cfg(not(feature = "param-mldsa44"))]
+/// ML-DSA-65 is the default. `param-mldsa44` and `param-mldsa87` select the
+/// other two FIPS 204 sets; a firmware image links exactly one, because
+/// carrying more than one is not affordable in FLASH.
+#[cfg(param65)]
 pub type Param = MlDsa65;
 /// See [`Param`].
 #[cfg(feature = "param-mldsa44")]
 pub type Param = MlDsa44;
+/// See [`Param`].
+#[cfg(feature = "param-mldsa87")]
+pub type Param = MlDsa87;
 
 /// Encoded signing-key length in bytes (FIPS 204 Table 2).
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 pub const SIGNING_KEY_LEN: usize = 4032;
 /// See [`SIGNING_KEY_LEN`].
 #[cfg(feature = "param-mldsa44")]
 pub const SIGNING_KEY_LEN: usize = 2560;
+/// See [`SIGNING_KEY_LEN`].
+#[cfg(feature = "param-mldsa87")]
+pub const SIGNING_KEY_LEN: usize = 4896;
 
 /// Encoded verifying-key length in bytes (FIPS 204 Table 2).
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 pub const VERIFYING_KEY_LEN: usize = 1952;
 /// See [`VERIFYING_KEY_LEN`].
 #[cfg(feature = "param-mldsa44")]
 pub const VERIFYING_KEY_LEN: usize = 1312;
+/// See [`VERIFYING_KEY_LEN`].
+#[cfg(feature = "param-mldsa87")]
+pub const VERIFYING_KEY_LEN: usize = 2592;
 
 /// Signature length in bytes (FIPS 204 Table 2).
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 pub const SIGNATURE_LEN: usize = 3309;
 /// See [`SIGNATURE_LEN`].
 #[cfg(feature = "param-mldsa44")]
 pub const SIGNATURE_LEN: usize = 2420;
+/// See [`SIGNATURE_LEN`].
+#[cfg(feature = "param-mldsa87")]
+pub const SIGNATURE_LEN: usize = 4627;
 
 /// Private-key coefficient bound (FIPS 204 Table 1): eta = 4 for ML-DSA-65,
-/// eta = 2 for ML-DSA-44.
-#[cfg(not(feature = "param-mldsa44"))]
+/// eta = 2 for ML-DSA-44 and ML-DSA-87.
+#[cfg(param65)]
 const ETA: u8 = 4;
 /// See [`ETA`].
-#[cfg(feature = "param-mldsa44")]
+#[cfg(any(feature = "param-mldsa44", feature = "param-mldsa87"))]
 const ETA: u8 = 2;
 
 /// Length in bytes of the `rho ‖ K ‖ tr` prefix that precedes `s1` in an
@@ -83,18 +96,24 @@ const ETA: u8 = 2;
 const PREFIX_LEN: usize = 128;
 
 /// Number of `s1` polynomials (dimension `l`).
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 const L: usize = 5;
 /// See [`L`].
 #[cfg(feature = "param-mldsa44")]
 const L: usize = 4;
+/// See [`L`].
+#[cfg(feature = "param-mldsa87")]
+const L: usize = 7;
 
 /// Number of `s2` polynomials (dimension `k`).
-#[cfg(not(feature = "param-mldsa44"))]
+#[cfg(param65)]
 const K: usize = 6;
 /// See [`K`].
 #[cfg(feature = "param-mldsa44")]
 const K: usize = 4;
+/// See [`K`].
+#[cfg(feature = "param-mldsa87")]
+const K: usize = 8;
 
 /// Coefficients per polynomial.
 const N: usize = 256;
@@ -103,11 +122,11 @@ const N: usize = 256;
 ///
 /// FIPS 204 `BitPack` encodes each coefficient of a private-key vector in
 /// `bitlen(2 * eta)` bits: 4 bits for eta = 4 (ML-DSA-65), 3 bits for
-/// eta = 2 (ML-DSA-44).
-#[cfg(not(feature = "param-mldsa44"))]
+/// eta = 2 (ML-DSA-44 and ML-DSA-87).
+#[cfg(param65)]
 const ETA_BITS: usize = 4;
 /// See [`ETA_BITS`].
-#[cfg(feature = "param-mldsa44")]
+#[cfg(any(feature = "param-mldsa44", feature = "param-mldsa87"))]
 const ETA_BITS: usize = 3;
 
 /// Packed byte length of one `s1`/`s2` polynomial.
@@ -232,15 +251,20 @@ impl From<MlDsaKeyError> for MlDsaOpError {
 ///
 /// # Stack
 ///
-/// `#[inline(never)]`, and the keypair is built directly into locals rather
-/// than being returned through a `Result` — the same discipline
-/// [`sign_into`] relies on, and for the same reason: a value of this size
-/// returned across a call boundary is materialised twice.
+/// Deliberately a **single** frame. Emitting the two halves from separate
+/// `#[inline(never)]` helpers was measured and is worse, not better: the
+/// key derivation is then instantiated in both, and the chain grew from
+/// 235.5 KiB to 294.6 KiB at ML-DSA-65 (149.3 -> 190.9 KiB at ML-DSA-44).
+/// Splitting only pays when it stops something large being live across the
+/// boundary, which is not the case here.
 ///
-/// Keygen is *cheaper* than signing, not more expensive. It performs one
-/// matrix-vector product; signing performs one per rejection round, and
-/// expands the same matrix first. So a build whose signing path fits has
-/// already paid for the larger of the two.
+/// Worst-case chain: 149.3 KiB at ML-DSA-44, which fits the 212.9 KiB
+/// stack, and 235.5 KiB at ML-DSA-65, which does not — hence
+/// `tbor-ml-dsa-keygen` being ML-DSA-44 only. The residual cost at
+/// ML-DSA-65 is `VerifyingKey::new` (54 KiB) running while the whole
+/// `SigningKey` is still live; `SigningKey` caches the verifying key only
+/// under the crate's `alloc` feature, which a no-std firmware build cannot
+/// enable. Fitting it needs in-place construction inside the ml-dsa crate.
 ///
 /// # Errors
 ///
@@ -353,7 +377,7 @@ mod tests {
     use super::*;
 
     /// A coefficient nibble of `2 * ETA + 1` is the smallest out-of-range value.
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     const BAD_NIBBLE: u8 = 2 * ETA + 1;
 
     fn valid_key() -> [u8; SIGNING_KEY_LEN] {
@@ -385,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     fn rejects_out_of_range_s1_low_nibble() {
         let mut k = valid_key();
         k[PREFIX_LEN] = BAD_NIBBLE;
@@ -396,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     fn rejects_out_of_range_s1_high_nibble() {
         let mut k = valid_key();
         k[PREFIX_LEN] = BAD_NIBBLE << 4;
@@ -407,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     fn rejects_out_of_range_s2() {
         let mut k = valid_key();
         // First byte of `s2`, immediately after the `s1` block.
@@ -419,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     fn boundary_coefficient_is_accepted() {
         let mut k = valid_key();
         k[PREFIX_LEN] = (2 * ETA) | ((2 * ETA) << 4);
@@ -429,6 +453,7 @@ mod tests {
 
 // ── On-device self-test (Phase 1) ──────────────────────────────────
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Outcome of [`selftest`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfTestResult {
@@ -450,6 +475,7 @@ pub enum SelfTestResult {
     VerifyFailed,
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Pinned FIPS 204 ML-DSA-65 known-answer vector.
 ///
 /// Source: Wycheproof `mldsa_65_sign_noseed_test.json`, group 0 ("baseline"),
@@ -457,16 +483,16 @@ pub enum SelfTestResult {
 /// context.
 mod kat {
     /// Encoded signing key (`skDecode` input).
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     pub const SK: &[u8] = include_bytes!("../testdata/kat_sk.bin");
     /// Encoded verifying key.
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     pub const PK: &[u8] = include_bytes!("../testdata/kat_pk.bin");
     /// Message signed by the vector.
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     pub const MSG: &[u8] = include_bytes!("../testdata/kat_msg.bin");
     /// Expected deterministic signature.
-    #[cfg(not(feature = "param-mldsa44"))]
+    #[cfg(param65)]
     pub const SIG: &[u8] = include_bytes!("../testdata/kat_sig.bin");
 
     /// See [`SK`].
@@ -483,6 +509,7 @@ mod kat {
     pub const SIG: &[u8] = include_bytes!("../testdata/kat44_sig.bin");
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Runs ML-DSA-65 import, sign and verify against a pinned known-answer
 /// vector, entirely on-device.
 ///
@@ -510,6 +537,7 @@ pub mod stage {
     pub const VERIFY_DONE: u32 = 4;
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Same as [`selftest`], but invokes `mark` after each stage so a caller can
 /// report progress. Used to localise a hang or fault on hardware, where a
 /// single pass/fail result cannot say which stage failed to return.
@@ -539,6 +567,7 @@ fn kat_sign(mark: &mut dyn FnMut(u32)) -> Result<EncodedSignature<Param>, SelfTe
     Ok(sig.encode())
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Verifies the pinned signature with the pinned verifying key.
 ///
 /// Separate frame from [`kat_sign`] so the signing key and verifying key are
@@ -562,6 +591,7 @@ fn kat_verify() -> bool {
         .is_ok()
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 /// Runs the self-test.
 ///
 /// With the `verify-only` feature the signing half is skipped: ML-DSA-65's
@@ -590,6 +620,7 @@ pub fn selftest_staged(mark: &mut dyn FnMut(u32)) -> SelfTestResult {
     SelfTestResult::Pass
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 pub fn selftest() -> SelfTestResult {
     use ml_dsa::signature::Verifier;
     use ml_dsa::EncodedSignature;
@@ -629,6 +660,7 @@ pub fn selftest() -> SelfTestResult {
     SelfTestResult::Pass
 }
 
+#[cfg(not(feature = "param-mldsa87"))]
 #[cfg(test)]
 mod selftest_tests {
     use super::*;
