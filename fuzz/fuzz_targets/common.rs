@@ -140,25 +140,27 @@ pub fn run_request_view(data: &[u8]) {
 /// Parse a serialised TBOR request and validate its TOC entries against
 /// the operations used to encode it.
 ///
-/// A parse failure is treated as expected (the bytes may be invalid).
-pub fn validate_request_view(data: &[u8], ops: &[EncoderTOCBuilders]) {
-    if let Ok(view) = RequestView::parse(data) {
-        let _ = view.version();
-        let _ = view.opcode();
-        assert_eq!(view.toc_count(), ops.len());
-        let _ = view.data_start();
-        let _ = view.data_size();
-        let _ = view.len();
-        let _ = view.is_empty();
-        let _ = view.as_bytes();
-        let _ = view.data_section();
+/// `data` must come from a successful `RequestEncoder::finish`, so a parse
+/// failure here means the encoder and decoder disagree and is reported via
+/// `expect` rather than discarded.
+pub fn validate_request_view(data: &[u8], version: u8, opcode: u8, ops: &[EncoderTOCBuilders]) {
+    let view =
+        RequestView::parse(data).expect("bytes from a successful RequestEncoder::finish must parse");
+    assert_eq!(view.version(), version);
+    assert_eq!(view.opcode(), opcode);
+    assert_eq!(view.toc_count(), ops.len());
+    let _ = view.data_start();
+    let _ = view.data_size();
+    let _ = view.len();
+    let _ = view.is_empty();
+    let _ = view.as_bytes();
+    let _ = view.data_section();
 
-        for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
-            assert_eq!(view.toc_entry(i), entry);
-            let _ = view.toc_entry_type(i);
+    for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
+        assert_eq!(view.toc_entry(i), entry);
+        let _ = view.toc_entry_type(i);
 
-            validate_toc_entry(op, entry);
-        }
+        validate_toc_entry(op, entry);
     }
 }
 

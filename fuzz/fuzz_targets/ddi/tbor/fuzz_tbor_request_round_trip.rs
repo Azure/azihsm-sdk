@@ -27,6 +27,6 @@ fuzz_target!(|input: FuzzInput| {
     let buf = &mut backing[..len];
     let encoder = RequestEncoder::new(buf, input.version, input.opcode);
     if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
-        common::validate_request_view(encoded, &input.ops);
+        common::validate_request_view(encoded, input.version, input.opcode, &input.ops);
     }
 });
