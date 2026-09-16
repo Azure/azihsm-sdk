@@ -9,8 +9,8 @@
 //! then one self-contained variable-length `cert_chain_desc` per attestation slot (device-id =
 //! slot 0 today, device-owner = slot 1 in future), followed by the packed DER.  Each descriptor
 //! carries its own `desc_size`, so chains are walked without an offset table.  `CertBlobHdr`,
-//! `CertChainDesc` and `CertBlobMeta` are a byte-for-byte ABI mirror of the SP-side structs in
-//! `sp/src/dc_scm/soc_shared.h`; all fields little-endian. See `docs/cert_chain_hsm_dtcm.md`.
+//! `CertChainDesc` and `CertBlobMeta` are a byte-for-byte ABI mirror of the SP-side producer
+//! structs; all fields little-endian.
 
 #![cfg_attr(not(test), no_std)]
 
