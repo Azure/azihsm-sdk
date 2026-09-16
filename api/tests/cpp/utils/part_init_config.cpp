@@ -449,6 +449,14 @@ void save_mobk_file(const std::string &path, const std::vector<uint8_t> &mobk)
             return;
         }
         f.write(reinterpret_cast<const char *>(mobk.data()), mobk.size());
+        f.flush();
+        if (!f)
+        {
+            f.close();
+            std::error_code write_ec;
+            std::filesystem::remove(tmp, write_ec);
+            return;
+        }
     }
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
