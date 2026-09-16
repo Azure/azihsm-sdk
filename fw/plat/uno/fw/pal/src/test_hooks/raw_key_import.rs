@@ -141,8 +141,16 @@ pub(super) async fn raw_key_import<'p>(
     check_session_key_tag(attrs, body.key_tag)?;
 
     // Copy the raw plaintext into a vault-import scratch buffer and
-    // commit it, session-scoped iff requested.
-    let key_buf = pal.dma_alloc(io, body.raw.len())?;
+    // commit it, session-scoped iff requested. Scrub the host-supplied
+    // copy on the allocation-failure path too — per-IO DMA is not
+    // implicitly wiped, and this hook promises to scrub `body.raw`.
+    let key_buf = match pal.dma_alloc(io, body.raw.len()) {
+        Ok(buf) => buf,
+        Err(e) => {
+            body.raw.zeroize();
+            return Err(e);
+        }
+    };
     key_buf.copy_from_slice(body.raw);
     // The plaintext now lives only in `key_buf`; scrub the host-supplied
     // copy from the request DMA so it does not linger there. `DmaBuf::
@@ -199,13 +207,21 @@ pub(super) async fn raw_key_import<'p>(
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects anything
 /// else with `InvalidPermissions`. All fallible response preparation
-/// completes before the partition property is committed to the new key
-/// and the old key is reclaimed. The commit happens before the old key is
-/// deleted, so no failure can leave the property naming a deleted key, and
-/// an error before the commit leaves the partition on the still-valid
-/// previous key. The
-/// response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`] —
-/// matching how the unwrapping key is masked elsewhere — so the host's
+/// completes before the partition property is committed to the new key.
+/// If the commit fails, nothing has been published, so the unpublished
+/// replacement is dropped and the partition stays on its previous key.
+///
+/// A previously installed unwrapping key is **intentionally not reclaimed
+/// inline**. Uno's PAL is lock-free (`partition_lock` is a no-op) and DDI
+/// commands run on a single-threaded cooperative executor, so a
+/// concurrent `GetUnwrappingKey` may hold the old key's vault slice across
+/// its masking `await`; zeroizing it here could corrupt that reader, and
+/// there is no retirement/quiescence mechanism to know when the slice is
+/// free. The orphaned key is instead reclaimed when the partition is torn
+/// down (`vault_clear` zeroizes every key in the partition's tables).
+///
+/// The response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`]
+/// — matching how the unwrapping key is masked elsewhere — so the host's
 /// unmask path treats it as the partition unwrapping key rather than a
 /// general RSA private key.
 async fn raw_import_unwrapping_key<'p>(
@@ -219,8 +235,16 @@ async fn raw_import_unwrapping_key<'p>(
     let attrs = for_rsa_unwrap(&body.key_properties.key_metadata)?;
 
     // Copy the raw plaintext into a vault-import scratch buffer and
-    // create an unpublished partition-internal unwrapping key.
-    let key_buf = pal.dma_alloc(io, body.raw.len())?;
+    // create an unpublished partition-internal unwrapping key. Scrub the
+    // host-supplied copy on the allocation-failure path too — per-IO DMA
+    // is not implicitly wiped, and this hook promises to scrub `body.raw`.
+    let key_buf = match pal.dma_alloc(io, body.raw.len()) {
+        Ok(buf) => buf,
+        Err(e) => {
+            body.raw.zeroize();
+            return Err(e);
+        }
+    };
     key_buf.copy_from_slice(body.raw);
     // The plaintext now lives only in `key_buf`; scrub the host-supplied
     // copy from the request DMA so it does not linger there.
@@ -277,37 +301,21 @@ async fn raw_import_unwrapping_key<'p>(
         }
     };
 
-    // Read the current key only after response preparation so concurrent
-    // replacements cannot leave a stale snapshot across earlier awaits.
-    let old_id = match part_unwrapping_key_id(pal, io) {
-        Ok(old_id) => Some(old_id),
-        Err(HsmError::PartPropNotFound) => None,
-        Err(e) => {
-            pal.vault_key_delete(io, key_id).await?;
-            return Err(e);
-        }
-    };
-
-    // Commit the property to the new key BEFORE reclaiming the old one, so
-    // no failure can leave the property naming a deleted key. Nothing has
-    // been destroyed yet, so a failed commit only drops the unpublished
-    // replacement; the partition stays on the still-valid old key.
+    // Commit the property to the new key. If the commit fails, nothing has
+    // been published — drop the unpublished replacement and surface the
+    // error; the partition stays on its previous key.
     if let Err(e) = part_set_unwrapping_key_id(pal, io, key_id) {
         pal.vault_key_delete(io, key_id).await?;
         return Err(e);
     }
 
-    // The property now names the new, valid key. Reclaim the old entry; on
-    // a delete failure roll the property back to the still-present old key
-    // and drop the replacement, restoring the exact pre-call state.
-    if let Some(old_id) = old_id
-        && let Err(e) = pal.vault_key_delete(io, old_id).await
-    {
-        part_set_unwrapping_key_id(pal, io, old_id)?;
-        pal.vault_key_delete(io, key_id).await?;
-        return Err(e);
-    }
-
+    // The property now names the new, valid key. The previous unwrapping
+    // key (if any) is deliberately left in place rather than deleted here:
+    // on Uno's lock-free cooperative executor a concurrent
+    // `GetUnwrappingKey` may hold the old key's vault slice across its
+    // masking await, so zeroizing it now could corrupt that reader, and
+    // there is no retirement mechanism to know when the slice is free. The
+    // orphan is reclaimed at partition teardown by `vault_clear`.
     Ok(resp)
 }
 
@@ -544,12 +552,6 @@ async fn mask_blob<'p>(
 /// `EstablishCredential`).
 fn part_mk_key_id(pal: &UnoHsmPal, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
     let raw = pal.part_prop_get_u16(io, PartPropId::MK_KEY_ID)?;
-    Ok(HsmKeyId::from(raw))
-}
-
-/// Read the partition RSA unwrapping key id.
-fn part_unwrapping_key_id(pal: &UnoHsmPal, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
-    let raw = pal.part_prop_get_u16(io, PartPropId::RSA_UNWRAPPING_KEY_ID)?;
     Ok(HsmKeyId::from(raw))
 }
 

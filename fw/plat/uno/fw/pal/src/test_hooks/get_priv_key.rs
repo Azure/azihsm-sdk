@@ -9,6 +9,11 @@
 //! key vectors landed correctly; the normal DDI surface never exposes
 //! private / secret key bytes.
 //!
+//! Session-scoped keys are readable only from the session that created
+//! them: a key bound to another session is reported as
+//! [`HsmError::KeyNotFound`], so a session cannot export another
+//! session's material by guessing its id.
+//!
 //! No `partition_lock` is needed: the handler only performs read-only
 //! vault lookups (`vault_key_kind` / `vault_key_attrs` / `vault_key`).
 //!
@@ -90,6 +95,20 @@ pub(super) fn get_priv_key<'p>(
     }
 
     let key_id = HsmKeyId::from(body.key_id);
+
+    // Enforce session-scoped key isolation before any read-back: a
+    // session-bound key may only be exported from the session that
+    // created it. Without this, a second session that learns a
+    // session-scoped id could use this hook to exfiltrate its raw bytes.
+    // A cross-session (or unknown) id is reported as `KeyNotFound` so the
+    // two cases are indistinguishable; partition-scoped keys carry no
+    // binding and stay readable.
+    if pal
+        .vault_key_session_binding(io, key_id)?
+        .is_some_and(|bound| bound != sess_id)
+    {
+        return Err(HsmError::KeyNotFound);
+    }
 
     // Resolve the stored kind first — an unknown id surfaces as
     // `KeyNotFound` here.
