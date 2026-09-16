@@ -15,15 +15,18 @@ use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
+    buf_size: usize,
     version: u8,
     opcode: u8,
     ops: Vec<EncoderTOCBuilders>,
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let mut buf = [0u8; FUZZ_REQ_BUF_SIZE];
-    let encoder = RequestEncoder::new(&mut buf, input.version, input.opcode);
+    let mut backing = [0u8; FUZZ_REQ_BUF_SIZE];
+    let len = input.buf_size % (FUZZ_REQ_BUF_SIZE + 1); // clamp into range
+    let buf = &mut backing[..len];
+    let encoder = RequestEncoder::new(buf, input.version, input.opcode);
     if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
-        common::run_request_view(encoded);
+        common::validate_request_view(encoded, &input.ops);
     }
 });

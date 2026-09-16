@@ -8,10 +8,12 @@
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
+use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RequestView;
 use azihsm_ddi_tbor_codec::ResponseView;
+use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -37,14 +39,13 @@ pub enum EncoderTOCBuilders {
 ///
 /// Sized to hold the worst-case request: a full header, the maximum number
 /// of TOC entries (each a 4-byte / `u32` wire word), and the maximum data
-/// section. `TOC_ENTRY_LEN` is `pub(crate)` in the codec, so we use
-/// `size_of::<u32>()` as an equivalent.
+/// section.
 pub const FUZZ_REQ_BUF_SIZE: usize =
-    REQ_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
+    REQ_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
 /// Buffer size used by response encoder fuzz targets.
 pub const FUZZ_RESP_BUF_SIZE: usize =
-    RESP_HEADER_LEN + MAX_TOC_ENTRIES * core::mem::size_of::<u32>() + MAX_DATA_SIZE;
+    RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
 /// Apply a sequence of TOC builder operations to an encoder, returning
 /// the encoded bytes on success or `None` if any step (including
@@ -76,6 +77,44 @@ pub fn run_encoder<'a, H: Header>(
     encoder.finish().ok()
 }
 
+fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
+    match (op, entry) {
+        (EncoderTOCBuilders::SessionId(expected), TocEntry::SessionId(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::KeyId(expected), TocEntry::KeyId(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::Uint8(expected), TocEntry::Uint8(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::Uint16(expected), TocEntry::Uint16(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::Uint32(expected), TocEntry::Uint32(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::Uint64(expected), TocEntry::Uint64(actual)) => {
+            assert_eq!(*expected, actual);
+        }
+        (EncoderTOCBuilders::Buffer(expected), TocEntry::Buffer(actual)) => {
+            assert_eq!(expected, actual);
+        }
+        (EncoderTOCBuilders::BufferReserve(expected), TocEntry::Buffer(actual)) => {
+            assert_eq!(usize::from(*expected), actual.len());
+        }
+        (EncoderTOCBuilders::SealedKey(expected), TocEntry::SealedKey(actual)) => {
+            assert_eq!(expected, actual);
+        }
+        (EncoderTOCBuilders::None, TocEntry::None) => {}
+        (EncoderTOCBuilders::Padding(expected), TocEntry::Padding(actual)) => {
+            assert_eq!(usize::from(*expected), actual.len());
+            assert!(actual.iter().all(|byte| *byte == 0));
+        }
+        (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
+    }
+}
+
 /// Parse and exercise every accessor on a serialised TBOR request.
 ///
 /// A parse failure is treated as expected (the bytes may be invalid).
@@ -94,6 +133,31 @@ pub fn run_request_view(data: &[u8]) {
             let _ = entry;
             let _ = view.toc_entry_type(i);
             let _ = view.toc_entry(i);
+        }
+    }
+}
+
+/// Parse a serialised TBOR request and validate its TOC entries against
+/// the operations used to encode it.
+///
+/// A parse failure is treated as expected (the bytes may be invalid).
+pub fn validate_request_view(data: &[u8], ops: &[EncoderTOCBuilders]) {
+    if let Ok(view) = RequestView::parse(data) {
+        let _ = view.version();
+        let _ = view.opcode();
+        assert_eq!(view.toc_count(), ops.len());
+        let _ = view.data_start();
+        let _ = view.data_size();
+        let _ = view.len();
+        let _ = view.is_empty();
+        let _ = view.as_bytes();
+        let _ = view.data_section();
+
+        for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
+            assert_eq!(view.toc_entry(i), entry);
+            let _ = view.toc_entry_type(i);
+
+            validate_toc_entry(op, entry);
         }
     }
 }
@@ -118,6 +182,32 @@ pub fn run_response_view(data: &[u8]) {
             let _ = entry;
             let _ = view.toc_entry_type(i);
             let _ = view.toc_entry(i);
+        }
+    }
+}
+
+/// Parse and exercise every accessor on a serialised TBOR response.
+///
+/// A parse failure is treated as expected (the bytes may be invalid).
+pub fn validate_response_view(data: &[u8], ops: &[EncoderTOCBuilders]) {
+    if let Ok(view) = ResponseView::parse(data) {
+        let _ = view.version();
+        let _ = view.status();
+        let _ = view.flags();
+        let _ = view.fips_approved();
+        assert_eq!(view.toc_count(), ops.len());
+        let _ = view.data_start();
+        let _ = view.data_size();
+        let _ = view.len();
+        let _ = view.is_empty();
+        let _ = view.as_bytes();
+        let _ = view.data_section();
+
+        for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
+            assert_eq!(view.toc_entry(i), entry);
+            let _ = view.toc_entry_type(i);
+
+            validate_toc_entry(op, entry);
         }
     }
 }

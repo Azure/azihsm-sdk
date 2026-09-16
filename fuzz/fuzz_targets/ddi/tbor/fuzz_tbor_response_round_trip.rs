@@ -15,6 +15,7 @@ use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
+    buf_size: usize,
     version: u8,
     status: u32,
     fips_approved: bool,
@@ -22,9 +23,11 @@ struct FuzzInput {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let mut buf = [0u8; FUZZ_RESP_BUF_SIZE];
-    let encoder = ResponseEncoder::new(&mut buf, input.version, input.status, input.fips_approved);
+    let mut backing = [0u8; FUZZ_RESP_BUF_SIZE];
+    let len = input.buf_size % (FUZZ_RESP_BUF_SIZE + 1); // clamp into range
+    let buf = &mut backing[..len];
+    let encoder = ResponseEncoder::new(buf, input.version, input.status, input.fips_approved);
     if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
-        common::run_response_view(encoded);
+        common::validate_response_view(encoded, &input.ops);
     }
 });
