@@ -119,7 +119,11 @@ impl DdiSockDev {
             .session_id(session_id.unwrap_or(0))
             .build();
 
-        let req = Request { sqe, payload };
+        let req = Request {
+            sqe,
+            payload,
+            oob: Vec::new(),
+        };
 
         let resp: Response = {
             let mut stream = self.stream.lock();
