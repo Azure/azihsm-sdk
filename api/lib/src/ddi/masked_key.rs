@@ -37,6 +37,9 @@ enum TborMaskedKeyKind {
     Secret256,
     Secret384,
     Secret521,
+    VarLenHmacSha256,
+    VarLenHmacSha384,
+    VarLenHmacSha512,
 }
 
 impl TryFrom<u8> for TborMaskedKeyKind {
@@ -53,6 +56,9 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             22 => Self::Secret256,
             23 => Self::Secret384,
             24 => Self::Secret521,
+            32 => Self::VarLenHmacSha256,
+            33 => Self::VarLenHmacSha384,
+            34 => Self::VarLenHmacSha512,
             _ => return Err(HsmError::MaskedKeyDecodeFailed),
         })
     }
@@ -237,6 +243,12 @@ impl HsmMaskedKey {
             TborMaskedKeyKind::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
             TborMaskedKeyKind::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
             TborMaskedKeyKind::Secret521 => (HsmKeyKind::SharedSecret, 521, None),
+            // HMAC keygen is fixed to the canonical per-variant key size
+            // (SHA-256/384/512 -> 32/48/64 B); the payload-length check
+            // below rejects any other (variable-length) blob.
+            TborMaskedKeyKind::VarLenHmacSha256 => (HsmKeyKind::HmacSha256, 256, None),
+            TborMaskedKeyKind::VarLenHmacSha384 => (HsmKeyKind::HmacSha384, 384, None),
+            TborMaskedKeyKind::VarLenHmacSha512 => (HsmKeyKind::HmacSha512, 512, None),
         };
 
         // Masked payload = the raw key material's byte length. ECC private

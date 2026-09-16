@@ -25,6 +25,9 @@
 //!   (SHA-256: 32–64, SHA-384: 48–128, SHA-512: 64–128 — matching the
 //!   reference firmware's `VarLenHmacSha*` bounds), else the handler
 //!   rejects it with `InvalidKeyLength`.
+//! * `key_label` — caller-supplied key label recorded in the masked
+//!   blob's `MaskedKeyMetadata.key_label`, up to 128 bytes; empty for an
+//!   unlabeled key.
 //!
 //! Outputs:
 //!
@@ -59,7 +62,7 @@ pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 /// [`HashAlgo`] and `key_length` under the active session's partition,
 /// masked with the requested [`KeyScope`]'s masking key.
 #[tbor(opcode = 0x11)]
-pub struct TborHmacGenerateKeyReq {
+pub struct TborHmacGenerateKeyReq<'a> {
     /// CO/CU session id this request is bound to.  The dispatcher
     /// cross-checks it against the SQE-carried session id.
     #[tbor(session_id)]
@@ -82,6 +85,12 @@ pub struct TborHmacGenerateKeyReq {
     /// `InvalidKeyLength`.
     #[tbor(U8)]
     pub key_length: u8,
+
+    /// Caller-supplied key label recorded in the masked blob's
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
+    /// unlabeled key.
+    #[tbor(buffer, max_len = 128)]
+    pub key_label: &'a [u8],
 }
 
 /// `HmacGenerateKey` response schema.
@@ -110,6 +119,7 @@ mod tests {
     #[test]
     fn request_round_trips_scope_and_hash() {
         let mut buf = [0u8; 256];
+        let label = b"hmac-key";
         let frame = TborHmacGenerateKeyReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(5))
@@ -120,11 +130,14 @@ mod tests {
             .unwrap()
             .key_length(96)
             .unwrap()
+            .key_label(label)
+            .unwrap()
             .finish();
 
         assert_eq!(frame.scope(), KeyScope::Session);
         assert_eq!(frame.hash_algo(), HashAlgo::Sha384);
         assert_eq!(frame.key_length(), 96);
+        assert_eq!(frame.key_label(), label);
     }
 
     #[test]
