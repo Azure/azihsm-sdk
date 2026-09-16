@@ -36,7 +36,7 @@ pub use crate::sd_create_remote_backup::SD_MK_BACKUP_LEN;
 pub const TBOR_OP_SD_RESTORE_LOCAL_BACKUP: u8 = 0x0D;
 
 // `pok_local_backup` is a masked BKS3 envelope; the derive needs an
-// integer literal on the field, so the length is spelled out as `180` and
+// integer literal on the field, so the length is spelled out as `276` and
 // pinned against the canonical value here.
 const _: () = assert!(MASKED_SD_LEN == 276);
 

@@ -58,7 +58,7 @@ pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
 // against the canonical value here.
 const _: () = assert!(PART_POLICY_LEN == 484);
 
-// `masked_sealing_key` is spelled out as `180` on the field (the derive
+// `masked_sealing_key` is spelled out as `276` on the field (the derive
 // needs an integer literal) and pinned against the canonical
 // `MASKED_SEALING_KEY_LEN` here.
 const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
