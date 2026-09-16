@@ -515,7 +515,8 @@ azihsm_status part_init_with_mobk_fallback(
     {
         std::error_code ec;
         std::filesystem::remove(get_mobk_path(), ec);
-        make_part_init_config(part_handle, init_config);
+        init_config.backup_config.masked_owner_backup_key = nullptr;
+        make_part_init_config(part_handle, init_config)
         err = azihsm_part_init(
             part_handle,
             creds,
