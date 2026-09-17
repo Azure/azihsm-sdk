@@ -357,10 +357,16 @@ impl StdHsmBuilder {
 ///
 /// # Shutdown
 ///
-/// Dropping `StdHsm` closes the submission channels, then its shutdown
-/// thread waits for the Embassy executor to drain — every in-flight IO
-/// and IPC command finishes before the executor stops and the Embassy
-/// thread is joined — and finally (if owned) the tokio runtime.
+/// Prefer the explicit [`shutdown`](Self::shutdown) /
+/// [`shutdown_async`](Self::shutdown_async) methods: both close the submission
+/// channels and return only once the Embassy executor has drained every
+/// in-flight IO and IPC command and stopped. This is required when the caller
+/// owns the tokio runtime, since that runtime must outlive the drain.
+///
+/// Dropping `StdHsm` without calling them also closes the submission channels,
+/// but the drain is joined on a background thread, so `Drop` returns before the
+/// Embassy thread has finished. An owned tokio runtime is dropped by that
+/// thread after the drain completes; a caller-owned runtime is not coordinated.
 ///
 /// `StdHsm` owns process-global HSM and executor singletons, so only one
 /// instance can ever be built per process, even after that instance is dropped.
@@ -504,6 +510,58 @@ impl StdHsm {
         self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
         reply_rx.await.expect("partition command reply dropped")
     }
+
+    /// Shut down the HSM, blocking until all in-flight work has drained.
+    ///
+    /// Callers that supplied their own tokio runtime
+    /// ([`with_tokio`](Self::with_tokio) /
+    /// [`tokio_handle`](StdHsmBuilder::tokio_handle)) must use this method (or
+    /// [`shutdown_async`](Self::shutdown_async)) instead of relying on `Drop`:
+    /// `Drop` joins the Embassy thread in the background and returns
+    /// immediately, so the caller-owned runtime could be dropped while
+    /// in-flight work still needs it, aborting that work and stalling the
+    /// drain. This method returns only once the Embassy executor has stopped,
+    /// after which the runtime can safely be dropped.
+    ///
+    /// Must not be called from a thread of the tokio runtime backing this HSM —
+    /// blocking a worker that in-flight work needs would deadlock the drain.
+    /// Use [`shutdown_async`](Self::shutdown_async) from async contexts.
+    pub fn shutdown(mut self) {
+        if let Some(thread) = self.begin_shutdown() {
+            let _ = thread.join();
+        }
+        drop(self.tokio_rt.take());
+    }
+
+    /// Shut down the HSM, awaiting until all in-flight work has drained.
+    ///
+    /// Async counterpart of [`shutdown`](Self::shutdown): the Embassy thread is
+    /// joined on a dedicated thread, so no tokio worker is blocked while
+    /// in-flight work drains. Awaiting this future to completion guarantees the
+    /// executor has stopped, so a caller-owned runtime can then be dropped
+    /// safely.
+    pub async fn shutdown_async(mut self) {
+        if let Some(thread) = self.begin_shutdown() {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = thread.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.await;
+        }
+        drop(self.tokio_rt.take());
+    }
+
+    /// Stops accepting new work and takes ownership of the Embassy thread.
+    ///
+    /// Closing both channels lets `poll_io`/`ipc_task` exit once drained,
+    /// which in turn wakes `run_core` to deinitialize the PAL. Returns `None`
+    /// if shutdown was already started.
+    fn begin_shutdown(&mut self) -> Option<JoinHandle<()>> {
+        self.io_tx.close();
+        self.ipc_tx.close();
+        self.embassy_thread.take()
+    }
 }
 
 /// Cleanly shuts down the HSM.
@@ -514,6 +572,11 @@ impl StdHsm {
 /// after all in-flight work is complete, without blocking a Tokio worker
 /// that may be needed by the work being drained.
 ///
+/// Because that join is detached, `Drop` returns before the drain finishes.
+/// Callers owning the tokio runtime must instead use
+/// [`StdHsm::shutdown`]/[`StdHsm::shutdown_async`], which return only after the
+/// Embassy executor has stopped, so their runtime outlives the drain.
+///
 /// If a tokio runtime is owned (`tokio_rt` is `Some`), it is dropped
 /// after the Embassy thread exits, shutting down the worker pool.
 impl Drop for StdHsm {
@@ -522,9 +585,7 @@ impl Drop for StdHsm {
         // once these channels are closed and drained. `ShutdownTracker`
         // then wakes `run_core` to deinitialize the PAL before the
         // `run_until` predicate lets the Embassy thread stop.
-        self.io_tx.close();
-        self.ipc_tx.close();
-        if let Some(thread) = self.embassy_thread.take() {
+        if let Some(thread) = self.begin_shutdown() {
             join_shutdown(thread, self.tokio_rt.take());
         }
     }
