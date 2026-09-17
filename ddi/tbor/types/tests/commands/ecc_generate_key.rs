@@ -26,23 +26,17 @@ use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
+use crate::commands::common::CU;
+use crate::commands::common::ROTATED_CU_PSK;
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SECURITY_DOMAIN;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
-
-const CU: u8 = 1;
-const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
-
-/// `KeyScope::Session` discriminant — masks under the per-session key.
-const SCOPE_SESSION: u8 = 0b001;
-/// `KeyScope::Ephemeral` discriminant.
-const SCOPE_EPHEMERAL: u8 = 0b010;
-/// `KeyScope::Local` discriminant.
-const SCOPE_LOCAL: u8 = 0b011;
-/// `KeyScope::SecurityDomain` discriminant.
-const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
 /// All supported NIST ECC curves.
 const SUPPORTED_CURVES: [u8; 3] = [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521];
