@@ -175,9 +175,13 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
-### EccGenerateKey
 
-| Requirement | Covered | Test | Notes |
+## `EccGenerateKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `EccGenerateKey` command. These tests exercise
+the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
+
+| Requirement | Status | Test | Notes |
 |---|---|---|---|
 | Generates fresh ECC keypairs on all supported curves | ✅ | `ecc_generate_key::ecc_generate_key_all_curves` | Covers P-256, P-384, and P-521 and verifies distinct masked/private and public-key outputs. |
 | Session-scoped generation is allowed before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_before_finalize` | Session scope does not require Ephemeral or Local masking keys. |
