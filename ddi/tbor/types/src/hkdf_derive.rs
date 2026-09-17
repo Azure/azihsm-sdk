@@ -84,6 +84,11 @@ pub struct TborHkdfDeriveReq {
     /// means none.
     #[tbor(max_len = 256)]
     pub info: Vec<u8>,
+
+    /// Caller-supplied key label recorded in the derived key's masked-blob
+    /// metadata, up to 128 bytes.  Empty for an unlabeled key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `HkdfDerive` response.
@@ -113,6 +118,7 @@ mod tests {
             masked_secret: alloc::vec![0x11u8; HKDF_MASKED_SECRET_MIN_LEN],
             salt: alloc::vec![0x22u8; 16],
             info: alloc::vec![0x33u8; 8],
+            key_label: alloc::vec![0x44u8; 8],
         };
         let mut buf = [0u8; 1024];
         let frame = req.encode_request(&mut buf).expect("encode");
