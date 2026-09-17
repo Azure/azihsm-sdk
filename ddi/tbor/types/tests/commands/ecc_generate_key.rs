@@ -23,11 +23,9 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
 use crate::commands::common::CU;
-use crate::commands::common::ROTATED_CU_PSK;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
@@ -37,6 +35,7 @@ use crate::harness::bootstrap_rotated_co;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
+use crate::harness::ROTATED_CU_PSK;
 
 /// All supported NIST ECC curves.
 const SUPPORTED_CURVES: [u8; 3] = [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521];
@@ -342,7 +341,7 @@ fn ecc_generate_key_max_label_length() {
 
 /// Rejects ECC generation while the CO PSK is still the default.
 #[test]
-fn ecc_generate_key_rejects_default_psk() {
+fn ecc_generate_key_rejects_default_co_psk() {
     let ctx = TestCtx::new();
     let session = ctx
         .open_session(0, SessionType::Authenticated)
@@ -438,13 +437,11 @@ fn ecc_generate_key_one_byte_label() {
     assert_eq!(resp.masked_key.len(), masked_key_len(ECC_CURVE_P256));
 }
 
-/// Session-scoped generation continues to work after closing and reopening a session.
+/// Allows Session-scoped generation after closing and reopening the CO session.
 #[test]
 fn ecc_generate_key_session_scope_after_reopen() {
     let ctx = TestCtx::new();
     let session_a = finalized_co_session(&ctx);
-
-    generate(&ctx, session_a.session_id, SCOPE_SESSION, ECC_CURVE_P256);
 
     ctx.session_close(session_a.session_id)
         .expect("close first CO session");

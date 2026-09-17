@@ -1,9 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use azihsm_ddi_tbor_types::PSK_LEN;
-
-//Common constants and helpers for TBOR command tests.
+//! Common constants and helpers for TBOR command tests.
 
 /// `KeyScope::Session` discriminant.
 pub(crate) const SCOPE_SESSION: u8 = 0b001;
@@ -22,5 +20,3 @@ pub(crate) const CO: u8 = 0;
 
 /// `SessionType` role identifier for Crypto-User sessions.
 pub(crate) const CU: u8 = 1;
-
-pub(crate) const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
