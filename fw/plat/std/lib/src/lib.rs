@@ -541,10 +541,12 @@ impl StdHsm {
     /// executor has stopped, so a caller-owned runtime can then be dropped
     /// safely.
     pub async fn shutdown_async(mut self) {
-        if let Some(thread) = self.begin_shutdown() {
+if let Some(thread) = self.begin_shutdown() {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            let tokio_rt = self.tokio_rt.take();
             std::thread::spawn(move || {
                 let _ = thread.join();
+                drop(tokio_rt);
                 let _ = tx.send(());
             });
             let _ = rx.await;
