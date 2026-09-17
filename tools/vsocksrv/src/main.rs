@@ -489,8 +489,30 @@ fn main() -> Result<()> {
         }
         SocketType::Unix => {
             debug!("Socket Type UNIX");
-            let stream = unix_stream.as_mut().context("AF_UNIX stream is missing")?;
-            serve_connection(stream, &hsm, runtime.handle(), args.partition_id)
+            let path = args
+                .unix_socket
+                .as_ref()
+                .context("AF_UNIX socket is required")?;
+            let mut stream = unix_stream.take().context("AF_UNIX stream is missing")?;
+            loop {
+                match serve_connection(&mut stream, &hsm, runtime.handle(), args.partition_id) {
+                    Ok(()) => {
+                        debug!("HSM client disconnected; reconnecting");
+                        tracing::info!("HSM client disconnected; reconnecting");
+                    }
+                    Err(error) => {
+                        debug!("HSM connection failed; reconnecting");
+                        tracing::warn!(?error, "HSM connection failed; reconnecting");
+                    }
+                }
+                stream = connect_unix(path, args.port)
+                    .context("Failed to reconnect to AF_UNIX")?;
+                tracing::info!(
+                    socket = %path.display(),
+                    port = args.port,
+                    "Reconnected to Cloud Hypervisor"
+                );
+            }
         }
     }
 }
