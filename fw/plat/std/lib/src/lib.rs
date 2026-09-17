@@ -24,10 +24,14 @@
 //! let hsm = StdHsm::with_tokio(runtime.handle().clone());
 //! ```
 
+use core::future::poll_fn;
+use core::task::Poll;
+use core::task::Waker;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_core::Hsm;
@@ -48,28 +52,69 @@ static STD_HSM_BUILT: AtomicBool = AtomicBool::new(false);
 /// spawn adds one more. Every task decrements the count exactly once
 /// when it permanently exits — `poll_io`/`ipc_task` only exit once
 /// their channel is closed and drained, and `handle_io` always exits
-/// after finishing its single IO. `run_until`'s predicate observes
-/// `done` (flipped once the count reaches zero), so the executor only
-/// stops after every accepted IO/IPC command has actually completed.
+/// after finishing its single IO. Once the task count reaches zero,
+/// [`run_core`] is woken to deinitialize the PAL; only then may
+/// `run_until` stop the executor.
 struct ShutdownTracker {
     active_tasks: AtomicUsize,
-    done: AtomicBool,
+    drained: AtomicBool,
+    deinitialized: AtomicBool,
+    waker: Mutex<Option<Waker>>,
 }
 
 impl ShutdownTracker {
+    fn new(active_tasks: usize) -> Self {
+        Self {
+            active_tasks: AtomicUsize::new(active_tasks),
+            drained: AtomicBool::new(false),
+            deinitialized: AtomicBool::new(false),
+            waker: Mutex::new(None),
+        }
+    }
+
     /// Marks one tracked task as permanently finished.
     fn task_done(&self) {
         if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.done.store(true, Ordering::Release);
+            self.drained.store(true, Ordering::Release);
+            let mut waker = self
+                .waker
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
         }
+    }
+
+    async fn wait_drained(&self) {
+        poll_fn(|cx| {
+            if self.drained.load(Ordering::Acquire) {
+                return Poll::Ready(());
+            }
+
+            *self
+                .waker
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cx.waker().clone());
+
+            if self.drained.load(Ordering::Acquire) {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    fn mark_deinitialized(&self) {
+        self.deinitialized.store(true, Ordering::Release);
     }
 }
 
 /// Embassy task that runs the HSM core lifecycle.
 ///
-/// Initialises the PAL, spawns the IO recv/send task pool, enters the
-/// PAL's main event loop, then deinitialises. This task never returns
-/// under normal operation.
+/// Initialises the PAL, spawns the IO recv/send task pool, waits for
+/// shutdown drain, then deinitialises before allowing the executor to stop.
 #[embassy_executor::task]
 async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     let hsm = HSM.get().await;
@@ -77,6 +122,9 @@ async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTrack
     if hsm.pal().init_cert_store().await.is_err() {
         // poll_io never starts — account for its reserved slot.
         tracker.task_done();
+        tracker.wait_drained().await;
+        hsm.pal().deinit();
+        tracker.mark_deinitialized();
         return;
     }
 
@@ -85,11 +133,15 @@ async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTrack
     } else {
         // poll_io never starts — account for its reserved slot.
         tracker.task_done();
+        tracker.wait_drained().await;
+        hsm.pal().deinit();
+        tracker.mark_deinitialized();
         return;
     }
 
-    hsm.pal().run().await;
+    tracker.wait_drained().await;
     hsm.pal().deinit();
+    tracker.mark_deinitialized();
 }
 
 /// IO receive loop — runs until the submission channel is closed.
@@ -238,10 +290,7 @@ impl StdHsmBuilder {
         let pool_handle = handle.clone();
         // Reserves one slot each for `poll_io` and `ipc_task`; decremented
         // as those loops (and any in-flight `handle_io`) permanently exit.
-        let shutdown_tracker = Arc::new(ShutdownTracker {
-            active_tasks: AtomicUsize::new(2),
-            done: AtomicBool::new(false),
-        });
+        let shutdown_tracker = Arc::new(ShutdownTracker::new(2));
         let executor_shutdown = shutdown_tracker.clone();
 
         // Embassy + Hsm task frames in debug builds are large enough
@@ -278,7 +327,7 @@ impl StdHsmBuilder {
                             .expect("part_cmd_task spawn failed");
                         spawner.spawn(token);
                     },
-                    || executor_shutdown.done.load(Ordering::Acquire),
+                    || executor_shutdown.deinitialized.load(Ordering::Acquire),
                 );
             })
             .expect("failed to spawn Embassy thread");
@@ -469,10 +518,9 @@ impl StdHsm {
 impl Drop for StdHsm {
     fn drop(&mut self) {
         // Stop accepting new work; `poll_io`/`ipc_task` exit their loops
-        // once these channels are closed and drained, and `ShutdownTracker`
-        // only flips the `run_until` predicate once those loops and every
-        // in-flight `handle_io` have finished — so joining the Embassy
-        // thread below waits for all accepted IO/IPC work to complete.
+        // once these channels are closed and drained. `ShutdownTracker`
+        // then wakes `run_core` to deinitialize the PAL before the
+        // `run_until` predicate lets the Embassy thread stop.
         self.io_tx.close();
         self.ipc_tx.close();
         if let Some(thread) = self.embassy_thread.take() {
@@ -491,19 +539,13 @@ impl Default for StdHsm {
 mod tests {
     use super::*;
 
-    /// Regression test for the shutdown drain protocol: `done` must not
-    /// flip while `handle_io` work is still in flight, even after the
-    /// long-running `poll_io`/`ipc_task` loops have both exited (e.g.
-    /// their channels closed and drained). Only once every tracked task
-    /// — including a still-running `handle_io` — reports completion may
-    /// the `run_until` predicate observe `done`, so an in-flight IO can
-    /// never be abandoned by a premature executor shutdown.
+    /// Regression test for the shutdown drain protocol: shutdown must not
+    /// drain while `handle_io` work is still in flight, and draining must
+    /// not by itself satisfy the `run_until` predicate before `run_core`
+    /// has deinitialized the PAL.
     #[test]
     fn shutdown_tracker_waits_for_all_tasks() {
-        let tracker = ShutdownTracker {
-            active_tasks: AtomicUsize::new(2),
-            done: AtomicBool::new(false),
-        };
+        let tracker = ShutdownTracker::new(2);
 
         // Simulate an IO accepted by `poll_io` and still being processed
         // by `handle_io` when shutdown begins.
@@ -512,22 +554,32 @@ mod tests {
         // `poll_io`'s loop exits (its channel closed and drained).
         tracker.task_done();
         assert!(
-            !tracker.done.load(Ordering::Acquire),
+            !tracker.drained.load(Ordering::Acquire),
             "must not stop while handle_io is still in flight"
         );
 
         // `ipc_task`'s loop exits (its channel closed and drained).
         tracker.task_done();
         assert!(
-            !tracker.done.load(Ordering::Acquire),
+            !tracker.drained.load(Ordering::Acquire),
             "must not stop while handle_io is still in flight"
         );
 
         // The in-flight `handle_io` finally finishes.
         tracker.task_done();
         assert!(
-            tracker.done.load(Ordering::Acquire),
-            "must stop only once every accepted task has finished"
+            tracker.drained.load(Ordering::Acquire),
+            "must drain only once every accepted task has finished"
+        );
+        assert!(
+            !tracker.deinitialized.load(Ordering::Acquire),
+            "must not stop before run_core deinitializes the PAL"
+        );
+
+        tracker.mark_deinitialized();
+        assert!(
+            tracker.deinitialized.load(Ordering::Acquire),
+            "must stop after run_core deinitializes the PAL"
         );
     }
 
