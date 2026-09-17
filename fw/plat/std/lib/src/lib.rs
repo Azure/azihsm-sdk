@@ -23,8 +23,10 @@
 //! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
 //! ```
 
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_core::Hsm;
@@ -35,22 +37,50 @@ use embassy_sync::once_lock::OnceLock;
 /// Global HSM singleton — concrete type with StdHsmPal.
 static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 
+/// Coordinates a drain-then-stop shutdown of the Embassy executor.
+///
+/// `active_tasks` starts at 2, accounting for the long-running
+/// [`poll_io`] and [`ipc_task`] loops. Each in-flight [`handle_io`]
+/// spawn adds one more. Every task decrements the count exactly once
+/// when it permanently exits — `poll_io`/`ipc_task` only exit once
+/// their channel is closed and drained, and `handle_io` always exits
+/// after finishing its single IO. `run_until`'s predicate observes
+/// `done` (flipped once the count reaches zero), so the executor only
+/// stops after every accepted IO/IPC command has actually completed.
+struct ShutdownTracker {
+    active_tasks: AtomicUsize,
+    done: AtomicBool,
+}
+
+impl ShutdownTracker {
+    /// Marks one tracked task as permanently finished.
+    fn task_done(&self) {
+        if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.done.store(true, Ordering::Release);
+        }
+    }
+}
+
 /// Embassy task that runs the HSM core lifecycle.
 ///
 /// Initialises the PAL, spawns the IO recv/send task pool, enters the
 /// PAL's main event loop, then deinitialises. This task never returns
 /// under normal operation.
 #[embassy_executor::task]
-async fn run_core(spawner: embassy_executor::Spawner) {
+async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     let hsm = HSM.get().await;
     hsm.pal().init();
     if hsm.pal().init_cert_store().await.is_err() {
+        // poll_io never starts — account for its reserved slot.
+        tracker.task_done();
         return;
     }
 
-    if let Ok(token) = poll_io(spawner) {
+    if let Ok(token) = poll_io(spawner, tracker.clone()) {
         spawner.spawn(token);
     } else {
+        // poll_io never starts — account for its reserved slot.
+        tracker.task_done();
         return;
     }
 
@@ -62,19 +92,25 @@ async fn run_core(spawner: embassy_executor::Spawner) {
 ///
 /// Awaits the next IO from the PAL submission queue, then spawns a
 /// `handle_io` task from the 32-slot pool. If no pool slots are
-/// available, the IO is silently skipped and the loop continues.
+/// available, the IO is silently skipped and the loop continues. Only
+/// exits once the submission channel is closed and drained, and only
+/// then marks itself done in `tracker` — the executor won't stop
+/// until this loop (and every `handle_io` it spawned) has finished.
 #[embassy_executor::task]
-async fn poll_io(spawner: embassy_executor::Spawner) {
+async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     loop {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
             break;
         };
 
-        let Ok(token) = handle_io(io) else {
+        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
+        let Ok(token) = handle_io(io, tracker.clone()) else {
+            tracker.task_done();
             continue;
         };
         spawner.spawn(token);
     }
+    tracker.task_done();
 }
 
 /// Processes a single IO to completion.
@@ -83,17 +119,20 @@ async fn poll_io(spawner: embassy_executor::Spawner) {
 /// [`Hsm::handle_io`]. Runs in a 32-task Embassy pool, allowing
 /// up to 32 IOs to be processed concurrently.
 #[embassy_executor::task(pool_size = 32)]
-async fn handle_io(io: StdHsmIo) {
+async fn handle_io(io: StdHsmIo, tracker: Arc<ShutdownTracker>) {
     HSM.get().await.handle_io(io).await;
+    tracker.task_done();
 }
 
 /// Embassy task that processes sideband partition commands.
 ///
 /// Receives [`PartCommand`]s from the user-facing [`StdHsm`] and
 /// dispatches them to [`StdHsmPal`]'s internal alloc/free methods.
-/// Replies via the per-command oneshot channel.
+/// Replies via the per-command oneshot channel. Only exits once the
+/// command channel is closed and drained, then marks itself done in
+/// `tracker`.
 #[embassy_executor::task]
-async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
+async fn ipc_task(rx: async_channel::Receiver<PartCommand>, tracker: Arc<ShutdownTracker>) {
     loop {
         let Ok(cmd) = rx.recv().await else {
             break;
@@ -118,6 +157,7 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
             }
         }
     }
+    tracker.task_done();
 }
 
 /// Maximum concurrent IOs — matches core's `send_task` pool size.
@@ -176,8 +216,13 @@ impl StdHsmBuilder {
         let (ipc_tx, ipc_rx) = async_channel::bounded(4);
 
         let pool_handle = handle.clone();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let executor_shutdown = shutdown.clone();
+        // Reserves one slot each for `poll_io` and `ipc_task`; decremented
+        // as those loops (and any in-flight `handle_io`) permanently exit.
+        let shutdown_tracker = Arc::new(ShutdownTracker {
+            active_tasks: AtomicUsize::new(2),
+            done: AtomicBool::new(false),
+        });
+        let executor_shutdown = shutdown_tracker.clone();
 
         // Embassy + Hsm task frames in debug builds are large enough
         // to overflow Linux's default 2 MiB thread stack — every
@@ -205,13 +250,15 @@ impl StdHsmBuilder {
 
                         let _ = HSM.init(Hsm::new(pal));
 
-                        let token = run_core(spawner).expect("run_core spawn failed");
+                        let token = run_core(spawner, shutdown_tracker.clone())
+                            .expect("run_core spawn failed");
                         spawner.spawn(token);
 
-                        let token = ipc_task(ipc_rx).expect("part_cmd_task spawn failed");
+                        let token = ipc_task(ipc_rx, shutdown_tracker.clone())
+                            .expect("part_cmd_task spawn failed");
                         spawner.spawn(token);
                     },
-                    || executor_shutdown.load(Ordering::Acquire),
+                    || executor_shutdown.done.load(Ordering::Acquire),
                 );
             })
             .expect("failed to spawn Embassy thread");
@@ -219,7 +266,6 @@ impl StdHsmBuilder {
         StdHsm {
             io_tx,
             ipc_tx,
-            shutdown,
             embassy_thread: Some(embassy_thread),
             tokio_rt: owned_rt,
             tokio_handle: handle,
@@ -242,13 +288,14 @@ impl StdHsmBuilder {
 ///
 /// # Shutdown
 ///
-/// Dropping `StdHsm` cleanly shuts down the Embassy thread and
-/// (if owned) the tokio runtime.
+/// Dropping `StdHsm` closes the submission channels, then waits for
+/// the Embassy executor to drain — every in-flight IO and IPC command
+/// finishes before the executor stops and the Embassy thread is
+/// joined — and finally (if owned) the tokio runtime.
 #[derive(Debug)]
 pub struct StdHsm {
     io_tx: async_channel::Sender<HsmIoRequest>,
     ipc_tx: async_channel::Sender<PartCommand>,
-    shutdown: Arc<AtomicBool>,
     embassy_thread: Option<JoinHandle<()>>,
     /// Owned tokio runtime (None if caller provided a handle).
     /// Kept alive for the lifetime of StdHsm; dropped on shutdown.
@@ -397,7 +444,11 @@ impl StdHsm {
 /// after the Embassy thread exits, shutting down the worker pool.
 impl Drop for StdHsm {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
+        // Stop accepting new work; `poll_io`/`ipc_task` exit their loops
+        // once these channels are closed and drained, and `ShutdownTracker`
+        // only flips the `run_until` predicate once those loops and every
+        // in-flight `handle_io` have finished — so joining the Embassy
+        // thread below waits for all accepted IO/IPC work to complete.
         self.io_tx.close();
         self.ipc_tx.close();
         if let Some(thread) = self.embassy_thread.take() {
@@ -409,5 +460,50 @@ impl Drop for StdHsm {
 impl Default for StdHsm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for the shutdown drain protocol: `done` must not
+    /// flip while `handle_io` work is still in flight, even after the
+    /// long-running `poll_io`/`ipc_task` loops have both exited (e.g.
+    /// their channels closed and drained). Only once every tracked task
+    /// — including a still-running `handle_io` — reports completion may
+    /// the `run_until` predicate observe `done`, so an in-flight IO can
+    /// never be abandoned by a premature executor shutdown.
+    #[test]
+    fn shutdown_tracker_waits_for_all_tasks() {
+        let tracker = ShutdownTracker {
+            active_tasks: AtomicUsize::new(2),
+            done: AtomicBool::new(false),
+        };
+
+        // Simulate an IO accepted by `poll_io` and still being processed
+        // by `handle_io` when shutdown begins.
+        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
+
+        // `poll_io`'s loop exits (its channel closed and drained).
+        tracker.task_done();
+        assert!(
+            !tracker.done.load(Ordering::Acquire),
+            "must not stop while handle_io is still in flight"
+        );
+
+        // `ipc_task`'s loop exits (its channel closed and drained).
+        tracker.task_done();
+        assert!(
+            !tracker.done.load(Ordering::Acquire),
+            "must not stop while handle_io is still in flight"
+        );
+
+        // The in-flight `handle_io` finally finishes.
+        tracker.task_done();
+        assert!(
+            tracker.done.load(Ordering::Acquire),
+            "must stop only once every accepted task has finished"
+        );
     }
 }
