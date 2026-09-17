@@ -37,6 +37,9 @@ use embassy_sync::once_lock::OnceLock;
 /// Global HSM singleton — concrete type with StdHsmPal.
 static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 
+/// Tracks the one-instance-ever [`StdHsm`] lifecycle restriction.
+static STD_HSM_BUILT: AtomicBool = AtomicBool::new(false);
+
 /// Coordinates a drain-then-stop shutdown of the Embassy executor.
 ///
 /// `active_tasks` starts at 2, accounting for the long-running
@@ -198,8 +201,14 @@ impl StdHsmBuilder {
     ///
     /// # Panics
     ///
-    /// Panics if the Embassy thread or tokio runtime fails to start.
+    /// Panics if a [`StdHsm`] has already been built in this process, or if the
+    /// Embassy thread or tokio runtime fails to start.
     pub fn build(self) -> StdHsm {
+        assert!(
+            !STD_HSM_BUILT.swap(true, Ordering::AcqRel),
+            "StdHsm can only be built once per process"
+        );
+
         let (owned_rt, handle) = if let Some(h) = self.tokio_handle {
             (None, h)
         } else {
@@ -292,6 +301,9 @@ impl StdHsmBuilder {
 /// the Embassy executor to drain — every in-flight IO and IPC command
 /// finishes before the executor stops and the Embassy thread is
 /// joined — and finally (if owned) the tokio runtime.
+///
+/// `StdHsm` owns process-global HSM and executor singletons, so only one
+/// instance can ever be built per process, even after that instance is dropped.
 #[derive(Debug)]
 pub struct StdHsm {
     io_tx: async_channel::Sender<HsmIoRequest>,
