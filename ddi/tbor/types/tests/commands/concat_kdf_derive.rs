@@ -60,8 +60,8 @@ const HASH_SHA384: u8 = 2;
 const HASH_SHA512: u8 = 3;
 
 /// AEAD-GCM-256 masked-key envelope overhead:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ tag(16)` = 132 B around the plaintext.
-const MASK_OVERHEAD: usize = 8 + 12 + 96 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ tag(16)` = 228 B around the plaintext.
+const MASK_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
 /// Derive a fresh masked ECDH shared secret (the KDF IKM) on-device.
 fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> Vec<u8> {
@@ -90,6 +90,7 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
         scope: SCOPE_LOCAL,
         masked_key: key_a.masked_key,
         peer_pub_key: key_b.pub_key,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret

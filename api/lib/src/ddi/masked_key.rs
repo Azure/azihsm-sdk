@@ -13,7 +13,7 @@ use super::*;
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
 /// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
-const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
+const TBOR_MASKED_KEY_METADATA_LEN: usize = 192;
 /// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
 /// Bit offset of the `KeyScope` field packed into `usage_flags`.
@@ -34,6 +34,9 @@ enum TborMaskedKeyKind {
     Aes128,
     Aes192,
     Aes256,
+    Secret256,
+    Secret384,
+    Secret521,
 }
 
 impl TryFrom<u8> for TborMaskedKeyKind {
@@ -47,6 +50,9 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             16 => Self::Aes128,
             17 => Self::Aes192,
             18 => Self::Aes256,
+            22 => Self::Secret256,
+            23 => Self::Secret384,
+            24 => Self::Secret521,
             _ => return Err(HsmError::MaskedKeyDecodeFailed),
         })
     }
@@ -228,14 +234,19 @@ impl HsmMaskedKey {
             TborMaskedKeyKind::Aes128 => (HsmKeyKind::Aes, 128, None),
             TborMaskedKeyKind::Aes192 => (HsmKeyKind::Aes, 192, None),
             TborMaskedKeyKind::Aes256 => (HsmKeyKind::Aes, 256, None),
+            TborMaskedKeyKind::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
+            TborMaskedKeyKind::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
+            TborMaskedKeyKind::Secret521 => (HsmKeyKind::SharedSecret, 521, None),
         };
 
-        // The masked payload is the raw AES key or the ECC private scalar.
-        // ECC scalars are zero-padded to a 4-byte-aligned wire length
-        // (P-521: 66 -> 68).
-        let payload_len = match curve {
-            Some(curve) => curve.component_size().next_multiple_of(4),
-            None => usize::from(bits) / 8,
+        // Masked payload = the raw key material's byte length. ECC private
+        // scalars are zero-padded to a 4-byte-aligned wire length (P-521:
+        // 66 -> 68); AES keys and ECDH shared secrets use the exact byte
+        // length (shared-secret P-521 is 66).
+        let key_bytes = usize::from(bits).div_ceil(8);
+        let payload_len = match kind {
+            HsmKeyKind::Ecc => key_bytes.next_multiple_of(4),
+            _ => key_bytes,
         };
         if envelope.payload.len() != payload_len {
             return Err(HsmError::MaskedKeyDecodeFailed);

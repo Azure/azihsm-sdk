@@ -54,12 +54,12 @@ const CU: u8 = 1;
 const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
 
 /// Expected masked shared-secret envelope length per curve:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ secret(raw_coord) ‖ tag(16)` = 132 + raw.
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ secret(raw_coord) ‖ tag(16)` = 228 + raw.
 fn masked_secret_len(curve: u8) -> usize {
     match curve {
-        ECC_CURVE_P256 => 132 + 32,
-        ECC_CURVE_P384 => 132 + 48,
-        ECC_CURVE_P521 => 132 + 66,
+        ECC_CURVE_P256 => 228 + 32,
+        ECC_CURVE_P384 => 228 + 48,
+        ECC_CURVE_P521 => 228 + 66,
         _ => unreachable!(),
     }
 }
@@ -92,6 +92,7 @@ fn derive(
         scope,
         masked_key,
         peer_pub_key: peer_pub,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret

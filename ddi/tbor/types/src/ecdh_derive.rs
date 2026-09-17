@@ -19,9 +19,9 @@ pub const TBOR_OP_ECDH_DERIVE: u8 = 0x19;
 /// Maximum peer public-key length (`x ‖ y`, P-521 padded).
 pub const ECDH_PEER_PUB_MAX_LEN: usize = 136;
 /// Minimum masked derived-secret envelope length (P-256).
-pub const MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 /// Maximum masked derived-secret envelope length (P-521).
-pub const MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 
 /// Host-facing TBOR `EcdhDerive` request.
 #[tbor(opcode = TBOR_OP_ECDH_DERIVE, session_ctrl = in_session)]
@@ -36,12 +36,18 @@ pub struct TborEcdhDeriveReq {
 
     /// The masked local ECC private key (from `EccGenerateKey` /
     /// `UnwrapKey`).
-    #[tbor(min_len = 164, max_len = 200)]
+    #[tbor(min_len = 260, max_len = 296)]
     pub masked_key: Vec<u8>,
 
     /// The peer's wire public key `x ‖ y` (little-endian, P-521 padded).
     #[tbor(max_len = 136)]
     pub peer_pub_key: Vec<u8>,
+
+    /// Caller-supplied key label recorded in the derived secret's masked
+    /// metadata, up to `TBOR_KEY_LABEL_MAX_LEN` (128) bytes.  Empty for an
+    /// unlabeled secret.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `EcdhDerive` response.
@@ -50,7 +56,7 @@ pub struct TborEcdhDeriveReq {
 pub struct TborEcdhDeriveResp {
     /// The derived ECDH shared secret, masked under the scope's masking
     /// key.
-    #[tbor(max_len = 198)]
+    #[tbor(max_len = 294)]
     pub masked_secret: Vec<u8>,
 }
 
@@ -67,6 +73,7 @@ mod tests {
             scope: 0b011,
             masked_key: alloc::vec![0x11u8; 164],
             peer_pub_key: alloc::vec![0x22u8; 64],
+            key_label: alloc::vec![],
         };
         let mut buf = [0u8; 512];
         let frame = req.encode_request(&mut buf).expect("encode");

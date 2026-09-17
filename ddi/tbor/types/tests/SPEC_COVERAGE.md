@@ -143,7 +143,7 @@ full native certificate-chain validation remains M1.5 work.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| First instantiation returns a 164-byte `local_mk_backup` | ✅ | `part_final::part_final_smoke_roundtrip` | Original test body |
+| First instantiation returns a 260-byte `local_mk_backup` | ✅ | `part_final::part_final_smoke_roundtrip` | Original test body |
 | Restore a prior backup with the same provisioning identity | ✅ | `part_final::part_final_restore_prev_backup` | Original test body |
 | Tampered prior backup is rejected | 🟡 | `part_final::part_final_reject_tampered_backup` | Original test body; exact status is not pinned |
 | Command before `PartInit` is rejected | 🟡 | `part_final::part_final_reject_wrong_state` | Original test body; exact status is not pinned |

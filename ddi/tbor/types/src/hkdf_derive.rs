@@ -25,11 +25,11 @@ pub const HKDF_SALT_MAX_LEN: usize = 256;
 /// Maximum HKDF info length (bytes).
 pub const HKDF_INFO_MAX_LEN: usize = 256;
 /// Minimum masked ECDH-secret IKM envelope length (P-256).
-pub const HKDF_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const HKDF_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 /// Maximum masked ECDH-secret IKM envelope length (P-521).
-pub const HKDF_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const HKDF_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 /// Maximum masked derived-key envelope length (128-byte var HMAC key).
-pub const HKDF_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+pub const HKDF_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `KdfKeyType` discriminant for an AES-128 (16-byte) derived key.
 pub const KDF_KEY_TYPE_AES128: u8 = 10;
@@ -72,7 +72,7 @@ pub struct TborHkdfDeriveReq {
     pub key_length: u8,
 
     /// The masked ECDH shared secret IKM (from `EcdhDerive`).
-    #[tbor(min_len = 164, max_len = 198)]
+    #[tbor(min_len = 260, max_len = 294)]
     pub masked_secret: Vec<u8>,
 
     /// Optional HKDF-Extract salt; an **empty** buffer selects the RFC
@@ -92,7 +92,7 @@ pub struct TborHkdfDeriveReq {
 pub struct TborHkdfDeriveResp {
     /// The derived key, masked (AEAD-GCM-256) under the scope's masking
     /// key.
-    #[tbor(max_len = 260)]
+    #[tbor(max_len = 356)]
     pub masked_key: Vec<u8>,
 }
 

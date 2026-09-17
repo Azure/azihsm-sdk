@@ -96,7 +96,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let svn = part_state::part_mfgr_svn(pal);
     let owner = u16::try_from(part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
     let attrs = ecc_key_attrs(scope, req.key_usage())?;
-    // Caller-supplied label stamped into the masked metadata (≤ 32 B,
+    // Caller-supplied label stamped into the masked metadata (≤ 128 B,
     // bounded by the wire `max_len`); empty for an unlabeled key.
     let caller_label = req.key_label();
 

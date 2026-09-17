@@ -17,9 +17,9 @@ use crate::tbor;
 pub const TBOR_OP_ECC_GENERATE_KEY: u8 = 0x17;
 
 /// Minimum masked ECC private-key envelope length (P-256).
-pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 /// Maximum masked ECC private-key envelope length (P-521).
-pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 68 + 16;
+pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 68 + 16;
 /// Maximum wire public-key length (`x ‖ y`, P-521 padded).
 pub const ECC_PUB_KEY_MAX_LEN: usize = 136;
 
@@ -53,9 +53,9 @@ pub struct TborEccGenerateKeyReq {
     pub key_usage: u64,
 
     /// Caller-supplied key label recorded in the masked blob's metadata,
-    /// up to `TBOR_KEY_LABEL_MAX_LEN` (32) bytes.  Empty for an unlabeled
+    /// up to `TBOR_KEY_LABEL_MAX_LEN` (128) bytes.  Empty for an unlabeled
     /// key.
-    #[tbor(max_len = 32)]
+    #[tbor(max_len = 128)]
     pub key_label: Vec<u8>,
 }
 
@@ -64,7 +64,7 @@ pub struct TborEccGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborEccGenerateKeyResp {
     /// The generated private key, masked under the scope's masking key.
-    #[tbor(max_len = 200)]
+    #[tbor(max_len = 296)]
     pub masked_key: Vec<u8>,
 
     /// The wire public key `x ‖ y` (little-endian, P-521 padded).
