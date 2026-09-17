@@ -168,6 +168,7 @@ fn ecdh_derive_bad_peer_pub_len_rejected() {
                 scope: SCOPE_LOCAL,
                 masked_key,
                 peer_pub_key: peer_pub,
+                key_label: Vec::new(),
             },
             TborStatus::InvalidArg,
         );
@@ -189,6 +190,7 @@ fn ecdh_derive_p256_peer_pub_trailing_byte_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: overlong,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
@@ -209,6 +211,7 @@ fn ecdh_derive_p384_peer_pub_trailing_byte_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: overlong,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
@@ -234,6 +237,7 @@ fn ecdh_derive_p521_peer_pub_trailing_byte_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: overlong,
+            key_label: Vec::new(),
         },
         TborStatus::TborInvalidFixedLength,
     );
@@ -262,6 +266,8 @@ fn ecdh_derive_peer_curve_mismatch_rejected() {
                 scope: SCOPE_LOCAL,
                 masked_key,
                 peer_pub_key: peer_pub,
+
+                key_label: Vec::new(),
             },
             TborStatus::InvalidArg,
         );
@@ -284,6 +290,8 @@ fn ecdh_derive_invalid_peer_coordinates_rejected() {
                 scope: SCOPE_LOCAL,
                 masked_key,
                 peer_pub_key: vec![0; peer_pub.len()],
+
+                key_label: Vec::new(),
             },
             TborStatus::EccPublicKeyValidationFailed,
         );
@@ -309,6 +317,7 @@ fn ecdh_derive_peer_coordinates_above_upper_bound_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::EccPublicKeyValidationFailed,
     );
@@ -334,6 +343,7 @@ fn ecdh_derive_off_curve_peer_point_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::EccPointValidationFailed,
     );
@@ -356,6 +366,7 @@ fn ecdh_derive_tampered_masked_key_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::AesGcmDecryptTagDoesNotMatch,
     );
@@ -375,6 +386,7 @@ fn ecdh_derive_wrong_key_class_rejected() {
             scope: SCOPE_LOCAL,
             masked_key: aes.masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );
@@ -394,6 +406,7 @@ fn ecdh_derive_unsupported_target_scope_rejected() {
             scope: SCOPE_SECURITY_DOMAIN,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
@@ -414,6 +427,7 @@ fn ecdh_derive_unknown_session_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::FileHandleSessionIdDoesNotMatch,
     );
@@ -433,6 +447,7 @@ fn ecdh_derive_rejects_default_co_psk() {
             scope: SCOPE_SESSION,
             masked_key: Vec::new(),
             peer_pub_key: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::DefaultPskMustRotate,
     );
@@ -452,6 +467,7 @@ fn ecdh_derive_rejects_default_cu_psk() {
             scope: SCOPE_SESSION,
             masked_key: Vec::new(),
             peer_pub_key: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::DefaultPskMustRotate,
     );
@@ -542,6 +558,7 @@ fn ecdh_derive_key_without_derive_usage_rejected() {
             scope: SCOPE_LOCAL,
             masked_key: imported.masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::InvalidPermissions,
     );
@@ -560,6 +577,7 @@ fn ecdh_derive_empty_peer_pub_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
@@ -578,6 +596,7 @@ fn ecdh_derive_empty_masked_key_rejected() {
             scope: SCOPE_LOCAL,
             masked_key: Vec::new(),
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::TborInvalidFixedLength,
     );
@@ -600,6 +619,7 @@ fn ecdh_derive_truncated_masked_key_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::TborInvalidFixedLength,
     );
@@ -619,6 +639,7 @@ fn ecdh_derive_invalid_scope_rejected() {
             scope: 0xff,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
@@ -640,6 +661,7 @@ fn ecdh_derive_local_target_before_finalize_rejected() {
             scope: SCOPE_LOCAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
@@ -661,6 +683,7 @@ fn ecdh_derive_ephemeral_target_before_finalize_rejected() {
             scope: SCOPE_EPHEMERAL,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
@@ -698,6 +721,7 @@ fn ecdh_derive_session_key_from_other_session_rejected() {
             scope: SCOPE_SESSION,
             masked_key,
             peer_pub_key: peer_pub,
+            key_label: Vec::new(),
         },
         TborStatus::AesGcmDecryptTagDoesNotMatch,
     );
