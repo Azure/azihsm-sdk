@@ -357,10 +357,10 @@ impl StdHsmBuilder {
 ///
 /// # Shutdown
 ///
-/// Dropping `StdHsm` closes the submission channels, then waits for
-/// the Embassy executor to drain — every in-flight IO and IPC command
-/// finishes before the executor stops and the Embassy thread is
-/// joined — and finally (if owned) the tokio runtime.
+/// Dropping `StdHsm` closes the submission channels, then its shutdown
+/// thread waits for the Embassy executor to drain — every in-flight IO
+/// and IPC command finishes before the executor stops and the Embassy
+/// thread is joined — and finally (if owned) the tokio runtime.
 ///
 /// `StdHsm` owns process-global HSM and executor singletons, so only one
 /// instance can ever be built per process, even after that instance is dropped.
@@ -510,8 +510,9 @@ impl StdHsm {
 ///
 /// Closes both the IO submission and partition command channels, which
 /// causes the corresponding Embassy tasks (`run_core` / `part_cmd_task`)
-/// to exit. Then joins the Embassy background thread to ensure all
-/// in-flight work is completed before the `StdHsm` is dropped.
+/// to exit. A shutdown thread then joins the Embassy background thread
+/// after all in-flight work is complete, without blocking a Tokio worker
+/// that may be needed by the work being drained.
 ///
 /// If a tokio runtime is owned (`tokio_rt` is `Some`), it is dropped
 /// after the Embassy thread exits, shutting down the worker pool.
@@ -524,9 +525,16 @@ impl Drop for StdHsm {
         self.io_tx.close();
         self.ipc_tx.close();
         if let Some(thread) = self.embassy_thread.take() {
-            let _ = thread.join();
+            join_shutdown(thread, self.tokio_rt.take());
         }
     }
+}
+
+fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtime>) {
+    std::thread::spawn(move || {
+        let _ = thread.join();
+        drop(tokio_rt);
+    });
 }
 
 impl Default for StdHsm {
@@ -537,6 +545,9 @@ impl Default for StdHsm {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
     use super::*;
 
     /// Regression test for the shutdown drain protocol: shutdown must not
@@ -590,5 +601,26 @@ mod tests {
             .build()
             .expect("failed to create tokio runtime");
         let _hsm = StdHsm::with_tokio(runtime.handle().clone());
+    }
+
+    #[test]
+    fn shutdown_join_does_not_block_caller() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            release_rx.recv().expect("release sender dropped");
+            done_tx.send(()).expect("completion receiver dropped");
+        });
+
+        join_shutdown(thread, None);
+
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(10)).is_err(),
+            "shutdown must not join on the calling thread"
+        );
+        release_tx.send(()).expect("shutdown thread dropped");
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown thread did not complete");
     }
 }
