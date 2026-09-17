@@ -404,6 +404,8 @@ fn ecc_generate_key_unspecified_scope_rejected_emu() {
             session_id: session.session_id,
             scope: SCOPE_UNSPECIFIED,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
@@ -421,6 +423,8 @@ fn ecc_generate_key_internal_scope_rejected_emu() {
             session_id: session.session_id,
             scope: SCOPE_INTERNAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
         },
         TborStatus::UnsupportedKeyScope,
     );
