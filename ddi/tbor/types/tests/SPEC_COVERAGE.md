@@ -207,6 +207,11 @@ role's partition PSK still matches the compiled-in default.
 | Ephemeral result scope before partition finalization → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_ephemeral_target_before_finalize_rejected` | Input key remains Session scoped so the output-scope gate is isolated |
 | Session-scoped private key cannot be reused after its originating session closes | ✅ | `ecdh_derive::ecdh_derive_session_key_from_other_session_rejected` | Reopened session cannot authenticate the old session-scoped masked key |
 | Local-scoped private key remains usable after session close and reopen | ✅ | `ecdh_derive::ecdh_derive_local_key_across_sessions` | Confirms Local masking scope survives the session lifecycle |
+ | Non-empty key labels are accepted | ✅ | `ecdh_derive::ecdh_derive_non_empty_key_label` |  |
+ | Key label at `TBOR_KEY_LABEL_MAX_LEN` is accepted | ✅ | `ecdh_derive::ecdh_derive_max_key_label_length` |  |
+ | Key label over `TBOR_KEY_LABEL_MAX_LEN` → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_key_label_too_long_rejected` |  |
+ | Distinct non-empty key labels are accepted for identical ECDH inputs | ✅ | `ecdh_derive::ecdh_derive_different_labels_succeed` |  |
+ | Binary key labels are accepted | ✅ | `ecdh_derive::ecdh_derive_binary_key_label` |  |
 | Empty response surfaces FW status without attempting body decode | ✅ | `fw_error_decode::empty_response_surfaces_fw_status` | Mock + emu |
 | Non-empty error response surfaces FW status before schema decode | ✅ | `fw_error_decode::fields_response_surfaces_fw_status_before_schema_decode` | Mock + emu |
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
