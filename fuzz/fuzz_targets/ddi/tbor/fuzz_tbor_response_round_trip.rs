@@ -37,10 +37,10 @@ fuzz_target!(|input: FuzzInput| {
             Err(DecodeError::UnsupportedVersion(_)) => return,
             Err(e) => panic!("bytes from a successful ResponseEncoder::finish must parse: {e:?}"),
         };
-        let _ = view.version();
-        let _ = view.status();
-        let _ = view.flags();
-        let _ = view.fips_approved();
+        assert_eq!(view.version(), input.version);
+        assert_eq!(view.status(), input.status);
+        assert_eq!(view.fips_approved(), input.fips_approved);
+        assert_eq!(view.flags(), u8::from(input.fips_approved));
         assert_eq!(view.toc_count(), input.ops.len());
         let _ = view.data_start();
         let _ = view.data_size();
