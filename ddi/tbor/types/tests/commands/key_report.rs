@@ -24,6 +24,7 @@ use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
+use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::bootstrap_rotated_co;
@@ -229,7 +230,7 @@ fn key_report_rejects_before_finalize() {
 
     let req = TborKeyReportReq {
         session_id: session.session_id,
-        masked_key: vec![0u8; 180],
+        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
@@ -248,7 +249,7 @@ fn key_report_rejected_on_cu_session() {
     // before the state/scope gates) rejects a CU session.
     let req = TborKeyReportReq {
         session_id: session.session_id,
-        masked_key: vec![0u8; 180],
+        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
@@ -266,7 +267,7 @@ fn key_report_rejected_on_default_psk() {
 
     let req = TborKeyReportReq {
         session_id: session.session_id(),
-        masked_key: vec![0u8; 180],
+        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);

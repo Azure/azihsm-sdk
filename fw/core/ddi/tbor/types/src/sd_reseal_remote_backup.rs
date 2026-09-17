@@ -54,7 +54,7 @@ pub const TBOR_OP_SD_RESEAL_REMOTE_BACKUP: u8 = 0x0B;
 const _: () = assert!(PART_POLICY_LEN == 484);
 
 // `masked_sealing_key` is a masked SD-sealing key; the derive needs an
-// integer literal on the field, so the length is spelled out as `180` and
+// integer literal on the field, so the length is spelled out as `276` and
 // pinned against the canonical `MASKED_SEALING_KEY_LEN` here.
 const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
