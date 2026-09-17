@@ -34,7 +34,10 @@ use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 use azihsm_ddi_tbor_types::PSK_LEN;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
+pub(crate) use crate::commands::common::CO;
+pub(crate) use crate::commands::common::CU;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
@@ -46,9 +49,6 @@ use crate::harness::bootstrap_rotated_co;
 use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
 
 /// Non-default CU PSK used to pass the default-PSK gate.
 const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
@@ -765,4 +765,114 @@ fn ecdh_derive_local_key_across_sessions() {
         masked_secret_len(ECC_CURVE_P256),
         "local-scoped key must remain usable after reopening the session",
     );
+}
+
+/// Derives a shared secret with a non-empty key label.
+#[test]
+fn ecdh_derive_non_empty_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    let resp = ctx
+        .tbor(&TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+            key_label: b"ecdh-derived-secret".to_vec(),
+        })
+        .expect("EcdhDerive with non-empty key label");
+
+    assert_eq!(resp.masked_secret.len(), masked_secret_len(ECC_CURVE_P256),);
+}
+
+/// Derives successfully with the maximum supported key-label length.
+#[test]
+fn ecdh_derive_max_key_label_length() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    let resp = ctx
+        .tbor(&TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+            key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+        })
+        .expect("EcdhDerive with maximum key-label length");
+
+    assert_eq!(resp.masked_secret.len(), masked_secret_len(ECC_CURVE_P256),);
+}
+/// Rejects a key label longer than the TBOR maximum.
+#[test]
+fn ecdh_derive_key_label_too_long_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+            key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN + 1],
+        },
+        TborStatus::TborInvalidFixedLength,
+    );
+}
+
+/// Derives successfully with distinct non-empty labels for identical ECDH inputs.
+#[test]
+fn ecdh_derive_different_labels_succeed() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    for label in [b"label-a".to_vec(), b"label-b".to_vec()] {
+        let resp = ctx
+            .tbor(&TborEcdhDeriveReq {
+                session_id: session.session_id,
+                scope: SCOPE_LOCAL,
+                masked_key: masked_key.clone(),
+                peer_pub_key: peer_pub.clone(),
+                key_label: label,
+            })
+            .expect("EcdhDerive with non-empty label");
+
+        assert_eq!(resp.masked_secret.len(), masked_secret_len(ECC_CURVE_P256));
+    }
+}
+
+/// Allows an arbitrary binary key label.
+#[test]
+fn ecdh_derive_binary_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let (masked_key, _) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+    let (_, peer_pub) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
+
+    let resp = ctx
+        .tbor(&TborEcdhDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            masked_key,
+            peer_pub_key: peer_pub,
+            key_label: vec![0x00, 0x80, 0xff, 0x41],
+        })
+        .expect("EcdhDerive with binary key label");
+
+    assert_eq!(resp.masked_secret.len(), masked_secret_len(ECC_CURVE_P256));
 }

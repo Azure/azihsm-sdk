@@ -8,6 +8,7 @@
 pub mod aes_encrypt_decrypt;
 pub mod aes_generate_key;
 pub mod api_rev;
+#[cfg(feature = "emu")]
 pub mod common;
 pub mod concat_kdf_derive;
 pub mod default_psk_gate;
