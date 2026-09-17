@@ -401,7 +401,7 @@ fn ecc_generate_key_derive_usage_all_curves() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    for curve in [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521] {
+    for curve in SUPPORTED_CURVES {
         let resp = ctx
             .tbor(&TborEccGenerateKeyReq {
                 session_id: session.session_id,
