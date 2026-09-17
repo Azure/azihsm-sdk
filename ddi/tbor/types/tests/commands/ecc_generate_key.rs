@@ -30,6 +30,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 use azihsm_ddi_tbor_types::KEY_USAGE_WRAP;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
+use crate::commands::common::CO;
 use crate::commands::common::CU;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
@@ -311,13 +312,15 @@ fn ecc_generate_key_non_empty_label_all_curves() {
     let session = finalized_co_session(&ctx);
 
     for curve in SUPPORTED_CURVES {
+        let key_label = b"ecc-test-key".to_vec();
+
         let resp = ctx
             .tbor(&TborEccGenerateKeyReq {
                 session_id: session.session_id,
                 scope: SCOPE_LOCAL,
                 curve,
                 key_usage: KEY_USAGE_SIGN,
-                key_label: b"ecc-test-key".to_vec(),
+                key_label,
             })
             .expect("EccGenerateKey with key label");
 
@@ -333,13 +336,15 @@ fn ecc_generate_key_max_label_length_all_curves() {
     let session = finalized_co_session(&ctx);
 
     for curve in SUPPORTED_CURVES {
+        let key_label = vec![b'L'; TBOR_KEY_LABEL_MAX_LEN];
+
         let resp = ctx
             .tbor(&TborEccGenerateKeyReq {
                 session_id: session.session_id,
                 scope: SCOPE_LOCAL,
                 curve,
                 key_usage: KEY_USAGE_SIGN,
-                key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+                key_label,
             })
             .expect("EccGenerateKey with maximum key-label length");
 
@@ -353,7 +358,7 @@ fn ecc_generate_key_max_label_length_all_curves() {
 fn ecc_generate_key_rejects_default_co_psk() {
     let ctx = TestCtx::new();
     let session = ctx
-        .open_session(0, SessionType::Authenticated)
+        .open_session(CO, SessionType::Authenticated)
         .expect("open CO session under default PSK");
 
     ctx.expect_fw_reject(
@@ -431,6 +436,7 @@ fn ecc_generate_key_derive_usage_all_curves() {
 fn ecc_generate_key_one_byte_label() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
+    let key_label = vec![b'A'];
 
     let resp = ctx
         .tbor(&TborEccGenerateKeyReq {
@@ -438,7 +444,7 @@ fn ecc_generate_key_one_byte_label() {
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
             key_usage: KEY_USAGE_SIGN,
-            key_label: vec![b'A'],
+            key_label,
         })
         .expect("EccGenerateKey with one-byte key label");
 
@@ -455,7 +461,8 @@ fn ecc_generate_key_session_scope_after_reopen() {
     ctx.session_close(session_a.session_id)
         .expect("close first CO session");
 
-    let opts = SessionOpenInitOptions::new(0, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+    let opts =
+        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
 
     let pending = ctx
         .session_open_init_with_options(opts)
@@ -601,11 +608,13 @@ fn ecc_generate_key_derive_usage_with_labels_all_curves() {
         }
     }
 }
+
 /// Allows an arbitrary byte sequence as the key label.
 #[test]
 fn ecc_generate_key_binary_label() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
+    let key_label = vec![0x00, 0x80, 0xff, 0x41];
 
     let resp = ctx
         .tbor(&TborEccGenerateKeyReq {
@@ -613,7 +622,7 @@ fn ecc_generate_key_binary_label() {
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
             key_usage: KEY_USAGE_SIGN,
-            key_label: vec![0x00, 0x80, 0xff, 0x41],
+            key_label,
         })
         .expect("EccGenerateKey with binary label");
 
