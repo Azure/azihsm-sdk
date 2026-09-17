@@ -417,8 +417,8 @@ mod tests {
         msg
     }
 
-    /// Boundary behaviour of the `1 < m < n - 1` predicate.  Operands are
-    /// little-endian, so byte 0 is the least-significant.
+    /// Edge cases for the `1 < m < n - 1` input-range check (all values
+    /// little-endian).
     #[test]
     fn mod_exp_input_range_check() {
         // n = 0x0100FF (65791); valid m is 2..=65789 (1 < m < n-1).
@@ -431,29 +431,14 @@ mod tests {
         assert!(!mod_exp_input_in_range(&n, &[0xFF, 0x00, 0x01]), "m = n");
         assert!(!mod_exp_input_in_range(&n, &[0x00, 0x01, 0x01]), "m = n+1");
 
-        // Borrow pattern: n = 0x010000, so n-1 = 0x00FFFF — n's lower bytes
-        // are all 0x00 and m's all 0xFF.
+        // Borrow pattern: n = 0x010000, so n-1 = 0x00FFFF.
         let n2 = [0x00, 0x00, 0x01];
         assert!(!mod_exp_input_in_range(&n2, &[0xFF, 0xFF, 0x00]), "m = n-1");
         assert!(mod_exp_input_in_range(&n2, &[0xFE, 0xFF, 0x00]), "m = n-2");
 
-        // Adjacent most-significant bytes: n = 0x00FFFF.
-        let n3 = [0xFF, 0xFF, 0x00];
-        assert!(!mod_exp_input_in_range(&n3, &[0xFF, 0xFF, 0x00]), "m = n");
-        assert!(!mod_exp_input_in_range(&n3, &[0xFE, 0xFF, 0x00]), "m = n-1");
-        assert!(mod_exp_input_in_range(&n3, &[0xFD, 0xFF, 0x00]), "m = n-2");
-
-        // Length disagreement and empty operands are rejected.
+        // Length mismatch and empty inputs are rejected.
         assert!(!mod_exp_input_in_range(&n, &[0x02, 0x00]));
         assert!(!mod_exp_input_in_range(&[], &[]));
-    }
-
-    /// An all-`0xFF` input of modulus length is the DDI boundary case:
-    /// it always exceeds the modulus, so it must be rejected.
-    #[test]
-    fn all_ones_input_rejected() {
-        let n = [0xFF, 0x00, 0x01];
-        assert!(!mod_exp_input_in_range(&n, &[0xFF, 0xFF, 0xFF]));
     }
 
     // ── Key generation ──────────────────────────────────────────

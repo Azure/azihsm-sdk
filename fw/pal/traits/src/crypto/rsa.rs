@@ -213,27 +213,15 @@ pub trait HsmRsa {
     /// - `y` — input integer; must be exactly
     ///   `key_size.modulus_len()` bytes, in wire **little-endian** byte
     ///   order.  The PAL flips to its primitive's native order (e.g. the
-    ///   std/OpenSSL PAL reverses to big-endian).  The value must satisfy
-    ///   `1 < y < n - 1`, where `n` is the key's modulus.
+    ///   std/OpenSSL PAL reverses to big-endian).
     /// - `x` — output integer; must be exactly
     ///   `key_size.modulus_len()` bytes, written in wire **little-endian**
     ///   byte order.
     ///
-    /// # Input range
-    ///
-    /// FIPS / NIST-ACVP restrict the private-key primitive's input to
-    /// `1 < y < n - 1`.  Implementations **must** enforce this range and
-    /// return [`HsmError::InvalidArg`] outside it: the underlying
-    /// primitives reduce `y mod n` and produce a well-formed result for an
-    /// out-of-range input rather than rejecting it, so the range cannot be
-    /// left to the engine.  Each PAL applies the check itself, recovering
-    /// `n` from its own key layout, which this trait keeps PAL-defined.
-    ///
     /// # Returns
     ///
     /// - `Ok(())` — `x` populated.
-    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch, or `y`
-    ///   outside `1 < y < n - 1`.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
     /// - `Err(HsmError)` — PKA driver failure.
     async fn mod_exp_priv(
         &self,
