@@ -33,13 +33,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_core::Hsm;
 use azihsm_fw_hsm_pal_std::*;
 use azihsm_fw_hsm_pal_traits::*;
 use embassy_sync::once_lock::OnceLock;
+use parking_lot::Mutex;
 
 /// Global HSM singleton — concrete type with StdHsmPal.
 static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
@@ -78,10 +78,7 @@ impl ShutdownTracker {
     fn task_done(&self) {
         if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.drained.store(true, Ordering::Release);
-            let mut waker = self
-                .waker
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut waker = self.waker.lock();
             if let Some(waker) = waker.take() {
                 waker.wake();
             }
@@ -94,10 +91,7 @@ impl ShutdownTracker {
                 return Poll::Ready(());
             }
 
-            *self
-                .waker
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cx.waker().clone());
+            *self.waker.lock() = Some(cx.waker().clone());
 
             if self.drained.load(Ordering::Acquire) {
                 Poll::Ready(())
