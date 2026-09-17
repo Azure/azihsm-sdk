@@ -26,6 +26,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_UNWRAP;
+use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 use azihsm_ddi_tbor_types::KEY_USAGE_WRAP;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
@@ -554,6 +555,7 @@ fn ecc_generate_key_known_invalid_usages_rejected() {
     for key_usage in [
         KEY_USAGE_ENCRYPT,
         KEY_USAGE_DECRYPT,
+        KEY_USAGE_VERIFY,
         KEY_USAGE_WRAP,
         KEY_USAGE_UNWRAP,
         KEY_USAGE_SIGN | KEY_USAGE_ENCRYPT,
