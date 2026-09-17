@@ -20,7 +20,8 @@
 //! assert_eq!(c.cqe[3], expected_cmd_id);
 //!
 //! // With caller's tokio runtime:
-//! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
+//! let runtime = tokio::runtime::Builder::new_multi_thread().build()?;
+//! let hsm = StdHsm::with_tokio(runtime.handle().clone());
 //! ```
 
 use std::sync::atomic::AtomicBool;
@@ -187,7 +188,7 @@ impl StdHsmBuilder {
     ///
     /// When set, `StdHsm` does not create or own a tokio runtime.
     /// The caller must keep their runtime alive for the lifetime of
-    /// the `StdHsm`.
+    /// the `StdHsm`. The runtime must use Tokio's multi-thread scheduler.
     pub fn tokio_handle(mut self, handle: tokio::runtime::Handle) -> Self {
         self.tokio_handle = Some(handle);
         self
@@ -202,8 +203,18 @@ impl StdHsmBuilder {
     /// # Panics
     ///
     /// Panics if a [`StdHsm`] has already been built in this process, or if the
-    /// Embassy thread or tokio runtime fails to start.
+    /// Embassy thread or tokio runtime fails to start. Also panics if the
+    /// supplied Tokio handle belongs to a current-thread runtime.
     pub fn build(self) -> StdHsm {
+        if let Some(handle) = &self.tokio_handle {
+            assert!(
+                matches!(
+                    handle.runtime_flavor(),
+                    tokio::runtime::RuntimeFlavor::MultiThread
+                ),
+                "StdHsm requires a multi-thread Tokio runtime"
+            );
+        }
         assert!(
             !STD_HSM_BUILT.swap(true, Ordering::AcqRel),
             "StdHsm can only be built once per process"
@@ -335,7 +346,8 @@ impl StdHsm {
     /// Create and start using an existing tokio runtime handle.
     ///
     /// The caller must keep their tokio runtime alive. No delays are
-    /// configured — use [`builder`](Self::builder) for that.
+    /// configured — use [`builder`](Self::builder) for that. The runtime
+    /// must use Tokio's multi-thread scheduler.
     pub fn with_tokio(handle: tokio::runtime::Handle) -> Self {
         Self::builder().tokio_handle(handle).build()
     }
@@ -517,5 +529,14 @@ mod tests {
             tracker.done.load(Ordering::Acquire),
             "must stop only once every accepted task has finished"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "StdHsm requires a multi-thread Tokio runtime")]
+    fn current_thread_tokio_runtime_is_rejected() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("failed to create tokio runtime");
+        let _hsm = StdHsm::with_tokio(runtime.handle().clone());
     }
 }
