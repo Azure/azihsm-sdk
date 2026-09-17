@@ -18,6 +18,7 @@ azihsm_fw_hsm_io.workspace = true
 azihsm_fw_hsm_std.workspace = true
 clap = { features = ["derive"], workspace = true }
 libc.workspace = true
+log.workspace = true
 nix.workspace = true
 tokio = { features = ["rt-multi-thread", "time"], workspace = true }
 tracing.workspace = true

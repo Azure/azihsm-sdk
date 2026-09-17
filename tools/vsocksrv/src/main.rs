@@ -12,6 +12,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::anyhow;
@@ -26,6 +27,7 @@ use azihsm_fw_hsm_io::Sqe;
 use azihsm_fw_hsm_std::StdHsm;
 use clap::Parser;
 use clap::ValueEnum;
+use log::debug;
 use nix::sys::socket::accept4;
 use nix::sys::socket::bind;
 use nix::sys::socket::listen;
@@ -103,6 +105,10 @@ impl PreparedRequest {
         let dst_len = request.sqe[6] as usize;
         let oob_len = request.sqe[15] as usize;
 
+        debug!(
+            "src_len {:?} dst_len {:?} oob_len {:?}",
+            src_len, dst_len, oob_len
+        );
         if src_len == 0 || src_len > MAX_SRC_LEN || request.payload.len() != src_len {
             bail!("Invalid source payload length");
         }
@@ -283,9 +289,24 @@ fn write_connect_command(stream: &mut impl Write, port: u32) -> io::Result<()> {
 }
 
 fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
-    let mut stream = UnixStream::connect(path)?;
-    write_connect_command(&mut stream, port)?;
-    Ok(stream)
+    loop {
+        match UnixStream::connect(path) {
+            Ok(mut stream) => {
+                write_connect_command(&mut stream, port)?;
+                return Ok(stream);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                tracing::debug!(socket = %path.display(), ?error, "Waiting for AF_UNIX listener");
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn serve_connection(
@@ -296,6 +317,7 @@ fn serve_connection(
 ) -> Result<()> {
     let mut request_id = 0u64;
     loop {
+        debug!("Waiting for request frame");
         tracing::trace!("Waiting for request frame");
         let request = match Request::read_from(stream) {
             Ok(request) => request,
@@ -307,10 +329,12 @@ fn serve_connection(
                         | io::ErrorKind::BrokenPipe
                 ) =>
             {
+                debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
                 return Ok(());
             }
             Err(error) => {
+                debug!("Failed to decode request frame");
                 tracing::warn!(?error, "Failed to decode request frame");
                 return Err(error.into());
             }
@@ -328,13 +352,16 @@ fn serve_connection(
             oob_count = request.oob.len(),
         );
         let _request_guard = request_span.enter();
+        debug!("Received request frame");
         tracing::debug!("Received request frame");
         let started = Instant::now();
         let response = match PreparedRequest::new(request) {
             Ok(prepared) => {
+                debug!("Submitting request to StdHsm");
                 tracing::trace!(partition_id, "Submitting request to StdHsm");
                 match runtime.block_on(hsm.io(prepared.sqe, partition_id, 0, 0)) {
                     Ok(cqe) => {
+                        debug!("StdHsm request completed");
                         tracing::debug!(
                             elapsed_us = started.elapsed().as_micros(),
                             "StdHsm request completed"
@@ -342,6 +369,7 @@ fn serve_connection(
                         prepared.response(cqe)
                     }
                     Err(error) => {
+                        debug!("HSM request failed");
                         tracing::warn!(
                             ?error,
                             elapsed_us = started.elapsed().as_micros(),
@@ -352,16 +380,19 @@ fn serve_connection(
                 }
             }
             Err(error) => {
+                debug!("Invalid HSM request");
                 tracing::warn!(?error, "Invalid HSM request");
                 error_response()
             }
         };
+        debug!("Writing response frame");
         tracing::trace!(
             transport_status = response.status,
             payload_len = response.payload.len(),
             "Writing response frame"
         );
         response.write_to(stream)?;
+        debug!("Request finished");
         tracing::debug!(
             transport_status = response.status,
             elapsed_us = started.elapsed().as_micros(),
@@ -399,6 +430,25 @@ fn main() -> Result<()> {
         bail!("Partition ID must be less than 65");
     }
 
+    let mut unix_stream = if matches!(args.socket_type, SocketType::Unix) {
+        debug!("Setting up UNIX socket");
+        let path = args
+            .unix_socket
+            .as_ref()
+            .context("AF_UNIX socket is required")?;
+        tracing::info!(socket = %path.display(), port = args.port, "Connecting to Cloud Hypervisor");
+        let stream = connect_unix(path, args.port).context("Failed to connect to AF_UNIX")?;
+        tracing::info!(
+            socket = %path.display(),
+            port = args.port,
+            "Connected to Cloud Hypervisor"
+        );
+        debug!("Set up UNIX socket");
+        Some(stream)
+    } else {
+        None
+    };
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_time()
         .build()
@@ -417,6 +467,7 @@ fn main() -> Result<()> {
 
     match args.socket_type {
         SocketType::Vsock => {
+            debug!("Socket Type VSOCK");
             let listener =
                 VsockListener::bind(args.cid, args.port).context("Failed to bind AF_VSOCK")?;
             tracing::info!(
@@ -437,18 +488,9 @@ fn main() -> Result<()> {
             }
         }
         SocketType::Unix => {
-            let path = args
-                .unix_socket
-                .as_ref()
-                .context("AF_UNIX socket is required")?;
-            let mut stream =
-                connect_unix(path, args.port).context("Failed to connect to AF_UNIX")?;
-            tracing::info!(
-                socket = %path.display(),
-                port = args.port,
-                "Connected to Cloud Hypervisor"
-            );
-            serve_connection(&mut stream, &hsm, runtime.handle(), args.partition_id)
+            debug!("Socket Type UNIX");
+            let stream = unix_stream.as_mut().context("AF_UNIX stream is missing")?;
+            serve_connection(stream, &hsm, runtime.handle(), args.partition_id)
         }
     }
 }

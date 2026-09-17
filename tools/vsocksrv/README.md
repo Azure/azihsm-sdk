@@ -31,7 +31,8 @@ cargo run --release -p vsocksrv -- \
 ```
 
 Unix mode sends `CONNECT <port>\n` before the framed protocol begins. Vsock
-mode does not send this command. The socket type defaults to `vsock`.
+mode does not send this command. The socket type defaults to `vsock`. Unix mode
+automatically reconnects and resends `CONNECT` when the connection closes.
 
 Set `RUST_LOG=vsocksrv=debug` to trace connection and request lifecycles, HSM
 completion status, and request latency. Use `RUST_LOG=vsocksrv=trace` for frame
