@@ -22,9 +22,11 @@
 //! // With caller's tokio runtime:
 //! let runtime = tokio::runtime::Builder::new_multi_thread().build()?;
 //! let hsm = StdHsm::with_tokio(runtime.handle().clone());
+//! hsm.shutdown();
 //! ```
 
 use core::future::poll_fn;
+use core::future::Future;
 use core::task::Poll;
 use core::task::Waker;
 use std::sync::atomic::AtomicBool;
@@ -122,7 +124,7 @@ async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTrack
     if hsm.pal().init_cert_store().await.is_err() {
         // poll_io never starts — account for its reserved slot.
         tracker.task_done();
-        tracker.wait_drained().await;
+        run_pal_until_drained(hsm, &tracker).await;
         hsm.pal().deinit();
         tracker.mark_deinitialized();
         return;
@@ -133,15 +135,30 @@ async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTrack
     } else {
         // poll_io never starts — account for its reserved slot.
         tracker.task_done();
-        tracker.wait_drained().await;
+        run_pal_until_drained(hsm, &tracker).await;
         hsm.pal().deinit();
         tracker.mark_deinitialized();
         return;
     }
 
-    tracker.wait_drained().await;
+    run_pal_until_drained(hsm, &tracker).await;
     hsm.pal().deinit();
     tracker.mark_deinitialized();
+}
+
+/// Drives the PAL until its run loop exits or all work has drained.
+async fn run_pal_until_drained(hsm: &Hsm<StdHsmPal>, tracker: &ShutdownTracker) {
+    let mut run = core::pin::pin!(hsm.pal().run());
+    let mut drained = core::pin::pin!(tracker.wait_drained());
+
+    poll_fn(|cx| {
+        if run.as_mut().poll(cx).is_ready() || drained.as_mut().poll(cx).is_ready() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
 }
 
 /// IO receive loop — runs until the submission channel is closed.
@@ -541,7 +558,7 @@ impl StdHsm {
     /// executor has stopped, so a caller-owned runtime can then be dropped
     /// safely.
     pub async fn shutdown_async(mut self) {
-if let Some(thread) = self.begin_shutdown() {
+        if let Some(thread) = self.begin_shutdown() {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let tokio_rt = self.tokio_rt.take();
             std::thread::spawn(move || {
