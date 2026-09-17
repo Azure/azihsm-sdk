@@ -9,13 +9,12 @@
 //! public key, returning the secret **masked** under the requested scope.
 //!
 //! Because the derived secret is returned only in masked form (there is no
-//! TBOR command to observe its plaintext), these tests validate command
-//! command's plumbing: well-formed masked secrets for every curve and
-//! provisioned scope; exact peer-key length and point validation; masked-key
-//! authentication and class checks; target-scope and session validation.
-//! The underlying ECDH primitive's correctness is covered by the MBOR
-//! `EcdhKeyExchange` tests and the std-PAL ECC driver tests, which share the
-//! same `pal.ecdh_derive`.
+//! TBOR command to observe its plaintext), these tests validate the command's
+//! plumbing: well-formed masked secrets for every curve and provisioned
+//! scope; exact peer-key length and point validation; masked-key authentication
+//! and class checks; target-scope and session validation. The underlying ECDH
+//! primitive's correctness is covered by the MBOR `EcdhKeyExchange` tests and
+//! the std-PAL ECC driver tests, which share the same `pal.ecdh_derive`.
 
 #![cfg(feature = "emu")]
 
@@ -214,7 +213,7 @@ fn ecdh_derive_p384_peer_pub_trailing_byte_rejected() {
     );
 }
 
-/// Rejects an overlong P-521 peer public key at the TBOR fixed-length boundary.
+/// Rejects a P-521 peer public key that exceeds the 136-byte TBOR field maximum.
 #[test]
 fn ecdh_derive_p521_peer_pub_trailing_byte_rejected() {
     let ctx = TestCtx::new();

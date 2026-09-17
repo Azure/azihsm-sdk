@@ -181,12 +181,16 @@ role's partition PSK still matches the compiled-in default.
 |---|---|---|---|
 | Derive succeeds for P-256, P-384, and P-521 | ✅ 🔁 | `ecdh_derive::ecdh_derive_all_curves` | Loops over all three supported curves and validates the returned masked-secret envelope length |
 | Derived result can be returned under Session, Ephemeral, and Local scopes | ✅ 🔁 | `ecdh_derive::ecdh_derive_scopes` | Loops over all provisioned output scopes |
-| CO session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_psk` | Verifies the dispatcher gate before ECDH field validation |
-| Peer public key shorter than the required wire length → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_bad_peer_pub_len_rejected` | P-256 peer key truncated by one byte |
-| Peer public key with trailing bytes → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_peer_pub_trailing_byte_rejected` | Correct P-256 point plus one trailing byte |
-| Peer public key wire size belongs to a different curve → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_peer_curve_mismatch_rejected` | P-256 private key with P-384 peer public key |
-| Peer coordinates fail coordinate/public-key validation → `EccPublicKeyValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_invalid_peer_coordinates_rejected` | All-zero P-256 coordinates exercise the coordinate-validation branch |
-| In-range peer coordinates that are not on the curve → `EccPointValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_off_curve_peer_point_rejected` | Uses `(1, 1)` to reach the separate curve-equation validation branch |
+| CO session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_co_psk` | Verifies the dispatcher gate for CO before ECDH field validation |
+| CU session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_cu_psk` | Verifies the dispatcher gate for CU before ECDH field validation |
+| Peer public key shorter than the required wire length → `InvalidArg` | ✅ 🔁 | `ecdh_derive::ecdh_derive_bad_peer_pub_len_rejected` | Loops over P-256, P-384, and P-521; each peer key is truncated by one byte |
+| P-256 peer public key with one trailing byte → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_p256_peer_pub_trailing_byte_rejected` | 64-byte valid peer key becomes 65 bytes and reaches ECDH length validation |
+| P-384 peer public key with one trailing byte → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_p384_peer_pub_trailing_byte_rejected` | 96-byte valid peer key becomes 97 bytes and reaches ECDH length validation |
+| P-521 peer public key with one trailing byte → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_p521_peer_pub_trailing_byte_rejected` | Valid P-521 peer key already occupies the 136-byte TBOR maximum; 137 bytes is rejected during TBOR decoding |
+| Peer public key wire size belongs to a different curve → `InvalidArg` | ✅ 🔁 | `ecdh_derive::ecdh_derive_peer_curve_mismatch_rejected` | Covers all six local/peer mismatched-curve combinations |
+| Peer coordinates fail coordinate/public-key validation → `EccPublicKeyValidationFailed` | ✅ 🔁 | `ecdh_derive::ecdh_derive_invalid_peer_coordinates_rejected` | Loops over P-256, P-384, and P-521 using all-zero peer coordinates |
+| P-256 peer coordinates exceed the field upper bound → `EccPublicKeyValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_peer_coordinates_above_upper_bound_rejected` | Uses all-ones coordinates to exercise the coordinate upper-bound validation branch |
+| In-range P-256 peer coordinates that are not on the curve → `EccPointValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_off_curve_peer_point_rejected` | Uses `(1, 1)` to reach the separate curve-equation validation branch |
 | Tampered masked private-key envelope → `AesGcmDecryptTagDoesNotMatch` | ✅ | `ecdh_derive::ecdh_derive_tampered_masked_key_rejected` | Flips one byte in the authenticated masked-key envelope |
 | Masked key is not an ECC private key → `InvalidKeyType` | ✅ | `ecdh_derive::ecdh_derive_wrong_key_class_rejected` | Supplies a valid masked AES key |
 | SecurityDomain output scope is not provisioned → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_unsupported_target_scope_rejected` | Requests SecurityDomain result scope |
