@@ -340,8 +340,9 @@ impl StdHsmBuilder {
                             .expect("run_core spawn failed");
                         spawner.spawn(token);
 
-let token = ipc_task(ipc_rx, shutdown_tracker.clone())
+                        let token = ipc_task(ipc_rx, shutdown_tracker.clone())
                             .expect("ipc_task spawn failed");
+                        spawner.spawn(token);
                     },
                     || executor_shutdown.deinitialized.load(Ordering::Acquire),
                 );
