@@ -11,8 +11,6 @@ use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
 use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
-use azihsm_ddi_tbor_codec::RequestView;
-use azihsm_ddi_tbor_codec::ResponseView;
 use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
@@ -77,7 +75,7 @@ pub fn run_encoder<'a, H: Header>(
     encoder.finish().ok()
 }
 
-fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
+pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
     match (op, entry) {
         (EncoderTOCBuilders::SessionId(expected), TocEntry::SessionId(actual)) => {
             assert_eq!(*expected, actual);
@@ -112,104 +110,5 @@ fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
             assert!(actual.iter().all(|byte| *byte == 0));
         }
         (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
-    }
-}
-
-/// Parse and exercise every accessor on a serialised TBOR request.
-///
-/// A parse failure is treated as expected (the bytes may be invalid).
-pub fn run_request_view(data: &[u8]) {
-    if let Ok(view) = RequestView::parse(data) {
-        let _ = view.version();
-        let _ = view.opcode();
-        let _ = view.toc_count();
-        let _ = view.data_start();
-        let _ = view.data_size();
-        let _ = view.len();
-        let _ = view.is_empty();
-        let _ = view.as_bytes();
-        let _ = view.data_section();
-        for (i, entry) in view.toc_iter().enumerate() {
-            let _ = entry;
-            let _ = view.toc_entry_type(i);
-            let _ = view.toc_entry(i);
-        }
-    }
-}
-
-/// Parse a serialised TBOR request and validate its TOC entries against
-/// the operations used to encode it.
-///
-/// `data` must come from a successful `RequestEncoder::finish`, so a parse
-/// failure here means the encoder and decoder disagree and is reported via
-/// `expect` rather than discarded.
-pub fn validate_request_view(data: &[u8], version: u8, opcode: u8, ops: &[EncoderTOCBuilders]) {
-    let view =
-        RequestView::parse(data).expect("bytes from a successful RequestEncoder::finish must parse");
-    assert_eq!(view.version(), version);
-    assert_eq!(view.opcode(), opcode);
-    assert_eq!(view.toc_count(), ops.len());
-    let _ = view.data_start();
-    let _ = view.data_size();
-    let _ = view.len();
-    let _ = view.is_empty();
-    let _ = view.as_bytes();
-    let _ = view.data_section();
-
-    for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
-        assert_eq!(view.toc_entry(i), entry);
-        let _ = view.toc_entry_type(i);
-
-        validate_toc_entry(op, entry);
-    }
-}
-
-/// Parse and exercise every accessor on a serialised TBOR response.
-///
-/// A parse failure is treated as expected (the bytes may be invalid).
-pub fn run_response_view(data: &[u8]) {
-    if let Ok(view) = ResponseView::parse(data) {
-        let _ = view.version();
-        let _ = view.status();
-        let _ = view.flags();
-        let _ = view.fips_approved();
-        let _ = view.toc_count();
-        let _ = view.data_start();
-        let _ = view.data_size();
-        let _ = view.len();
-        let _ = view.is_empty();
-        let _ = view.as_bytes();
-        let _ = view.data_section();
-        for (i, entry) in view.toc_iter().enumerate() {
-            let _ = entry;
-            let _ = view.toc_entry_type(i);
-            let _ = view.toc_entry(i);
-        }
-    }
-}
-
-/// Parse and exercise every accessor on a serialised TBOR response.
-///
-/// A parse failure is treated as expected (the bytes may be invalid).
-pub fn validate_response_view(data: &[u8], ops: &[EncoderTOCBuilders]) {
-    if let Ok(view) = ResponseView::parse(data) {
-        let _ = view.version();
-        let _ = view.status();
-        let _ = view.flags();
-        let _ = view.fips_approved();
-        assert_eq!(view.toc_count(), ops.len());
-        let _ = view.data_start();
-        let _ = view.data_size();
-        let _ = view.len();
-        let _ = view.is_empty();
-        let _ = view.as_bytes();
-        let _ = view.data_section();
-
-        for (i, (entry, op)) in view.toc_iter().zip(ops).enumerate() {
-            assert_eq!(view.toc_entry(i), entry);
-            let _ = view.toc_entry_type(i);
-
-            validate_toc_entry(op, entry);
-        }
     }
 }

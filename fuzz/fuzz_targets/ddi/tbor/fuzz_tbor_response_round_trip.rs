@@ -7,6 +7,10 @@
 mod common;
 
 use azihsm_ddi_tbor_codec::ResponseEncoder;
+use azihsm_ddi_tbor_codec::ResponseView;
+use azihsm_ddi_tbor_codec::DecodeError;
+use common::run_encoder;
+use common::validate_toc_entry;
 use common::EncoderTOCBuilders;
 use common::FUZZ_RESP_BUF_SIZE;
 use libfuzzer_sys::arbitrary;
@@ -27,7 +31,29 @@ fuzz_target!(|input: FuzzInput| {
     let len = input.buf_size % (FUZZ_RESP_BUF_SIZE + 1); // clamp into range
     let buf = &mut backing[..len];
     let encoder = ResponseEncoder::new(buf, input.version, input.status, input.fips_approved);
-    if let Some(encoded) = common::run_encoder(encoder, &input.ops) {
-        common::validate_response_view(encoded, &input.ops);
+    if let Some(encoded) = run_encoder(encoder, &input.ops) {
+        let view = match ResponseView::parse(encoded) {
+            Ok(view) => view,
+            Err(DecodeError::UnsupportedVersion(_)) => return,
+            Err(e) => panic!("bytes from a successful ResponseEncoder::finish must parse: {e:?}"),
+        };
+        let _ = view.version();
+        let _ = view.status();
+        let _ = view.flags();
+        let _ = view.fips_approved();
+        assert_eq!(view.toc_count(), input.ops.len());
+        let _ = view.data_start();
+        let _ = view.data_size();
+        let _ = view.len();
+        let _ = view.is_empty();
+        let _ = view.as_bytes();
+        let _ = view.data_section();
+
+        for (i, (entry, op)) in view.toc_iter().zip(input.ops).enumerate() {
+            assert_eq!(view.toc_entry(i), entry);
+            let _ = view.toc_entry_type(i);
+
+            validate_toc_entry(&op, entry);
+        }
     }
 });
