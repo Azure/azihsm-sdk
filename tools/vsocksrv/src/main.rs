@@ -31,11 +31,15 @@ use log::debug;
 use nix::sys::socket::accept4;
 use nix::sys::socket::bind;
 use nix::sys::socket::listen;
+use nix::sys::socket::setsockopt;
 use nix::sys::socket::socket;
+use nix::sys::socket::sockopt::ReceiveTimeout;
+use nix::sys::socket::sockopt::SendTimeout;
 use nix::sys::socket::AddressFamily;
 use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockType;
 use nix::sys::socket::VsockAddr;
+use nix::sys::time::TimeVal;
 use nix::unistd::close;
 use nix::unistd::read;
 use nix::unistd::write;
@@ -46,6 +50,13 @@ const MAX_SRC_LEN: usize = PAGE_SIZE;
 const MAX_DST_LEN: usize = 2 * PAGE_SIZE;
 const OOB_DESCRIPTOR_SIZE: usize = 16;
 const TRANSPORT_ERROR: u32 = 1;
+/// Connections are served one at a time (see `serve_connection_logged`), so
+/// an idle or stalled AF_VSOCK client must not be allowed to occupy the
+/// server indefinitely and lock out every other client. Any accepted
+/// connection that doesn't send a full request within this window is
+/// treated the same as a disconnect: the partition is reset and the
+/// connection is dropped so the next client can be accepted.
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -243,9 +254,22 @@ impl VsockListener {
     }
 
     fn accept(&self) -> io::Result<VsockStream> {
-        accept4(self.0, SockFlag::SOCK_CLOEXEC)
-            .map(VsockStream)
-            .map_err(nix_to_io)
+        let fd = accept4(self.0, SockFlag::SOCK_CLOEXEC).map_err(nix_to_io)?;
+        // Bound how long a single connection can occupy the server (see
+        // `CONNECTION_READ_TIMEOUT`).
+        let timeout = TimeVal::new(
+            CONNECTION_READ_TIMEOUT.as_secs() as i64,
+            i64::from(CONNECTION_READ_TIMEOUT.subsec_micros()),
+        );
+        if let Err(error) = setsockopt(fd, ReceiveTimeout, &timeout) {
+            let _ = close(fd);
+            return Err(nix_to_io(error));
+        }
+        if let Err(error) = setsockopt(fd, SendTimeout, &timeout) {
+            let _ = close(fd);
+            return Err(nix_to_io(error));
+        }
+        Ok(VsockStream(fd))
     }
 }
 
@@ -309,6 +333,46 @@ fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
     }
 }
 
+/// Number of attempts to re-enable a partition after a disconnect-triggered
+/// reset before giving up and logging at `error` level. `part_enable`
+/// failures are expected to be rare and transient (e.g. contention with a
+/// concurrent request), so a few immediate retries are cheap insurance
+/// against leaving the partition disabled - and therefore unusable by every
+/// subsequent connection - after a single failed attempt.
+const PARTITION_ENABLE_RETRIES: u32 = 3;
+
+/// Disables then re-enables `partition_id`, which clears its keys, nonce,
+/// vault, and sessions. Called when a client disconnects, since a disconnect
+/// signals a device reset. Retries `part_enable` a few times on failure;
+/// if it still fails, every subsequent connection sharing this partition
+/// will fail until the process is restarted, so that's logged at `error`
+/// level to make the condition impossible to miss.
+fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id: u8) {
+    if let Err(error) = runtime.block_on(hsm.part_disable(partition_id)) {
+        tracing::warn!(?error, "Failed to disable partition on reset");
+    }
+    for attempt in 1..=PARTITION_ENABLE_RETRIES {
+        match runtime.block_on(hsm.part_enable(partition_id)) {
+            Ok(()) => return,
+            Err(error) if attempt < PARTITION_ENABLE_RETRIES => {
+                tracing::warn!(
+                    ?error,
+                    attempt,
+                    "Failed to re-enable partition on reset; retrying"
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    attempt,
+                    "Failed to re-enable partition on reset after all retries; \
+                     partition is unusable until the server is restarted"
+                );
+            }
+        }
+    }
+}
+
 fn serve_connection(
     stream: &mut (impl Read + Write),
     hsm: &StdHsm,
@@ -327,17 +391,18 @@ fn serve_connection(
                     io::ErrorKind::UnexpectedEof
                         | io::ErrorKind::ConnectionReset
                         | io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
                 ) =>
             {
+                // WouldBlock/TimedOut means the connection's read timeout
+                // (see `CONNECTION_READ_TIMEOUT`) expired; treat a stalled
+                // client the same as a disconnect so it can't hold up every
+                // other client waiting to be served.
                 debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
                 // A disconnect signals a device reset, so reset the partition here
-                if let Err(reset_error) = runtime.block_on(hsm.part_disable(partition_id)) {
-                    tracing::warn!(?reset_error, "Failed to disable partition on reset");
-                }
-                if let Err(reset_error) = runtime.block_on(hsm.part_enable(partition_id)) {
-                    tracing::warn!(?reset_error, "Failed to re-enable partition on reset");
-                }
+                reset_partition(hsm, runtime, partition_id);
                 return Ok(());
             }
             Err(error) => {
@@ -512,8 +577,7 @@ fn main() -> Result<()> {
                         tracing::warn!(?error, "HSM connection failed; reconnecting");
                     }
                 }
-                stream = connect_unix(path, args.port)
-                    .context("Failed to reconnect to AF_UNIX")?;
+                stream = connect_unix(path, args.port).context("Failed to reconnect to AF_UNIX")?;
                 tracing::info!(
                     socket = %path.display(),
                     port = args.port,
