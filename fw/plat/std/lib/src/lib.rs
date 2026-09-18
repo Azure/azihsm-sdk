@@ -47,6 +47,35 @@ static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 /// Tracks the one-instance-ever [`StdHsm`] lifecycle restriction.
 static STD_HSM_BUILT: AtomicBool = AtomicBool::new(false);
 
+/// Reserves the one-instance lifecycle while an HSM is starting.
+///
+/// Releases the reservation if startup panics before it has completed.
+struct StdHsmBuildGuard {
+    committed: bool,
+}
+
+impl StdHsmBuildGuard {
+    fn acquire() -> Self {
+        assert!(
+            !STD_HSM_BUILT.swap(true, Ordering::AcqRel),
+            "StdHsm can only be built once per process"
+        );
+        Self { committed: false }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for StdHsmBuildGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            STD_HSM_BUILT.store(false, Ordering::Release);
+        }
+    }
+}
+
 /// Coordinates a drain-then-stop shutdown of the Embassy executor.
 ///
 /// `active_tasks` starts at 2, accounting for the long-running
@@ -278,10 +307,7 @@ impl StdHsmBuilder {
                 "StdHsm requires a multi-thread Tokio runtime"
             );
         }
-        assert!(
-            !STD_HSM_BUILT.swap(true, Ordering::AcqRel),
-            "StdHsm can only be built once per process"
-        );
+        let mut build_guard = StdHsmBuildGuard::acquire();
 
         let (owned_rt, handle) = if let Some(h) = self.tokio_handle {
             (None, h)
@@ -342,6 +368,8 @@ impl StdHsmBuilder {
                 );
             })
             .expect("failed to spawn Embassy thread");
+
+        build_guard.commit();
 
         StdHsm {
             io_tx,
