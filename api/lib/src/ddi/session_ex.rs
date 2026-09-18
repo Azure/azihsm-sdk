@@ -125,11 +125,8 @@ pub(crate) struct OpenSessionExResult {
 /// so the partition cert chain is cryptographically verified (via
 /// [`validate_part_cert_chain`]) before the leaf key is trusted.
 ///
-/// The negotiated API revision (`_rev`) is accepted for parity with the
-/// other cert-fetch APIs but is currently ignored: the `session_ex`
-/// handshake is intrinsically TBOR (api_rev >= 1.1), so the `pk_hsm`
-/// fetch always uses the TBOR cert commands and there is no MBOR variant
-/// to select.
+/// The negotiated API revision is validated before issuing the TBOR cert
+/// commands; revisions below [`TBOR_MIN_API_REV`] are unsupported.
 pub(super) fn fetch_pk_hsm(
     dev: &HsmDev,
     rev: HsmApiRev,
@@ -187,16 +184,16 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 ///
 /// Always runs the two-phase HPKE handshake —
 /// [`open_session_ex_init`] (Phase 1) followed by
-/// [`open_session_ex_finish`] (Phase 2). The transport is selected by
-/// the caller invoking this entry point, not by the negotiated API
-/// revision.
+/// [`open_session_ex_finish`] (Phase 2) — over TBOR. The negotiated API
+/// revision is validated for TBOR support rather than used to select a
+/// transport.
 ///
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle.
 /// * `rev` - The negotiated API revision. A `session_ex` session is
-///   TBOR-only and requires api_rev >= 1.1; a lower revision is rejected
-///   with [`HsmError::UnsupportedApiRevision`].
+///   TBOR-only and requires [`TBOR_MIN_API_REV`] or newer; an older revision
+///   is rejected with [`HsmError::UnsupportedApiRevision`].
 /// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
 ///   1 = CU).
 /// * `session_type` - Channel integrity profile to pin for the session.
@@ -208,7 +205,8 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 ///
 /// # Errors
 ///
-/// Propagates transport-specific failures from the handshake.
+/// Returns [`HsmError::UnsupportedApiRevision`] when `rev` does not
+/// support TBOR, and propagates failures from the handshake.
 pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
@@ -216,9 +214,6 @@ pub(crate) fn open_session_ex(
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
-    // A `session_ex` session runs entirely over TBOR, so it requires an
-    // api_rev that speaks the TBOR commands; reject a lower revision up
-    // front rather than failing mid-handshake on an unavailable opcode.
     require_tbor_rev(rev)?;
 
     // Convert the API-layer session type to the wire-level `SessionType`
@@ -240,13 +235,13 @@ pub(crate) fn open_session_ex(
 /// Uses the caller-supplied PSK when present, otherwise the partition
 /// default PSK for `psk_id` (CO = 0, CU = 1).
 ///
-/// The negotiated API revision (`rev`) is threaded to [`fetch_pk_hsm`],
-/// which accepts it for parity with the other cert-fetch APIs but
-/// currently ignores it (the V2 handshake is intrinsically TBOR).
+/// The negotiated API revision is passed to [`fetch_pk_hsm`], which
+/// validates that it supports TBOR before fetching the partition cert.
 ///
 /// # Errors
 ///
-/// Propagates DDI failures from the round-trip,
+/// Returns [`HsmError::UnsupportedApiRevision`] when `rev` does not
+/// support TBOR, propagates DDI failures from the round-trip,
 /// [`HsmError::InvalidArgument`] for malformed handshake inputs (e.g.
 /// an unknown `psk_id`), and [`HsmError::InternalError`] for
 /// handshake-crypto failures (e.g. a Phase-1 confirm MAC mismatch).
@@ -257,6 +252,9 @@ fn open_session_ex_init(
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: SessionType,
 ) -> HsmResult<PendingHandshake> {
+    // Ensure the negotiated API revision supports TBOR before proceeding.
+    require_tbor_rev(rev)?;
+
     let inner = partition.inner().read();
     let dev = inner.dev();
 
@@ -576,6 +574,20 @@ mod tests {
             !result.bmk_session.is_empty(),
             "FW must return a non-empty bmk_session envelope"
         );
+    }
+
+    /// All `session_ex` entry points require a TBOR-capable API revision.
+    #[test]
+    fn session_ex_entry_points_reject_revision_without_tbor() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let rev = HsmApiRev { major: 1, minor: 0 };
+
+        let result = open_session_ex(&part, rev, CO, None, HsmSessionExType::Authenticated);
+        assert!(matches!(result, Err(HsmError::UnsupportedApiRevision)));
+
+        let result = open_session_ex_init(&part, rev, CO, None, SessionType::Authenticated);
+        assert!(matches!(result, Err(HsmError::UnsupportedApiRevision)));
     }
 
     /// Negative path: an unknown `psk_id` (neither CO nor CU) must not
