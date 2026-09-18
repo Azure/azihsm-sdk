@@ -399,6 +399,26 @@ mod round_trips {
             "unexpected error: {err}"
         );
 
+        // Only extract-and-expand is supported armed; each other mode is
+        // accepted as a ctrl but rejected at derive time.
+        for bad_mode in ["EXTRACT_ONLY", "EXPAND_ONLY"] {
+            let err = try_hkdf(
+                engine_raw,
+                &[
+                    ("md", "SHA256"),
+                    ("azihsm.ikm_file", ikm),
+                    ("derived_key_type", "aes"),
+                    ("mode", bad_mode),
+                ],
+                None,
+            )
+            .expect_err("non-default HKDF mode must be rejected");
+            assert!(
+                err.contains("extract-and-expand"),
+                "unexpected error for mode {bad_mode}: {err}"
+            );
+        }
+
         // output_file mode: blob to disk, nothing in the buffer.
         let out = dir.join(format!("hkdf-derived-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&out);
