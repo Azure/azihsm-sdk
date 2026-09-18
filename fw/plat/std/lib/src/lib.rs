@@ -20,8 +20,7 @@
 //! assert_eq!(c.cqe[3], expected_cmd_id);
 //!
 //! // With caller's tokio runtime:
-//! let runtime = tokio::runtime::Builder::new_multi_thread().build()?;
-//! let hsm = StdHsm::with_tokio(runtime.handle().clone());
+//! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
 //! hsm.shutdown();
 //! ```
 
@@ -42,39 +41,15 @@ use embassy_sync::once_lock::OnceLock;
 use parking_lot::Mutex;
 
 /// Global HSM singleton — concrete type with StdHsmPal.
-static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
-
-/// Tracks the one-instance-ever [`StdHsm`] lifecycle restriction.
-static STD_HSM_BUILT: AtomicBool = AtomicBool::new(false);
-
-/// Reserves the one-instance lifecycle while an HSM is starting.
 ///
-/// Releases the reservation if startup panics before it has completed.
-struct StdHsmBuildGuard {
-    committed: bool,
-}
-
-impl StdHsmBuildGuard {
-    fn acquire() -> Self {
-        assert!(
-            !STD_HSM_BUILT.swap(true, Ordering::AcqRel),
-            "StdHsm can only be built once per process"
-        );
-        Self { committed: false }
-    }
-
-    fn commit(&mut self) {
-        self.committed = true;
-    }
-}
-
-impl Drop for StdHsmBuildGuard {
-    fn drop(&mut self) {
-        if !self.committed {
-            STD_HSM_BUILT.store(false, Ordering::Release);
-        }
-    }
-}
+/// [`OnceLock::init`] atomically succeeds at most once, so it also serves
+/// as the one-instance-ever [`StdHsm`] lifecycle reservation: no separate
+/// flag is needed. Note that unlike the previous `AtomicBool`-based guard,
+/// this reservation is *not* rolled back if the Embassy thread fails to
+/// spawn afterward — a transient startup failure permanently prevents any
+/// further `StdHsm` in the process. This is an accepted trade-off for
+/// avoiding a redundant synchronization primitive.
+static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 
 /// Coordinates a drain-then-stop shutdown of the Embassy executor.
 ///
@@ -297,6 +272,10 @@ impl StdHsmBuilder {
     /// Panics if a [`StdHsm`] has already been built in this process, or if the
     /// Embassy thread or tokio runtime fails to start. Also panics if the
     /// supplied Tokio handle belongs to a current-thread runtime.
+    ///
+    /// A failure to spawn the Embassy thread after the one-instance-ever
+    /// reservation succeeds (see the [`HSM`] doc comment) permanently
+    /// prevents any further `StdHsm` from being built in this process.
     pub fn build(self) -> StdHsm {
         if let Some(handle) = &self.tokio_handle {
             assert!(
@@ -307,8 +286,6 @@ impl StdHsmBuilder {
                 "StdHsm requires a multi-thread Tokio runtime"
             );
         }
-        let mut build_guard = StdHsmBuildGuard::acquire();
-
         let (owned_rt, handle) = if let Some(h) = self.tokio_handle {
             (None, h)
         } else {
@@ -325,6 +302,14 @@ impl StdHsmBuilder {
         let (ipc_tx, ipc_rx) = async_channel::bounded(4);
 
         let pool_handle = handle.clone();
+
+        // `HSM.init` doubles as the one-instance-ever reservation (see the
+        // `HSM` doc comment): it can only succeed once per process.
+        let pal = StdHsmPal::new(io_rx, pool_handle);
+        if HSM.init(Hsm::new(pal)).is_err() {
+            panic!("StdHsm can only be built once per process");
+        }
+
         // Reserves one slot each for `poll_io` and `ipc_task`; decremented
         // as those loops (and any in-flight `handle_io`) permanently exit.
         let shutdown_tracker = Arc::new(ShutdownTracker::new(2));
@@ -352,10 +337,6 @@ impl StdHsmBuilder {
 
                 executor.run_until(
                     |spawner| {
-                        let pal = StdHsmPal::new(io_rx, pool_handle);
-
-                        let _ = HSM.init(Hsm::new(pal));
-
                         let token = run_core(spawner, shutdown_tracker.clone())
                             .expect("run_core spawn failed");
                         spawner.spawn(token);
@@ -368,8 +349,6 @@ impl StdHsmBuilder {
                 );
             })
             .expect("failed to spawn Embassy thread");
-
-        build_guard.commit();
 
         StdHsm {
             io_tx,
