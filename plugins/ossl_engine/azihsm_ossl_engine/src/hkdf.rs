@@ -37,7 +37,8 @@ pub(crate) struct AzihsmHkdf;
 
 /// Map the `md` digest NID to the HSM hash algorithm.
 fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
-    #[allow(clippy::cast_possible_wrap)]
+    // NIDs are non-negative, so reinterpreting the sign bit is safe.
+    #[allow(clippy::cast_sign_loss)]
     match nid as u32 {
         ffi::NID_sha256 => Ok(HsmHashAlgo::Sha256),
         ffi::NID_sha384 => Ok(HsmHashAlgo::Sha384),

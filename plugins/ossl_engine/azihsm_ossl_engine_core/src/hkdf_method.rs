@@ -90,6 +90,10 @@ pub trait HkdfHandler {
     ) -> EngineResult<Option<Zeroizing<Vec<u8>>>>;
 }
 
+/// Default derived-key size (bits) when `derived_key_bits` is unset, matching
+/// the 3.x provider's default.
+const DEFAULT_DERIVED_KEY_BITS: u32 = 256;
+
 /// Per-context state. `armed` is implied by any azihsm-specific field.
 #[derive(Clone, Default)]
 struct HkdfState {
@@ -571,7 +575,7 @@ fn derive_inner<H: HkdfHandler>(
         info: state.info,
         ikm,
         derived_key_type: state.derived_key_type.unwrap_or(DerivedKeyType::Aes),
-        derived_key_bits: state.derived_key_bits.unwrap_or(256),
+        derived_key_bits: state.derived_key_bits.unwrap_or(DEFAULT_DERIVED_KEY_BITS),
     };
 
     let engine_ptr = NonNull::new(state.engine as *mut ffi::ENGINE)
