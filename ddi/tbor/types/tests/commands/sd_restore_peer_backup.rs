@@ -24,6 +24,8 @@
 //! * One-shot — restore onto an already-initialized SD → `SdAlreadyInitialized`.
 //! * Policy without `allow_peer_cloning` → `SdPeerCloningNotAllowed`.
 //! * Restore before finalize → `InvalidArg`.
+//! * Tampered peer backup → authenticated-decryption failure.
+//! * Missing sender evidence OOB data → `InvalidArg`.
 
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborSdRestorePeerBackupReq;
@@ -47,6 +49,7 @@ use crate::harness::bootstrap_rotated_co;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
+use crate::harness::SessionHandshake;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
 
@@ -126,6 +129,27 @@ fn restore_peer_req(session_id: u16, backup: &PeerBackup) -> TborSdRestorePeerBa
     }
 }
 
+fn finalize_restore_target(
+    ctx: &TestCtx,
+    seed: &[u8],
+    backup: &PeerBackup,
+    pota: &CaKey,
+) -> SessionHandshake {
+    let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+    let init = ctx
+        .part_init(&session, seed, &backup.policy, &pota_thumbprint())
+        .expect("PartInit (restore target)");
+    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(
+        &session,
+        &backup.policy,
+        &backup.local_mk_backup,
+        &chain.der_items(),
+    )
+    .expect("PartFinal must restore PartLocalMK from the prior backup");
+    session
+}
+
 #[test]
 fn sd_restore_peer_backup_roundtrip() {
     let seed = mach_seed();
@@ -139,18 +163,7 @@ fn sd_restore_peer_backup_roundtrip() {
     // Device 2 (reboot): restore PartLocalMK (so the captured sealing key
     // unmasks), then restore the SD from the peer backup.
     let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let init = ctx
-        .part_init(&session, &seed, &backup.policy, &pota_thumbprint())
-        .expect("PartInit (device 2)");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
-    ctx.part_final(
-        &session,
-        &backup.policy,
-        &backup.local_mk_backup,
-        &chain.der_items(),
-    )
-    .expect("PartFinal must restore PartLocalMK from the prior backup");
+    let session = finalize_restore_target(&ctx, &seed, &backup, &pota);
 
     let req = restore_peer_req(session.session_id, &backup);
     let resp = ctx
@@ -169,6 +182,39 @@ fn sd_restore_peer_backup_roundtrip() {
         resp.sd_mk_backup.iter().any(|&b| b != 0),
         "sd_mk_backup must not be all-zero",
     );
+}
+
+#[test]
+fn sd_restore_peer_backup_rejects_tampered_peer_backup() {
+    let seed = mach_seed();
+    let sata = CaKey::generate();
+    let pota = CaKey::generate();
+    let mut backup = create_peer_backup(&seed, &sata, &pota);
+
+    let ctx = TestCtx::new();
+    let session = finalize_restore_target(&ctx, &seed, &backup, &pota);
+    backup.pok_peer_backup[POK_REMOTE_BACKUP_LEN - 1] ^= 0x01;
+    let req = restore_peer_req(session.session_id, &backup);
+
+    ctx.expect_fw_reject_oob(
+        &req,
+        &backup.evidence.oob(),
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+}
+
+#[test]
+fn sd_restore_peer_backup_rejects_missing_oob() {
+    let seed = mach_seed();
+    let sata = CaKey::generate();
+    let pota = CaKey::generate();
+    let backup = create_peer_backup(&seed, &sata, &pota);
+
+    let ctx = TestCtx::new();
+    let session = finalize_restore_target(&ctx, &seed, &backup, &pota);
+    let req = restore_peer_req(session.session_id, &backup);
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
 
 #[test]
