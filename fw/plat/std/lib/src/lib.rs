@@ -27,7 +27,6 @@
 use core::future::poll_fn;
 use core::future::Future;
 use core::task::Poll;
-use core::task::Waker;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -37,8 +36,9 @@ use std::thread::JoinHandle;
 use azihsm_fw_hsm_core::Hsm;
 use azihsm_fw_hsm_pal_std::*;
 use azihsm_fw_hsm_pal_traits::*;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::once_lock::OnceLock;
-use parking_lot::Mutex;
+use embassy_sync::signal::Signal;
 
 /// Global HSM singleton — concrete type with StdHsmPal.
 ///
@@ -63,47 +63,28 @@ static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 /// `run_until` stop the executor.
 struct ShutdownTracker {
     active_tasks: AtomicUsize,
-    drained: AtomicBool,
+    drained: Signal<CriticalSectionRawMutex, ()>,
     deinitialized: AtomicBool,
-    waker: Mutex<Option<Waker>>,
 }
 
 impl ShutdownTracker {
     fn new(active_tasks: usize) -> Self {
         Self {
             active_tasks: AtomicUsize::new(active_tasks),
-            drained: AtomicBool::new(false),
+            drained: Signal::new(),
             deinitialized: AtomicBool::new(false),
-            waker: Mutex::new(None),
         }
     }
 
     /// Marks one tracked task as permanently finished.
     fn task_done(&self) {
         if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.drained.store(true, Ordering::Release);
-            let mut waker = self.waker.lock();
-            if let Some(waker) = waker.take() {
-                waker.wake();
-            }
+            self.drained.signal(());
         }
     }
 
     async fn wait_drained(&self) {
-        poll_fn(|cx| {
-            if self.drained.load(Ordering::Acquire) {
-                return Poll::Ready(());
-            }
-
-            *self.waker.lock() = Some(cx.waker().clone());
-
-            if self.drained.load(Ordering::Acquire) {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await;
+        self.drained.wait().await;
     }
 
     fn mark_deinitialized(&self) {
@@ -646,21 +627,21 @@ mod tests {
         // `poll_io`'s loop exits (its channel closed and drained).
         tracker.task_done();
         assert!(
-            !tracker.drained.load(Ordering::Acquire),
+            !tracker.drained.signaled(),
             "must not stop while handle_io is still in flight"
         );
 
         // `ipc_task`'s loop exits (its channel closed and drained).
         tracker.task_done();
         assert!(
-            !tracker.drained.load(Ordering::Acquire),
+            !tracker.drained.signaled(),
             "must not stop while handle_io is still in flight"
         );
 
         // The in-flight `handle_io` finally finishes.
         tracker.task_done();
         assert!(
-            tracker.drained.load(Ordering::Acquire),
+            tracker.drained.signaled(),
             "must drain only once every accepted task has finished"
         );
         assert!(
