@@ -808,6 +808,10 @@ impl HsmPal for UnoHsmPal {
         self.ipc.init();
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
+        // Without this the FP response descriptor never raises its interrupt,
+        // so `wake` never marks the send slot complete and the first request
+        // to FP1 hangs forever, holding the pair against every later sender.
+        self.ipc.enable(IpcChannel::FpMessage as u8);
         azihsm_fw_uno_drivers_part_store::PartStore::init_default();
         boot_status::set(BootStatus::Done);
     }

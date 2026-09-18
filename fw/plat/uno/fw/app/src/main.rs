@@ -99,6 +99,25 @@ async fn poll_io(spawner: Spawner) -> ! {
             continue;
         };
 
+        // Channel test: fire one empty IPC to FP1 on the first host IO.
+        //
+        // get_api_rev passes 3/3 with the FP data path parked, so host IO
+        // reaches uno and this trigger does fire. No payload and no TCM write
+        // -- this establishes only whether a CP1 -> FP1 message lands.
+        #[cfg(feature = "mldsa-fp-probe")]
+        {
+            use core::sync::atomic::{AtomicBool, Ordering};
+            static PROBED: AtomicBool = AtomicBool::new(false);
+            if !PROBED.swap(true, Ordering::Relaxed) {
+                if let Ok(token) = mldsa_fp_probe() {
+                    spawner.spawn(token);
+                }
+                if let Ok(token) = mldsa_fp_probe2() {
+                    spawner.spawn(token);
+                }
+            }
+        }
+
         let Ok(token) = handle_io(io) else {
             continue;
         };
@@ -242,17 +261,7 @@ async fn poll_ipc(spawner: Spawner) -> ! {
             booted = true;
             info!("app", "boot complete, spawning poll_io");
 
-            // First CP1 -> FP1 ML-DSA request, as its own task.
-            //
-            // It must NOT be awaited inline here: poll_ipc is the task that
-            // services Admin <-> HSM IPC, and awaiting a reply from FP1 inside
-            // it stops CP1 answering Admin. Doing exactly that made the SP fail
-            // system init with msg=96 (INIT_LOGGING_IPC_SYNC) -- measured, this
-            // build boots cleanly without the probe and fails with it.
-            #[cfg(feature = "mldsa-fp-probe")]
-            if let Ok(token) = mldsa_fp_probe() {
-                spawner.spawn(token);
-            }
+
 
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
@@ -362,6 +371,7 @@ async fn main(spawner: Spawner) {
         return;
     }
 
+
     hsm.pal().run().await;
     hsm.pal().deinit();
 }
@@ -377,50 +387,118 @@ async fn main(spawner: Spawner) {
 /// address in FP1's DTCM, which the CP addresses at 0xA3200000.
 #[cfg(feature = "mldsa-fp-probe")]
 #[embassy_executor::task]
-async fn mldsa_fp_probe() {
-    let hsm = HSM.get().await;
+async fn mldsa_fp_probe2() {
     use azihsm_fw_uno_pal::IpcChannel;
+
+    // Independent of mldsa_fp_probe. Every request after the first has failed
+    // to appear, whether or not a read preceded it, which suggests the first
+    // send's future never resolves and the task simply never proceeds. This
+    // task shares no state with it: if this request arrives, the first send
+    // is not completing and sending as such is fine.
+    let hsm = HSM.get().await;
+    embassy_time::Timer::after(embassy_time::Duration::from_millis(30_000)).await;
+
+    let msg: [u32; 3] = [0x50 | (9 << 8), 5, 0];
+    let mut resp = [0u32; 16];
+    hsm.pal()
+        .ipc
+        .send(IpcChannel::FpMessage as u8, &msg, &mut resp)
+        .await;
+}
+
+#[cfg(feature = "mldsa-fp-probe")]
+#[embassy_executor::task]
+async fn mldsa_fp_probe() {
+    use azihsm_fw_uno_pal::IpcChannel;
+    use core::ptr::read_volatile;
     use core::ptr::write_volatile;
 
-    const PAYLOAD_CP_ADDR: u32 = 0xA320_0000;
+    const PAYLOAD: u32 = 0xA320_0000;
     const OP_KEYGEN: u32 = 0x50;
+    const OP_SIGN: u32 = 0x51;
     const PARAM_87: u32 = 5;
+    const HDR: u32 = 8; // both payload structs put data[] at offset 8
     const SEED_LEN: u32 = 32;
-    const HDR_LEN: u32 = 8; // verifyingKeyLen + signingKeyLen
-    const EXPECT_RESP_LEN: u32 = HDR_LEN + 2592 + 4896;
+    const MSG_LEN: u32 = 32;
 
-    // Payload: MlDsaKeyGenPayload_t -- two length words then the seed.
-    let base = PAYLOAD_CP_ADDR as *mut u8;
-    unsafe {
-        for i in 0..HDR_LEN {
-            write_volatile(base.add(i as usize), 0);
-        }
-        for i in 0..SEED_LEN {
-            write_volatile(base.add((HDR_LEN + i) as usize), i as u8);
-        }
+    let hsm = HSM.get().await;
+    let base = PAYLOAD as *mut u8;
+
+    let rd = |off: u32| -> u8 { unsafe { read_volatile(base.add(off as usize)) } };
+    let wr = |off: u32, v: u8| unsafe { write_volatile(base.add(off as usize), v) };
+    let rd32 = |off: u32| -> u32 {
+        (rd(off) as u32)
+            | ((rd(off + 1) as u32) << 8)
+            | ((rd(off + 2) as u32) << 16)
+            | ((rd(off + 3) as u32) << 24)
+    };
+    let wr32 = |off: u32, v: u32| {
+        wr(off, v as u8);
+        wr(off + 1, (v >> 8) as u8);
+        wr(off + 2, (v >> 16) as u8);
+        wr(off + 3, (v >> 24) as u8);
+    };
+
+    // ---- 1. keygen: seed in, public and private key out ----
+    wr32(0, 0);
+    wr32(4, 0);
+    for i in 0..SEED_LEN {
+        wr(HDR + i, i as u8);
     }
-
-    // The payload writes must land before the descriptor is posted, or FP1
-    // can observe the message ahead of the data. TCM is not cached on the M7,
-    // so a barrier is sufficient.
     core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
-    // word 0: header -- msg_op[6:0], response[7], tag[15:8]
-    // word 1: param set (byte 0) + 3 reserved
-    // word 2: payload length
-    let tag: u32 = 1;
-    let msg: [u32; 3] = [OP_KEYGEN | (tag << 8), PARAM_87, HDR_LEN + SEED_LEN];
+    let msg: [u32; 3] = [OP_KEYGEN | (1 << 8), PARAM_87, HDR + SEED_LEN];
     let mut resp = [0u32; 16];
+    hsm.pal()
+        .ipc
+        .send(IpcChannel::FpMessage as u8, &msg, &mut resp)
+        .await;
 
-    info!("app", "mldsa: payload written, skipping send (bisect)");
+    // ---- 2. read the keygen result back out of FP1 TCM ----
+    //
+    // The header tells us how much of each key FP1 wrote. If CP1 cannot read
+    // FP1 TCM these come back as something other than 2,592 / 4,896 and the
+    // signature below will fail, which is the answer either way.
+    let vk_len = rd32(0);
+    let sk_len = rd32(4);
 
-    // BISECT: the IPC send is deliberately not performed. If the board boots
-    // with this build, the write to FP1 TCM at 0xA3200000 is fine and the
-    // problem is the send path. If it still fails, CP1 cannot write there --
-    // the verified precedent (aes_gcm_iv_queue at 0xA3221A1C) is CP0 -> FP1,
-    // not CP1 -> FP1, so MPU permissions are the likely difference.
-    let _ = &msg;
-    let _ = &mut resp;
-    let _ = EXPECT_RESP_LEN;
-    let _ = hsm;
+    // ---- 3. reshape the buffer in place into a sign request ----
+    //
+    // Keygen left  [vk_len][sk_len][vk .. ][sk .. ]  and sign wants
+    //              [sk_len][msg_len][sk .. ][msg .. ]. The signing key moves
+    // down over the verifying key; copying ascending is safe because the
+    // destination is below the source.
+    //
+    // Guard the copy: a bad read would otherwise scribble past the 10 KB
+    // buffer and corrupt FP1's wolfCrypt pool, destroying the evidence. The
+    // lengths are fixed for ML-DSA-87, so anything else is a failed read and
+    // the sign request below still goes out carrying those bad lengths, which
+    // FP1 logs.
+    let sane = vk_len == 2592 && sk_len == 4896;
+    let sk_src = HDR + vk_len;
+    for i in 0..(if sane { sk_len } else { 0 }) {
+        wr(HDR + i, rd(sk_src + i));
+    }
+    wr32(0, sk_len);
+    wr32(4, MSG_LEN);
+    if sane {
+        for i in 0..MSG_LEN {
+            wr(HDR + sk_len + i, 0xA5u8.wrapping_add(i as u8));
+        }
+    }
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+    // ---- 4. sign ----
+    //
+    // ML-DSA-87 produces a 4,627-byte signature, so a successful response
+    // carries respLen 4627 and nothing else does.
+    let payload_len = if sane { HDR + sk_len + MSG_LEN } else { HDR };
+    let msg2: [u32; 3] = [OP_SIGN | (2 << 8), PARAM_87, payload_len];
+    let mut resp2 = [0u32; 16];
+    hsm.pal()
+        .ipc
+        .send(IpcChannel::FpMessage as u8, &msg2, &mut resp2)
+        .await;
+
+    let _ = (resp, resp2, vk_len, sk_len);
 }
