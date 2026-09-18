@@ -9,14 +9,16 @@ mod common;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_emu::DdiEmu;
-use azihsm_ddi_mbor_types::*;
 use azihsm_ddi_tbor_types::MAC_FIN_LEN;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SEED_LEN;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
+use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
+use azihsm_ddi_tbor_types::TborGetCertReq;
 use azihsm_ddi_tbor_types::TborSessionCloseReq;
+use azihsm_ddi_tbor_types::TborSessionCloseResp;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
 use azihsm_crypto::aead_envelope;
@@ -54,6 +56,7 @@ struct FuzzInput {
     psk_id: u8,
     session_type: u8,
     suite_id: u8,
+    pk_init: [u8; PK_INIT_LEN],
     pk_init_scalar: [u8; P384_COORD_LEN],
     // When building a valid request, pick the CO/`Authenticated` psk_id +
     // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
@@ -136,7 +139,7 @@ fuzz_target!(|input: FuzzInput| {
             psk_id: input.psk_id,
             session_type: input.session_type,
             suite_id: input.suite_id,
-            pk_init: ephemeral.pk_sec1,
+            pk_init: input.pk_init,
         }
     };
 
@@ -207,51 +210,47 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let mut open_finish_cookie = None;
-        let _ = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+        let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
-        // SessionClose afterwards to clean up
-        let close_req = TborSessionCloseReq {
-            session_id: resp.session_id,
-        };
-        let mut close_cookie = None;
-        let _ = dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        if let Ok(_) = finish_result {
+            // SessionClose afterwards to clean up. `resp.session_id` names a
+            // slot that `init_result` just proved is Pending or Active, so
+            // Close must succeed regardless of whether Finish above did;
+            // a well-formed error response here would indicate a real bug.
+            let close_req = TborSessionCloseReq {
+                session_id: resp.session_id,
+            };
+            let mut close_cookie = None;
+            let close_result: Result<TborSessionCloseResp, _> =
+                dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+            assert!(
+                close_result.is_ok(),
+                "SessionClose on a session opened this iteration must succeed, got {close_result:?}"
+            );
+        }
     }
 });
 
+/// Fetches the HSM's leaf certificate (last entry in slot 0's chain) and
+/// returns its public key in both parsed and raw SEC1 form; all failure
+/// modes collapse to `()` since callers only need to bail out via `?`.
 fn fetch_pk_hsm(
     dev: &<DdiEmu as Ddi>::Dev,
 ) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
-    let info_req = DdiGetCertChainInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetCertChainInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetCertChainInfoReq { slot_id: 0 },
-        ext: None,
-    };
+    let info_req = TborGetCertChainInfoReq::new(0);
     let mut info_cookie = None;
-    let info = dev.exec_op_mbor(&info_req, &mut info_cookie).map_err(|_| ())?;
-    if info.data.num_certs == 0 {
+    let info = dev
+        .exec_op_tbor(&info_req, None, &mut info_cookie)
+        .map_err(|_| ())?;
+    if info.num_certs == 0 {
         return Err(());
     }
-    let cert_req = DdiGetCertificateCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetCertificate,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetCertificateReq {
-            slot_id: 0,
-            cert_id: info.data.num_certs - 1,
-        },
-        ext: None,
-    };
+    let cert_req = TborGetCertReq::new(0, info.num_certs - 1);
     let mut cert_cookie = None;
     let leaf = dev
-        .exec_op_mbor(&cert_req, &mut cert_cookie)
+        .exec_op_tbor(&cert_req, None, &mut cert_cookie)
         .map_err(|_| ())?;
-    let cert = x509::X509Certificate::from_der(leaf.data.certificate.as_slice()).map_err(|_| ())?;
+    let cert = x509::X509Certificate::from_der(leaf.certificate.as_slice()).map_err(|_| ())?;
     let pk_der = cert.get_public_key_der().map_err(|_| ())?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| ())?;
     let sec1 = ec_pub_to_sec1(&pk).map_err(|_| ())?;
