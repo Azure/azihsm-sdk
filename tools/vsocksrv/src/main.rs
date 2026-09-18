@@ -331,6 +331,9 @@ fn serve_connection(
             {
                 debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
+                // A disconnect signals a device reset, so reset the partition here
+                runtime.block_on(hsm.part_disable(partition_id));
+                runtime.block_on(hsm.part_enable(partition_id));
                 return Ok(());
             }
             Err(error) => {
