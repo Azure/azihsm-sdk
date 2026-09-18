@@ -9,10 +9,16 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-/// Returns the standard test API revision (1.0) used across all C++ tests.
+/// Returns the standard test API revision (1.0) used by MBOR tests.
 inline azihsm_api_rev test_api_rev()
 {
     return azihsm_api_rev{ 1, 0 };
+}
+
+/// Returns the minimum API revision (1.1) required by security-domain tests.
+inline azihsm_api_rev sd_test_api_rev()
+{
+    return azihsm_api_rev{ 1, 1 };
 }
 
 /// Returns the system temporary directory (`/tmp` on Linux, `%TEMP%` on Windows).
