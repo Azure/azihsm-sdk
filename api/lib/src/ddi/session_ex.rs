@@ -124,7 +124,16 @@ pub(crate) struct OpenSessionExResult {
 /// The SD handshake authenticates the entire session against this key,
 /// so the partition cert chain is cryptographically verified (via
 /// [`validate_part_cert_chain`]) before the leaf key is trusted.
-pub(super) fn fetch_pk_hsm(dev: &HsmDev) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
+///
+/// The negotiated API revision (`_rev`) is accepted for parity with the
+/// other cert-fetch APIs but is currently ignored: the `session_ex`
+/// handshake is intrinsically TBOR (api_rev >= 1.1), so the `pk_hsm`
+/// fetch always uses the TBOR cert commands and there is no MBOR variant
+/// to select.
+pub(super) fn fetch_pk_hsm(
+    dev: &HsmDev,
+    _rev: HsmApiRev,
+) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
     let (chain_pem, leaf_der) = fetch_cert_chain_checked_tbor(dev, 0)?;
     validate_part_cert_chain(&chain_pem)?;
 
@@ -224,9 +233,9 @@ pub(crate) fn open_session_ex(
 /// Uses the caller-supplied PSK when present, otherwise the partition
 /// default PSK for `psk_id` (CO = 0, CU = 1).
 ///
-/// The negotiated API revision (`_rev`) is threaded through the handshake
-/// and reserved for future revision-gated behavior; the TBOR `pk_hsm`
-/// cert fetch is revision-agnostic, so it is currently unused.
+/// The negotiated API revision (`rev`) is threaded to [`fetch_pk_hsm`],
+/// which accepts it for parity with the other cert-fetch APIs but
+/// currently ignores it (the V2 handshake is intrinsically TBOR).
 ///
 /// # Errors
 ///
@@ -236,7 +245,7 @@ pub(crate) fn open_session_ex(
 /// handshake-crypto failures (e.g. a Phase-1 confirm MAC mismatch).
 fn open_session_ex_init(
     partition: &HsmPartition,
-    _rev: HsmApiRev,
+    rev: HsmApiRev,
     psk_id: u8,
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: SessionType,
@@ -250,7 +259,7 @@ fn open_session_ex_init(
 
     // Partition identity key (`pk_hsm`, HPKE sender) from the leaf
     // cert in the production cert chain.
-    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev)?;
+    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev, rev)?;
 
     let suite_id = SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
     let req = TborSessionOpenInitReq {
@@ -539,7 +548,7 @@ mod tests {
 
     /// Happy path: CO must pair with an Authenticated session.
     #[test]
-    fn open_session_ex_co_authenticated_happy_emu() {
+    fn open_session_ex_co_authenticated_happy() {
         let result = run_handshake(CO, SessionType::Authenticated);
         assert_eq!(result.psk_id, CO);
         assert!(result.session_type.is_authenticated());
@@ -552,7 +561,7 @@ mod tests {
 
     /// Happy path: CU must pair with a PlainText session.
     #[test]
-    fn open_session_ex_cu_plaintext_happy_emu() {
+    fn open_session_ex_cu_plaintext_happy() {
         let result = run_handshake(CU, SessionType::PlainText);
         assert_eq!(result.psk_id, CU);
         assert!(!result.session_type.is_authenticated());
@@ -565,7 +574,7 @@ mod tests {
     /// Negative path: an unknown `psk_id` (neither CO nor CU) must not
     /// yield a pending handshake — the FW rejects it during Phase 1.
     #[test]
-    fn open_session_ex_init_rejects_unknown_psk_id_emu() {
+    fn open_session_ex_init_rejects_unknown_psk_id() {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
         let rev = part.inner().read().api_rev();
@@ -581,7 +590,7 @@ mod tests {
     /// TBOR. Both must yield the identical PID public key against the emu
     /// (which speaks both transports at every advertised revision).
     #[test]
-    fn cert_transport_gated_by_api_rev_emu() {
+    fn cert_transport_gated_by_api_rev() {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
         let inner = part.inner().read();
