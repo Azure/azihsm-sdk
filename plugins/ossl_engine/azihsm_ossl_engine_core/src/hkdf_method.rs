@@ -336,14 +336,15 @@ fn ctrl_str_inner(
                 let value_str = value_c
                     .to_str()
                     .map_err(|_| EngineError::Other("derived_key_type must be UTF-8".into()))?;
-                state.derived_key_type = Some(match value_str {
-                    "aes" => DerivedKeyType::Aes,
-                    "hmac" => DerivedKeyType::Hmac,
-                    other => {
-                        return Err(EngineError::Other(format!(
-                            "derived_key_type must be aes or hmac, got: {other}"
-                        )));
-                    }
+                // Case-insensitive for parity with the provider (strcasecmp).
+                state.derived_key_type = Some(if value_str.eq_ignore_ascii_case("aes") {
+                    DerivedKeyType::Aes
+                } else if value_str.eq_ignore_ascii_case("hmac") {
+                    DerivedKeyType::Hmac
+                } else {
+                    return Err(EngineError::Other(format!(
+                        "derived_key_type must be aes or hmac, got: {value_str}"
+                    )));
                 });
                 Ok(())
             }
