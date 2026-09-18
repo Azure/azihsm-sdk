@@ -225,7 +225,7 @@ fuzz_target!(|input: FuzzInput| {
                 dev.exec_op_tbor(&close_req, None, &mut close_cookie);
             assert!(
                 close_result.is_ok(),
-                "SessionClose on a session opened this iteration must succeed, got {close_result:?}"
+                "SessionClose on a session opened this iteration must succeed"
             );
         }
     }
