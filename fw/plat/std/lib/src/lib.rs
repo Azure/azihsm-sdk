@@ -583,10 +583,11 @@ impl StdHsm {
 /// Cleanly shuts down the HSM.
 ///
 /// Closes both the IO submission and partition command channels, which
-/// causes the corresponding Embassy tasks (`run_core` / `part_cmd_task`)
-/// to exit. A shutdown thread then joins the Embassy background thread
-/// after all in-flight work is complete, without blocking a Tokio worker
-/// that may be needed by the work being drained.
+/// causes the corresponding Embassy tasks (`poll_io` / `ipc_task`) to exit
+/// once drained; `run_core` then deinitializes the PAL. A shutdown thread
+/// joins the Embassy background thread after all in-flight work is
+/// complete, without blocking a Tokio worker that may be needed by the
+/// work being drained.
 ///
 /// Because that join is detached, `Drop` returns before the drain finishes.
 /// Callers owning the tokio runtime must instead use
