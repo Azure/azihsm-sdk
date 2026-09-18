@@ -59,6 +59,12 @@ tbor-ml-dsa-65 = [
 # build it with MBOR disabled. Never enable in a production build.
 mldsa-selftest = ["dep:azihsm_fw_core_crypto_ml_dsa"]
 
+# CP1 -> FP1 ML-DSA probe. Deliberately carries no dependencies: it only
+# posts an IPC descriptor and reads a reply, with the crypto happening on
+# FP1. Keeping it separate from mldsa-selftest avoids pulling the RustCrypto
+# ml-dsa crate into CP1, which is the implementation the FP work replaces.
+mldsa-fp-probe = []
+
 # Diagnostic: run the self-test at ML-DSA-44 (see the crate feature).
 mldsa-verify-only = ["azihsm_fw_core_crypto_ml_dsa?/verify-only"]
 param-mldsa44 = ["azihsm_fw_core_crypto_ml_dsa?/param-mldsa44"]

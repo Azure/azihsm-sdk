@@ -241,6 +241,19 @@ async fn poll_ipc(spawner: Spawner) -> ! {
         if !booted && hsm.pal().boot_phase() == BootPhase::Running {
             booted = true;
             info!("app", "boot complete, spawning poll_io");
+
+            // First CP1 -> FP1 ML-DSA request, as its own task.
+            //
+            // It must NOT be awaited inline here: poll_ipc is the task that
+            // services Admin <-> HSM IPC, and awaiting a reply from FP1 inside
+            // it stops CP1 answering Admin. Doing exactly that made the SP fail
+            // system init with msg=96 (INIT_LOGGING_IPC_SYNC) -- measured, this
+            // build boots cleanly without the probe and fails with it.
+            #[cfg(feature = "mldsa-fp-probe")]
+            if let Ok(token) = mldsa_fp_probe() {
+                spawner.spawn(token);
+            }
+
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
             }
@@ -351,4 +364,63 @@ async fn main(spawner: Spawner) {
 
     hsm.pal().run().await;
     hsm.pal().deinit();
+}
+
+/// Issues one ML-DSA keygen request to FP1 and reports what came back.
+///
+/// Keygen is the right first probe: the request is a 32-byte seed, the
+/// smallest payload of the three, and the response is self-checking because
+/// the key lengths are fixed per parameter set (ML-DSA-87: verifying key
+/// 2,592 + signing key 4,896 = 7,488 bytes plus an 8-byte header).
+///
+/// The descriptor travels in the IPC slot; the payload lives at a fixed
+/// address in FP1's DTCM, which the CP addresses at 0xA3200000.
+#[cfg(feature = "mldsa-fp-probe")]
+#[embassy_executor::task]
+async fn mldsa_fp_probe() {
+    let hsm = HSM.get().await;
+    use azihsm_fw_uno_pal::IpcChannel;
+    use core::ptr::write_volatile;
+
+    const PAYLOAD_CP_ADDR: u32 = 0xA320_0000;
+    const OP_KEYGEN: u32 = 0x50;
+    const PARAM_87: u32 = 5;
+    const SEED_LEN: u32 = 32;
+    const HDR_LEN: u32 = 8; // verifyingKeyLen + signingKeyLen
+    const EXPECT_RESP_LEN: u32 = HDR_LEN + 2592 + 4896;
+
+    // Payload: MlDsaKeyGenPayload_t -- two length words then the seed.
+    let base = PAYLOAD_CP_ADDR as *mut u8;
+    unsafe {
+        for i in 0..HDR_LEN {
+            write_volatile(base.add(i as usize), 0);
+        }
+        for i in 0..SEED_LEN {
+            write_volatile(base.add((HDR_LEN + i) as usize), i as u8);
+        }
+    }
+
+    // The payload writes must land before the descriptor is posted, or FP1
+    // can observe the message ahead of the data. TCM is not cached on the M7,
+    // so a barrier is sufficient.
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+    // word 0: header -- msg_op[6:0], response[7], tag[15:8]
+    // word 1: param set (byte 0) + 3 reserved
+    // word 2: payload length
+    let tag: u32 = 1;
+    let msg: [u32; 3] = [OP_KEYGEN | (tag << 8), PARAM_87, HDR_LEN + SEED_LEN];
+    let mut resp = [0u32; 16];
+
+    info!("app", "mldsa: payload written, skipping send (bisect)");
+
+    // BISECT: the IPC send is deliberately not performed. If the board boots
+    // with this build, the write to FP1 TCM at 0xA3200000 is fine and the
+    // problem is the send path. If it still fails, CP1 cannot write there --
+    // the verified precedent (aes_gcm_iv_queue at 0xA3221A1C) is CP0 -> FP1,
+    // not CP1 -> FP1, so MPU permissions are the likely difference.
+    let _ = &msg;
+    let _ = &mut resp;
+    let _ = EXPECT_RESP_LEN;
+    let _ = hsm;
 }

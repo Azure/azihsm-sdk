@@ -111,7 +111,7 @@ pub enum BootPhase {
 const IO_QUEUE_DEPTH: usize = 32;
 
 /// Number of IPC pairs configured for the firmware.
-const IPC_PAIRS: usize = 2;
+const IPC_PAIRS: usize = 3;
 
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,6 +121,8 @@ pub enum IpcChannel {
     AdminMessage = 0,
     /// Admin → HSM event notifications.
     AdminEvent = 1,
+    /// HSM → FP1 requests, FP1 → HSM responses (ML-DSA offload).
+    FpMessage = 2,
 }
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
@@ -369,6 +371,30 @@ impl Default for UnoHsmPal {
                     rx_ci: 0,
                     depth: 0,
                     msg_len: 0,
+                },
+                // Pair 2 slot: HSM -> FP1 requests / FP1 -> HSM responses.
+                //
+                // Rings live in pSRAM, which the CP addresses at 0xA3E00000
+                // (PsRamMemMap) and FP1 at its own 0x00010000 -- the offsets
+                // are identical, which is what confirms the translation:
+                // hsm_to_fp tx at +0x980 matches PSRAM_CP1toFP_REQ_MSG_ADDR
+                // and rx at +0xD80 matches PSRAM_FPtoCP1_RES_MSG_ADDR.
+                //
+                // Descriptors 15/16 and IntBlock1 come from the HSM<->FP
+                // channel definition; Admin<->FP uses 0/1 on IntBlock0, so
+                // the two do not collide.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 16,
+                    outbound_desc: 15,
+                    tx_ring_base: 0xA3E0_0980,
+                    tx_pi: 0xA3E0_3BD4,
+                    tx_ci: 0xA3E0_3BD8,
+                    rx_ring_base: 0xA3E0_0D80,
+                    rx_pi: 0xA3E0_3BDC,
+                    rx_ci: 0xA3E0_3BE0,
+                    depth: 16,
+                    msg_len: 16, // 64-byte slots / 4
                 },
             ],
         };
