@@ -16,8 +16,7 @@
 #![cfg(unix)]
 
 use std::io;
-use std::io::BufRead;
-use std::io::BufReader;
+use std::io::Read;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -80,13 +79,18 @@ impl Drop for SocketPaths {
 
 /// Reads and discards the `CONNECT <port>\n` line `vsocksrv` sends first,
 /// then splices the remainder of `ch` bidirectionally with `ddi`.
-fn bridge_connection(ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
-    // Consume exactly the "CONNECT <port>\n" line via a BufReader, then
-    // hand the underlying socket (with any read-ahead) to the splice.
-    let mut reader = BufReader::new(ch);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let mut ch = reader.into_inner();
+fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
+    // Read the "CONNECT <port>\n" line one byte at a time so no bytes are
+    // buffered past it. A `BufReader` would read ahead and its
+    // `into_inner()` silently discards anything buffered beyond the
+    // line, which would corrupt the framed protocol if `vsocksrv` ever
+    // writes more before this line is consumed.
+    let mut byte = [0u8; 1];
+    loop {
+        if ch.read_exact(&mut byte).is_err() || byte[0] == b'\n' {
+            break;
+        }
+    }
     let mut ddi = ddi;
 
     let mut ch_clone = ch.try_clone()?;

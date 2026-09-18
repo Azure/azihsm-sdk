@@ -8,6 +8,13 @@ payload.
 The server allocates and enables its HSM partition during startup. Partition 3
 is used by default to match the Manticore device.
 
+The server handles one client connection at a time: since all connections
+share the same HSM partition and a disconnect resets it (clearing keys,
+sessions, and vault state), serving connections concurrently would let one
+client's disconnect corrupt another's in-flight session. A new `AF_VSOCK`
+connection is accepted once the previous one closes; `AF_UNIX` mode is
+inherently single-connection (it reconnects to the same peer).
+
 ## Build
 
 ```bash

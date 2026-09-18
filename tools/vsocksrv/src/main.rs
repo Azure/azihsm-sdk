@@ -332,8 +332,12 @@ fn serve_connection(
                 debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
                 // A disconnect signals a device reset, so reset the partition here
-                runtime.block_on(hsm.part_disable(partition_id));
-                runtime.block_on(hsm.part_enable(partition_id));
+                if let Err(reset_error) = runtime.block_on(hsm.part_disable(partition_id)) {
+                    tracing::warn!(?reset_error, "Failed to disable partition on reset");
+                }
+                if let Err(reset_error) = runtime.block_on(hsm.part_enable(partition_id)) {
+                    tracing::warn!(?reset_error, "Failed to re-enable partition on reset");
+                }
                 return Ok(());
             }
             Err(error) => {
@@ -404,24 +408,22 @@ fn serve_connection(
     }
 }
 
-fn spawn_connection(
-    mut stream: impl Read + Write + Send + 'static,
-    hsm: Arc<StdHsm>,
-    runtime: tokio::runtime::Handle,
+fn serve_connection_logged(
+    mut stream: impl Read + Write,
+    hsm: &StdHsm,
+    runtime: &tokio::runtime::Handle,
     partition_id: u8,
 ) {
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
     tracing::info!(connection_id, "Connected HSM client");
-    thread::spawn(move || {
-        let connection_span = tracing::info_span!("connection", connection_id);
-        let _connection_guard = connection_span.enter();
-        tracing::debug!("Started connection worker");
-        if let Err(error) = serve_connection(&mut stream, &hsm, &runtime, partition_id) {
-            tracing::warn!(?error, "HSM client connection closed with an error");
-        } else {
-            tracing::info!("HSM client connection closed");
-        }
-    });
+    let connection_span = tracing::info_span!("connection", connection_id);
+    let _connection_guard = connection_span.enter();
+    tracing::debug!("Started connection worker");
+    if let Err(error) = serve_connection(&mut stream, hsm, runtime, partition_id) {
+        tracing::warn!(?error, "HSM client connection closed with an error");
+    } else {
+        tracing::info!("HSM client connection closed");
+    }
 }
 
 fn main() -> Result<()> {
@@ -482,12 +484,14 @@ fn main() -> Result<()> {
                 let stream = listener
                     .accept()
                     .context("Failed to accept AF_VSOCK connection")?;
-                spawn_connection(
-                    stream,
-                    hsm.clone(),
-                    runtime.handle().clone(),
-                    args.partition_id,
-                );
+                // Serve one connection at a time: a disconnect resets the
+                // shared HSM partition (see `serve_connection`), and
+                // `partition_id` is a single process-wide value, so
+                // concurrent connections would let one client's
+                // disconnect wipe another's live sessions/keys. Handling
+                // connections serially also removes any need to bound
+                // concurrent threads against this untrusted listener.
+                serve_connection_logged(stream, &hsm, runtime.handle(), args.partition_id);
             }
         }
         SocketType::Unix => {
