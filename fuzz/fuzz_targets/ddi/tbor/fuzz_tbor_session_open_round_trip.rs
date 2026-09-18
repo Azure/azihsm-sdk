@@ -120,27 +120,29 @@ fn seal_seed_envelope_with_iv(
 
 fuzz_target!(|input: FuzzInput| {
     let Ok(dev) = common::open_emu_dev() else { return; };
-    let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
 
-    let req = if input.valid_open_init || input.valid_open_finish {
+    let (req, ephemeral) = if input.valid_open_init || input.valid_open_finish {
+        let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
         let (psk_id, session_type) = if input.valid_use_authenticated {
             (0, SessionType::Authenticated.to_u8())
         } else {
             (1, SessionType::PlainText.to_u8())
         };
-        TborSessionOpenInitReq {
+        let req = TborSessionOpenInitReq {
             psk_id,
             session_type,
             suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
             pk_init: ephemeral.pk_sec1,
-        }
+        };
+        (req, Some(ephemeral))
     } else {
-        TborSessionOpenInitReq {
+        let req = TborSessionOpenInitReq {
             psk_id: input.psk_id,
             session_type: input.session_type,
             suite_id: input.suite_id,
             pk_init: input.pk_init,
-        }
+        };
+        (req, None)
     };
 
     let mut cookie = None;
@@ -151,6 +153,11 @@ fuzz_target!(|input: FuzzInput| {
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
+            // `valid_open_finish` forces the valid-handshake branch above,
+            // which always populates `ephemeral`.
+            let ephemeral = ephemeral
+                .as_ref()
+                .expect("ephemeral is Some whenever valid_open_finish is true");
             let Ok((pk_hsm_key, pk_hsm_sec1)) = fetch_pk_hsm(&dev) else { return; };
             let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
             let Ok(psk) = default_psk(req.psk_id) else { return; };
