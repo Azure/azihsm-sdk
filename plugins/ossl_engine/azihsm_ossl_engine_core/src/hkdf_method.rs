@@ -489,6 +489,8 @@ fn hex_decode(value: &CStr) -> EngineResult<Zeroizing<Vec<u8>>> {
         }
         let n = usize::try_from(len).unwrap_or(0);
         let out = Zeroizing::new(std::slice::from_raw_parts(buf.cast::<u8>(), n).to_vec());
+        // The value may be the masked IKM; wipe the OpenSSL buffer before free.
+        ffi::OPENSSL_cleanse(buf.cast(), n);
         ffi::CRYPTO_free(buf.cast(), c"".as_ptr(), 0);
         Ok(out)
     }
