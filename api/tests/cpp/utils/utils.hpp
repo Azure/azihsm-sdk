@@ -15,10 +15,15 @@ inline azihsm_api_rev test_api_rev()
     return azihsm_api_rev{ 1, 0 };
 }
 
-/// Returns the minimum API revision (1.1) required by security-domain tests.
+/// Returns a backend-supported revision for security-domain test fixtures.
+/// Mock-only argument validation uses 1.0; SD operations use 1.1.
 inline azihsm_api_rev sd_test_api_rev()
 {
+#if defined(AZIHSM_FEATURE_MOCK)
+    return azihsm_api_rev{ 1, 0 };
+#else
     return azihsm_api_rev{ 1, 1 };
+#endif
 }
 
 /// Returns the system temporary directory (`/tmp` on Linux, `%TEMP%` on Windows).
