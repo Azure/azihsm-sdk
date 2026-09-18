@@ -11,7 +11,7 @@
 //!
 //! Coverage:
 //! * Happy path per key size (128/192/256) — the masked key has the
-//!   expected length (148/156/164 B) and is non-zero; a second call yields
+//!   expected length (244/252/260 B) and is non-zero; a second call yields
 //!   a distinct key.
 //! * Every AES masking scope exercised after `PartFinal`: `Session`, `Ephemeral`,
 //!   and `Local`; `Session` is also available before finalization.
@@ -45,9 +45,9 @@ pub(crate) const SCOPE_LOCAL: u8 = 0b011;
 pub(crate) const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
 /// Masked-key envelope length for a given AES key length: `header(8) ‖
-/// iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`.
+/// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
 fn masked_len(key_len: usize) -> usize {
-    8 + 12 + 96 + key_len + 16
+    8 + 12 + 192 + key_len + 16
 }
 
 /// Expected AES key length (bytes) for a wire key-size discriminant.
