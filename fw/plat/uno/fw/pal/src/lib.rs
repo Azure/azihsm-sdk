@@ -50,7 +50,7 @@ mod part;
 mod seed;
 mod session;
 /// Test-only DDI commands, reached through the `HsmCustomDispatch` hook.
-#[cfg(feature = "mcr_test_hooks")]
+#[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
 mod test_hooks;
 mod vault;
 

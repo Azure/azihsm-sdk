@@ -5,11 +5,11 @@
 resolver = "2"
 
 members = [
+  "api/ddi/mbor/test_hooks",
   "api/lib",
   "api/native",
   "api/tests",
   "api/tests/macro",
-  "api/ddi/test_hooks",
   "crates/cred_encrypt",
   "crates/crypto",
   "crates/crypto/x509_builder/gen",
@@ -94,7 +94,6 @@ azihsm_ddi = { path = "ddi/lib" }
 azihsm_ddi_emu = { path = "ddi/emu" }
 azihsm_ddi_interface = { path = "ddi/interface" }
 azihsm_ddi_mbor_codec = { path = "ddi/mbor/codec" }
-azihsm_ddi_test_hooks = { path = "api/ddi/test_hooks" }
 azihsm_ddi_mbor_derive = { path = "ddi/mbor/derive" }
 azihsm_ddi_mbor_sim = { path = "ddi/mbor/sim" }
 azihsm_ddi_mbor_test_helpers = { path = "ddi/mbor/test_helpers" }
@@ -110,6 +109,7 @@ azihsm_ddi_sock_proto = { path = "ddi/sock/proto" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
+azihsm_ddi_mbor_test_hooks = { path = "api/ddi/mbor/test_hooks" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_ossl_engine_core = { path = "plugins/ossl_engine/azihsm_ossl_engine_core" }
 azihsm_ossl_engine_resiliency = { path = "plugins/ossl_engine/azihsm_ossl_engine_resiliency" }

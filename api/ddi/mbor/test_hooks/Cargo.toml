@@ -3,7 +3,7 @@
 
 [package]
 edition = "2021"
-name = "azihsm_ddi_test_hooks"
+name = "azihsm_ddi_mbor_test_hooks"
 version = "0.1.0"
 
 # Host-side wire types and helpers for the DDI test-hook commands. These
@@ -33,9 +33,9 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor_codec.workspace = true
 azihsm_ddi_mbor_test_helpers.workspace = true
+azihsm_ddi_mbor_types.workspace = true
 azihsm_ddi_mock.workspace = true
 azihsm_ddi_nix.workspace = true
-azihsm_ddi_mbor_types.workspace = true
 test_with_tracing.workspace = true
 x509.workspace = true
 
@@ -52,13 +52,13 @@ helpers = ["dep:azihsm_ddi"]
 # MBOR codec hooks emitted by the `Ddi` derive on `#[ddi(map)]` structs.
 # Declared (and forwarded) so `check-cfg` does not warn; kept off by
 # default since the host wire types need no encode/decode hooks.
-pre_encode = [
-  "azihsm_ddi_mbor_codec/pre_encode",
-  "azihsm_ddi_mbor_types/pre_encode",
-]
 post_decode = [
   "azihsm_ddi_mbor_codec/post_decode",
   "azihsm_ddi_mbor_types/post_decode",
+]
+pre_encode = [
+  "azihsm_ddi_mbor_codec/pre_encode",
+  "azihsm_ddi_mbor_types/pre_encode",
 ]
 
 # Forward backend selection to the azihsm_ddi facade so the integration

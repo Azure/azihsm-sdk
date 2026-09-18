@@ -11,6 +11,8 @@
 
 #![allow(dead_code)]
 
+use std::panic::AssertUnwindSafe;
+
 use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto::*;
 use azihsm_ddi::*;
@@ -97,8 +99,13 @@ pub fn ddi_dev_test(
         let mut dev = ddi.open_dev(&dev_info.path).unwrap();
 
         let setup_session_id = setup(&mut dev, &ddi, &dev_info.path);
-        test(&mut dev, &ddi, &dev_info.path, setup_session_id);
+        let test_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            test(&mut dev, &ddi, &dev_info.path, setup_session_id);
+        }));
         cleanup(&mut dev, &ddi, &dev_info.path, Some(setup_session_id));
+        if let Err(payload) = test_result {
+            std::panic::resume_unwind(payload);
+        }
     }
 }
 
@@ -264,34 +271,4 @@ pub fn is_unsupported_cmd(err: &DdiError) -> bool {
     } else {
         false
     }
-}
-
-/// Generate an ECC key pair with the given curve/usage and return
-/// `(private_key_id, public_key, masked_key)`.
-pub fn ecc_gen_key_mcr(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    curve: DdiEccCurve,
-    key_tag: Option<u16>,
-    session_id: Option<u16>,
-    key_usage: DdiKeyUsage,
-) -> (u16, DdiDerPublicKey, MborByteArray<3072>) {
-    let key_props = helper_key_properties(key_usage, DdiKeyAvailability::App);
-
-    let resp = helper_ecc_generate_key_pair(
-        dev,
-        session_id,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        curve,
-        key_tag,
-        key_props,
-    );
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-    let resp = resp.unwrap();
-
-    (
-        resp.data.private_key_id,
-        resp.data.pub_key,
-        resp.data.masked_key,
-    )
 }

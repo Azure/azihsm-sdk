@@ -5,9 +5,11 @@
 //! family. These mirror, field-for-field, the request the platform
 //! handler decodes below the PAL.
 
+use azihsm_ddi_mbor_codec::*;
+use azihsm_ddi_mbor_derive::Ddi;
+use azihsm_ddi_mbor_types::*;
+use open_enum::open_enum;
 use pastey::paste;
-
-use crate::*;
 
 /// `DdiOp::TestAction` — not a core opcode; claimed only by the platform
 /// test-hook dispatch below the PAL.
@@ -346,6 +348,35 @@ pub fn encode_test_action_payload<T: MborEncode>(
     DdiTestActionPayload::from_slice(&buf[..len]).map_err(|_| MborEncodeError::BufferOverflow)
 }
 
+/// A typed `TestAction` request that keeps the action and payload together.
+#[derive(Debug)]
+pub enum TestActionRequest {
+    Level1SkipIo,
+    SetLevel2SkipIo,
+    ClearLevel2SkipIo,
+    InvalidateCertSizeCache,
+    TriggerIoFailure,
+    TriggerDmaOutFailure,
+    TriggerDmaEndFailure,
+    TriggerCrash(DdiTestActionCrashReqInfo),
+    ExecuteNegativeSelfTest(u32),
+    PinPolicyOverride(DdiTestActionPinPolicyConfig),
+    PinPolicyClear,
+    ForcePkaInstance(Option<u8>),
+    TriggerRngHwFailure,
+    ToggleFipsApprovedState,
+    TriggerNegativePctFailure(u8),
+    TriggerEccError(DdiTestActionEccErrorInfo),
+    TriggerTdispInterrupt(DdiTestActionInterruptSimulationType),
+    ClearUserCredentials,
+    ClearProvisioningState,
+    UpdateSvn(u64),
+    TriggerGdmaError(DdiTestActionGDMAErrorType),
+    ClearBk3,
+    TriggerStackValidation(DdiTestActionStackValidationReqInfo),
+    TriggerUcdError(DdiTestActionUCDErrorType),
+}
+
 /// DDI Test Action request.
 ///
 /// Uses the opaque-payload shape `{1: action, 2: payload?}`: every action's
@@ -372,6 +403,80 @@ pub struct DdiTestActionReq {
     pub payload: Option<MborByteArray<TEST_ACTION_PAYLOAD_MAX>>,
 }
 
+impl TryFrom<TestActionRequest> for DdiTestActionReq {
+    type Error = MborEncodeError;
+
+    fn try_from(request: TestActionRequest) -> Result<Self, Self::Error> {
+        let (action, payload) = match request {
+            TestActionRequest::Level1SkipIo => (DdiTestAction::Level1SkipIo, None),
+            TestActionRequest::SetLevel2SkipIo => (DdiTestAction::SetLevel2SkipIo, None),
+            TestActionRequest::ClearLevel2SkipIo => (DdiTestAction::ClearLevel2SkipIo, None),
+            TestActionRequest::InvalidateCertSizeCache => {
+                (DdiTestAction::InvalidateCertSizeCache, None)
+            }
+            TestActionRequest::TriggerIoFailure => (DdiTestAction::TriggerIoFailure, None),
+            TestActionRequest::TriggerDmaOutFailure => (DdiTestAction::TriggerDmaOutFailure, None),
+            TestActionRequest::TriggerDmaEndFailure => (DdiTestAction::TriggerDmaEndFailure, None),
+            TestActionRequest::TriggerCrash(value) => (
+                DdiTestAction::TriggerCrash,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::ExecuteNegativeSelfTest(value) => (
+                DdiTestAction::ExecuteNegativeSelfTest,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::PinPolicyOverride(value) => (
+                DdiTestAction::PinPolicyOverride,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::PinPolicyClear => (DdiTestAction::PinPolicyClear, None),
+            TestActionRequest::ForcePkaInstance(value) => (
+                DdiTestAction::ForcePkaInstance,
+                value.as_ref().map(encode_test_action_payload).transpose()?,
+            ),
+            TestActionRequest::TriggerRngHwFailure => (DdiTestAction::TriggerRngHwFailure, None),
+            TestActionRequest::ToggleFipsApprovedState => {
+                (DdiTestAction::ToggleFipsApprovedState, None)
+            }
+            TestActionRequest::TriggerNegativePctFailure(value) => (
+                DdiTestAction::TriggerNegativePctFailure,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::TriggerEccError(value) => (
+                DdiTestAction::TriggerEccError,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::TriggerTdispInterrupt(value) => (
+                DdiTestAction::TriggerTdispInterrupt,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::ClearUserCredentials => (DdiTestAction::ClearUserCredentials, None),
+            TestActionRequest::ClearProvisioningState => {
+                (DdiTestAction::ClearProvisioningState, None)
+            }
+            TestActionRequest::UpdateSvn(value) => (
+                DdiTestAction::UpdateSvn,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::TriggerGdmaError(value) => (
+                DdiTestAction::TriggerGdmaError,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::ClearBk3 => (DdiTestAction::ClearBk3, None),
+            TestActionRequest::TriggerStackValidation(value) => (
+                DdiTestAction::TriggerStackValidation,
+                Some(encode_test_action_payload(&value)?),
+            ),
+            TestActionRequest::TriggerUcdError(value) => (
+                DdiTestAction::TriggerUcdError,
+                Some(encode_test_action_payload(&value)?),
+            ),
+        };
+
+        Ok(Self { action, payload })
+    }
+}
+
 /// DDI Test Action response
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
@@ -384,81 +489,25 @@ pub struct DdiTestActionResp {
 
 ddi_op_req_resp!(DdiTestAction);
 
-/// `DdiOp::GetPrivKey` — FIPS-validation read-back of a key's private
-/// material. Served below the PAL under `fips_validation_hooks`; not a
-/// core opcode.
-pub const DDI_OP_GET_PRIV_KEY: DdiOp = DdiOp(2005);
+/// Execute a typed `TestAction` request against validation firmware.
+#[cfg(feature = "helpers")]
+pub fn helper_test_action_cmd(
+    dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
+    session_id: u16,
+    request: TestActionRequest,
+) -> azihsm_ddi::DdiResult<DdiTestActionCmdResp> {
+    use azihsm_ddi::DdiDev;
+    use azihsm_ddi::DdiError;
 
-/// `DdiOp::RawKeyImport` — FIPS-validation import of raw key material.
-/// Served below the PAL under `fips_validation_hooks`; not a core opcode.
-pub const DDI_OP_RAW_KEY_IMPORT: DdiOp = DdiOp(2008);
-
-/// DDI Get Private Key request.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiGetPrivKeyReq {
-    /// Key ID
-    #[ddi(id = 1)]
-    pub key_id: u16,
+    let data = DdiTestActionReq::try_from(request).map_err(|_| DdiError::InvalidParameter)?;
+    let req = DdiTestActionCmdReq {
+        hdr: DdiReqHdr {
+            op: DDI_OP_TEST_ACTION,
+            sess_id: Some(session_id),
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        },
+        data,
+        ext: None,
+    };
+    dev.exec_op_mbor(&req, &mut None)
 }
-
-/// DDI Get Private Key response.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiGetPrivKeyResp {
-    /// Key type
-    #[ddi(id = 1)]
-    pub key_kind: DdiKeyType,
-
-    /// Private key data. Supports ECC and RSA (including RSA CRT) private
-    /// keys, as well as raw secret material.
-    #[ddi(id = 2)]
-    pub key_data: MborByteArray<2564>,
-}
-
-ddi_op_req_resp!(DdiGetPrivKey);
-
-/// DDI RAW Key Import (test operation) request.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportReq {
-    /// RAW format key material.
-    #[ddi(id = 1)]
-    pub raw: MborByteArray<3072>,
-
-    /// Key type.
-    #[ddi(id = 2)]
-    pub key_kind: DdiKeyType,
-
-    /// Key tag (optional). May only be used with app keys. The tag must be
-    /// unique within the app; a tag of `0x0000` is not allowed.
-    #[ddi(id = 3)]
-    pub key_tag: Option<u16>,
-
-    /// Key properties.
-    #[ddi(id = 4)]
-    pub key_properties: DdiTargetKeyProperties,
-}
-
-/// DDI RAW Key Import (test operation) response.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportResp {
-    /// Key ID
-    #[ddi(id = 1)]
-    pub key_id: u16,
-
-    /// Optional bulk key ID.
-    #[ddi(id = 2)]
-    pub bulk_key_id: Option<u16>,
-
-    /// Masked key.
-    #[ddi(id = 3)]
-    pub masked_key: MborByteArray<3072>,
-}
-
-ddi_op_req_resp!(DdiRawKeyImport);

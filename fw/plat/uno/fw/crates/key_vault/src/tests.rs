@@ -267,7 +267,30 @@ fn create_and_read_roundtrip_cpu() {
     assert_eq!(g.copies.get(), 0, "AES-256 (32 B) uses the CPU path");
     assert_eq!(&**v.key(id).unwrap(), &material[..]);
     assert_eq!(v.key_kind(id).unwrap(), HsmVaultKeyKind::Aes256);
+    assert_eq!(v.key_session_binding(id).unwrap(), None);
     assert_eq!(v.key_attrs(id).unwrap(), aes_attrs());
+}
+
+#[test]
+fn session_binding_roundtrip() {
+    const SESSION_ID: u16 = 0x1234;
+
+    let (mut v, g, io) = vault::<1>();
+    let material = [0xABu8; 32];
+    let id = with_key(&material, |k| {
+        block_on(v.create(
+            &g,
+            &io,
+            7,
+            k,
+            HsmVaultKeyKind::Aes256,
+            Some(SESSION_ID),
+            aes_attrs().with_session(true),
+        ))
+        .unwrap()
+    });
+
+    assert_eq!(v.key_session_binding(id).unwrap(), Some(SESSION_ID));
 }
 
 #[test]
@@ -818,6 +841,10 @@ fn accessors_on_invalid_id_are_key_not_found() {
     let bad = HsmKeyId::from(0x0005u16);
     assert_eq!(v.key(bad).unwrap_err(), HsmError::KeyNotFound);
     assert_eq!(v.key_kind(bad).unwrap_err(), HsmError::KeyNotFound);
+    assert_eq!(
+        v.key_session_binding(bad).unwrap_err(),
+        HsmError::KeyNotFound
+    );
     assert_eq!(v.key_attrs(bad).unwrap_err(), HsmError::KeyNotFound);
     assert_eq!(v.key_location(bad).unwrap_err(), HsmError::KeyNotFound);
 }

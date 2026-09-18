@@ -33,13 +33,12 @@ use std::thread;
 use std::time::Duration;
 
 use azihsm_ddi::*;
+use azihsm_ddi_mbor_test_hooks::helper_test_action_cmd;
+use azihsm_ddi_mbor_test_hooks::DdiTestActionCrashReqInfo;
+use azihsm_ddi_mbor_test_hooks::DdiTestActionCrashType;
+use azihsm_ddi_mbor_test_hooks::DdiTestActionSocCpuId;
+use azihsm_ddi_mbor_test_hooks::TestActionRequest;
 use azihsm_ddi_mbor_types::*;
-use azihsm_ddi_test_hooks::helper_test_action_cmd;
-use azihsm_ddi_test_hooks::DdiTestAction;
-use azihsm_ddi_test_hooks::DdiTestActionContext;
-use azihsm_ddi_test_hooks::DdiTestActionCrashReqInfo;
-use azihsm_ddi_test_hooks::DdiTestActionCrashType;
-use azihsm_ddi_test_hooks::DdiTestActionSocCpuId;
 use common::*;
 use test_with_tracing::test;
 
@@ -48,6 +47,11 @@ const REV: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 /// Seconds to wait for the firmware and driver to recover after a crash.
 const RECOVERY_WAIT_SECS: u64 = 10;
 
+fn close_setup_session(dev: &<DdiTest as Ddi>::Dev, session_id: u16) {
+    let resp = helper_close_session(dev, Some(session_id), Some(REV));
+    assert!(resp.is_ok(), "Failed to close setup session: {resp:?}");
+}
+
 /// Trigger a hard fault in the Admin core.
 #[test]
 fn test_trigger_hard_fault_crash_admin() {
@@ -55,7 +59,7 @@ fn test_trigger_hard_fault_crash_admin() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Admin,
@@ -72,7 +76,7 @@ fn test_trigger_panic_in_admin() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Admin,
@@ -89,7 +93,7 @@ fn test_trigger_hang_crash_admin() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Admin,
@@ -106,7 +110,7 @@ fn test_trigger_explicit_fault_crash_admin() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Admin,
@@ -123,7 +127,7 @@ fn test_trigger_hard_fault_crash_hsm() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Hsm,
@@ -140,7 +144,7 @@ fn test_trigger_panic_in_hsm() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Hsm,
@@ -157,7 +161,7 @@ fn test_trigger_explicit_fault_crash_hsm() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Hsm,
@@ -174,7 +178,7 @@ fn test_trigger_hard_fault_crash_fp0() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp0,
@@ -191,7 +195,7 @@ fn test_trigger_hard_fault_crash_fp1() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp1,
@@ -208,7 +212,7 @@ fn test_trigger_hard_fault_crash_fp2() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp2,
@@ -225,7 +229,7 @@ fn test_trigger_explicit_fault_crash_fp2() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp2,
@@ -242,7 +246,7 @@ fn test_trigger_hang_in_fp2() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp2,
@@ -259,7 +263,7 @@ fn test_trigger_hang_in_fp1() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp1,
@@ -276,7 +280,7 @@ fn test_trigger_hang_in_fp0() {
         common_setup,
         common_cleanup,
         |dev, _ddi, path, session_id| {
-            let _ = helper_close_session(dev, Some(session_id), Some(REV));
+            close_setup_session(dev, session_id);
             trigger_crash(
                 path.to_string(),
                 DdiTestActionSocCpuId::Fp0,
@@ -315,8 +319,7 @@ fn trigger_crash(
     let resp = helper_test_action_cmd(
         &mut dev,
         session_id,
-        DdiTestAction::TriggerCrash,
-        DdiTestActionContext::CrashInfo(DdiTestActionCrashReqInfo { crash_type, cpu_id }),
+        TestActionRequest::TriggerCrash(DdiTestActionCrashReqInfo { crash_type, cpu_id }),
     );
 
     // A clean `UnsupportedCmd` means no crash happened: either the firmware
@@ -348,7 +351,13 @@ fn trigger_crash(
     // Read the API revision to confirm the firmware is healthy again.
     let resp = helper_get_api_rev(&dev, None, None).unwrap();
     assert_eq!(resp.hdr.op, DdiOp::GetApiRev);
+    assert!(resp.hdr.rev.is_none());
+    assert!(resp.hdr.sess_id.is_none());
     assert_eq!(resp.hdr.status, DdiStatus::Success);
+    assert!(resp.data.min.major <= resp.data.max.major);
+    if resp.data.min.major == resp.data.max.major {
+        assert!(resp.data.min.minor <= resp.data.max.minor);
+    }
     assert_eq!(resp.data.min.major, 1);
     assert_eq!(resp.data.min.minor, 0);
     assert_eq!(resp.data.max.major, 1);

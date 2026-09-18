@@ -12,9 +12,11 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_key_derive = { workspace = true }
+azihsm_fw_core_crypto_key_masking = { optional = true, workspace = true }
 azihsm_fw_core_crypto_x509_builder = { workspace = true }
 azihsm_fw_ddi_mbor = { optional = true, workspace = true }
 azihsm_fw_ddi_mbor_derive = { optional = true, workspace = true }
+azihsm_fw_ddi_mbor_types = { optional = true, workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
@@ -62,7 +64,12 @@ default = []
 semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
 
 # Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
-# rather than the core opcode tables. Adds `TestAction` (DdiOp 2004),
-# used by crash-recovery and credential-lifecycle testing. Never enable
-# in a production build.
+# rather than the core opcode tables. Never enable either feature in a
+# production build.
+fips_validation_hooks = [
+  "dep:azihsm_fw_core_crypto_key_masking",
+  "dep:azihsm_fw_ddi_mbor",
+  "dep:azihsm_fw_ddi_mbor_derive",
+  "dep:azihsm_fw_ddi_mbor_types",
+]
 mcr_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]

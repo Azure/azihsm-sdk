@@ -71,17 +71,12 @@ pub(super) struct RespHdr {
     pub(super) fips_approved: bool,
 }
 
-/// Build a success response header echoing the request's revision and
-/// opcode.
-///
-/// `sess_id` is `None`: a `TestAction` neither opens nor closes a session,
-/// so its response carries no session id — matching the core's
-/// `success_hdr`.
-pub(super) fn success_hdr(hdr: &ReqHdr) -> RespHdr {
+/// Build a success response header echoing the request revision and opcode.
+pub(super) fn success_hdr(hdr: &ReqHdr, sess_id: Option<u16>) -> RespHdr {
     RespHdr {
         rev: hdr.rev,
         op: hdr.op,
-        sess_id: None,
+        sess_id,
         status: DDI_STATUS_SUCCESS,
         fips_approved: false,
     }

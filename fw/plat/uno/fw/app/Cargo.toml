@@ -36,12 +36,10 @@ embassy-time = { workspace = true }
 #default = ["trace-uart"]
 default = []
 
-# CP0 and CP1 share one `--cp_features` list: `cp/make_cp.sh` forwards it
-# verbatim to both firmwares, so a name passed there must exist on both.
-# CP0's legacy `mcr_test_hooks` gates `TestAction` in the HSM core; on CP1
-# that command lives below the PAL, so map the shared flag onto the uno
-# PAL's `mcr_test_hooks` dispatch feature. This lets
-# `make_manticore.sh --cp_features mcr_test_hooks` build both cores.
+# CP0 and CP1 share one `--cp_features` list. Re-export the Uno PAL's
+# test-only features under the names accepted by the legacy CP firmware
+# so `cp/make_cp.sh` can forward the list unchanged to both builds.
+fips_validation_hooks = ["azihsm_fw_uno_pal/fips_validation_hooks"]
 mcr_test_hooks = ["azihsm_fw_uno_pal/mcr_test_hooks"]
 
 # Enable ARM semihosting integration for the emulator:
