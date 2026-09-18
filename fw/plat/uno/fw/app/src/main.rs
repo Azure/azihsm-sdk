@@ -416,6 +416,11 @@ async fn mldsa_fp_probe() {
     const PAYLOAD: u32 = 0xA320_0000;
     const OP_KEYGEN: u32 = 0x50;
     const OP_SIGN: u32 = 0x51;
+    const OP_VERIFY: u32 = 0x52;
+    /// ML-DSA-87 signature size. Fixed by the parameter set.
+    const SIG_LEN: u32 = 4627;
+    /// Verify's header is three lengths, not two.
+    const VHDR: u32 = 12;
     const PARAM_87: u32 = 5;
     const HDR: u32 = 8; // both payload structs put data[] at offset 8
     const SEED_LEN: u32 = 32;
@@ -475,6 +480,19 @@ async fn mldsa_fp_probe() {
     // the sign request below still goes out carrying those bad lengths, which
     // FP1 logs.
     let sane = vk_len == 2592 && sk_len == 4896;
+    //
+    // The verifying key has to survive this: the sign request overwrites it,
+    // and the verify request afterwards needs it back. It cannot be recovered
+    // by re-running keygen either, because that would overwrite the signature.
+    // 2,592 bytes is the only state this probe holds on CP1.
+    let mut vk = [0u8; 2592];
+
+    if sane {
+        for i in 0..vk_len {
+            vk[i as usize] = rd(HDR + i);
+        }
+    }
+
     let sk_src = HDR + vk_len;
     for i in 0..(if sane { sk_len } else { 0 }) {
         wr(HDR + i, rd(sk_src + i));
@@ -500,5 +518,66 @@ async fn mldsa_fp_probe() {
         .send(IpcChannel::FpMessage as u8, &msg2, &mut resp2)
         .await;
 
-    let _ = (resp, resp2, vk_len, sk_len);
+    // ---- 5. reshape again, into a verify request ----
+    //
+    // FP1 left the signature at offset 0. Verify wants
+    // [vk_len][sig_len][msg_len][vk][sig][msg], so the signature moves up to
+    // make room for the header and the verifying key. Copying descending is
+    // what makes that safe -- the destination is above the source and the two
+    // ranges overlap.
+    if sane {
+        let sig_dst = VHDR + vk_len;
+
+        for i in (0..SIG_LEN).rev() {
+            wr(sig_dst + i, rd(i));
+        }
+
+        for i in 0..vk_len {
+            wr(VHDR + i, vk[i as usize]);
+        }
+
+        // The same message that was signed, regenerated rather than kept.
+        for i in 0..MSG_LEN {
+            wr(sig_dst + SIG_LEN + i, 0xA5u8.wrapping_add(i as u8));
+        }
+
+        wr32(0, vk_len);
+        wr32(4, SIG_LEN);
+        wr32(8, MSG_LEN);
+    }
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+    // ---- 6. verify ----
+    //
+    // This is the step that proves the signature is sound rather than merely
+    // the right length: FP1 logs wolfCrypt's verify result directly.
+    let verify_len = if sane { VHDR + vk_len + SIG_LEN + MSG_LEN } else { VHDR };
+    let msg3: [u32; 3] = [OP_VERIFY | (3 << 8), PARAM_87, verify_len];
+    let mut resp3 = [0u32; 16];
+    hsm.pal()
+        .ipc
+        .send(IpcChannel::FpMessage as u8, &msg3, &mut resp3)
+        .await;
+
+    // ---- 7. negative control ----
+    //
+    // A verify that returned 1 unconditionally would be indistinguishable from
+    // the step above, so corrupt one byte of the message and re-send the same
+    // request. Nothing else changes, and the expected answer is 0. Without
+    // this the positive result proves very little.
+    if sane {
+        let sig_dst = VHDR + vk_len;
+        let tampered = rd(sig_dst + SIG_LEN) ^ 0x01;
+        wr(sig_dst + SIG_LEN, tampered);
+    }
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+    let msg4: [u32; 3] = [OP_VERIFY | (4 << 8), PARAM_87, verify_len];
+    let mut resp4 = [0u32; 16];
+    hsm.pal()
+        .ipc
+        .send(IpcChannel::FpMessage as u8, &msg4, &mut resp4)
+        .await;
+
+    let _ = (resp, resp2, resp3, resp4, vk_len, sk_len);
 }
