@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
@@ -585,12 +586,13 @@ impl UnoHsmPal {
         // because the session slots were never freed.
 
         // Wipe every vault key (app + session + internal) so no prior
-        // tenant key material survives the reset. Runs inside a
-        // `with_admin_io` session so the per-IO scratch the clear touches
-        // is scrubbed on exit — an admin IO obtained any other way would
-        // bypass the teardown wipe.
+        // tenant key material survives the reset, and release the partition's
+        // fast-path engine bulk-key slots. Runs inside a `with_admin_io`
+        // session so the per-IO scratch the clear touches is scrubbed on
+        // exit — an admin IO obtained any other way would bypass the
+        // teardown wipe.
         self.with_admin_io(pid, async |admin_io, _alloc| {
-            crate::vault::vault(admin_io).clear(self, admin_io).await
+            self.vault_clear(admin_io).await
         })
         .await?;
         // Clear the per-tenant persistent state (including the session
