@@ -51,3 +51,7 @@ path = "junit.xml"
 # profile for running emu ddi tests
 [profile.ci-emu-ddi.junit]
 path = "junit.xml"
+
+# profile for running socket DDI tests against a live vsocksrv process
+[profile.ci-sock-ddi.junit]
+path = "junit.xml"
