@@ -49,9 +49,10 @@ fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
     }
 }
 
-/// Derived-key props per the provider's rules: AES (encrypt/decrypt) for any
-/// byte-multiple size; for HMAC the key kind follows the HKDF digest (as the
-/// provider derives it from `md`) and the bits must match the digest size.
+/// Derived-key props per the provider's rules: AES (encrypt/decrypt) for a
+/// 128-, 192-, or 256-bit size; for HMAC the key kind follows the HKDF digest
+/// (as the provider derives it from `md`) and the bits must match the digest
+/// size.
 fn derived_props(
     key_type: DerivedKeyType,
     bits: u32,
@@ -61,10 +62,17 @@ fn derived_props(
         .class(HsmKeyClass::Secret)
         .bits(bits);
     let builder = match key_type {
-        DerivedKeyType::Aes => builder
-            .key_kind(HsmKeyKind::Aes)
-            .can_encrypt(true)
-            .can_decrypt(true),
+        DerivedKeyType::Aes => {
+            if !matches!(bits, 128 | 192 | 256) {
+                return Err(EngineError::Other(format!(
+                    "derived_key_bits for aes must be 128, 192, or 256, got: {bits}"
+                )));
+            }
+            builder
+                .key_kind(HsmKeyKind::Aes)
+                .can_encrypt(true)
+                .can_decrypt(true)
+        }
         DerivedKeyType::Hmac => {
             let (kind, expected_bits) = match hash {
                 HsmHashAlgo::Sha256 => (HsmKeyKind::HmacSha256, 256),
