@@ -19,9 +19,9 @@
 //! let c = hsm.submit([0u32; 16], 0, 0, 0).await;
 //! assert_eq!(c.cqe[3], expected_cmd_id);
 //!
-//! // With caller's tokio runtime:
+//! // With caller's tokio runtime (from an async context):
 //! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
-//! hsm.shutdown();
+//! hsm.shutdown_async().await;
 //! ```
 
 use core::future::poll_fn;
@@ -539,6 +539,21 @@ impl StdHsm {
     /// in-flight work drains. Awaiting this future to completion guarantees the
     /// executor has stopped, so a caller-owned runtime can then be dropped
     /// safely.
+    ///
+    /// # Cancellation
+    ///
+    /// This future takes ownership of the Embassy thread (and any
+    /// self-owned tokio runtime) for the dedicated join thread before its
+    /// first `.await` point, so dropping it early does not abort the
+    /// drain — shutdown continues in the background exactly as with
+    /// [`Drop`], detached from this future. But the "safe to drop your
+    /// runtime now" guarantee above only holds once this future runs to
+    /// completion. There is no way to observe completion of a cancelled
+    /// shutdown from the caller side, so if you supplied an external tokio
+    /// runtime via [`with_tokio`](Self::with_tokio), do not cancel this
+    /// future (e.g. via `select!` or a timeout): keep that runtime alive
+    /// indefinitely instead, since dropping it after cancellation risks the
+    /// same runtime-lifetime hazard this method exists to avoid.
     pub async fn shutdown_async(mut self) {
         if let Some(thread) = self.begin_shutdown() {
             let (tx, rx) = tokio::sync::oneshot::channel();
