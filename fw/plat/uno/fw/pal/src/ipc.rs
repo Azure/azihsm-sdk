@@ -159,6 +159,24 @@ pub enum IpcMessageOpCode {
     /// FP error log.
     FpErrLog = 0x9,
 
+    /// ML-DSA key generation on FP1.
+    ///
+    /// These three carry only a descriptor -- parameter set and payload
+    /// length. The payload itself lives at a fixed address in FP1's DTCM
+    /// (`MLDSA_PAYLOAD_CP_ADDR`, 0xA3200000 from this side), because an IPC
+    /// slot is 64 bytes and an ML-DSA-87 verify request is 8,243.
+    ///
+    /// Values must match msgOpMlDsaKeyGen / Sign / Verify in the FP's
+    /// hal/MQ/MessageHandler.h; the two enums are parallel and a mismatch
+    /// silently misroutes messages.
+    MlDsaKeyGen = 0x50,
+
+    /// ML-DSA signing on FP1.
+    MlDsaSign = 0x51,
+
+    /// ML-DSA verification on FP1.
+    MlDsaVerify = 0x52,
+
     /// Set resource.
     SetResource = 0x7f,
 }
@@ -183,6 +201,56 @@ impl TryFrom<u8> for IpcMessageOpCode {
 // ---------------------------------------------------------------------------
 // IPC header
 // ---------------------------------------------------------------------------
+
+/// CP1 <-> FP1 ML-DSA shared payload buffer.
+///
+/// The IPC descriptor carries only the operation, parameter set and length;
+/// the data lives here. Mirrors CM7/Common/MlDsaIpcContract.h on the FP side
+/// -- these three constants and that header must agree.
+pub mod ml_dsa {
+    /// Payload buffer as the CP addresses it: FP_GLOBAL_ADDRESS(1, 0x20000000).
+    ///
+    /// The CP reaching into FP1 TCM is established practice, not new: the
+    /// AES-GCM IV queue already lives at 0xA3221A1C and is maintained by the
+    /// CP through SocMemMap offset 0x43221A1C.
+    pub const PAYLOAD_CP_ADDR: u32 = 0xA320_0000;
+
+    /// The same buffer in FP1's own address space.
+    pub const PAYLOAD_LOCAL_ADDR: u32 = 0x2000_0000;
+
+    /// 10 KB. Worst case is an ML-DSA-87 verify request at 8,243 bytes.
+    pub const PAYLOAD_SIZE: u32 = 0x2800;
+
+    /// Parameter set, matching wolfCrypt's level argument.
+    #[repr(u8)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum ParamSet {
+        MlDsa44 = 2,
+        MlDsa65 = 3,
+        MlDsa87 = 5,
+    }
+
+    /// Descriptor carried in the IPC slot's data area.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct Request {
+        /// [`ParamSet`]
+        pub param_set: u8,
+        pub rsvd: [u8; 3],
+        /// Bytes valid in the shared buffer.
+        pub payload_len: u32,
+    }
+
+    /// Reply descriptor. Status itself travels in the message header.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct Response {
+        /// Bytes written back; 0 for verify.
+        pub resp_len: u32,
+        /// Verify only: 1 if the signature is valid.
+        pub verify_result: u32,
+    }
+}
 
 /// IPC message header (first 32-bit word of every IPC slot).
 #[bitfield(u32)]
