@@ -29,7 +29,7 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 
 use super::*;
-use crate::harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 
 /// A present-but-wrong-length `prev_local_mk_backup` must be rejected.
 ///

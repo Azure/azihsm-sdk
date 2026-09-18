@@ -26,6 +26,7 @@ use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Verifier;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -36,7 +37,6 @@ use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::TestCtx;
 
 /// `KeyScope::Local` discriminant.
 const SCOPE_LOCAL: u8 = 0b011;
