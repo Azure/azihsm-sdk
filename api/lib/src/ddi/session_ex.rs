@@ -132,8 +132,9 @@ pub(crate) struct OpenSessionExResult {
 /// to select.
 pub(super) fn fetch_pk_hsm(
     dev: &HsmDev,
-    _rev: HsmApiRev,
+    rev: HsmApiRev,
 ) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
+    require_tbor_rev(rev)?;
     let (chain_pem, leaf_der) = fetch_cert_chain_checked_tbor(dev, 0)?;
     validate_part_cert_chain(&chain_pem)?;
 
@@ -193,8 +194,9 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle.
-/// * `rev` - The negotiated API revision, threaded through the handshake
-///   (reserved for future revision-gated behavior).
+/// * `rev` - The negotiated API revision. A `session_ex` session is
+///   TBOR-only and requires api_rev >= 1.1; a lower revision is rejected
+///   with [`HsmError::UnsupportedApiRevision`].
 /// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
 ///   1 = CU).
 /// * `session_type` - Channel integrity profile to pin for the session.
@@ -214,6 +216,11 @@ pub(crate) fn open_session_ex(
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
+    // A `session_ex` session runs entirely over TBOR, so it requires an
+    // api_rev that speaks the TBOR commands; reject a lower revision up
+    // front rather than failing mid-handshake on an unavailable opcode.
+    require_tbor_rev(rev)?;
+
     // Convert the API-layer session type to the wire-level `SessionType`
     // here in the DDI layer, so the public API surface never handles the
     // DDI wire type.

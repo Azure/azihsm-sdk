@@ -78,6 +78,26 @@ use super::*;
 // cannot drift.
 const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 
+/// Negotiated api revision at or above which commands are issued over TBOR
+/// instead of MBOR. Firmware advertising >= 1.1 speaks the TBOR command set.
+pub(crate) const TBOR_MIN_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 1 };
+
+/// Returns `true` when the negotiated `rev` speaks the TBOR command set
+/// (api_rev >= [`TBOR_MIN_API_REV`]).
+pub(crate) fn rev_supports_tbor(rev: HsmApiRev) -> bool {
+    rev >= TBOR_MIN_API_REV
+}
+
+/// Ensures the negotiated `rev` speaks TBOR, returning
+/// [`HsmError::UnsupportedApiRevision`] otherwise.
+pub(crate) fn require_tbor_rev(rev: HsmApiRev) -> HsmResult<()> {
+    if rev_supports_tbor(rev) {
+        Ok(())
+    } else {
+        Err(HsmError::UnsupportedApiRevision)
+    }
+}
+
 /// Converts a DDI error into the corresponding `HsmError`.
 ///
 /// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
