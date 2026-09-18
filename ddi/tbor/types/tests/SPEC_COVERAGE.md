@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-09-14):
-* emu: 75 tests
+Test counts (last updated 2026-09-16):
+* emu: 97 tests
 * mock: 6 tests
 
 ## Legend
@@ -174,6 +174,40 @@ role's partition PSK still matches the compiled-in default.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
+
+
+## `EccGenerateKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `EccGenerateKey` command. These tests exercise
+the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Generates fresh ECC keypairs on all supported curves | ✅ | `ecc_generate_key::ecc_generate_key_all_curves` | Covers P-256, P-384, and P-521 and verifies distinct masked/private and public-key outputs. |
+| Session-scoped generation is allowed before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_before_finalize` | Session scope does not require Ephemeral or Local masking keys. |
+| Crypto-User session may generate ECC keys | ✅ | `ecc_generate_key::ecc_generate_key_allowed_on_crypto_user_session` | Uses a rotated CU PSK and exercises all supported curves. |
+| SecurityDomain scope is rejected before its masking key is provisioned | ✅ | `ecc_generate_key::ecc_generate_key_security_domain_scope_rejected` | Expects `UnsupportedKeyScope`. |
+| Ephemeral scope is rejected before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_ephemeral_scope_before_finalize_rejected` | Expects `UnsupportedKeyScope`. |
+| Local scope is rejected before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_local_scope_before_finalize_rejected` | Expects `UnsupportedKeyScope`. |
+| Supported provisioned scopes generate valid keys | ✅ | `ecc_generate_key::ecc_generate_key_scopes` | Covers Session, Ephemeral, and Local scopes across all supported curves. |
+| Unknown curve values are rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_curve_rejected` | Covers values below/above the supported curve range and `u8::MAX`. |
+| Unknown key scope is rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_scope_rejected` | Expects `UnsupportedKeyScope`. |
+| Mismatched session id is rejected | ✅ | `ecc_generate_key::ecc_generate_key_mismatched_session_id_rejected` | Exercises the invalid session id on all supported curves. |
+| DERIVE key usage is accepted | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage` | Generates a derive-capable P-256 ECC key. |
+| DERIVE key usage is accepted on all supported curves | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage_all_curves` | Covers P-256, P-384, and P-521. |
+| Non-empty key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_non_empty_label_all_curves` | Exercises a non-empty label on all supported ECC curves. |
+| One-byte key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_one_byte_label` | Covers the smallest non-empty key label. |
+| Maximum key-label length is accepted | ✅ | `ecc_generate_key::ecc_generate_key_max_label_length_all_curves` | Exercises `TBOR_KEY_LABEL_MAX_LEN` on all supported ECC curves. |
+| Key label longer than the maximum is rejected | ✅ | `ecc_generate_key::ecc_generate_key_label_too_long_rejected` | Expects `TborInvalidFixedLength`. |
+| Binary key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_binary_label` | Covers arbitrary non-text label bytes including `0x00`, `0x80`, and `0xff`. |
+| DERIVE usage accepts valid key labels | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage_with_labels_all_curves` | Covers non-empty and maximum-length labels with DERIVE on all supported ECC curves. |
+| Default CO PSK is rejected | ✅ | `ecc_generate_key::ecc_generate_key_rejects_default_co_psk` | Expects `DefaultPskMustRotate`. |
+| SIGN and DERIVE combined usage is rejected | ✅ | `ecc_generate_key::ecc_generate_key_sign_and_derive_usage_rejected` | Expects `InvalidPermissions`. |
+| Empty key-usage bitfield is rejected | ✅ | `ecc_generate_key::ecc_generate_key_zero_usage_rejected` | `key_usage = 0` expects `InvalidPermissions`. |
+| Unknown key-usage bits are rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_usage_rejected` | Uses an unsupported high usage bit and expects `InvalidPermissions`. |
+| Defined but invalid ECC key usages are rejected | ✅ | `ecc_generate_key::ecc_generate_key_known_invalid_usages_rejected` | Covers ENCRYPT, DECRYPT, VERIFY, WRAP, UNWRAP, and invalid usage combinations. |
+| Closed session is rejected | ✅ | `ecc_generate_key::ecc_generate_key_closed_session_rejected` | Attempts generation after session close on P-256, P-384, and P-521 and expects `SessionNotFound`. |
+| Session-scoped generation succeeds after closing and reopening the CO session | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_after_reopen` | Confirms a newly opened authenticated CO session can generate a Session-scoped key. |
 
 ## `EcdhDerive` (opcode in-session, gated)
 
