@@ -48,16 +48,25 @@ pub const TBOR_OP_ML_DSA_SIGN: u8 = 0x20;
 pub const ML_DSA_44_SIGNING_KEY_LEN: usize = 2560;
 /// Encoded ML-DSA-65 signing key length (bytes), per FIPS 204.
 pub const ML_DSA_65_SIGNING_KEY_LEN: usize = 4032;
+/// Encoded ML-DSA-87 signing key length (bytes), per FIPS 204.
+pub const ML_DSA_87_SIGNING_KEY_LEN: usize = 4896;
 
 /// Encoded ML-DSA-44 verifying key length (bytes), per FIPS 204.
 pub const ML_DSA_44_VERIFYING_KEY_LEN: usize = 1312;
 /// Encoded ML-DSA-65 verifying key length (bytes), per FIPS 204.
 pub const ML_DSA_65_VERIFYING_KEY_LEN: usize = 1952;
+/// Encoded ML-DSA-87 verifying key length (bytes), per FIPS 204.
+pub const ML_DSA_87_VERIFYING_KEY_LEN: usize = 2592;
 
 /// Encoded ML-DSA-44 signature length (bytes), per FIPS 204.
 pub const ML_DSA_44_SIGNATURE_LEN: usize = 2420;
 /// Encoded ML-DSA-65 signature length (bytes), per FIPS 204.
 pub const ML_DSA_65_SIGNATURE_LEN: usize = 3309;
+/// Encoded ML-DSA-87 signature length (bytes), per FIPS 204.
+///
+/// Larger than one 4 KiB response page, which is why the response path
+/// splits across `dst_prp1` and `dst_prp2`.
+pub const ML_DSA_87_SIGNATURE_LEN: usize = 4627;
 
 /// Maximum message length (bytes) accepted by `MlDsaSign` / `MlDsaVerify`.
 ///
@@ -105,8 +114,8 @@ pub struct TborMlDsaSignReq<'a> {
 #[tbor(response)]
 pub struct TborMlDsaSignResp<'a> {
     /// The FIPS 204 encoded signature: 2420 B for ML-DSA-44, 3309 B for
-    /// ML-DSA-65.
-    #[tbor(buffer, max_len = 3309, mutable)]
+    /// ML-DSA-65, 4627 B for ML-DSA-87.
+    #[tbor(buffer, max_len = 4627, mutable)]
     pub signature: &'a [u8],
 }
 

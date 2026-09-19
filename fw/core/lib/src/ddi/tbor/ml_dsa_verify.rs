@@ -23,7 +23,6 @@
 //!
 //! Available to both Crypto-Officer and Crypto-User sessions.
 
-use azihsm_fw_core_crypto_ml_dsa::MlDsaOpError;
 use azihsm_fw_core_crypto_ml_dsa::SIGNATURE_LEN;
 use azihsm_fw_core_crypto_ml_dsa::VERIFYING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaVerifyReq;
@@ -67,12 +66,15 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let sig = pal.dma_alloc(io, SIGNATURE_LEN)?;
     copy_oob(pal, io, &oob, 0, sig).await?;
 
-    azihsm_fw_core_crypto_ml_dsa::verify(req.verifying_key(), req.msg(), sig).map_err(
-        |e| match e {
-            MlDsaOpError::VerifyFailed => HsmError::MlDsaVerifyFailed,
-            _ => HsmError::InvalidArg,
-        },
-    )?;
+    // A signature that does not verify is reported as its own wire status
+    // rather than as a flag inside a successful response, so a negative
+    // answer becomes an error here.
+    if !pal
+        .ml_dsa_verify(io, req.verifying_key(), sig, req.msg())
+        .await?
+    {
+        return Err(HsmError::MlDsaVerifyFailed);
+    }
 
     pal.dma_alloc_var(io, |buf| {
         let frame = TborMlDsaVerifyResp::encode(buf, 0, false)?.finish();

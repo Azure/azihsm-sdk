@@ -23,8 +23,6 @@
 //!
 //! Available to both Crypto-Officer and Crypto-User sessions.
 
-use azihsm_fw_core_crypto_ml_dsa::MlDsaKeyError;
-use azihsm_fw_core_crypto_ml_dsa::MlDsaOpError;
 use azihsm_fw_core_crypto_ml_dsa::SIGNATURE_LEN;
 use azihsm_fw_core_crypto_ml_dsa::SIGNING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaSignReq;
@@ -39,22 +37,6 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 
 use super::validate_active_session;
-
-/// Map a crypto-layer error onto the wire status.
-fn map_err(e: MlDsaOpError) -> HsmError {
-    match e {
-        // A correct-length key whose coefficients are out of range is
-        // reported distinctly from a wrong-length one: the former is the
-        // input class that would otherwise panic the decoder, and saying so
-        // tells a caller its key is corrupt rather than merely mis-sized.
-        MlDsaOpError::Key(MlDsaKeyError::CoefficientOutOfRange) => HsmError::MlDsaInvalidSigningKey,
-        MlDsaOpError::Key(MlDsaKeyError::BadLength) | MlDsaOpError::BadLength => {
-            HsmError::InvalidArg
-        }
-        MlDsaOpError::SignFailed => HsmError::MlDsaSignFailed,
-        MlDsaOpError::VerifyFailed => HsmError::MlDsaVerifyFailed,
-    }
-}
 
 /// Handle a TBOR `MlDsaSign` request.
 ///
@@ -90,7 +72,11 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     // Reserve the signature slot and sign straight into it — the response
     // buffer is the only copy of the signature.
-    let outcome: HsmResult<&'p DmaBuf> = (|| {
+    // An async block rather than a closure: signing may now happen on another
+    // core, so this has to be able to await. The shape is otherwise the same,
+    // and it exists for the same reason -- every exit path has to fall
+    // through to the scrub below.
+    let outcome: HsmResult<&'p DmaBuf> = async {
         let resp = pal.dma_alloc_var(io, |buf| {
             let frame = TborMlDsaSignResp::encode(buf, 0, false)?
                 .signature_reserve(SIGNATURE_LEN)?
@@ -99,12 +85,12 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         })?;
         {
             let out = TborMlDsaSignResp::decode_mut(resp)?;
-            azihsm_fw_core_crypto_ml_dsa::sign_into(key, req.msg(), out.signature)
-                .map_err(map_err)?;
+            pal.ml_dsa_sign(io, key, req.msg(), out.signature).await?;
         }
         let resp: &'p DmaBuf = resp;
         Ok(resp)
-    })();
+    }
+    .await;
 
     // Scrub the caller's private key on every path.
     key.zeroize();

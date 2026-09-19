@@ -39,6 +39,7 @@ mod ecc;
 mod hash;
 mod hmac;
 mod kdf;
+mod ml_dsa;
 mod rng;
 mod rsa;
 
@@ -47,6 +48,7 @@ pub use ecc::*;
 pub use hash::*;
 pub use hmac::*;
 pub use kdf::*;
+pub use ml_dsa::HsmMlDsa;
 pub use rng::*;
 pub use rsa::*;
 
@@ -59,4 +61,4 @@ use super::*;
 /// {}`) since this trait only bundles the sub-trait bounds.  Adding
 /// a new crypto family means adding a sub-trait here and a method
 /// table to the standard PAL.
-pub trait HsmCrypto: HsmRng + HsmHash + HsmHmac + HsmAes + HsmEcc + HsmRsa + HsmKdf {}
+pub trait HsmCrypto: HsmRng + HsmHash + HsmHmac + HsmAes + HsmEcc + HsmRsa + HsmKdf + HsmMlDsa {}

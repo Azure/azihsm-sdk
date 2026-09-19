@@ -18,7 +18,6 @@ use azihsm_fw_core_crypto_ml_dsa::VERIFYING_KEY_LEN;
 use azihsm_fw_ddi_tbor_types::TborMlDsaKeyGenReq;
 use azihsm_fw_ddi_tbor_types::TborMlDsaKeyGenResp;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
-use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -56,8 +55,10 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let outcome = {
         let out = TborMlDsaKeyGenResp::decode_mut(resp)?;
         out.seed.copy_from_slice(&seed);
-        azihsm_fw_core_crypto_ml_dsa::keygen_into(&seed, out.verifying_key)
-            .map_err(|_| HsmError::MlDsaKeyGenFailed)
+        // Empty second buffer: the reply carries the seed, so the expanded
+        // signing key is never wanted here.
+        pal.ml_dsa_keygen(io, &seed, out.verifying_key, &mut [])
+            .await
     };
 
     // The local copy of the seed is redundant once it is in the response

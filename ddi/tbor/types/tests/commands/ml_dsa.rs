@@ -34,11 +34,11 @@ use azihsm_ddi_tbor_types::TborMlDsaKeyGenReq;
 use azihsm_ddi_tbor_types::TborMlDsaSignReq;
 use azihsm_ddi_tbor_types::TborMlDsaVerifyReq;
 use azihsm_ddi_tbor_types::TborStatus;
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 use azihsm_ddi_tbor_types::ML_DSA_44_SIGNATURE_LEN as SIGNATURE_LEN;
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 use azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN as SIGNING_KEY_LEN;
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 use azihsm_ddi_tbor_types::ML_DSA_44_VERIFYING_KEY_LEN as VERIFYING_KEY_LEN;
 #[cfg(feature = "mldsa-65")]
 use azihsm_ddi_tbor_types::ML_DSA_65_SIGNATURE_LEN as SIGNATURE_LEN;
@@ -46,12 +46,20 @@ use azihsm_ddi_tbor_types::ML_DSA_65_SIGNATURE_LEN as SIGNATURE_LEN;
 use azihsm_ddi_tbor_types::ML_DSA_65_SIGNING_KEY_LEN as SIGNING_KEY_LEN;
 #[cfg(feature = "mldsa-65")]
 use azihsm_ddi_tbor_types::ML_DSA_65_VERIFYING_KEY_LEN as VERIFYING_KEY_LEN;
+#[cfg(feature = "mldsa-87")]
+use azihsm_ddi_tbor_types::ML_DSA_87_SIGNATURE_LEN as SIGNATURE_LEN;
+#[cfg(feature = "mldsa-87")]
+use azihsm_ddi_tbor_types::ML_DSA_87_SIGNING_KEY_LEN as SIGNING_KEY_LEN;
+#[cfg(feature = "mldsa-87")]
+use azihsm_ddi_tbor_types::ML_DSA_87_VERIFYING_KEY_LEN as VERIFYING_KEY_LEN;
 use ml_dsa::signature::Keypair;
 use ml_dsa::signature::Verifier;
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 use ml_dsa::MlDsa44;
 #[cfg(feature = "mldsa-65")]
 use ml_dsa::MlDsa65;
+#[cfg(feature = "mldsa-87")]
+use ml_dsa::MlDsa87;
 use ml_dsa::Signature;
 use ml_dsa::SigningKey;
 use ml_dsa::VerifyingKey;
@@ -61,11 +69,14 @@ use ml_dsa::VerifyingKey;
 /// A firmware image links exactly one, so the test must match it. Default
 /// is ML-DSA-44 (what the emulator selects); `--features mldsa-65` targets
 /// an ML-DSA-65 image.
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 type Param = MlDsa44;
 /// See [`Param`].
 #[cfg(feature = "mldsa-65")]
 type Param = MlDsa65;
+/// See [`Param`].
+#[cfg(feature = "mldsa-87")]
+type Param = MlDsa87;
 
 /// A signing-key length this device must reject.
 ///
@@ -74,10 +85,13 @@ type Param = MlDsa65;
 /// near the bottom of that range: the firmware caps an inbound request at
 /// one 4K page (`MAX_SRC_LEN`), so a 4032 B probe would be refused for its
 /// length rather than its parameter set, testing the wrong thing.
-#[cfg(not(feature = "mldsa-65"))]
+#[cfg(all(not(feature = "mldsa-65"), not(feature = "mldsa-87")))]
 const WRONG_SIGNING_KEY_LEN: usize = azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN + 1;
 /// See [`WRONG_SIGNING_KEY_LEN`].
 #[cfg(feature = "mldsa-65")]
+const WRONG_SIGNING_KEY_LEN: usize = azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN;
+/// See [`WRONG_SIGNING_KEY_LEN`].
+#[cfg(feature = "mldsa-87")]
 const WRONG_SIGNING_KEY_LEN: usize = azihsm_ddi_tbor_types::ML_DSA_44_SIGNING_KEY_LEN;
 
 use crate::harness::bootstrap_rotated_co;

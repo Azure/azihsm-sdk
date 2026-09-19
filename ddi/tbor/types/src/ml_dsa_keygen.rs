@@ -46,6 +46,6 @@ pub struct TborMlDsaKeyGenResp {
 
     /// The FIPS 204 encoded verifying key: 1312 B at ML-DSA-44, 1952 B at
     /// ML-DSA-65.
-    #[tbor(min_len = 1312, max_len = 1952)]
+    #[tbor(min_len = 1312, max_len = 2592)]
     pub verifying_key: Vec<u8>,
 }

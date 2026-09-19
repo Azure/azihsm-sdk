@@ -31,7 +31,7 @@ pub struct TborMlDsaVerifyReq {
 
     /// The FIPS 204 encoded verifying key (`pk`).  Its length selects the
     /// parameter set: 1312 B → ML-DSA-44, 1952 B → ML-DSA-65.
-    #[tbor(min_len = 1312, max_len = 1952)]
+    #[tbor(min_len = 1312, max_len = 2592)]
     pub verifying_key: Vec<u8>,
 
     /// Length in bytes of the signature passed as OOB SGL item 0.

@@ -69,6 +69,15 @@ tbor-ml-dsa-44 = [
   "tbor-ml-dsa-keygen",
 ]
 
+# Select ML-DSA-87. The signing path does not fit this part at all -- it is
+# performed by FP1 through `HsmMlDsa` -- so unlike `tbor-ml-dsa-44` this set
+# is only usable on a platform whose PAL offloads the work.
+tbor-ml-dsa-87 = [
+  "azihsm_fw_core_crypto_ml_dsa?/param-mldsa87",
+  "tbor-ml-dsa",
+  "tbor-ml-dsa-keygen",
+]
+
 # On-device ML-DSA key generation. Fits at every parameter set now that key
 # generation returns the encoded verifying key it already computed.
 tbor-ml-dsa-keygen = ["tbor-ml-dsa"]

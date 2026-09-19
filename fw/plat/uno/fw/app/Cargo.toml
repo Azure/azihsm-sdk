@@ -53,6 +53,11 @@ tbor-ml-dsa-65 = [
   "azihsm_fw_hsm_core/tbor-ml-dsa-keygen",
 ]
 
+# The TBOR ML-DSA commands at ML-DSA-87, performed on FP1. Costs none of the
+# ~73 KiB of .text the on-core sets do: CP1 links no ML-DSA implementation,
+# only the offload shim, so this coexists with MBOR.
+tbor-ml-dsa-87 = ["azihsm_fw_hsm_core/tbor-ml-dsa-87"]
+
 # Phase 1: run an ML-DSA-65 import/sign/verify known-answer self-test at
 # boot and report the result. Costs roughly 73 KiB of .text plus ~9 KiB of
 # pinned vector data, so it does not fit alongside both DDI transports —

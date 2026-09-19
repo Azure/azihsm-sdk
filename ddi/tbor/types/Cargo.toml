@@ -44,6 +44,10 @@ emu = ["azihsm_ddi/emu"]
 # A firmware image links exactly one parameter set, so the ml_dsa tests must
 # be told which one the device under test speaks.
 mldsa-65 = []
+
+# Target a device built for ML-DSA-87. Its signature exceeds one 4 KiB
+# response page, so this also exercises the two-page response path.
+mldsa-87 = []
 mock = ["azihsm_ddi/mock"]
 sock = ["azihsm_ddi/sock"]
 table-4 = ["azihsm_ddi/table-4"]

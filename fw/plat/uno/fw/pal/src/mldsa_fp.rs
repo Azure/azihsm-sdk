@@ -63,6 +63,9 @@ pub const ML_DSA_SEED_LEN: usize = 32;
 
 /// Status codes from `MlDsaService.cpp`.
 const STS_OK: u8 = 0;
+const STS_BAD_REQUEST: u8 = 1;
+const STS_BAD_KEY: u8 = 2;
+const STS_NO_MEMORY: u8 = 3;
 
 /// Word offsets within the 16-word reply.
 ///
@@ -131,8 +134,17 @@ impl UnoHsmPal {
             .await;
 
         let sts = ((reply[RESP_STS_WORD] >> 16) & 0xFF) as u8;
+
+        // Preserve the distinction FP1 drew. Collapsing everything to
+        // "sign failed" told a caller with a structurally invalid key that
+        // the device had broken, rather than that its key was bad.
         if sts != STS_OK {
-            return Err(HsmError::MlDsaSignFailed);
+            return Err(match sts {
+                STS_BAD_KEY => HsmError::MlDsaInvalidSigningKey,
+                STS_BAD_REQUEST => HsmError::InvalidArg,
+                STS_NO_MEMORY => HsmError::DmaBufferAllocFailure,
+                _ => HsmError::MlDsaSignFailed,
+            });
         }
 
         Ok((reply[RESP_LEN_WORD], reply[RESP_VERIFY_WORD]))
@@ -247,5 +259,39 @@ impl UnoHsmPal {
 
         let (_, verified) = self.fp_request(OP_VERIFY, payload_len).await?;
         Ok(verified == 1)
+    }
+}
+
+impl azihsm_fw_hsm_pal_traits::HsmMlDsa for UnoHsmPal {
+    /// Runs on FP1. `io` is unused: the offload addresses FP1's DTCM
+    /// directly rather than going through this core's DMA.
+    async fn ml_dsa_keygen(
+        &self,
+        _io: &impl azihsm_fw_hsm_pal_traits::HsmIo,
+        seed: &[u8; 32],
+        vk: &mut [u8],
+        sk: &mut [u8],
+    ) -> HsmResult<()> {
+        self.ml_dsa_fp_keygen(seed, vk, sk).await
+    }
+
+    async fn ml_dsa_sign(
+        &self,
+        _io: &impl azihsm_fw_hsm_pal_traits::HsmIo,
+        sk: &[u8],
+        msg: &[u8],
+        sig: &mut [u8],
+    ) -> HsmResult<()> {
+        self.ml_dsa_fp_sign(sk, msg, sig).await
+    }
+
+    async fn ml_dsa_verify(
+        &self,
+        _io: &impl azihsm_fw_hsm_pal_traits::HsmIo,
+        vk: &[u8],
+        sig: &[u8],
+        msg: &[u8],
+    ) -> HsmResult<bool> {
+        self.ml_dsa_fp_verify(vk, sig, msg).await
     }
 }
