@@ -1155,3 +1155,116 @@ fn test_ecdh_rejects_non_derivable_shared_secret(session: HsmSession) {
         "ECDH should reject creating a shared secret without can_derive flag"
     );
 }
+
+/// Derive a matching pair of **session-scoped** masked ECDH shared secrets
+/// on a V2 (TBOR) session. Session scope is required because the
+/// un-finalized session has no partition-local masking key.
+#[cfg(not(feature = "mock"))]
+fn tbor_session_shared_secrets(
+    session: &HsmSession,
+    curve: HsmEccCurve,
+) -> (HsmGenericSecretKey, HsmGenericSecretKey) {
+    let (priv_a, pub_a) =
+        generate_ecc_keypair_with_derive(session.clone(), curve, true).expect("keypair a");
+    let (priv_b, pub_b) =
+        generate_ecc_keypair_with_derive(session.clone(), curve, true).expect("keypair b");
+
+    let secret_props = || {
+        HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::SharedSecret)
+            .bits(curve.key_size_bits() as u32)
+            .can_derive(true)
+            .is_session(true)
+            .build()
+            .expect("shared-secret props")
+    };
+
+    let secret_a = ecdh_derive_shared_secret_with_props(session, &priv_a, &pub_b, secret_props())
+        .expect("derive shared secret a");
+    let secret_b = ecdh_derive_shared_secret_with_props(session, &priv_b, &pub_a, secret_props())
+        .expect("derive shared secret b");
+    (secret_a, secret_b)
+}
+
+/// Derive a **session-scoped** AES key from a masked shared secret via
+/// TBOR HKDF (needed on the un-finalized V2 session).
+#[cfg(not(feature = "mock"))]
+fn derive_aes_key_session(
+    session: &HsmSession,
+    hkdf_algo: &mut HsmHkdfAlgo,
+    shared_secret: &HsmGenericSecretKey,
+    bits: u32,
+) -> HsmAesKey {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(bits)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .label(b"hkdf-derived-aes")
+        .build()
+        .expect("aes props");
+    HsmKeyManager::derive_key(session, hkdf_algo, shared_secret, props)
+        .expect("derive AES key via HKDF")
+        .try_into()
+        .expect("derived key was not an AES key")
+}
+
+/// TBOR HKDF derive through a V2 session: derive AES and HMAC keys from a
+/// masked ECDH shared secret, exercising the public API's TBOR dispatch.
+/// AES output is verified end-to-end (both parties' keys agree on a CBC
+/// roundtrip); the derived HMAC key is validated by its typed properties
+/// (signing a masked HMAC key is a separate TBOR command).
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_hkdf_derive_tbor_aes_and_hmac() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    let (secret_a, secret_b) = tbor_session_shared_secrets(&session, HsmEccCurve::P256);
+
+    // AES output: derive on both sides and verify a CBC roundtrip.
+    for bits in [128u32, 192, 256] {
+        let mut hkdf_a = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).expect("hkdf a");
+        let mut hkdf_b = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).expect("hkdf b");
+        let key_a = derive_aes_key_session(&session, &mut hkdf_a, &secret_a, bits);
+        let key_b = derive_aes_key_session(&session, &mut hkdf_b, &secret_b, bits);
+        assert_aes_cbc_roundtrip(&key_a, &key_b, b"tbor hkdf aes roundtrip");
+    }
+
+    // HMAC output: derive and validate the typed properties + masked blob.
+    for (kind, bits) in [
+        (HsmKeyKind::HmacSha256, 256u32),
+        (HsmKeyKind::HmacSha384, 384),
+        (HsmKeyKind::HmacSha512, 512),
+    ] {
+        let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).expect("hkdf");
+        let hmac_props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(kind)
+            .bits(bits)
+            .is_session(true)
+            .can_sign(true)
+            .can_verify(true)
+            .label(b"hkdf-derived-hmac")
+            .build()
+            .expect("build hmac props");
+
+        let derived = HsmKeyManager::derive_key(&session, &mut hkdf, &secret_a, hmac_props)
+            .expect("derive HMAC key via HKDF");
+
+        assert_eq!(derived.kind(), kind);
+        assert_eq!(derived.bits(), bits);
+
+        let hmac_key: HsmHmacKey = derived.try_into().expect("convert to HsmHmacKey");
+        assert!(
+            !hmac_key.masked_key_vec().expect("masked key").is_empty(),
+            "derived HMAC key must carry a masked blob"
+        );
+    }
+}

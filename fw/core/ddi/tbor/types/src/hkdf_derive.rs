@@ -114,6 +114,12 @@ pub struct TborHkdfDeriveReq<'a> {
     /// **empty** buffer means none.
     #[tbor(buffer, max_len = 256)]
     pub info: &'a [u8],
+
+    /// Caller-supplied key label recorded in the derived-key masked blob's
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
+    /// unlabeled key.
+    #[tbor(buffer, max_len = 128)]
+    pub key_label: &'a [u8],
 }
 
 /// `HkdfDerive` response schema.
@@ -142,6 +148,7 @@ mod tests {
         let secret = [0x11u8; HKDF_MASKED_SECRET_MIN_LEN];
         let salt = [0x22u8; 16];
         let info = [0x33u8; 8];
+        let label = [0x44u8; 8];
         let frame = TborHkdfDeriveReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(7))
@@ -160,12 +167,15 @@ mod tests {
             .unwrap()
             .info(&info)
             .unwrap()
+            .key_label(&label)
+            .unwrap()
             .finish();
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.hash_algo(), HashAlgo::Sha384);
         assert_eq!(frame.key_type(), KdfKeyType::Aes256);
         assert_eq!(frame.salt(), &salt[..]);
         assert_eq!(frame.info(), &info[..]);
+        assert_eq!(frame.key_label(), &label[..]);
     }
 
     #[test]
