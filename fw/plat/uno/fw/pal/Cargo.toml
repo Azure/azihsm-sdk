@@ -66,3 +66,10 @@ semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
 # which crash-recovery testing uses to inject faults. Never enable in a
 # production build.
 mcr_test_action = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
+
+# Validation-only DDI test hooks, routed through the `HsmCustomDispatch`
+# PAL hook rather than the core opcode tables. `fips_validation_hooks`
+# gates FIPS key-material ops (e.g. RawKeyImport); `mcr_test_hooks` gates
+# general test-hook ops. Never enable in a production build.
+fips_validation_hooks = []
+mcr_test_hooks = []
