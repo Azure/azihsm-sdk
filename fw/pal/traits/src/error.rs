@@ -465,6 +465,50 @@ pub enum HsmError {
     /// An exception or interrupt with no dedicated handler reached the
     /// `DefaultHandler`.
     UnexpectedException = 0x08F00003,
+
+    // -- CPT (CryptoController) errors --------------------------------
+    // Mirror of tiger-collab's `DeviceErrorCodes::CryptoController` range
+    // (fw/crates/error/src/device.rs, subopcode 0x0a). Values are copied
+    // verbatim so CPT-originated codes carry the same numeric meaning
+    // across both stacks.
+
+    // Software validation / PAL / runtime errors.
+    CryptoNotInitialized = 0x090A0001,
+    CryptoBufferTooSmall = 0x090A0002,
+    CryptoInputTooLarge = 0x090A0003,
+    CryptoInvalidAlg = 0x090A0004,
+    CryptoTimeout = 0x090A0005,
+    CryptoUnalignedCptr = 0x090A0006,
+    CryptoInvalidArg = 0x090A0007,
+    CryptoInvalidIvLength = 0x090A0008,
+    CryptoInvalidKeyLength = 0x090A0009,
+    CryptoInvalidDataLength = 0x090A000A,
+    CryptoInvalidContextLength = 0x090A000B,
+    CryptoInvalidPartialContext = 0x090A000C,
+    CryptoUnsupportedMode = 0x090A000D,
+    CryptoUnalignedBuffer = 0x090A000E,
+    CryptoNotSupported = 0x090A000F,
+    CryptoHardwareError = 0x090A0010,
+
+    // CPT hardware completion codes (payload16 >= 0x0100).
+    CryptoCptRsaUcErrModLenInvalid = 0x090A0106,
+    CryptoCptRsaUcErrExpLenInvalid = 0x090A0107,
+    CryptoCptRsaUcErrDataLenInvalid = 0x090A0108,
+    CryptoCptGcUcErrDataLenInvalid = 0x090A0143,
+    CryptoCptGcUcErrCipherUnsupported = 0x090A0146,
+    CryptoCptGcUcErrAuthUnsupported = 0x090A0147,
+    CryptoCptGcUcErrHashModeUnsupported = 0x090A0149,
+    CryptoCptGcUcErrIcvMiscompare = 0x090A014C,
+    CryptoCptGcUcErrKeyLenInvalid = 0x090A014E,
+    CryptoCptRsaUcErrPkcsDecoding = 0x090A0151,
+    CryptoCptRsaUcErrPkcsSignatureInvalid = 0x090A0152,
+
+    // CPT completion status errors.
+    CryptoCptFault = 0x090A0200,
+    CryptoCptSwErr = 0x090A0300,
+    CryptoCptHwErr = 0x090A0400,
+    CryptoCptInstErr = 0x090A0500,
+    CryptoCptSwWarn = 0x090A0600,
 }
 
 impl core::fmt::Debug for HsmError {
@@ -489,3 +533,81 @@ impl From<HsmError> for u32 {
 
 /// A specialized [`Result`] type for HSM operations.
 pub type HsmResult<T> = Result<T, HsmError>;
+#[cfg(test)]
+mod tests {
+    use super::HsmError;
+
+    #[test]
+    fn cpt_error_codes_match_tiger_collab_device_error_codes() {
+        // Values copied from tiger-collab's `DeviceErrorCodes::CryptoController`
+        // range (fw/crates/error/src/device.rs); pinned here since the two
+        // repos do not share a crate dependency.
+        assert_eq!(u32::from(HsmError::CryptoNotInitialized), 0x090A0001);
+        assert_eq!(u32::from(HsmError::CryptoBufferTooSmall), 0x090A0002);
+        assert_eq!(u32::from(HsmError::CryptoInputTooLarge), 0x090A0003);
+        assert_eq!(u32::from(HsmError::CryptoInvalidAlg), 0x090A0004);
+        assert_eq!(u32::from(HsmError::CryptoTimeout), 0x090A0005);
+        assert_eq!(u32::from(HsmError::CryptoUnalignedCptr), 0x090A0006);
+        assert_eq!(u32::from(HsmError::CryptoInvalidArg), 0x090A0007);
+        assert_eq!(u32::from(HsmError::CryptoInvalidIvLength), 0x090A0008);
+        assert_eq!(u32::from(HsmError::CryptoInvalidKeyLength), 0x090A0009);
+        assert_eq!(u32::from(HsmError::CryptoInvalidDataLength), 0x090A000A);
+        assert_eq!(u32::from(HsmError::CryptoInvalidContextLength), 0x090A000B);
+        assert_eq!(u32::from(HsmError::CryptoInvalidPartialContext), 0x090A000C);
+        assert_eq!(u32::from(HsmError::CryptoUnsupportedMode), 0x090A000D);
+        assert_eq!(u32::from(HsmError::CryptoUnalignedBuffer), 0x090A000E);
+        assert_eq!(u32::from(HsmError::CryptoNotSupported), 0x090A000F);
+        assert_eq!(u32::from(HsmError::CryptoHardwareError), 0x090A0010);
+
+        assert_eq!(
+            u32::from(HsmError::CryptoCptRsaUcErrModLenInvalid),
+            0x090A0106
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptRsaUcErrExpLenInvalid),
+            0x090A0107
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptRsaUcErrDataLenInvalid),
+            0x090A0108
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrDataLenInvalid),
+            0x090A0143
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrCipherUnsupported),
+            0x090A0146
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrAuthUnsupported),
+            0x090A0147
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrHashModeUnsupported),
+            0x090A0149
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrIcvMiscompare),
+            0x090A014C
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptGcUcErrKeyLenInvalid),
+            0x090A014E
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptRsaUcErrPkcsDecoding),
+            0x090A0151
+        );
+        assert_eq!(
+            u32::from(HsmError::CryptoCptRsaUcErrPkcsSignatureInvalid),
+            0x090A0152
+        );
+
+        assert_eq!(u32::from(HsmError::CryptoCptFault), 0x090A0200);
+        assert_eq!(u32::from(HsmError::CryptoCptSwErr), 0x090A0300);
+        assert_eq!(u32::from(HsmError::CryptoCptHwErr), 0x090A0400);
+        assert_eq!(u32::from(HsmError::CryptoCptInstErr), 0x090A0500);
+        assert_eq!(u32::from(HsmError::CryptoCptSwWarn), 0x090A0600);
+    }
+}
