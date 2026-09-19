@@ -106,13 +106,11 @@ async fn poll_io(spawner: Spawner) -> ! {
         // -- this establishes only whether a CP1 -> FP1 message lands.
         #[cfg(feature = "mldsa-fp-probe")]
         {
-            use core::sync::atomic::{AtomicBool, Ordering};
+            use core::sync::atomic::AtomicBool;
+            use core::sync::atomic::Ordering;
             static PROBED: AtomicBool = AtomicBool::new(false);
             if !PROBED.swap(true, Ordering::Relaxed) {
                 if let Ok(token) = mldsa_fp_probe() {
-                    spawner.spawn(token);
-                }
-                if let Ok(token) = mldsa_fp_probe2() {
                     spawner.spawn(token);
                 }
             }
@@ -261,8 +259,6 @@ async fn poll_ipc(spawner: Spawner) -> ! {
             booted = true;
             info!("app", "boot complete, spawning poll_io");
 
-
-
             if let Ok(token) = poll_io(spawner) {
                 spawner.spawn(token);
             }
@@ -371,7 +367,6 @@ async fn main(spawner: Spawner) {
         return;
     }
 
-
     hsm.pal().run().await;
     hsm.pal().deinit();
 }
@@ -385,199 +380,50 @@ async fn main(spawner: Spawner) {
 ///
 /// The descriptor travels in the IPC slot; the payload lives at a fixed
 /// address in FP1's DTCM, which the CP addresses at 0xA3200000.
-#[cfg(feature = "mldsa-fp-probe")]
-#[embassy_executor::task]
-async fn mldsa_fp_probe2() {
-    use azihsm_fw_uno_pal::IpcChannel;
 
-    // Independent of mldsa_fp_probe. Every request after the first has failed
-    // to appear, whether or not a read preceded it, which suggests the first
-    // send's future never resolves and the task simply never proceeds. This
-    // task shares no state with it: if this request arrives, the first send
-    // is not completing and sending as such is fine.
-    let hsm = HSM.get().await;
-    embassy_time::Timer::after(embassy_time::Duration::from_millis(30_000)).await;
-
-    let msg: [u32; 3] = [0x50 | (9 << 8), 5, 0];
-    let mut resp = [0u32; 16];
-    hsm.pal()
-        .ipc
-        .send(IpcChannel::FpMessage as u8, &msg, &mut resp)
-        .await;
-}
-
+/// Exercises the ML-DSA offload through the PAL shim rather than by hand.
+///
+/// Everything here used to be open-coded: payload layout, descriptor
+/// marshalling, the in-place reshapes between operations. That now lives in
+/// `mldsa_fp`, and this is what remains -- which is the point. If this
+/// produces the same digests the hand-rolled version did, the shim is a
+/// faithful replacement for it.
 #[cfg(feature = "mldsa-fp-probe")]
 #[embassy_executor::task]
 async fn mldsa_fp_probe() {
-    use azihsm_fw_uno_pal::IpcChannel;
-    use core::ptr::read_volatile;
-    use core::ptr::write_volatile;
-
-    const PAYLOAD: u32 = 0xA320_0000;
-    const OP_KEYGEN: u32 = 0x50;
-    const OP_SIGN: u32 = 0x51;
-    const OP_VERIFY: u32 = 0x52;
-    /// ML-DSA-87 signature size. Fixed by the parameter set.
-    const SIG_LEN: u32 = 4627;
-    /// Verify's header is three lengths, not two.
-    const VHDR: u32 = 12;
-    const PARAM_87: u32 = 5;
-    const HDR: u32 = 8; // both payload structs put data[] at offset 8
-    const SEED_LEN: u32 = 32;
-    const MSG_LEN: u32 = 32;
+    const VK_LEN: usize = 2592;
+    const SK_LEN: usize = 4896;
+    const SIG_LEN: usize = 4627;
 
     let hsm = HSM.get().await;
-    let base = PAYLOAD as *mut u8;
+    let pal = hsm.pal();
 
-    let rd = |off: u32| -> u8 { unsafe { read_volatile(base.add(off as usize)) } };
-    let wr = |off: u32, v: u8| unsafe { write_volatile(base.add(off as usize), v) };
-    let rd32 = |off: u32| -> u32 {
-        (rd(off) as u32)
-            | ((rd(off + 1) as u32) << 8)
-            | ((rd(off + 2) as u32) << 16)
-            | ((rd(off + 3) as u32) << 24)
-    };
-    let wr32 = |off: u32, v: u32| {
-        wr(off, v as u8);
-        wr(off + 1, (v >> 8) as u8);
-        wr(off + 2, (v >> 16) as u8);
-        wr(off + 3, (v >> 24) as u8);
-    };
-
-    // ---- 1. keygen: seed in, public and private key out ----
-    wr32(0, 0);
-    wr32(4, 0);
-    for i in 0..SEED_LEN {
-        wr(HDR + i, i as u8);
+    let mut seed = [0u8; 32];
+    for (i, b) in seed.iter_mut().enumerate() {
+        *b = i as u8;
     }
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+    let msg: [u8; 32] = core::array::from_fn(|i| 0xA5u8.wrapping_add(i as u8));
 
-    let msg: [u32; 3] = [OP_KEYGEN | (1 << 8), PARAM_87, HDR + SEED_LEN];
-    let mut resp = [0u32; 16];
-    hsm.pal()
-        .ipc
-        .send(IpcChannel::FpMessage as u8, &msg, &mut resp)
-        .await;
+    let mut vk = [0u8; VK_LEN];
+    let mut sk = [0u8; SK_LEN];
+    let mut sig = [0u8; SIG_LEN];
 
-    // ---- 2. read the keygen result back out of FP1 TCM ----
-    //
-    // The header tells us how much of each key FP1 wrote. If CP1 cannot read
-    // FP1 TCM these come back as something other than 2,592 / 4,896 and the
-    // signature below will fail, which is the answer either way.
-    let vk_len = rd32(0);
-    let sk_len = rd32(4);
-
-    // ---- 3. reshape the buffer in place into a sign request ----
-    //
-    // Keygen left  [vk_len][sk_len][vk .. ][sk .. ]  and sign wants
-    //              [sk_len][msg_len][sk .. ][msg .. ]. The signing key moves
-    // down over the verifying key; copying ascending is safe because the
-    // destination is below the source.
-    //
-    // Guard the copy: a bad read would otherwise scribble past the 10 KB
-    // buffer and corrupt FP1's wolfCrypt pool, destroying the evidence. The
-    // lengths are fixed for ML-DSA-87, so anything else is a failed read and
-    // the sign request below still goes out carrying those bad lengths, which
-    // FP1 logs.
-    let sane = vk_len == 2592 && sk_len == 4896;
-    //
-    // The verifying key has to survive this: the sign request overwrites it,
-    // and the verify request afterwards needs it back. It cannot be recovered
-    // by re-running keygen either, because that would overwrite the signature.
-    // 2,592 bytes is the only state this probe holds on CP1.
-    let mut vk = [0u8; 2592];
-
-    if sane {
-        for i in 0..vk_len {
-            vk[i as usize] = rd(HDR + i);
-        }
+    if pal.ml_dsa_fp_keygen(&seed, &mut vk, &mut sk).await.is_err() {
+        return;
     }
 
-    let sk_src = HDR + vk_len;
-    for i in 0..(if sane { sk_len } else { 0 }) {
-        wr(HDR + i, rd(sk_src + i));
+    if pal.ml_dsa_fp_sign(&sk, &msg, &mut sig).await.is_err() {
+        return;
     }
-    wr32(0, sk_len);
-    wr32(4, MSG_LEN);
-    if sane {
-        for i in 0..MSG_LEN {
-            wr(HDR + sk_len + i, 0xA5u8.wrapping_add(i as u8));
-        }
-    }
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
-    // ---- 4. sign ----
-    //
-    // ML-DSA-87 produces a 4,627-byte signature, so a successful response
-    // carries respLen 4627 and nothing else does.
-    let payload_len = if sane { HDR + sk_len + MSG_LEN } else { HDR };
-    let msg2: [u32; 3] = [OP_SIGN | (2 << 8), PARAM_87, payload_len];
-    let mut resp2 = [0u32; 16];
-    hsm.pal()
-        .ipc
-        .send(IpcChannel::FpMessage as u8, &msg2, &mut resp2)
-        .await;
+    // FP1 logs its own verify result, so the value is not needed here -- what
+    // matters is that the request is well formed enough to be answered.
+    let _ = pal.ml_dsa_fp_verify(&vk, &sig, &msg).await;
 
-    // ---- 5. reshape again, into a verify request ----
-    //
-    // FP1 left the signature at offset 0. Verify wants
-    // [vk_len][sig_len][msg_len][vk][sig][msg], so the signature moves up to
-    // make room for the header and the verifying key. Copying descending is
-    // what makes that safe -- the destination is above the source and the two
-    // ranges overlap.
-    if sane {
-        let sig_dst = VHDR + vk_len;
-
-        for i in (0..SIG_LEN).rev() {
-            wr(sig_dst + i, rd(i));
-        }
-
-        for i in 0..vk_len {
-            wr(VHDR + i, vk[i as usize]);
-        }
-
-        // The same message that was signed, regenerated rather than kept.
-        for i in 0..MSG_LEN {
-            wr(sig_dst + SIG_LEN + i, 0xA5u8.wrapping_add(i as u8));
-        }
-
-        wr32(0, vk_len);
-        wr32(4, SIG_LEN);
-        wr32(8, MSG_LEN);
-    }
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
-    // ---- 6. verify ----
-    //
-    // This is the step that proves the signature is sound rather than merely
-    // the right length: FP1 logs wolfCrypt's verify result directly.
-    let verify_len = if sane { VHDR + vk_len + SIG_LEN + MSG_LEN } else { VHDR };
-    let msg3: [u32; 3] = [OP_VERIFY | (3 << 8), PARAM_87, verify_len];
-    let mut resp3 = [0u32; 16];
-    hsm.pal()
-        .ipc
-        .send(IpcChannel::FpMessage as u8, &msg3, &mut resp3)
-        .await;
-
-    // ---- 7. negative control ----
-    //
-    // A verify that returned 1 unconditionally would be indistinguishable from
-    // the step above, so corrupt one byte of the message and re-send the same
-    // request. Nothing else changes, and the expected answer is 0. Without
-    // this the positive result proves very little.
-    if sane {
-        let sig_dst = VHDR + vk_len;
-        let tampered = rd(sig_dst + SIG_LEN) ^ 0x01;
-        wr(sig_dst + SIG_LEN, tampered);
-    }
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
-    let msg4: [u32; 3] = [OP_VERIFY | (4 << 8), PARAM_87, verify_len];
-    let mut resp4 = [0u32; 16];
-    hsm.pal()
-        .ipc
-        .send(IpcChannel::FpMessage as u8, &msg4, &mut resp4)
-        .await;
-
-    let _ = (resp, resp2, resp3, resp4, vk_len, sk_len);
+    // Negative control, as before: one flipped message bit must flip the
+    // answer. Without it a verify stub that always said "valid" would be
+    // indistinguishable from a working one.
+    let mut bad = msg;
+    bad[0] ^= 0x01;
+    let _ = pal.ml_dsa_fp_verify(&vk, &sig, &bad).await;
 }

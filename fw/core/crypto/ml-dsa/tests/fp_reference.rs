@@ -24,6 +24,8 @@
 //! The inputs match the FP1 probe exactly: seed `0,1,..,31` and a 32-byte
 //! message `0xA5 + i`.
 
+#![allow(clippy::unwrap_used)]
+
 use ml_dsa::signature::Keypair;
 use ml_dsa::MlDsa87;
 use ml_dsa::SigningKey;

@@ -45,6 +45,7 @@ mod gsram_alias;
 mod io;
 mod ipc;
 mod lock;
+mod mldsa_fp;
 mod pal;
 mod part;
 mod seed;
