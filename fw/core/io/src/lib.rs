@@ -390,6 +390,17 @@ impl SqeBuilder {
         self
     }
 
+    /// Set the destination PRP2 address (DW9-10).
+    ///
+    /// The second response page. Only consulted when a response exceeds
+    /// 4 KiB, which the GDMA cannot carry in one transfer.
+    #[inline]
+    pub fn dst_prp2(mut self, addr: u64) -> Self {
+        self.0[9] = addr as u32;
+        self.0[10] = (addr >> 32) as u32;
+        self
+    }
+
     /// Set the session flags dword (DW11).
     #[inline]
     pub fn session_flags(mut self, flags: SessionFlags) -> Self {

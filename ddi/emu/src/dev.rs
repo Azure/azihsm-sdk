@@ -81,6 +81,10 @@ const SCRATCH_LEN: usize = 4096;
 /// instead of being rejected or handled.
 const RESP_SCRATCH_LEN: usize = 8192;
 
+/// Bytes carried by one response page. A response larger than this is split
+/// across `dst_prp1` and `dst_prp2`.
+const RESP_PAGE_LEN: usize = 4096;
+
 /// Size of one NVMe SGL Data Block descriptor in the out-of-band page.
 const OOB_ENTRY_LEN: usize = 16;
 
@@ -211,7 +215,13 @@ impl DdiDev for DdiEmuDev {
 
         // ── 2. Encode DDI request via host MBOR (wire-compat with fw) ─
         let mut src = AlignedBuf::new(SCRATCH_LEN);
-        let mut dst = AlignedBuf::new(RESP_SCRATCH_LEN);
+        // Two independent pages, exactly as the host driver supplies them.
+        // Deliberately not one 8 KiB buffer: the firmware splits a large
+        // response across `dst_prp1` and `dst_prp2`, and only genuinely
+        // separate allocations can catch a boundary mistake or an assumption
+        // that the two are contiguous.
+        let mut dst = AlignedBuf::new(RESP_PAGE_LEN);
+        let mut dst2 = AlignedBuf::new(RESP_PAGE_LEN);
 
         let req_len = {
             let mut enc = MborEncoder::new(src.as_mut_slice(), pre_encode);
@@ -229,6 +239,7 @@ impl DdiDev for DdiEmuDev {
             .buf_lens(req_len as u32, RESP_SCRATCH_LEN as u32)
             .src_prp1(req_buf.as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
+            .dst_prp2(dst2.as_mut_slice().as_mut_ptr() as u64)
             .session_flags(
                 SessionFlags::new()
                     .with_ctrl(u8::from(session_ctrl))
@@ -254,7 +265,17 @@ impl DdiDev for DdiEmuDev {
         if resp_len == 0 {
             return Err(DdiError::DdiError(0));
         }
-        let resp_buf = &dst.as_slice()[..resp_len];
+        // Rejoin the two pages the firmware wrote into. The host driver does
+        // the same thing before handing the response to user space.
+        let joined: Vec<u8> = if resp_len <= RESP_PAGE_LEN {
+            dst.as_slice()[..resp_len].to_vec()
+        } else {
+            let mut v = Vec::with_capacity(resp_len);
+            v.extend_from_slice(dst.as_slice());
+            v.extend_from_slice(&dst2.as_slice()[..resp_len - RESP_PAGE_LEN]);
+            v
+        };
+        let resp_buf = &joined[..];
         tracing::trace!(opcode = ?opcode, len = resp_len, "DdiEmu response (in hex): {:02x?}", resp_buf);
 
         let mut hdr_dec = DdiDecoder::new(resp_buf, post_decode);
@@ -309,7 +330,13 @@ impl DdiDev for DdiEmuDev {
 
         // ── 1. Encode the TBOR request into a 4-KiB scratch buffer ─
         let mut src = AlignedBuf::new(SCRATCH_LEN);
-        let mut dst = AlignedBuf::new(RESP_SCRATCH_LEN);
+        // Two independent pages, exactly as the host driver supplies them.
+        // Deliberately not one 8 KiB buffer: the firmware splits a large
+        // response across `dst_prp1` and `dst_prp2`, and only genuinely
+        // separate allocations can catch a boundary mistake or an assumption
+        // that the two are contiguous.
+        let mut dst = AlignedBuf::new(RESP_PAGE_LEN);
+        let mut dst2 = AlignedBuf::new(RESP_PAGE_LEN);
 
         let req_len = {
             let bytes = req.encode_request(src.as_mut_slice())?;
@@ -364,6 +391,7 @@ impl DdiDev for DdiEmuDev {
             .buf_lens(req_len as u32, RESP_SCRATCH_LEN as u32)
             .src_prp1(src.as_slice().as_ptr() as u64)
             .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
+            .dst_prp2(dst2.as_mut_slice().as_mut_ptr() as u64)
             .oob_prp(oob_prp)
             .oob_len(oob_len)
             .session_flags(
@@ -395,7 +423,17 @@ impl DdiDev for DdiEmuDev {
         if resp_len == 0 {
             return Err(DdiError::DdiError(0));
         }
-        let resp_buf = &dst.as_slice()[..resp_len];
+        // Rejoin the two pages the firmware wrote into. The host driver does
+        // the same thing before handing the response to user space.
+        let joined: Vec<u8> = if resp_len <= RESP_PAGE_LEN {
+            dst.as_slice()[..resp_len].to_vec()
+        } else {
+            let mut v = Vec::with_capacity(resp_len);
+            v.extend_from_slice(dst.as_slice());
+            v.extend_from_slice(&dst2.as_slice()[..resp_len - RESP_PAGE_LEN]);
+            v
+        };
+        let resp_buf = &joined[..];
         tracing::trace!(
             opcode = T::OPCODE,
             len = resp_len,

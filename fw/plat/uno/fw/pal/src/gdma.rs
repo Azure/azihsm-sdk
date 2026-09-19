@@ -32,6 +32,7 @@ use azihsm_fw_hsm_pal_traits::HsmGdmaController;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::host_resp_split;
 use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
@@ -273,10 +274,54 @@ impl HsmGdmaController for UnoHsmPal {
         io: &impl HsmIo,
         src: &DmaBuf,
         dst: HsmDmaAddr,
+        dst2: HsmDmaAddr,
         prp: bool,
     ) -> HsmResult<()> {
-        let len = src.len() as u32;
-        let src_addr = device_dma_buf(src.as_ptr(), len);
+        // One 4 KiB page is all a single transfer can carry: the GDMA's PRP
+        // form moves at most one page via PRP0 and must not cross a page
+        // boundary, and `prp1` is reserved for a PRP-list feature this part
+        // does not implement. So a larger response is split across two
+        // transfers into the two pages the host driver already provides,
+        // rather than described by one descriptor.
+        let (head, tail) = host_resp_split(src.len()).ok_or(HsmError::InvalidArg)?;
+
+        self.copy_page_to_host(io, src.as_ptr(), head as u32, dst, prp)
+            .await?;
+
+        if tail == 0 {
+            return Ok(());
+        }
+
+        // Better to refuse than to truncate: a silently short response
+        // decodes as a malformed frame a long way from here.
+        if dst2.is_null() {
+            return Err(HsmError::InvalidArg);
+        }
+
+        // SAFETY: `head + tail == src.len()`, so `head` is within the buffer
+        // and the remaining `tail` bytes start there.
+        let rest = unsafe { src.as_ptr().add(head) };
+        self.copy_page_to_host(io, rest, tail as u32, dst2, prp)
+            .await
+    }
+}
+
+impl UnoHsmPal {
+    /// Moves up to one 4 KiB page from a device buffer to a host page.
+    ///
+    /// Factored out of
+    /// [`copy_mem_to_host`](HsmGdmaController::copy_mem_to_host) because a
+    /// response larger than a page is carried by two of these rather than by
+    /// one descriptor -- see that method for why.
+    async fn copy_page_to_host(
+        &self,
+        io: &impl HsmIo,
+        src: *const u8,
+        len: u32,
+        dst: HsmDmaAddr,
+        prp: bool,
+    ) -> HsmResult<()> {
+        let src_addr = device_dma_buf(src, len);
         let dst_addr = host_dma_buf(dst, prp);
         self.gdma
             .copy_mem(
@@ -289,9 +334,7 @@ impl HsmGdmaController for UnoHsmPal {
             )?
             .await
     }
-}
 
-impl UnoHsmPal {
     /// GDMA-zero a GDMA-reachable device region `[dst_ptr, dst_ptr + len)`.
     ///
     /// Copies zeros from the [`ZERO_BASE`] window, chunked to its

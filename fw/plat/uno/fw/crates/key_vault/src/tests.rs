@@ -169,6 +169,7 @@ impl HsmGdmaController for FakeGdma {
         _io: &impl HsmIo,
         _src: &DmaBuf,
         _dst: HsmDmaAddr,
+        _dst2: HsmDmaAddr,
         _prp: bool,
     ) -> HsmResult<()> {
         unimplemented!("vault does not use host copies")

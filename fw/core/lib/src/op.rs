@@ -40,7 +40,10 @@ const MAX_SRC_LEN: u32 = PAGE_4K;
 /// actual DDI responses stay within a single 4K page, so the outbound GDMA
 /// (which uses a single PRP / PRP0 — max 4K, no page crossing) always carries
 /// the real payload. A response that ever needed to exceed 4K would require
-/// the GDMA path to plumb a second PRP page (`dst_prp2`).
+/// the GDMA path to plumb a second PRP page (`dst_prp2`) -- which it now
+/// does: a response over 4 KiB is split across `dst_prp1` and `dst_prp2`,
+/// one GDMA transfer each, because the engine carries at most one page per
+/// transfer and implements no PRP list.
 const MAX_DST_LEN: u32 = 2 * PAGE_4K;
 
 /// Size of one NVMe SGL Data Block descriptor in the OOB array.
@@ -147,6 +150,24 @@ impl SqeValidateExt for Sqe<'_> {
                 HsmError::IoChannelInvalidDstAlignment,
                 "Invalid destination PRP alignment: {:?}",
                 self.dst_prp1()
+            );
+            return Err(OpError::new(
+                HsmError::IoChannelInvalidDstAlignment,
+                HostStatus::INVALID_DST_PRP,
+            ));
+        }
+
+        // The second response page is only consulted when a response
+        // actually exceeds 4 KiB, but validate it whenever the caller
+        // advertises room for one: a misaligned page would fail inside the
+        // GDMA, halfway through a split writeback, with the first half
+        // already delivered.
+        if self.dst_len() > PAGE_4K && !is_aligned_4k(self.dst_prp2()) {
+            error!(
+                "core",
+                HsmError::IoChannelInvalidDstAlignment,
+                "Invalid second destination PRP alignment: {:?}",
+                self.dst_prp2()
             );
             return Err(OpError::new(
                 HsmError::IoChannelInvalidDstAlignment,

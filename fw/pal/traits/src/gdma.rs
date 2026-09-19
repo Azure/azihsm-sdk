@@ -58,6 +58,81 @@ pub struct HsmDmaAddr {
     pub hi: u32,
 }
 
+/// Bytes one host response page can hold.
+///
+/// The Uno GDMA moves at most one 4 KiB page per transfer via PRP0, must not
+/// cross a page boundary, and implements no PRP list, so this is a hardware
+/// limit rather than a convention.
+pub const HOST_RESP_PAGE_LEN: usize = 4096;
+
+/// Divides a response across the two host response pages.
+///
+/// The host driver always supplies two, so a response up to 8 KiB can be
+/// delivered as two transfers. Returns `(head, tail)` where `tail == 0` means
+/// one page sufficed, or `None` when the response is too large for both --
+/// which callers must treat as an error, since a truncated response decodes
+/// as a malformed frame a long way from the cause.
+///
+/// Shared by the uno and std PALs so the boundary cannot drift between the
+/// hardware path and the one the emulator exercises.
+#[inline]
+pub const fn host_resp_split(len: usize) -> Option<(usize, usize)> {
+    if len <= HOST_RESP_PAGE_LEN {
+        Some((len, 0))
+    } else if len <= 2 * HOST_RESP_PAGE_LEN {
+        Some((HOST_RESP_PAGE_LEN, len - HOST_RESP_PAGE_LEN))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod resp_split_tests {
+    use super::HOST_RESP_PAGE_LEN;
+    use super::host_resp_split;
+
+    #[test]
+    fn single_page_responses_are_not_split() {
+        assert_eq!(host_resp_split(0), Some((0, 0)));
+        assert_eq!(host_resp_split(1), Some((1, 0)));
+        // Exactly one page must still be one transfer, not a page plus an
+        // empty second -- an empty GDMA transfer is not a no-op.
+        assert_eq!(
+            host_resp_split(HOST_RESP_PAGE_LEN),
+            Some((HOST_RESP_PAGE_LEN, 0))
+        );
+    }
+
+    #[test]
+    fn two_page_responses_split_at_the_page_boundary() {
+        assert_eq!(
+            host_resp_split(HOST_RESP_PAGE_LEN + 1),
+            Some((HOST_RESP_PAGE_LEN, 1))
+        );
+        // An ML-DSA-87 signature, the response this exists for.
+        assert_eq!(host_resp_split(4627), Some((4096, 531)));
+        assert_eq!(
+            host_resp_split(2 * HOST_RESP_PAGE_LEN),
+            Some((HOST_RESP_PAGE_LEN, HOST_RESP_PAGE_LEN))
+        );
+    }
+
+    #[test]
+    fn oversized_responses_are_refused_rather_than_truncated() {
+        assert_eq!(host_resp_split(2 * HOST_RESP_PAGE_LEN + 1), None);
+    }
+
+    #[test]
+    fn the_two_halves_always_reconstitute_the_whole() {
+        for len in [0, 1, 4095, 4096, 4097, 4627, 8191, 8192] {
+            let (head, tail) = host_resp_split(len).expect("within two pages");
+            assert_eq!(head + tail, len, "len {len}");
+            assert!(head <= HOST_RESP_PAGE_LEN);
+            assert!(tail <= HOST_RESP_PAGE_LEN);
+        }
+    }
+}
+
 impl HsmDmaAddr {
     /// Returns `true` if both halves are zero (null address).
     ///
@@ -235,6 +310,13 @@ pub trait HsmGdmaController {
     /// - `dst` — host-side address.  Same `prp == true`/`false`
     ///   semantics as
     ///   [`copy_mem_from_host`](Self::copy_mem_from_host).
+    /// - `dst2` — second host page, used only when `src.len()` exceeds
+    ///   4 KiB.  The Uno GDMA moves at most one 4 KiB page per transfer
+    ///   and does not implement PRP lists, so a larger response is split
+    ///   across two transfers rather than described by one descriptor:
+    ///   the first 4 KiB go to `dst`, the remainder to `dst2`.  Pass a
+    ///   null address when there is no second page; a response larger
+    ///   than 4 KiB is then rejected rather than silently truncated.
     /// - `prp` — `true` to interpret `dst` as a PRP entry, `false`
     ///   for a flat address.
     ///
@@ -252,6 +334,7 @@ pub trait HsmGdmaController {
         io: &impl HsmIo,
         src: &DmaBuf,
         dst: HsmDmaAddr,
+        dst2: HsmDmaAddr,
         prp: bool,
     ) -> HsmResult<()>;
 }

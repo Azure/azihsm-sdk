@@ -320,7 +320,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Outbound DMA (yield 2) ─────────────────────────────────
         self.pal()
-            .copy_mem_to_host(io, resp, params.dst_addr, true)
+            .copy_mem_to_host(io, resp, params.dst_addr, params.dst_addr2, true)
             .await
             .op_err(
                 "core",
@@ -451,7 +451,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Outbound DMA (yield 2) ─────────────────────────────────
         self.pal()
-            .copy_mem_to_host(io, resp, params.dst_addr, true)
+            .copy_mem_to_host(io, resp, params.dst_addr, params.dst_addr2, true)
             .await
             .op_err(
                 "core",
@@ -498,6 +498,7 @@ impl<P: HsmPal> Hsm<P> {
             src_len: sqe.src_len() as usize,
             src_addr: sqe.src_prp1(),
             dst_addr: sqe.dst_prp1(),
+            dst_addr2: sqe.dst_prp2(),
             session_flags: sqe.session_flags(),
             sqe_session_id: sqe.session_id(),
             oob,
@@ -614,6 +615,10 @@ struct IoSqeParams {
     src_len: usize,
     src_addr: HsmDmaAddr,
     dst_addr: HsmDmaAddr,
+    /// Second host response page (`dst_prp2`). The driver always supplies
+    /// two, and a response over 4 KiB is split across both because the GDMA
+    /// carries only one page per transfer.
+    dst_addr2: HsmDmaAddr,
     session_flags: SessionFlags,
     sqe_session_id: u16,
     /// Optional out-of-band SGL descriptor array (`oob_prp`/`oob_len`);
