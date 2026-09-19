@@ -106,3 +106,20 @@ impl HsmVault for UnoHsmPal {
         vault(io).key_attrs(key_id)
     }
 }
+
+impl UnoHsmPal {
+    /// Session id a key is bound to, or `None` for a partition-scoped
+    /// (persistent) key.
+    ///
+    /// Used by below-PAL validation hooks to enforce session-scoped key
+    /// isolation: a session-bound key may only be accessed from the
+    /// session that created it.
+    #[cfg(feature = "fips_validation_hooks")]
+    pub(crate) fn vault_key_session_binding(
+        &self,
+        io: &impl HsmIo,
+        key_id: HsmKeyId,
+    ) -> HsmResult<Option<u16>> {
+        vault(io).key_session_binding(key_id)
+    }
+}
