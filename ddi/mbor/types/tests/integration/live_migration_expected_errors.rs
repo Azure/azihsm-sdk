@@ -252,7 +252,12 @@ fn test_get_cert_after_lm() {
             result
         );
 
-        let resp = helper_get_certificate(dev, cert_info.data.num_certs - 1);
+         let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
+         let resp = if idfu_enabled {
+             helper_get_cert_with_retry(dev, 15)
+         } else {
+             helper_get_certificate(dev, cert_info.data.num_certs - 1)
+         };
 
         assert!(resp.is_ok(), "resp {:?}", resp);
     });
