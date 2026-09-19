@@ -36,6 +36,12 @@ embassy-time = { workspace = true }
 #default = ["trace-uart"]
 default = []
 
+# CP0 and CP1 share one `--cp_features` list. Re-export the Uno PAL's
+# test-only features under the names accepted by the legacy CP firmware
+# so `cp/make_cp.sh` can forward the list unchanged to both builds.
+fips_validation_hooks = ["azihsm_fw_uno_pal/fips_validation_hooks"]
+mcr_test_hooks = ["azihsm_fw_uno_pal/mcr_test_hooks"]
+
 # Enable ARM semihosting integration for the emulator:
 #   - The PAL emits `SYS_READY` when the boot handshake completes, so the
 #     emulator host loop (which snoops the semihosting trap) learns the
