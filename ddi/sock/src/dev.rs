@@ -230,8 +230,9 @@ impl DdiDev for DdiSockDev {
         oob_items: Option<&[&[u8]]>,
         _cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
-        // The socket transport (v1) carries only the SQE body; it has no
-        // channel for out-of-band SGL descriptor pages yet.
+        // The wire protocol has a channel for out-of-band SGL descriptor
+        // pages (see `azihsm_ddi_sock_proto`'s OOB field and `vsocksrv`'s
+        // SGL re-homing), but this client isn't wired to use it yet.
         if oob_items.is_some_and(|items| !items.is_empty()) {
             return Err(DdiError::UnsupportedEncoding);
         }
