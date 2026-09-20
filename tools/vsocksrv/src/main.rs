@@ -373,6 +373,23 @@ fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id:
     }
 }
 
+/// Serves a single connection until it ends (cleanly, via timeout, or via
+/// error), then unconditionally resets the partition, since *any* end of a
+/// connection signals a device reset. This must not be skipped for any exit
+/// path (including protocol/decode errors or a failed response write),
+/// otherwise the next client on the same shared partition could observe the
+/// previous client's live keys/sessions/vault state.
+fn serve_connection_and_reset(
+    stream: &mut (impl Read + Write),
+    hsm: &StdHsm,
+    runtime: &tokio::runtime::Handle,
+    partition_id: u8,
+) -> Result<()> {
+    let result = serve_connection(stream, hsm, runtime, partition_id);
+    reset_partition(hsm, runtime, partition_id);
+    result
+}
+
 fn serve_connection(
     stream: &mut (impl Read + Write),
     hsm: &StdHsm,
@@ -401,8 +418,9 @@ fn serve_connection(
                 // other client waiting to be served.
                 debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
-                // A disconnect signals a device reset, so reset the partition here
-                reset_partition(hsm, runtime, partition_id);
+                // The caller (`serve_connection_and_reset`) resets the
+                // partition unconditionally, since any end of a connection
+                // signals a device reset.
                 return Ok(());
             }
             Err(error) => {
@@ -484,7 +502,7 @@ fn serve_connection_logged(
     let connection_span = tracing::info_span!("connection", connection_id);
     let _connection_guard = connection_span.enter();
     tracing::debug!("Started connection worker");
-    if let Err(error) = serve_connection(&mut stream, hsm, runtime, partition_id) {
+    if let Err(error) = serve_connection_and_reset(&mut stream, hsm, runtime, partition_id) {
         tracing::warn!(?error, "HSM client connection closed with an error");
     } else {
         tracing::info!("HSM client connection closed");
@@ -567,7 +585,12 @@ fn main() -> Result<()> {
                 .context("AF_UNIX socket is required")?;
             let mut stream = unix_stream.take().context("AF_UNIX stream is missing")?;
             loop {
-                match serve_connection(&mut stream, &hsm, runtime.handle(), args.partition_id) {
+                match serve_connection_and_reset(
+                    &mut stream,
+                    &hsm,
+                    runtime.handle(),
+                    args.partition_id,
+                ) {
                     Ok(()) => {
                         debug!("HSM client disconnected; reconnecting");
                         tracing::info!("HSM client disconnected; reconnecting");

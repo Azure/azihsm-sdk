@@ -17,6 +17,7 @@
 
 use std::io;
 use std::io::Read;
+use std::io::Write;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -25,6 +26,7 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 use azihsm_ddi_interface::Ddi;
@@ -96,8 +98,22 @@ fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
     let mut ch_clone = ch.try_clone()?;
     let mut ddi_clone = ddi.try_clone()?;
 
-    let to_ddi = thread::spawn(move || io::copy(&mut ch_clone, &mut ddi_clone));
-    let to_ch = thread::spawn(move || io::copy(&mut ddi, &mut ch));
+    // Each direction shuts down the *write* half of its destination as
+    // soon as its source hits EOF. A plain `drop` would not be enough:
+    // `try_clone` dups the fd, so the peer (whichever process is on the
+    // other end of that dup'd socket) only sees EOF once every dup is
+    // closed. `shutdown(Write)` acts on the shared socket state itself,
+    // so it propagates a half-close to the peer immediately regardless
+    // of how many dup'd fds are still open on this side, letting a
+    // one-directional disconnect end the whole bridged connection.
+    let to_ddi = thread::spawn(move || {
+        let _ = io::copy(&mut ch_clone, &mut ddi_clone);
+        let _ = ddi_clone.shutdown(std::net::Shutdown::Write);
+    });
+    let to_ch = thread::spawn(move || {
+        let _ = io::copy(&mut ddi, &mut ch);
+        let _ = ch.shutdown(std::net::Shutdown::Write);
+    });
 
     let _ = to_ddi.join();
     let _ = to_ch.join();
@@ -108,16 +124,28 @@ fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
 /// connection on `paths.ch` and one client connection on `paths.ddi`,
 /// then bridges them together.
 fn spawn_bridge(paths: &SocketPaths) -> io::Result<thread::JoinHandle<()>> {
+    spawn_bridge_loop(paths, 1)
+}
+
+/// Like [`spawn_bridge`], but accepts and bridges up to `iterations`
+/// sequential `vsocksrv` reconnections. `vsocksrv --socket-type unix`
+/// reconnects to `paths.ch` (and, through the bridge, `paths.ddi` gets a
+/// fresh client connection too) after every disconnect, so tests that
+/// exercise reconnect-after-disconnect behavior need more than one
+/// accepted pair.
+fn spawn_bridge_loop(paths: &SocketPaths, iterations: usize) -> io::Result<thread::JoinHandle<()>> {
     let ch_listener = UnixListener::bind(&paths.ch)?;
     let ddi_listener = UnixListener::bind(&paths.ddi)?;
     Ok(thread::spawn(move || {
-        let Ok((ch, _)) = ch_listener.accept() else {
-            return;
-        };
-        let Ok((ddi, _)) = ddi_listener.accept() else {
-            return;
-        };
-        let _ = bridge_connection(ch, ddi);
+        for _ in 0..iterations {
+            let Ok((ch, _)) = ch_listener.accept() else {
+                return;
+            };
+            let Ok((ddi, _)) = ddi_listener.accept() else {
+                return;
+            };
+            let _ = bridge_connection(ch, ddi);
+        }
     }))
 }
 
@@ -180,23 +208,9 @@ fn spawn_vsocksrv(paths: &SocketPaths) -> io::Result<VsocksrvGuard> {
     Ok(VsocksrvGuard(child))
 }
 
-#[test]
-fn get_api_rev_round_trips_through_vsocksrv() {
-    let paths = SocketPaths::new("get-api-rev");
-    // `spawn_bridge` binds both listeners synchronously before spawning
-    // its worker thread, so the socket at `paths.ddi` is already
-    // connectable once this call returns — a connection is queued in the
-    // kernel backlog until the bridge's single `accept()` picks it up
-    // after `vsocksrv` connects. Probing the socket here first would
-    // consume that one-shot `accept()` and hang the real client.
-    let _bridge = spawn_bridge(&paths).expect("failed to start test bridge");
-    let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
-
-    let ddi = DdiSock::default();
-    let dev = ddi
-        .open_dev(paths.ddi.to_str().expect("temp path is valid UTF-8"))
-        .expect("failed to connect to vsocksrv via the bridge");
-
+/// Issues a `GetApiRev` request over `dev` and asserts it succeeds against
+/// `vsocksrv`'s in-process `StdHsm`.
+fn assert_get_api_rev_succeeds(dev: &azihsm_ddi_sock::DdiSockDev) {
     let req = DdiGetApiRevCmdReq {
         hdr: DdiReqHdr {
             rev: None,
@@ -223,4 +237,112 @@ fn get_api_rev_round_trips_through_vsocksrv() {
         DdiApiRev { major: 1, minor: 0 },
         "StdHsm should report max api rev 1.0",
     );
+}
+
+/// Retries `open_dev` until it succeeds or `timeout` elapses. A fresh
+/// connection through the bridge only becomes acceptable once `vsocksrv`
+/// has fully processed the previous connection's end (including, after
+/// this reconnection, resetting the partition), so callers that connect
+/// again after disconnecting need to poll rather than connect once.
+fn open_dev_with_retry(
+    ddi: &DdiSock,
+    paths: &SocketPaths,
+    timeout: Duration,
+) -> azihsm_ddi_sock::DdiSockDev {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match ddi.open_dev(paths.ddi.to_str().expect("temp path is valid UTF-8")) {
+            Ok(dev) => return dev,
+            Err(error) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+                let _ = error;
+            }
+            Err(error) => panic!("failed to reconnect to vsocksrv via the bridge: {error}"),
+        }
+    }
+}
+
+#[test]
+fn get_api_rev_round_trips_through_vsocksrv() {
+    let paths = SocketPaths::new("get-api-rev");
+    // `spawn_bridge` binds both listeners synchronously before spawning
+    // its worker thread, so the socket at `paths.ddi` is already
+    // connectable once this call returns — a connection is queued in the
+    // kernel backlog until the bridge's single `accept()` picks it up
+    // after `vsocksrv` connects. Probing the socket here first would
+    // consume that one-shot `accept()` and hang the real client.
+    let _bridge = spawn_bridge(&paths).expect("failed to start test bridge");
+    let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
+
+    let ddi = DdiSock::default();
+    let dev = ddi
+        .open_dev(paths.ddi.to_str().expect("temp path is valid UTF-8"))
+        .expect("failed to connect to vsocksrv via the bridge");
+
+    assert_get_api_rev_succeeds(&dev);
+}
+
+/// Regression test for the shared-partition reset invariant: `vsocksrv`
+/// must reset the partition and keep serving new connections after a
+/// client cleanly disconnects, not just leave the partition in whatever
+/// state the previous client left it in.
+#[test]
+fn reconnect_after_disconnect_still_serves_requests() {
+    let paths = SocketPaths::new("reconnect-after-disconnect");
+    let _bridge = spawn_bridge_loop(&paths, 2).expect("failed to start test bridge");
+    let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
+
+    let ddi = DdiSock::default();
+
+    {
+        let dev = ddi
+            .open_dev(paths.ddi.to_str().expect("temp path is valid UTF-8"))
+            .expect("failed to connect to vsocksrv via the bridge");
+        assert_get_api_rev_succeeds(&dev);
+        // Dropping `dev` closes the connection, which should make
+        // `vsocksrv` reset the partition and reconnect to `paths.ch` so
+        // the bridge can accept the next client.
+    }
+
+    let dev2 = open_dev_with_retry(&ddi, &paths, Duration::from_secs(10));
+    assert_get_api_rev_succeeds(&dev2);
+}
+
+/// Regression test: a malformed (but fully-framed, non-EOF) request must
+/// not leave `vsocksrv` stuck. This exercises the code path that
+/// previously *skipped* the shared-partition reset performed for every
+/// other kind of connection end (only I/O-level disconnects — EOF,
+/// connection reset, timeout — reset the partition; a protocol decode
+/// error returned from `serve_connection` without resetting it or
+/// necessarily leaving the process able to serve the next client).
+///
+/// Note: this test only observes externally-visible recovery (the server
+/// keeps accepting and serving connections). It does not directly assert
+/// that partition/session state was cleared, since doing so would
+/// require driving a stateful HSM operation (e.g. session open/close)
+/// through the wire protocol.
+#[test]
+fn malformed_frame_recovers_and_serves_next_connection() {
+    let paths = SocketPaths::new("malformed-frame");
+    let _bridge = spawn_bridge_loop(&paths, 2).expect("failed to start test bridge");
+    let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
+
+    {
+        let mut raw = UnixStream::connect(&paths.ddi).expect("failed to connect for raw frame");
+        // A length-prefixed 8-byte body of zeros is a well-formed frame
+        // header (right size, so no EOF/short-read) with an invalid
+        // magic number, so `Request::read_from` returns
+        // `ProtoError::BadMagic`, not an I/O error.
+        let body = [0u8; 8];
+        raw.write_all(&(body.len() as u32).to_le_bytes())
+            .expect("failed to write frame length");
+        raw.write_all(&body).expect("failed to write frame body");
+        raw.flush().expect("failed to flush malformed frame");
+        // Drop `raw` to close the connection once the malformed frame is
+        // sent; `vsocksrv` should already have failed to decode it.
+    }
+
+    let ddi = DdiSock::default();
+    let dev = open_dev_with_retry(&ddi, &paths, Duration::from_secs(10));
+    assert_get_api_rev_succeeds(&dev);
 }
