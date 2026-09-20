@@ -51,15 +51,19 @@ use embassy_sync::signal::Signal;
 /// avoiding a redundant synchronization primitive.
 static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 
+/// Number of long-running Embassy loops [`ShutdownTracker`] must wait to
+/// exit before it is drained: [`poll_io`] and [`ipc_task`].
+const LONG_RUNNING_TASKS: usize = 2;
+
 /// Coordinates a drain-then-stop shutdown of the Embassy executor.
 ///
-/// `active_tasks` starts at 2, accounting for the long-running
-/// [`poll_io`] and [`ipc_task`] loops. Each in-flight [`handle_io`]
-/// spawn adds one more. Every task decrements the count exactly once
-/// when it permanently exits — `poll_io`/`ipc_task` only exit once
-/// their channel is closed and drained, and `handle_io` always exits
-/// after finishing its single IO. Once the task count reaches zero,
-/// [`run_core`] is woken to deinitialize the PAL; only then may
+/// `active_tasks` starts at [`LONG_RUNNING_TASKS`], accounting for the
+/// long-running [`poll_io`] and [`ipc_task`] loops. Each in-flight
+/// [`handle_io`] spawn adds one more. Every task decrements the count
+/// exactly once when it permanently exits — `poll_io`/`ipc_task` only
+/// exit once their channel is closed and drained, and `handle_io` always
+/// exits after finishing its single IO. Once the task count reaches
+/// zero, [`run_core`] is woken to deinitialize the PAL; only then may
 /// `run_until` stop the executor.
 struct ShutdownTracker {
     active_tasks: AtomicUsize,
@@ -293,7 +297,7 @@ impl StdHsmBuilder {
 
         // Reserves one slot each for `poll_io` and `ipc_task`; decremented
         // as those loops (and any in-flight `handle_io`) permanently exit.
-        let shutdown_tracker = Arc::new(ShutdownTracker::new(2));
+        let shutdown_tracker = Arc::new(ShutdownTracker::new(LONG_RUNNING_TASKS));
         let executor_shutdown = shutdown_tracker.clone();
 
         // Embassy + Hsm task frames in debug builds are large enough
@@ -634,7 +638,7 @@ mod tests {
     /// has deinitialized the PAL.
     #[test]
     fn shutdown_tracker_waits_for_all_tasks() {
-        let tracker = ShutdownTracker::new(2);
+        let tracker = ShutdownTracker::new(LONG_RUNNING_TASKS);
 
         // Simulate an IO accepted by `poll_io` and still being processed
         // by `handle_io` when shutdown begins.
