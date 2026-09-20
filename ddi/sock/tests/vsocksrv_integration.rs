@@ -234,8 +234,8 @@ fn assert_get_api_rev_succeeds(dev: &azihsm_ddi_sock::DdiSockDev) {
     );
     assert_eq!(
         resp.data.max,
-        DdiApiRev { major: 1, minor: 0 },
-        "StdHsm should report max api rev 1.0",
+        DdiApiRev { major: 1, minor: 1 },
+        "StdHsm should report max api rev 1.1",
     );
 }
 
