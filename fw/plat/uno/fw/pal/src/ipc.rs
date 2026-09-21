@@ -810,8 +810,19 @@ impl IpcMessageType for IpcMessageKeyUpdate {
 }
 
 impl IpcMessageEncoderTrait for IpcMessageKeyUpdate {
-    fn encode(self) -> IpcMessage {
-        IpcMessageEncoder::encode(self)
+    fn encode(mut self) -> IpcMessage {
+        // The typed body holds raw AES key material in `info.key_data`;
+        // copy it into the wire `IpcMessage` and immediately scrub the
+        // typed copy so no second stack image of the key lingers past this
+        // encode.  `fp_send_key_update` separately scrubs the returned
+        // `IpcMessage` after the send completes.
+        let mut ipc_message = IpcMessage {
+            data: [0; IPC_MESSAGE_LENGTH],
+        };
+        ipc_message.as_mut_bytes().copy_from_slice(self.as_bytes());
+        use zeroize::Zeroize;
+        self.info.key_data.zeroize();
+        ipc_message
     }
 }
 
