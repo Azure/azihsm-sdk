@@ -84,8 +84,3 @@ fips_validation_hooks = [
   "dep:azihsm_fw_ddi_mbor_derive",
   "dep:azihsm_fw_ddi_mbor_types",
 ]
-
-# General MCR test hooks, reserved for below-PAL test commands that do
-# not need the MBOR codec. Currently a placeholder. Never enable in a
-# production build.
-mcr_test_hooks = []

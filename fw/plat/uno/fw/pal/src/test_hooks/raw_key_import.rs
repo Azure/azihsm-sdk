@@ -348,12 +348,12 @@ fn raw_import_attrs(
         DdiKeyType::Secret256 | DdiKeyType::Secret384 | DdiKeyType::Secret521 => {
             for_ecdh_secret(metadata)?
         }
-        DdiKeyType::HmacSha256
-        | DdiKeyType::HmacSha384
-        | DdiKeyType::HmacSha512
-        | DdiKeyType::VarHmac256
-        | DdiKeyType::VarHmac384
-        | DdiKeyType::VarHmac512 => for_var_hmac(metadata)?,
+        DdiKeyType::HmacSha256 | DdiKeyType::HmacSha384 | DdiKeyType::HmacSha512 => {
+            for_fixed_hmac(metadata)?
+        }
+        DdiKeyType::VarHmac256 | DdiKeyType::VarHmac384 | DdiKeyType::VarHmac512 => {
+            for_var_hmac(metadata)?
+        }
         _ => return Err(HsmError::InvalidKeyType),
     };
     Ok(attrs.with_local(false))
@@ -409,6 +409,32 @@ fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttr
     }
     attrs = attrs.with_derive(true);
 
+    if metadata.session() {
+        attrs = attrs.with_session(true);
+    }
+
+    Ok(attrs)
+}
+
+/// Build vault attrs for a raw-imported fixed-length HMAC key.
+///
+/// Fixed-length HMAC keys support only MAC sign / verify usage.
+/// Derivation is reserved for variable-length HMAC keys.
+fn for_fixed_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
+
+    let sign_verify = metadata.sign() && metadata.verify();
+    if !sign_verify
+        || metadata.encrypt()
+        || metadata.decrypt()
+        || metadata.derive()
+        || metadata.wrap()
+        || metadata.unwrap()
+    {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    let mut attrs = HsmVaultKeyAttrs::new().with_sign(true).with_verify(true);
     if metadata.session() {
         attrs = attrs.with_session(true);
     }
