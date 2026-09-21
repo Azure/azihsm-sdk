@@ -25,7 +25,9 @@
 //! - [`common`] — the `{0: hdr, 1: data}` envelope shared by every opcode.
 //! - [`mbor_dispatch`] — the router: it decodes the envelope once, checks
 //!   the opcode, and hands the body to the matching handler.
-//! - [`test_action`] — the `TestAction` (`DdiOp` 2004) handler.
+//! - [`test_action`] — the `TestAction` (`DdiOp` 2004) action router.
+//! - [`clear_user_credentials`] / [`trigger_crash`] — action-specific
+//!   validation and behavior.
 //!
 //! # `TestAction` is an in-session command
 //!
@@ -43,8 +45,10 @@
 //! `mcr-hsm`'s definitions field-for-field, so the existing host-side
 //! test suite drives either firmware unchanged.
 
+mod clear_user_credentials;
 mod common;
 mod test_action;
+mod trigger_crash;
 
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
@@ -53,9 +57,9 @@ use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use common::ReqHdr;
 
 use crate::pal::UnoHsmPal;
-use common::ReqHdr;
 
 /// `DdiOp::TestAction` — matches `mcr-hsm`'s discriminant so the same
 /// host tooling drives both firmwares.
