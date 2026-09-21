@@ -18,9 +18,9 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
 use super::clear_user_credentials;
+use super::common::ReqHdr;
 use super::common::encode_resp;
 use super::common::success_hdr;
-use super::common::ReqHdr;
 use super::trigger_crash;
 use crate::pal::UnoHsmPal;
 
@@ -75,14 +75,9 @@ pub(super) fn dispatch<'p>(
     let selector = decode_action_selector(decoder)?;
 
     match selector.action {
-        SupportedTestAction::ClearUserCredentials => clear_user_credentials::dispatch(
-            pal,
-            io,
-            hdr,
-            decoder,
-            selector.body_count,
-            req_len,
-        ),
+        SupportedTestAction::ClearUserCredentials => {
+            clear_user_credentials::dispatch(pal, io, hdr, decoder, selector.body_count, req_len)
+        }
         SupportedTestAction::TriggerCrash => {
             trigger_crash::dispatch(decoder, selector.body_count, req_len)
                 .map(|never| match never {})
@@ -117,7 +112,7 @@ pub(super) fn encode_success<'p>(
 ) -> HsmResult<&'p DmaBuf> {
     let resp = pal.dma_alloc_var(io, |buf| {
         encode_resp(
-            &success_hdr(hdr, None),
+            &success_hdr(hdr, hdr.sess_id),
             &DdiTestActionResp { result: None },
             buf,
         )

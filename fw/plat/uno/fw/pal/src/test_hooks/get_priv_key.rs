@@ -36,9 +36,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
+use super::common::ReqHdr;
 use super::common::encode_resp;
 use super::common::success_hdr;
-use super::common::ReqHdr;
 use crate::pal::UnoHsmPal;
 
 /// DDI `GetPrivKey` request body.

@@ -99,6 +99,10 @@ struct DdiRawKeyImportResp<'a> {
 /// an await for an interleaved handler to corrupt. The RSA unwrapping-key
 /// path accepts only an initial installation and prepares its response
 /// before a final synchronous state commit.
+///
+/// The outer router wipes the complete encoded request after this
+/// function returns, including decode failures that occur after the raw
+/// plaintext field has been borrowed.
 pub(super) async fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
@@ -310,7 +314,10 @@ async fn raw_import_unwrapping_key<'p>(
 /// This reads `PartStore` directly so the check does not trigger the PAL's
 /// lazy import of an HSP-staged key.
 fn ensure_unwrapping_key_absent(io: &impl HsmIo) -> HsmResult<()> {
-    if PartStore::partition(io.pid())?.unwrapping_key_id().is_some() {
+    if PartStore::partition(io.pid())?
+        .unwrapping_key_id()
+        .is_some()
+    {
         return Err(HsmError::InvalidArg);
     }
     Ok(())
@@ -341,12 +348,12 @@ fn raw_import_attrs(
         DdiKeyType::Secret256 | DdiKeyType::Secret384 | DdiKeyType::Secret521 => {
             for_ecdh_secret(metadata)?
         }
-        DdiKeyType::HmacSha256
-        | DdiKeyType::HmacSha384
-        | DdiKeyType::HmacSha512
-        | DdiKeyType::VarHmac256
-        | DdiKeyType::VarHmac384
-        | DdiKeyType::VarHmac512 => for_hmac(metadata)?,
+        DdiKeyType::HmacSha256 | DdiKeyType::HmacSha384 | DdiKeyType::HmacSha512 => {
+            for_fixed_hmac(metadata)?
+        }
+        DdiKeyType::VarHmac256 | DdiKeyType::VarHmac384 | DdiKeyType::VarHmac512 => {
+            for_var_hmac(metadata)?
+        }
         _ => return Err(HsmError::InvalidKeyType),
     };
     Ok(attrs.with_local(false))
@@ -405,13 +412,34 @@ fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttr
     Ok(attrs)
 }
 
-/// Build vault attrs for a raw-imported HMAC key.
+/// Build vault attrs for a raw-imported fixed-length HMAC key.
+///
+/// Fixed-length HMAC keys support only MAC sign / verify usage.
+/// Derivation is reserved for variable-length HMAC keys.
+fn for_fixed_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+    validate_pairs(metadata)?;
+
+    let sign_verify = metadata.sign() && metadata.verify();
+    if !sign_verify
+        || metadata.encrypt()
+        || metadata.decrypt()
+        || metadata.derive()
+        || metadata.wrap()
+        || metadata.unwrap()
+    {
+        return Err(HsmError::InvalidPermissions);
+    }
+
+    Ok(HsmVaultKeyAttrs::new().with_sign(true).with_verify(true))
+}
+
+/// Build vault attrs for a raw-imported variable-length HMAC key.
 ///
 /// HMAC keys can sign / verify MACs or act as a key-derivation key
 /// (`derive`) for a further KDF.  Exactly one of those two usage groups
 /// must be set; `encrypt_decrypt`, `wrap`, and `unwrap` are rejected with
 /// [`HsmError::InvalidPermissions`].
-fn for_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
+fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
     validate_pairs(metadata)?;
     let mut attrs = HsmVaultKeyAttrs::new();
 

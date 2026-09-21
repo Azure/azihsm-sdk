@@ -155,7 +155,14 @@ pub(crate) async fn mbor_dispatch<'p>(
         DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, req_len),
         #[cfg(feature = "fips_validation_hooks")]
         DDI_OP_RAW_KEY_IMPORT => {
-            raw_key_import::dispatch(pal, io, &hdr, &mut decoder, req_len).await
+            let result = raw_key_import::dispatch(pal, io, &hdr, &mut decoder, req_len).await;
+
+            // RawKeyImport carries plaintext key material. Wipe the complete
+            // request after dispatch so partial body-decode failures cannot
+            // leave the already-decoded raw field in reusable per-IO DMA.
+            req.zeroize();
+
+            result
         }
         _ => Err(HsmError::UnsupportedCmd),
     }

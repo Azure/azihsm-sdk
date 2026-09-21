@@ -35,11 +35,8 @@ fn decode_request(decoder: &MborDecoder, body_count: u8, req_len: usize) -> HsmR
     Ok(())
 }
 
-fn execute<'p>(
-    pal: &'p UnoHsmPal,
-    io: &impl HsmIo,
-    hdr: &ReqHdr,
-) -> HsmResult<&'p DmaBuf> {
+fn execute<'p>(pal: &'p UnoHsmPal, io: &impl HsmIo, hdr: &ReqHdr) -> HsmResult<&'p DmaBuf> {
+    let resp = encode_success(pal, io, hdr)?;
     pal.part_prop_clear(io, PartPropId::CREDENTIAL)?;
-    encode_success(pal, io, hdr)
+    Ok(resp)
 }
