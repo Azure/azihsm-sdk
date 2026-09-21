@@ -70,6 +70,10 @@ fn decode_request(
     body_count: u8,
     req_len: usize,
 ) -> HsmResult<CrashRequest> {
+    if body_count == 1 && decoder.position() == req_len {
+        return Err(HsmError::InvalidArg);
+    }
+
     if body_count != 2 {
         return Err(HsmError::DdiDecodeFailed);
     }
