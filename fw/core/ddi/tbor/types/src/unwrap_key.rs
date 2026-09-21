@@ -24,6 +24,7 @@
 //! * `oaep_hash_algo` — the OAEP [`HashAlgo`] used to wrap the KEK.
 //! * `wrapped_blob` — the RSA-AES-wrapped key
 //!   (`RSA-OAEP(KEK) ‖ AES-KWP(key)`), up to [`UNWRAP_WRAPPED_BLOB_MAX_LEN`].
+//! * `key_label` — caller-supplied key label recorded in the masked-key metadata.
 //!
 //! Outputs:
 //!
@@ -118,6 +119,11 @@ pub struct TborUnwrapKeyReq<'a> {
     /// [`UNWRAP_WRAPPED_BLOB_MAX_LEN`] bytes.
     #[tbor(buffer, max_len = 3072)]
     pub wrapped_blob: &'a [u8],
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to 128 bytes. Empty for an unlabeled key.
+    #[tbor(buffer, max_len = 128)]
+    pub key_label: &'a [u8],
 }
 
 /// `UnwrapKey` response schema.
@@ -159,6 +165,7 @@ mod tests {
     fn request_round_trips_fields() {
         let mut buf = [0u8; 4096];
         let wrapped = [0x5Au8; 300];
+        let key_label = b"imported-key";
         let frame = TborUnwrapKeyReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(7))
@@ -173,6 +180,8 @@ mod tests {
             .unwrap()
             .wrapped_blob(&wrapped)
             .unwrap()
+            .key_label(key_label)
+            .unwrap()
             .finish();
 
         assert_eq!(frame.key_class(), KeyClass::HmacSha256);
@@ -182,6 +191,7 @@ mod tests {
         );
         assert_eq!(frame.oaep_hash_algo(), HashAlgo::Sha256);
         assert_eq!(frame.wrapped_blob(), &wrapped[..]);
+        assert_eq!(frame.key_label(), key_label);
     }
 
     #[test]

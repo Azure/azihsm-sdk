@@ -135,6 +135,7 @@ pub(crate) fn unwrap_with_usage(
         key_usage: usage,
         oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
+        key_label: b"imported-key".to_vec(),
     })
     .expect("UnwrapKey")
 }
@@ -263,6 +264,7 @@ fn unwrap_key_rejects_invalid_usage_for_class_emu() {
         key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
         oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
+        key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
 }

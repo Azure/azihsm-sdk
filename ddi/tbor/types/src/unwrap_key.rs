@@ -85,6 +85,11 @@ pub struct TborUnwrapKeyReq {
     /// The RSA-AES-wrapped key (`RSA-OAEP(KEK) ‖ AES-KWP(key)`).
     #[tbor(max_len = 3072)]
     pub wrapped_blob: Vec<u8>,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to 128 bytes. Empty for an unlabeled key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `UnwrapKey` response.
@@ -119,6 +124,7 @@ mod tests {
             key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
             oaep_hash_algo: 1,
             wrapped_blob: alloc::vec![0x5Au8; 300],
+            key_label: b"imported-key".to_vec(),
         };
         let mut buf = [0u8; 4096];
         let frame = req.encode_request(&mut buf).expect("encode");

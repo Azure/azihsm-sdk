@@ -1,6 +1,23 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_crypto as crypto;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA256;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
+use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
+use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
+use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
+use azihsm_ddi_tbor_types::RSA_OP_DECRYPT;
+use azihsm_ddi_tbor_types::RSA_OP_SIGN;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
+use azihsm_ddi_tbor_types::TborRsaModExpReq;
+use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
+use crypto::ExportableKey;
 use resiliency_macro::*;
 
 use super::*;
@@ -25,7 +42,11 @@ pub(crate) fn get_rsa_unwrapping_key(
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
-    get_rsa_unwrapping_key_raw_no_res(session, priv_key_props, pub_key_props)
+    if session.is_ex() {
+        get_rsa_unwrapping_key_tbor(session, priv_key_props, pub_key_props)
+    } else {
+        get_rsa_unwrapping_key_raw_no_res(session, priv_key_props, pub_key_props)
+    }
 }
 
 /// Raw RSA unwrapping key retrieval — no resiliency retry.
@@ -145,6 +166,32 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
 #[resiliency_key_op(key = "unwrapping_key")]
 pub(crate) fn rsa_aes_unwrap_key_pair(
+    unwrapping_key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    hash_algo: HsmHashAlgo,
+    priv_key_props: HsmKeyProps,
+    pub_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    if unwrapping_key.session().is_ex() {
+        rsa_aes_unwrap_key_pair_tbor(
+            unwrapping_key,
+            wrapped_key,
+            hash_algo,
+            priv_key_props,
+            pub_key_props,
+        )
+    } else {
+        rsa_aes_unwrap_key_pair_mbor(
+            unwrapping_key,
+            wrapped_key,
+            hash_algo,
+            priv_key_props,
+            pub_key_props,
+        )
+    }
+}
+
+fn rsa_aes_unwrap_key_pair_mbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
@@ -278,6 +325,19 @@ fn rsa_mod_exp(
     input: &[u8],
     output: &mut [u8],
 ) -> HsmResult<usize> {
+    if key.session().is_ex() {
+        rsa_mod_exp_tbor(key, op, input, output)
+    } else {
+        rsa_mod_exp_mbor(key, op, input, output)
+    }
+}
+
+fn rsa_mod_exp_mbor(
+    key: &HsmRsaPrivateKey,
+    op: DdiRsaOpType,
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
     let req = DdiRsaModExpCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaModExp, &key.session()),
         data: DdiRsaModExpReq {
@@ -290,9 +350,173 @@ fn rsa_mod_exp(
 
     let resp = key.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))?;
 
-    output.copy_from_slice(resp.data.x.as_slice());
+    if output.len() < resp.data.x.len() {
+        return Err(HsmError::BufferTooSmall);
+    }
+    output[..resp.data.x.len()].copy_from_slice(resp.data.x.as_slice());
 
     Ok(resp.data.x.len())
+}
+
+fn rsa_mod_exp_tbor(
+    key: &HsmRsaPrivateKey,
+    op: DdiRsaOpType,
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
+    let op_type = match op {
+        DdiRsaOpType::Sign => RSA_OP_SIGN,
+        DdiRsaOpType::Decrypt => RSA_OP_DECRYPT,
+        _ => return Err(HsmError::InvalidArgument),
+    };
+
+    // Host RSA operands are big-endian; the TBOR wire uses little-endian.
+    let req = TborRsaModExpReq {
+        session_id: key.session().ex_session_id()?,
+        masked_key: key.masked_key_vec()?,
+        op_type,
+        y: input.iter().rev().copied().collect(),
+    };
+    let mut cookie = None;
+    let resp = key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    if output.len() < resp.x.len() {
+        return Err(HsmError::BufferTooSmall);
+    }
+    for (dst, src) in output[..resp.x.len()].iter_mut().zip(resp.x.iter().rev()) {
+        *dst = *src;
+    }
+    Ok(resp.x.len())
+}
+
+fn get_rsa_unwrapping_key_tbor(
+    session: &HsmSession,
+    mut priv_key_props: HsmKeyProps,
+    mut pub_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    let req = TborGetUnwrappingKeyReq {
+        session_id: session.ex_session_id()?,
+    };
+    let mut cookie = None;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    let crypto_key = hsm_wire_pub_to_crypto(&resp.pub_key)?;
+    let pub_key_der = crypto_key.to_vec().map_hsm_err(HsmError::InternalError)?;
+    priv_key_props.set_pub_key_der(&pub_key_der);
+    pub_key_props.set_pub_key_der(&pub_key_der);
+    Ok((HsmKeyHandle::Unpinned, priv_key_props, pub_key_props))
+}
+
+fn rsa_aes_unwrap_key_pair_tbor(
+    unwrapping_key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    oaep_hash: HsmHashAlgo,
+    priv_key_props: HsmKeyProps,
+    pub_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    if priv_key_props.label().len() > TBOR_KEY_LABEL_MAX_LEN {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    let (key_class, expected_key_kind) = tbor_rsa_key_class_and_kind(&priv_key_props)?;
+    let unwrapping_modulus_len = unwrapping_key.size();
+    if wrapped_key.len() < unwrapping_modulus_len {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    // The host wrapper emits the OAEP ciphertext big-endian; TBOR consumes
+    // only that leading RSA segment in little-endian order.
+    let mut wrapped_blob = wrapped_key.to_vec();
+    wrapped_blob[..unwrapping_modulus_len].reverse();
+
+    let req = TborUnwrapKeyReq {
+        session_id: unwrapping_key.session().ex_session_id()?,
+        scope: priv_key_props.tbor_scope(),
+        key_class,
+        key_usage: rsa_tbor_key_usage(&priv_key_props)?,
+        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
+        wrapped_blob,
+        key_label: priv_key_props.label().to_vec(),
+    };
+    let mut cookie = None;
+    let resp = unwrapping_key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    if resp.key_kind != expected_key_kind {
+        return Err(HsmError::InvalidKeyProps);
+    }
+    let modulus_len = resp.pub_key.len().saturating_sub(4);
+    if modulus_len != priv_key_props.bits() as usize / 8 {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    let crypto_key = hsm_wire_pub_to_crypto(&resp.pub_key)?;
+    let pub_key_der = crypto_key.to_vec().map_hsm_err(HsmError::InternalError)?;
+    let (dev_priv_key_props, dev_pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(&resp.masked_key, &pub_key_der)?;
+
+    if !priv_key_props.validate_dev_props(&dev_priv_key_props)
+        || !pub_key_props.validate_dev_props(&dev_pub_key_props)
+    {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    Ok((
+        HsmKeyHandle::Unpinned,
+        dev_priv_key_props,
+        dev_pub_key_props,
+    ))
+}
+
+fn hsm_wire_pub_to_crypto(wire: &[u8]) -> HsmResult<crypto::RsaPublicKey> {
+    if wire.len() <= 4 {
+        return Err(HsmError::InternalError);
+    }
+
+    let modulus_len = wire.len() - 4;
+    let mut big_endian = Vec::with_capacity(wire.len());
+    big_endian.extend(wire[..modulus_len].iter().rev());
+    big_endian.extend(wire[modulus_len..].iter().rev());
+    crypto::RsaPublicKey::from_hsm_bytes(&big_endian).map_hsm_err(HsmError::InternalError)
+}
+
+fn rsa_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
+    if props.can_sign() {
+        Ok(KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+    } else if props.can_decrypt() {
+        Ok(KEY_USAGE_DECRYPT | KEY_USAGE_ENCRYPT)
+    } else {
+        Err(HsmError::InvalidKeyProps)
+    }
+}
+
+fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
+    match algo {
+        HsmHashAlgo::Sha256 => Ok(HASH_ALGO_SHA256),
+        HsmHashAlgo::Sha384 => Ok(HASH_ALGO_SHA384),
+        HsmHashAlgo::Sha512 => Ok(HASH_ALGO_SHA512),
+        _ => Err(HsmError::InvalidArgument),
+    }
+}
+
+fn tbor_rsa_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
+    match (props.kind(), props.bits()) {
+        (HsmKeyKind::Rsa, 2048) => Ok((KEY_CLASS_RSA, 4)),
+        (HsmKeyKind::Rsa, 3072) => Ok((KEY_CLASS_RSA, 5)),
+        (HsmKeyKind::Rsa, 4096) => Ok((KEY_CLASS_RSA, 6)),
+        (HsmKeyKind::RsaCrt, 2048) => Ok((KEY_CLASS_RSA_CRT, 7)),
+        (HsmKeyKind::RsaCrt, 3072) => Ok((KEY_CLASS_RSA_CRT, 8)),
+        (HsmKeyKind::RsaCrt, 4096) => Ok((KEY_CLASS_RSA_CRT, 9)),
+        _ => Err(HsmError::InvalidKeyProps),
+    }
 }
 
 impl TryFrom<HsmKeyKind> for DdiKeyClass {
