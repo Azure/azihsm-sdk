@@ -129,12 +129,12 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        // Session teardown: a single DeleteEphemeral clears the session's
+        // Session teardown: a single DeleteSessionOnly clears the session's
         // bulk keys on the fast-path engine (matched by session id + app id;
         // a no-op when the session owns none), then reclaim their HSM-side
         // slot bitmap, then drop the vault entries.
         let sess = u16::from(session_id);
-        fp_delete_ephemeral(self, io, sess).await?;
+        fp_delete_session_only(self, io, sess).await?;
         vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
             if is_bulk_kind(kind) {
                 let bytes: &[u8] = blob;
@@ -421,17 +421,21 @@ async fn fp_bulk_delete(
     Ok(())
 }
 
-/// Clear all of session `session_id`'s ephemeral bulk keys from the
+/// Clear all of session `session_id`'s session-scoped bulk keys from the
 /// fast-path engine in a single message — the engine iterates its table and
 /// matches by session id + app id, mirroring the reference firmware's
 /// close-session path.
-async fn fp_delete_ephemeral(pal: &UnoHsmPal, io: &impl HsmIo, session_id: u16) -> HsmResult<()> {
+async fn fp_delete_session_only(
+    pal: &UnoHsmPal,
+    io: &impl HsmIo,
+    session_id: u16,
+) -> HsmResult<()> {
     let pcie_fn = part_id_to_pcie_fn(u8::from(io.pid()))?;
     let info = KeyUpdateInfo {
         key_index: 0,
         resource_id: 0,
         pfn: pcie_fn,
-        action: KeyUpdateAction::DeleteEphemeral.0,
+        action: KeyUpdateAction::DeleteSessionOnly.0,
         session_id,
         app_id: FP_APP_ID,
         flag: AesKeyFlag::new().with_session_only(true).into_bits(),

@@ -725,8 +725,8 @@ pub enum KeyUpdateAction {
     /// Delete a single bulk key.
     Delete = 0,
 
-    /// Delete all ephemeral (session-scoped) bulk keys.
-    DeleteEphemeral = 1,
+    /// Delete all session-scoped bulk keys for a given session.
+    DeleteSessionOnly = 1,
 
     /// Delete all bulk keys.
     DeleteAll = 2,
