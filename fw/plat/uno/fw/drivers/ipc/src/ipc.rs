@@ -294,6 +294,23 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
         pend_clr.set(0xFFFF_FFFF);
     }
 
+    /// Discards anything already sitting in a pair's RX ring.
+    ///
+    /// The rings live in pSRAM, which the remote core owns and which does not
+    /// necessarily start empty from this core's point of view: a reply left
+    /// unconsumed by an earlier boot leaves `rx_ci` behind `rx_pi`, and every
+    /// later request then reads someone else's answer. Aligning the consumer
+    /// index to the producer's costs nothing at init and removes a class of
+    /// failure that is otherwise invisible until replies start being read.
+    pub fn drain(&self, pair: u8) {
+        self.state.with(|s| {
+            let p = &mut s.pairs[pair as usize];
+            // SAFETY: ring index registers, mapped for the life of the driver.
+            let pi = unsafe { p.rx_pi.read_volatile() };
+            unsafe { p.rx_ci.write_volatile(pi) };
+        });
+    }
+
     /// Enable interrupts for a pair's inbound descriptor.
     pub fn enable(&self, pair: u8) {
         self.state.with(|s| {
@@ -479,14 +496,22 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                     return Poll::Pending;
                 }
 
-                // Response arrived — read from RX ring
+                // Response arrived — drain the RX ring, keeping the newest.
+                //
+                // Consuming exactly one entry assumed exactly one reply per
+                // request. The FP side can post more than one for a single
+                // ML-DSA request, and a surplus left in the ring does not go
+                // away: it makes the *next* request read this one's answer,
+                // and the next, indefinitely. Only one request is in flight
+                // on a pair at a time, so everything queued here belongs to
+                // it and the last entry is the current answer.
                 let pi = unsafe { p.rx_pi.read_volatile() } as u16;
-                let ci = unsafe { p.rx_ci.read_volatile() } as u16;
+                let mut ci = unsafe { p.rx_ci.read_volatile() } as u16;
 
-                if pi != ci {
+                while ci != pi {
                     unsafe { p.copy_from_rx(ci, resp) };
-                    let new_ci = (ci + 1) % p.depth;
-                    unsafe { p.rx_ci.write_volatile(new_ci as u32) };
+                    ci = (ci + 1) % p.depth;
+                    unsafe { p.rx_ci.write_volatile(ci as u32) };
                 }
 
                 // Clear pending

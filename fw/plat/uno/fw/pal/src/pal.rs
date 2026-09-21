@@ -811,6 +811,9 @@ impl HsmPal for UnoHsmPal {
         // Without this the FP response descriptor never raises its interrupt,
         // so `wake` never marks the send slot complete and the first request
         // to FP1 hangs forever, holding the pair against every later sender.
+        // Before enabling it, not after: an interrupt for a stale reply would
+        // otherwise complete the first real request with the wrong answer.
+        self.ipc.drain(IpcChannel::FpMessage as u8);
         self.ipc.enable(IpcChannel::FpMessage as u8);
         azihsm_fw_uno_drivers_part_store::PartStore::init_default();
         boot_status::set(BootStatus::Done);
