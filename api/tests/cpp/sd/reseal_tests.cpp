@@ -141,7 +141,7 @@ class azihsm_sd_reseal_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, sd_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;

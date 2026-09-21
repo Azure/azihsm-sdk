@@ -5,7 +5,8 @@
 //!
 //! This module provides low-level helpers for executing the DDI `Hmac` operation.
 //! It bridges the N-API key wrapper layer to the underlying DDI protocol by:
-//! - Encoding request payloads into MBOR
+//! - Encoding request payloads into MBOR (device-resident key) or TBOR
+//!   (caller-held masked key, unmask-on-use)
 //! - Executing the command on the device
 //! - Copying the returned tag into caller-provided buffers
 //!
@@ -20,6 +21,7 @@ use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
+use azihsm_ddi_tbor_types::TborHmacReq;
 use resiliency_macro::resiliency_key_gen;
 use resiliency_macro::resiliency_key_op;
 
@@ -51,6 +53,17 @@ use super::*;
 /// - The provided `signature` buffer is too small.
 #[resiliency_key_op(key = "key")]
 pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> HsmResult<usize> {
+    // A V2 (TBOR) session holds the key as a caller-held masked blob
+    // (unmask-on-use); a V1 (MBOR) session uses the device-resident key.
+    if key.session().is_ex() {
+        hmac_sign_tbor(key, data, signature)
+    } else {
+        hmac_sign_mbor(key, data, signature)
+    }
+}
+
+/// Computes an HMAC tag over MBOR `Hmac` using the device-resident key.
+fn hmac_sign_mbor(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> HsmResult<usize> {
     // build hmac sign ddi request
     let req = DdiHmacCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::Hmac, &key.session()),
@@ -70,6 +83,33 @@ pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> 
     signature[..resp.data.tag.len()].copy_from_slice(resp.data.tag.as_slice());
 
     Ok(resp.data.tag.len())
+}
+
+/// Computes an HMAC tag over TBOR `Hmac` using the caller-held masked key
+/// (unmask-on-use); nothing is stored on-device.
+fn hmac_sign_tbor(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> HsmResult<usize> {
+    let props = key.props();
+    let masked = props.masked_key().ok_or(HsmError::InternalError)?;
+
+    let req = TborHmacReq {
+        session_id: key.session().ex_session_id()?,
+        masked_key: masked.to_vec(),
+        msg: data.to_vec(),
+    };
+    let mut cookie = None;
+    let resp = key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    // check if signature buffer is large enough
+    if signature.len() < resp.tag.len() {
+        Err(HsmError::BufferTooSmall)?;
+    }
+    // Copy output signature
+    signature[..resp.tag.len()].copy_from_slice(&resp.tag);
+
+    Ok(resp.tag.len())
 }
 
 /// Generates a random HMAC key via TBOR `HmacGenerateKey`.

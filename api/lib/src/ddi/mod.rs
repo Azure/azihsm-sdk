@@ -78,6 +78,24 @@ use super::*;
 // cannot drift.
 const _: () = assert!(crate::PSK_LEN == azihsm_ddi_tbor_types::PSK_LEN);
 
+/// Minimum negotiated API revision required by TBOR operations.
+pub(crate) const TBOR_MIN_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 1 };
+
+/// Returns `true` when `rev` supports TBOR operations.
+pub(crate) fn rev_supports_tbor(rev: HsmApiRev) -> bool {
+    rev >= TBOR_MIN_API_REV
+}
+
+/// Validates that `rev` supports TBOR operations, returning
+/// [`HsmError::UnsupportedApiRevision`] otherwise.
+pub(crate) fn require_tbor_rev(rev: HsmApiRev) -> HsmResult<()> {
+    if rev_supports_tbor(rev) {
+        Ok(())
+    } else {
+        Err(HsmError::UnsupportedApiRevision)
+    }
+}
+
 /// Converts a DDI error into the corresponding `HsmError`.
 ///
 /// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
