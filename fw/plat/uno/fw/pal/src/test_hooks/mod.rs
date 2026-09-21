@@ -104,7 +104,15 @@ pub(crate) async fn mbor_dispatch<'p>(
     match hdr.op {
         DDI_OP_GET_PRIV_KEY => get_priv_key::get_priv_key(pal, io, &mut decoder, &hdr, req_len),
         DDI_OP_RAW_KEY_IMPORT => {
-            raw_key_import::raw_key_import(pal, io, &mut decoder, &hdr, req_len).await
+            let result =
+                raw_key_import::raw_key_import(pal, io, &mut decoder, &hdr, req_len).await;
+
+            // RawKeyImport carries plaintext key material in the request.
+            // Scrub the complete inbound frame after dispatch so every
+            // handler exit path, including validation failures, wipes it.
+            req.zeroize();
+
+            result
         }
         _ => Err(HsmError::UnsupportedCmd),
     }

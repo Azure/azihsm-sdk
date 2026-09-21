@@ -13,11 +13,11 @@
 //! Scope (parity with the legacy firmware `import_raw_key` and its
 //! tests): ECDH shared secrets (`Secret256/384/521`), fixed-length HMAC
 //! keys (`HmacSha256/384/512`), and variable-length HMAC keys
-//! (`VarHmac256/384/512`) import as session-scoped keys; `Rsa2kPrivate`
-//! imports (usage = `Unwrap` only) as the partition unwrapping key via a
-//! dedicated internal-vault path. AES, ECC, and other RSA kinds are
-//! rejected with `InvalidKeyType` — those arrive via their own generate
-//! / unwrap handlers.
+//! (`VarHmac256/384/512`) import with the requested app or session
+//! availability; `Rsa2kPrivate` imports (usage = `Unwrap` only) as the
+//! partition unwrapping key via a dedicated internal-vault path. AES,
+//! ECC, and other RSA kinds are rejected with `InvalidKeyType` — those
+//! arrive via their own generate / unwrap handlers.
 
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor::MborDecode;
@@ -41,6 +41,7 @@ use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
+use azihsm_fw_uno_drivers_part_store::PartStore;
 
 use super::DDI_OP_RAW_KEY_IMPORT;
 use super::common::ReqHdr;
@@ -64,7 +65,11 @@ struct DdiRawKeyImportReq<'a> {
     /// On-wire key kind the raw bytes are imported as.
     #[ddi(id = 2)]
     key_kind: DdiKeyType,
-    /// Optional host key tag (app-scoped keys only).
+    /// Host key tag retained for compatibility with the mainline hook.
+    ///
+    /// App-key tags are accepted but are not persisted or used by the
+    /// refactor vault. Session-scoped keys still reject a populated tag,
+    /// matching the mainline validation rule.
     #[ddi(id = 3)]
     key_tag: Option<u16>,
     /// Target key properties (usage / availability / label).
@@ -134,16 +139,18 @@ pub(super) async fn raw_key_import<'p>(
     // (`Rsa2kPrivate` is handled by the unwrapping-key path above) and
     // any usage the kind may not carry.
     let attrs = raw_import_attrs(body.key_kind, &body.key_properties.key_metadata)?;
+    // The refactor vault does not persist app-key tags, but accepts them
+    // for compatibility with the mainline validation hook. Mainline
+    // rejects tags for session-scoped keys because those keys are bound
+    // to a session rather than addressed by tag.
+    if attrs.session() && body.key_tag.is_some() {
+        return Err(HsmError::InvalidArg);
+    }
     let vault_kind = vault_kind_from_ddi(body.key_kind)?;
-
-    // Session-only keys are anonymous — disallow a host-supplied
-    // `key_tag` because the key cannot be looked up across sessions.
-    check_session_key_tag(attrs, body.key_tag)?;
 
     // Copy the raw plaintext into a vault-import scratch buffer and
     // commit it, session-scoped iff requested. Scrub the host-supplied
-    // copy on the allocation-failure path too — per-IO DMA is not
-    // implicitly wiped, and this hook promises to scrub `body.raw`.
+    // copy on allocation failure to minimize plaintext residency.
     let key_buf = match pal.dma_alloc(io, body.raw.len()) {
         Ok(buf) => buf,
         Err(e) => {
@@ -162,43 +169,55 @@ pub(super) async fn raw_key_import<'p>(
         .vault_key_create(io, key_buf, vault_kind, session_binding, attrs)
         .await;
 
-    // Scrub the plaintext scratch before propagating a create failure —
-    // per-IO DMA is not implicitly wiped on reuse. `DmaBuf::zeroize` is
-    // a volatile, un-elidable wipe.
+    // Scrub the plaintext scratch immediately after vault creation to
+    // minimize plaintext residency. `DmaBuf::zeroize` is a volatile,
+    // un-elidable wipe.
     key_buf.zeroize();
 
     let key_handle = key_handle?;
     let key_id: u16 = key_handle.into();
 
-    // Build the host's opaque re-import blob from the committed key so the
-    // masked bytes match exactly what the host will later re-import.
-    let plaintext = pal.vault_key(io, key_handle)?;
-    let key_length = plaintext.len() as u16;
-    let masked_key = mask_blob(
-        pal,
-        io,
-        HsmSessId::from(sess_id),
-        attrs,
-        vault_kind_ddi(vault_kind)?,
-        body.key_properties.key_label,
-        key_length,
-        plaintext,
-    )
-    .await?;
-
-    let resp = pal.dma_alloc_var(io, |buf| {
-        encode_resp(
-            &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
-            &DdiRawKeyImportResp {
-                key_id,
-                bulk_key_id: None,
-                masked_key,
-            },
-            buf,
+    // The key now exists in the vault but has not been returned to the
+    // caller. If response construction fails, delete it so the caller
+    // cannot lose an unreachable live key.
+    let response = async {
+        let plaintext = pal.vault_key(io, key_handle)?;
+        let key_length = plaintext.len() as u16;
+        let masked_key = mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            attrs,
+            vault_kind_ddi(vault_kind)?,
+            body.key_properties.key_label,
+            key_length,
+            plaintext,
         )
-    })?;
+        .await?;
 
-    Ok(resp)
+        pal.dma_alloc_var(io, |buf| {
+            encode_resp(
+                &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
+                &DdiRawKeyImportResp {
+                    key_id,
+                    bulk_key_id: None,
+                    masked_key,
+                },
+                buf,
+            )
+        })
+    }
+    .await;
+
+    match response {
+        Ok(resp) => Ok(resp),
+        Err(err) => {
+            // Cleanup errors take precedence because they indicate that
+            // sensitive vault state remains after the failed operation.
+            pal.vault_key_delete(io, key_handle).await?;
+            Err(err)
+        }
+    }
 }
 
 /// Import a host-supplied plaintext RSA-2048 private key as the
@@ -207,18 +226,13 @@ pub(super) async fn raw_key_import<'p>(
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects anything
 /// else with `InvalidPermissions`. All fallible response preparation
-/// completes before the partition property is committed to the new key.
-/// If the commit fails, nothing has been published, so the unpublished
-/// replacement is dropped and the partition stays on its previous key.
+/// completes before the partition property is assigned to the new key.
+/// If response preparation fails, the unpublished key is deleted.
 ///
-/// A previously installed unwrapping key is **intentionally not reclaimed
-/// inline**. Uno's PAL is lock-free (`partition_lock` is a no-op) and DDI
-/// commands run on a single-threaded cooperative executor, so a
-/// concurrent `GetUnwrappingKey` may hold the old key's vault slice across
-/// its masking `await`; zeroizing it here could corrupt that reader, and
-/// there is no retirement/quiescence mechanism to know when the slice is
-/// free. The orphaned key is instead reclaimed when the partition is torn
-/// down (`vault_clear` zeroizes every key in the partition's tables).
+/// This validation hook only installs an unwrapping key when the
+/// partition does not already have one. Replacement is rejected because
+/// Uno has no lock or key-borrow retirement mechanism that would make
+/// deleting a concurrently referenced old key safe.
 ///
 /// The response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`]
 /// — matching how the unwrapping key is masked elsewhere — so the host's
@@ -233,11 +247,10 @@ async fn raw_import_unwrapping_key<'p>(
 ) -> HsmResult<&'p DmaBuf> {
     // Unwrap-only; SignVerify / EncryptDecrypt -> InvalidPermissions.
     let attrs = for_rsa_unwrap(&body.key_properties.key_metadata)?;
-
     // Copy the raw plaintext into a vault-import scratch buffer and
     // create an unpublished partition-internal unwrapping key. Scrub the
-    // host-supplied copy on the allocation-failure path too — per-IO DMA
-    // is not implicitly wiped, and this hook promises to scrub `body.raw`.
+    // host-supplied copy on allocation failure to minimize plaintext
+    // residency.
     let key_buf = match pal.dma_alloc(io, body.raw.len()) {
         Ok(buf) => buf,
         Err(e) => {
@@ -301,21 +314,22 @@ async fn raw_import_unwrapping_key<'p>(
         }
     };
 
-    // Commit the property to the new key. If the commit fails, nothing has
-    // been published — drop the unpublished replacement and surface the
-    // error; the partition stays on its previous key.
-    if let Err(e) = part_set_unwrapping_key_id(pal, io, key_id) {
+    // Publish only when no unwrapping key is already installed. The
+    // check-and-set sequence contains no await, so concurrent imports
+    // cannot both commit on the single-threaded executor.
+    let part = match PartStore::partition(io.pid()) {
+        Ok(part) => part,
+        Err(e) => {
+            pal.vault_key_delete(io, key_id).await?;
+            return Err(e);
+        }
+    };
+    if part.unwrapping_key_id().is_some() {
         pal.vault_key_delete(io, key_id).await?;
-        return Err(e);
+        return Err(HsmError::InvalidArg);
     }
+    part.set_unwrapping_key_id(Some(key_id));
 
-    // The property now names the new, valid key. The previous unwrapping
-    // key (if any) is deliberately left in place rather than deleted here:
-    // on Uno's lock-free cooperative executor a concurrent
-    // `GetUnwrappingKey` may hold the old key's vault slice across its
-    // masking await, so zeroizing it now could corrupt that reader, and
-    // there is no retirement mechanism to know when the slice is free. The
-    // orphan is reclaimed at partition teardown by `vault_clear`.
     Ok(resp)
 }
 
@@ -494,16 +508,6 @@ fn validate_pairs(metadata: &DdiTargetKeyMetadata) -> HsmResult<()> {
     Ok(())
 }
 
-/// Reject a session-only key request that also carries a host-supplied
-/// `key_tag`.  Session-only keys are anonymous and cannot be looked up
-/// across sessions, so a tag is meaningless.
-fn check_session_key_tag(attrs: HsmVaultKeyAttrs, key_tag: Option<u16>) -> HsmResult<()> {
-    if attrs.session() && key_tag.is_some() {
-        return Err(HsmError::InvalidArg);
-    }
-    Ok(())
-}
-
 /// Produce a complete masked-key envelope for `plaintext` into a fresh
 /// DMA buffer and return the written slice.
 ///
@@ -553,9 +557,4 @@ async fn mask_blob<'p>(
 fn part_mk_key_id(pal: &UnoHsmPal, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
     let raw = pal.part_prop_get_u16(io, PartPropId::MK_KEY_ID)?;
     Ok(HsmKeyId::from(raw))
-}
-
-/// Record `key_id` as the partition RSA unwrapping key id.
-fn part_set_unwrapping_key_id(pal: &UnoHsmPal, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
-    pal.part_prop_set_u16(io, PartPropId::RSA_UNWRAPPING_KEY_ID, u16::from(key_id))
 }
