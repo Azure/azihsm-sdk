@@ -84,6 +84,7 @@ pub(super) fn expect_import_error(
     key_type: DdiKeyType,
     usage: DdiKeyUsage,
     availability: DdiKeyAvailability,
+    key_tag: Option<u16>,
     expected: DdiStatus,
 ) {
     if !require_raw_key_import(dev, session_id) {
@@ -91,7 +92,7 @@ pub(super) fn expect_import_error(
     }
     let key = [0x5au8; 32];
     let properties = helper_key_properties(usage, availability);
-    let resp = helper_raw_key_import(dev, Some(session_id), &key, key_type, None, properties);
+    let resp = helper_raw_key_import(dev, Some(session_id), &key, key_type, key_tag, properties);
     assert!(matches!(resp, Err(DdiError::DdiStatus(status)) if status == expected));
 }
 
@@ -99,6 +100,7 @@ pub(super) fn expect_rsa2k_import_error(
     dev: &mut <DdiTest as Ddi>::Dev,
     session_id: u16,
     usage: DdiKeyUsage,
+    key_tag: Option<u16>,
     expected: DdiStatus,
 ) {
     if !require_raw_key_import(dev, session_id) {
@@ -111,7 +113,7 @@ pub(super) fn expect_rsa2k_import_error(
         Some(session_id),
         &key,
         DdiKeyType::Rsa2kPrivate,
-        None,
+        key_tag,
         properties,
     );
     assert!(matches!(resp, Err(DdiError::DdiStatus(status)) if status == expected));

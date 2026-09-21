@@ -7,10 +7,8 @@
 //! open session and asserts the platform handler reports success. The
 //! action needs no request-specific payload.
 //!
-//! Requires the `helpers` feature (host send helpers) and a device
-//! whose firmware is built with `mcr_test_hooks`.
+//! Requires a device whose firmware is built with `mcr_test_hooks`.
 
-#![cfg(feature = "helpers")]
 #![allow(clippy::unwrap_used)]
 
 mod common;
@@ -18,7 +16,10 @@ mod common;
 use azihsm_ddi::DdiError;
 use azihsm_ddi_mbor_test_hooks::helper_test_action_cmd;
 use azihsm_ddi_mbor_test_hooks::TestActionRequest;
+use azihsm_ddi_mbor_types::DdiAesKeySize;
 use azihsm_ddi_mbor_types::DdiApiRev;
+use azihsm_ddi_mbor_types::DdiKeyAvailability;
+use azihsm_ddi_mbor_types::DdiKeyUsage;
 use azihsm_ddi_mbor_types::DdiStatus;
 use common::common_cleanup;
 use common::common_setup;
@@ -29,11 +30,23 @@ use common::TEST_CRED_PIN;
 use test_with_tracing::test;
 
 #[test]
-fn clear_user_credentials_succeeds() {
+fn test_part_prov_only_once() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
+            let key_properties =
+                common::helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+            let resp = common::helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_properties,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
             let resp =
                 helper_test_action_cmd(dev, session_id, TestActionRequest::ClearUserCredentials);
 
@@ -42,7 +55,9 @@ fn clear_user_credentials_succeeds() {
                 return;
             }
 
-            assert_eq!(resp.unwrap().hdr.status, DdiStatus::Success);
+            let resp = resp.unwrap();
+            assert_eq!(resp.hdr.sess_id, Some(session_id));
+            assert_eq!(resp.hdr.status, DdiStatus::Success);
 
             let resp = common::helper_get_session_encryption_key(
                 dev,

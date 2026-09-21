@@ -24,7 +24,6 @@
 //!   skip until the cross-core crash path exists. They are kept here so the
 //!   suite documents the full intended matrix.
 
-#![cfg(feature = "helpers")]
 #![allow(clippy::unwrap_used)]
 
 mod common;

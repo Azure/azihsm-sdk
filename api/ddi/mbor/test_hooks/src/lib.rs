@@ -5,10 +5,7 @@
 //!
 //! These wire types mirror the requests served by the platform test-hook
 //! handlers below the PAL (`fw/plat/uno/fw/pal/src/test_hooks`). Firmware
-//! feature selection is owned by the Uno firmware; host helpers are enabled
-//! uniformly through this crate's `helpers` feature.
-
-#![cfg_attr(not(any(feature = "fuzzing", feature = "helpers")), no_std)]
+//! feature selection is owned independently by the Uno firmware.
 
 mod get_priv_key;
 mod raw_key_import;

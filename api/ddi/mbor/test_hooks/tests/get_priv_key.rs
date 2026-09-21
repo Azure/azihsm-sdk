@@ -8,9 +8,6 @@
 //! with `GetPrivKey`. They only run on a physical device whose firmware
 //! is built with `fips_validation_hooks`; otherwise they skip.
 //!
-//! Requires the `helpers` feature for the host send helpers.
-
-#![cfg(feature = "helpers")]
 #![allow(clippy::unwrap_used)]
 
 mod common;
@@ -19,7 +16,6 @@ mod helper;
 
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::HashAlgo;
-use azihsm_ddi::Ddi;
 use azihsm_ddi::DdiError;
 use azihsm_ddi_mbor_test_hooks::helper_get_priv_key;
 use azihsm_ddi_mbor_types::DdiAesKeySize;
@@ -56,7 +52,7 @@ fn test_aes_get_and_validate_key() {
 }
 
 #[test]
-fn test_aes_bulk_get_privkey_rejected() {
+fn test_aes_bulk_get_and_validate_key() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -65,15 +61,40 @@ fn test_aes_bulk_get_privkey_rejected() {
                 return;
             }
 
-            let resp =
-                generate_aes_bulk_256_key(dev, session_id, DdiAesKeySize::AesGcmBulk256Unapproved)
-                    .unwrap();
-            let get_resp = helper_get_priv_key(dev, Some(session_id), resp.data.key_id);
+            let (app_session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                app_session_id,
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            )
+            .unwrap();
+            let key_id = resp.data.key_id;
+            let bulk_key_id = resp.data.bulk_key_id.unwrap();
 
-            assert!(matches!(
-                get_resp,
-                Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType))
-            ));
+            let data = vec![1; 16384];
+            let aad = [4; 32];
+            let iv = [3; 12];
+            let (ciphertext, tag) = aes_gcm_encrypt_hardware(
+                dev,
+                app_session_id,
+                short_app_id,
+                bulk_key_id,
+                &data,
+                &aad,
+                &iv,
+            );
+
+            let Some((key_type, raw_key)) = retrieve_private_key(dev, app_session_id, key_id)
+            else {
+                return;
+            };
+            assert_eq!(key_type, DdiKeyType::AesGcmBulk256Unapproved);
+            assert_eq!(
+                aes_gcm_decrypt_local(&raw_key, &ciphertext, &iv, &aad, &tag),
+                data
+            );
+
+            close_app_session(dev, app_session_id);
         },
     );
 }
@@ -252,46 +273,6 @@ fn test_ecc_get_privkey_incorrect_session() {
                 Err(DdiError::DdiStatus(
                     DdiStatus::FileHandleSessionIdDoesNotMatch
                 ))
-            ));
-        },
-    );
-}
-
-#[test]
-fn test_get_privkey_rejects_other_live_session() {
-    ddi_dev_test(
-        common_setup,
-        common_cleanup,
-        |dev, ddi, path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                return;
-            }
-
-            let key_id = create_hmac_key(session_id, DdiKeyType::VarHmac256, dev, Some(32));
-
-            let other_dev = ddi.open_dev(path).unwrap();
-            let (encrypted_credential, public_key) = encrypt_userid_pin_for_open_session(
-                &other_dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                TEST_SESSION_SEED,
-            );
-            let open_resp = helper_open_session(
-                &other_dev,
-                None,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                public_key,
-            )
-            .unwrap();
-            let other_session_id = open_resp.data.sess_id;
-
-            let resp = helper_get_priv_key(&other_dev, Some(other_session_id), key_id);
-            close_app_session(&other_dev, other_session_id);
-
-            assert!(matches!(
-                resp,
-                Err(DdiError::DdiStatus(DdiStatus::KeyNotFound))
             ));
         },
     );

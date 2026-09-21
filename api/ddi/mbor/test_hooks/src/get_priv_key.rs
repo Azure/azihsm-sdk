@@ -32,7 +32,6 @@ pub struct DdiGetPrivKeyResp {
 ddi_op_req_resp!(DdiGetPrivKey);
 
 /// Read back a key's private material from validation firmware.
-#[cfg(feature = "helpers")]
 pub fn helper_get_priv_key(
     dev: &<azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
     session_id: Option<u16>,

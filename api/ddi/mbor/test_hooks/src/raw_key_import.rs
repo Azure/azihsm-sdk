@@ -40,7 +40,6 @@ pub struct DdiRawKeyImportResp {
 ddi_op_req_resp!(DdiRawKeyImport);
 
 /// Import raw key material into validation firmware.
-#[cfg(feature = "helpers")]
 #[allow(clippy::too_many_arguments)]
 pub fn helper_raw_key_import(
     dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
@@ -73,7 +72,6 @@ pub fn helper_raw_key_import(
 }
 
 /// Read back a fixed-length raw secret and validate its length.
-#[cfg(feature = "helpers")]
 pub fn retrieve_shared_raw_key<const N: usize>(
     dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
     session_id: u16,
@@ -93,7 +91,6 @@ pub fn retrieve_shared_raw_key<const N: usize>(
 }
 
 /// Read back a variable-length raw secret and validate its length.
-#[cfg(feature = "helpers")]
 pub fn retrieve_shared_raw_key_var(
     dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
     session_id: u16,

@@ -151,7 +151,7 @@ pub enum DdiTestActionGDMAErrorType {
     /// GDMA Data Access Error Bit
     GdmaDataAccessErrorBit = 2,
 
-    /// GDMA Devlivery Queue Error Bit
+    /// GDMA Delivery Queue Error Bit
     GdmaDeliveryQueueErrorBit = 3,
 
     /// GDMA Completion Queue Error Bit
@@ -490,7 +490,6 @@ pub struct DdiTestActionResp {
 ddi_op_req_resp!(DdiTestAction);
 
 /// Execute a typed `TestAction` request against validation firmware.
-#[cfg(feature = "helpers")]
 pub fn helper_test_action_cmd(
     dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
     session_id: u16,
