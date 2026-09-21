@@ -45,16 +45,17 @@ pub(crate) fn try_import_rsa_key_pair(
     usage: ImportedRsaKeyUsage,
     is_session: bool,
 ) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
-    try_import_rsa_key_pair_with_kind(session, der, bits, HsmKeyKind::Rsa, usage, is_session)
+    try_import_rsa_key_pair_with_kind(session, der, bits, HsmKeyKind::Rsa, &[], usage, is_session)
 }
 
-/// Imports RSA private-key DER while allowing the private key representation
-/// to be selected as RSA or RSA-CRT.
+/// Imports RSA private-key DER with an explicit private-key representation
+/// and caller-supplied label.
 pub(crate) fn try_import_rsa_key_pair_with_kind(
     session: &HsmSession,
     der: &[u8],
     bits: u32,
     kind: HsmKeyKind,
+    label: &[u8],
     usage: ImportedRsaKeyUsage,
     is_session: bool,
 ) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
@@ -69,6 +70,7 @@ pub(crate) fn try_import_rsa_key_pair_with_kind(
         .class(HsmKeyClass::Private)
         .key_kind(kind)
         .bits(bits)
+        .label(label)
         .can_sign(can_sign)
         .can_decrypt(can_decrypt)
         .is_session(is_session)
@@ -79,6 +81,7 @@ pub(crate) fn try_import_rsa_key_pair_with_kind(
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(bits)
+        .label(label)
         .can_verify(can_verify)
         .can_encrypt(can_encrypt)
         .is_session(is_session)

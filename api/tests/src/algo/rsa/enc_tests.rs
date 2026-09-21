@@ -34,18 +34,22 @@ fn test_rsa_crt_enc_dec_tbor_all_key_sizes() {
         .expect("rotate the default CO PSK before using crypto commands");
 
     for (bits, modulus_bytes) in [(2048, 256), (3072, 384), (4096, 512)] {
-        let host_key = crypto::RsaPrivateKey::generate(modulus_bytes)
-            .expect("Failed to generate RSA Key");
+        let label = b"rsa-crt-decrypt-key";
+        let host_key =
+            crypto::RsaPrivateKey::generate(modulus_bytes).expect("Failed to generate RSA Key");
         let der = host_key.to_vec().expect("Failed to export RSA Key");
         let (priv_key, pub_key) = try_import_rsa_key_pair_with_kind(
             &session,
             &der,
             bits,
             HsmKeyKind::RsaCrt,
+            label,
             ImportedRsaKeyUsage::EncryptDecrypt,
             true,
         )
         .expect("Failed to import RSA-CRT encrypt/decrypt key pair over TBOR");
+        assert_eq!(priv_key.label(), label.to_vec());
+        assert_eq!(pub_key.label(), label.to_vec());
 
         let plaintext = b"RSA TBOR encrypt/decrypt";
         let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, None);

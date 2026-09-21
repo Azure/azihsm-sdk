@@ -15,6 +15,7 @@
 //!   carries no public key.  (Using the recovered key via `Hmac` to
 //!   compute a MAC is exercised by the HMAC command's own emu tests,
 //!   which build on this command.)
+//! * ECC P-256 — PKCS#8 decode and public-key re-derivation.
 //! * RSA-4096 (CRT and non-CRT) — the largest supported key and the
 //!   tightest on the per-IO DMA budget; exercises the transient-vault
 //!   unwrap path that keeps it within 8 KB.
@@ -140,11 +141,10 @@ pub(crate) fn unwrap_with_usage(
     .expect("UnwrapKey")
 }
 
-/// Import a host-generated RSA-4096 key via `UnwrapKey` and assert the
-/// recovered blob is well-formed.  RSA-4096 is the largest supported key
-/// and the tightest on the per-IO DMA budget — this exercises the
-/// transient-vault unwrap path that keeps it within 8 KB (both the CRT and
-/// non-CRT vault forms).
+/// Import a host-generated RSA-4096 key via `UnwrapKey` and check its
+/// masked blob and public-key size. RSA-4096 is the largest supported key
+/// and the tightest on the per-IO DMA budget, exercising the transient-vault
+/// unwrap path for both CRT and non-CRT vault forms.
 fn rsa_4k_unwrap_roundtrip(crt: bool) {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);

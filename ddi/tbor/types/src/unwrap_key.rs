@@ -45,6 +45,19 @@ pub const KEY_CLASS_HMAC_SHA384: u8 = 5;
 /// `KeyClass` discriminant for a variable-length HMAC-SHA-512 key.
 pub const KEY_CLASS_HMAC_SHA512: u8 = 6;
 
+/// `HsmVaultKeyKind::Rsa2kPrivate` response discriminant.
+pub const KEY_KIND_RSA2K_PRIVATE: u8 = 4;
+/// `HsmVaultKeyKind::Rsa3kPrivate` response discriminant.
+pub const KEY_KIND_RSA3K_PRIVATE: u8 = 5;
+/// `HsmVaultKeyKind::Rsa4kPrivate` response discriminant.
+pub const KEY_KIND_RSA4K_PRIVATE: u8 = 6;
+/// `HsmVaultKeyKind::Rsa2kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA2K_PRIVATE_CRT: u8 = 7;
+/// `HsmVaultKeyKind::Rsa3kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA3K_PRIVATE_CRT: u8 = 8;
+/// `HsmVaultKeyKind::Rsa4kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA4K_PRIVATE_CRT: u8 = 9;
+
 /// `KeyUsage` bit: key may encrypt.
 pub const KEY_USAGE_ENCRYPT: u64 = 1 << 0;
 /// `KeyUsage` bit: key may decrypt.

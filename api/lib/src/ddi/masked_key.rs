@@ -2,6 +2,12 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::aead_envelope;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use zerocopy::little_endian::U16 as Le16;
 use zerocopy::little_endian::U64 as Le64;
@@ -57,12 +63,12 @@ impl TryFrom<u8> for TborMaskedKeyKind {
 
     fn try_from(value: u8) -> HsmResult<Self> {
         Ok(match value {
-            4 => Self::Rsa2kPrivate,
-            5 => Self::Rsa3kPrivate,
-            6 => Self::Rsa4kPrivate,
-            7 => Self::Rsa2kPrivateCrt,
-            8 => Self::Rsa3kPrivateCrt,
-            9 => Self::Rsa4kPrivateCrt,
+            KEY_KIND_RSA2K_PRIVATE => Self::Rsa2kPrivate,
+            KEY_KIND_RSA3K_PRIVATE => Self::Rsa3kPrivate,
+            KEY_KIND_RSA4K_PRIVATE => Self::Rsa4kPrivate,
+            KEY_KIND_RSA2K_PRIVATE_CRT => Self::Rsa2kPrivateCrt,
+            KEY_KIND_RSA3K_PRIVATE_CRT => Self::Rsa3kPrivateCrt,
+            KEY_KIND_RSA4K_PRIVATE_CRT => Self::Rsa4kPrivateCrt,
             13 => Self::EccP256,
             14 => Self::EccP384,
             15 => Self::EccP521,
@@ -113,8 +119,8 @@ impl TborMaskedKeyKind {
             Self::Rsa2kPrivate | Self::Rsa3kPrivate | Self::Rsa4kPrivate => {
                 payload_len == key_bytes * 2 + 4
             }
-            // CRT layout is PAL-defined: std/emu uses 4.5k+4 bytes and
-            // Uno uses its 5k+4-byte PKA representation.
+            // CRT is PAL-defined: std uses the crypto crate's 4.5k+4-byte
+            // HSM component layout; Uno uses a 5k+4-byte PKA operand.
             Self::Rsa2kPrivateCrt | Self::Rsa3kPrivateCrt | Self::Rsa4kPrivateCrt => {
                 payload_len == key_bytes * 9 / 2 + 4 || payload_len == key_bytes * 5 + 4
             }
@@ -301,8 +307,8 @@ impl HsmMaskedKey {
     /// [`HsmMaskedKeyMetadata`].
     ///
     /// Validates the envelope algorithm and the authenticated metadata
-    /// (magic, version, key kind, packed scope, label, and reserved
-    /// padding) and checks the masked payload length against the key kind.
+    /// (magic, version, key kind, label, and reserved padding) and checks
+    /// the masked payload length against the key kind.
     /// Every device-supplied length is bounds-checked, so a malformed blob
     /// is rejected with [`HsmError::MaskedKeyDecodeFailed`] rather than
     /// panicking.

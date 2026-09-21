@@ -7,6 +7,12 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
@@ -240,19 +246,17 @@ fn rsa_aes_unwrap_key_pair_mbor(
     Ok((key_id.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
-/// Performs RSA encryption using the specified RSA public key.
+/// Performs RSA decryption using the specified RSA private key.
 ///
 /// # Arguments
 ///
-/// * `key` - The RSA public key to use for encryption.
-/// * `input` - The data to encrypt.
-/// * `output` - Optional output buffer. If `None`, returns the required ciphertext
-///   size. If provided, must be large enough to hold the ciphertext.
+/// * `key` - The RSA private key to use for decryption.
+/// * `input` - The ciphertext to decrypt.
+/// * `output` - Buffer that receives the decrypted padded block.
 ///
 /// # Returns
 ///
-/// Returns the number of bytes written to the output buffer, or the required
-/// buffer size if `output` is `None`.
+/// Returns the number of bytes written to the output buffer.
 #[resiliency_key_op(key = "key")]
 pub(crate) fn rsa_decrypt(
     key: &HsmRsaPrivateKey,
@@ -313,12 +317,11 @@ pub(crate) fn rsa_generate_key_report(
 /// * `key` - The RSA private key to use for the operation.
 /// * `op` - The type of RSA operation to perform (e.g., Decrypt, Sign).
 /// * `input` - The input data for the operation.
-/// * `output` - Optional output buffer. If `None`, returns the required output size.
+/// * `output` - Buffer that receives the operation result.
 ///
 /// # Returns
 ///
-/// Returns the number of bytes written to the output buffer, or the required
-/// buffer size if `output` is `None`.
+/// Returns the number of bytes written to the output buffer.
 fn rsa_mod_exp(
     key: &HsmRsaPrivateKey,
     op: DdiRsaOpType,
@@ -383,6 +386,9 @@ fn rsa_mod_exp_tbor(
             .map_err(HsmError::from)
     })?;
 
+    if resp.x.len() != key.size() {
+        return Err(HsmError::InternalError);
+    }
     if output.len() < resp.x.len() {
         return Err(HsmError::BufferTooSmall);
     }
@@ -406,6 +412,11 @@ fn get_rsa_unwrapping_key_tbor(
             .map_err(HsmError::from)
     })?;
 
+    let modulus_len =
+        usize::try_from(priv_key_props.bits()).map_err(|_| HsmError::InvalidKeyProps)? / 8;
+    if resp.pub_key.len() != modulus_len + 4 {
+        return Err(HsmError::InvalidKeyProps);
+    }
     let crypto_key = hsm_wire_pub_to_crypto(&resp.pub_key)?;
     let pub_key_der = crypto_key.to_vec().map_hsm_err(HsmError::InternalError)?;
     priv_key_props.set_pub_key_der(&pub_key_der);
@@ -453,8 +464,10 @@ fn rsa_aes_unwrap_key_pair_tbor(
     if resp.key_kind != expected_key_kind {
         return Err(HsmError::InvalidKeyProps);
     }
+    let expected_modulus_len =
+        usize::try_from(priv_key_props.bits()).map_err(|_| HsmError::InvalidKeyProps)? / 8;
     let modulus_len = resp.pub_key.len().saturating_sub(4);
-    if modulus_len != priv_key_props.bits() as usize / 8 {
+    if modulus_len != expected_modulus_len {
         return Err(HsmError::InvalidKeyProps);
     }
 
@@ -509,12 +522,12 @@ fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
 
 fn tbor_rsa_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
     match (props.kind(), props.bits()) {
-        (HsmKeyKind::Rsa, 2048) => Ok((KEY_CLASS_RSA, 4)),
-        (HsmKeyKind::Rsa, 3072) => Ok((KEY_CLASS_RSA, 5)),
-        (HsmKeyKind::Rsa, 4096) => Ok((KEY_CLASS_RSA, 6)),
-        (HsmKeyKind::RsaCrt, 2048) => Ok((KEY_CLASS_RSA_CRT, 7)),
-        (HsmKeyKind::RsaCrt, 3072) => Ok((KEY_CLASS_RSA_CRT, 8)),
-        (HsmKeyKind::RsaCrt, 4096) => Ok((KEY_CLASS_RSA_CRT, 9)),
+        (HsmKeyKind::Rsa, 2048) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA2K_PRIVATE)),
+        (HsmKeyKind::Rsa, 3072) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA3K_PRIVATE)),
+        (HsmKeyKind::Rsa, 4096) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA4K_PRIVATE)),
+        (HsmKeyKind::RsaCrt, 2048) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA2K_PRIVATE_CRT)),
+        (HsmKeyKind::RsaCrt, 3072) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA3K_PRIVATE_CRT)),
+        (HsmKeyKind::RsaCrt, 4096) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA4K_PRIVATE_CRT)),
         _ => Err(HsmError::InvalidKeyProps),
     }
 }

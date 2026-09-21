@@ -79,13 +79,14 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
 | 8 | `scope` | `uint8` (inline) | Requested key scope (`KeyScope` discriminant): `1` = Session, `2` = Ephemeral, `3` = Local, `4` = SecurityDomain. |
 | 12 | `key_class` | `uint8` (inline) | Class of the wrapped key (`KeyClass` discriminant): `0` = Aes, `1` = Rsa, `2` = RsaCrt, `3` = Ecc, `4` = HmacSha256, `5` = HmacSha384, `6` = HmacSha512. |
-| 16 | `key_usage` | `uint8` (inline) | Requested usage permissions (`KeyUsage` bitfield): `0x01` = encrypt, `0x02` = decrypt, `0x04` = sign, `0x08` = verify, `0x10` = derive, `0x20` = wrap, `0x40` = unwrap. Validated against `key_class`. |
+| 16 | `key_usage` | `uint64` (inline) | Requested usage permissions (`KeyUsage` bitfield): `0x01` = encrypt, `0x02` = decrypt, `0x04` = sign, `0x08` = verify, `0x10` = derive, `0x20` = wrap, `0x40` = unwrap. Validated against `key_class`. |
 | 20 | `oaep_hash_algo` | `uint8` (inline) | OAEP hash used to wrap the KEK (`HashAlgo` discriminant): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
 | 24 | `wrapped_blob` | `buffer` (≤ 3072 B) | The RSA-AES-wrapped key: `RSA-OAEP(KEK) ‖ AES-KWP(key)`. The leading modulus-sized (256 B for RSA-2048) OAEP ciphertext is wire little-endian. |
+| 28 | `key_label` | `buffer` (≤ 128 B) | Caller-supplied label recorded in the masked-key metadata; empty for an unlabeled key. |
 
 ### Data section
 
-Carries the wrapped-key blob.
+Carries the wrapped-key blob followed by the key label.
 
 ## Response
 
