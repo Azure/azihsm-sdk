@@ -7,7 +7,6 @@
 
 use azihsm_ddi_emu::DdiEmu;
 use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
@@ -125,14 +124,5 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
 /// Open a fresh emulator device handle for fuzz targets.
 pub fn open_emu_dev() -> DdiResult<<DdiEmu as Ddi>::Dev> {
     let devs = EMU.dev_info_list();
-    EMU.open_dev(&devs[0].path)
-}
-
-/// Issue a TBOR request against the emulator, discarding the result.
-pub fn fuzz_exec_op_tbor<R: azihsm_ddi_tbor_types::TborOpReq>(
-    dev: &<DdiEmu as Ddi>::Dev,
-    req: &R,
-) {
-    let mut cookie = None;
-    let _: Result<R::OpResp, _> = dev.exec_op_tbor(req, None, &mut cookie);
+    EMU.open_dev(&devs.first().unwrap().path)
 }

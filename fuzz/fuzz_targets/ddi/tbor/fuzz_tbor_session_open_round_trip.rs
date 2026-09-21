@@ -8,6 +8,7 @@ mod common;
 
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_emu::DdiEmu;
 use azihsm_ddi_tbor_types::MAC_FIN_LEN;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
@@ -21,6 +22,7 @@ use azihsm_ddi_tbor_types::TborSessionCloseReq;
 use azihsm_ddi_tbor_types::TborSessionCloseResp;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::AesKey;
@@ -150,6 +152,11 @@ fuzz_target!(|input: FuzzInput| {
     // If session open succeeds, finish then close it afterwards.
     let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
 
+    // assert open init success if expected
+    if input.valid_open_init || input.valid_open_finish {
+        assert!(init_result.is_ok(), "SessionOpenInit with valid input must succeed");
+    }
+
     if let Ok(resp) = init_result {
         // if init succeeded, attempt SessionOpenFinish
         let open_finish_req = if input.valid_open_finish {
@@ -219,20 +226,39 @@ fuzz_target!(|input: FuzzInput| {
         let mut open_finish_cookie = None;
         let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
-        if let Ok(_) = finish_result {
-            // SessionClose afterwards to clean up. `resp.session_id` names a
-            // slot that `init_result` just proved is Pending or Active, so
-            // Close must succeed regardless of whether Finish above did;
-            // a well-formed error response here would indicate a real bug.
-            let close_req = TborSessionCloseReq {
-                session_id: resp.session_id,
-            };
-            let mut close_cookie = None;
-            let close_result: Result<TborSessionCloseResp, _> =
-                dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+        // assert open init success if expected
+        if input.valid_open_finish && !input.corrupt_seed_envelope {
+            assert!(finish_result.is_ok(), "SessionOpenFinish with valid input must succeed");
+        }
+
+        // SessionClose afterwards to clean up. `resp.session_id` names a
+        // slot that `init_result` just proved is Pending or Active, so
+        // Close must succeed regardless of whether Finish above did;
+        // a well-formed error response here would indicate a real bug.
+        let close_req = TborSessionCloseReq {
+            session_id: resp.session_id,
+        };
+        let mut close_cookie = None;
+        let close_result: Result<TborSessionCloseResp, _> =
+            dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+
+        // if session open finish succeeded, the session should be closable
+        if finish_result.is_ok() {
             assert!(
                 close_result.is_ok(),
                 "SessionClose on a session opened this iteration must succeed"
+            );
+        }
+        else {
+            // Any SessionOpenFinish failure eagerly destroys the Pending slot in FW,
+            // so a follow-up SessionClose on the same id must be rejected with
+            // SessionNotFound (0x08700004).
+            assert!(
+                matches!(
+                    close_result,
+                    Err(DdiError::TborStatus(status)) if status == TborStatus::SessionNotFound
+                ),
+                "SessionClose on a session that failed to open must fail with SessionNotFound, got {close_result:?}"
             );
         }
     }
