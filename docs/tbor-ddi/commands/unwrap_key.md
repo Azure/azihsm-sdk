@@ -94,7 +94,7 @@ Carries the wrapped-key blob.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 8 | `key_kind` | `uint8` (inline) | The recovered key's `HsmVaultKeyKind` discriminant. |
-| 12 | `masked_key` | `buffer` (≤ 3072 B) | The recovered key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
+| 12 | `masked_key` | `buffer` (≤ 3168 B) | The recovered key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
 | 16 | `pub_key` | `buffer` (≤ 520 B) | The recovered key's wire public key for RSA (`n_le ‖ e_le`) / ECC (`x ‖ y`); empty for symmetric (AES / HMAC) keys. |
 
 ### Data section

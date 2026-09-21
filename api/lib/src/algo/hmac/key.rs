@@ -146,3 +146,29 @@ impl HsmKeyUnmaskOp for HsmHmacKeyUnmaskAlgo {
         Ok(key)
     }
 }
+
+/// Algorithm for generating a random HMAC key.
+///
+/// HMAC key generation is a TBOR-only (V2) capability; the key is returned
+/// as a masked blob (unmasked on-use by the sign/verify operations) and is
+/// not stored on-device.
+#[derive(Default)]
+pub struct HsmHmacKeyGenAlgo {}
+
+impl HsmKeyGenOp for HsmHmacKeyGenAlgo {
+    type Key = HsmHmacKey;
+    type Session = HsmSession;
+    type Error = HsmError;
+
+    /// Generates a new HMAC key of the SHA variant described by `props`.
+    fn generate_key(
+        &mut self,
+        session: &Self::Session,
+        props: HsmKeyProps,
+    ) -> Result<Self::Key, Self::Error> {
+        HsmHmacKey::validate_props(&props)?;
+
+        let (handle, props) = ddi::hmac_generate_key(session, props)?;
+        Ok(HsmHmacKey::new(session.clone(), props, handle))
+    }
+}

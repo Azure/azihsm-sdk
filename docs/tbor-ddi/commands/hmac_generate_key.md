@@ -24,11 +24,11 @@ as the variable-length `VarLenHmacSha*` kind, so `key_length` must fall in
 the variant's `[min, max]` range — matching the reference firmware's
 `VarLenHmacSha*` bounds — else the command returns `InvalidKeyLength`:
 
-| `hash_algo` | key length (min–max) | masked blob (`132 + key_length`) |
+| `hash_algo` | key length (min–max) | masked blob (`228 + key_length`) |
 |---|---|---|
-| SHA-256 | 32–64 | 164–196 B |
-| SHA-384 | 48–128 | 180–260 B |
-| SHA-512 | 64–128 | 196–260 B |
+| SHA-256 | 32–64 | 260–292 B |
+| SHA-384 | 48–128 | 276–356 B |
+| SHA-512 | 64–128 | 292–356 B |
 
 Scope → masking key (resolved on-device):
 
@@ -42,8 +42,8 @@ The `Ephemeral` / `Local` / `SecurityDomain` masking keys are provisioned
 by `PartFinal` / `CreateSD`, so a non-`Session` scope before the partition
 is `Initialized` is rejected with `InvalidArg`, and `SecurityDomain`
 before `CreateSD` with `UnsupportedKeyScope`.  The masked key's metadata
-records the key as an HMAC signing key (`sign` + `verify`, `local`) plus
-the requested scope.
+records the key as an HMAC signing key (`sign` + `verify`, `local`), the
+caller-supplied `key_label`, plus the requested scope.
 
 Unlike the security-domain administrative commands, this command is
 available to **both Crypto-Officer and Crypto-User** sessions.
@@ -58,10 +58,12 @@ available to **both Crypto-Officer and Crypto-User** sessions.
 | 8 | `scope` | `uint8` (inline) | Requested key scope (`KeyScope` discriminant): `1` = Session, `2` = Ephemeral, `3` = Local, `4` = SecurityDomain. |
 | 12 | `hash_algo` | `uint8` (inline) | HMAC hash variant (`HashAlgo` discriminant): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
 | 16 | `key_length` | `uint8` (inline) | Requested key length in bytes; must be in the variant's `[min, max]` range (see table above). |
+| 20 | `key_label` | `buffer` (≤ 128 B) | Caller-supplied key label recorded in the masked blob's `MaskedKeyMetadata.key_label`; empty for an unlabeled key. |
 
 ### Data section
 
-_Empty — all fields are carried inline within their TOC entries._
+Carries the caller-supplied `key_label` (≤ 128 B); empty for an unlabeled
+key.
 
 ## Response
 
@@ -69,11 +71,11 @@ _Empty — all fields are carried inline within their TOC entries._
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_key` | `buffer` (164–260 B) | The generated HMAC key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
+| 8 | `masked_key` | `buffer` (260–356 B) | The generated HMAC key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
 
 ### Data section
 
-Carries the masked key (`132 + key_length` B).
+Carries the masked key (`228 + key_length` B).
 
 ## Errors
 

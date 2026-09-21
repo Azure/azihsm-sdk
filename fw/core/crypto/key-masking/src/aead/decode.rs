@@ -77,7 +77,7 @@ pub struct UnmaskedView<'a> {
 /// * `Err(HsmError::AesGcmDecryptTagDoesNotMatch)` — tag mismatch
 ///   (tamper / wrong key / corrupted blob).
 /// * `Err(HsmError::MaskedKeyDecodeFailed)` — any metadata
-///   invariant violation: AAD length not 96, bad magic, unsupported
+///   invariant violation: AAD length not 192, bad magic, unsupported
 ///   version, `key_label_len > KEY_LABEL_MAX`, non-zero pad after
 ///   the label, or non-zero reserved tail.
 /// * Any [`HsmError`] surfaced by
@@ -95,7 +95,7 @@ pub async fn unmask<'a>(
     // HsmError::AesGcmDecryptTagDoesNotMatch.
     let env = aead_open(crypto, io, key, blob).await?;
 
-    // Envelope-level schema check: only a 96 B metadata AAD is a
+    // Envelope-level schema check: only a 192 B metadata AAD is a
     // masked-key blob. The AEAD algorithm is unconstrained here —
     // the metadata format is alg-agnostic, so any AeadAlg supported
     // by aead_envelope is valid.
@@ -103,8 +103,8 @@ pub async fn unmask<'a>(
         return Err(HsmError::MaskedKeyDecodeFailed);
     }
 
-    // Parse the 96 B AAD region as MaskedKeyMetadata. `ref_from_bytes`
-    // never panics; the length check above guarantees a 96 B slice.
+    // Parse the 192 B AAD region as MaskedKeyMetadata. `ref_from_bytes`
+    // never panics; the length check above guarantees a 192 B slice.
     let metadata =
         MaskedKeyMetadata::ref_from_bytes(env.aad).map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
 

@@ -50,24 +50,24 @@ pub const HKDF_SALT_MAX_LEN: usize = 256;
 pub const HKDF_INFO_MAX_LEN: usize = 256;
 
 /// Minimum masked ECDH-secret IKM envelope length (P-256, 32-byte
-/// secret): `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(32) ‖ tag(16)`.  Pinned
-/// into the `#[tbor(buffer, min_len = 164)]` literal on
+/// secret): `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(32) ‖ tag(16)`.  Pinned
+/// into the `#[tbor(buffer, min_len = 260)]` literal on
 /// [`TborHkdfDeriveReq::masked_secret`].
-pub const HKDF_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const HKDF_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked ECDH-secret IKM envelope length (P-521, 66-byte
-/// secret).  Pinned into the `#[tbor(buffer, max_len = 198)]` literal on
+/// secret).  Pinned into the `#[tbor(buffer, max_len = 294)]` literal on
 /// [`TborHkdfDeriveReq::masked_secret`].
-pub const HKDF_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const HKDF_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 
 /// Minimum masked derived-key envelope length (AES-128 / 16-byte key):
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(16) ‖ tag(16)`.
-pub const HKDF_MASKED_KEY_MIN_LEN: usize = 8 + 12 + 96 + 16 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(16) ‖ tag(16)`.
+pub const HKDF_MASKED_KEY_MIN_LEN: usize = 8 + 12 + 192 + 16 + 16;
 
 /// Maximum masked derived-key envelope length (128-byte variable-length
-/// HMAC key).  Pinned into the `#[tbor(buffer, max_len = 260)]` literal on
+/// HMAC key).  Pinned into the `#[tbor(buffer, max_len = 356)]` literal on
 /// [`TborHkdfDeriveResp::masked_key`].
-pub const HKDF_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+pub const HKDF_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `HkdfDerive` request schema.
 ///
@@ -101,8 +101,8 @@ pub struct TborHkdfDeriveReq<'a> {
     pub key_length: u8,
 
     /// The masked ECDH shared secret IKM (from `EcdhDerive`), an
-    /// AEAD-GCM-256 envelope of 164..=198 B; unmasked in place.
-    #[tbor(buffer, min_len = 164, max_len = 198, mutable)]
+    /// AEAD-GCM-256 envelope of 260..=294 B; unmasked in place.
+    #[tbor(buffer, min_len = 260, max_len = 294, mutable)]
     pub masked_secret: &'a [u8],
 
     /// Optional HKDF-Extract salt (≤ 256 B); an **empty** buffer selects
@@ -114,6 +114,12 @@ pub struct TborHkdfDeriveReq<'a> {
     /// **empty** buffer means none.
     #[tbor(buffer, max_len = 256)]
     pub info: &'a [u8],
+
+    /// Caller-supplied key label recorded in the derived-key masked blob's
+    /// `MaskedKeyMetadata.key_label`, up to 128 bytes.  Empty for an
+    /// unlabeled key.
+    #[tbor(buffer, max_len = 128)]
+    pub key_label: &'a [u8],
 }
 
 /// `HkdfDerive` response schema.
@@ -123,8 +129,8 @@ pub struct TborHkdfDeriveReq<'a> {
 #[tbor(response)]
 pub struct TborHkdfDeriveResp<'a> {
     /// The derived key, masked (AEAD-GCM-256) under the scope's masking
-    /// key.  148..=260 B depending on the derived key length.
-    #[tbor(buffer, max_len = 260, mutable)]
+    /// key.  244..=356 B depending on the derived key length.
+    #[tbor(buffer, max_len = 356, mutable)]
     pub masked_key: &'a [u8],
 }
 
@@ -142,6 +148,7 @@ mod tests {
         let secret = [0x11u8; HKDF_MASKED_SECRET_MIN_LEN];
         let salt = [0x22u8; 16];
         let info = [0x33u8; 8];
+        let label = [0x44u8; 8];
         let frame = TborHkdfDeriveReq::encode(&mut buf)
             .unwrap()
             .session_id(SessionId(7))
@@ -160,12 +167,15 @@ mod tests {
             .unwrap()
             .info(&info)
             .unwrap()
+            .key_label(&label)
+            .unwrap()
             .finish();
         assert_eq!(frame.scope(), KeyScope::Local);
         assert_eq!(frame.hash_algo(), HashAlgo::Sha384);
         assert_eq!(frame.key_type(), KdfKeyType::Aes256);
         assert_eq!(frame.salt(), &salt[..]);
         assert_eq!(frame.info(), &info[..]);
+        assert_eq!(frame.key_label(), &label[..]);
     }
 
     #[test]
@@ -182,11 +192,11 @@ mod tests {
 
     #[test]
     fn lengths_match_pinned_values() {
-        const _: () = assert!(164 == HKDF_MASKED_SECRET_MIN_LEN);
-        const _: () = assert!(198 == HKDF_MASKED_SECRET_MAX_LEN);
-        const _: () = assert!(260 == HKDF_MASKED_KEY_MAX_LEN);
+        const _: () = assert!(260 == HKDF_MASKED_SECRET_MIN_LEN);
+        const _: () = assert!(294 == HKDF_MASKED_SECRET_MAX_LEN);
+        const _: () = assert!(356 == HKDF_MASKED_KEY_MAX_LEN);
         assert_eq!(HKDF_SALT_MAX_LEN, 256);
         assert_eq!(HKDF_INFO_MAX_LEN, 256);
-        assert_eq!(HKDF_MASKED_KEY_MIN_LEN, 148);
+        assert_eq!(HKDF_MASKED_KEY_MIN_LEN, 244);
     }
 }

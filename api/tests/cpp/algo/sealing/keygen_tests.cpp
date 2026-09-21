@@ -39,7 +39,7 @@ class azihsm_sealing_keygen : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, sd_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -117,11 +117,6 @@ azihsm_algo sealing_algo()
     algo.len = 0;
     return algo;
 }
-
-// Pinned masked sealing-key blob length (header 8 + iv 12 + meta 96 + scalar
-// 48 + tag 16). Mirrors `azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN`, which
-// is not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
 } // namespace
 
 // ── FFI boundary (backend-agnostic) ─────────────────────────────────────────

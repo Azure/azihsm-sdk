@@ -39,10 +39,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the derived-secret masked blob's
-/// `MaskedKeyMetadata`.
-const ECDH_SECRET_LABEL: &[u8] = b"EcdhSecret";
-
 /// Attributes recorded in the derived-secret masked blob's metadata.  An
 /// ECDH shared secret is derived on-device (so `local`) and usable only as
 /// a key-derivation key (`derive`) for a further KDF — matching MBOR's
@@ -132,8 +128,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 // Scope exit only resets the bump watermark; it does not zero
                 // freed memory, so the derived secret must be scrubbed here.
                 let masking_key_target = resolve_masking_key(pal, io, target_scope, sess_id)?;
-                let key_label = alloc.dma_alloc(ECDH_SECRET_LABEL.len())?;
-                key_label.copy_from_slice(ECDH_SECRET_LABEL);
+                let key_label = alloc.dma_alloc(req.key_label.len())?;
+                key_label.copy_from_slice(req.key_label);
                 let params = MaskParams {
                     key_kind: kind,
                     key_attrs: attrs,

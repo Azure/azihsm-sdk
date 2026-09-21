@@ -78,7 +78,7 @@ use super::*;
 pub(crate) const DDI_API_REV_MIN: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 
 /// Maximum DDI API revision accepted by this firmware.
-pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 1 };
 
 /// User credential field length (user ID or PIN) — one AES block.
 ///
@@ -129,7 +129,7 @@ pub(crate) struct DispatchResult<'p> {
 
 impl<'p> DispatchResult<'p> {
     /// Wraps a plain response that carries no session id (the common case).
-    fn from_resp(resp: &'p DmaBuf) -> Self {
+    pub(crate) fn from_resp(resp: &'p DmaBuf) -> Self {
         Self {
             resp,
             session_id: None,
@@ -137,12 +137,17 @@ impl<'p> DispatchResult<'p> {
     }
 }
 
-/// Dispatch a DDI command to its handler.
+/// Dispatch an MBOR command to its handler.
 ///
 /// Returns a [`DispatchResult`] — the encoded response slice plus, for
 /// `OpenSession`, the freshly allocated session id — on success, or a
 /// [`HsmError`] on failure. The slice borrows from `pal`'s per-IO allocator
 /// and is valid until the IO completes.
+///
+/// An opcode this function does not implement yields
+/// [`HsmError::UnsupportedCmd`]. The caller treats that as its cue to
+/// offer the request to the platform — see
+/// [`HsmCustomDispatch`](azihsm_fw_hsm_pal_traits::HsmCustomDispatch).
 ///
 /// This function is `async` because `GetCertificate` calls into
 /// `HsmCertStore::get_cert` which is async.
@@ -192,6 +197,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::Hmac => hmac(pal, io, decoder, hdr).await,
         DdiOp::RsaModExp => rsa_mod_exp(pal, io, decoder, hdr).await,
         DdiOp::AttestKey => attest_key(pal, io, decoder, hdr).await,
+        // Not a core command. The caller offers it to the platform on
+        // seeing this status.
         _ => Err(HsmError::UnsupportedCmd),
     }?;
     Ok(DispatchResult::from_resp(resp))

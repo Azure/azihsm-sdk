@@ -88,7 +88,8 @@ struct PendingHandshake {
     /// Wire `pk_resp` (SEC1 uncompressed, 97 B).
     pub pk_resp: [u8; PK_RESP_LEN],
     /// Wire `pk_hsm` (SEC1 uncompressed, 97 B) — partition identity
-    /// public key fetched out-of-band via the MBOR cert chain.
+    /// public key fetched out-of-band via the TBOR cert chain
+    /// (`GetCertChainInfo` / `GetCertificate`).
     pub pk_hsm: [u8; PK_RESP_LEN],
 }
 
@@ -114,18 +115,24 @@ pub(crate) struct OpenSessionExResult {
 }
 
 /// Look up the partition identity public key (`pk_hsm`) via the
-/// production cert chain. Reuses [`fetch_cert_chain_checked`], whose
-/// leaf cert is the partition-ID cert; its SubjectPublicKeyInfo carries
-/// the P-384 key the FW uses as `pk_s` in HPKE `auth_psk`.
+/// production cert chain. Uses [`fetch_cert_chain_checked_tbor`] — the
+/// out-of-session TBOR `GetCertChainInfo` / `GetCertificate` commands,
+/// so the whole handshake stays on the TBOR transport — whose leaf cert
+/// is the partition-ID cert; its SubjectPublicKeyInfo carries the P-384
+/// key the FW uses as `pk_s` in HPKE `auth_psk`.
 ///
 /// The SD handshake authenticates the entire session against this key,
 /// so the partition cert chain is cryptographically verified (via
 /// [`validate_part_cert_chain`]) before the leaf key is trusted.
+///
+/// The negotiated API revision is validated before issuing the TBOR cert
+/// commands; revisions below [`TBOR_MIN_API_REV`] are unsupported.
 pub(super) fn fetch_pk_hsm(
     dev: &HsmDev,
     rev: HsmApiRev,
 ) -> HsmResult<(EccPublicKey, [u8; PK_RESP_LEN])> {
-    let (chain_pem, leaf_der) = fetch_cert_chain_checked(dev, rev, 0)?;
+    require_tbor_rev(rev)?;
+    let (chain_pem, leaf_der) = fetch_cert_chain_checked_tbor(dev, 0)?;
     validate_part_cert_chain(&chain_pem)?;
 
     let leaf = X509Certificate::from_der(&leaf_der).map_err(|_| HsmError::InternalError)?;
@@ -142,7 +149,7 @@ pub(super) fn fetch_pk_hsm(
 /// before its leaf key is trusted as `pk_hsm`.
 ///
 /// `chain_pem` is the leaf->root PEM stack returned by
-/// [`fetch_cert_chain_checked`]. [`X509CertificateOp::validate_chain`]
+/// [`fetch_cert_chain_checked_tbor`]. [`X509CertificateOp::validate_chain`]
 /// verifies internal consistency, not a pinned trust anchor. A single
 /// self-signed cert (e.g. the sim backend) has no ordering to verify,
 /// so chains shorter than two certs are accepted as-is.
@@ -177,15 +184,16 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 ///
 /// Always runs the two-phase HPKE handshake —
 /// [`open_session_ex_init`] (Phase 1) followed by
-/// [`open_session_ex_finish`] (Phase 2). The transport is selected by
-/// the caller invoking this entry point, not by the negotiated API
-/// revision.
+/// [`open_session_ex_finish`] (Phase 2) — over TBOR. The negotiated API
+/// revision is validated for TBOR support rather than used to select a
+/// transport.
 ///
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle.
-/// * `rev` - The negotiated API revision (used for the `pk_hsm`
-///   cert-chain fetch).
+/// * `rev` - The negotiated API revision. A `session_ex` session is
+///   TBOR-only and requires [`TBOR_MIN_API_REV`] or newer; an older revision
+///   is rejected with [`HsmError::UnsupportedApiRevision`].
 /// * `psk_id` - Pre-shared-key identity selecting the role (0 = CO,
 ///   1 = CU).
 /// * `session_type` - Channel integrity profile to pin for the session.
@@ -197,7 +205,8 @@ fn validate_part_cert_chain(chain_pem: &str) -> HsmResult<()> {
 ///
 /// # Errors
 ///
-/// Propagates transport-specific failures from the handshake.
+/// Returns [`HsmError::UnsupportedApiRevision`] when `rev` does not
+/// support TBOR, and propagates failures from the handshake.
 pub(crate) fn open_session_ex(
     partition: &HsmPartition,
     rev: HsmApiRev,
@@ -205,6 +214,8 @@ pub(crate) fn open_session_ex(
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: HsmSessionExType,
 ) -> HsmResult<OpenSessionExResult> {
+    require_tbor_rev(rev)?;
+
     // Convert the API-layer session type to the wire-level `SessionType`
     // here in the DDI layer, so the public API surface never handles the
     // DDI wire type.
@@ -224,13 +235,13 @@ pub(crate) fn open_session_ex(
 /// Uses the caller-supplied PSK when present, otherwise the partition
 /// default PSK for `psk_id` (CO = 0, CU = 1).
 ///
-/// `rev` is the negotiated API revision selected by the caller
-/// ([`open_session_ex`]); it is used for the `pk_hsm` cert-chain
-/// fetch so gating and retrieval observe a single revision.
+/// The negotiated API revision is passed to [`fetch_pk_hsm`], which
+/// validates that it supports TBOR before fetching the partition cert.
 ///
 /// # Errors
 ///
-/// Propagates DDI failures from the round-trip,
+/// Returns [`HsmError::UnsupportedApiRevision`] when `rev` does not
+/// support TBOR, propagates DDI failures from the round-trip,
 /// [`HsmError::InvalidArgument`] for malformed handshake inputs (e.g.
 /// an unknown `psk_id`), and [`HsmError::InternalError`] for
 /// handshake-crypto failures (e.g. a Phase-1 confirm MAC mismatch).
@@ -241,6 +252,9 @@ fn open_session_ex_init(
     psk: Option<&[u8; crate::PSK_LEN]>,
     session_type: SessionType,
 ) -> HsmResult<PendingHandshake> {
+    // Ensure the negotiated API revision supports TBOR before proceeding.
+    require_tbor_rev(rev)?;
+
     let inner = partition.inner().read();
     let dev = inner.dev();
 
@@ -539,7 +553,7 @@ mod tests {
 
     /// Happy path: CO must pair with an Authenticated session.
     #[test]
-    fn open_session_ex_co_authenticated_happy_emu() {
+    fn open_session_ex_co_authenticated_happy() {
         let result = run_handshake(CO, SessionType::Authenticated);
         assert_eq!(result.psk_id, CO);
         assert!(result.session_type.is_authenticated());
@@ -552,7 +566,7 @@ mod tests {
 
     /// Happy path: CU must pair with a PlainText session.
     #[test]
-    fn open_session_ex_cu_plaintext_happy_emu() {
+    fn open_session_ex_cu_plaintext_happy() {
         let result = run_handshake(CU, SessionType::PlainText);
         assert_eq!(result.psk_id, CU);
         assert!(!result.session_type.is_authenticated());
@@ -562,17 +576,52 @@ mod tests {
         );
     }
 
+    /// All `session_ex` entry points require a TBOR-capable API revision.
+    #[test]
+    fn session_ex_entry_points_reject_revision_without_tbor() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let rev = HsmApiRev { major: 1, minor: 0 };
+
+        let result = open_session_ex(&part, rev, CO, None, HsmSessionExType::Authenticated);
+        assert!(matches!(result, Err(HsmError::UnsupportedApiRevision)));
+
+        let result = open_session_ex_init(&part, rev, CO, None, SessionType::Authenticated);
+        assert!(matches!(result, Err(HsmError::UnsupportedApiRevision)));
+    }
+
     /// Negative path: an unknown `psk_id` (neither CO nor CU) must not
     /// yield a pending handshake — the FW rejects it during Phase 1.
     #[test]
-    fn open_session_ex_init_rejects_unknown_psk_id_emu() {
+    fn open_session_ex_init_rejects_unknown_psk_id() {
         let _guard = EMU_LOCK.lock();
         let part = fresh_emu_partition();
         let rev = part.inner().read().api_rev();
+
         let result = open_session_ex_init(&part, rev, 2, None, SessionType::Authenticated);
         assert!(
             result.is_err(),
             "unknown psk_id must not produce a pending handshake"
+        );
+    }
+
+    /// The partition cert path is api_rev-gated: 1.0 uses MBOR, 1.1 uses
+    /// TBOR. Both must yield the identical PID public key against the emu
+    /// (which speaks both transports at every advertised revision).
+    #[test]
+    fn cert_transport_gated_by_api_rev() {
+        let _guard = EMU_LOCK.lock();
+        let part = fresh_emu_partition();
+        let inner = part.inner().read();
+        let dev = inner.dev();
+
+        let mbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 0 })
+            .expect("MBOR pub key at api_rev 1.0");
+        let tbor = get_part_pub_key(dev, HsmApiRev { major: 1, minor: 1 })
+            .expect("TBOR pub key at api_rev 1.1");
+        assert_eq!(
+            mbor, tbor,
+            "MBOR (1.0) and TBOR (1.1) cert paths must return the same PID public key"
         );
     }
 }

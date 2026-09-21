@@ -30,14 +30,7 @@
 
 namespace
 {
-// Pinned wire lengths. Mirror the `azihsm_ddi_tbor_types` constants
-// (`MASKED_SEALING_KEY_LEN`, `MASKED_SD_LEN`, `POK_REMOTE_BACKUP_LEN`),
-// which are not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-constexpr uint32_t kMaskedSdLen = 180;
-constexpr uint32_t kPokRemoteBackupLen = 161;
-
-// Create the security domain and capture the 180-byte device-local backup
+// Create the security domain and capture the 276-byte device-local backup
 // that CreatePeerBackup recovers BKS3 from. Sizes the three output buffers
 // via the probe/fill convention. Records a gtest failure and returns false
 // on error.
@@ -148,7 +141,7 @@ class azihsm_sd_create_peer_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, sd_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
