@@ -64,7 +64,8 @@ pub enum IkmSource {
 
 /// Parameters an armed context accumulated by the time derive runs.
 pub struct HkdfParams {
-    /// Digest NID from the `md` parameter.
+    /// Digest NID from the `md` parameter (defaults to SHA-256 when unset, as
+    /// the provider does).
     pub md_nid: c_int,
     /// Optional salt (replace semantics, like the built-in).
     pub salt: Option<Vec<u8>>,
@@ -93,6 +94,10 @@ pub trait HkdfHandler {
 /// Default derived-key size (bits) when `derived_key_bits` is unset, matching
 /// the 3.x provider's default.
 const DEFAULT_DERIVED_KEY_BITS: u32 = 256;
+
+/// Default HKDF digest when `md` is unset, matching the 3.x provider's default
+/// (the provider seeds `md` to SHA-256 at context creation).
+const DEFAULT_MD_NID: c_int = ffi::NID_sha256 as c_int;
 
 /// Per-context state. `armed` is implied by any azihsm-specific field.
 #[derive(Clone, Default)]
@@ -571,9 +576,7 @@ fn derive_inner<H: HkdfHandler>(
         }
     };
     let params = HkdfParams {
-        md_nid: state
-            .md_nid
-            .ok_or(EngineError::Other("azihsm HKDF requires md".into()))?,
+        md_nid: state.md_nid.unwrap_or(DEFAULT_MD_NID),
         salt: state.salt,
         info: state.info,
         ikm,
