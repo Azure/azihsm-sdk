@@ -340,22 +340,16 @@ async fn encode_and_mask<'p, P: HsmPal>(
     // scoped and freed on return).
     {
         let out = TborUnwrapKeyResp::decode_mut(resp)?;
-        match deriv {
-            Some(PubDeriv::Rsa) => {
-                if pal.rsa_priv_pub_key(io, priv_blob, Some(out.pub_key))? != pub_len {
-                    return Err(HsmError::InternalError);
-                }
-            }
+        let actual_pub_len = match deriv {
+            Some(PubDeriv::Rsa) => pal.rsa_priv_pub_key(io, priv_blob, Some(out.pub_key))?,
             Some(PubDeriv::Ecc) => {
-                if pal
-                    .ecc_priv_pub_key(io, priv_blob, Some(out.pub_key))
+                pal.ecc_priv_pub_key(io, priv_blob, Some(out.pub_key))
                     .await?
-                    != pub_len
-                {
-                    return Err(HsmError::InternalError);
-                }
             }
-            None => {}
+            None => 0,
+        };
+        if actual_pub_len != pub_len {
+            return Err(HsmError::InternalError);
         }
         pal.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
             let masking_key = resolve_masking_key(pal, io, ctx.scope, ctx.sess_id)?;
