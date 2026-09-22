@@ -308,6 +308,43 @@ fn reconnect_after_disconnect_still_serves_requests() {
     assert_get_api_rev_succeeds(&dev2);
 }
 
+/// Regression test for `reset_partition`'s reset cycle: it must remain
+/// fully usable across many repeated connect/disconnect cycles, not just
+/// a single one. This guards against, e.g., accidentally reverting to a
+/// session-preserving reset (`part_disable`/`part_enable`, which mirrors
+/// real hardware NSSR semantics and marks sessions `NeedsRenegotiation`
+/// instead of freeing their slots) or any other regression that leaks a
+/// partition-scoped resource per connection until the partition itself
+/// becomes unusable.
+///
+/// Note: `GetApiRev` never opens a session, so this alone does not drive
+/// the partition's fixed-size session table toward exhaustion (the
+/// concrete failure mode reported against a session-preserving reset,
+/// observed after 8 accumulated sessions) - doing so would require
+/// driving a stateful HSM operation (e.g. session open/close) through the
+/// wire protocol. This test instead exercises the reset cycle itself well
+/// past that threshold and asserts the partition keeps serving requests.
+#[test]
+fn many_reconnects_do_not_exhaust_partition() {
+    const RECONNECTS: usize = 16;
+    let paths = SocketPaths::new("many-reconnects");
+    let _bridge = spawn_bridge_loop(&paths, RECONNECTS).expect("failed to start test bridge");
+    let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
+
+    let ddi = DdiSock::default();
+    for i in 0..RECONNECTS {
+        let dev = if i == 0 {
+            ddi.open_dev(paths.ddi.to_str().expect("temp path is valid UTF-8"))
+                .expect("failed to connect to vsocksrv via the bridge")
+        } else {
+            open_dev_with_retry(&ddi, &paths, Duration::from_secs(10))
+        };
+        assert_get_api_rev_succeeds(&dev);
+        // Dropping `dev` here disconnects, triggering `vsocksrv`'s
+        // partition reset before the next iteration reconnects.
+    }
+}
+
 /// Regression test: a malformed (but fully-framed, non-EOF) request must
 /// not leave `vsocksrv` stuck. This exercises the code path that
 /// previously *skipped* the shared-partition reset performed for every

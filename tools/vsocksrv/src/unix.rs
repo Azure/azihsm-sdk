@@ -341,31 +341,48 @@ fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
 /// subsequent connection - after a single failed attempt.
 const PARTITION_ENABLE_RETRIES: u32 = 3;
 
-/// Disables then re-enables `partition_id`, which clears its keys, nonce,
-/// vault, and sessions. Called when a client disconnects, since a disconnect
-/// signals a device reset. Retries `part_enable` a few times on failure;
-/// if it still fails, every subsequent connection sharing this partition
-/// will fail until the process is restarted, so that's logged at `error`
-/// level to make the condition impossible to miss.
+/// Frees then re-allocates and re-enables `partition_id`, which clears its
+/// keys, nonce, vault, *and* fully releases its sessions. Called when a
+/// client disconnects, since a disconnect signals a device reset.
+///
+/// This deliberately uses `part_free`/`part_alloc`, not
+/// `part_disable`/`part_enable`: `part_disable` preserves any live sessions
+/// across the cycle (marked `NeedsRenegotiation`, so a later `ReopenSession`
+/// can re-key them), mirroring real hardware NSSR semantics - it does not
+/// free session slots. Since vsocksrv drops a client's connection without
+/// ever explicitly closing its sessions, `part_disable`/`part_enable` would
+/// leak one session slot per connection until the partition's session table
+/// is exhausted. `part_free` clears the session table outright, so each
+/// reset starts the next client with zero live sessions.
+///
+/// Retries `part_alloc`/`part_enable` a few times on failure; if either
+/// still fails, every subsequent connection sharing this partition will
+/// fail until the process is restarted, so that's logged at `error` level
+/// to make the condition impossible to miss.
 fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id: u8) {
-    if let Err(error) = runtime.block_on(hsm.part_disable(partition_id)) {
-        tracing::warn!(?error, "Failed to disable partition on reset");
+    if let Err(error) = runtime.block_on(hsm.part_free(partition_id)) {
+        tracing::warn!(?error, "Failed to free partition on reset");
     }
+    let res_mask = 1u128 << u32::from(partition_id);
     for attempt in 1..=PARTITION_ENABLE_RETRIES {
-        match runtime.block_on(hsm.part_enable(partition_id)) {
+        let result = match runtime.block_on(hsm.part_alloc(partition_id, res_mask)) {
+            Ok(()) => runtime.block_on(hsm.part_enable(partition_id)),
+            Err(error) => Err(error),
+        };
+        match result {
             Ok(()) => return,
             Err(error) if attempt < PARTITION_ENABLE_RETRIES => {
                 tracing::warn!(
                     ?error,
                     attempt,
-                    "Failed to re-enable partition on reset; retrying"
+                    "Failed to re-allocate/re-enable partition on reset; retrying"
                 );
             }
             Err(error) => {
                 tracing::error!(
                     ?error,
                     attempt,
-                    "Failed to re-enable partition on reset after all retries; \
+                    "Failed to re-allocate/re-enable partition on reset after all retries; \
                      partition is unusable until the server is restarted"
                 );
             }
