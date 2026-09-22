@@ -195,13 +195,24 @@ fuzz_target!(|input: FuzzInput| {
 
         // assert open finish success only when we actually built a valid request
         if input.valid_open_finish {
-            if !input.corrupt_seed_envelope {
-                assert!(built_valid_finish, "a valid finish request must be built with valid input");
-                assert!(finish_result.is_ok(), "SessionOpenFinish with valid input must succeed");
-            }
-            else {
-                // If the seed envelope is corrupt, we expect the finish to fail
-                assert!(finish_result.is_err(), "SessionOpenFinish with corrupt seed envelope must fail");
+            assert!(
+                built_valid_finish,
+                "a valid finish request must be built with valid input"
+            );
+            if input.corrupt_seed_envelope {
+                assert!(
+                    matches!(
+                        finish_result.as_ref(),
+                        Err(DdiError::TborStatus(status))
+                            if *status == TborStatus::SessionAuthFailure
+                    ),
+                    "SessionOpenFinish with corrupt seed envelope must fail authentication"
+                );
+            } else {
+                assert!(
+                    finish_result.is_ok(),
+                    "SessionOpenFinish with valid input must succeed"
+                );
             }
         }
 
