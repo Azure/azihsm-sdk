@@ -6,8 +6,10 @@ native C API (`azihsm.h`, generated from `api/native`) the same way
 
 ## Status — framework + login + first key-backed slice
 
-Unimplemented PKCS#11 entry points return `CKR_FUNCTION_NOT_SUPPORTED`.
-Implemented so far:
+Unimplemented PKCS#11 entry points return `CKR_FUNCTION_NOT_SUPPORTED` (after
+`C_Initialize`; before it every entry point other than `C_Initialize` and the
+function-list / interface queries reports `CKR_CRYPTOKI_NOT_INITIALIZED`, as
+the spec requires). Implemented so far:
 
 - **Library / slots / sessions** — `C_Initialize`, `C_GetInfo`, slot/token/
   mechanism enumeration (real AZIHSM partitions become slots), sessions and the

@@ -62,6 +62,20 @@ typedef enum
     P11_OP_VERIFY,
 } azihsm_pkcs11_op_type_t;
 
+/*
+ * How the active operation is being driven. PKCS#11 forbids mixing the
+ * one-shot call (C_Digest, C_Encrypt, ...) with the multi-part calls
+ * (C_DigestUpdate / C_DigestFinal, ...) within one operation: the first data
+ * call fixes the mode, and a call from the other family then fails with
+ * CKR_OPERATION_ACTIVE and terminates the operation.
+ */
+typedef enum
+{
+    P11_OP_MODE_UNSET = 0, /* no data call yet: either family may start */
+    P11_OP_MODE_ONESHOT,   /* a one-shot sizing probe / retry is pending */
+    P11_OP_MODE_MULTIPART, /* an *Update or *Final call has been made */
+} azihsm_pkcs11_op_mode_t;
+
 typedef struct
 {
     bool in_use;
@@ -72,10 +86,11 @@ typedef struct
     CK_NOTIFY notify;
 
     azihsm_pkcs11_op_type_t op;
-    void *op_ctx;      /* digest state (P11_OP_DIGEST) or cipher operation state
-                        * (P11_OP_ENCRYPT / P11_OP_DECRYPT, owned by
-                        * azihsm_pkcs11_crypt.c) */
-    void *find_cursor; /* object-store cursor while op == P11_OP_FIND */
+    azihsm_pkcs11_op_mode_t op_mode; /* reset together with op */
+    void *op_ctx;                    /* digest state (P11_OP_DIGEST) or cipher operation state
+                                      * (P11_OP_ENCRYPT / P11_OP_DECRYPT, owned by
+                                      * azihsm_pkcs11_crypt.c) */
+    void *find_cursor;               /* object-store cursor while op == P11_OP_FIND */
 } azihsm_pkcs11_session_t;
 
 /* ------------------------------------------------------------------------- */

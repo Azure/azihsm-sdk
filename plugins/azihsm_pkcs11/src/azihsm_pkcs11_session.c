@@ -34,6 +34,7 @@ CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
     }
     s->find_cursor = NULL;
     s->op = P11_OP_NONE;
+    s->op_mode = P11_OP_MODE_UNSET;
     return CKR_OK;
 }
 
@@ -525,15 +526,22 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 /* Digest (host-side; see azihsm_pkcs11_digest.h)                            */
 /* ========================================================================= */
 
+/*
+ * Precedence in the digest entry points, in line with the spec's operation
+ * rules and what conformance tooling checks: a bad session handle is reported
+ * before anything else. C_DigestInit then checks arguments, then operation
+ * state. The data calls check operation state first — with no operation there
+ * is nothing to terminate, so CKR_OPERATION_NOT_INITIALIZED is the answer —
+ * then arguments and the one-shot/multi-part mode; from there on every failure
+ * terminates the operation, and only a successful sizing probe and
+ * CKR_BUFFER_TOO_SMALL keep it alive.
+ */
+
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
 {
     if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    }
-    if (pMechanism == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
     }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
@@ -541,6 +549,11 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
     {
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
+    }
+    if (pMechanism == NULL_PTR)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_ARGUMENTS_BAD;
     }
     if (s->op != P11_OP_NONE)
     {
@@ -577,10 +590,6 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (ulPartLen > 0 && pPart == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -593,6 +602,22 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
+    CK_RV rv = CKR_OK;
+    if ((ulPartLen > 0) && (pPart == NULL_PTR))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot C_Digest is in progress */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    s->op_mode = P11_OP_MODE_MULTIPART;
     if (ulPartLen > 0)
     {
         azihsm_pkcs11_digest_op_update(s->op_ctx, pPart, ulPartLen);
@@ -636,14 +661,6 @@ CK_RV C_Digest(
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (pulDigestLen == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
-    if (ulDataLen > 0 && pData == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -656,12 +673,30 @@ CK_RV C_Digest(
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    if (pDigest != NULL_PTR && *pulDigestLen >= azihsm_pkcs11_digest_op_len(s->op_ctx) &&
-        ulDataLen > 0)
+    CK_RV rv = CKR_OK;
+    if ((pulDigestLen == NULL_PTR) || ((ulDataLen > 0) && (pData == NULL_PTR)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_MULTIPART)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* only C_DigestFinal may finish it now */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    s->op_mode = P11_OP_MODE_ONESHOT;
+    /* Absorb the data only on the call that will complete: a sizing probe or a
+     * too-small buffer keeps the operation, and the retry supplies it again. */
+    if ((pDigest != NULL_PTR) && (*pulDigestLen >= azihsm_pkcs11_digest_op_len(s->op_ctx)) &&
+        (ulDataLen > 0))
     {
         azihsm_pkcs11_digest_op_update(s->op_ctx, pData, ulDataLen);
     }
-    CK_RV rv = digest_output(s, pDigest, pulDigestLen);
+    rv = digest_output(s, pDigest, pulDigestLen);
     azihsm_pkcs11_unlock();
     return rv;
 }
@@ -672,10 +707,6 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (pulDigestLen == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -688,7 +719,24 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    CK_RV rv = digest_output(s, pDigest, pulDigestLen);
+    CK_RV rv = CKR_OK;
+    if (pulDigestLen == NULL_PTR)
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot C_Digest is in progress */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    /* Straight after C_DigestInit this is the (allowed) zero-part case. */
+    s->op_mode = P11_OP_MODE_MULTIPART;
+    rv = digest_output(s, pDigest, pulDigestLen);
     azihsm_pkcs11_unlock();
     return rv;
 }

@@ -7,7 +7,10 @@
  * Every PKCS#11 entry point not implemented in a dedicated translation unit is
  * defined here as a real symbol returning CKR_FUNCTION_NOT_SUPPORTED (or
  * CKR_FUNCTION_NOT_PARALLEL for the two legacy parallel-execution calls), so the
- * module always exposes a complete CK_FUNCTION_LIST / _3_0.
+ * module always exposes a complete CK_FUNCTION_LIST / _3_0. Like the
+ * implemented entry points they report CKR_CRYPTOKI_NOT_INITIALIZED before
+ * C_Initialize — the spec puts that check first, ahead of what the function
+ * would do.
  */
 
 #include "azihsm_pkcs11_internal.h"
@@ -19,6 +22,10 @@ CK_RV C_InitToken(
     CK_UTF8CHAR_PTR pLabel
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)slotID;
     (void)pPin;
     (void)ulPinLen;
@@ -28,6 +35,10 @@ CK_RV C_InitToken(
 
 CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPin;
     (void)ulPinLen;
@@ -42,6 +53,10 @@ CK_RV C_SetPIN(
     CK_ULONG ulNewLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pOldPin;
     (void)ulOldLen;
@@ -56,6 +71,10 @@ CK_RV C_GetOperationState(
     CK_ULONG_PTR pulOperationStateLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pOperationState;
     (void)pulOperationStateLen;
@@ -70,6 +89,10 @@ CK_RV C_SetOperationState(
     CK_OBJECT_HANDLE hAuthenticationKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pOperationState;
     (void)ulOperationStateLen;
@@ -86,6 +109,10 @@ CK_RV C_CopyObject(
     CK_OBJECT_HANDLE_PTR phNewObject
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)hObject;
     (void)pTemplate;
@@ -96,6 +123,10 @@ CK_RV C_CopyObject(
 
 CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)hObject;
     (void)pulSize;
@@ -109,6 +140,10 @@ CK_RV C_SetAttributeValue(
     CK_ULONG ulCount
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)hObject;
     (void)pTemplate;
@@ -124,6 +159,10 @@ CK_RV C_EncryptUpdate(
     CK_ULONG_PTR pulEncryptedPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPart;
     (void)ulPartLen;
@@ -138,6 +177,10 @@ CK_RV C_EncryptFinal(
     CK_ULONG_PTR pulLastEncryptedPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pLastEncryptedPart;
     (void)pulLastEncryptedPartLen;
@@ -152,6 +195,10 @@ CK_RV C_DecryptUpdate(
     CK_ULONG_PTR pulPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pEncryptedPart;
     (void)ulEncryptedPartLen;
@@ -162,6 +209,10 @@ CK_RV C_DecryptUpdate(
 
 CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart, CK_ULONG_PTR pulLastPartLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pLastPart;
     (void)pulLastPartLen;
@@ -170,6 +221,10 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart, CK_ULONG
 
 CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)hKey;
     return CKR_FUNCTION_NOT_SUPPORTED;
@@ -177,6 +232,10 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 
 CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -191,6 +250,10 @@ CK_RV C_Sign(
     CK_ULONG_PTR pulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pData;
     (void)ulDataLen;
@@ -201,6 +264,10 @@ CK_RV C_Sign(
 
 CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPart;
     (void)ulPartLen;
@@ -209,6 +276,10 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPar
 
 CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pSignature;
     (void)pulSignatureLen;
@@ -221,6 +292,10 @@ CK_RV C_SignRecoverInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -235,6 +310,10 @@ CK_RV C_SignRecover(
     CK_ULONG_PTR pulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pData;
     (void)ulDataLen;
@@ -245,6 +324,10 @@ CK_RV C_SignRecover(
 
 CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -259,6 +342,10 @@ CK_RV C_Verify(
     CK_ULONG ulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pData;
     (void)ulDataLen;
@@ -269,6 +356,10 @@ CK_RV C_Verify(
 
 CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPart;
     (void)ulPartLen;
@@ -277,6 +368,10 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
 
 CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pSignature;
     (void)ulSignatureLen;
@@ -289,6 +384,10 @@ CK_RV C_VerifyRecoverInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -303,6 +402,10 @@ CK_RV C_VerifyRecover(
     CK_ULONG_PTR pulDataLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pSignature;
     (void)ulSignatureLen;
@@ -319,6 +422,10 @@ CK_RV C_DigestEncryptUpdate(
     CK_ULONG_PTR pulEncryptedPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPart;
     (void)ulPartLen;
@@ -335,6 +442,10 @@ CK_RV C_DecryptDigestUpdate(
     CK_ULONG_PTR pulPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pEncryptedPart;
     (void)ulEncryptedPartLen;
@@ -351,6 +462,10 @@ CK_RV C_SignEncryptUpdate(
     CK_ULONG_PTR pulEncryptedPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pPart;
     (void)ulPartLen;
@@ -367,6 +482,10 @@ CK_RV C_DecryptVerifyUpdate(
     CK_ULONG_PTR pulPartLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pEncryptedPart;
     (void)ulEncryptedPartLen;
@@ -386,6 +505,10 @@ CK_RV C_GenerateKeyPair(
     CK_OBJECT_HANDLE_PTR phPrivateKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)pPublicKeyTemplate;
@@ -406,6 +529,10 @@ CK_RV C_WrapKey(
     CK_ULONG_PTR pulWrappedKeyLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hWrappingKey;
@@ -426,6 +553,10 @@ CK_RV C_UnwrapKey(
     CK_OBJECT_HANDLE_PTR phKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hUnwrappingKey;
@@ -446,6 +577,10 @@ CK_RV C_DeriveKey(
     CK_OBJECT_HANDLE_PTR phKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hBaseKey;
@@ -457,6 +592,10 @@ CK_RV C_DeriveKey(
 
 CK_RV C_SeedRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed, CK_ULONG ulSeedLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pSeed;
     (void)ulSeedLen;
@@ -465,6 +604,10 @@ CK_RV C_SeedRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed, CK_ULONG ulSee
 
 CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR RandomData, CK_ULONG ulRandomLen)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)RandomData;
     (void)ulRandomLen;
@@ -473,12 +616,20 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR RandomData, CK_UL
 
 CK_RV C_GetFunctionStatus(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_PARALLEL;
 }
 
 CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_PARALLEL;
 }
@@ -492,6 +643,10 @@ CK_RV C_LoginUser(
     CK_ULONG ulUsernameLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)userType;
     (void)pPin;
@@ -503,6 +658,10 @@ CK_RV C_LoginUser(
 
 CK_RV C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS flags)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)flags;
     return CKR_FUNCTION_NOT_SUPPORTED;
@@ -514,6 +673,10 @@ CK_RV C_MessageEncryptInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -532,6 +695,10 @@ CK_RV C_EncryptMessage(
     CK_ULONG_PTR pulCiphertextLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -552,6 +719,10 @@ CK_RV C_EncryptMessageBegin(
     CK_ULONG ulAssociatedDataLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -571,6 +742,10 @@ CK_RV C_EncryptMessageNext(
     CK_FLAGS flags
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -584,6 +759,10 @@ CK_RV C_EncryptMessageNext(
 
 CK_RV C_MessageEncryptFinal(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
@@ -594,6 +773,10 @@ CK_RV C_MessageDecryptInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -612,6 +795,10 @@ CK_RV C_DecryptMessage(
     CK_ULONG_PTR pulPlaintextLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -632,6 +819,10 @@ CK_RV C_DecryptMessageBegin(
     CK_ULONG ulAssociatedDataLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -651,6 +842,10 @@ CK_RV C_DecryptMessageNext(
     CK_FLAGS flags
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -664,6 +859,10 @@ CK_RV C_DecryptMessageNext(
 
 CK_RV C_MessageDecryptFinal(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
@@ -674,6 +873,10 @@ CK_RV C_MessageSignInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -690,6 +893,10 @@ CK_RV C_SignMessage(
     CK_ULONG_PTR pulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -706,6 +913,10 @@ CK_RV C_SignMessageBegin(
     CK_ULONG ulParameterLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -722,6 +933,10 @@ CK_RV C_SignMessageNext(
     CK_ULONG_PTR pulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -734,6 +949,10 @@ CK_RV C_SignMessageNext(
 
 CK_RV C_MessageSignFinal(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
@@ -744,6 +963,10 @@ CK_RV C_MessageVerifyInit(
     CK_OBJECT_HANDLE hKey
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pMechanism;
     (void)hKey;
@@ -760,6 +983,10 @@ CK_RV C_VerifyMessage(
     CK_ULONG ulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -776,6 +1003,10 @@ CK_RV C_VerifyMessageBegin(
     CK_ULONG ulParameterLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -792,6 +1023,10 @@ CK_RV C_VerifyMessageNext(
     CK_ULONG ulSignatureLen
 )
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     (void)pParameter;
     (void)ulParameterLen;
@@ -804,6 +1039,10 @@ CK_RV C_VerifyMessageNext(
 
 CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
 {
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
     (void)hSession;
     return CKR_FUNCTION_NOT_SUPPORTED;
 }

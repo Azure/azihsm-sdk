@@ -240,26 +240,34 @@ CK_RV C_GenerateKey(
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if ((pMechanism == NULL_PTR) || (phKey == NULL_PTR) ||
-        ((pTemplate == NULL_PTR) && (ulCount > 0)))
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
-    if (pMechanism->mechanism != CKM_AES_KEY_GEN)
-    {
-        return CKR_MECHANISM_INVALID;
-    }
-    if ((pMechanism->pParameter != NULL_PTR) || (pMechanism->ulParameterLen != 0))
-    {
-        return CKR_MECHANISM_PARAM_INVALID;
-    }
-
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
     {
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
+    }
+    /* Precedence: bad handle, then bad arguments and mechanism, then login
+     * state — so a logged-out caller is told about a malformed request rather
+     * than about its login. */
+    CK_RV rv = CKR_OK;
+    if ((pMechanism == NULL_PTR) || (phKey == NULL_PTR) ||
+        ((pTemplate == NULL_PTR) && (ulCount > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (pMechanism->mechanism != CKM_AES_KEY_GEN)
+    {
+        rv = CKR_MECHANISM_INVALID;
+    }
+    else if ((pMechanism->pParameter != NULL_PTR) || (pMechanism->ulParameterLen != 0))
+    {
+        rv = CKR_MECHANISM_PARAM_INVALID;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
     }
     azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
     if (!slot->user_logged_in || (slot->hsm_session == 0))
@@ -270,7 +278,7 @@ CK_RV C_GenerateKey(
 
     CK_ULONG value_len = 0;
     CK_BBOOL token = CK_FALSE;
-    CK_RV rv = keygen_check_template(pTemplate, ulCount, &value_len, &token);
+    rv = keygen_check_template(pTemplate, ulCount, &value_len, &token);
     if ((rv == CKR_OK) && token && ((s->flags & CKF_RW_SESSION) == 0))
     {
         rv = CKR_SESSION_READ_ONLY;
@@ -388,20 +396,6 @@ static CK_RV cipher_init(
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (pMechanism == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
-    if ((pMechanism->mechanism != CKM_AES_CBC) && (pMechanism->mechanism != CKM_AES_CBC_PAD))
-    {
-        return CKR_MECHANISM_INVALID;
-    }
-    /* Both mechanisms take the raw 16-byte IV as their parameter. */
-    if ((pMechanism->pParameter == NULL_PTR) || (pMechanism->ulParameterLen != AES_BLOCK_LEN))
-    {
-        return CKR_MECHANISM_PARAM_INVALID;
-    }
-
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -409,10 +403,30 @@ static CK_RV cipher_init(
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    if (s->op != P11_OP_NONE)
+    /* Precedence as in C_GenerateKey — handle, arguments, mechanism, then login
+     * state — with the operation-state check between arguments and mechanism,
+     * as in C_DigestInit. */
+    CK_RV rv = CKR_OK;
+    if (pMechanism == NULL_PTR)
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op != P11_OP_NONE)
+    {
+        rv = CKR_OPERATION_ACTIVE;
+    }
+    else if ((pMechanism->mechanism != CKM_AES_CBC) && (pMechanism->mechanism != CKM_AES_CBC_PAD))
+    {
+        rv = CKR_MECHANISM_INVALID;
+    }
+    else if ((pMechanism->pParameter == NULL_PTR) || (pMechanism->ulParameterLen != AES_BLOCK_LEN))
+    {
+        rv = CKR_MECHANISM_PARAM_INVALID; /* both take the raw 16-byte IV */
+    }
+    if (rv != CKR_OK)
     {
         azihsm_pkcs11_unlock();
-        return CKR_OPERATION_ACTIVE;
+        return rv;
     }
     azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
     if (!slot->user_logged_in || (slot->hsm_session == 0))
@@ -421,7 +435,6 @@ static CK_RV cipher_init(
         return CKR_USER_NOT_LOGGED_IN; /* unmasking needs the device session */
     }
 
-    CK_RV rv;
     CK_BYTE *body = NULL;
     CK_ULONG body_len = 0;
     cipher_op *op = NULL;
@@ -525,7 +538,10 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
  * Shared one-shot body. Follows the spec's operation-lifetime rules: a NULL
  * output buffer reports the required length and keeps the operation active, a
  * too-small buffer returns CKR_BUFFER_TOO_SMALL and keeps it active for the
- * retry, and every other outcome — success or failure — terminates it.
+ * retry, and every other outcome — success or any failure, bad arguments
+ * included — terminates it. Hence the arguments are checked only once the
+ * operation has been found: with no operation there is nothing to terminate,
+ * and CKR_OPERATION_NOT_INITIALIZED is the answer.
  */
 static CK_RV cipher_oneshot(
     CK_SESSION_HANDLE hSession,
@@ -539,10 +555,6 @@ static CK_RV cipher_oneshot(
     if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    }
-    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
-    {
-        return CKR_ARGUMENTS_BAD;
     }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
@@ -560,12 +572,17 @@ static CK_RV cipher_oneshot(
     cipher_op *op = (cipher_op *)s->op_ctx;
     bool pad = (op->mech == CKM_AES_CBC_PAD);
 
-    /* Deterministic length policy, host-side (the device would reject these
-     * too, but with statuses that don't map to the spec's *_LEN_RANGE). The
-     * input length is also range-checked here before it is narrowed to the
-     * device buffer's 32-bit length in azihsm_pkcs11_key_aes_cbc. */
+    /* Argument check, then the deterministic length policy, host-side (the
+     * device would reject these too, but with statuses that don't map to the
+     * spec's *_LEN_RANGE). The input length is also range-checked here before
+     * it is narrowed to the device buffer's 32-bit length in
+     * azihsm_pkcs11_key_aes_cbc. */
     CK_RV rv = CKR_OK;
-    if (in_len > (CK_ULONG)UINT32_MAX)
+    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (in_len > (CK_ULONG)UINT32_MAX)
     {
         rv = encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
     }
@@ -583,6 +600,9 @@ static CK_RV cipher_oneshot(
         azihsm_pkcs11_unlock();
         return rv;
     }
+    /* Recorded so the multi-part calls (once implemented) refuse to join a
+     * one-shot operation with CKR_OPERATION_ACTIVE, as the digests do. */
+    s->op_mode = P11_OP_MODE_ONESHOT;
 
     if (out == NULL_PTR)
     {
