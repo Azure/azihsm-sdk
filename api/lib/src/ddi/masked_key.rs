@@ -14,6 +14,12 @@ use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_SECRET256;
+use azihsm_ddi_tbor_types::KEY_KIND_SECRET384;
+use azihsm_ddi_tbor_types::KEY_KIND_SECRET521;
+use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA256;
+use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA384;
+use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA512;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use zerocopy::little_endian::U16 as Le16;
 use zerocopy::little_endian::U64 as Le64;
@@ -38,6 +44,18 @@ const TBOR_KEY_SCOPE_SHIFT: u32 = 17;
 const TBOR_KEY_SCOPE_MASK: u64 = 0b111;
 /// `KeyScope::Session` value in the packed scope field.
 const TBOR_KEY_SCOPE_SESSION: u64 = 0b001;
+
+/// std/OpenSSL stores `n | e | d | p | q | dp | dq | qInv`.
+#[cfg(feature = "emu")]
+const fn rsa_crt_payload_len(key_bytes: usize) -> usize {
+    key_bytes * 9 / 2 + 4
+}
+
+/// Uno stores the PKA operand `p | q | dp | dq | n | n1q | n2p | e`.
+#[cfg(not(feature = "emu"))]
+const fn rsa_crt_payload_len(key_bytes: usize) -> usize {
+    key_bytes * 5 + 4
+}
 
 /// Key-kind discriminant recorded in the TBOR masked-key metadata
 /// `key_kind` field. Values mirror the firmware `HsmVaultKeyKind`
@@ -81,12 +99,12 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             KEY_KIND_AES128 => Self::Aes128,
             KEY_KIND_AES192 => Self::Aes192,
             KEY_KIND_AES256 => Self::Aes256,
-            22 => Self::Secret256,
-            23 => Self::Secret384,
-            24 => Self::Secret521,
-            32 => Self::VarLenHmacSha256,
-            33 => Self::VarLenHmacSha384,
-            34 => Self::VarLenHmacSha512,
+            KEY_KIND_SECRET256 => Self::Secret256,
+            KEY_KIND_SECRET384 => Self::Secret384,
+            KEY_KIND_SECRET521 => Self::Secret521,
+            KEY_KIND_VAR_LEN_HMAC_SHA256 => Self::VarLenHmacSha256,
+            KEY_KIND_VAR_LEN_HMAC_SHA384 => Self::VarLenHmacSha384,
+            KEY_KIND_VAR_LEN_HMAC_SHA512 => Self::VarLenHmacSha512,
             _ => return Err(HsmError::MaskedKeyDecodeFailed),
         })
     }
@@ -125,10 +143,8 @@ impl TborMaskedKeyKind {
             Self::Rsa2kPrivate | Self::Rsa3kPrivate | Self::Rsa4kPrivate => {
                 payload_len == key_bytes * 2 + 4
             }
-            // CRT is PAL-defined: std uses the crypto crate's 4.5k+4-byte
-            // HSM component layout; Uno uses a 5k+4-byte PKA operand.
             Self::Rsa2kPrivateCrt | Self::Rsa3kPrivateCrt | Self::Rsa4kPrivateCrt => {
-                payload_len == key_bytes * 9 / 2 + 4 || payload_len == key_bytes * 5 + 4
+                payload_len == rsa_crt_payload_len(key_bytes)
             }
             Self::EccP256 | Self::EccP384 | Self::EccP521 => {
                 payload_len == key_bytes.next_multiple_of(4)
@@ -636,5 +652,19 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
                 .map_err(|_| HsmError::InternalError)?,
         );
         Ok(HsmMaskedKeyAttributes::from_bits_truncate(flags))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rsa_crt_payload_len_matches_backend() {
+        #[cfg(feature = "emu")]
+        assert_eq!([256, 384, 512].map(rsa_crt_payload_len), [1156, 1732, 2308]);
+
+        #[cfg(not(feature = "emu"))]
+        assert_eq!([256, 384, 512].map(rsa_crt_payload_len), [1284, 1924, 2564]);
     }
 }

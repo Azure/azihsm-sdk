@@ -69,6 +69,18 @@ pub const KEY_KIND_AES128: u8 = 16;
 pub const KEY_KIND_AES192: u8 = 17;
 /// `HsmVaultKeyKind::Aes256` response discriminant.
 pub const KEY_KIND_AES256: u8 = 18;
+/// `HsmVaultKeyKind::Secret256` discriminant.
+pub const KEY_KIND_SECRET256: u8 = 22;
+/// `HsmVaultKeyKind::Secret384` discriminant.
+pub const KEY_KIND_SECRET384: u8 = 23;
+/// `HsmVaultKeyKind::Secret521` discriminant.
+pub const KEY_KIND_SECRET521: u8 = 24;
+/// `HsmVaultKeyKind::VarLenHmacSha256` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA256: u8 = 32;
+/// `HsmVaultKeyKind::VarLenHmacSha384` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA384: u8 = 33;
+/// `HsmVaultKeyKind::VarLenHmacSha512` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA512: u8 = 34;
 
 /// `KeyUsage` bit: key may encrypt.
 pub const KEY_USAGE_ENCRYPT: u64 = 1 << 0;
