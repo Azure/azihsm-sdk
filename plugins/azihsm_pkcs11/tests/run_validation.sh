@@ -4,9 +4,11 @@
 #
 # Drives the module with the two validation tools: OpenSC pkcs11-tool (smoke)
 # and, when present, Google pkcs11test (conformance). Builds the standalone
-# no-device module for the tool-facing checks; if the mock-backed module has
-# been built (cargo build -p azihsm_pkcs11 --features mock), it also runs the
-# C_Login provisioning ceremony against the simulator.
+# no-device module for the tool-facing checks and runs the device-free unit
+# tests; if the mock-backed module has been built (cargo build -p azihsm_pkcs11
+# --features mock), it also runs the C_Login provisioning ceremony, a
+# pkcs11-tool AES keygen and the GoogleTest functional suite
+# (integration-tests/cpp) against the simulator.
 #
 # The tools are expected locally (extracted from distro packages / cloned, no
 # system install). Point PKCS11_TESTING at that directory; it defaults to the
@@ -91,12 +93,19 @@ if [ -f "$HSMMOD" ]; then
         echo "   (AES keygen failed)"; exit 1
     fi
 
-    echo; echo "== mock-backed: AES keygen + CBC round-trip harness =="
-    gcc -Wall -Wextra -Werror -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
-        "$PLUGIN/tests/aes_test.c" -o "$WORK/aes_test" -ldl
-    "$WORK/aes_test" "$HSMMOD" || { echo "   (AES harness failed)"; exit 1; }
+    echo; echo "== mock-backed: GoogleTest functional suite (integration-tests/cpp) =="
+    # googletest is fetched by CMake; keep it in a per-user cache so re-runs
+    # stay quick (assumes one run at a time — concurrent runs would share it).
+    deps="${XDG_CACHE_HOME:-$HOME/.cache}/azihsm-pkcs11-cpp-deps"
+    cmake -S "$PLUGIN/integration-tests/cpp" -B "$WORK/cpp-tests" \
+        -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_BASE_DIR="$deps" > "$WORK/cmake.log" 2>&1 \
+        || { tail -n 20 "$WORK/cmake.log"; echo "   (cmake configure failed)"; exit 1; }
+    cmake --build "$WORK/cpp-tests" --parallel > "$WORK/cmake-build.log" 2>&1 \
+        || { tail -n 30 "$WORK/cmake-build.log"; echo "   (cmake build failed)"; exit 1; }
+    AZIHSM_PKCS11_MODULE="$HSMMOD" ctest --test-dir "$WORK/cpp-tests" --output-on-failure \
+        --no-tests=error || { echo "   (functional suite failed)"; exit 1; }
 else
-    echo; echo "== mock-backed C_Login skipped (no target/debug/azihsm_pkcs11.so) =="
+    echo; echo "== mock-backed checks skipped (no target/debug/azihsm_pkcs11.so) =="
 fi
 
 echo; echo "All validation steps completed."

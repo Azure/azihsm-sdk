@@ -79,8 +79,12 @@ for stderr tracing.
 that link the translation unit directly: `tests/digest_kat_test.c` (NIST
 vectors), the object-store harnesses, and `tests/aes_template_test.c` (the
 complete CK_RV matrix of the keygen template validation and defaults, plus the
-status maps). `tests/aes_test.c` is a functional harness for the AES slice
-(keygen templates, CBC round trips, the two-call sizing discipline, operation
-state machine); it drives the real module ABI via `dlopen`, so it needs the
-mock-backed build. The CI workflow (`.github/workflows/pkcs11.yml`) runs on
-pushes/PRs to the staging branch.
+status maps). `integration-tests/cpp/` is the functional suite (GoogleTest,
+same shape as the OpenSSL provider's): it `dlopen`s the built module and
+drives the real Cryptoki ABI — keygen, one-shot CBC round trips, the two-call
+sizing discipline, the operation state machine and init precedence — so it
+needs the mock- or hardware-backed build (see the CMakeLists.txt header for
+the build/run recipe; `AZIHSM_PKCS11_MODULE` points it at a module,
+`AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). The CI workflow
+(`.github/workflows/pkcs11.yml`) runs all of these on pushes/PRs to the
+staging branch.
