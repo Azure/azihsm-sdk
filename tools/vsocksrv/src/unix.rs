@@ -59,6 +59,37 @@ const TRANSPORT_ERROR: u32 = 1;
 const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Wraps a `Read` with an overall deadline that bounds the *total* time
+/// spent reading a single frame, not just each individual blocking
+/// syscall.
+///
+/// The AF_VSOCK/AF_UNIX socket-level `SO_RCVTIMEO` (see
+/// `CONNECTION_READ_TIMEOUT`) only bounds how long a single `read()`
+/// syscall can block; it does not bound how long `Request::read_from` (or
+/// any other multi-read parse) takes overall. A peer that drips one byte
+/// just under that timeout apart could otherwise keep completing
+/// individual reads forever while still taking arbitrarily long to
+/// deliver a full frame, defeating the timeout and occupying this
+/// single-threaded server indefinitely. Checking a monotonic deadline
+/// before every read bounds the total wall-clock time regardless of how
+/// the peer paces its writes.
+struct DeadlineRead<'a, T: Read> {
+    inner: &'a mut T,
+    deadline: Instant,
+}
+
+impl<T: Read> Read for DeadlineRead<'_, T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if Instant::now() >= self.deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "connection read deadline exceeded",
+            ));
+        }
+        self.inner.read(buf)
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum SocketType {
     Vsock,
@@ -343,11 +374,12 @@ fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
 }
 
 /// Number of attempts to re-enable a partition after a disconnect-triggered
-/// reset before giving up and logging at `error` level. `part_enable`
-/// failures are expected to be rare and transient (e.g. contention with a
-/// concurrent request), so a few immediate retries are cheap insurance
-/// against leaving the partition disabled - and therefore unusable by every
-/// subsequent connection - after a single failed attempt.
+/// reset before giving up and logging at `error` level. `part_alloc`/
+/// `part_enable` failures are expected to be rare and transient (e.g.
+/// contention with a concurrent request), so a few immediate retries are
+/// cheap insurance against leaving the partition disabled - and therefore
+/// unusable by every subsequent connection - after a single failed
+/// attempt.
 const PARTITION_ENABLE_RETRIES: u32 = 3;
 
 /// Frees then re-allocates and re-enables `partition_id`, which clears its
@@ -364,39 +396,50 @@ const PARTITION_ENABLE_RETRIES: u32 = 3;
 /// is exhausted. `part_free` clears the session table outright, so each
 /// reset starts the next client with zero live sessions.
 ///
-/// Retries `part_alloc`/`part_enable` a few times on failure; if either
-/// still fails, every subsequent connection sharing this partition will
-/// fail until the process is restarted, so that's logged at `error` level
-/// to make the condition impossible to miss.
-fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id: u8) {
+/// Retries `part_alloc`/`part_enable` a few times on failure. Once
+/// `part_alloc` succeeds, later attempts only retry `part_enable` -
+/// re-calling `part_alloc` on an already-`Allocated` partition would just
+/// fail, permanently stranding the partition after a single transient
+/// `part_enable` failure. Returns an error if the partition could not be
+/// returned to a usable (`Enabled`) state after all retries; the caller
+/// must treat that as fatal (stop serving further clients), since
+/// continuing on a partition that isn't known to be freshly reset would
+/// violate the isolation invariant this reset exists to uphold.
+fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id: u8) -> Result<()> {
     if let Err(error) = runtime.block_on(hsm.part_free(partition_id)) {
         tracing::warn!(?error, "Failed to free partition on reset");
     }
     let res_mask = 1u128 << u32::from(partition_id);
+    let mut allocated = false;
+    let mut last_error = None;
     for attempt in 1..=PARTITION_ENABLE_RETRIES {
-        let result = match runtime.block_on(hsm.part_alloc(partition_id, res_mask)) {
-            Ok(()) => runtime.block_on(hsm.part_enable(partition_id)),
-            Err(error) => Err(error),
-        };
-        match result {
-            Ok(()) => return,
-            Err(error) if attempt < PARTITION_ENABLE_RETRIES => {
-                tracing::warn!(
-                    ?error,
-                    attempt,
-                    "Failed to re-allocate/re-enable partition on reset; retrying"
-                );
+        if !allocated {
+            match runtime.block_on(hsm.part_alloc(partition_id, res_mask)) {
+                Ok(()) => allocated = true,
+                Err(error) => {
+                    tracing::warn!(?error, attempt, "Failed to re-allocate partition on reset");
+                    last_error = Some(error);
+                    continue;
+                }
             }
+        }
+        match runtime.block_on(hsm.part_enable(partition_id)) {
+            Ok(()) => return Ok(()),
             Err(error) => {
-                tracing::error!(
-                    ?error,
-                    attempt,
-                    "Failed to re-allocate/re-enable partition on reset after all retries; \
-                     partition is unusable until the server is restarted"
-                );
+                tracing::warn!(?error, attempt, "Failed to re-enable partition on reset");
+                last_error = Some(error);
             }
         }
     }
+    let error = last_error.expect("loop runs at least once and only exits early via return Ok");
+    tracing::error!(
+        ?error,
+        "Failed to reset partition after all retries; partition is unusable until the server \
+         is restarted"
+    );
+    Err(anyhow!(
+        "Failed to reset partition after all retries: {error:?}"
+    ))
 }
 
 /// Serves a single connection until it ends (cleanly, via timeout, or via
@@ -405,15 +448,22 @@ fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id:
 /// path (including protocol/decode errors or a failed response write),
 /// otherwise the next client on the same shared partition could observe the
 /// previous client's live keys/sessions/vault state.
+///
+/// A connection-level error (protocol decode failure, I/O error, etc.) is
+/// logged here and does not fail this function - only a *reset* failure
+/// does, since that is the condition callers must treat as fatal (see
+/// `reset_partition`).
 fn serve_connection_and_reset(
     stream: &mut (impl Read + Write),
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
 ) -> Result<()> {
-    let result = serve_connection(stream, hsm, runtime, partition_id);
-    reset_partition(hsm, runtime, partition_id);
-    result
+    match serve_connection(stream, hsm, runtime, partition_id) {
+        Ok(()) => tracing::info!("HSM client connection closed"),
+        Err(error) => tracing::warn!(?error, "HSM client connection closed with an error"),
+    }
+    reset_partition(hsm, runtime, partition_id)
 }
 
 fn serve_connection(
@@ -426,7 +476,11 @@ fn serve_connection(
     loop {
         debug!("Waiting for request frame");
         tracing::trace!("Waiting for request frame");
-        let request = match Request::read_from(stream) {
+        let mut deadline_stream = DeadlineRead {
+            inner: stream,
+            deadline: Instant::now() + CONNECTION_READ_TIMEOUT,
+        };
+        let request = match Request::read_from(&mut deadline_stream) {
             Ok(request) => request,
             Err(azihsm_ddi_sock_proto::ProtoError::Io(error))
                 if matches!(
@@ -517,22 +571,23 @@ fn serve_connection(
     }
 }
 
+/// Serves one accepted connection under a per-connection tracing span,
+/// then propagates any partition reset failure (see
+/// `serve_connection_and_reset`) so the caller can stop accepting further
+/// clients rather than serving them on a partition that isn't known to be
+/// freshly reset.
 fn serve_connection_logged(
     mut stream: impl Read + Write,
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
-) {
+) -> Result<()> {
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
     tracing::info!(connection_id, "Connected HSM client");
     let connection_span = tracing::info_span!("connection", connection_id);
     let _connection_guard = connection_span.enter();
     tracing::debug!("Started connection worker");
-    if let Err(error) = serve_connection_and_reset(&mut stream, hsm, runtime, partition_id) {
-        tracing::warn!(?error, "HSM client connection closed with an error");
-    } else {
-        tracing::info!("HSM client connection closed");
-    }
+    serve_connection_and_reset(&mut stream, hsm, runtime, partition_id)
 }
 
 pub(crate) fn main() -> Result<()> {
@@ -600,7 +655,11 @@ pub(crate) fn main() -> Result<()> {
                 // disconnect wipe another's live sessions/keys. Handling
                 // connections serially also removes any need to bound
                 // concurrent threads against this untrusted listener.
-                serve_connection_logged(stream, &hsm, runtime.handle(), args.partition_id);
+                serve_connection_logged(stream, &hsm, runtime.handle(), args.partition_id)
+                    .context(
+                        "Partition reset failed after a client disconnected; refusing to \
+                         serve further clients on a partition that isn't known to be reset",
+                    )?;
             }
         }
         SocketType::Unix => {
@@ -611,21 +670,13 @@ pub(crate) fn main() -> Result<()> {
                 .context("AF_UNIX socket is required")?;
             let mut stream = unix_stream.take().context("AF_UNIX stream is missing")?;
             loop {
-                match serve_connection_and_reset(
-                    &mut stream,
-                    &hsm,
-                    runtime.handle(),
-                    args.partition_id,
-                ) {
-                    Ok(()) => {
-                        debug!("HSM client disconnected; reconnecting");
-                        tracing::info!("HSM client disconnected; reconnecting");
-                    }
-                    Err(error) => {
-                        debug!("HSM connection failed; reconnecting");
-                        tracing::warn!(?error, "HSM connection failed; reconnecting");
-                    }
-                }
+                serve_connection_and_reset(&mut stream, &hsm, runtime.handle(), args.partition_id)
+                    .context(
+                        "Partition reset failed after a client disconnected; refusing to \
+                         serve further clients on a partition that isn't known to be reset",
+                    )?;
+                debug!("HSM client disconnected; reconnecting");
+                tracing::info!("HSM client disconnected; reconnecting");
                 stream = connect_unix(path, args.port).context("Failed to reconnect to AF_UNIX")?;
                 tracing::info!(
                     socket = %path.display(),
