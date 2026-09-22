@@ -5,9 +5,13 @@ use azihsm_crypto as crypto;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA256;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
+use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_AES128;
+use azihsm_ddi_tbor_types::KEY_KIND_AES192;
+use azihsm_ddi_tbor_types::KEY_KIND_AES256;
 use azihsm_ddi_tbor_types::KEY_KIND_ECC256_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_ECC384_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_ECC521_PRIVATE;
@@ -124,9 +128,23 @@ pub(crate) fn rsa_aes_unwrap_key(
 ///
 /// For use under the barrier lock or by callers already inside a
 /// resiliency retry loop (e.g. [`aes_xts_unwrap_key`] which has its
-/// own `#[resiliency_key_op]`). On failure after a successful DDI
-/// call, the handle is cleaned up via [`HsmKeyIdGuard`].
+/// own `#[resiliency_key_op]`). MBOR failures after a successful DDI
+/// call clean up the resident handle via [`HsmKeyIdGuard`]; TBOR returns
+/// an unpinned masked key and creates no resident handle.
 pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
+    key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    hash_algo: HsmHashAlgo,
+    key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    if key.session().is_ex() {
+        rsa_aes_unwrap_key_tbor(key, wrapped_key, hash_algo, key_props)
+    } else {
+        rsa_aes_unwrap_key_mbor(key, wrapped_key, hash_algo, key_props)
+    }
+}
+
+fn rsa_aes_unwrap_key_mbor(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
@@ -161,6 +179,80 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     }
 
     Ok((guard.release(), dev_key_props))
+}
+
+fn rsa_aes_unwrap_key_tbor(
+    unwrapping_key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    oaep_hash: HsmHashAlgo,
+    key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    if key_props.label().len() > TBOR_KEY_LABEL_MAX_LEN {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    let expected_key_kind = match (key_props.kind(), key_props.bits()) {
+        (HsmKeyKind::Aes, 128) => KEY_KIND_AES128,
+        (HsmKeyKind::Aes, 192) => KEY_KIND_AES192,
+        (HsmKeyKind::Aes | HsmKeyKind::AesGcm | HsmKeyKind::AesXts, 256) => KEY_KIND_AES256,
+        _ => return Err(HsmError::InvalidKeyProps),
+    };
+    let unwrapping_modulus_len = unwrapping_key.size();
+    if wrapped_key.len() < unwrapping_modulus_len {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    let mut wrapped_blob = wrapped_key.to_vec();
+    wrapped_blob[..unwrapping_modulus_len].reverse();
+
+    let req = TborUnwrapKeyReq {
+        session_id: unwrapping_key.session().ex_session_id()?,
+        scope: key_props.tbor_scope(),
+        key_class: KEY_CLASS_AES,
+        key_usage: tbor_unwrap_key_usage(&key_props)?,
+        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
+        wrapped_blob,
+        key_label: key_props.label().to_vec(),
+    };
+    let mut cookie = None;
+    let resp = unwrapping_key.with_dev(|dev| {
+        dev.exec_op_tbor(&req, None, &mut cookie)
+            .map_err(HsmError::from)
+    })?;
+
+    if resp.key_kind != expected_key_kind || !resp.pub_key.is_empty() {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    // Firmware represents every symmetric unwrap as raw AES. Validate that
+    // representation before restoring the API's logical AES-GCM/XTS kind.
+    let raw_dev_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
+    let raw_expected_props = HsmKeyProps::new(
+        key_props.class(),
+        HsmKeyKind::Aes,
+        key_props.bits(),
+        key_props.ecc_curve(),
+        key_props.flags(),
+        key_props.label().to_vec(),
+    );
+    if !raw_expected_props.validate_dev_props(&raw_dev_props) {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    let mut dev_key_props = HsmKeyProps::new(
+        raw_dev_props.class(),
+        key_props.kind(),
+        raw_dev_props.bits(),
+        raw_dev_props.ecc_curve(),
+        raw_dev_props.flags(),
+        raw_dev_props.label().to_vec(),
+    );
+    dev_key_props.set_masked_key(&resp.masked_key);
+    if !key_props.validate_dev_props(&dev_key_props) {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    Ok((HsmKeyHandle::Unpinned, dev_key_props))
 }
 
 /// Performs RSA AES key pair unwrapping using the specified RSA private key.
@@ -500,6 +592,11 @@ fn hsm_wire_pub_to_crypto(wire: &[u8]) -> HsmResult<crypto::RsaPublicKey> {
 
 fn tbor_unwrap_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
     match props.kind() {
+        HsmKeyKind::Aes | HsmKeyKind::AesGcm | HsmKeyKind::AesXts
+            if props.can_encrypt() && props.can_decrypt() =>
+        {
+            Ok(KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
+        }
         HsmKeyKind::Rsa | HsmKeyKind::RsaCrt if props.can_sign() => {
             Ok(KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
         }

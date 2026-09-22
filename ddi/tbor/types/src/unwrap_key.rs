@@ -63,6 +63,12 @@ pub const KEY_KIND_ECC256_PRIVATE: u8 = 13;
 pub const KEY_KIND_ECC384_PRIVATE: u8 = 14;
 /// `HsmVaultKeyKind::Ecc521Private` response discriminant.
 pub const KEY_KIND_ECC521_PRIVATE: u8 = 15;
+/// `HsmVaultKeyKind::Aes128` response discriminant.
+pub const KEY_KIND_AES128: u8 = 16;
+/// `HsmVaultKeyKind::Aes192` response discriminant.
+pub const KEY_KIND_AES192: u8 = 17;
+/// `HsmVaultKeyKind::Aes256` response discriminant.
+pub const KEY_KIND_AES256: u8 = 18;
 
 /// `KeyUsage` bit: key may encrypt.
 pub const KEY_USAGE_ENCRYPT: u64 = 1 << 0;
