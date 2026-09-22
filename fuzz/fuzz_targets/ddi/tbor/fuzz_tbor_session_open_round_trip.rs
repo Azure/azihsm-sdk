@@ -70,6 +70,7 @@ struct FuzzInput {
     valid_open_finish: bool,
     mac_fin: [u8; MAC_FIN_LEN],
     seed_envelope: [u8; SEED_ENVELOPE_LEN],
+    seed: [u8; SESSION_SEED_LEN],
     seed_iv: [u8; AES_GCM_IV_LEN],
     // When `valid_open_finish` is true, corrupt the otherwise-valid
     // `seed_envelope` so the Phase-2 MAC still verifies but the AEAD-open
@@ -281,8 +282,7 @@ fn build_valid_finish_req(
     .ok()?;
 
     let param_key = derive_param_key(&exported).ok()?;
-    let seed = [0u8; SESSION_SEED_LEN];
-    let mut seed_envelope_vec = seal_seed_envelope_with_iv(&param_key, &seed, &input.seed_iv).ok()?;
+    let mut seed_envelope_vec = seal_seed_envelope_with_iv(&param_key, &input.seed, &input.seed_iv).ok()?;
     if input.corrupt_seed_envelope {
         // Flip a byte in the ciphertext/tag so the Phase-2 MAC (computed
         // from `exported`/`pk_*`, not the envelope) still verifies, but the
