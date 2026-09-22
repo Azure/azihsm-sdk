@@ -20,6 +20,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEcdhDeriveReq;
 use azihsm_ddi_tbor_types::TborHkdfDeriveReq;
@@ -36,7 +37,6 @@ use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
 use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
 
 /// `KeyScope::Session` discriminant.
 const SCOPE_SESSION: u8 = 0b001;

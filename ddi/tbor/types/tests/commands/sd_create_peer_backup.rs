@@ -20,6 +20,14 @@
 //! * Policy without `allow_peer_cloning` → `SdPeerCloningNotAllowed`.
 //! * Not finalized → `InvalidArg`.
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
@@ -37,14 +45,6 @@ use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::SessionHandshake;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CO_PSK;
 
 /// Byte offset of the `flags` field in the 484-byte `PartPolicy` image.
 const OFF_FLAGS: usize = 418;
