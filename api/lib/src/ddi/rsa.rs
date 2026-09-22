@@ -5,8 +5,12 @@ use azihsm_crypto as crypto;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA256;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
+use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
 use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC256_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC384_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC521_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
@@ -14,6 +18,7 @@ use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
@@ -435,7 +440,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
-    let (key_class, expected_key_kind) = tbor_rsa_key_class_and_kind(&priv_key_props)?;
+    let (key_class, expected_key_kind) = tbor_key_class_and_kind(&priv_key_props)?;
     let unwrapping_modulus_len = unwrapping_key.size();
     if wrapped_key.len() < unwrapping_modulus_len {
         return Err(HsmError::InvalidArgument);
@@ -450,7 +455,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
         session_id: unwrapping_key.session().ex_session_id()?,
         scope: priv_key_props.tbor_scope(),
         key_class,
-        key_usage: rsa_tbor_key_usage(&priv_key_props)?,
+        key_usage: tbor_unwrap_key_usage(&priv_key_props)?,
         oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
         wrapped_blob,
         key_label: priv_key_props.label().to_vec(),
@@ -464,15 +469,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
     if resp.key_kind != expected_key_kind {
         return Err(HsmError::InvalidKeyProps);
     }
-    let expected_modulus_len =
-        usize::try_from(priv_key_props.bits()).map_err(|_| HsmError::InvalidKeyProps)? / 8;
-    let modulus_len = resp.pub_key.len().saturating_sub(4);
-    if modulus_len != expected_modulus_len {
-        return Err(HsmError::InvalidKeyProps);
-    }
-
-    let crypto_key = hsm_wire_pub_to_crypto(&resp.pub_key)?;
-    let pub_key_der = crypto_key.to_vec().map_hsm_err(HsmError::InternalError)?;
+    let pub_key_der = tbor_unwrapped_pub_key_to_der(&priv_key_props, &resp.pub_key)?;
     let (dev_priv_key_props, dev_pub_key_props) =
         HsmMaskedKey::to_key_pair_props(&resp.masked_key, &pub_key_der)?;
 
@@ -501,13 +498,19 @@ fn hsm_wire_pub_to_crypto(wire: &[u8]) -> HsmResult<crypto::RsaPublicKey> {
     crypto::RsaPublicKey::from_hsm_bytes(&big_endian).map_hsm_err(HsmError::InternalError)
 }
 
-fn rsa_tbor_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
-    if props.can_sign() {
-        Ok(KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
-    } else if props.can_decrypt() {
-        Ok(KEY_USAGE_DECRYPT | KEY_USAGE_ENCRYPT)
-    } else {
-        Err(HsmError::InvalidKeyProps)
+fn tbor_unwrap_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
+    match props.kind() {
+        HsmKeyKind::Rsa | HsmKeyKind::RsaCrt if props.can_sign() => {
+            Ok(KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+        }
+        HsmKeyKind::Rsa | HsmKeyKind::RsaCrt if props.can_decrypt() => {
+            Ok(KEY_USAGE_DECRYPT | KEY_USAGE_ENCRYPT)
+        }
+        HsmKeyKind::Ecc if props.can_sign() && !props.can_derive() => {
+            Ok(KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+        }
+        HsmKeyKind::Ecc if props.can_derive() && !props.can_sign() => Ok(KEY_USAGE_DERIVE),
+        _ => Err(HsmError::InvalidKeyProps),
     }
 }
 
@@ -520,14 +523,42 @@ fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
     }
 }
 
-fn tbor_rsa_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
-    match (props.kind(), props.bits()) {
-        (HsmKeyKind::Rsa, 2048) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA2K_PRIVATE)),
-        (HsmKeyKind::Rsa, 3072) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA3K_PRIVATE)),
-        (HsmKeyKind::Rsa, 4096) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA4K_PRIVATE)),
-        (HsmKeyKind::RsaCrt, 2048) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA2K_PRIVATE_CRT)),
-        (HsmKeyKind::RsaCrt, 3072) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA3K_PRIVATE_CRT)),
-        (HsmKeyKind::RsaCrt, 4096) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA4K_PRIVATE_CRT)),
+fn tbor_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
+    match (props.kind(), props.bits(), props.ecc_curve()) {
+        (HsmKeyKind::Rsa, 2048, None) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA2K_PRIVATE)),
+        (HsmKeyKind::Rsa, 3072, None) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA3K_PRIVATE)),
+        (HsmKeyKind::Rsa, 4096, None) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA4K_PRIVATE)),
+        (HsmKeyKind::RsaCrt, 2048, None) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA2K_PRIVATE_CRT)),
+        (HsmKeyKind::RsaCrt, 3072, None) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA3K_PRIVATE_CRT)),
+        (HsmKeyKind::RsaCrt, 4096, None) => Ok((KEY_CLASS_RSA_CRT, KEY_KIND_RSA4K_PRIVATE_CRT)),
+        (HsmKeyKind::Ecc, 256, Some(HsmEccCurve::P256)) => {
+            Ok((KEY_CLASS_ECC, KEY_KIND_ECC256_PRIVATE))
+        }
+        (HsmKeyKind::Ecc, 384, Some(HsmEccCurve::P384)) => {
+            Ok((KEY_CLASS_ECC, KEY_KIND_ECC384_PRIVATE))
+        }
+        (HsmKeyKind::Ecc, 521, Some(HsmEccCurve::P521)) => {
+            Ok((KEY_CLASS_ECC, KEY_KIND_ECC521_PRIVATE))
+        }
+        _ => Err(HsmError::InvalidKeyProps),
+    }
+}
+
+fn tbor_unwrapped_pub_key_to_der(props: &HsmKeyProps, wire: &[u8]) -> HsmResult<Vec<u8>> {
+    match props.kind() {
+        HsmKeyKind::Rsa | HsmKeyKind::RsaCrt => {
+            let expected_modulus_len =
+                usize::try_from(props.bits()).map_err(|_| HsmError::InvalidKeyProps)? / 8;
+            if wire.len().saturating_sub(4) != expected_modulus_len {
+                return Err(HsmError::InvalidKeyProps);
+            }
+            let crypto_key = hsm_wire_pub_to_crypto(wire)?;
+            crypto_key.to_vec().map_hsm_err(HsmError::InternalError)
+        }
+        HsmKeyKind::Ecc => {
+            let curve = props.ecc_curve().ok_or(HsmError::InvalidKeyProps)?;
+            ecc_wire_pub_key_to_der(curve, wire)
+        }
         _ => Err(HsmError::InvalidKeyProps),
     }
 }

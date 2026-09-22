@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::aead_envelope;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC256_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC384_PRIVATE;
+use azihsm_ddi_tbor_types::KEY_KIND_ECC521_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE_CRT;
 use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
@@ -69,9 +72,9 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             KEY_KIND_RSA2K_PRIVATE_CRT => Self::Rsa2kPrivateCrt,
             KEY_KIND_RSA3K_PRIVATE_CRT => Self::Rsa3kPrivateCrt,
             KEY_KIND_RSA4K_PRIVATE_CRT => Self::Rsa4kPrivateCrt,
-            13 => Self::EccP256,
-            14 => Self::EccP384,
-            15 => Self::EccP521,
+            KEY_KIND_ECC256_PRIVATE => Self::EccP256,
+            KEY_KIND_ECC384_PRIVATE => Self::EccP384,
+            KEY_KIND_ECC521_PRIVATE => Self::EccP521,
             16 => Self::Aes128,
             17 => Self::Aes192,
             18 => Self::Aes256,

@@ -57,6 +57,12 @@ pub const KEY_KIND_RSA2K_PRIVATE_CRT: u8 = 7;
 pub const KEY_KIND_RSA3K_PRIVATE_CRT: u8 = 8;
 /// `HsmVaultKeyKind::Rsa4kPrivateCrt` response discriminant.
 pub const KEY_KIND_RSA4K_PRIVATE_CRT: u8 = 9;
+/// `HsmVaultKeyKind::Ecc256Private` response discriminant.
+pub const KEY_KIND_ECC256_PRIVATE: u8 = 13;
+/// `HsmVaultKeyKind::Ecc384Private` response discriminant.
+pub const KEY_KIND_ECC384_PRIVATE: u8 = 14;
+/// `HsmVaultKeyKind::Ecc521Private` response discriminant.
+pub const KEY_KIND_ECC521_PRIVATE: u8 = 15;
 
 /// `KeyUsage` bit: key may encrypt.
 pub const KEY_USAGE_ENCRYPT: u64 = 1 << 0;
