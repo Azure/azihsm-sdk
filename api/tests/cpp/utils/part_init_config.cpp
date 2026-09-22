@@ -3,6 +3,7 @@
 
 #include "part_init_config.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -22,6 +23,7 @@
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/evp.h>
+#include <unistd.h>
 #endif
 
 // clang-format off
@@ -428,10 +430,39 @@ std::vector<uint8_t> load_mobk_file(const std::string &path)
 
 void save_mobk_file(const std::string &path, const std::vector<uint8_t> &mobk)
 {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (f)
+    // Multiple nextest processes share this path, and the std PAL derives a
+    // deterministic masking key so the MOBK content is identical across
+    // them. Stage to a per-process temp file then atomically rename into
+    // place, so a concurrent reader in another process never observes a
+    // half-truncated file mid-write.
+    auto nanos = std::chrono::steady_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+    auto pid = static_cast<unsigned long long>(GetCurrentProcessId());
+#else
+    auto pid = static_cast<unsigned long long>(getpid());
+#endif
+    auto tmp = path + ".tmp." + std::to_string(pid) + "." + std::to_string(nanos);
     {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f)
+        {
+            return;
+        }
         f.write(reinterpret_cast<const char *>(mobk.data()), mobk.size());
+        f.flush();
+        if (!f)
+        {
+            f.close();
+            std::error_code write_ec;
+            std::filesystem::remove(tmp, write_ec);
+            return;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec)
+    {
+        std::filesystem::remove(tmp, ec);
     }
 }
 
@@ -473,6 +504,29 @@ azihsm_status part_init_with_mobk_fallback(
         &init_config.pota_endorsement,
         resiliency_config
     );
+
+    // Stale/incompatible cached MOBK: the shared cache file may have been
+    // written by a different backend (emu vs mock) or an older masked-key
+    // format, yielding a MOBK this device cannot decode. Drop the cache and
+    // re-init from the raw OBK.
+    if (err == AZIHSM_STATUS_MASKED_KEY_DECODE_FAILED &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER &&
+        init_config.backup_config.masked_owner_backup_key != nullptr)
+    {
+        std::error_code ec;
+        std::filesystem::remove(get_mobk_path(), ec);
+        init_config.backup_config.masked_owner_backup_key = nullptr;
+        make_part_init_config(part_handle, init_config);
+        err = azihsm_part_init(
+            part_handle,
+            creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            resiliency_config
+        );
+    }
 
     // Warm-device fallback: load cached MOBK from file and retry.
     std::vector<uint8_t> mobk_data;

@@ -24,7 +24,7 @@ use crate::tbor;
 pub const TBOR_OP_RSA_MOD_EXP: u8 = 0x1A;
 
 /// Max masked RSA private-key envelope length (RSA-4096-CRT).
-pub const RSA_MASKED_KEY_MAX_LEN: usize = 3072;
+pub const RSA_MASKED_KEY_MAX_LEN: usize = 3168;
 /// Max RSA modulus length (bytes) — RSA-4096.
 pub const RSA_MOD_EXP_MAX_LEN: usize = 512;
 
@@ -45,7 +45,7 @@ pub struct TborRsaModExpReq {
 
     /// The masked RSA private key (from `UnwrapKey`); its kind recovers the
     /// modulus size and CRT form.
-    #[tbor(max_len = 3072)]
+    #[tbor(max_len = 3168)]
     pub masked_key: Vec<u8>,
 
     /// The private-key operation, 1-byte `RsaOp` (see `RSA_OP_*`): gates on

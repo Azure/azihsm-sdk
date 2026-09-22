@@ -26,7 +26,7 @@ pub const TBOR_OP_UNWRAP_KEY: u8 = 0x14;
 /// Max wrapped-blob length (`RSA-OAEP(KEK) ‖ AES-KWP(key)`).
 pub const UNWRAP_WRAPPED_BLOB_MAX_LEN: usize = 3072;
 /// Max masked recovered-key envelope length.
-pub const UNWRAP_MASKED_KEY_MAX_LEN: usize = 3072;
+pub const UNWRAP_MASKED_KEY_MAX_LEN: usize = 3168;
 /// Max recovered public-key length.
 pub const UNWRAP_PUB_KEY_MAX_LEN: usize = 520;
 
@@ -95,7 +95,7 @@ pub struct TborUnwrapKeyResp {
     pub key_kind: u8,
 
     /// The recovered key, masked under the scope's masking key.
-    #[tbor(max_len = 3072)]
+    #[tbor(max_len = 3168)]
     pub masked_key: Vec<u8>,
 
     /// The recovered key's wire public key for RSA / ECC; empty for

@@ -33,6 +33,7 @@ use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use zerocopy::TryFromBytes;
@@ -201,7 +202,7 @@ fn sd_create_peer_backup_rejects_before_finalize() {
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let req = TborSdCreatePeerBackupReq {
         session_id: session.session_id,
-        masked_sealing_key: [0u8; 180],
+        masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
         policy: PartPolicy::zeroed(),
         dst_mfgr_cert_chain: Vec::new(),
         dst_owner_cert_chain: Vec::new(),

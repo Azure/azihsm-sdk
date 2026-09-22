@@ -42,7 +42,12 @@ fn test_get_api_rev() {
         assert_eq!(resp.data.min.major, 1);
         assert_eq!(resp.data.min.minor, 0);
         assert_eq!(resp.data.max.major, 1);
+        // Only the mock simulator advertises 1.0; the emu (fw/core) and
+        // real devices report the firmware's 1.1 maximum.
+        #[cfg(feature = "mock")]
         assert_eq!(resp.data.max.minor, 0);
+        #[cfg(not(feature = "mock"))]
+        assert_eq!(resp.data.max.minor, 1);
     });
 }
 

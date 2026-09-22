@@ -7,8 +7,8 @@
 //! BKS3 and a random security-domain masking key (`SDMK`), provisions
 //! `SDMK` in the vault as the partition's SecurityDomain-scope masking
 //! key, and returns three backups — the 161-byte HPKE-Auth
-//! `pok_remote_backup`, the 180-byte `pok_local_backup` (BKS3 masked
-//! under `PartLocalMK`), and the 164-byte `sd_mk_backup` (`SDMK` masked
+//! `pok_remote_backup`, the 276-byte `pok_local_backup` (BKS3 masked
+//! under `PartLocalMK`), and the 260-byte `sd_mk_backup` (`SDMK` masked
 //! under the derived `SDBMK`).
 //!
 //! These tests run a **self-backup** (sender == receiver): one partition
@@ -20,7 +20,7 @@
 //!
 //! Coverage:
 //! * Happy path — non-zero `pok_remote_backup` (161 B), `pok_local_backup`
-//!   (180 B), and `sd_mk_backup` (164 B).
+//!   (276 B), and `sd_mk_backup` (260 B).
 //! * One-shot: a second create on the now-initialized partition →
 //!   `SdAlreadyInitialized`.
 //! * Missing OOB evidence → `InvalidArg`.
@@ -322,14 +322,14 @@ fn sd_create_remote_backup_roundtrip() {
         "pok_remote_backup must not be all-zero",
     );
 
-    // Local backup: BKS3 masked under PartLocalMK, 180 B, non-zero.
+    // Local backup: BKS3 masked under PartLocalMK, 276 B, non-zero.
     assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         resp.pok_local_backup.iter().any(|&b| b != 0),
         "pok_local_backup must not be all-zero",
     );
 
-    // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
+    // Masking-key backup: SDMK masked under the derived SDBMK, 260 B,
     // non-zero.
     assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(

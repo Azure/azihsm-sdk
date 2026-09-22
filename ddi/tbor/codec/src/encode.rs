@@ -145,7 +145,7 @@ impl<'a, H: Header> Encoder<'a, H> {
         self.push_toc(build_offset_len(TocType::Buffer, len, offset))?;
         // Validate that the staging area can accommodate the reserved bytes.
         if len > 0 {
-            let _ = self.stage_range(len)?;
+            self.stage_range(len)?;
         }
         self.data_offset += len;
         self.check_offset_overflow()?;

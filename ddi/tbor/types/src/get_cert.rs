@@ -6,8 +6,9 @@
 //! `GetCertificate` is an **out-of-session** command — the TBOR analogue
 //! of MBOR `GetCertificate`. The host sends a `(slot_id, cert_id)` pair;
 //! the firmware responds with the DER-encoded X.509 certificate at that
-//! index of the partition slot's chain. By convention index `0` is the
-//! leaf and the last index is the root (see
+//! index of the partition slot's chain. The firmware returns the chain
+//! root->leaf: index `0` is the root and the last index (`count - 1`) is
+//! the partition leaf (see
 //! [`GetCertChainInfo`](crate::get_cert_chain_info) for the chain length).
 //! No session is required.
 //!
@@ -36,8 +37,8 @@ pub struct TborGetCertReq {
     /// Certificate chain slot within the caller's partition.
     pub slot_id: u8,
 
-    /// Zero-based certificate index; `0` is the leaf, the last index is
-    /// the root.
+    /// Zero-based certificate index; `0` is the root and the last index
+    /// (`count - 1`) is the partition leaf.
     pub cert_id: u8,
 }
 
