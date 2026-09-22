@@ -69,6 +69,10 @@ struct ShutdownTracker {
     active_tasks: AtomicUsize,
     drained: Signal<CriticalSectionRawMutex, ()>,
     deinitialized: AtomicBool,
+    /// Free slots in the `handle_io` Embassy task pool
+    /// ([`MAX_CONCURRENT_IOS`]), mirrored 1:1 with the pool's own
+    /// capacity. See [`try_reserve_handle_io_slot`](Self::try_reserve_handle_io_slot).
+    handle_io_permits: AtomicUsize,
 }
 
 impl ShutdownTracker {
@@ -77,6 +81,7 @@ impl ShutdownTracker {
             active_tasks: AtomicUsize::new(active_tasks),
             drained: Signal::new(),
             deinitialized: AtomicBool::new(false),
+            handle_io_permits: AtomicUsize::new(MAX_CONCURRENT_IOS),
         }
     }
 
@@ -85,6 +90,30 @@ impl ShutdownTracker {
         if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.drained.signal(());
         }
+    }
+
+    /// Attempts to reserve one of the `handle_io` pool's
+    /// [`MAX_CONCURRENT_IOS`] slots.
+    ///
+    /// `poll_io` must call this *before* invoking `handle_io`: a failed
+    /// spawn (Embassy's pool full) still consumes — and silently drops —
+    /// the `StdHsmIo` argument passed to it, leaking its buffer-pool
+    /// slot, since Embassy gives no way to recover the argument once
+    /// spawning fails. Mirroring the pool's capacity here 1:1 lets
+    /// `poll_io` know *before* calling `handle_io` whether the spawn
+    /// will succeed, so it can release the IO's slot itself via
+    /// `drop_io` when none are free instead.
+    fn try_reserve_handle_io_slot(&self) -> bool {
+        self.handle_io_permits
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+            .is_ok()
+    }
+
+    /// Releases a slot reserved by
+    /// [`try_reserve_handle_io_slot`](Self::try_reserve_handle_io_slot),
+    /// called once the corresponding `handle_io` task finishes.
+    fn release_handle_io_slot(&self) {
+        self.handle_io_permits.fetch_add(1, Ordering::AcqRel);
     }
 
     async fn wait_drained(&self) {
@@ -148,7 +177,8 @@ async fn run_pal_until_drained(hsm: &Hsm<StdHsmPal>, tracker: &ShutdownTracker) 
 ///
 /// Awaits the next IO from the PAL submission queue, then spawns a
 /// `handle_io` task from the 32-slot pool. If no pool slots are
-/// available, the IO is silently skipped and the loop continues. Only
+/// available, the IO is discarded — its buffer-pool slot is released
+/// via [`HsmIoController::drop_io`] — and the loop continues. Only
 /// exits once the submission channel is closed and drained, and only
 /// then marks itself done in `tracker` — the executor won't stop
 /// until this loop (and every `handle_io` it spawned) has finished.
@@ -159,11 +189,19 @@ async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracke
             break;
         };
 
-        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
-        let Ok(token) = handle_io(io, tracker.clone()) else {
-            tracker.task_done();
+        if !tracker.try_reserve_handle_io_slot() {
+            // No `handle_io` pool slot is free: discard the IO, but
+            // release its buffer-pool slot rather than just dropping
+            // it (see `try_reserve_handle_io_slot`'s doc comment).
+            let _ = HSM.get().await.pal().drop_io(io).await;
             continue;
-        };
+        }
+
+        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
+        // A slot was just reserved above, so this mirrors the pool's
+        // own capacity 1:1 and is guaranteed to succeed.
+        let token =
+            handle_io(io, tracker.clone()).expect("handle_io slot reserved but spawn failed");
         spawner.spawn(token);
     }
     tracker.task_done();
@@ -177,6 +215,7 @@ async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracke
 #[embassy_executor::task(pool_size = 32)]
 async fn handle_io(io: StdHsmIo, tracker: Arc<ShutdownTracker>) {
     HSM.get().await.handle_io(io).await;
+    tracker.release_handle_io_slot();
     tracker.task_done();
 }
 
