@@ -44,6 +44,10 @@ fn profile_to_command(profile_name: &str) -> String {
             "cargo nextest run --no-fail-fast -p azihsm_ddi_sock --test vsocksrv_integration --profile ci-sock-ddi"
                 .to_string()
         }
+        "ci-api-sock" => {
+            "cargo nextest run --no-fail-fast -p azihsm_api_tests -F sock --profile ci-api-sock -- vsocksrv_session_tests"
+                .to_string()
+        }
         // For unknown profiles, construct a generic command showing the profile
         _ => format!("cargo nextest run --profile {}", profile_name),
     }

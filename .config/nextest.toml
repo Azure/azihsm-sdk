@@ -62,3 +62,8 @@ path = "junit.xml"
 # profile for running socket DDI tests against a live vsocksrv process
 [profile.ci-sock-ddi.junit]
 path = "junit.xml"
+
+# profile for running azihsm_api_tests's vsocksrv session regression test
+# against a live vsocksrv process
+[profile.ci-api-sock.junit]
+path = "junit.xml"
