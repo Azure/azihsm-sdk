@@ -39,8 +39,9 @@ use super::*;
 
 /// Retrieves an RSA unwrapping key pair from the HSM.
 ///
-/// Wraps [`get_rsa_unwrapping_key_raw_no_res`] with `#[resiliency_key_gen]` for
-/// use in the normal (non-Phase-3) path.
+/// Dispatches to TBOR for V2 sessions and MBOR for V1 sessions. The
+/// `#[resiliency_key_gen]` wrapper provides retry handling for the normal
+/// non-Phase-3 path.
 ///
 /// # Arguments
 ///
@@ -64,7 +65,7 @@ pub(crate) fn get_rsa_unwrapping_key(
     }
 }
 
-/// Raw RSA unwrapping key retrieval — no resiliency retry.
+/// Retrieves the RSA unwrapping key over MBOR without a resiliency retry.
 ///
 /// For use under the barrier write lock (Phase 3 key restoration) or
 /// by the macro-wrapped [`get_rsa_unwrapping_key`].
@@ -101,17 +102,22 @@ pub(crate) fn get_rsa_unwrapping_key_raw_no_res(
     Ok((guard.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
-/// Performs RSA AES key unwrapping using the specified RSA private key.
+/// Performs RSA-AES key unwrapping using the specified RSA private key.
+///
+/// V1 sessions use MBOR. V2 sessions use TBOR for plain AES keys; TBOR
+/// AES-GCM and AES-XTS bulk-key imports are not supported.
 ///
 /// # Arguments
 ///
 /// * `key` - The RSA private key to use for unwrapping.
-/// * `wrapped_key` - The wrapped AES key data.
-/// * `key_props` - Properties for the unwrapped AES key.
+/// * `wrapped_key` - The RSA-AES-wrapped key data.
+/// * `hash_algo` - The OAEP hash used in the RSA-AES wrapping envelope.
+/// * `key_props` - Properties for the unwrapped symmetric key.
 ///
 /// # Returns
 ///
-/// Returns a tuple containing the key handle and properties of the unwrapped AES key.
+/// Returns a tuple containing the key handle and properties of the unwrapped key.
+///
 /// Wraps [`rsa_aes_unwrap_key_raw_no_res`] with `#[resiliency_key_op]` for
 /// use in the normal (non-nested) path.
 #[resiliency_key_op(key = "key")]
@@ -128,9 +134,10 @@ pub(crate) fn rsa_aes_unwrap_key(
 ///
 /// For use under the barrier lock or by callers already inside a
 /// resiliency retry loop (e.g. [`aes_xts_unwrap_key`] which has its
-/// own `#[resiliency_key_op]`). MBOR failures after a successful DDI
-/// call clean up the resident handle via [`HsmKeyIdGuard`]; TBOR returns
-/// an unpinned masked key and creates no resident handle.
+/// own `#[resiliency_key_op]`). The session selects MBOR or TBOR; TBOR
+/// supports plain AES only. MBOR failures after a successful DDI call
+/// clean up the resident handle via [`HsmKeyIdGuard`]. A successful TBOR
+/// unwrap returns an unpinned masked key and creates no resident handle.
 pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -144,6 +151,10 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     }
 }
 
+/// Performs one MBOR RSA-AES unwrap without resiliency retry handling.
+///
+/// The device imports a resident key and returns its handle plus masked
+/// metadata. The handle guard deletes that key if response validation fails.
 fn rsa_aes_unwrap_key_mbor(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -181,6 +192,13 @@ fn rsa_aes_unwrap_key_mbor(
     Ok((guard.release(), dev_key_props))
 }
 
+/// Performs one TBOR RSA-AES unwrap of a plain AES key.
+///
+/// TBOR `UnwrapKey` currently decodes raw AES material into `Aes128`,
+/// `Aes192`, or `Aes256`. AES-GCM and AES-XTS require distinct bulk-key
+/// representations and are rejected until TBOR bulk-key import is supported.
+/// The returned masked metadata and empty public-key field are validated
+/// before returning an unpinned handle.
 fn rsa_aes_unwrap_key_tbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -194,7 +212,10 @@ fn rsa_aes_unwrap_key_tbor(
     let expected_key_kind = match (key_props.kind(), key_props.bits()) {
         (HsmKeyKind::Aes, 128) => KEY_KIND_AES128,
         (HsmKeyKind::Aes, 192) => KEY_KIND_AES192,
-        (HsmKeyKind::Aes | HsmKeyKind::AesGcm | HsmKeyKind::AesXts, 256) => KEY_KIND_AES256,
+        (HsmKeyKind::Aes, 256) => KEY_KIND_AES256,
+        (HsmKeyKind::AesGcm | HsmKeyKind::AesXts, _) => {
+            return Err(HsmError::UnsupportedKeyOperation);
+        }
         _ => return Err(HsmError::InvalidKeyProps),
     };
     let unwrapping_modulus_len = unwrapping_key.size();
@@ -224,30 +245,7 @@ fn rsa_aes_unwrap_key_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
-    // Firmware represents every symmetric unwrap as raw AES. Validate that
-    // representation before restoring the API's logical AES-GCM/XTS kind.
-    let raw_dev_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
-    let raw_expected_props = HsmKeyProps::new(
-        key_props.class(),
-        HsmKeyKind::Aes,
-        key_props.bits(),
-        key_props.ecc_curve(),
-        key_props.flags(),
-        key_props.label().to_vec(),
-    );
-    if !raw_expected_props.validate_dev_props(&raw_dev_props) {
-        return Err(HsmError::InvalidKeyProps);
-    }
-
-    let mut dev_key_props = HsmKeyProps::new(
-        raw_dev_props.class(),
-        key_props.kind(),
-        raw_dev_props.bits(),
-        raw_dev_props.ecc_curve(),
-        raw_dev_props.flags(),
-        raw_dev_props.label().to_vec(),
-    );
-    dev_key_props.set_masked_key(&resp.masked_key);
+    let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
     if !key_props.validate_dev_props(&dev_key_props) {
         return Err(HsmError::InvalidKeyProps);
     }
@@ -257,10 +255,14 @@ fn rsa_aes_unwrap_key_tbor(
 
 /// Performs RSA AES key pair unwrapping using the specified RSA private key.
 ///
+/// V1 sessions use MBOR; V2 sessions use TBOR. The supported key-pair kinds
+/// are RSA, RSA-CRT, and ECC.
+///
 /// # Arguments
 ///
 /// * `unwrapping_key` - The RSA private key used to unwrap the key pair.
 /// * `wrapped_key` - The wrapped key pair data.
+/// * `hash_algo` - The OAEP hash used in the RSA-AES wrapping envelope.
 /// * `priv_key_props` - Properties for the unwrapped private key.
 /// * `pub_key_props` - Properties for the unwrapped public key.
 ///
@@ -294,6 +296,11 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     }
 }
 
+/// Performs one MBOR RSA-AES unwrap of an RSA or ECC private key.
+///
+/// The device imports a resident private key and returns its masked metadata
+/// and public key. Both requested property sets are validated before the
+/// guarded resident handle is released to the caller.
 fn rsa_aes_unwrap_key_pair_mbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -432,6 +439,7 @@ fn rsa_mod_exp(
     }
 }
 
+/// Performs RSA modular exponentiation with a resident key over MBOR.
 fn rsa_mod_exp_mbor(
     key: &HsmRsaPrivateKey,
     op: DdiRsaOpType,
@@ -458,6 +466,10 @@ fn rsa_mod_exp_mbor(
     Ok(resp.data.x.len())
 }
 
+/// Performs RSA modular exponentiation with a masked key over TBOR.
+///
+/// RSA operands are converted between the host's big-endian representation
+/// and the TBOR wire's little-endian representation.
 fn rsa_mod_exp_tbor(
     key: &HsmRsaPrivateKey,
     op: DdiRsaOpType,
@@ -495,6 +507,12 @@ fn rsa_mod_exp_tbor(
     Ok(resp.x.len())
 }
 
+/// Retrieves the partition RSA unwrapping public key over TBOR.
+///
+/// The TBOR response contains no resident private-key handle or masked key.
+/// The host converts the wire public key to DER and returns an unpinned handle
+/// because subsequent TBOR unwraps resolve the partition key from the session
+/// instead of accepting a vault key ID.
 fn get_rsa_unwrapping_key_tbor(
     session: &HsmSession,
     mut priv_key_props: HsmKeyProps,
@@ -521,6 +539,11 @@ fn get_rsa_unwrapping_key_tbor(
     Ok((HsmKeyHandle::Unpinned, priv_key_props, pub_key_props))
 }
 
+/// Performs one TBOR RSA-AES unwrap of an RSA or ECC private key.
+///
+/// The response key kind, re-derived public key, masked private-key metadata,
+/// and requested private/public properties are validated before an unpinned
+/// key-pair handle is returned.
 fn rsa_aes_unwrap_key_pair_tbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -578,6 +601,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
     ))
 }
 
+/// Converts `n_le || e_le` RSA wire bytes to the crypto crate's representation.
 fn hsm_wire_pub_to_crypto(wire: &[u8]) -> HsmResult<crypto::RsaPublicKey> {
     if wire.len() <= 4 {
         return Err(HsmError::InternalError);
@@ -590,11 +614,10 @@ fn hsm_wire_pub_to_crypto(wire: &[u8]) -> HsmResult<crypto::RsaPublicKey> {
     crypto::RsaPublicKey::from_hsm_bytes(&big_endian).map_hsm_err(HsmError::InternalError)
 }
 
+/// Maps API key permissions to a TBOR `KeyUsage` value accepted by `UnwrapKey`.
 fn tbor_unwrap_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
     match props.kind() {
-        HsmKeyKind::Aes | HsmKeyKind::AesGcm | HsmKeyKind::AesXts
-            if props.can_encrypt() && props.can_decrypt() =>
-        {
+        HsmKeyKind::Aes if props.can_encrypt() && props.can_decrypt() => {
             Ok(KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
         }
         HsmKeyKind::Rsa | HsmKeyKind::RsaCrt if props.can_sign() => {
@@ -611,6 +634,7 @@ fn tbor_unwrap_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
     }
 }
 
+/// Maps a supported OAEP hash to its TBOR wire discriminant.
 fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
     match algo {
         HsmHashAlgo::Sha256 => Ok(HASH_ALGO_SHA256),
@@ -620,6 +644,7 @@ fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
     }
 }
 
+/// Maps RSA/ECC API properties to the requested TBOR class and response kind.
 fn tbor_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
     match (props.kind(), props.bits(), props.ecc_curve()) {
         (HsmKeyKind::Rsa, 2048, None) => Ok((KEY_CLASS_RSA, KEY_KIND_RSA2K_PRIVATE)),
@@ -641,6 +666,7 @@ fn tbor_key_class_and_kind(props: &HsmKeyProps) -> HsmResult<(u8, u8)> {
     }
 }
 
+/// Validates and converts a TBOR RSA/ECC public key to DER.
 fn tbor_unwrapped_pub_key_to_der(props: &HsmKeyProps, wire: &[u8]) -> HsmResult<Vec<u8>> {
     match props.kind() {
         HsmKeyKind::Rsa | HsmKeyKind::RsaCrt => {

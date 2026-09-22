@@ -213,7 +213,7 @@ fn test_aes_key_unwrap_common(session: &HsmSession, bits: u32, is_session: bool)
     HsmKeyManager::delete_key(aes_key).expect("Failed to delete unwrapped AES key");
 }
 
-/// Verifies AES RSA-AES unwrap uses TBOR in a V2 session.
+/// Exercises RSA-AES unwrap of a session-scoped AES-256 key in a V2 session.
 #[cfg(not(feature = "mock"))]
 #[test]
 fn test_aes_key_unwrap_tbor() {
@@ -224,89 +224,6 @@ fn test_aes_key_unwrap_tbor() {
         .expect("rotate the default CO PSK before using crypto commands");
 
     test_aes_key_unwrap_common(&session, 256, true);
-}
-
-/// Verifies AES-GCM RSA-AES unwrap uses TBOR in a V2 session.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_aes_gcm_key_unwrap_tbor() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
-    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(&session);
-    let key_data = [0x11; 32];
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_data.len());
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &key_data)
-        .expect("Failed to wrap AES-GCM key");
-
-    let aes_gcm_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::AesGcm)
-        .bits(256)
-        .label(b"tbor-aes-gcm-key")
-        .can_encrypt(true)
-        .can_decrypt(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build AES-GCM key props");
-    let mut aes_gcm_unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-    let aes_gcm_key = HsmKeyManager::unwrap_key(
-        &mut aes_gcm_unwrap_algo,
-        &unwrapping_priv_key,
-        &wrapped_key,
-        aes_gcm_props,
-    )
-    .expect("Failed to unwrap AES-GCM key over TBOR");
-    assert_eq!(aes_gcm_key.kind(), HsmKeyKind::AesGcm);
-    assert_eq!(aes_gcm_key.label(), b"tbor-aes-gcm-key");
-    assert!(aes_gcm_key.is_session());
-
-    HsmKeyManager::delete_key(aes_gcm_key).expect("Failed to delete unwrapped AES-GCM key");
-}
-
-/// Verifies AES-XTS RSA-AES unwrap uses TBOR for both key halves in a V2 session.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_aes_xts_key_unwrap_tbor() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
-    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(&session);
-    let xts_wrapped_key = build_xts_wrapped_blob(
-        &unwrapping_pub_key,
-        HsmHashAlgo::Sha256,
-        &[0x22; 32],
-        &[0x33; 32],
-    );
-    let aes_xts_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::AesXts)
-        .bits(512)
-        .label(b"tbor-aes-xts-key")
-        .can_encrypt(true)
-        .can_decrypt(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build AES-XTS key props");
-    let mut aes_xts_unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-    let aes_xts_key = HsmKeyManager::unwrap_key(
-        &mut aes_xts_unwrap_algo,
-        &unwrapping_priv_key,
-        &xts_wrapped_key,
-        aes_xts_props,
-    )
-    .expect("Failed to unwrap AES-XTS key over TBOR");
-    assert_eq!(aes_xts_key.kind(), HsmKeyKind::AesXts);
-    assert_eq!(aes_xts_key.label(), b"tbor-aes-xts-key");
-    assert!(aes_xts_key.is_session());
-
-    HsmKeyManager::delete_key(aes_xts_key).expect("Failed to delete unwrapped AES-XTS key");
 }
 
 fn test_aes_key_unmask_common(session: &HsmSession, bits: u32) {
