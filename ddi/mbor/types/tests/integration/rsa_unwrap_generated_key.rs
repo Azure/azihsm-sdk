@@ -302,7 +302,8 @@ fn test_rsa_unwrap_tampered_data() {
             let der_len = rsa_3k_private_wrapped.len();
 
             // Tamper the data:
-            der[(der_len / 2) as usize] = der[(der_len / 2) as usize].wrapping_add(1);
+            let middle = der_len / 2;
+            der[middle] = der[middle].wrapping_add(1);
 
             let key_props =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
