@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-09-16):
-* emu: 97 tests
+Test counts (last updated 2026-09-21):
+* emu: 521 tests
 * mock: 6 tests
 
 ## Legend
@@ -155,6 +155,49 @@ full native certificate-chain validation remains M1.5 work.
 | Backup from a different machine-seed identity is rejected | ✅ | `part_final::part_final_rejects_backup_from_different_mach_seed` | Verifies identity/state remain stable and fresh finalization still succeeds |
 | Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
 | Concurrent valid `PartFinal` requests → exactly one success; every loser gets `InvalidArg` | ✅ | `part_final::part_final_multi_threaded_single_winner` | Runs on emulator and hardware using the same active CO session; the lifecycle transition to `Initialized` is what serialises the race, not any in-FSM flag |
+
+## `SdRestoreLocalBackup` (opcode in-session, gated)
+
+Restores a security domain from its device-local backups
+(`pok_local_backup` = BKS3 masked under `PartLocalMK`, `sd_mk_backup` =
+SDMK masked under the derived SDBMK) and re-masks both at the current
+SVN. Mainline on both `emu` and hardware; every row below is verified on
+both backends. Tests live in `commands/sd_restore_local_backup/`.
+
+Backend note: for a fault in the 8-byte envelope header the two backends
+report different reasons — mcr-hsm raises `MaskedKeyDecodeFailed`, the
+emulator collapses six framing faults to `InvalidArg` in
+`From<Error> for HsmError`. Rows marked 🟡 accept either.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Round trip: create → reboot → restore returns a well-formed refreshed pair | ✅ | `success_path::sd_restore_local_backup_roundtrip` | Pins both widths (276 B / 260 B) and non-zero content |
+| The refreshed pair is itself restorable | ✅ | `success_path::sd_restore_local_backup_chained_restore` | Cycle 2 consumes cycle 1's output; also asserts consecutive envelopes differ (fresh IV) |
+| Command before `PartFinal` is rejected with `InvalidArg` | ✅ | `fw_rejects::sd_restore_local_backup_rejects_before_finalize` | Lifecycle gate; no `PartLocalMK` exists yet |
+| CU session is rejected with `InvalidPermissions` | ✅ | `fw_rejects::sd_restore_local_backup_rejects_non_co_session` | Rotates the CU PSK first so the role gate is reached |
+| Second restore on an SD-initialized partition is rejected with `SdAlreadyInitialized` | ✅ | `one_shot::sd_restore_local_backup_is_one_shot` | Write-once claim, witnessed by `SD_MK_KEY_ID` |
+| A delivered success cannot be replayed | ✅ | `one_shot::sd_restore_local_backup_rejects_replay_after_success` | State commits before the response is handed back; deliberate, non-idempotent |
+| Concurrent requests → exactly one success; every loser gets `SdAlreadyInitialized` | ✅ | `one_shot::sd_restore_local_backup_multi_threaded_single_winner` | 16 threads on one CO session; serialised by partition state, not an in-FSM flag |
+| A rejected restore does not consume the one-shot claim | ✅ | `one_shot::sd_restore_local_backup_retry_after_rejected_restore` | Valid retry on the same session must still succeed |
+| The claim survives repeated, distinct failures | ✅ | `one_shot::sd_restore_local_backup_multiple_rejections_do_not_consume_the_claim` | Three failure modes in sequence, then a valid restore |
+| A rejected restore does not mutate partition state | ✅ | `one_shot::sd_restore_local_backup_rejection_does_not_mutate_partition_state` | Asserts `part_state`, `generation` and `owner_svn` are unchanged |
+| A rejected restore does not tear down the session | ✅ | `one_shot::sd_restore_local_backup_session_remains_usable_after_rejection` | Same session then serves a valid restore |
+| Tampered `pok_local_backup` → `AesGcmDecryptTagDoesNotMatch` | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_tampered_pok` |  |
+| Tampered `sd_mk_backup` → `AesGcmDecryptTagDoesNotMatch` | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_tampered_sd_mk` | Second unmask, reached only after BKS3 recovery |
+| Backups are bound to the minting `PartLocalMK` | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_foreign_part_local_mk` | Re-finalizes without replaying `local_mk_backup`; identical seed/policy/anchors |
+| All-zero envelope is rejected, both envelopes | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_all_zero_envelopes` | Accepts `MaskedKeyDecodeFailed` or `InvalidArg`; measured `0x08000003` on emu and `0x087000C1` on hardware, for both envelopes |
+| Envelope header: wrong magic | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_wrong_magic` | See backend note |
+| Envelope header: unsupported `alg` | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_unsupported_algorithm` | See backend note |
+| Envelope header: non-zero reserved byte | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_nonzero_reserved_byte` | See backend note |
+| Envelope header: wrong `aad_len` | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_wrong_aad_len` | See backend note |
+| Envelope header: every byte is load-bearing | 🔁🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_every_header_byte_tampered` | Sweeps all 8 header bytes |
+| Tampered IV → `AesGcmDecryptTagDoesNotMatch` | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_pok_tampered_iv` | Envelope still parses, so both backends agree |
+| Tampered ciphertext → `AesGcmDecryptTagDoesNotMatch` | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_pok_tampered_ciphertext` |  |
+| Tampered metadata / AAD is rejected | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_pok_tampered_metadata` | Accepts the documented `MaskedKeyDecodeFailed` / `AesGcmDecryptTagDoesNotMatch` pair |
+| Full 16-byte tag is compared | 🔁 | `crypto_rejects::sd_restore_local_backup_rejects_pok_every_tag_byte_tampered` | Sweeps all 16 tag bytes; catches a truncated comparison |
+| `sd_mk_backup` header is parsed independently | 🟡 | `crypto_rejects::sd_restore_local_backup_rejects_sd_mk_wrong_magic` | Reached under a derived SDBMK |
+| `sd_mk_backup` ciphertext is authenticated | ✅ | `crypto_rejects::sd_restore_local_backup_rejects_sd_mk_tampered_ciphertext` |  |
+| Rejection status is stable across retries | ✅ | `crypto_rejects::sd_restore_local_backup_envelope_rejection_is_repeatable` | A drifting status would mean the first rejection left state behind |
 
 ## Default-PSK dispatcher gate (cross-cutting)
 
