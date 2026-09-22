@@ -677,7 +677,7 @@ pub(crate) fn main() -> Result<()> {
         bail!("Partition ID must be less than 65");
     }
 
-    let mut unix_stream = if matches!(args.socket_type, SocketType::Unix) {
+    let unix_stream = if matches!(args.socket_type, SocketType::Unix) {
         debug!("Setting up UNIX socket");
         let path = args
             .unix_socket
@@ -703,6 +703,28 @@ pub(crate) fn main() -> Result<()> {
     tracing::debug!("Created Tokio runtime");
     let hsm = Arc::new(StdHsm::with_tokio(runtime.handle().clone()));
     tracing::debug!(partition_id = args.partition_id, "Created StdHsm");
+
+    let result = serve(&args, &runtime, &hsm, unix_stream);
+    if result.is_err() {
+        // `StdHsm::drop` joins its Embassy background thread, but that
+        // thread's `run()` future is intentionally pending forever (the
+        // Embassy tasks that actually do work - `poll_io`/`ipc_task` - are
+        // spawned separately and never make `run()` itself return). So
+        // once any fatal error occurs here, letting `hsm` drop normally
+        // would hang the process forever instead of exiting with an
+        // error. Skip its destructor: the process is about to exit
+        // anyway, so the OS reclaims every resource `StdHsm` holds.
+        std::mem::forget(hsm);
+    }
+    result
+}
+
+fn serve(
+    args: &Args,
+    runtime: &tokio::runtime::Runtime,
+    hsm: &Arc<StdHsm>,
+    mut unix_stream: Option<UnixStream>,
+) -> Result<()> {
     runtime
         .block_on(hsm.part_alloc(args.partition_id, 1u128 << u32::from(args.partition_id)))
         .map_err(|error| anyhow!("Failed to allocate HSM partition: {error:?}"))?;
@@ -733,11 +755,10 @@ pub(crate) fn main() -> Result<()> {
                 // disconnect wipe another's live sessions/keys. Handling
                 // connections serially also removes any need to bound
                 // concurrent threads against this untrusted listener.
-                serve_connection_logged(stream, &hsm, runtime.handle(), args.partition_id)
-                    .context(
-                        "Partition reset failed after a client disconnected; refusing to \
+                serve_connection_logged(stream, hsm, runtime.handle(), args.partition_id).context(
+                    "Partition reset failed after a client disconnected; refusing to \
                          serve further clients on a partition that isn't known to be reset",
-                    )?;
+                )?;
             }
         }
         SocketType::Unix => {
@@ -748,11 +769,11 @@ pub(crate) fn main() -> Result<()> {
                 .context("AF_UNIX socket is required")?;
             let mut stream = unix_stream.take().context("AF_UNIX stream is missing")?;
             loop {
-                serve_connection_and_reset(&mut stream, &hsm, runtime.handle(), args.partition_id)
+                serve_connection_and_reset(&mut stream, hsm, runtime.handle(), args.partition_id)
                     .context(
-                        "Partition reset failed after a client disconnected; refusing to \
+                    "Partition reset failed after a client disconnected; refusing to \
                          serve further clients on a partition that isn't known to be reset",
-                    )?;
+                )?;
                 debug!("HSM client disconnected; reconnecting");
                 tracing::info!("HSM client disconnected; reconnecting");
                 stream = connect_unix(path, args.port).context("Failed to reconnect to AF_UNIX")?;

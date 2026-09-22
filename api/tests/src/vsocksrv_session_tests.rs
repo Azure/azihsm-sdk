@@ -92,6 +92,42 @@ fn resolved_ddi_sock_path() -> PathBuf {
     }
 }
 
+/// Removes `path` only if it is a *stale* socket file (nothing is
+/// listening on it), never one another process is actively using.
+///
+/// `UnixListener::bind` fails if `path` already exists, so a leftover
+/// file from a prior crashed run of this test must be cleared before
+/// binding. But `path` is a fixed, well-known location (`AZIHSM_DDI_SOCK`
+/// or the DDI socket default), so it could also be the path of a real,
+/// currently-running `vsocksrv`/service; unconditionally unlinking it
+/// would silently disrupt that other listener. Connecting to the path
+/// first distinguishes a stale file (connection refused/not found - safe
+/// to remove) from a live one (connection succeeds - must not remove).
+fn remove_stale_socket(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    match UnixStream::connect(path) {
+        Ok(_) => panic!(
+            "refusing to remove {}: a live socket is already listening there; set \
+             AZIHSM_DDI_SOCK to a private path before running this test",
+            path.display()
+        ),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+            ) =>
+        {
+            let _ = std::fs::remove_file(path);
+        }
+        Err(error) => panic!(
+            "failed to probe existing socket at {}: {error}",
+            path.display()
+        ),
+    }
+}
+
 impl SocketPaths {
     fn new(tag: &str) -> Self {
         let dir = std::env::temp_dir();
@@ -101,10 +137,7 @@ impl SocketPaths {
             Instant::now().elapsed()
         );
         let ddi = resolved_ddi_sock_path();
-        // Remove any stale socket file left behind by a prior crashed
-        // run, since `UnixListener::bind` fails if the path already
-        // exists.
-        let _ = std::fs::remove_file(&ddi);
+        remove_stale_socket(&ddi);
         Self {
             ch: dir.join(format!("azihsm-api-sock-test-ch-{unique}.sock")),
             ddi,
