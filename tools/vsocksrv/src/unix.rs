@@ -59,6 +59,60 @@ const TRANSPORT_ERROR: u32 = 1;
 const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Adjusts a stream's per-syscall socket timeouts.
+///
+/// `SO_RCVTIMEO`/`SO_SNDTIMEO` only bound a single blocking syscall, not
+/// however many syscalls a multi-read/write operation (e.g.
+/// `Request::read_from`, `Response::write_to`) ends up making. [`DeadlineRead`]
+/// and [`DeadlineWrite`] use this to shrink the underlying socket timeout to
+/// whatever time remains of their overall deadline before every syscall, so
+/// a peer that paces bytes just under the *socket* timeout still cannot
+/// exceed the overall deadline.
+trait SetSocketTimeouts {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()>;
+    fn set_write_timeout(&self, timeout: Duration) -> io::Result<()>;
+}
+
+impl SetSocketTimeouts for UnixStream {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        UnixStream::set_read_timeout(self, Some(timeout))
+    }
+
+    fn set_write_timeout(&self, timeout: Duration) -> io::Result<()> {
+        UnixStream::set_write_timeout(self, Some(timeout))
+    }
+}
+
+impl SetSocketTimeouts for VsockStream {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        setsockopt(self.0, ReceiveTimeout, &duration_to_timeval(timeout)).map_err(nix_to_io)
+    }
+
+    fn set_write_timeout(&self, timeout: Duration) -> io::Result<()> {
+        setsockopt(self.0, SendTimeout, &duration_to_timeval(timeout)).map_err(nix_to_io)
+    }
+}
+
+fn duration_to_timeval(duration: Duration) -> TimeVal {
+    TimeVal::new(
+        duration.as_secs() as i64,
+        i64::from(duration.subsec_micros()),
+    )
+}
+
+/// Returns the time remaining until `deadline`, or an
+/// [`io::ErrorKind::TimedOut`] error if it has already passed.
+fn remaining_or_timed_out(deadline: Instant) -> io::Result<Duration> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "connection deadline exceeded",
+        ));
+    }
+    Ok(deadline - now)
+}
+
 /// Wraps a `Read` with an overall deadline that bounds the *total* time
 /// spent reading a single frame, not just each individual blocking
 /// syscall.
@@ -70,23 +124,44 @@ static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 /// just under that timeout apart could otherwise keep completing
 /// individual reads forever while still taking arbitrarily long to
 /// deliver a full frame, defeating the timeout and occupying this
-/// single-threaded server indefinitely. Checking a monotonic deadline
-/// before every read bounds the total wall-clock time regardless of how
-/// the peer paces its writes.
-struct DeadlineRead<'a, T: Read> {
+/// single-threaded server indefinitely. Shrinking the socket's own
+/// `SO_RCVTIMEO` to whatever remains of the overall deadline before every
+/// read (rather than just checking the deadline before calling into a
+/// `read()` that can still block for the full socket timeout) bounds the
+/// total wall-clock time regardless of how the peer paces its writes.
+struct DeadlineRead<'a, T: Read + SetSocketTimeouts> {
     inner: &'a mut T,
     deadline: Instant,
 }
 
-impl<T: Read> Read for DeadlineRead<'_, T> {
+impl<T: Read + SetSocketTimeouts> Read for DeadlineRead<'_, T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if Instant::now() >= self.deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "connection read deadline exceeded",
-            ));
-        }
+        let remaining = remaining_or_timed_out(self.deadline)?;
+        self.inner.set_read_timeout(remaining)?;
         self.inner.read(buf)
+    }
+}
+
+/// Wraps a `Write` with an overall deadline that bounds the *total* time
+/// spent writing a single response, not just each individual blocking
+/// syscall. Mirrors [`DeadlineRead`]'s reasoning: `SO_SNDTIMEO` only bounds
+/// one `write()` syscall, so a peer that drains just a few bytes right
+/// before each timeout could otherwise keep `Response::write_to` blocked
+/// indefinitely across many individually-timed-out-but-successful writes.
+struct DeadlineWrite<'a, T: Write + SetSocketTimeouts> {
+    inner: &'a mut T,
+    deadline: Instant,
+}
+
+impl<T: Write + SetSocketTimeouts> Write for DeadlineWrite<'_, T> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let remaining = remaining_or_timed_out(self.deadline)?;
+        self.inner.set_write_timeout(remaining)?;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -454,7 +529,7 @@ fn reset_partition(hsm: &StdHsm, runtime: &tokio::runtime::Handle, partition_id:
 /// does, since that is the condition callers must treat as fatal (see
 /// `reset_partition`).
 fn serve_connection_and_reset(
-    stream: &mut (impl Read + Write),
+    stream: &mut (impl Read + Write + SetSocketTimeouts),
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
@@ -467,7 +542,7 @@ fn serve_connection_and_reset(
 }
 
 fn serve_connection(
-    stream: &mut (impl Read + Write),
+    stream: &mut (impl Read + Write + SetSocketTimeouts),
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
@@ -561,7 +636,10 @@ fn serve_connection(
             payload_len = response.payload.len(),
             "Writing response frame"
         );
-        response.write_to(stream)?;
+        response.write_to(&mut DeadlineWrite {
+            inner: stream,
+            deadline: Instant::now() + CONNECTION_READ_TIMEOUT,
+        })?;
         debug!("Request finished");
         tracing::debug!(
             transport_status = response.status,
@@ -577,7 +655,7 @@ fn serve_connection(
 /// clients rather than serving them on a partition that isn't known to be
 /// freshly reset.
 fn serve_connection_logged(
-    mut stream: impl Read + Write,
+    mut stream: impl Read + Write + SetSocketTimeouts,
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
