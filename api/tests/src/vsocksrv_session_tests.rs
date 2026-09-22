@@ -72,6 +72,10 @@ struct SocketPaths {
     ch: PathBuf,
     /// Path the socket DDI client connects to.
     ddi: PathBuf,
+    /// Whether this test actually bound (and therefore created) `ch`.
+    ch_owned: bool,
+    /// Whether this test actually bound (and therefore created) `ddi`.
+    ddi_owned: bool,
 }
 
 /// The environment variable `azihsm_ddi_sock::DdiSock` reads to resolve
@@ -138,14 +142,24 @@ impl SocketPaths {
         Self {
             ch: dir.join(format!("azihsm-api-sock-test-ch-{unique}.sock")),
             ddi,
+            ch_owned: false,
+            ddi_owned: false,
         }
     }
 }
 
 impl Drop for SocketPaths {
+    /// Only removes socket files this test actually created (i.e. ones
+    /// whose `UnixListener::bind` succeeded), so an externally supplied
+    /// `AZIHSM_DDI_SOCK` that turned out to belong to another process
+    /// is never unlinked here.
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.ch);
-        let _ = std::fs::remove_file(&self.ddi);
+        if self.ch_owned {
+            let _ = std::fs::remove_file(&self.ch);
+        }
+        if self.ddi_owned {
+            let _ = std::fs::remove_file(&self.ddi);
+        }
     }
 }
 
@@ -204,12 +218,17 @@ fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
 /// alongside a [`CurrentConn`] slot that always holds clones of the
 /// most recently accepted connection's sockets, so the caller can sever
 /// it on demand via [`sever_current_connection`].
+///
+/// Takes `paths` by `&mut` so each path is only marked test-owned (and
+/// therefore only removed on teardown) once its `bind` has succeeded.
 fn spawn_bridge_loop(
-    paths: &SocketPaths,
+    paths: &mut SocketPaths,
     iterations: usize,
 ) -> io::Result<(thread::JoinHandle<()>, CurrentConn)> {
     let ch_listener = UnixListener::bind(&paths.ch)?;
+    paths.ch_owned = true;
     let ddi_listener = UnixListener::bind(&paths.ddi)?;
+    paths.ddi_owned = true;
     let current: CurrentConn = Arc::new(Mutex::new(None));
     let current_for_thread = Arc::clone(&current);
     let handle = thread::spawn(move || {
@@ -343,9 +362,9 @@ fn open_partition_with_retry(path: &str, api_rev: HsmApiRev, timeout: Duration) 
 /// credential state from a prior iteration is reusable.
 #[test]
 fn many_reconnects_with_open_sessions_do_not_exhaust_partition() {
-    let paths = SocketPaths::new("many-reconnects-sessions");
+    let mut paths = SocketPaths::new("many-reconnects-sessions");
     let (_bridge, current_conn) =
-        spawn_bridge_loop(&paths, RECONNECTS).expect("failed to start test bridge");
+        spawn_bridge_loop(&mut paths, RECONNECTS).expect("failed to start test bridge");
     let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
 
     let ddi_path = paths.ddi.to_str().expect("temp path is valid UTF-8");
