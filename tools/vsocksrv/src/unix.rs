@@ -31,18 +31,19 @@ use log::debug;
 use nix::sys::socket::accept4;
 use nix::sys::socket::bind;
 use nix::sys::socket::listen;
+use nix::sys::socket::send;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::socket;
 use nix::sys::socket::sockopt::ReceiveTimeout;
 use nix::sys::socket::sockopt::SendTimeout;
 use nix::sys::socket::AddressFamily;
+use nix::sys::socket::MsgFlags;
 use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockType;
 use nix::sys::socket::VsockAddr;
 use nix::sys::time::TimeVal;
 use nix::unistd::close;
 use nix::unistd::read;
-use nix::unistd::write;
 use tracing_subscriber::EnvFilter;
 
 const PAGE_SIZE: usize = 4096;
@@ -393,7 +394,7 @@ impl Read for VsockStream {
 
 impl Write for VsockStream {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        write(self.0, buffer).map_err(nix_to_io)
+        send(self.0, buffer, MsgFlags::MSG_NOSIGNAL).map_err(nix_to_io)
     }
 
     fn flush(&mut self) -> io::Result<()> {
