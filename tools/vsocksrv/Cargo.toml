@@ -19,10 +19,12 @@ azihsm_fw_hsm_std.workspace = true
 clap = { features = ["derive"], workspace = true }
 libc.workspace = true
 log.workspace = true
-nix.workspace = true
 tokio = { features = ["rt-multi-thread", "time"], workspace = true }
 tracing.workspace = true
 tracing-subscriber = { features = ["env-filter"], workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
 
 [lints]
 workspace = true
