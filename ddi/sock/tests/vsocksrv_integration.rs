@@ -13,7 +13,7 @@
 //! connects to, so the client exercises the exact wire protocol used by
 //! the socket DDI transport.
 
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::io;
 use std::io::Read;
