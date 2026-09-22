@@ -2,25 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::aead_envelope;
-use azihsm_ddi_tbor_types::KEY_KIND_AES128;
-use azihsm_ddi_tbor_types::KEY_KIND_AES192;
-use azihsm_ddi_tbor_types::KEY_KIND_AES256;
-use azihsm_ddi_tbor_types::KEY_KIND_ECC256_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_ECC384_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_ECC521_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA2K_PRIVATE_CRT;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA3K_PRIVATE_CRT;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE;
-use azihsm_ddi_tbor_types::KEY_KIND_RSA4K_PRIVATE_CRT;
-use azihsm_ddi_tbor_types::KEY_KIND_SECRET256;
-use azihsm_ddi_tbor_types::KEY_KIND_SECRET384;
-use azihsm_ddi_tbor_types::KEY_KIND_SECRET521;
-use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA256;
-use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA384;
-use azihsm_ddi_tbor_types::KEY_KIND_VAR_LEN_HMAC_SHA512;
-use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+use azihsm_ddi_tbor_types::*;
 use zerocopy::little_endian::U16 as Le16;
 use zerocopy::little_endian::U64 as Le64;
 use zerocopy::*;
@@ -138,19 +120,15 @@ impl TborMaskedKeyKind {
     /// Validates the PAL-specific plaintext layout inside a masked envelope.
     fn payload_len_valid(self, bits: u16, payload_len: usize) -> bool {
         let key_bytes = usize::from(bits).div_ceil(8);
-        match self {
-            // Non-CRT: n || e(4) || p || q = 2k+4 bytes.
-            Self::Rsa2kPrivate | Self::Rsa3kPrivate | Self::Rsa4kPrivate => {
-                payload_len == key_bytes * 2 + 4
-            }
+        let expected_len = match self {
+            Self::Rsa2kPrivate | Self::Rsa3kPrivate | Self::Rsa4kPrivate => key_bytes * 2 + 4,
             Self::Rsa2kPrivateCrt | Self::Rsa3kPrivateCrt | Self::Rsa4kPrivateCrt => {
-                payload_len == rsa_crt_payload_len(key_bytes)
+                rsa_crt_payload_len(key_bytes)
             }
-            Self::EccP256 | Self::EccP384 | Self::EccP521 => {
-                payload_len == key_bytes.next_multiple_of(4)
-            }
-            _ => payload_len == key_bytes,
-        }
+            Self::EccP256 | Self::EccP384 | Self::EccP521 => key_bytes.next_multiple_of(4),
+            _ => key_bytes,
+        };
+        payload_len == expected_len
     }
 }
 
