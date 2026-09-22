@@ -309,10 +309,80 @@ pub struct DdiTestActionPinPolicyConfig {
     pub lockout_delay: Option<u32>,
 }
 
+/// Test action negative self-test request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionNegativeSelfTestReqInfo {
+    /// Negative self-test identifier.
+    #[ddi(id = 1)]
+    pub neg_test_id: u32,
+}
+
+/// Test action PKA instance request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionForcePkaInstanceReqInfo {
+    /// PKA instance to use.
+    #[ddi(id = 1)]
+    pub force_pka_instance: u8,
+}
+
+/// Test action negative PCT request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionNegativePctFailureReqInfo {
+    /// Number of pairwise consistency tests to skip.
+    #[ddi(id = 1)]
+    pub neg_pct_skip_cnt: u8,
+}
+
+/// Test action interrupt request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionInterruptReqInfo {
+    /// Interrupt to simulate.
+    #[ddi(id = 1)]
+    pub interrupt_type: DdiTestActionInterruptSimulationType,
+}
+
+/// Test action SVN update request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionUpdateSvnReqInfo {
+    /// Security version number to install.
+    #[ddi(id = 1)]
+    pub updated_svn: u64,
+}
+
+/// Test action GDMA error request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionGdmaErrorReqInfo {
+    /// GDMA error to inject.
+    #[ddi(id = 1)]
+    pub gdma_error_type: DdiTestActionGDMAErrorType,
+}
+
+/// Test action UCD error request info.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiTestActionUcdErrorReqInfo {
+    /// UCD error to inject.
+    #[ddi(id = 1)]
+    pub ucd_error_type: DdiTestActionUCDErrorType,
+}
+
 /// Maximum size, in bytes, of a `TestAction` opaque payload — the MBOR
-/// encoding of an action's own request-info body.
+/// encoding of an action's own request-info map.
 ///
-/// Sized with generous headroom over the current largest body
+/// Sized with generous headroom over the current largest request-info map
 /// ([`DdiTestActionPinPolicyConfig`]); this is only the buffer capacity,
 /// and just the significant bytes travel on the wire, so the ceiling is
 /// free. Because every action shares this one container, growing it here
@@ -324,18 +394,31 @@ pub const TEST_ACTION_PAYLOAD_MAX: usize = 64;
 ///
 /// Carries the MBOR encoding of an action's own request-info struct as a
 /// byte string, so the `TestAction` request map stays fixed at
-/// `{1: action, 2: payload?}` regardless of the action. Build one with
-/// [`encode_test_action_payload`].
+/// `{1: action, 2: payload?}` regardless of the action. Payload construction
+/// is owned by the conversion from [`TestActionRequest`] to
+/// [`DdiTestActionReq`].
 pub type DdiTestActionPayload = MborByteArray<TEST_ACTION_PAYLOAD_MAX>;
 
-/// MBOR-encode an action-specific body into the opaque payload container.
-///
-/// `body` is any of the per-action request-info types (for example
-/// [`DdiTestActionCrashReqInfo`]) or a bare scalar the action expects; it
-/// is encoded exactly as it would have been as a typed map entry, then
-/// wrapped as the opaque byte string the firmware re-decodes.
-pub fn encode_test_action_payload<T: MborEncode>(
-    body: &T,
+/// Every parameterized action uses a dedicated `#[ddi(map)]` request-info
+/// type. The private marker trait keeps bare scalars and enums out of the
+/// payload wire contract.
+trait TestActionPayload: MborEncode {}
+
+impl TestActionPayload for DdiTestActionCrashReqInfo {}
+impl TestActionPayload for DdiTestActionStackValidationReqInfo {}
+impl TestActionPayload for DdiTestActionEccErrorInfo {}
+impl TestActionPayload for DdiTestActionPinPolicyConfig {}
+impl TestActionPayload for DdiTestActionNegativeSelfTestReqInfo {}
+impl TestActionPayload for DdiTestActionForcePkaInstanceReqInfo {}
+impl TestActionPayload for DdiTestActionNegativePctFailureReqInfo {}
+impl TestActionPayload for DdiTestActionInterruptReqInfo {}
+impl TestActionPayload for DdiTestActionUpdateSvnReqInfo {}
+impl TestActionPayload for DdiTestActionGdmaErrorReqInfo {}
+impl TestActionPayload for DdiTestActionUcdErrorReqInfo {}
+
+/// MBOR-encode an action-specific map into the opaque payload container.
+fn encode_test_action_payload<T: TestActionPayload>(
+    request_info: &T,
 ) -> Result<DdiTestActionPayload, MborEncodeError> {
     let mut buf = [0u8; TEST_ACTION_PAYLOAD_MAX];
     // The workspace pins `azihsm_ddi_mbor_types` (hence the codec) with
@@ -343,7 +426,7 @@ pub fn encode_test_action_payload<T: MborEncode>(
     // `false`: an opaque payload is plain bytes and needs no pre-encode
     // transform.
     let mut encoder = MborEncoder::new(&mut buf, false);
-    body.mbor_encode(&mut encoder)?;
+    request_info.mbor_encode(&mut encoder)?;
     let len = encoder.position();
     DdiTestActionPayload::from_slice(&buf[..len]).map_err(|_| MborEncodeError::BufferOverflow)
 }
@@ -393,7 +476,7 @@ pub struct DdiTestActionReq {
     pub action: DdiTestAction,
 
     /// Opaque, action-specific payload — the MBOR encoding of the action's
-    /// request-info body. See [`encode_test_action_payload`].
+    /// request-info map. Constructed from [`TestActionRequest`].
     ///
     /// Spelled as `MborByteArray<..>` rather than the [`DdiTestActionPayload`]
     /// alias because the `Ddi` derive recognises a byte-array field by that
@@ -423,24 +506,36 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             ),
             TestActionRequest::ExecuteNegativeSelfTest(value) => (
                 DdiTestAction::ExecuteNegativeSelfTest,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(
+                    &DdiTestActionNegativeSelfTestReqInfo { neg_test_id: value },
+                )?),
             ),
             TestActionRequest::PinPolicyOverride(value) => (
                 DdiTestAction::PinPolicyOverride,
                 Some(encode_test_action_payload(&value)?),
             ),
             TestActionRequest::PinPolicyClear => (DdiTestAction::PinPolicyClear, None),
-            TestActionRequest::ForcePkaInstance(value) => (
-                DdiTestAction::ForcePkaInstance,
-                value.as_ref().map(encode_test_action_payload).transpose()?,
-            ),
+            TestActionRequest::ForcePkaInstance(value) => {
+                let payload = value
+                    .map(|force_pka_instance| {
+                        encode_test_action_payload(&DdiTestActionForcePkaInstanceReqInfo {
+                            force_pka_instance,
+                        })
+                    })
+                    .transpose()?;
+                (DdiTestAction::ForcePkaInstance, payload)
+            }
             TestActionRequest::TriggerRngHwFailure => (DdiTestAction::TriggerRngHwFailure, None),
             TestActionRequest::ToggleFipsApprovedState => {
                 (DdiTestAction::ToggleFipsApprovedState, None)
             }
             TestActionRequest::TriggerNegativePctFailure(value) => (
                 DdiTestAction::TriggerNegativePctFailure,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(
+                    &DdiTestActionNegativePctFailureReqInfo {
+                        neg_pct_skip_cnt: value,
+                    },
+                )?),
             ),
             TestActionRequest::TriggerEccError(value) => (
                 DdiTestAction::TriggerEccError,
@@ -448,7 +543,11 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             ),
             TestActionRequest::TriggerTdispInterrupt(value) => (
                 DdiTestAction::TriggerTdispInterrupt,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(
+                    &DdiTestActionInterruptReqInfo {
+                        interrupt_type: value,
+                    },
+                )?),
             ),
             TestActionRequest::ClearUserCredentials => (DdiTestAction::ClearUserCredentials, None),
             TestActionRequest::ClearProvisioningState => {
@@ -456,11 +555,17 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             }
             TestActionRequest::UpdateSvn(value) => (
                 DdiTestAction::UpdateSvn,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(
+                    &DdiTestActionUpdateSvnReqInfo { updated_svn: value },
+                )?),
             ),
             TestActionRequest::TriggerGdmaError(value) => (
                 DdiTestAction::TriggerGdmaError,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(
+                    &DdiTestActionGdmaErrorReqInfo {
+                        gdma_error_type: value,
+                    },
+                )?),
             ),
             TestActionRequest::ClearBk3 => (DdiTestAction::ClearBk3, None),
             TestActionRequest::TriggerStackValidation(value) => (
@@ -469,7 +574,9 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             ),
             TestActionRequest::TriggerUcdError(value) => (
                 DdiTestAction::TriggerUcdError,
-                Some(encode_test_action_payload(&value)?),
+                Some(encode_test_action_payload(&DdiTestActionUcdErrorReqInfo {
+                    ucd_error_type: value,
+                })?),
             ),
         };
 
@@ -509,4 +616,58 @@ pub fn helper_test_action_cmd(
         ext: None,
     };
     dev.exec_op_mbor(&req, &mut None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameterized_actions_use_map_payloads() {
+        let requests = [
+            TestActionRequest::TriggerCrash(DdiTestActionCrashReqInfo {
+                crash_type: DdiTestActionCrashType::Panic,
+                cpu_id: DdiTestActionSocCpuId::Hsm,
+            }),
+            TestActionRequest::ExecuteNegativeSelfTest(1),
+            TestActionRequest::PinPolicyOverride(DdiTestActionPinPolicyConfig {
+                delay_increment: Some(1),
+                state: None,
+                delay: None,
+                allowed_attempts: None,
+                lockout_delay: None,
+            }),
+            TestActionRequest::ForcePkaInstance(Some(1)),
+            TestActionRequest::TriggerNegativePctFailure(1),
+            TestActionRequest::TriggerEccError(DdiTestActionEccErrorInfo {
+                ecc_error_type: DdiTestActionEccErrorType::DtcmDoubleBit,
+                cpu_id: DdiTestActionSocCpuId::Hsm,
+            }),
+            TestActionRequest::TriggerTdispInterrupt(DdiTestActionInterruptSimulationType::Tdisp),
+            TestActionRequest::UpdateSvn(1),
+            TestActionRequest::TriggerGdmaError(DdiTestActionGDMAErrorType::GdmaDataAccessErrorBit),
+            TestActionRequest::TriggerStackValidation(DdiTestActionStackValidationReqInfo {
+                stack_error_type: DdiTestStackErrorType::StackOverflow,
+                cpu_id: DdiTestActionSocCpuId::Hsm,
+            }),
+            TestActionRequest::TriggerUcdError(DdiTestActionUCDErrorType::UcdIbDflOverflowError),
+        ];
+
+        for request in requests {
+            let wire = DdiTestActionReq::try_from(request).expect("payload must encode");
+            let payload = wire
+                .payload
+                .expect("parameterized action must have a payload");
+            let mut decoder = MborDecoder::new(payload.as_slice(), false);
+            MborMap::mbor_decode(&mut decoder).expect("payload must start with an MBOR map");
+        }
+    }
+
+    #[test]
+    fn optional_parameter_omits_payload_when_absent() {
+        let wire = DdiTestActionReq::try_from(TestActionRequest::ForcePkaInstance(None))
+            .expect("request must encode");
+
+        assert!(wire.payload.is_none());
+    }
 }

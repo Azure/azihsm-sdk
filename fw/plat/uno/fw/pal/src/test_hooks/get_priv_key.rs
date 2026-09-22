@@ -41,7 +41,7 @@ use super::common::encode_resp;
 use super::common::success_hdr;
 use crate::pal::UnoHsmPal;
 
-/// DDI `GetPrivKey` request body.
+/// DDI `GetPrivKey` request data.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 struct DdiGetPrivKeyReq {
@@ -50,7 +50,7 @@ struct DdiGetPrivKeyReq {
     key_id: u16,
 }
 
-/// DDI `GetPrivKey` response body.
+/// DDI `GetPrivKey` response data.
 ///
 /// Returns the key's on-wire kind ([`DdiKeyType`]) and its raw
 /// plaintext bytes. The `key_data` capacity matches the repository-wide
@@ -69,22 +69,22 @@ struct DdiGetPrivKeyResp<'a> {
 /// Handle `DdiGetPrivKeyCmd`.
 ///
 /// The envelope map, header, and data field ID have already been consumed
-/// by the caller; `decoder` is positioned at the request body.
+/// by the caller; `decoder` is positioned at the request data map.
 pub(super) fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     hdr: &ReqHdr,
     decoder: &mut MborDecoder<'_>,
-    req_len: usize,
+    request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
-    let body = DdiGetPrivKeyReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    let request = DdiGetPrivKeyReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
 
-    if decoder.position() != req_len {
+    if decoder.position() != request_len {
         return Err(HsmError::DdiDecodeFailed);
     }
 
-    let key_id = HsmKeyId::from(body.key_id);
+    let key_id = HsmKeyId::from(request.key_id);
 
     if pal
         .vault_key_session_binding(io, key_id)?

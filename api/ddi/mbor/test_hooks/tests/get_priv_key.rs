@@ -61,40 +61,28 @@ fn test_aes_bulk_get_and_validate_key() {
                 return;
             }
 
-            let (app_session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
-            let resp = generate_aes_bulk_256_key(
-                dev,
-                app_session_id,
-                DdiAesKeySize::AesGcmBulk256Unapproved,
-            )
-            .unwrap();
-            let key_id = resp.data.key_id;
-            let bulk_key_id = resp.data.bulk_key_id.unwrap();
-
-            let data = vec![1; 16384];
-            let aad = [4; 32];
-            let iv = [3; 12];
-            let (ciphertext, tag) = aes_gcm_encrypt_hardware(
-                dev,
-                app_session_id,
-                short_app_id,
-                bulk_key_id,
-                &data,
-                &aad,
-                &iv,
-            );
-
-            let Some((key_type, raw_key)) = retrieve_private_key(dev, app_session_id, key_id)
-            else {
+            let resp =
+                generate_aes_bulk_256_key(dev, session_id, DdiAesKeySize::AesGcmBulk256Unapproved);
+            if matches!(
+                &resp,
+                Err(DdiError::DdiStatus(
+                    DdiStatus::InvalidArg | DdiStatus::UnsupportedCmd
+                ))
+            ) {
+                println!("AES-GCM bulk key generation is not supported by this firmware.");
                 return;
-            };
-            assert_eq!(key_type, DdiKeyType::AesGcmBulk256Unapproved);
-            assert_eq!(
-                aes_gcm_decrypt_local(&raw_key, &ciphertext, &iv, &aad, &tag),
-                data
+            }
+            assert!(
+                resp.is_ok(),
+                "Unexpected AES-GCM bulk generation error: {resp:?}"
             );
+            let resp = resp.unwrap();
 
-            close_app_session(dev, app_session_id);
+            let get_resp = helper_get_priv_key(dev, Some(session_id), resp.data.key_id);
+            assert!(matches!(
+                get_resp,
+                Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType))
+            ));
         },
     );
 }

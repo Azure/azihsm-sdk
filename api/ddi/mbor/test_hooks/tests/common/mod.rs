@@ -8,6 +8,14 @@
 //! helpers are reused from `azihsm_ddi_mbor_test_helpers`, while device
 //! provisioning and session orchestration are owned here so the test-hook
 //! suite stays independent of the standard DDI suite.
+//!
+//! Hardware execution intentionally follows the Martichoras `mcrtb` contract:
+//! integration-test binaries and their cases run sequentially per VM/device,
+//! and each invocation uses `--test-threads 1`. Parallelism is limited to
+//! separate VMs/devices. Concurrent nextest execution of these binaries
+//! against one physical device is not supported; if that execution model is
+//! introduced later, the runner must add serialization or this harness must
+//! gain a cross-process device lock.
 
 #![allow(dead_code)]
 

@@ -3,8 +3,8 @@
 
 //! `TestAction` (`DdiOp` 2004) action router.
 //!
-//! The outer request body has the stable `{1: action, 2: payload?}` shape.
-//! This module decodes the action ID and routes the remaining body to the
+//! The request data has the stable `{1: action, 2: payload?}` shape.
+//! This module decodes the action ID and routes the remaining data to the
 //! action-specific module that owns its validation and behavior.
 
 use azihsm_fw_ddi_mbor::MborDecode;
@@ -24,10 +24,16 @@ use super::common::success_hdr;
 use super::trigger_crash;
 use crate::pal::UnoHsmPal;
 
-/// The response body shared by `TestAction` variants.
+/// Maximum encoded size of one action-specific opaque payload.
+///
+/// This must match the host test-hooks `TEST_ACTION_PAYLOAD_MAX`.
+pub(super) const TEST_ACTION_PAYLOAD_MAX: usize = 64;
+
+/// The response data shared by `TestAction` variants.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 struct DdiTestActionResp {
+    /// Optional action-specific result.
     #[ddi(id = 1)]
     result: Option<u32>,
 }
@@ -40,14 +46,19 @@ struct DdiTestActionResp {
 #[derive(Debug, Copy, Clone)]
 #[repr(u32)]
 enum SupportedTestAction {
+    /// Inject a crash into the CP1 HSM core.
     TriggerCrash = 8,
+    /// Clear the partition's stored user credential.
     ClearUserCredentials = 18,
 }
 
+/// Decoded action and field count from the outer TestAction request map.
 #[derive(Debug, Copy, Clone)]
 struct TestActionSelector {
+    /// Action implemented by this firmware.
     action: SupportedTestAction,
-    body_count: u8,
+    /// Number of fields in the outer TestAction request map.
+    request_field_count: u8,
 }
 
 impl TryFrom<u32> for SupportedTestAction {
@@ -64,30 +75,35 @@ impl TryFrom<u32> for SupportedTestAction {
     }
 }
 
-/// Decode the action selector and route the action-specific body.
+/// Decode the action selector and route the action-specific request.
 pub(super) fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     hdr: &ReqHdr,
     decoder: &mut MborDecoder,
-    req_len: usize,
+    request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let selector = decode_action_selector(decoder)?;
 
     match selector.action {
-        SupportedTestAction::ClearUserCredentials => {
-            clear_user_credentials::dispatch(pal, io, hdr, decoder, selector.body_count, req_len)
-        }
+        SupportedTestAction::ClearUserCredentials => clear_user_credentials::dispatch(
+            pal,
+            io,
+            hdr,
+            decoder,
+            selector.request_field_count,
+            request_len,
+        ),
         SupportedTestAction::TriggerCrash => {
-            trigger_crash::dispatch(decoder, selector.body_count, req_len)
+            trigger_crash::dispatch(decoder, selector.request_field_count, request_len)
                 .map(|never| match never {})
         }
     }
 }
 
 fn decode_action_selector(decoder: &mut MborDecoder) -> HsmResult<TestActionSelector> {
-    let body_count = MborMap::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if body_count.0 == 0 {
+    let request_map = MborMap::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if request_map.0 == 0 {
         return Err(HsmError::DdiDecodeFailed);
     }
 
@@ -100,8 +116,63 @@ fn decode_action_selector(decoder: &mut MborDecoder) -> HsmResult<TestActionSele
 
     Ok(TestActionSelector {
         action,
-        body_count: body_count.0,
+        request_field_count: request_map.0,
     })
+}
+
+/// Decode the opaque payload for a parameterized action.
+///
+/// Validates the shared outer `{1: action, 2: payload}` request shape,
+/// enforces the payload bound, and requires complete consumption of both
+/// the outer request and the nested MBOR payload.
+pub(super) fn decode_payload<'a, T>(
+    decoder: &mut MborDecoder<'a>,
+    request_field_count: u8,
+    request_len: usize,
+) -> HsmResult<T>
+where
+    T: MborDecode<'a>,
+{
+    if request_field_count != 2 {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    let payload_field_id = u8::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if payload_field_id != 2 {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    let (_pad, payload) = decoder
+        .decode_byte_slice()
+        .map_err(|_| HsmError::DdiDecodeFailed)?;
+    if payload.len() > TEST_ACTION_PAYLOAD_MAX || decoder.position() != request_len {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    let payload_len = payload.len();
+    let mut payload_decoder = MborDecoder::new(payload);
+    let request = T::mbor_decode(&mut payload_decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if payload_decoder.position() != payload_len {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    Ok(request)
+}
+
+/// Validate the request shape for a parameterless action.
+///
+/// Parameterless actions contain only `{1: action}` and must not carry a
+/// payload or any trailing outer bytes.
+pub(super) fn expect_no_payload(
+    decoder: &MborDecoder<'_>,
+    request_field_count: u8,
+    request_len: usize,
+) -> HsmResult<()> {
+    if request_field_count != 1 || decoder.position() != request_len {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    Ok(())
 }
 
 /// Encode a successful action response with no action-specific result.

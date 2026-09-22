@@ -5,7 +5,6 @@
 
 use azihsm_fw_ddi_mbor::MborDecoder;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
-use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -13,26 +12,20 @@ use azihsm_fw_hsm_pal_traits::PartPropId;
 
 use super::common::ReqHdr;
 use super::test_action::encode_success;
+use super::test_action::expect_no_payload;
 use crate::pal::UnoHsmPal;
 
+/// Validate and execute `TestAction::ClearUserCredentials`.
 pub(super) fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     hdr: &ReqHdr,
     decoder: &MborDecoder,
-    body_count: u8,
-    req_len: usize,
+    request_field_count: u8,
+    request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
-    decode_request(decoder, body_count, req_len)?;
+    expect_no_payload(decoder, request_field_count, request_len)?;
     execute(pal, io, hdr)
-}
-
-fn decode_request(decoder: &MborDecoder, body_count: u8, req_len: usize) -> HsmResult<()> {
-    if body_count != 1 || decoder.position() != req_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    Ok(())
 }
 
 fn execute<'p>(pal: &'p UnoHsmPal, io: &impl HsmIo, hdr: &ReqHdr) -> HsmResult<&'p DmaBuf> {

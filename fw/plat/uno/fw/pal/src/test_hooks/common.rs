@@ -6,9 +6,9 @@
 //! Every test-hook request and response is the MBOR map `{0: hdr, 1: data}`,
 //! where `hdr` mirrors the core's `DdiReqHdr` / `DdiRespHdr` field-for-field.
 //! The header types and the response helpers live here so each opcode
-//! handler decodes the same envelope and encodes the same reply; the router
-//! in [`super`] reads the request envelope once and hands the body to the
-//! matching handler.
+//! handler decodes the same envelope and encodes the same reply; the
+//! router in [`super`] reads the request envelope once and hands the
+//! request data to the matching handler.
 //!
 //! The types are redeclared rather than imported from the core DDI crate on
 //! purpose: nothing about a test-only command may reach a crate above the PAL,
@@ -28,8 +28,10 @@ pub(super) const DDI_STATUS_SUCCESS: u32 = 0;
 #[derive(Debug, Ddi, Clone, Copy)]
 #[ddi(map)]
 pub(super) struct ApiRev {
+    /// Major API revision.
     #[ddi(id = 1)]
     pub(super) major: u32,
+    /// Minor API revision.
     #[ddi(id = 2)]
     pub(super) minor: u32,
 }
@@ -57,16 +59,19 @@ pub(super) struct ReqHdr {
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 pub(super) struct RespHdr {
+    /// API revision.
     #[ddi(id = 1)]
     pub(super) rev: Option<ApiRev>,
     /// Opcode, carried as a raw `u32` (`DdiOp` is `repr(u32)`).
     #[ddi(id = 2)]
     pub(super) op: u32,
+    /// Session id, if any.
     #[ddi(id = 3)]
     pub(super) sess_id: Option<u16>,
     /// Status, carried as a raw `u32` (`DdiStatus` is a `u32`).
     #[ddi(id = 4)]
     pub(super) status: u32,
+    /// Whether the operation was FIPS approved.
     #[ddi(id = 5)]
     pub(super) fips_approved: bool,
 }

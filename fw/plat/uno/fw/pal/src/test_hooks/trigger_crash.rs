@@ -5,37 +5,47 @@
 
 use core::convert::Infallible;
 
-use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
 use azihsm_fw_ddi_mbor_derive::Ddi;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
+use super::test_action::decode_payload;
+
+/// On-wire CPU identifier for the CP1 HSM core.
 const CPU_ID_HSM: u32 = 1;
-const TEST_ACTION_PAYLOAD_MAX: usize = 64;
 
 /// Mirrors the host test-hooks `DdiTestActionCrashReqInfo` MBOR
 /// representation without introducing a PAL-to-host dependency.
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 struct DdiTestActionCrashReqInfo {
+    /// Requested crash mechanism.
     #[ddi(id = 1)]
     crash_type: u32,
+    /// Target processor.
     #[ddi(id = 2)]
     cpu_id: u32,
 }
 
+/// Validated crash request for the local CP1 HSM core.
 #[derive(Debug, Copy, Clone)]
 struct CrashRequest {
+    /// Crash mechanism to execute.
     crash_type: CrashType,
 }
 
+/// Crash mechanisms supported by the CP1 HSM core.
 #[derive(Debug, Copy, Clone)]
 #[repr(u32)]
 enum CrashType {
+    /// Execute an undefined instruction.
     HardFault = 1,
+    /// Trigger the firmware panic path.
     Explicit = 2,
+    /// Trigger the firmware panic path.
     Panic = 3,
+    /// Stop making forward progress.
     Hang = 4,
 }
 
@@ -53,43 +63,23 @@ impl TryFrom<u32> for CrashType {
     }
 }
 
+/// Decode, validate, and execute `TestAction::TriggerCrash`.
 pub(super) fn dispatch(
     decoder: &mut MborDecoder,
-    body_count: u8,
-    req_len: usize,
+    request_field_count: u8,
+    request_len: usize,
 ) -> HsmResult<Infallible> {
-    let request = decode_request(decoder, body_count, req_len)?;
+    let request = decode_request(decoder, request_field_count, request_len)?;
     execute(request)
 }
 
 fn decode_request(
     decoder: &mut MborDecoder,
-    body_count: u8,
-    req_len: usize,
+    request_field_count: u8,
+    request_len: usize,
 ) -> HsmResult<CrashRequest> {
-    if body_count != 2 {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    let payload_key = u8::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if payload_key != 2 {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    let (_pad, payload) = decoder
-        .decode_byte_slice()
-        .map_err(|_| HsmError::DdiDecodeFailed)?;
-    if payload.len() > TEST_ACTION_PAYLOAD_MAX || decoder.position() != req_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    let payload_len = payload.len();
-    let mut payload_decoder = MborDecoder::new(payload);
-    let wire_request = DdiTestActionCrashReqInfo::mbor_decode(&mut payload_decoder)
-        .map_err(|_| HsmError::DdiDecodeFailed)?;
-    if payload_decoder.position() != payload_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
+    let wire_request: DdiTestActionCrashReqInfo =
+        decode_payload(decoder, request_field_count, request_len)?;
 
     if wire_request.cpu_id != CPU_ID_HSM {
         return Err(HsmError::UnsupportedCmd);

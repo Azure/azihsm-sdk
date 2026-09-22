@@ -5,8 +5,6 @@
 
 use azihsm_crypto::*;
 use azihsm_ddi::Ddi;
-use azihsm_ddi::DdiAesGcmParams;
-use azihsm_ddi::DdiDev;
 use azihsm_ddi::DdiError;
 use azihsm_ddi_mbor_codec::MborByteArray;
 use azihsm_ddi_mbor_test_hooks::helper_get_priv_key;
@@ -70,68 +68,6 @@ pub(super) fn create_aes_key(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -
     .unwrap()
     .data
     .key_id
-}
-
-pub(super) fn reopen_session_with_short_app_id(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-) -> (u16, u8) {
-    close_app_session(dev, session_id);
-
-    let (encrypted_credential, public_key) =
-        encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
-    let resp = helper_open_session(
-        dev,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        public_key,
-    )
-    .unwrap();
-
-    (resp.data.sess_id, resp.data.short_app_id)
-}
-
-pub(super) fn aes_gcm_encrypt_hardware(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-    short_app_id: u8,
-    bulk_key_id: u16,
-    plaintext: &[u8],
-    aad: &[u8],
-    iv: &[u8; 12],
-) -> (Vec<u8>, Vec<u8>) {
-    let params = DdiAesGcmParams {
-        key_id: u32::from(bulk_key_id),
-        iv: *iv,
-        aad: Some(aad.to_vec()),
-        tag: None,
-        session_id,
-        short_app_id,
-    };
-    let resp = dev
-        .exec_op_fp_gcm(DdiAesOp::Encrypt, params, plaintext.to_vec())
-        .unwrap();
-    assert_eq!(resp.data.len(), plaintext.len());
-    assert_ne!(resp.data, plaintext);
-    (resp.data, resp.tag.unwrap().to_vec())
-}
-
-pub(super) fn aes_gcm_decrypt_local(
-    key: &[u8],
-    ciphertext: &[u8],
-    iv: &[u8],
-    aad: &[u8],
-    tag: &[u8],
-) -> Vec<u8> {
-    let key = AesKey::from_bytes(key).unwrap();
-    let mut algo = AesGcmAlgo::for_decrypt(iv, tag, Some(aad)).unwrap();
-    let mut plaintext = vec![0u8; ciphertext.len()];
-    let len = algo
-        .decrypt(&key, ciphertext, Some(&mut plaintext))
-        .unwrap();
-    plaintext.truncate(len);
-    plaintext
 }
 
 pub(super) fn aes_encrypt_hardware(
@@ -325,16 +261,4 @@ pub(super) fn generate_aes_bulk_256_key(
         None,
         key_properties,
     )
-}
-
-pub(super) fn close_app_session(dev: &<DdiTest as Ddi>::Dev, session_id: u16) {
-    let resp = helper_close_session(
-        dev,
-        Some(session_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-    );
-    assert!(
-        resp.is_ok(),
-        "Failed to close session {session_id}: {resp:?}"
-    );
 }

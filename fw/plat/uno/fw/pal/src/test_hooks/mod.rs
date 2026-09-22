@@ -23,7 +23,7 @@
 //!
 //! - [`common`] — the `{0: hdr, 1: data}` envelope shared by every opcode.
 //! - [`mbor_dispatch`] — the router: it decodes the envelope once, checks
-//!   the opcode, and hands the body to the matching handler.
+//!   the opcode, and hands the request data to the matching handler.
 //! - [`test_action`] — the `TestAction` (`DdiOp` 2004) handler.
 //! - [`get_priv_key`] / [`raw_key_import`] — FIPS-validation handlers.
 //!
@@ -41,7 +41,7 @@
 //!
 //! `TestAction` (`DdiOp` 2004) uses an **opaque-payload** request:
 //! `{1: action, 2: payload?}`, where `payload` is a byte string holding
-//! the MBOR encoding of the chosen action's own request-info body. The
+//! the MBOR encoding of the chosen action's own request-info map. The
 //! opcode's wire schema is therefore fixed no matter which action is sent,
 //! so adding an action never changes it. This intentionally **diverges
 //! from `mcr-hsm`**, which still carries each action's parameters as typed
@@ -77,8 +77,10 @@ use crate::pal::UnoHsmPal;
 /// host tooling drives both firmwares.
 #[cfg(feature = "mcr_test_hooks")]
 const DDI_OP_TEST_ACTION: u32 = 2004;
+/// `DdiOp::GetPrivKey`.
 #[cfg(feature = "fips_validation_hooks")]
 const DDI_OP_GET_PRIV_KEY: u32 = 2005;
+/// `DdiOp::RawKeyImport`.
 #[cfg(feature = "fips_validation_hooks")]
 const DDI_OP_RAW_KEY_IMPORT: u32 = 2008;
 
@@ -109,26 +111,27 @@ fn handles_opcode(opcode: u32) -> bool {
 ///
 /// - `Ok(&DmaBuf)` — a claimed opcode that answers with a response.
 /// - `Err(HsmError::UnsupportedCmd)` — not handled here.
-/// - `Err(HsmError::DdiDecodeFailed)` — claimed, but the envelope or body
-///   is malformed.
+/// - `Err(HsmError::DdiDecodeFailed)` — claimed, but the envelope or
+///   request data is malformed.
 pub(crate) async fn mbor_dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     req: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req_len = req.len();
+    let request_len = req.len();
     let mut decoder = MborDecoder::new(req);
 
     // Re-parse the envelope. The core already did this, but telling the
     // core anything about this command is precisely what the hook exists
     // to avoid.
-    let count = MborMap::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if count.0 != 2 {
+    let envelope_field_count =
+        MborMap::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if envelope_field_count.0 != 2 {
         return Err(HsmError::DdiDecodeFailed);
     }
 
-    let key = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if key != 0 {
+    let field_id = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if field_id != 0 {
         return Err(HsmError::DdiDecodeFailed);
     }
 
@@ -141,25 +144,27 @@ pub(crate) async fn mbor_dispatch<'p>(
         return Err(HsmError::UnsupportedCmd);
     }
 
-    let key = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if key != 1 {
+    let field_id = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if field_id != 1 {
         return Err(HsmError::DdiDecodeFailed);
     }
 
-    // The decoder is now positioned at the body map; the selected handler
+    // The decoder is now positioned at the request data map; the selected handler
     // owns it from here.
     match hdr.op {
         #[cfg(feature = "mcr_test_hooks")]
-        DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, req_len),
+        DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, request_len),
         #[cfg(feature = "fips_validation_hooks")]
-        DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, req_len),
+        DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),
         #[cfg(feature = "fips_validation_hooks")]
         DDI_OP_RAW_KEY_IMPORT => {
-            let result = raw_key_import::dispatch(pal, io, &hdr, &mut decoder, req_len).await;
+            let result = raw_key_import::dispatch(pal, io, &hdr, &mut decoder, request_len).await;
 
-            // RawKeyImport carries plaintext key material. Wipe the complete
-            // request after dispatch so partial body-decode failures cannot
-            // leave the already-decoded raw field in reusable per-IO DMA.
+            // Dispatch completes all request-derived work and, on success,
+            // returns a fully encoded response in a separate PAL DMA
+            // allocation. It is therefore safe to wipe the complete inbound
+            // request here. This also covers partial request-data decode failures
+            // where the raw plaintext field was already borrowed.
             req.zeroize();
 
             result

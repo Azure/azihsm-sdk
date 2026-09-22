@@ -325,13 +325,16 @@ fn trigger_crash(
     // lacks `mcr_test_hooks` or it does not implement crashing this core.
     // Skip rather than assert a recovery that never had a crash to recover
     // from.
-    if let Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) = resp {
+    if let Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) = &resp {
         println!("TriggerCrash for {cpu_id:?} not supported by this firmware; skipping.");
         return;
     }
 
     // A real crash never returns a success CQE — the op aborts or times out.
-    assert!(resp.is_err(), "resp {:?}", resp);
+    assert!(
+        resp.is_err(),
+        "TriggerCrash unexpectedly succeeded: {resp:?}"
+    );
 
     // Wait for the firmware and driver to recover.
     thread::sleep(Duration::from_secs(RECOVERY_WAIT_SECS));
