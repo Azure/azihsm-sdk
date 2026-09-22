@@ -74,57 +74,55 @@ struct SocketPaths {
     ddi: PathBuf,
 }
 
-/// Resolves the socket path `azihsm_ddi_sock::DdiSock` reports via
-/// `dev_info_list()` (and therefore the only path
-/// `HsmPartitionManager::open_partition` will accept): `AZIHSM_DDI_SOCK`
-/// if set, otherwise `azihsm_ddi_sock::DEFAULT_SOCK_PATH`.
+/// The environment variable `azihsm_ddi_sock::DdiSock` reads to resolve
+/// the socket path it reports via `dev_info_list()` (and therefore the
+/// only path `HsmPartitionManager::open_partition` will accept).
+const AZIHSM_DDI_SOCK: &str = "AZIHSM_DDI_SOCK";
+
+/// Sets `AZIHSM_DDI_SOCK` to `path`.
 ///
-/// The bridge's `ddi` listener must be bound at exactly this path so
-/// `open_partition`'s internal `dev_info_by_path` lookup (which matches
-/// against `dev_info_list()`'s reported path, not whatever path the
-/// caller passes in) succeeds. This mirrors `DdiSock`'s own resolution
-/// logic by reading (not setting) the env var, so no process-wide
-/// mutable state needs to change.
-fn resolved_ddi_sock_path() -> PathBuf {
-    match std::env::var("AZIHSM_DDI_SOCK") {
-        Ok(path) if !path.is_empty() => PathBuf::from(path),
-        _ => PathBuf::from("/tmp/azihsm-ddi.sock"),
-    }
+/// # Safety
+///
+/// `set_var` is only safe to call while no other thread might be
+/// reading or writing the process environment concurrently. This test
+/// is the only one in this crate that reads or writes `AZIHSM_DDI_SOCK`,
+/// and it calls this before spawning any thread that reads it.
+#[allow(unsafe_code)]
+fn set_ddi_sock_env(path: &Path) {
+    // SAFETY: see function doc comment above.
+    unsafe { std::env::set_var(AZIHSM_DDI_SOCK, path) };
 }
 
-/// Removes `path` only if it is a *stale* socket file (nothing is
-/// listening on it), never one another process is actively using.
+/// Picks the socket path the bridge's `ddi` listener must bind at so
+/// `open_partition`'s internal `dev_info_by_path` lookup (which matches
+/// against `dev_info_list()`'s reported path, not whatever path the
+/// caller passes in) succeeds.
 ///
-/// `UnixListener::bind` fails if `path` already exists, so a leftover
-/// file from a prior crashed run of this test must be cleared before
-/// binding. But `path` is a fixed, well-known location (`AZIHSM_DDI_SOCK`
-/// or the DDI socket default), so it could also be the path of a real,
-/// currently-running `vsocksrv`/service; unconditionally unlinking it
-/// would silently disrupt that other listener. Connecting to the path
-/// first distinguishes a stale file (connection refused/not found - safe
-/// to remove) from a live one (connection succeeds - must not remove).
-fn remove_stale_socket(path: &Path) {
-    if !path.exists() {
-        return;
-    }
-    match UnixStream::connect(path) {
-        Ok(_) => panic!(
-            "refusing to remove {}: a live socket is already listening there; set \
-             AZIHSM_DDI_SOCK to a private path before running this test",
-            path.display()
-        ),
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
-            ) =>
-        {
-            let _ = std::fs::remove_file(path);
+/// If `AZIHSM_DDI_SOCK` is already set, the caller has explicitly opted
+/// into a specific path, so it is used as-is and must not already exist
+/// (this test never probes or removes another process's live socket).
+/// Otherwise, a unique per-test path is generated and exported via
+/// `AZIHSM_DDI_SOCK` so this test always gets a test-owned endpoint
+/// instead of colliding with `azihsm_ddi_sock::DEFAULT_SOCK_PATH`, which
+/// a real `vsocksrv`/service could be using.
+fn test_owned_ddi_sock_path(unique: &str) -> PathBuf {
+    match std::env::var(AZIHSM_DDI_SOCK) {
+        Ok(path) if !path.is_empty() => {
+            let path = PathBuf::from(path);
+            assert!(
+                !path.exists(),
+                "refusing to use {}: a file already exists there and this test never \
+                 probes or removes another process's socket; set AZIHSM_DDI_SOCK to an \
+                 unused path or unset it before running this test",
+                path.display()
+            );
+            path
         }
-        Err(error) => panic!(
-            "failed to probe existing socket at {}: {error}",
-            path.display()
-        ),
+        _ => {
+            let path = std::env::temp_dir().join(format!("azihsm-ddi-sock-test-{unique}.sock"));
+            set_ddi_sock_env(&path);
+            path
+        }
     }
 }
 
@@ -136,8 +134,7 @@ impl SocketPaths {
             std::process::id(),
             Instant::now().elapsed()
         );
-        let ddi = resolved_ddi_sock_path();
-        remove_stale_socket(&ddi);
+        let ddi = test_owned_ddi_sock_path(&unique);
         Self {
             ch: dir.join(format!("azihsm-api-sock-test-ch-{unique}.sock")),
             ddi,

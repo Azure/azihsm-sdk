@@ -95,10 +95,7 @@ impl SetSocketTimeouts for VsockStream {
 
 fn duration_to_timeval(duration: Duration) -> TimeVal {
     let micros = duration.as_micros().max(1);
-    TimeVal::new(
-        (micros / 1_000_000) as i64,
-        (micros % 1_000_000) as i64,
-    )
+    TimeVal::new((micros / 1_000_000) as i64, (micros % 1_000_000) as i64)
 }
 
 /// Returns the time remaining until `deadline`, or an
