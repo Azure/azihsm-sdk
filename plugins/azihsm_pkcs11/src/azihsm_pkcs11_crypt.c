@@ -37,6 +37,14 @@
  */
 #define KEYGEN_APPENDED_ATTRS 9
 
+/*
+ * Ceiling on the caller's template length. PKCS#11 defines some forty
+ * attributes for a secret-key object, so anything longer is treated as a bogus
+ * ulCount and refused with CKR_ARGUMENTS_BAD before the O(n²) duplicate scan
+ * runs over it and before the store buffer in C_GenerateKey is sized from it.
+ */
+#define KEYGEN_MAX_TEMPLATE_ATTRS 64
+
 /* Per-operation cipher state (s->op_ctx while op is P11_OP_ENCRYPT/_DECRYPT). */
 typedef struct
 {
@@ -106,6 +114,10 @@ static CK_RV keygen_check_template(
     *value_len = 0;
     *token = CK_FALSE;
 
+    if (count > KEYGEN_MAX_TEMPLATE_ATTRS)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
     for (CK_ULONG i = 0; i < count; i++)
     {
         const CK_ATTRIBUTE *a = &tmpl[i];

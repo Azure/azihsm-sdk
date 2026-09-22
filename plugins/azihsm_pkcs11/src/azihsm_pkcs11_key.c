@@ -120,7 +120,8 @@ CK_RV azihsm_pkcs11_key_aes_unmask(
     uint32_t *out_key
 )
 {
-    if ((blob == NULL) || (blob_len == 0) || (out_key == NULL))
+    /* The device buffer length is 32-bit; a blob beyond it cannot be passed. */
+    if ((blob == NULL) || (blob_len == 0) || (blob_len > (CK_ULONG)UINT32_MAX) || (out_key == NULL))
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -146,14 +147,23 @@ void azihsm_pkcs11_key_release(uint32_t key_handle)
     }
 }
 
-/* Translate a CBC encrypt/decrypt status. A decrypt with padding surfaces bad
- * PKCS#7 padding as INTERNAL_ERROR (api/lib pkcs7_unpad), which for the caller
- * means the ciphertext is invalid, not a device fault — map that one case to
- * the spec's CKR_ENCRYPTED_DATA_INVALID; everything else takes the shared map,
- * with a stale device key handle reading as CKR_KEY_HANDLE_INVALID. */
-static CK_RV cbc_status_to_ckr(azihsm_status st, bool encrypt, bool pad)
+/*
+ * Translate a status from the FILL call of azihsm_pkcs11_key_aes_cbc (the
+ * second device call; the sizing call takes the shared map directly). For a
+ * padded decrypt the sizing call returns before any plaintext exists, so the
+ * PKCS#7 check (api/lib pkcs7_unpad) runs only in the fill and reports bad
+ * padding as INTERNAL_ERROR; for the caller that means the ciphertext is
+ * invalid, hence the spec's CKR_ENCRYPTED_DATA_INVALID. A device or DDI
+ * command failure never arrives as INTERNAL_ERROR (api/lib maps those to named
+ * statuses or DDI_CMD_FAILURE), so the remap cannot hide one; what it could
+ * hide is a violated SDK-internal invariant, which is why it is scoped to this
+ * single case and why a dedicated SDK status for bad padding would make it
+ * exact. Every other status takes the shared map, with a stale device key
+ * handle reading as CKR_KEY_HANDLE_INVALID.
+ */
+static CK_RV cbc_fill_status_to_ckr(azihsm_status st, bool unpad)
 {
-    if (!encrypt && pad && (st == AZIHSM_STATUS_INTERNAL_ERROR))
+    if (unpad && (st == AZIHSM_STATUS_INTERNAL_ERROR))
     {
         return CKR_ENCRYPTED_DATA_INVALID;
     }
@@ -171,7 +181,10 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     CK_ULONG *out_len
 )
 {
-    if ((iv == NULL) || (out_len == NULL) || ((in == NULL) && (in_len > 0)))
+    /* The device buffer length is 32-bit (the entry point reports an
+     * over-long input as a *_LEN_RANGE before it gets here). */
+    if ((iv == NULL) || (out_len == NULL) || ((in == NULL) && (in_len > 0)) ||
+        (in_len > (CK_ULONG)UINT32_MAX))
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -196,7 +209,7 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     if ((st != AZIHSM_STATUS_BUFFER_TOO_SMALL) && (st != AZIHSM_STATUS_SUCCESS))
     {
         AZIHSM_PKCS11_LOG("crypt_%s sizing failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
-        return cbc_status_to_ckr(st, encrypt, pad);
+        return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_KEY_HANDLE_INVALID);
     }
     CK_ULONG required = outbuf.len;
     if ((out == NULL) || (required == 0))
@@ -219,7 +232,11 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     if (st != AZIHSM_STATUS_SUCCESS)
     {
         AZIHSM_PKCS11_LOG("crypt_%s failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
-        return cbc_status_to_ckr(st, encrypt, pad);
+        /* The device may already have written into `out` (a padded decrypt is
+         * rejected only after the raw blocks exist); a failed call must not
+         * leave that behind a reported length of zero. */
+        azihsm_pkcs11_wipe(out, required);
+        return cbc_fill_status_to_ckr(st, !encrypt && pad);
     }
     *out_len = outbuf.len;
     return CKR_OK;
