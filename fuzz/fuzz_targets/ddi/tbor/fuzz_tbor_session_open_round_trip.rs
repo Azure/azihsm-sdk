@@ -194,8 +194,9 @@ fuzz_target!(|input: FuzzInput| {
         let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
 
         // assert open finish success only when we actually built a valid request
-        if built_valid_finish {
+        if input.valid_open_finish {
             if !input.corrupt_seed_envelope {
+                assert!(built_valid_finish, "a valid finish request must be built with valid input");
                 assert!(finish_result.is_ok(), "SessionOpenFinish with valid input must succeed");
             }
             else {
