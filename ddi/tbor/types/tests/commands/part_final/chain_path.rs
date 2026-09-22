@@ -26,14 +26,14 @@
 //! real chain on both backends. The gates that fire *before* the chain
 //! walk live in [`super::fw_rejects`].
 
-use azihsm_ddi_tbor_types::TborStatus;
-
-use super::*;
-use crate::commands::part_init::part_policy_with_pota;
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_types::TborStatus;
+
+use super::*;
+use crate::commands::part_init::part_policy_with_pota;
 
 /// A PTA chain that is not anchored to the policy `POTAPubKey` must be
 /// rejected: here the chain is rooted at a different CA than the policy's

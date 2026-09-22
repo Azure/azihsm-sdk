@@ -21,6 +21,9 @@
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableKey;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEcdhDeriveReq;
@@ -45,9 +48,6 @@ use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 /// Non-default CU PSK used to pass the default-PSK gate.
 const ROTATED_CU_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];

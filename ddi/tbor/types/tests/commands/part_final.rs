@@ -41,19 +41,6 @@ mod fw_rejects;
 
 use std::sync::Barrier;
 
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborPartInfoResp;
-use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-
-use crate::commands::part_init::known_good_part_policy;
-use crate::commands::part_init::mach_seed;
-use crate::commands::part_init::open_co_with;
-use crate::commands::part_init::part_policy_with_pota;
-use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::sata_thumbprint;
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
@@ -67,6 +54,19 @@ use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
+use azihsm_ddi_tbor_types::TborPartInfoResp;
+use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+
+use crate::commands::part_init::known_good_part_policy;
+use crate::commands::part_init::mach_seed;
+use crate::commands::part_init::open_co_with;
+use crate::commands::part_init::part_policy_with_pota;
+use crate::commands::part_init::pota_thumbprint;
+use crate::commands::part_init::sata_thumbprint;
 
 const PART_STATE_INITIALIZING: u8 = 4;
 const PART_STATE_INITIALIZED: u8 = 5;

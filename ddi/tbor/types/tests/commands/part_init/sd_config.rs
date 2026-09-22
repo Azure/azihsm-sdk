@@ -16,10 +16,10 @@
 //!   SAPOTA thumbprint succeeds.
 
 use azihsm_ddi_tbor_test_harness::assertions;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;

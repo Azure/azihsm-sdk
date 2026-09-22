@@ -25,18 +25,17 @@
 // exercise them today; suppress dead-code noise in non-emu builds.
 #![cfg_attr(not(feature = "emu"), allow(dead_code))]
 
+#[cfg(feature = "emu")]
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+#[cfg(feature = "emu")]
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
-
-#[cfg(feature = "emu")]
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-#[cfg(feature = "emu")]
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 
 /// `KeyScope` discriminants matching the firmware `HsmKeyScope`.
 pub(crate) const SCOPE_SESSION: u8 = 0b001;
