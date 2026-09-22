@@ -9,13 +9,10 @@
 //! provisioning and session orchestration are owned here so the test-hook
 //! suite stays independent of the standard DDI suite.
 //!
-//! Hardware execution intentionally follows the Martichoras `mcrtb` contract:
-//! integration-test binaries and their cases run sequentially per VM/device,
-//! and each invocation uses `--test-threads 1`. Parallelism is limited to
-//! separate VMs/devices. Concurrent nextest execution of these binaries
-//! against one physical device is not supported; if that execution model is
-//! introduced later, the runner must add serialization or this harness must
-//! gain a cross-process device lock.
+//! These test-only hardware validation suites run one binary and one case at
+//! a time per VM/device with `--test-threads 1`. Parallelism is limited to
+//! separate VMs with isolated devices. Concurrent Cargo or nextest execution
+//! against the same physical device is not supported.
 
 #![allow(dead_code)]
 

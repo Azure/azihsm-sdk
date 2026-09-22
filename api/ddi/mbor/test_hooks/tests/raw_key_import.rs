@@ -18,6 +18,7 @@ mod helper;
 use azihsm_crypto::Rng;
 use azihsm_ddi::DdiError;
 use azihsm_ddi_mbor_test_hooks::helper_raw_key_import;
+use azihsm_ddi_mbor_types::DdiApiRev;
 use azihsm_ddi_mbor_types::DdiKeyAvailability;
 use azihsm_ddi_mbor_types::DdiKeyType;
 use azihsm_ddi_mbor_types::DdiKeyUsage;
@@ -594,6 +595,53 @@ fn test_raw_key_import_fixed_hmac_readback_preserves_type_and_bytes() {
                 DdiKeyUsage::SignVerify,
                 None,
             );
+        },
+    );
+}
+
+#[test]
+fn test_raw_key_import_fixed_hmac_masked_key_round_trip() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            if !require_physical_device(dev) || !require_raw_key_import(dev, session_id) {
+                return;
+            }
+
+            let key = [0x5au8; 32];
+            let properties =
+                helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::App);
+            let imported = helper_raw_key_import(
+                dev,
+                Some(session_id),
+                &key,
+                DdiKeyType::HmacSha256,
+                None,
+                properties,
+            )
+            .unwrap()
+            .data;
+
+            let (key_id, bulk_key_id, public_key) = helper_get_new_key_id_from_unmask(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                imported.key_id,
+                false,
+                imported.masked_key,
+            )
+            .unwrap();
+
+            assert!(bulk_key_id.is_none());
+            assert!(public_key.is_none());
+
+            let stored =
+                azihsm_ddi_mbor_test_hooks::helper_get_priv_key(dev, Some(session_id), key_id)
+                    .unwrap()
+                    .data;
+            assert_eq!(stored.key_kind, DdiKeyType::HmacSha256);
+            assert_eq!(stored.key_data.as_slice(), key);
         },
     );
 }
