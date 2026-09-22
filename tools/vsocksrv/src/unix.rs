@@ -316,6 +316,15 @@ fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
     loop {
         match UnixStream::connect(path) {
             Ok(mut stream) => {
+                // Bound how long a single connection can occupy the server
+                // (see `CONNECTION_READ_TIMEOUT`), matching the timeouts
+                // `VsockListener::accept` applies to AF_VSOCK connections.
+                // Without this, a stalled AF_UNIX peer could block
+                // `serve_connection_and_reset` forever, preventing the
+                // single-threaded server from resetting and serving any
+                // other client.
+                stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+                stream.set_write_timeout(Some(CONNECTION_READ_TIMEOUT))?;
                 write_connect_command(&mut stream, port)?;
                 return Ok(stream);
             }
