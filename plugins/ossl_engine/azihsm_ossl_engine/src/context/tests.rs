@@ -368,6 +368,18 @@ mod round_trips {
         .expect("aes-kind HKDF failed");
         assert!(!aes_blob.is_empty(), "empty aes-kind blob");
 
+        // No md: defaults to SHA-256 for provider parity. An hmac derive with
+        // neither md nor derived_key_bits must succeed as HMAC-SHA256/256 — this
+        // only holds if the default digest is SHA-256, since HMAC bits must match
+        // the digest size (a different default would mismatch the 256-bit default).
+        let default_md_blob = try_hkdf(
+            engine_raw,
+            &[("azihsm.ikm_file", ikm), ("derived_key_type", "hmac")],
+            None,
+        )
+        .expect("HKDF with the default md (SHA-256) failed");
+        assert!(!default_md_blob.is_empty(), "empty default-md blob");
+
         // Armed in-memory IKM: the masked shared secret as hexkey bytes.
         let hex_ikm: String = secret_blob.iter().map(|b| format!("{b:02x}")).collect();
         let mem_blob = try_hkdf(
@@ -476,9 +488,8 @@ mod round_trips {
             err.contains("must match the HKDF digest size"),
             "unexpected error: {err}"
         );
-        let err = try_hkdf(engine_raw, &[("azihsm.ikm_file", ikm)], None)
-            .expect_err("missing md must fail");
-        assert!(err.contains("requires md"), "unexpected error: {err}");
+        // (Missing md is no longer an error: it defaults to SHA-256 for provider
+        // parity — covered by the default-md derive above.)
         let err = try_hkdf(
             engine_raw,
             &[("md", "SHA256"), ("derived_key_type", "aes")],
