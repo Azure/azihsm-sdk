@@ -41,7 +41,7 @@ the spec requires). Implemented so far:
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
 | Host crypto | `azihsm_pkcs11_digest.c` | self-contained SHA-1/256/384/512 (PKCS#11 digests must work in public sessions; the SDK digest needs a login) |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
-| Key operations | `azihsm_pkcs11_crypt.c` | key-backed entry points: template normalisation, operation state, masked-blob store/unmask flow (CK_RV only) |
+| Key operations | `azihsm_pkcs11_crypt.c`, `azihsm_pkcs11_template.c` | key-backed entry points: operation state and the masked-blob store/unmask flow (CK_RV only); the keygen template validation and defaults are a device-free unit of their own |
 | HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_key.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
 
@@ -75,8 +75,12 @@ for stderr tracing.
 ## Testing
 
 `tests/run_validation.sh` builds the module and drives it with OpenSC
-`pkcs11-tool` (interactive smoke). `tests/aes_test.c` is a functional harness
-for the AES slice (keygen templates, CBC round trips, the two-call sizing
-discipline, operation state machine); it drives the real module ABI via
-`dlopen`, so it needs the mock-backed build. The CI workflow
-(`.github/workflows/pkcs11.yml`) runs on pushes/PRs to the staging branch.
+`pkcs11-tool` (interactive smoke). Pure host logic has device-free unit tests
+that link the translation unit directly: `tests/digest_kat_test.c` (NIST
+vectors), the object-store harnesses, and `tests/aes_template_test.c` (the
+complete CK_RV matrix of the keygen template validation and defaults, plus the
+status maps). `tests/aes_test.c` is a functional harness for the AES slice
+(keygen templates, CBC round trips, the two-call sizing discipline, operation
+state machine); it drives the real module ABI via `dlopen`, so it needs the
+mock-backed build. The CI workflow (`.github/workflows/pkcs11.yml`) runs on
+pushes/PRs to the staging branch.

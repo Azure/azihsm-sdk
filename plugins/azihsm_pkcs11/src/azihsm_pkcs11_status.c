@@ -89,3 +89,23 @@ CK_RV azihsm_pkcs11_ckr_from_azihsm(int status)
 {
     return azihsm_pkcs11_ckr_from_azihsm_hint(status, CKR_OBJECT_HANDLE_INVALID);
 }
+
+/*
+ * For a padded decrypt the sizing call returns before any plaintext exists, so
+ * the PKCS#7 check (api/lib pkcs7_unpad) runs only in the fill and reports bad
+ * padding as INTERNAL_ERROR; for the caller that means the ciphertext is
+ * invalid, hence the spec's CKR_ENCRYPTED_DATA_INVALID. A device or DDI
+ * command failure never arrives as INTERNAL_ERROR (api/lib maps those to named
+ * statuses or DDI_CMD_FAILURE), so the remap cannot hide one; what it could
+ * hide is a violated SDK-internal invariant, which is why it is scoped to this
+ * single case and why a dedicated SDK status for bad padding would make it
+ * exact.
+ */
+CK_RV azihsm_pkcs11_ckr_from_cbc_fill(int status, bool unpad)
+{
+    if (unpad && (status == -5 /* INTERNAL_ERROR */))
+    {
+        return CKR_ENCRYPTED_DATA_INVALID;
+    }
+    return azihsm_pkcs11_ckr_from_azihsm_hint(status, CKR_KEY_HANDLE_INVALID);
+}

@@ -42,7 +42,7 @@ CK_RV azihsm_pkcs11_key_aes_generate(
     /*
      * SENSITIVE / EXTRACTABLE / LOCAL are deliberately absent: the SDK rejects
      * them as inputs (it sets them itself), which is why the template
-     * normaliser in azihsm_pkcs11_crypt.c strips them before this call. SESSION is
+     * normaliser in azihsm_pkcs11_template.c strips them before this call. SESSION is
      * always true — device residence is per-session by design here; the masked
      * blob below is what persists. ENCRYPT and DECRYPT are always both set:
      * the SDK refuses an AES key with only one of them (see the header note).
@@ -147,28 +147,12 @@ void azihsm_pkcs11_key_release(uint32_t key_handle)
     }
 }
 
-/*
- * Translate a status from the FILL call of azihsm_pkcs11_key_aes_cbc (the
- * second device call; the sizing call takes the shared map directly). For a
- * padded decrypt the sizing call returns before any plaintext exists, so the
- * PKCS#7 check (api/lib pkcs7_unpad) runs only in the fill and reports bad
- * padding as INTERNAL_ERROR; for the caller that means the ciphertext is
- * invalid, hence the spec's CKR_ENCRYPTED_DATA_INVALID. A device or DDI
- * command failure never arrives as INTERNAL_ERROR (api/lib maps those to named
- * statuses or DDI_CMD_FAILURE), so the remap cannot hide one; what it could
- * hide is a violated SDK-internal invariant, which is why it is scoped to this
- * single case and why a dedicated SDK status for bad padding would make it
- * exact. Every other status takes the shared map, with a stale device key
- * handle reading as CKR_KEY_HANDLE_INVALID.
- */
-static CK_RV cbc_fill_status_to_ckr(azihsm_status st, bool unpad)
-{
-    if (unpad && (st == AZIHSM_STATUS_INTERNAL_ERROR))
-    {
-        return CKR_ENCRYPTED_DATA_INVALID;
-    }
-    return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_KEY_HANDLE_INVALID);
-}
+/* The status map's INTERNAL_ERROR literal must be the SDK's, since the map is
+ * compiled without azihsm.h. */
+_Static_assert(
+    AZIHSM_STATUS_INTERNAL_ERROR == -5,
+    "azihsm_pkcs11_status.c assumes INTERNAL_ERROR == -5"
+);
 
 CK_RV azihsm_pkcs11_key_aes_cbc(
     bool encrypt,
@@ -236,7 +220,9 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
          * rejected only after the raw blocks exist); a failed call must not
          * leave that behind a reported length of zero. */
         azihsm_pkcs11_wipe(out, required);
-        return cbc_fill_status_to_ckr(st, !encrypt && pad);
+        /* Bad PKCS#7 padding on a padded decrypt reads as invalid ciphertext;
+         * see azihsm_pkcs11_ckr_from_cbc_fill. */
+        return azihsm_pkcs11_ckr_from_cbc_fill((int)st, !encrypt && pad);
     }
     *out_len = outbuf.len;
     return CKR_OK;

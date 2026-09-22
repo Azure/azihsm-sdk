@@ -35,6 +35,14 @@ gcc -Wall -Wextra -Werror \
     -o "$WORK/digest_kat_test"
 "$WORK/digest_kat_test"
 
+echo; echo "== AES keygen template + status map unit test (no device) =="
+gcc -Wall -Wextra -Werror \
+    -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
+    "$HERE/aes_template_test.c" \
+    "$PLUGIN/src/azihsm_pkcs11_template.c" "$PLUGIN/src/azihsm_pkcs11_status.c" \
+    -o "$WORK/aes_template_test"
+"$WORK/aes_template_test"
+
 if [ -f "$PKCS11_TESTING/env.sh" ]; then
     # shellcheck disable=SC1091
     source "$PKCS11_TESTING/env.sh"

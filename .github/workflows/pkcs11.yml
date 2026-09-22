@@ -98,6 +98,24 @@ jobs:
           "$out/objstore_file_test"
           "$out/objstore_stress_test"
 
+  # AES keygen-template and status-map unit test: a standalone C harness that
+  # links the two device-free translation units directly (no device, no
+  # libcrypto), so it needs only a compiler.
+  template-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and run the template / status-map unit test
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          gcc -Wall -Wextra -Werror -I include/pkcs11-v3.1 -I src \
+            tests/aes_template_test.c \
+            src/azihsm_pkcs11_template.c src/azihsm_pkcs11_status.c \
+            -o "$RUNNER_TEMP/aes_template_test"
+          "$RUNNER_TEMP/aes_template_test"
+
   # Digest known-answer tests: a standalone C harness that links the digest
   # source directly (no device, no libcrypto), so it needs only a compiler.
   digest-unit-tests:

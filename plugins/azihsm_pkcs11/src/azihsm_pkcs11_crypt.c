@@ -11,39 +11,22 @@
  * unmasks it into a fresh device handle owned by the session's operation state
  * (released when the operation ends, wherever it ends — see
  * azihsm_pkcs11_session_reset_op). This file speaks CK_RV only; device calls
- * and status translation live in azihsm_pkcs11_key.c.
+ * and status translation live in azihsm_pkcs11_key.c, and the pure template
+ * logic (validation, defaults) in azihsm_pkcs11_template.c.
  */
 
 #include "azihsm_pkcs11_internal.h"
 #include "azihsm_pkcs11_key.h"
+#include "azihsm_pkcs11_template.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 
-/* AES_BLOCK_LEN (the CBC IV/block length) comes from azihsm_pkcs11_key.h. */
+/* AES_BLOCK_LEN (the CBC IV/block length) comes from azihsm_pkcs11_key.h; the
+ * key lengths and template constants from azihsm_pkcs11_template.h. */
 
-/* Supported AES key lengths, and the bits-per-byte used to turn CKA_VALUE_LEN
- * into the device's bit-length property. */
-#define AES128_KEY_BYTES 16
-#define AES192_KEY_BYTES 24
-#define AES256_KEY_BYTES 32
+/* Turns CKA_VALUE_LEN (bytes) into the device's bit-length key property. */
 #define AES_KEY_BITS_PER_BYTE 8
-
-/*
- * Attributes C_GenerateKey appends to the caller template before storing:
- * CKA_CLASS, CKA_KEY_TYPE, CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_ENCRYPT,
- * CKA_DECRYPT (each only if absent), plus CKA_LOCAL, CKA_ALWAYS_SENSITIVE and
- * CKA_NEVER_EXTRACTABLE (always). Bounds the store buffer headroom.
- */
-#define KEYGEN_APPENDED_ATTRS 9
-
-/*
- * Ceiling on the caller's template length. PKCS#11 defines some forty
- * attributes for a secret-key object, so anything longer is treated as a bogus
- * ulCount and refused with CKR_ARGUMENTS_BAD before the O(n²) duplicate scan
- * runs over it and before the store buffer in C_GenerateKey is sized from it.
- */
-#define KEYGEN_MAX_TEMPLATE_ATTRS 64
 
 /* Per-operation cipher state (s->op_ctx while op is P11_OP_ENCRYPT/_DECRYPT). */
 typedef struct
@@ -68,177 +51,6 @@ void azihsm_pkcs11_cipher_op_free(void *op_ctx)
 /* ========================================================================= */
 /* C_GenerateKey (CKM_AES_KEY_GEN)                                           */
 /* ========================================================================= */
-
-static const CK_ATTRIBUTE *tmpl_find(const CK_ATTRIBUTE *tmpl, CK_ULONG count, CK_ATTRIBUTE_TYPE t)
-{
-    for (CK_ULONG i = 0; i < count; i++)
-    {
-        if (tmpl[i].type == t)
-        {
-            return &tmpl[i];
-        }
-    }
-    return NULL;
-}
-
-/* Read a CK_BBOOL template attribute into *out; length must be exactly 1. */
-static CK_RV tmpl_bool(const CK_ATTRIBUTE *a, CK_BBOOL *out)
-{
-    if ((a == NULL) || (a->pValue == NULL) || (out == NULL))
-    {
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    }
-    if (a->ulValueLen != sizeof(CK_BBOOL))
-    {
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    }
-    *out = (*(const CK_BBOOL *)a->pValue != CK_FALSE) ? CK_TRUE : CK_FALSE;
-    return CKR_OK;
-}
-
-/*
- * Validate the caller's CKM_AES_KEY_GEN template and extract what the device
- * needs. This is the CKA_ → key-property normaliser: the device prop list is
- * built from the extracted values only, never from the raw template — the SDK
- * hard-rejects SENSITIVE/EXTRACTABLE/LOCAL as inputs and takes u32/1-byte
- * property values where PKCS#11 has CK_ULONG/CK_BBOOL.
- */
-static CK_RV keygen_check_template(
-    const CK_ATTRIBUTE *tmpl,
-    CK_ULONG count,
-    CK_ULONG *value_len,
-    CK_BBOOL *token
-)
-{
-    CK_BBOOL have_value_len = CK_FALSE;
-    *value_len = 0;
-    *token = CK_FALSE;
-
-    if (count > KEYGEN_MAX_TEMPLATE_ATTRS)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
-    for (CK_ULONG i = 0; i < count; i++)
-    {
-        const CK_ATTRIBUTE *a = &tmpl[i];
-        if ((a->ulValueLen > 0) && (a->pValue == NULL))
-        {
-            return CKR_ATTRIBUTE_VALUE_INVALID;
-        }
-        /* A type repeated with a different value is inconsistent, and would also
-         * split the generation input (last value wins) from what is stored and
-         * later read back (first value wins). */
-        if (tmpl_find(tmpl, i, a->type) != NULL)
-        {
-            return CKR_TEMPLATE_INCONSISTENT;
-        }
-        CK_BBOOL b = CK_FALSE;
-        CK_RV rv = CKR_OK;
-        switch (a->type)
-        {
-        case CKA_CLASS:
-            if (a->ulValueLen != sizeof(CK_OBJECT_CLASS))
-            {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            }
-            if (*(const CK_OBJECT_CLASS *)a->pValue != CKO_SECRET_KEY)
-            {
-                return CKR_TEMPLATE_INCONSISTENT;
-            }
-            break;
-        case CKA_KEY_TYPE:
-            if (a->ulValueLen != sizeof(CK_KEY_TYPE))
-            {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            }
-            if (*(const CK_KEY_TYPE *)a->pValue != CKK_AES)
-            {
-                return CKR_TEMPLATE_INCONSISTENT;
-            }
-            break;
-        case CKA_VALUE_LEN:
-            if (a->ulValueLen != sizeof(CK_ULONG))
-            {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            }
-            *value_len = *(const CK_ULONG *)a->pValue;
-            if ((*value_len != AES128_KEY_BYTES) && (*value_len != AES192_KEY_BYTES) &&
-                (*value_len != AES256_KEY_BYTES))
-            {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            }
-            have_value_len = CK_TRUE;
-            break;
-        case CKA_SENSITIVE:
-            rv = tmpl_bool(a, &b);
-            if (rv != CKR_OK)
-            {
-                return rv;
-            }
-            if (!b)
-            {
-                /* Device keys only ever exist masked; a non-sensitive (readable)
-                 * key cannot be produced. */
-                return CKR_TEMPLATE_INCONSISTENT;
-            }
-            break;
-        case CKA_EXTRACTABLE:
-            rv = tmpl_bool(a, &b);
-            if (rv != CKR_OK)
-            {
-                return rv;
-            }
-            if (b)
-            {
-                return CKR_TEMPLATE_INCONSISTENT; /* see CKA_SENSITIVE */
-            }
-            break;
-        case CKA_ENCRYPT:
-        case CKA_DECRYPT:
-            /* Direction policy is stored and enforced host-side at operation
-             * init (the device key always carries both — see
-             * azihsm_pkcs11_key.h); only the value's shape is checked here. */
-            rv = tmpl_bool(a, &b);
-            if (rv != CKR_OK)
-            {
-                return rv;
-            }
-            break;
-        case CKA_TOKEN:
-            rv = tmpl_bool(a, token);
-            if (rv != CKR_OK)
-            {
-                return rv;
-            }
-            break;
-        case CKA_LOCAL:
-        case CKA_ALWAYS_SENSITIVE:
-        case CKA_NEVER_EXTRACTABLE:
-            return CKR_ATTRIBUTE_READ_ONLY; /* token-computed, never caller-set */
-        case CKA_VALUE:
-            return CKR_TEMPLATE_INCONSISTENT; /* generated keys take no material */
-        default:
-            break; /* stored verbatim on the object */
-        }
-    }
-    /* CKM_AES_KEY_GEN derives the strength solely from CKA_VALUE_LEN. */
-    return (have_value_len == CK_TRUE) ? CKR_OK : CKR_TEMPLATE_INCOMPLETE;
-}
-
-/* Append `a` unless the caller's template already carries the type. */
-static void tmpl_append(
-    CK_ATTRIBUTE *full,
-    CK_ULONG *n,
-    const CK_ATTRIBUTE *tmpl,
-    CK_ULONG count,
-    CK_ATTRIBUTE a
-)
-{
-    if (tmpl_find(tmpl, count, a.type) == NULL)
-    {
-        full[(*n)++] = a;
-    }
-}
 
 CK_RV C_GenerateKey(
     CK_SESSION_HANDLE hSession,
@@ -290,7 +102,7 @@ CK_RV C_GenerateKey(
 
     CK_ULONG value_len = 0;
     CK_BBOOL token = CK_FALSE;
-    rv = keygen_check_template(pTemplate, ulCount, &value_len, &token);
+    rv = azihsm_pkcs11_keygen_check_template(pTemplate, ulCount, &value_len, &token);
     if ((rv == CKR_OK) && token && ((s->flags & CKF_RW_SESSION) == 0))
     {
         rv = CKR_SESSION_READ_ONLY;
@@ -315,49 +127,22 @@ CK_RV C_GenerateKey(
         goto cleanup;
     }
 
-    /*
-     * Store the caller's template plus the attributes this token decides:
-     * class/type identify the object for search and C_GetAttributeValue,
-     * the sensitivity quartet states the (only possible) key-protection
-     * reality, and the usage defaults make an attribute-less template usable.
-     */
+    /* Store the caller's template plus the attributes this token decides (see
+     * azihsm_pkcs11_keygen_build_template); `fill` backs the appended values
+     * and must live until the store call has copied them. */
     full = (CK_ATTRIBUTE *)malloc((ulCount + KEYGEN_APPENDED_ATTRS) * sizeof(CK_ATTRIBUTE));
     if (full == NULL)
     {
         rv = CKR_HOST_MEMORY;
         goto cleanup;
     }
+    azihsm_pkcs11_keygen_fill fill;
     CK_ULONG n = 0;
-    for (CK_ULONG i = 0; i < ulCount; i++)
+    rv = azihsm_pkcs11_keygen_build_template(pTemplate, ulCount, &fill, full, &n);
+    if (rv != CKR_OK)
     {
-        full[n++] = pTemplate[i];
+        goto cleanup;
     }
-    CK_OBJECT_CLASS cls = CKO_SECRET_KEY;
-    CK_KEY_TYPE kt = CKK_AES;
-    CK_BBOOL btrue = CK_TRUE;
-    CK_BBOOL bfalse = CK_FALSE;
-    tmpl_append(full, &n, pTemplate, ulCount, (CK_ATTRIBUTE){ CKA_CLASS, &cls, sizeof(cls) });
-    tmpl_append(full, &n, pTemplate, ulCount, (CK_ATTRIBUTE){ CKA_KEY_TYPE, &kt, sizeof(kt) });
-    tmpl_append(
-        full,
-        &n,
-        pTemplate,
-        ulCount,
-        (CK_ATTRIBUTE){ CKA_SENSITIVE, &btrue, sizeof(btrue) }
-    );
-    tmpl_append(
-        full,
-        &n,
-        pTemplate,
-        ulCount,
-        (CK_ATTRIBUTE){ CKA_EXTRACTABLE, &bfalse, sizeof(bfalse) }
-    );
-    tmpl_append(full, &n, pTemplate, ulCount, (CK_ATTRIBUTE){ CKA_ENCRYPT, &btrue, sizeof(btrue) });
-    tmpl_append(full, &n, pTemplate, ulCount, (CK_ATTRIBUTE){ CKA_DECRYPT, &btrue, sizeof(btrue) });
-    /* Rejected above as inputs, so always appended. */
-    full[n++] = (CK_ATTRIBUTE){ CKA_LOCAL, &btrue, sizeof(btrue) };
-    full[n++] = (CK_ATTRIBUTE){ CKA_ALWAYS_SENSITIVE, &btrue, sizeof(btrue) };
-    full[n++] = (CK_ATTRIBUTE){ CKA_NEVER_EXTRACTABLE, &btrue, sizeof(btrue) };
 
     CK_OBJECT_HANDLE h = CK_INVALID_HANDLE;
     rv =

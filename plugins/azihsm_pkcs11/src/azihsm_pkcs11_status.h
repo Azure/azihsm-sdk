@@ -5,6 +5,8 @@
 
 #include "azihsm_pkcs11_compat.h"
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -27,6 +29,18 @@ CK_RV azihsm_pkcs11_ckr_from_azihsm(int status);
  * CKR_OBJECT_HANDLE_INVALID.
  */
 CK_RV azihsm_pkcs11_ckr_from_azihsm_hint(int status, CK_RV invalid_handle);
+
+/*
+ * Translate a status from the FILL call of a one-shot AES-CBC operation (the
+ * second device call; the sizing call takes the hint map directly). With
+ * `unpad` — a CKM_AES_CBC_PAD decrypt — INTERNAL_ERROR (-5) is the SDK's
+ * PKCS#7 padding check rejecting the ciphertext and becomes
+ * CKR_ENCRYPTED_DATA_INVALID; every other status takes
+ * azihsm_pkcs11_ckr_from_azihsm_hint with a stale device key handle reading as
+ * CKR_KEY_HANDLE_INVALID. Why the remap is safe, and why it is this narrow, is
+ * explained at the definition.
+ */
+CK_RV azihsm_pkcs11_ckr_from_cbc_fill(int status, bool unpad);
 
 #ifdef __cplusplus
 }
