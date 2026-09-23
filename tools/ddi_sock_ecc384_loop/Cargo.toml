@@ -1,0 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_sock_ecc384_loop"
+version = "0.1.0"
+
+[dependencies]
+azihsm_api.workspace = true
+azihsm_ddi = { features = ["sock"], workspace = true }
+openssl.workspace = true
+
+[lints]
+workspace = true

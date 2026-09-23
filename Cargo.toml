@@ -76,6 +76,9 @@ members = [
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
+  "tools/ddi_sock_ecc384_loop",
+  "tools/ddi_sock_get_api_rev",
+  "tools/ddi_sock_server",
   "tools/resiliency_stress",
   "xtask",
 

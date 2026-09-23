@@ -1,0 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "ddi_sock_server"
+version = "0.1.0"
+
+[dependencies]
+azihsm_ddi_sock_proto.workspace = true
+azihsm_fw_hsm_std.workspace = true
+tokio = { features = ["io-util", "net", "rt-multi-thread", "time"], workspace = true }
+
+[lints]
+workspace = true

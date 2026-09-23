@@ -1,0 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_sock_get_api_rev"
+version = "0.1.0"
+
+[dependencies]
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+azihsm_ddi_sock.workspace = true
+
+[lints]
+workspace = true

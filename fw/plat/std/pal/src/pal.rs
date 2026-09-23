@@ -41,7 +41,6 @@
 use std::cell::UnsafeCell;
 
 use async_channel::Receiver;
-use azihsm_fw_hsm_core_tracing::*;
 use azihsm_fw_hsm_pal_traits::*;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as EmbassyMutex;
@@ -255,14 +254,12 @@ impl HsmCustomDispatch for StdHsmPal {
 
 /// [`HsmPal`] lifecycle implementation for the standard platform.
 ///
-/// - **`init`** — Logs initialization; no hardware to configure.
+/// - **`init`** — No-op; there is no hardware to configure.
 /// - **`run`** — Pends forever (the core drives the event loop via Embassy
 ///   tasks, not through this method).
 /// - **`deinit`** — No-op; resources are cleaned up on drop.
 impl HsmPal for StdHsmPal {
-    fn init(&self) {
-        info!("pal", "initialized (std)");
-    }
+    fn init(&self) {}
 
     async fn run(&self) {
         core::future::pending::<()>().await;

@@ -3,6 +3,8 @@
 
 //! Socket DDI transport — device handle and request execution.
 
+use std::io::Read;
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering;
@@ -37,6 +39,18 @@ use azihsm_fw_hsm_io::SessionFlags;
 use azihsm_fw_hsm_io::SqeBuilder;
 use azihsm_fw_hsm_io::OP_MBOR;
 use azihsm_fw_hsm_io::OP_TBOR;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::connect;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::socket;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::AddressFamily;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::SockFlag;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::SockType;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::VsockAddr;
 use parking_lot::Mutex;
 
 /// Environment variable naming the socket to connect to.
@@ -49,6 +63,120 @@ pub const DEFAULT_SOCK_PATH: &str = "/tmp/azihsm-ddi.sock";
 /// current TBOR command set; larger responses are future work.
 const DST_CAP: u32 = 4096;
 
+enum SocketStream {
+    Unix(UnixStream),
+    #[cfg(target_os = "linux")]
+    Vsock(VsockStream),
+}
+
+impl Read for SocketStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Unix(stream) => stream.read(buf),
+            #[cfg(target_os = "linux")]
+            Self::Vsock(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for SocketStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Unix(stream) => stream.write(buf),
+            #[cfg(target_os = "linux")]
+            Self::Vsock(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Unix(stream) => stream.flush(),
+            #[cfg(target_os = "linux")]
+            Self::Vsock(stream) => stream.flush(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct VsockStream {
+    fd: std::os::fd::RawFd,
+}
+
+#[cfg(target_os = "linux")]
+impl VsockStream {
+    fn connect(cid: u32, port: u32) -> std::io::Result<Self> {
+        let fd = socket(
+            AddressFamily::Vsock,
+            SockType::Stream,
+            SockFlag::SOCK_CLOEXEC,
+            None,
+        )
+        .map_err(std::io::Error::from)?;
+
+        if let Err(error) = connect(fd, &VsockAddr::new(cid, port)) {
+            let _ = nix::unistd::close(fd);
+            return Err(std::io::Error::from(error));
+        }
+        Ok(Self { fd })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Read for VsockStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        nix::unistd::read(self.fd, buf).map_err(std::io::Error::from)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Write for VsockStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        nix::unistd::write(self.fd, buf).map_err(std::io::Error::from)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for VsockStream {
+    fn drop(&mut self) {
+        let _ = nix::unistd::close(self.fd);
+    }
+}
+
+fn parse_vsock_endpoint(path: &str) -> std::io::Result<Option<(u32, u32)>> {
+    let Some(address) = path.strip_prefix("vsock://") else {
+        return Ok(None);
+    };
+    let Some((cid, port)) = address.split_once(':') else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vsock endpoint must have the form vsock://CID:PORT",
+        ));
+    };
+    if cid.is_empty() || port.is_empty() || port.contains(':') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vsock endpoint must have the form vsock://CID:PORT",
+        ));
+    }
+    let cid = cid
+        .parse()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid vsock CID"))?;
+    let port = port
+        .parse()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid vsock port"))?;
+    if port == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vsock port must be nonzero",
+        ));
+    }
+    Ok(Some((cid, port)))
+}
+
 /// Resolve the configured socket path from the environment or default.
 pub(crate) fn socket_path() -> String {
     std::env::var(SOCK_PATH_ENV).unwrap_or_else(|_| DEFAULT_SOCK_PATH.to_owned())
@@ -60,7 +188,7 @@ pub(crate) fn socket_path() -> String {
 /// are serialized through a mutex, so the synchronous trait methods can be
 /// shared across threads while each request/response exchange stays atomic.
 pub struct DdiSockDev {
-    stream: Mutex<UnixStream>,
+    stream: Mutex<SocketStream>,
     cmd_counter: AtomicU16,
     device_kind: DdiDeviceKind,
 }
@@ -76,7 +204,23 @@ impl std::fmt::Debug for DdiSockDev {
 impl DdiSockDev {
     /// Connect to the server at `path`.
     pub(crate) fn connect(path: &str) -> DdiResult<Self> {
-        let stream = UnixStream::connect(path).map_err(DdiError::IoError)?;
+        let stream = match parse_vsock_endpoint(path).map_err(DdiError::IoError)? {
+            Some((cid, port)) => {
+                #[cfg(target_os = "linux")]
+                {
+                    SocketStream::Vsock(VsockStream::connect(cid, port).map_err(DdiError::IoError)?)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (cid, port);
+                    return Err(DdiError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "vsock endpoints require Linux",
+                    )));
+                }
+            }
+            None => SocketStream::Unix(UnixStream::connect(path).map_err(DdiError::IoError)?),
+        };
         Ok(Self {
             stream: Mutex::new(stream),
             cmd_counter: AtomicU16::new(1),
@@ -311,5 +455,34 @@ fn map_proto_err(e: ProtoError) -> DdiError {
             std::io::ErrorKind::InvalidData,
             other.to_string(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_vsock_endpoint;
+
+    #[test]
+    fn parses_vsock_endpoint() {
+        assert_eq!(
+            parse_vsock_endpoint("vsock://4:1234").unwrap(),
+            Some((4, 1234))
+        );
+        assert_eq!(parse_vsock_endpoint("/tmp/ddi.sock").unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_invalid_vsock_endpoint() {
+        for endpoint in [
+            "vsock://",
+            "vsock://4",
+            "vsock://:1234",
+            "vsock://4:",
+            "vsock://x:1234",
+            "vsock://4:0",
+            "vsock://4:1234:5",
+        ] {
+            assert!(parse_vsock_endpoint(endpoint).is_err(), "{endpoint}");
+        }
     }
 }

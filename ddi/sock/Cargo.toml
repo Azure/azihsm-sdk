@@ -23,5 +23,8 @@ azihsm_fw_hsm_io.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { features = ["socket"], workspace = true }
+
 [lints]
 workspace = true
