@@ -44,8 +44,10 @@ doctest = false
 fuzzing = ["arbitrary", "azihsm_ddi_mbor_types/fuzzing"]
 
 # MBOR codec hooks emitted by the `Ddi` derive on `#[ddi(map)]` structs.
-# Declared (and forwarded) so `check-cfg` does not warn; kept off by
-# default since the host wire types need no encode/decode hooks.
+# The inherited workspace `azihsm_ddi_mbor_types` dependency enables both
+# hooks, so the codec constructors include their boolean arguments in normal
+# and `--no-default-features` builds. These features preserve explicit
+# forwarding for consumers and satisfy `check-cfg`.
 post_decode = [
   "azihsm_ddi_mbor_codec/post_decode",
   "azihsm_ddi_mbor_types/post_decode",

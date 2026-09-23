@@ -316,24 +316,24 @@ async fn raw_import_unwrapping_key<'p>(
     Ok(resp)
 }
 
-/// Reject an RSA import when the partition already owns an unwrapping key.
+/// Reject an RSA import when the partition already owns or has a staged
+/// unwrapping key.
 ///
 /// This reads `PartStore` directly so the check does not trigger the PAL's
 /// lazy import of an HSP-staged key.
 fn ensure_unwrapping_key_absent(io: &impl HsmIo) -> HsmResult<()> {
-    if PartStore::partition(io.pid())?
-        .unwrapping_key_id()
-        .is_some()
-    {
+    let partition = PartStore::partition(io.pid())?;
+    if partition.unwrapping_key_id().is_some() || partition.unwrapping_key_bk_valid() {
         return Err(HsmError::InvalidArg);
     }
     Ok(())
 }
 
-/// Publish the first RSA unwrapping key if the slot is still empty.
+/// Publish the first RSA unwrapping key if neither a vault ID nor an
+/// HSP-staged backup appeared while the import awaited hardware.
 fn publish_initial_unwrapping_key(io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
     let partition = PartStore::partition(io.pid())?;
-    if partition.unwrapping_key_id().is_some() {
+    if partition.unwrapping_key_id().is_some() || partition.unwrapping_key_bk_valid() {
         return Err(HsmError::InvalidArg);
     }
     partition.set_unwrapping_key_id(Some(key_id));

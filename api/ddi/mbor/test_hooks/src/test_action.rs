@@ -658,6 +658,8 @@ mod tests {
             let payload = wire
                 .payload
                 .expect("parameterized action must have a payload");
+            // The workspace types dependency enables `post_decode`, so the
+            // host decoder constructor includes this flag.
             let mut decoder = MborDecoder::new(payload.as_slice(), false);
             MborMap::mbor_decode(&mut decoder).expect("payload must start with an MBOR map");
         }
