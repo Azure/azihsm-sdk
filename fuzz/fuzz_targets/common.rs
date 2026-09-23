@@ -5,9 +5,8 @@
 
 #![allow(dead_code)]
 
-use azihsm_ddi_emu::DdiEmu;
+use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
@@ -18,11 +17,8 @@ use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
-use std::sync::LazyLock;
 
-/// Lazily-initialized emulator DDI and device for fuzz targets that
-/// exercise TBOR command round-trips.
-static EMU: LazyLock<DdiEmu> = LazyLock::new(DdiEmu::default);
+pub type DdiTest = AzihsmDdi;
 
 /// Fuzz operations corresponding to the TOC builder methods on
 /// [`Encoder`].
@@ -52,6 +48,21 @@ pub const FUZZ_REQ_BUF_SIZE: usize =
 /// Buffer size used by response encoder fuzz targets.
 pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
+
+pub fn common_fuzz_test(
+    test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str),
+) {
+    let ddi = DdiTest::default();
+    let dev_infos = ddi.dev_info_list();
+    if dev_infos.is_empty() {
+        panic!("No devices found");
+    }
+
+    for dev_info in dev_infos.iter() {
+        let mut dev = ddi.open_dev(&dev_info.path).expect("Failed to open device");
+        test(&mut dev, &dev_info.path);
+    }
+}
 
 /// Apply a sequence of TOC builder operations to an encoder, returning
 /// the encoded bytes on success or `None` if any step (including
@@ -119,10 +130,4 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
         }
         (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
     }
-}
-
-/// Open a fresh emulator device handle for fuzz targets.
-pub fn open_emu_dev() -> DdiResult<<DdiEmu as Ddi>::Dev> {
-    let devs = EMU.dev_info_list();
-    EMU.open_dev(&devs.first().unwrap().path)
 }
