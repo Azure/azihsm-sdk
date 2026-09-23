@@ -9,14 +9,16 @@
 //! the current SVN, and re-provisions the SD — the local-reboot recovery
 //! path.  It needs no sender, HPKE, evidence, or out-of-band data.
 //!
-//! The **round-trip** test exercises the realistic recovery sequence on one
-//! backend path: the first partition incarnation finalizes and `CreateSD`s
-//! (capturing the local backups and `local_mk_backup`), the test explicitly
-//! erases that partition, then a fresh handle restores `PartLocalMK` via
-//! `PartFinal` and restores the security domain from the captured backups.
+//! The **round-trip** test exercises the realistic recovery sequence: a
+//! first device finalizes and `CreateSD`s (capturing the local backups and
+//! the `local_mk_backup`), then a second device (factory-reset, same
+//! machine seed) restores `PartLocalMK` via `PartFinal` and finally
+//! restores the security domain from the captured local backups.
 //!
 //! Coverage:
-//! * Round-trip — create → explicit partition reset → fresh handle →
+//! * Round-trip — create → reboot → PartFinal(restore PartLocalMK) →
+//!   restore-local returns non-zero refreshed backups.
+//! * Explicit reset — create → erase the same partition → fresh handle →
 //!   PartFinal(restore PartLocalMK) → restore-local.
 //! * Functional proof — SecurityDomain-scoped sealing-key generation fails
 //!   before restore and succeeds after restore.
@@ -27,14 +29,14 @@
 //! * A tampered `pok_local_backup` is rejected (AEAD tag mismatch).
 //! * A tampered `sd_mk_backup` is rejected without publishing SDMK.
 
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
+use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
+use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
+use azihsm_ddi_tbor_types::TborStatus;
 
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
@@ -42,13 +44,13 @@ use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::harness::ROTATED_CO_PSK;
+use crate::harness::TestCtx;
 use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
 use crate::harness::x509_fixture::CaKey;
 use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CO_PSK;
+use crate::harness::x509_fixture::make_pta_chain;
+use crate::harness::x509_fixture::pta_pub_from_csr;
 
 /// `KeyScope::SecurityDomain` wire discriminant.
 const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
@@ -71,7 +73,52 @@ struct CreatedSd {
 /// `pota` / `sata` trust anchors and machine `seed` are supplied by the
 /// caller so the second device can re-finalize with an identical policy /
 /// certificate chain.
-fn create_sd_on_first_device(ctx: &TestCtx, seed: &[u8], sata: &CaKey, pota: &CaKey) -> CreatedSd {
+fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &CaKey) -> CreatedSd {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
+    let mut pid_pub = [0u8; RAW_PUB_LEN];
+    pid_pub.copy_from_slice(&info.pid_pub_key);
+    let policy = backing_part_policy(
+        &info.pid,
+        &info.pid_pub_key,
+        &sata.raw_pub(),
+        &pota.raw_pub(),
+    );
+
+    let init = ctx
+        .part_init(&session, seed, &policy, &pota_thumbprint())
+        .expect("PartInit");
+    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    let local_mk_backup = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal")
+        .local_mk_backup;
+
+    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, sata, &report);
+    let req = backup_request(session.session_id, masked, &evidence, &policy);
+    let resp = ctx
+        .tbor_oob(&req, &evidence.oob())
+        .expect("SdCreateRemoteBackup");
+
+    CreatedSd {
+        policy,
+        local_mk_backup,
+        pok_local_backup: resp.pok_local_backup.to_vec(),
+        sd_mk_backup: resp.sd_mk_backup.to_vec(),
+    }
+}
+
+/// Create an SD on a caller-owned context so explicit-reset tests can erase
+/// and reopen the same emulator backend path.
+fn create_sd_on_resettable_partition(
+    ctx: &TestCtx,
+    seed: &[u8],
+    sata: &CaKey,
+    pota: &CaKey,
+) -> CreatedSd {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
     let info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
@@ -166,6 +213,41 @@ fn assert_sd_scoped_sealing_key_is_operational(ctx: &TestCtx, session_id: u16) {
 }
 
 #[test]
+fn sd_restore_local_backup_roundtrip() {
+    let seed = mach_seed();
+    let sata = CaKey::generate();
+    let pota = CaKey::generate();
+
+    // Device 1: finalize + CreateSD, capturing the local backups.
+    let created = create_sd_on_first_device(&seed, &sata, &pota);
+
+    // Device 2 (reboot): restore PartLocalMK, then restore the SD locally.
+    let ctx = TestCtx::new();
+    let session = reboot_and_restore_part_local_mk(&ctx, &seed, &pota, &created);
+
+    let resp = ctx
+        .tbor(&TborSdRestoreLocalBackupReq {
+            session_id: session.session_id,
+            pok_local_backup: created.pok_local_backup.clone(),
+            sd_mk_backup: created.sd_mk_backup.clone(),
+        })
+        .expect("SdRestoreLocalBackup roundtrip");
+
+    // Refreshed local backup (BKS3 re-masked under PartLocalMK), 276 B.
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
+    assert!(
+        resp.pok_local_backup.iter().any(|&b| b != 0),
+        "refreshed pok_local_backup must not be all-zero",
+    );
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+    assert!(
+        resp.sd_mk_backup.iter().any(|&b| b != 0),
+        "refreshed sd_mk_backup must not be all-zero",
+    );
+}
+
+#[test]
 fn sd_restore_local_backup_after_explicit_partition_reset() {
     let seed = mach_seed();
     let sata = CaKey::generate();
@@ -175,7 +257,7 @@ fn sd_restore_local_backup_after_explicit_partition_reset() {
     // host-persisted artifact needed after destructive reset.
     let ctx = TestCtx::new();
     let path = ctx.path().to_owned();
-    let created = create_sd_on_first_device(&ctx, &seed, &sata, &pota);
+    let created = create_sd_on_resettable_partition(&ctx, &seed, &sata, &pota);
 
     // Reset the same backend path. Use a fresh handle because the old handle
     // deliberately retains host-side session tracking for reopen semantics.
@@ -318,14 +400,11 @@ fn sd_restore_local_backup_rejects_tampered_pok() {
     let sata = CaKey::generate();
     let pota = CaKey::generate();
 
-    let create_ctx = TestCtx::new();
-    let created = create_sd_on_first_device(&create_ctx, &seed, &sata, &pota);
-    let path = create_ctx.path().to_owned();
-    create_ctx.erase().expect("explicit partition reset");
+    let created = create_sd_on_first_device(&seed, &sata, &pota);
 
-    // Fresh incarnation: restore PartLocalMK, then attempt a restore with a
+    // Device 2 (reboot): restore PartLocalMK, then attempt a restore with a
     // byte-flipped local backup — the AEAD tag no longer verifies.
-    let ctx = TestCtx::new_with_path(&path);
+    let ctx = TestCtx::new();
     let session = reboot_and_restore_part_local_mk(&ctx, &seed, &pota, &created);
 
     let mut tampered = created.pok_local_backup.clone();
@@ -352,7 +431,7 @@ fn sd_restore_local_backup_rejects_tampered_sd_mk_without_partial_publication() 
     let pota = CaKey::generate();
 
     let create_ctx = TestCtx::new();
-    let created = create_sd_on_first_device(&create_ctx, &seed, &sata, &pota);
+    let created = create_sd_on_resettable_partition(&create_ctx, &seed, &sata, &pota);
     let path = create_ctx.path().to_owned();
     create_ctx.erase().expect("explicit partition reset");
 
