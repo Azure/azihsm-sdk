@@ -10,9 +10,9 @@ use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
-use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
+use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
@@ -49,19 +49,19 @@ pub const FUZZ_REQ_BUF_SIZE: usize =
 pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
-pub fn common_fuzz_test(
-    test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str),
-) {
+pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
     let ddi = DdiTest::default();
     let dev_infos = ddi.dev_info_list();
     if dev_infos.is_empty() {
         panic!("No devices found");
     }
 
-    for dev_info in dev_infos.iter() {
-        let mut dev = ddi.open_dev(&dev_info.path).expect("Failed to open device");
-        test(&mut dev, &dev_info.path);
-    }
+    let path = match std::env::var("FUZZ_DEVICE") {
+        Ok(path) => path,
+        Err(_) => dev_infos.first().unwrap().path.clone(),
+    };
+    let mut dev = ddi.open_dev(&path).expect("Failed to open device");
+    test(&mut dev, &path);
 }
 
 /// Apply a sequence of TOC builder operations to an encoder, returning

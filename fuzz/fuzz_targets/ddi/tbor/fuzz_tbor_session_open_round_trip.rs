@@ -6,16 +6,17 @@
 #[path = "../../common.rs"]
 mod common;
 
-use crate::common::DdiTest;
+use azihsm_crypto::aead_envelope::AeadAlg;
+use azihsm_crypto::*;
 use azihsm_ddi_interface::*;
 use azihsm_ddi_tbor_types::*;
-use azihsm_crypto::*;
-use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_session_ex_crypto::*;
-use x509::X509CertificateOp;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
+use x509::X509CertificateOp;
+
+use crate::common::DdiTest;
 
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
@@ -96,7 +97,9 @@ fn seal_seed_envelope_with_iv(
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|dev: &mut <DdiTest as Ddi>::Dev, _path: &str| {
         let (req, ephemeral) = if input.valid_open_init || input.valid_open_finish {
-            let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else { return; };
+            let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else {
+                return;
+            };
             let (psk_id, session_type) = if input.valid_use_authenticated {
                 (0, SessionType::Authenticated.to_u8())
             } else {
@@ -126,7 +129,10 @@ fuzz_target!(|input: FuzzInput| {
 
         // assert open init success if expected
         if input.valid_open_init || input.valid_open_finish {
-            assert!(init_result.is_ok(), "SessionOpenInit with valid input must succeed");
+            assert!(
+                init_result.is_ok(),
+                "SessionOpenInit with valid input must succeed"
+            );
         }
 
         if let Ok(resp) = init_result {
@@ -162,7 +168,11 @@ fuzz_target!(|input: FuzzInput| {
             };
 
             let mut open_finish_cookie = None;
-            let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(&open_finish_req, None, &mut open_finish_cookie);
+            let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(
+                &open_finish_req,
+                None,
+                &mut open_finish_cookie,
+            );
 
             // assert open finish success only when we actually built a valid request
             if input.valid_open_finish {
@@ -201,8 +211,7 @@ fuzz_target!(|input: FuzzInput| {
                     close_result.is_ok(),
                     "SessionClose on a session opened this iteration must succeed"
                 );
-            }
-            else {
+            } else {
                 // Any SessionOpenFinish failure eagerly destroys the Pending slot in FW,
                 // so a follow-up SessionClose on the same id must be rejected with
                 // SessionNotFound (0x08700004)
@@ -264,7 +273,8 @@ fn build_valid_finish_req(
     .ok()?;
 
     let param_key = derive_param_key(&exported).ok()?;
-    let mut seed_envelope_vec = seal_seed_envelope_with_iv(&param_key, &input.seed, &input.seed_iv).ok()?;
+    let mut seed_envelope_vec =
+        seal_seed_envelope_with_iv(&param_key, &input.seed, &input.seed_iv).ok()?;
     if input.corrupt_seed_envelope {
         // Flip a byte in the ciphertext/tag so the Phase-2 MAC (computed
         // from `exported`/`pk_*`, not the envelope) still verifies, but the
@@ -284,9 +294,7 @@ fn build_valid_finish_req(
 /// Fetches the HSM's leaf certificate (last entry in slot 0's chain) and
 /// returns its public key in both parsed and raw SEC1 form; all failure
 /// modes collapse to `()` since callers only need to bail out via `?`.
-fn fetch_pk_hsm(
-    dev: &<DdiTest as Ddi>::Dev,
-) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
+fn fetch_pk_hsm(dev: &<DdiTest as Ddi>::Dev) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
     let info_req = TborGetCertChainInfoReq::new(0);
     let mut info_cookie = None;
     let info = dev
