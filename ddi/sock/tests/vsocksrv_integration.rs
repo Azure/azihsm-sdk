@@ -55,6 +55,10 @@ struct SocketPaths {
     ch: PathBuf,
     /// Path the socket DDI client connects to.
     ddi: PathBuf,
+    /// Whether this test actually bound (and therefore created) `ch`.
+    ch_owned: bool,
+    /// Whether this test actually bound (and therefore created) `ddi`.
+    ddi_owned: bool,
 }
 
 impl SocketPaths {
@@ -68,14 +72,24 @@ impl SocketPaths {
         Self {
             ch: dir.join(format!("azihsm-ddi-sock-test-ch-{unique}.sock")),
             ddi: dir.join(format!("azihsm-ddi-sock-test-ddi-{unique}.sock")),
+            ch_owned: false,
+            ddi_owned: false,
         }
     }
 }
 
 impl Drop for SocketPaths {
+    /// Only removes socket files this test actually created (i.e. ones
+    /// whose `UnixListener::bind` succeeded), so a stale socket or
+    /// another process's endpoint that happened to collide with this
+    /// PID/tag-based name is never unlinked here.
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.ch);
-        let _ = std::fs::remove_file(&self.ddi);
+        if self.ch_owned {
+            let _ = std::fs::remove_file(&self.ch);
+        }
+        if self.ddi_owned {
+            let _ = std::fs::remove_file(&self.ddi);
+        }
     }
 }
 
@@ -123,7 +137,7 @@ fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
 /// Spawns a background thread that accepts exactly one `vsocksrv`
 /// connection on `paths.ch` and one client connection on `paths.ddi`,
 /// then bridges them together.
-fn spawn_bridge(paths: &SocketPaths) -> io::Result<thread::JoinHandle<()>> {
+fn spawn_bridge(paths: &mut SocketPaths) -> io::Result<thread::JoinHandle<()>> {
     spawn_bridge_loop(paths, 1)
 }
 
@@ -133,9 +147,17 @@ fn spawn_bridge(paths: &SocketPaths) -> io::Result<thread::JoinHandle<()>> {
 /// fresh client connection too) after every disconnect, so tests that
 /// exercise reconnect-after-disconnect behavior need more than one
 /// accepted pair.
-fn spawn_bridge_loop(paths: &SocketPaths, iterations: usize) -> io::Result<thread::JoinHandle<()>> {
+///
+/// Takes `paths` by `&mut` so each path is only marked test-owned (and
+/// therefore only removed on teardown) once its `bind` has succeeded.
+fn spawn_bridge_loop(
+    paths: &mut SocketPaths,
+    iterations: usize,
+) -> io::Result<thread::JoinHandle<()>> {
     let ch_listener = UnixListener::bind(&paths.ch)?;
+    paths.ch_owned = true;
     let ddi_listener = UnixListener::bind(&paths.ddi)?;
+    paths.ddi_owned = true;
     Ok(thread::spawn(move || {
         for _ in 0..iterations {
             let Ok((ch, _)) = ch_listener.accept() else {
@@ -264,14 +286,14 @@ fn open_dev_with_retry(
 
 #[test]
 fn get_api_rev_round_trips_through_vsocksrv() {
-    let paths = SocketPaths::new("get-api-rev");
+    let mut paths = SocketPaths::new("get-api-rev");
     // `spawn_bridge` binds both listeners synchronously before spawning
     // its worker thread, so the socket at `paths.ddi` is already
     // connectable once this call returns — a connection is queued in the
     // kernel backlog until the bridge's single `accept()` picks it up
     // after `vsocksrv` connects. Probing the socket here first would
     // consume that one-shot `accept()` and hang the real client.
-    let _bridge = spawn_bridge(&paths).expect("failed to start test bridge");
+    let _bridge = spawn_bridge(&mut paths).expect("failed to start test bridge");
     let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
 
     let ddi = DdiSock::default();
@@ -288,8 +310,8 @@ fn get_api_rev_round_trips_through_vsocksrv() {
 /// state the previous client left it in.
 #[test]
 fn reconnect_after_disconnect_still_serves_requests() {
-    let paths = SocketPaths::new("reconnect-after-disconnect");
-    let _bridge = spawn_bridge_loop(&paths, 2).expect("failed to start test bridge");
+    let mut paths = SocketPaths::new("reconnect-after-disconnect");
+    let _bridge = spawn_bridge_loop(&mut paths, 2).expect("failed to start test bridge");
     let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
 
     let ddi = DdiSock::default();
@@ -327,8 +349,8 @@ fn reconnect_after_disconnect_still_serves_requests() {
 #[test]
 fn many_reconnects_do_not_exhaust_partition() {
     const RECONNECTS: usize = 16;
-    let paths = SocketPaths::new("many-reconnects");
-    let _bridge = spawn_bridge_loop(&paths, RECONNECTS).expect("failed to start test bridge");
+    let mut paths = SocketPaths::new("many-reconnects");
+    let _bridge = spawn_bridge_loop(&mut paths, RECONNECTS).expect("failed to start test bridge");
     let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
 
     let ddi = DdiSock::default();
@@ -360,8 +382,8 @@ fn many_reconnects_do_not_exhaust_partition() {
 /// through the wire protocol.
 #[test]
 fn malformed_frame_recovers_and_serves_next_connection() {
-    let paths = SocketPaths::new("malformed-frame");
-    let _bridge = spawn_bridge_loop(&paths, 2).expect("failed to start test bridge");
+    let mut paths = SocketPaths::new("malformed-frame");
+    let _bridge = spawn_bridge_loop(&mut paths, 2).expect("failed to start test bridge");
     let _vsocksrv = spawn_vsocksrv(&paths).expect("failed to start vsocksrv");
 
     {

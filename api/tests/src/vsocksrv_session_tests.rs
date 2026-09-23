@@ -83,19 +83,10 @@ struct SocketPaths {
 /// only path `HsmPartitionManager::open_partition` will accept).
 const AZIHSM_DDI_SOCK: &str = "AZIHSM_DDI_SOCK";
 
-/// Sets `AZIHSM_DDI_SOCK` to `path`.
-///
-/// # Safety
-///
-/// `set_var` is only safe to call while no other thread might be
-/// reading or writing the process environment concurrently. This test
-/// is the only one in this crate that reads or writes `AZIHSM_DDI_SOCK`,
-/// and it calls this before spawning any thread that reads it.
-#[allow(unsafe_code)]
-fn set_ddi_sock_env(path: &Path) {
-    // SAFETY: see function doc comment above.
-    unsafe { std::env::set_var(AZIHSM_DDI_SOCK, path) };
-}
+/// Set on the re-executed child process (see [`reexec_with_ddi_sock_env`])
+/// so it knows to run the test body directly instead of re-executing
+/// itself again.
+const REEXEC_CHILD_MARKER: &str = "AZIHSM_VSOCKSRV_TEST_REEXEC_CHILD";
 
 /// Picks the socket path the bridge's `ddi` listener must bind at so
 /// `open_partition`'s internal `dev_info_by_path` lookup (which matches
@@ -105,11 +96,15 @@ fn set_ddi_sock_env(path: &Path) {
 /// If `AZIHSM_DDI_SOCK` is already set, the caller has explicitly opted
 /// into a specific path, so it is used as-is and must not already exist
 /// (this test never probes or removes another process's live socket).
-/// Otherwise, a unique per-test path is generated and exported via
-/// `AZIHSM_DDI_SOCK` so this test always gets a test-owned endpoint
+/// Otherwise, a unique per-test path under the OS temp directory is
+/// returned instead, so this test always gets a test-owned endpoint
 /// instead of colliding with `azihsm_ddi_sock::DEFAULT_SOCK_PATH`, which
 /// a real `vsocksrv`/service could be using.
-fn test_owned_ddi_sock_path(unique: &str) -> PathBuf {
+///
+/// This never mutates the process environment itself; see
+/// [`reexec_with_ddi_sock_env`] for how the resolved path actually
+/// reaches `AZIHSM_DDI_SOCK`.
+fn resolve_ddi_sock_path(unique: &str) -> PathBuf {
     match std::env::var(AZIHSM_DDI_SOCK) {
         Ok(path) if !path.is_empty() => {
             let path = PathBuf::from(path);
@@ -122,12 +117,40 @@ fn test_owned_ddi_sock_path(unique: &str) -> PathBuf {
             );
             path
         }
-        _ => {
-            let path = std::env::temp_dir().join(format!("azihsm-ddi-sock-test-{unique}.sock"));
-            set_ddi_sock_env(&path);
-            path
-        }
+        _ => std::env::temp_dir().join(format!("azihsm-ddi-sock-test-{unique}.sock")),
     }
+}
+
+/// Re-executes the current test binary, filtered down to `test_name`,
+/// with `AZIHSM_DDI_SOCK` set to a resolved test-owned path
+/// ([`resolve_ddi_sock_path`]) via [`Command::env`].
+///
+/// Setting an environment variable on an about-to-be-spawned child
+/// process is always safe (unlike mutating this process's own
+/// environment with `std::env::set_var`, which is unsound if any other
+/// thread might concurrently read or write it), so this lets the test
+/// body observe `AZIHSM_DDI_SOCK` without this crate ever needing
+/// `unsafe_code`.
+fn reexec_with_ddi_sock_env(test_name: &str) {
+    let unique = format!(
+        "reexec-{}-{:?}",
+        std::process::id(),
+        Instant::now().elapsed()
+    );
+    let ddi_path = resolve_ddi_sock_path(&unique);
+
+    let exe = std::env::current_exe().expect("failed to resolve current test executable");
+    let status = Command::new(exe)
+        .arg(test_name)
+        .arg("--nocapture")
+        .env(AZIHSM_DDI_SOCK, &ddi_path)
+        .env(REEXEC_CHILD_MARKER, "1")
+        .status()
+        .expect("failed to spawn re-executed test process");
+    assert!(
+        status.success(),
+        "re-executed test process for `{test_name}` failed: {status}"
+    );
 }
 
 impl SocketPaths {
@@ -138,7 +161,7 @@ impl SocketPaths {
             std::process::id(),
             Instant::now().elapsed()
         );
-        let ddi = test_owned_ddi_sock_path(&unique);
+        let ddi = resolve_ddi_sock_path(&unique);
         Self {
             ch: dir.join(format!("azihsm-api-sock-test-ch-{unique}.sock")),
             ddi,
@@ -362,6 +385,15 @@ fn open_partition_with_retry(path: &str, api_rev: HsmApiRev, timeout: Duration) 
 /// credential state from a prior iteration is reusable.
 #[test]
 fn many_reconnects_with_open_sessions_do_not_exhaust_partition() {
+    // Re-execute this test in a child process with `AZIHSM_DDI_SOCK` set
+    // via `Command::env` instead of mutating this process's own
+    // environment: see `reexec_with_ddi_sock_env`.
+    if std::env::var_os(REEXEC_CHILD_MARKER).is_none() {
+        return reexec_with_ddi_sock_env(
+            "many_reconnects_with_open_sessions_do_not_exhaust_partition",
+        );
+    }
+
     let mut paths = SocketPaths::new("many-reconnects-sessions");
     let (_bridge, current_conn) =
         spawn_bridge_loop(&mut paths, RECONNECTS).expect("failed to start test bridge");
