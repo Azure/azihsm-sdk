@@ -6,6 +6,8 @@
 //! The request data has the stable `{1: action, 2: payload?}` shape.
 //! This module decodes the action ID and routes the remaining data to the
 //! action-specific module that owns its validation and behavior.
+//! DDI MBOR uses canonical ascending field-ID order, matching the generated
+//! `#[ddi(map)]` codecs, so field `1` precedes optional field `2`.
 
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;

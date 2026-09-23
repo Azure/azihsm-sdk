@@ -144,31 +144,35 @@ pub(crate) async fn mbor_dispatch<'p>(
         return Err(HsmError::UnsupportedCmd);
     }
 
-    let field_id = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if field_id != 1 {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    // The decoder is now positioned at the request data map; the selected handler
-    // owns it from here.
-    match hdr.op {
-        #[cfg(feature = "mcr_test_hooks")]
-        DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, request_len),
-        #[cfg(feature = "fips_validation_hooks")]
-        DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),
-        #[cfg(feature = "fips_validation_hooks")]
-        DDI_OP_RAW_KEY_IMPORT => {
-            let result = raw_key_import::dispatch(pal, io, &hdr, &mut decoder, request_len).await;
-
-            // Dispatch completes all request-derived work and, on success,
-            // returns a fully encoded response in a separate PAL DMA
-            // allocation. It is therefore safe to wipe the complete inbound
-            // request here. This also covers partial request-data decode failures
-            // where the raw plaintext field was already borrowed.
-            req.zeroize();
-
-            result
+    let result = async {
+        let field_id = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+        if field_id != 1 {
+            return Err(HsmError::DdiDecodeFailed);
         }
-        _ => Err(HsmError::UnsupportedCmd),
+
+        // The decoder is now positioned at the request data map; the selected
+        // handler owns it from here.
+        match hdr.op {
+            #[cfg(feature = "mcr_test_hooks")]
+            DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, request_len),
+            #[cfg(feature = "fips_validation_hooks")]
+            DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),
+            #[cfg(feature = "fips_validation_hooks")]
+            DDI_OP_RAW_KEY_IMPORT => {
+                raw_key_import::dispatch(pal, io, &hdr, &mut decoder, request_len).await
+            }
+            _ => Err(HsmError::UnsupportedCmd),
+        }
     }
+    .await;
+
+    #[cfg(feature = "fips_validation_hooks")]
+    if hdr.op == DDI_OP_RAW_KEY_IMPORT {
+        // Once the header identifies RawKeyImport, wipe the complete inbound
+        // request on every later exit. This includes malformed or truncated
+        // data-field IDs as well as request-body decode and dispatch failures.
+        req.zeroize();
+    }
+
+    result
 }

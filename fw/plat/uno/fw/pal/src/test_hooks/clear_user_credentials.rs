@@ -29,6 +29,8 @@ pub(super) fn dispatch<'p>(
 }
 
 fn execute<'p>(pal: &'p UnoHsmPal, io: &impl HsmIo, hdr: &ReqHdr) -> HsmResult<&'p DmaBuf> {
+    // Prepare the response before mutating credential state so an allocation
+    // or encoding failure cannot clear the credential and return an error.
     let resp = encode_success(pal, io, hdr)?;
     pal.part_prop_clear(io, PartPropId::CREDENTIAL)?;
     Ok(resp)

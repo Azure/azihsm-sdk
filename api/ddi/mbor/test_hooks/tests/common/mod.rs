@@ -9,13 +9,13 @@
 //! provisioning and session orchestration are owned here so the test-hook
 //! suite stays independent of the standard DDI suite.
 //!
-//! These test-only hardware validation suites run one binary and one case at
-//! a time per VM/device with `--test-threads 1`. Parallelism is limited to
-//! separate VMs with isolated devices. Concurrent Cargo or nextest execution
-//! against the same physical device is not supported.
+//! An OS-backed lock serializes separate integration-test processes on each
+//! VM across setup, the test body, and cleanup. Separate VMs have independent
+//! lock files and can continue running in parallel.
 
 #![allow(dead_code)]
 
+use std::fs;
 use std::panic::AssertUnwindSafe;
 
 use azihsm_cred_encrypt::DeviceCredKey;
@@ -24,6 +24,7 @@ use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::MborByteArray;
 pub use azihsm_ddi_mbor_test_helpers::*;
 use azihsm_ddi_mbor_types::*;
+use fs2::FileExt;
 use x509::X509CertificateOp;
 use x509::*;
 
@@ -86,6 +87,33 @@ pub const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
 
 pub type DdiTest = AzihsmDdi;
 
+/// Cross-process lock held for one complete hardware-test lifecycle.
+struct HardwareTestLock {
+    file: fs::File,
+}
+
+impl HardwareTestLock {
+    fn acquire() -> Self {
+        let path = std::env::temp_dir().join("azihsm-ddi-mbor-test-hooks.lock");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .expect("open DDI test-hook lock file");
+        file.lock_exclusive()
+            .expect("acquire DDI test-hook device lock");
+        Self { file }
+    }
+}
+
+impl Drop for HardwareTestLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 /// Run `test` against every discovered device, wrapping it in the shared
 /// setup/cleanup lifecycle. Panics if no device is present.
 pub fn ddi_dev_test(
@@ -93,6 +121,7 @@ pub fn ddi_dev_test(
     cleanup: fn(&mut <DdiTest as Ddi>::Dev, &DdiTest, &str, Option<u16>),
     test: fn(&mut <DdiTest as Ddi>::Dev, &DdiTest, &str, u16),
 ) {
+    let _hardware_test_lock = HardwareTestLock::acquire();
     let ddi = DdiTest::default();
     let dev_infos = ddi.dev_info_list();
 
@@ -121,8 +150,8 @@ pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) 
 
     let mut setup_dev = ddi.open_dev(path).unwrap();
 
-    let _ =
-        helper_common_establish_credential_no_unwrap(&mut setup_dev, TEST_CRED_ID, TEST_CRED_PIN);
+    helper_common_establish_credential_no_unwrap(&mut setup_dev, TEST_CRED_ID, TEST_CRED_PIN)
+        .expect("establish test credential");
 
     let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
         &setup_dev,
