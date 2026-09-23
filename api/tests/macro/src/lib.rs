@@ -83,8 +83,8 @@ pub fn session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Attribute macro for tests that use MBOR under `mock` and TBOR under
-/// a firmware-backed test feature.
+/// Attribute macro for tests that run in separate MBOR and TBOR test passes.
+/// The `AZIHSM_API_TEST_PROTOCOL` environment variable selects the protocol.
 #[proc_macro_attribute]
 pub fn dual_session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);

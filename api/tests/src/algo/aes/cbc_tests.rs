@@ -40,8 +40,8 @@ fn aes_generate_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
 
 /// Generate an AES key for streaming tests.
 ///
-/// The MBOR tests retain their existing local scope. TBOR uses session scope so
-/// the tests need only an active session, not a fully provisioned partition.
+/// The streaming context and caller share ownership of the key, so the key can
+/// retain the same session-bound lifetime used by the other CBC tests.
 fn aes_generate_streaming_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -49,7 +49,7 @@ fn aes_generate_streaming_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
         .key_kind(HsmKeyKind::Aes)
         .can_encrypt(true)
         .can_decrypt(true)
-        .is_session(cfg!(not(feature = "mock")))
+        .is_session(true)
         .build()
         .expect("Failed to build key properties");
 
@@ -446,24 +446,6 @@ fn test_cbc_crypt_basic_no_pad_256(session: HsmSession) {
     run_cbc_roundtrip(&session, 256, false, &iv, &plaintext);
 }
 
-/// AES key generation and CBC roundtrips through a V2 session exercise the
-/// public API's TBOR dispatch for every supported key size.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_cbc_tbor_roundtrip_all_key_sizes() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-    let iv = test_iv();
-    let plaintext = [0x5Au8; AES_CBC_BLOCK_SIZE * 2];
-
-    for key_bits in [128, 192, 256] {
-        run_cbc_roundtrip(&session, key_bits, false, &iv, &plaintext);
-    }
-}
-
 /// AES key generation with a caller-supplied label through a V2 (TBOR)
 /// session: the label round-trips into the key's props (proving the
 /// keygen request carries it and the masked-blob parser reads it back),
@@ -472,55 +454,51 @@ fn test_cbc_tbor_roundtrip_all_key_sizes() {
 #[cfg(not(feature = "mock"))]
 #[test]
 fn test_aes_generate_key_label_tbor() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
+    crate::utils::session::with_tbor_session(|session| {
+        let iv = test_iv();
+        let plaintext = [0x5Au8; AES_CBC_BLOCK_SIZE * 2];
+        let label = b"my-aes-label";
 
-    let iv = test_iv();
-    let plaintext = [0x5Au8; AES_CBC_BLOCK_SIZE * 2];
-    let label = b"my-aes-label";
+        for key_bits in [128u32, 192, 256] {
+            let props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::Aes)
+                .bits(key_bits)
+                .can_encrypt(true)
+                .can_decrypt(true)
+                .is_session(true)
+                .label(label)
+                .build()
+                .expect("build labeled AES key props");
+            let mut algo = HsmAesKeyGenAlgo::default();
+            let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+                .expect("generate labeled AES key over TBOR");
 
-    for key_bits in [128u32, 192, 256] {
+            assert_eq!(key.label(), label.to_vec(), "caller label must round-trip");
+
+            let ct = cbc_encrypt(&key, false, &iv, &plaintext).expect("encrypt labeled key");
+            let pt = cbc_decrypt(&key, false, &iv, &ct).expect("decrypt labeled key");
+            assert_eq!(pt, plaintext, "labeled key roundtrip failed ({key_bits}b)");
+        }
+
+        // An unlabeled key still generates and reports an empty label.
         let props = HsmKeyPropsBuilder::default()
             .class(HsmKeyClass::Secret)
             .key_kind(HsmKeyKind::Aes)
-            .bits(key_bits)
+            .bits(256)
             .can_encrypt(true)
             .can_decrypt(true)
             .is_session(true)
-            .label(label)
             .build()
-            .expect("build labeled AES key props");
+            .expect("build unlabeled AES key props");
         let mut algo = HsmAesKeyGenAlgo::default();
         let key = HsmKeyManager::generate_key(&session, &mut algo, props)
-            .expect("generate labeled AES key over TBOR");
-
-        assert_eq!(key.label(), label.to_vec(), "caller label must round-trip");
-
-        let ct = cbc_encrypt(&key, false, &iv, &plaintext).expect("encrypt labeled key");
-        let pt = cbc_decrypt(&key, false, &iv, &ct).expect("decrypt labeled key");
-        assert_eq!(pt, plaintext, "labeled key roundtrip failed ({key_bits}b)");
-    }
-
-    // An unlabeled key still generates and reports an empty label.
-    let props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::Aes)
-        .bits(256)
-        .can_encrypt(true)
-        .can_decrypt(true)
-        .is_session(true)
-        .build()
-        .expect("build unlabeled AES key props");
-    let mut algo = HsmAesKeyGenAlgo::default();
-    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
-        .expect("generate unlabeled AES key over TBOR");
-    assert!(
-        key.label().is_empty(),
-        "unlabeled key must report an empty label"
-    );
+            .expect("generate unlabeled AES key over TBOR");
+        assert!(
+            key.label().is_empty(),
+            "unlabeled key must report an empty label"
+        );
+    });
 }
 
 /// Basic AES-CBC PKCS#7 padding roundtrip with a 128-bit key and non-block-aligned plaintext.

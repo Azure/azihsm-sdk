@@ -10,7 +10,14 @@
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
+use parking_lot::Mutex;
 use tracing::*;
+
+/// Serializes tests that reset or initialize the shared test partition.
+pub(crate) static PARTITION_LOCK: Mutex<()> = Mutex::new(());
+
+/// API revision used by the MBOR test fixture.
+pub(crate) const MBOR_TEST_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 0 };
 
 /// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set,
 /// indicating we are running against real hardware with TPM-sourced keys.
@@ -78,7 +85,7 @@ pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
 pub(crate) fn test_api_rev() -> HsmApiRev {
     // Function is defined in case we want to easily switch between different revisions for testing.
     // or to read from an environment variable in the future.
-    HsmApiRev { major: 1, minor: 0 }
+    MBOR_TEST_API_REV
 }
 
 /// Dynamically generates a POTA endorsement (signature + public key DER) for a partition.
