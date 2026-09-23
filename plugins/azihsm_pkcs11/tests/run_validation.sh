@@ -2,17 +2,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Drives the module with the two validation tools: OpenSC pkcs11-tool (smoke)
-# and, when present, Google pkcs11test (conformance). Builds the standalone
-# no-device module for the tool-facing checks and runs the device-free unit
-# tests; if the mock-backed module has been built (cargo build -p azihsm_pkcs11
-# --features mock), it also runs the C_Login provisioning ceremony, a
-# pkcs11-tool AES keygen and the GoogleTest functional suite
-# (integration-tests/cpp) against the simulator.
+# Runs the checks of the CI workflow's build-and-drive job plus the
+# standalone unit harnesses, in one go. Builds the standalone
+# no-device module and drives it with OpenSC pkcs11-tool, and runs the
+# device-free unit tests; if the mock-backed module has been built
+# (cargo build -p azihsm_pkcs11 --features mock), it also runs the C_Login
+# provisioning ceremony, a pkcs11-tool AES keygen, the gtest functional suite
+# (integration-tests/cpp) and the pkcs11test conformance gate
+# (tests/pkcs11test) against the simulator.
 #
-# The tools are expected locally (extracted from distro packages / cloned, no
-# system install). Point PKCS11_TESTING at that directory; it defaults to the
-# repo-sibling layout with an env.sh that puts the tools on PATH.
+# pkcs11-tool is expected locally (extracted from a distro package, no system
+# install). Point PKCS11_TESTING at that directory; it defaults to the
+# repo-sibling layout with an env.sh that puts the tools on PATH. pkcs11test
+# is cloned and built by the gate script itself.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +38,27 @@ gcc -Wall -Wextra -Werror \
     "$HERE/digest_kat_test.c" "$PLUGIN/src/azihsm_pkcs11_digest.c" \
     -o "$WORK/digest_kat_test"
 "$WORK/digest_kat_test"
+
+echo; echo "== object-store unit tests (no device) =="
+store_src="$PLUGIN/src/azihsm_pkcs11_objstore_file.c $PLUGIN/src/azihsm_pkcs11_objstore_mem.c \
+$PLUGIN/src/azihsm_pkcs11_store_io.c $PLUGIN/src/azihsm_pkcs11_store_record.c"
+inc="-I$PLUGIN/include/pkcs11-v3.1 -I$PLUGIN/src"
+# shellcheck disable=SC2086 # the flag/source lists are meant to split
+gcc -Wall -Wextra -Werror $inc "$HERE/store_io_test.c" \
+    "$PLUGIN/src/azihsm_pkcs11_store_io.c" -o "$WORK/store_io_test"
+# shellcheck disable=SC2086
+gcc -Wall -Wextra -Werror $inc "$HERE/record_test.c" \
+    "$PLUGIN/src/azihsm_pkcs11_store_record.c" -o "$WORK/record_test"
+# shellcheck disable=SC2086
+gcc -Wall -Wextra -Werror $inc "$HERE/objstore_file_test.c" $store_src \
+    -o "$WORK/objstore_file_test" -lpthread
+# shellcheck disable=SC2086
+gcc -Wall -Wextra -Werror $inc "$HERE/objstore_stress_test.c" $store_src \
+    -o "$WORK/objstore_stress_test" -lpthread
+"$WORK/store_io_test" | tail -n 1
+"$WORK/record_test" | tail -n 1
+"$WORK/objstore_file_test" | tail -n 1
+"$WORK/objstore_stress_test" | tail -n 1
 
 echo; echo "== AES keygen template + status map unit test (no device) =="
 gcc -Wall -Wextra -Werror \
@@ -66,14 +89,6 @@ for pair in SHA-1:sha1sum SHA256:sha256sum SHA384:sha384sum SHA512:sha512sum; do
     echo "  $mech module   : $got"; echo "  $mech coreutils: $exp"
     [ "$got" = "$exp" ] && echo "  *** $mech OK ***" || { echo "  MISMATCH"; exit 1; }
 done
-
-if [ -x "$PKCS11_TESTING/pkcs11test/pkcs11test" ]; then
-    echo; echo "== pkcs11test: framework conformance subset =="
-    ( cd "$PKCS11_TESTING/pkcs11test" && \
-      ./pkcs11test -m "$(basename "$MOD")" -l "$(dirname "$MOD")" -s 0 \
-        --gtest_filter='*Slot*:*Session*' 2>&1 \
-        | grep -E 'PASSED|FAILED\]' | tail -n 4 ) || true
-fi
 
 # --- mock-backed C_Login ceremony (needs the integrated build + mock DDI) ----
 HSMMOD="$REPO/target/debug/azihsm_pkcs11.so"
@@ -114,6 +129,12 @@ if [ -f "$HSMMOD" ]; then
         || { tail -n 30 "$WORK/cmake-build.log"; echo "   (cmake build failed)"; exit 1; }
     AZIHSM_PKCS11_MODULE="$HSMMOD" ctest --test-dir "$WORK/cpp-tests" --output-on-failure \
         --no-tests=error || { echo "   (functional suite failed)"; exit 1; }
+
+    echo; echo "== mock-backed: pkcs11test conformance gate =="
+    # Clones and builds the tool on first use; the work directory is reused.
+    "$HERE/pkcs11test/run.sh" "$HSMMOD" \
+        "${XDG_CACHE_HOME:-$HOME/.cache}/azihsm-pkcs11test" \
+        || { echo "   (conformance gate failed)"; exit 1; }
 else
     echo; echo "== mock-backed checks skipped (no target/debug/azihsm_pkcs11.so) =="
 fi

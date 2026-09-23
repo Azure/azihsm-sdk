@@ -88,6 +88,10 @@ drives the real Cryptoki ABI — keygen, one-shot CBC round trips, the two-call
 sizing discipline, the operation state machine and init precedence — so it
 needs the mock- or hardware-backed build (see the CMakeLists.txt header for
 the build/run recipe; `AZIHSM_PKCS11_MODULE` points it at a module,
-`AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). The CI workflow
+`AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). `tests/pkcs11test/` is
+the conformance gate: it builds Google's PKCS#11 conformance program at a
+pinned revision and requires every test on its include-list to pass, which is
+how spec behaviour is kept from regressing as pieces land (the list grows with
+them — see the README there). The CI workflow
 (`.github/workflows/pkcs11.yml`) runs all of these on pushes/PRs to the
 staging branch.

@@ -1,0 +1,147 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Google pkcs11test include-list for azihsm_pkcs11 — the conformance gate.
+#
+# Every test named here must PASS, and must actually run: pkcs11test's own
+# skip mechanism lets a test report OK without asserting anything, so a test
+# it skips is kept OFF this list and run.sh fails if a listed one skips.
+# One gtest name per line, parameterised tests as Suite/Test.Case/N; blank
+# lines and '#' comments are ignored. Widen the list when a piece turns tests
+# green; never remove a name without saying why in the commit.
+#
+# Seeded 2026-09-23 from pkcs11test 2cbe462c62bacf537b9a9a427a1c053d8c2e4760 + hsm-profile-login.patch against
+# the mock build of feat/pkcs11-aes: 130 of 330 tests (155 report OK, of which
+# 25 assert nothing — 23 skipped by pkcs11test plus the two AES-ECB IV cases,
+# whose bodies return immediately for a mechanism without an IV).
+
+BERDecode.DERDecode
+BERDecode.DERDecodeIndefiniteLength
+BERDecode.DERDecodeLongTag
+Ciphers/SecretKeyTest.DecryptErrors/5
+Ciphers/SecretKeyTest.DecryptInvalidIV/5
+Ciphers/SecretKeyTest.EncryptDecrypt/5
+Ciphers/SecretKeyTest.EncryptDecryptGetSpace/5
+Ciphers/SecretKeyTest.EncryptErrors/5
+Ciphers/SecretKeyTest.EncryptFailDecrypt/5
+Ciphers/SecretKeyTest.EncryptInvalidIV/5
+DataObjectTest.FindNoObject
+DataObjectTest.FindObject
+DataObjectTest.FindObjectInvalid
+DataObjectTest.GetMultipleAttributes
+DataObjectTest.GetMultipleAttributesInvalid
+Digests/DigestTest.CompareIncremental/1
+Digests/DigestTest.CompareIncremental/2
+Digests/DigestTest.CompareIncremental/3
+Digests/DigestTest.CompareIncremental/4
+Digests/DigestTest.DigestFinalGetSpace/1
+Digests/DigestTest.DigestFinalGetSpace/2
+Digests/DigestTest.DigestFinalGetSpace/3
+Digests/DigestTest.DigestFinalGetSpace/4
+Digests/DigestTest.DigestFinalIntersperse/1
+Digests/DigestTest.DigestFinalIntersperse/2
+Digests/DigestTest.DigestFinalIntersperse/3
+Digests/DigestTest.DigestFinalIntersperse/4
+Digests/DigestTest.DigestFinalInvalid/1
+Digests/DigestTest.DigestFinalInvalid/2
+Digests/DigestTest.DigestFinalInvalid/3
+Digests/DigestTest.DigestFinalInvalid/4
+Digests/DigestTest.DigestGetSpace/1
+Digests/DigestTest.DigestGetSpace/2
+Digests/DigestTest.DigestGetSpace/3
+Digests/DigestTest.DigestGetSpace/4
+Digests/DigestTest.DigestInitInvalidSession/0
+Digests/DigestTest.DigestInitInvalidSession/1
+Digests/DigestTest.DigestInitInvalidSession/2
+Digests/DigestTest.DigestInitInvalidSession/3
+Digests/DigestTest.DigestInitInvalidSession/4
+Digests/DigestTest.DigestIntersperse/1
+Digests/DigestTest.DigestIntersperse/2
+Digests/DigestTest.DigestIntersperse/3
+Digests/DigestTest.DigestIntersperse/4
+Digests/DigestTest.DigestInvalid/1
+Digests/DigestTest.DigestInvalid/2
+Digests/DigestTest.DigestInvalid/3
+Digests/DigestTest.DigestInvalid/4
+Digests/DigestTest.DigestInvalidSession/1
+Digests/DigestTest.DigestInvalidSession/2
+Digests/DigestTest.DigestInvalidSession/3
+Digests/DigestTest.DigestInvalidSession/4
+Digests/DigestTest.DigestNoInit/0
+Digests/DigestTest.DigestNoInit/1
+Digests/DigestTest.DigestNoInit/2
+Digests/DigestTest.DigestNoInit/3
+Digests/DigestTest.DigestNoInit/4
+Digests/DigestTest.DigestUpdateInvalidSession/1
+Digests/DigestTest.DigestUpdateInvalidSession/2
+Digests/DigestTest.DigestUpdateInvalidSession/3
+Digests/DigestTest.DigestUpdateInvalidSession/4
+Digests/DigestTest.DigestUpdateNoInit/0
+Digests/DigestTest.DigestUpdateNoInit/1
+Digests/DigestTest.DigestUpdateNoInit/2
+Digests/DigestTest.DigestUpdateNoInit/3
+Digests/DigestTest.DigestUpdateNoInit/4
+Digests/DigestTest.DigestUpdateZeroLen/1
+Digests/DigestTest.DigestUpdateZeroLen/2
+Digests/DigestTest.DigestUpdateZeroLen/3
+Digests/DigestTest.DigestUpdateZeroLen/4
+Init.DoubleFinalize
+Init.GetInfoNoInit
+Init.InitArgsBadReserved
+Init.InitArgsInternalLocks
+Init.InitArgsMyLocks
+Init.InitArgsMyOrInternalLocks
+Init.InitArgsNoLock
+Init.InitArgsNoNewThreads
+Init.Simple
+Init.UnexpectedFinalize
+Init.Uninitialized
+PKCS11Test.ClosedSessionErrors
+PKCS11Test.EnumerateMechanisms
+PKCS11Test.EnumerateSlots
+PKCS11Test.FailedTermination
+PKCS11Test.GetFunctionList
+PKCS11Test.GetFunctionListFail
+PKCS11Test.GetInfo
+PKCS11Test.GetInfoFail
+PKCS11Test.GetMechanismInfoFail
+PKCS11Test.GetMechanismInfoInvalid
+PKCS11Test.GetMechanismInfoInvalidSlot
+PKCS11Test.GetMechanismListFailInvalid
+PKCS11Test.GetMechanismListFailInvalidSlot
+PKCS11Test.GetMechanismListFailTooSmall
+PKCS11Test.GetMechanismListTooLarge
+PKCS11Test.GetSlotInfoFail
+PKCS11Test.GetSlotList
+PKCS11Test.GetSlotListFailArgumentsBad
+PKCS11Test.GetSlotListFailTooSmall
+PKCS11Test.GetSlotListTooLarge
+PKCS11Test.GetTokenInfoFail
+PKCS11Test.InitNestedFail
+PKCS11Test.OpenSessionInvalid
+PKCS11Test.OpenSessionInvalidSlot
+PKCS11Test.OpenSessionUnsupportedNonSerial
+PKCS11Test.ParallelSessions
+PKCS11Test.WaitForSlotEvent
+ReadOnlySessionTest.CloseSessionInvalid
+ReadOnlySessionTest.ConsistentObjects
+ReadOnlySessionTest.DigestInitInvalid
+ReadOnlySessionTest.DigestTestVectors
+ReadOnlySessionTest.EnumerateObjects
+ReadOnlySessionTest.GenerateKeyInvalid
+ReadOnlySessionTest.InvalidSessionInfo
+ReadOnlySessionTest.SessionInfo
+ReadOnlySessionTest.UserLoginInvalid
+ReadWriteSessionTest.CloseSessionInvalid
+ReadWriteSessionTest.ConsistentObjects
+ReadWriteSessionTest.EnumerateObjects
+ReadWriteSessionTest.InvalidSessionInfo
+ReadWriteSessionTest.SessionInfo
+RNG.GenerateRandomNoInit
+RNG.SeedRandomNoInit
+ROUserSessionTest.EnumerateObjects
+ROUserSessionTest.LogoutInvalid
+ROUserSessionTest.UserLoginAlreadyLoggedIn
+RWUserSessionTest.EnumerateObjects
+RWUserSessionTest.LogoutInvalid
+Slot.NoInit

@@ -77,8 +77,15 @@ jobs:
           AZIHSM_PKCS11_MODULE="$MOD" ctest --test-dir "$RUNNER_TEMP/pkcs11-cpp-tests" \
             --output-on-failure --no-tests=error
 
-      # TODO: add pkcs11test as the conformance gate once the key-backed
-      # mechanisms land and there is a meaningful conformance surface to check.
+      # Conformance gate: Google pkcs11test (external oracle) over the
+      # include-list of tests this module is expected to pass. The script
+      # clones and builds the tool at its pinned revision; see
+      # plugins/azihsm_pkcs11/tests/pkcs11test/README.md.
+      - name: Conformance gate (pkcs11test)
+        run: |
+          set -euo pipefail
+          plugins/azihsm_pkcs11/tests/pkcs11test/run.sh \
+            "$PWD/target/debug/azihsm_pkcs11.so" "$RUNNER_TEMP/pkcs11test"
 
   # Object-store unit tests: standalone C harnesses that link the backend
   # sources directly (no device, no libcrypto), so they need only a compiler.
