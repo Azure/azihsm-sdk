@@ -62,6 +62,19 @@ void azihsm_pkcs11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src)
     memset(dst + n, ' ', dstlen - n); /* PKCS#11 fixed-width fields are space-padded */
 }
 
+void azihsm_pkcs11_wipe(void *p, size_t n)
+{
+    if (p == NULL)
+    {
+        return;
+    }
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    for (size_t i = 0; i < n; i++)
+    {
+        v[i] = 0;
+    }
+}
+
 azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h)
 {
     if (h == CK_INVALID_HANDLE)
