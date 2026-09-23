@@ -29,14 +29,14 @@
 //! * A tampered `pok_local_backup` is rejected (AEAD tag mismatch).
 //! * A tampered `sd_mk_backup` is rejected without publishing SDMK.
 
-use azihsm_ddi_tbor_types::MASKED_SD_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
+use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
+use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
@@ -44,13 +44,13 @@ use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
 use crate::commands::sd_create_remote_backup::masked_key_and_report;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::TestCtx;
 use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
 use crate::harness::x509_fixture::make_pta_chain;
 use crate::harness::x509_fixture::pta_pub_from_csr;
+use crate::harness::x509_fixture::CaKey;
+use crate::harness::x509_fixture::RAW_PUB_LEN;
+use crate::harness::TestCtx;
+use crate::harness::ROTATED_CO_PSK;
 
 /// `KeyScope::SecurityDomain` wire discriminant.
 const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
