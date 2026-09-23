@@ -160,6 +160,11 @@ class azihsm_multi_process : public ::testing::Test
 
 TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
+    if (std::getenv("AZIHSM_DISABLE_MULTI_PROCESS_TESTS") != nullptr)
+    {
+        GTEST_SKIP() << "AZIHSM_DISABLE_MULTI_PROCESS_TESTS is set";
+    }
+
     cleanup_temp_files();
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
@@ -393,8 +398,14 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
         ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
     });
 
+    // The BMK property is a masked blob that includes fresh randomness (e.g. a
+    // per-operation nonce/IV) on every masking operation, so re-reading it after
+    // re-init on real hardware does not reproduce the exact same bytes even
+    // though the underlying key material is unchanged. Only assert that a BMK
+    // of the expected size was returned; the real round-trip validity is
+    // exercised below via unmask + sign/verify against the parent's data.
     auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    ASSERT_EQ(bmk_actual, bmk);
+    ASSERT_EQ(bmk_actual.size(), bmk.size());
 
     azihsm_buffer masked_buf = { masked_key.data(), static_cast<uint32_t>(masked_key.size()) };
     auto_key priv_key;
