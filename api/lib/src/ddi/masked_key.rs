@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::aead_envelope;
-use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+use azihsm_ddi_tbor_types::*;
 use zerocopy::little_endian::U16 as Le16;
 use zerocopy::little_endian::U64 as Le64;
 use zerocopy::*;
@@ -13,7 +13,11 @@ use super::*;
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
 /// Byte length of the TBOR masked-key metadata (the AEAD envelope's AAD).
-const TBOR_MASKED_KEY_METADATA_LEN: usize = 96;
+const TBOR_MASKED_KEY_METADATA_LEN: usize = 192;
+/// Magic identifying authenticated TBOR masked-key metadata.
+const TBOR_MASKED_KEY_METADATA_MAGIC: [u8; 4] = *b"MKEY";
+/// Supported TBOR masked-key metadata format version.
+const TBOR_MASKED_KEY_METADATA_VERSION: u16 = 1;
 /// Reserved trailing bytes of the metadata (must decode as all-zero).
 const TBOR_MASKED_KEY_RESERVED_LEN: usize = 38;
 /// Bit offset of the `KeyScope` field packed into `usage_flags`.
@@ -23,17 +27,41 @@ const TBOR_KEY_SCOPE_MASK: u64 = 0b111;
 /// `KeyScope::Session` value in the packed scope field.
 const TBOR_KEY_SCOPE_SESSION: u64 = 0b001;
 
+/// std/OpenSSL stores `n | e | d | p | q | dp | dq | qInv`.
+#[cfg(feature = "emu")]
+const fn rsa_crt_payload_len(key_bytes: usize) -> usize {
+    key_bytes * 9 / 2 + 4
+}
+
+/// Uno stores the PKA operand `p | q | dp | dq | n | n1q | n2p | e`.
+#[cfg(not(feature = "emu"))]
+const fn rsa_crt_payload_len(key_bytes: usize) -> usize {
+    key_bytes * 5 + 4
+}
+
 /// Key-kind discriminant recorded in the TBOR masked-key metadata
 /// `key_kind` field. Values mirror the firmware `HsmVaultKeyKind`
 /// (`fw/pal/traits/src/vault.rs`).
 #[derive(Clone, Copy)]
 enum TborMaskedKeyKind {
+    Rsa2kPrivate,
+    Rsa3kPrivate,
+    Rsa4kPrivate,
+    Rsa2kPrivateCrt,
+    Rsa3kPrivateCrt,
+    Rsa4kPrivateCrt,
     EccP256,
     EccP384,
     EccP521,
     Aes128,
     Aes192,
     Aes256,
+    Secret256,
+    Secret384,
+    Secret521,
+    VarLenHmacSha256,
+    VarLenHmacSha384,
+    VarLenHmacSha512,
 }
 
 impl TryFrom<u8> for TborMaskedKeyKind {
@@ -41,14 +69,66 @@ impl TryFrom<u8> for TborMaskedKeyKind {
 
     fn try_from(value: u8) -> HsmResult<Self> {
         Ok(match value {
-            13 => Self::EccP256,
-            14 => Self::EccP384,
-            15 => Self::EccP521,
-            16 => Self::Aes128,
-            17 => Self::Aes192,
-            18 => Self::Aes256,
+            KEY_KIND_RSA2K_PRIVATE => Self::Rsa2kPrivate,
+            KEY_KIND_RSA3K_PRIVATE => Self::Rsa3kPrivate,
+            KEY_KIND_RSA4K_PRIVATE => Self::Rsa4kPrivate,
+            KEY_KIND_RSA2K_PRIVATE_CRT => Self::Rsa2kPrivateCrt,
+            KEY_KIND_RSA3K_PRIVATE_CRT => Self::Rsa3kPrivateCrt,
+            KEY_KIND_RSA4K_PRIVATE_CRT => Self::Rsa4kPrivateCrt,
+            KEY_KIND_ECC256_PRIVATE => Self::EccP256,
+            KEY_KIND_ECC384_PRIVATE => Self::EccP384,
+            KEY_KIND_ECC521_PRIVATE => Self::EccP521,
+            KEY_KIND_AES128 => Self::Aes128,
+            KEY_KIND_AES192 => Self::Aes192,
+            KEY_KIND_AES256 => Self::Aes256,
+            KEY_KIND_SECRET256 => Self::Secret256,
+            KEY_KIND_SECRET384 => Self::Secret384,
+            KEY_KIND_SECRET521 => Self::Secret521,
+            KEY_KIND_VAR_LEN_HMAC_SHA256 => Self::VarLenHmacSha256,
+            KEY_KIND_VAR_LEN_HMAC_SHA384 => Self::VarLenHmacSha384,
+            KEY_KIND_VAR_LEN_HMAC_SHA512 => Self::VarLenHmacSha512,
             _ => return Err(HsmError::MaskedKeyDecodeFailed),
         })
+    }
+}
+
+impl TborMaskedKeyKind {
+    /// Maps a TBOR vault kind to its API key metadata.
+    fn key_metadata(self) -> (HsmKeyKind, u16, Option<HsmEccCurve>) {
+        match self {
+            Self::Rsa2kPrivate => (HsmKeyKind::Rsa, 2048, None),
+            Self::Rsa3kPrivate => (HsmKeyKind::Rsa, 3072, None),
+            Self::Rsa4kPrivate => (HsmKeyKind::Rsa, 4096, None),
+            Self::Rsa2kPrivateCrt => (HsmKeyKind::RsaCrt, 2048, None),
+            Self::Rsa3kPrivateCrt => (HsmKeyKind::RsaCrt, 3072, None),
+            Self::Rsa4kPrivateCrt => (HsmKeyKind::RsaCrt, 4096, None),
+            Self::EccP256 => (HsmKeyKind::Ecc, 256, Some(HsmEccCurve::P256)),
+            Self::EccP384 => (HsmKeyKind::Ecc, 384, Some(HsmEccCurve::P384)),
+            Self::EccP521 => (HsmKeyKind::Ecc, 521, Some(HsmEccCurve::P521)),
+            Self::Aes128 => (HsmKeyKind::Aes, 128, None),
+            Self::Aes192 => (HsmKeyKind::Aes, 192, None),
+            Self::Aes256 => (HsmKeyKind::Aes, 256, None),
+            Self::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
+            Self::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
+            Self::Secret521 => (HsmKeyKind::SharedSecret, 521, None),
+            Self::VarLenHmacSha256 => (HsmKeyKind::HmacSha256, 256, None),
+            Self::VarLenHmacSha384 => (HsmKeyKind::HmacSha384, 384, None),
+            Self::VarLenHmacSha512 => (HsmKeyKind::HmacSha512, 512, None),
+        }
+    }
+
+    /// Validates the PAL-specific plaintext layout inside a masked envelope.
+    fn payload_len_valid(self, bits: u16, payload_len: usize) -> bool {
+        let key_bytes = usize::from(bits).div_ceil(8);
+        let expected_len = match self {
+            Self::Rsa2kPrivate | Self::Rsa3kPrivate | Self::Rsa4kPrivate => key_bytes * 2 + 4,
+            Self::Rsa2kPrivateCrt | Self::Rsa3kPrivateCrt | Self::Rsa4kPrivateCrt => {
+                rsa_crt_payload_len(key_bytes)
+            }
+            Self::EccP256 | Self::EccP384 | Self::EccP521 => key_bytes.next_multiple_of(4),
+            _ => key_bytes,
+        };
+        payload_len == expected_len
     }
 }
 
@@ -70,6 +150,43 @@ struct TborMaskedKeyMetadata {
 }
 
 const _: () = assert!(size_of::<TborMaskedKeyMetadata>() == TBOR_MASKED_KEY_METADATA_LEN);
+
+impl TborMaskedKeyMetadata {
+    /// Validates the authenticated metadata framing and zero padding.
+    fn validate(&self) -> HsmResult<()> {
+        let label_padding = self
+            .key_label
+            .get(self.key_label_len as usize..)
+            .ok_or(HsmError::MaskedKeyDecodeFailed)?;
+        if self.magic != TBOR_MASKED_KEY_METADATA_MAGIC
+            || self.version.get() != TBOR_MASKED_KEY_METADATA_VERSION
+            || !label_padding.iter().all(|&byte| byte == 0)
+            || !self.reserved.iter().all(|&byte| byte == 0)
+        {
+            return Err(HsmError::MaskedKeyDecodeFailed);
+        }
+        Ok(())
+    }
+
+    /// Returns the caller-supplied label after metadata validation.
+    fn label(&self) -> HsmResult<Vec<u8>> {
+        self.key_label
+            .get(..self.key_label_len as usize)
+            .ok_or(HsmError::MaskedKeyDecodeFailed)
+            .map(<[u8]>::to_vec)
+    }
+
+    /// Decodes usage flags and surfaces TBOR session scope as an API flag.
+    fn attrs(&self) -> HsmMaskedKeyAttributes {
+        let raw_attrs = self.usage_flags.get();
+        let mut attrs = HsmMaskedKeyAttributes::from_bits_truncate(raw_attrs);
+        let scope = (raw_attrs >> TBOR_KEY_SCOPE_SHIFT) & TBOR_KEY_SCOPE_MASK;
+        if scope == TBOR_KEY_SCOPE_SESSION {
+            attrs |= HsmMaskedKeyAttributes::SESSION;
+        }
+        attrs
+    }
+}
 
 bitflags::bitflags! {
     /// Masked key attributes flags.
@@ -190,8 +307,8 @@ impl HsmMaskedKey {
     /// [`HsmMaskedKeyMetadata`].
     ///
     /// Validates the envelope algorithm and the authenticated metadata
-    /// (magic, version, key kind, packed scope, label, and reserved
-    /// padding) and checks the masked payload length against the key kind.
+    /// (magic, version, key kind, label, and reserved padding) and checks
+    /// the masked payload length against the key kind.
     /// Every device-supplied length is bounds-checked, so a malformed blob
     /// is rejected with [`HsmError::MaskedKeyDecodeFailed`] rather than
     /// panicking.
@@ -206,61 +323,17 @@ impl HsmMaskedKey {
 
         let metadata = TborMaskedKeyMetadata::ref_from_bytes(envelope.aad)
             .map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
-        let label_len = metadata.key_label_len as usize;
-        let label_padding = metadata
-            .key_label
-            .get(label_len..)
-            .ok_or(HsmError::MaskedKeyDecodeFailed)?;
-        if metadata.magic != *b"MKEY"
-            || metadata.version.get() != 1
-            || !label_padding.iter().all(|&byte| byte == 0)
-            || !metadata.reserved.iter().all(|&byte| byte == 0)
-        {
+        metadata.validate()?;
+
+        let tbor_kind = TborMaskedKeyKind::try_from(metadata.key_kind)?;
+        let (kind, bits, curve) = tbor_kind.key_metadata();
+        if !tbor_kind.payload_len_valid(bits, envelope.payload.len()) {
             return Err(HsmError::MaskedKeyDecodeFailed);
         }
-
-        // Same shape as the MBOR `DdiKeyType` mapping below: key kind, bit
-        // length, and curve.
-        let (kind, bits, curve) = match TborMaskedKeyKind::try_from(metadata.key_kind)? {
-            TborMaskedKeyKind::EccP256 => (HsmKeyKind::Ecc, 256, Some(HsmEccCurve::P256)),
-            TborMaskedKeyKind::EccP384 => (HsmKeyKind::Ecc, 384, Some(HsmEccCurve::P384)),
-            TborMaskedKeyKind::EccP521 => (HsmKeyKind::Ecc, 521, Some(HsmEccCurve::P521)),
-            TborMaskedKeyKind::Aes128 => (HsmKeyKind::Aes, 128, None),
-            TborMaskedKeyKind::Aes192 => (HsmKeyKind::Aes, 192, None),
-            TborMaskedKeyKind::Aes256 => (HsmKeyKind::Aes, 256, None),
-        };
-
-        // The masked payload is the raw AES key or the ECC private scalar, so
-        // its length follows from the key kind (P-521 rounds up to 66 bytes,
-        // not `bits / 8`).
-        let payload_len = match curve {
-            Some(curve) => curve.component_size(),
-            None => usize::from(bits) / 8,
-        };
-        if envelope.payload.len() != payload_len {
-            return Err(HsmError::MaskedKeyDecodeFailed);
-        }
-
-        let raw_attrs = metadata.usage_flags.get();
-        let mut attrs = HsmMaskedKeyAttributes::from_bits_truncate(raw_attrs);
-        // The key scope is packed into the usage_flags word; surface a
-        // session-scoped key as the SESSION attribute.
-        let scope = (raw_attrs >> TBOR_KEY_SCOPE_SHIFT) & TBOR_KEY_SCOPE_MASK;
-        if scope == TBOR_KEY_SCOPE_SESSION {
-            attrs |= HsmMaskedKeyAttributes::SESSION;
-        }
-
-        // The caller-supplied key label stamped by the keygen handler; the
-        // padding tail past `label_len` was validated to be zero above.
-        let label = metadata
-            .key_label
-            .get(..label_len)
-            .ok_or(HsmError::MaskedKeyDecodeFailed)?
-            .to_vec();
 
         Ok(HsmMaskedKeyMetadata {
-            attrs,
-            label,
+            attrs: metadata.attrs(),
+            label: metadata.label()?,
             kind,
             bits,
             curve,
@@ -557,5 +630,19 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
                 .map_err(|_| HsmError::InternalError)?,
         );
         Ok(HsmMaskedKeyAttributes::from_bits_truncate(flags))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rsa_crt_payload_len_matches_backend() {
+        #[cfg(feature = "emu")]
+        assert_eq!([256, 384, 512].map(rsa_crt_payload_len), [1156, 1732, 2308]);
+
+        #[cfg(not(feature = "emu"))]
+        assert_eq!([256, 384, 512].map(rsa_crt_payload_len), [1284, 1924, 2564]);
     }
 }

@@ -38,9 +38,9 @@ use azihsm_ddi_tbor_types::*;
 
 use super::*;
 
-/// Length of the masked sealing-key blob's AAD region: a fixed 96-byte
+/// Length of the masked sealing-key blob's AAD region: a fixed 192-byte
 /// masked-key metadata record.
-const SEALING_META_LEN: usize = 96;
+const SEALING_META_LEN: usize = 192;
 
 /// Length, in bytes, of the P-384 private scalar carried (encrypted) in
 /// the masked sealing-key blob.
@@ -67,7 +67,7 @@ const _: () = assert!(
 /// The host cannot verify the AEAD tag (the masking key is
 /// device-internal), but it can confirm the firmware returned a
 /// well-formed AES-256-GCM masked-key envelope of the expected shape:
-/// valid header/magic, the GCM algorithm, and the 96-byte metadata AAD.
+/// valid header/magic, the GCM algorithm, and the 192-byte metadata AAD.
 fn validate_masked_sealing_key(masked_key: &[u8; MASKED_SEALING_KEY_LEN]) -> HsmResult<()> {
     let env = aead_envelope::inspect(masked_key).map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
     if !matches!(env.alg, aead_envelope::AeadAlg::AesGcm256) || env.aad.len() != SEALING_META_LEN {

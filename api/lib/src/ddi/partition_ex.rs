@@ -314,6 +314,68 @@ pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
         .map_err(HsmError::from)
 }
 
+/// Fetch the partition cert chain over the out-of-session TBOR
+/// `GetCertChainInfo` / `GetCertificate` commands, so a TBOR session
+/// establishment never reaches into the MBOR transport.
+///
+/// Cert ordering matches the MBOR path: both transports share the same
+/// firmware PAL `get_cert`, which returns the chain root->leaf (leaf at
+/// index `count - 1`). This reverses it to a leaf->root PEM stack and
+/// also returns the leaf DER so callers can extract the partition key.
+///
+/// Returns [`HsmError::InternalError`] if the certificate count is zero,
+/// and [`HsmError::CertChainChanged`] if the count or thumbprint changes
+/// between the pre- and post-fetch `GetCertChainInfo` reads.
+pub(super) fn fetch_cert_chain_checked_tbor(
+    dev: &HsmDev,
+    slot_id: u8,
+) -> HsmResult<(String, Vec<u8>)> {
+    let (count, thumbprint) = get_cert_chain_info_tbor(dev, slot_id)?;
+    if count == 0 {
+        return Err(HsmError::InternalError);
+    }
+
+    let mut cert_chain = String::new();
+    let mut leaf_cert_der = Vec::new();
+
+    // Firmware returns the chain root->leaf; reverse it to leaf->root.
+    for cert_id in (0..count).rev() {
+        let der = get_cert_tbor(dev, slot_id, cert_id)?;
+        let pem = der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        cert_chain.push_str(&pem);
+        if cert_id == count - 1 {
+            leaf_cert_der = der;
+        }
+    }
+
+    let (new_count, new_thumbprint) = get_cert_chain_info_tbor(dev, slot_id)?;
+    if new_count != count || new_thumbprint != thumbprint {
+        return Err(HsmError::CertChainChanged);
+    }
+
+    Ok((cert_chain, leaf_cert_der))
+}
+
+/// TBOR `GetCertChainInfo` (opcode `0x1E`, out-of-session): returns the
+/// certificate count and chain thumbprint for `slot_id`.
+pub(super) fn get_cert_chain_info_tbor(dev: &HsmDev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
+    let mut cookie = None;
+    let resp = dev
+        .exec_op_tbor(&TborGetCertChainInfoReq::new(slot_id), None, &mut cookie)
+        .map_err(HsmError::from)?;
+    Ok((resp.num_certs, resp.thumbprint.to_vec()))
+}
+
+/// TBOR `GetCertificate` (opcode `0x1F`, out-of-session): returns the
+/// DER-encoded certificate at `(slot_id, cert_id)`.
+pub(super) fn get_cert_tbor(dev: &HsmDev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
+    let mut cookie = None;
+    let resp = dev
+        .exec_op_tbor(&TborGetCertReq::new(slot_id, cert_id), None, &mut cookie)
+        .map_err(HsmError::from)?;
+    Ok(resp.certificate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

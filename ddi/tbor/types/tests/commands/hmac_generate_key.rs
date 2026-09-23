@@ -15,7 +15,7 @@
 //!   key.
 //! * Variable key lengths across each variant's `[min, max]` range
 //!   (SHA-256: 32–64, SHA-384: 48–128, SHA-512: 64–128), incl. the 128 B
-//!   maximum → 260 B masked blob.
+//!   maximum → 356 B masked blob.
 //! * Out-of-range `key_length` (below min / above max) → `InvalidKeyLength`.
 //! * Every masking-key scope: `Session` (masked under the per-session
 //!   key, works pre-finalize), `Ephemeral` / `Local` (provisioned by
@@ -43,9 +43,9 @@ pub(crate) const SCOPE_LOCAL: u8 = 0b011;
 pub(crate) const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
-/// iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`.
+/// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
 fn masked_len(key_len: usize) -> usize {
-    8 + 12 + 96 + key_len + 16
+    8 + 12 + 192 + key_len + 16
 }
 
 /// A representative in-range key length for a wire hash discriminant (the
@@ -69,6 +69,7 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, hash: u8, key_len: usize
         scope,
         hash_algo: hash,
         key_length: key_len as u8,
+        key_label: b"hmac-key".to_vec(),
     };
     let resp = ctx.tbor(&req).expect("HmacGenerateKey roundtrip");
 
@@ -141,6 +142,7 @@ fn hmac_generate_key_rejects_out_of_range_length_emu() {
             scope: SCOPE_LOCAL,
             hash_algo: hash,
             key_length,
+            key_label: Vec::new(),
         };
         ctx.expect_fw_reject(&req, TborStatus::InvalidKeyLength);
     }
@@ -183,6 +185,7 @@ fn hmac_generate_key_rejects_security_domain_scope_emu() {
         scope: SCOPE_SECURITY_DOMAIN,
         hash_algo: HMAC_HASH_SHA256,
         key_length: 32,
+        key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
 }
@@ -198,6 +201,7 @@ fn hmac_generate_key_rejects_ephemeral_before_finalize_emu() {
         scope: SCOPE_EPHEMERAL,
         hash_algo: HMAC_HASH_SHA256,
         key_length: 32,
+        key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
@@ -212,6 +216,7 @@ fn hmac_generate_key_rejects_unknown_hash_emu() {
         // 0 is SHA-1's discriminant (not a valid HMAC variant) / unknown.
         hash_algo: 0,
         key_length: 32,
+        key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }

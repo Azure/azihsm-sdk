@@ -41,7 +41,6 @@ use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmKeyScope;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
-use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
@@ -50,9 +49,6 @@ use azihsm_fw_hsm_undo::UndoLog;
 use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
-
-/// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
-const UNWRAP_KEY_LABEL: &[u8] = b"UnwrappedKey";
 
 /// Map the wire OAEP [`HashAlgo`] onto the firmware hash algorithm.
 fn oaep_hsm_hash(algo: HashAlgo) -> HsmResult<HsmHashAlgo> {
@@ -174,7 +170,7 @@ fn pub_deriv(kind: HsmVaultKeyKind) -> Option<PubDeriv> {
 /// Masking context for the recovered key — everything `mask` needs beyond
 /// the key material itself, resolved once in [`handle`] and threaded into
 /// [`encode_and_mask`].
-struct MaskCtx {
+struct MaskCtx<'a> {
     /// Scope whose masking key wraps the recovered key.
     scope: HsmKeyScope,
     /// Session the request is bound to (resolves the `Session`-scope key).
@@ -185,6 +181,8 @@ struct MaskCtx {
     owner: u16,
     /// Usage attributes recorded in the masked blob's metadata.
     attrs: HsmVaultKeyAttrs,
+    /// Caller-supplied label recorded in the masked blob's metadata.
+    key_label: &'a DmaBuf,
 }
 
 /// Handle a TBOR `UnwrapKey` request.
@@ -218,6 +216,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let class = req.key_class();
     let dclass = decode_class(class)?;
     let wrapped_blob = req.wrapped_blob();
+    let key_label = pal.dma_alloc(io, req.key_label().len())?;
+    key_label.copy_from_slice(req.key_label());
 
     // Resolve the partition's RSA-2048 unwrapping key id; an absent id means
     // generation is still pending, surfaced so the host retries (call
@@ -285,6 +285,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         svn,
         owner,
         attrs,
+        key_label,
     };
     match encode_and_mask(pal, io, key_id, &mask_ctx).await {
         Ok(resp) => {
@@ -304,7 +305,7 @@ async fn encode_and_mask<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     key_id: HsmKeyId,
-    ctx: &MaskCtx,
+    ctx: &MaskCtx<'_>,
 ) -> HsmResult<&'p DmaBuf> {
     let kind = pal.vault_key_kind(io, key_id)?;
     let priv_blob = pal.vault_key(io, key_id)?;
@@ -340,33 +341,25 @@ async fn encode_and_mask<'p, P: HsmPal>(
     // scoped and freed on return).
     {
         let out = TborUnwrapKeyResp::decode_mut(resp)?;
-        match deriv {
-            Some(PubDeriv::Rsa) => {
-                if pal.rsa_priv_pub_key(io, priv_blob, Some(out.pub_key))? != pub_len {
-                    return Err(HsmError::InternalError);
-                }
-            }
+        let actual_pub_len = match deriv {
+            Some(PubDeriv::Rsa) => pal.rsa_priv_pub_key(io, priv_blob, Some(out.pub_key))?,
             Some(PubDeriv::Ecc) => {
-                if pal
-                    .ecc_priv_pub_key(io, priv_blob, Some(out.pub_key))
+                pal.ecc_priv_pub_key(io, priv_blob, Some(out.pub_key))
                     .await?
-                    != pub_len
-                {
-                    return Err(HsmError::InternalError);
-                }
             }
-            None => {}
+            None => 0,
+        };
+        if actual_pub_len != pub_len {
+            return Err(HsmError::InternalError);
         }
         pal.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
             let masking_key = resolve_masking_key(pal, io, ctx.scope, ctx.sess_id)?;
-            let key_label = alloc.dma_alloc(UNWRAP_KEY_LABEL.len())?;
-            key_label.copy_from_slice(UNWRAP_KEY_LABEL);
             let params = MaskParams {
                 key_kind: kind,
                 key_attrs: ctx.attrs,
                 svn: ctx.svn,
                 owner_seed_id: ctx.owner,
-                key_label,
+                key_label: ctx.key_label,
             };
             let written = mask(
                 pal,

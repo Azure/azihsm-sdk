@@ -69,9 +69,7 @@ const ORDER384_LE: [u8; 48] = [
 const fn reverse48(mut a: [u8; 48]) -> [u8; 48] {
     let mut i = 0;
     while i < 24 {
-        let t = a[i];
-        a[i] = a[47 - i];
-        a[47 - i] = t;
+        a.swap(i, 47 - i);
         i += 1;
     }
     a
