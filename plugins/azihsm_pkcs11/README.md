@@ -20,6 +20,9 @@ the spec requires). Implemented so far:
   is one-shot per power cycle; a session is the repeatable per-login primitive).
 - **Host objects** — `C_CreateObject` / `C_DestroyObject` / `C_GetAttributeValue`
   / `C_FindObjects*` against an in-memory object store (see the seam below).
+  A session object is destroyed when the session that created it closes;
+  token objects outlive it. (`C_Logout` does not yet destroy private session
+  objects — it only hides them until the next login.)
 - **`C_Digest*` (SHA-1/256/384/512)** — host-side digests (one-shot and
   multi-part); every other digest mechanism returns `CKR_MECHANISM_INVALID`.
 - **`C_GenerateKey` (`CKM_AES_KEY_GEN`)** — generates an AES-128/192/256 key on

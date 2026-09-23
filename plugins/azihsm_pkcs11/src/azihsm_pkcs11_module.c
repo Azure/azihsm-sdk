@@ -184,6 +184,8 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
         if (g_azihsm_pkcs11.sessions[i].in_use)
         {
             azihsm_pkcs11_session_reset_op(&g_azihsm_pkcs11.sessions[i]);
+            /* The store is torn down below anyway; this frees the lists. */
+            azihsm_pkcs11_session_destroy_owned(&g_azihsm_pkcs11.sessions[i]);
             g_azihsm_pkcs11.sessions[i].in_use = false;
         }
     }

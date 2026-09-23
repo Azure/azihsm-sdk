@@ -93,13 +93,23 @@ if [ -f "$HSMMOD" ]; then
         echo "   (AES keygen failed)"; exit 1
     fi
 
-    echo; echo "== mock-backed: GoogleTest functional suite (integration-tests/cpp) =="
-    # googletest is fetched by CMake; keep it in a per-user cache so re-runs
-    # stay quick (assumes one run at a time — concurrent runs would share it).
+    echo; echo "== mock-backed: gtest functional suite (integration-tests/cpp) =="
+    # googletest is fetched by CMake. Cache only its SOURCE between runs and
+    # let every build tree compile it privately: a shared build directory
+    # breaks as soon as one of the trees using it goes away.
     deps="${XDG_CACHE_HOME:-$HOME/.cache}/azihsm-pkcs11-cpp-deps"
+    src_arg=()
+    if [ -d "$deps/googletest-src" ]; then
+        src_arg=(-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="$deps/googletest-src")
+    fi
     cmake -S "$PLUGIN/integration-tests/cpp" -B "$WORK/cpp-tests" \
-        -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_BASE_DIR="$deps" > "$WORK/cmake.log" 2>&1 \
+        -DCMAKE_BUILD_TYPE=Release "${src_arg[@]}" > "$WORK/cmake.log" 2>&1 \
         || { tail -n 20 "$WORK/cmake.log"; echo "   (cmake configure failed)"; exit 1; }
+    # Seed the cache from the first run's download.
+    if [ ! -d "$deps/googletest-src" ] && [ -d "$WORK/cpp-tests/_deps/googletest-src" ]; then
+        mkdir -p "$deps"
+        cp -r "$WORK/cpp-tests/_deps/googletest-src" "$deps/googletest-src" || true
+    fi
     cmake --build "$WORK/cpp-tests" --parallel > "$WORK/cmake-build.log" 2>&1 \
         || { tail -n 30 "$WORK/cmake-build.log"; echo "   (cmake build failed)"; exit 1; }
     AZIHSM_PKCS11_MODULE="$HSMMOD" ctest --test-dir "$WORK/cpp-tests" --output-on-failure \

@@ -162,11 +162,9 @@ inline void abandon_operations(CK_SESSION_HANDLE s)
 }
 
 /// Destroy every session object visible from `s` (anything not CKA_TOKEN=TRUE),
-/// leaving token objects alone. Keeps the store as the test found it: the
-/// module does not yet destroy session objects when their session closes (a
-/// follow-up on the framework layer; see aes_keygen.DISABLED_session_object_
-/// dies_with_its_session), so without this a long single-process run would
-/// fill the in-memory store.
+/// leaving token objects alone. The module destroys a session's own objects
+/// when it closes; this is belt and braces for anything a test created on a
+/// session it never closed, so a long single-process run stays idempotent.
 inline void destroy_session_objects(CK_SESSION_HANDLE s)
 {
     if (p11()->C_FindObjectsInit(s, nullptr, 0) != CKR_OK)

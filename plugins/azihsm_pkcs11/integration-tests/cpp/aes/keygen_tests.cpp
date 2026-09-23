@@ -325,12 +325,12 @@ TEST_F(aes_keygen, generated_key_is_findable_by_class_type_and_label)
     EXPECT_EQ(key, found[0]);
 }
 
-// PKCS#11 5.6.3: session objects are destroyed automatically when the session
-// that created them closes. The module does not do this yet (a follow-up on
-// the framework layer — until then the fixtures destroy what they create), so
-// the expectation is kept on record here, disabled, to be switched on with
-// the fix.
-TEST_F(aes_keygen, DISABLED_session_object_dies_with_its_session)
+// ---------------------------------------------------------------------------
+// Session-object lifetime (the C_CloseSession rule: a session object is
+// destroyed when the session that created it closes; a token object outlives it)
+// ---------------------------------------------------------------------------
+
+TEST_F(aes_keygen, session_object_dies_with_its_session)
 {
     CK_SESSION_HANDLE other = 0;
     ASSERT_CKR_OK(
@@ -338,9 +338,120 @@ TEST_F(aes_keygen, DISABLED_session_object_dies_with_its_session)
     );
     CK_OBJECT_HANDLE key = 0;
     ASSERT_CKR_OK(gen_aes_key(other, 32, CK_TRUE, CK_TRUE, "ephemeral", &key));
+    CK_ULONG vlen = 0;
+    ASSERT_CKR_OK(get_attr(s_, key, CKA_VALUE_LEN, &vlen)) << "visible from a sibling session";
+    ASSERT_CKR_OK(p11()->C_CloseSession(other));
+    EXPECT_CKR(CKR_OBJECT_HANDLE_INVALID, get_attr(s_, key, CKA_VALUE_LEN, &vlen));
+    CK_BYTE iv[kAesBlock] = { 0 };
+    CK_MECHANISM cbc = { CKM_AES_CBC, iv, sizeof(iv) };
+    EXPECT_CKR(CKR_KEY_HANDLE_INVALID, p11()->C_EncryptInit(s_, &cbc, key));
+}
+
+TEST_F(aes_keygen, data_object_dies_with_its_session_too)
+{
+    CK_SESSION_HANDLE other = 0;
+    ASSERT_CKR_OK(
+        p11()->C_OpenSession(kSlot, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &other)
+    );
+    CK_BYTE payload[4] = { 1, 2, 3, 4 };
+    CK_ATTRIBUTE tmpl[] = { { CKA_VALUE, payload, sizeof(payload) } };
+    CK_OBJECT_HANDLE obj = 0;
+    ASSERT_CKR_OK(p11()->C_CreateObject(other, tmpl, 1, &obj));
+    ASSERT_CKR_OK(p11()->C_CloseSession(other));
+    CK_BYTE back[4];
+    CK_ATTRIBUTE read = { CKA_VALUE, back, sizeof(back) };
+    EXPECT_CKR(CKR_OBJECT_HANDLE_INVALID, p11()->C_GetAttributeValue(s_, obj, &read, 1));
+}
+
+TEST_F(aes_keygen, token_object_survives_its_session)
+{
+    CK_SESSION_HANDLE other = 0;
+    ASSERT_CKR_OK(
+        p11()->C_OpenSession(kSlot, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &other)
+    );
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(keygen_with(other, { CKA_TOKEN, &g_true, sizeof(g_true) }, &key));
     ASSERT_CKR_OK(p11()->C_CloseSession(other));
     CK_ULONG vlen = 0;
-    EXPECT_CKR(CKR_OBJECT_HANDLE_INVALID, get_attr(s_, key, CKA_VALUE_LEN, &vlen));
+    EXPECT_CKR_OK(get_attr(s_, key, CKA_VALUE_LEN, &vlen));
+    EXPECT_EQ(32u, vlen);
+    // Leave the token store as we found it.
+    EXPECT_CKR_OK(p11()->C_DestroyObject(s_, key));
+}
+
+TEST_F(aes_keygen, destroying_from_a_sibling_then_closing_the_owner_is_clean)
+{
+    CK_SESSION_HANDLE other = 0;
+    ASSERT_CKR_OK(
+        p11()->C_OpenSession(kSlot, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &other)
+    );
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(gen_aes_key(other, 32, CK_TRUE, CK_TRUE, "shared", &key));
+    ASSERT_CKR_OK(p11()->C_DestroyObject(s_, key)) << "any session of the token may destroy it";
+
+    // This session's own key predates the close, so it is the thing the
+    // owner's teardown could damage. (That the owner also forgot the
+    // already-destroyed handle is not observable through the ABI: handles are
+    // never reused, so a missing disown would only be an ignored error.)
+    CK_OBJECT_HANDLE mine = 0;
+    ASSERT_CKR_OK(gen_aes_key(s_, 16, CK_TRUE, CK_TRUE, "mine", &mine));
+    EXPECT_CKR_OK(p11()->C_CloseSession(other));
+    CK_ULONG vlen = 0;
+    EXPECT_CKR_OK(get_attr(s_, mine, CKA_VALUE_LEN, &vlen));
+    CK_BYTE iv[kAesBlock] = { 0 };
+    CK_MECHANISM cbc = { CKM_AES_CBC, iv, sizeof(iv) };
+    EXPECT_CKR_OK(p11()->C_EncryptInit(s_, &cbc, mine)) << "and is still usable";
+}
+
+TEST_F(aes_keygen, close_all_sessions_destroys_session_objects)
+{
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(gen_aes_key(s_, 32, CK_TRUE, CK_TRUE, "doomed-by-close-all", &key));
+    ASSERT_CKR_OK(p11()->C_CloseAllSessions(kSlot));
+    s_ = 0; /* gone; the fixture has nothing left to tear down */
+    // A fresh session sees neither the object nor the login.
+    CK_SESSION_HANDLE fresh = 0;
+    ASSERT_CKR_OK(
+        p11()->C_OpenSession(kSlot, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &fresh)
+    );
+    CK_SESSION_INFO info{};
+    ASSERT_CKR_OK(p11()->C_GetSessionInfo(fresh, &info));
+    EXPECT_EQ(static_cast<CK_STATE>(CKS_RW_PUBLIC_SESSION), info.state) << "the login went too";
+    // The key is public (gen_aes_key sets no CKA_PRIVATE), so this verdict is
+    // "destroyed", not "hidden by the login gate".
+    CK_ULONG vlen = 0;
+    EXPECT_CKR(CKR_OBJECT_HANDLE_INVALID, get_attr(fresh, key, CKA_VALUE_LEN, &vlen));
+    EXPECT_CKR_OK(p11()->C_CloseSession(fresh));
+}
+
+TEST_F(aes_keygen, create_object_validates_cka_token)
+{
+    // The framework settles CKA_TOKEN before the store sees the template: a
+    // wrongly sized value is invalid rather than silently a session object
+    // (the backends read the raw bytes more loosely).
+    CK_BYTE payload[4] = { 1, 2, 3, 4 };
+    CK_ULONG wide_true = 1;
+    CK_ATTRIBUTE bad[] = { { CKA_VALUE, payload, sizeof(payload) },
+                           { CKA_TOKEN, &wide_true, sizeof(wide_true) } };
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    EXPECT_CKR(CKR_ATTRIBUTE_VALUE_INVALID, p11()->C_CreateObject(s_, bad, 2, &obj));
+    EXPECT_EQ(CK_INVALID_HANDLE, obj) << "nothing was created";
+}
+
+TEST_F(aes_keygen, create_object_refuses_a_token_object_on_a_read_only_session)
+{
+    CK_SESSION_HANDLE ro = 0;
+    ASSERT_CKR_OK(p11()->C_OpenSession(kSlot, CKF_SERIAL_SESSION, nullptr, nullptr, &ro));
+    CK_BYTE payload[4] = { 1, 2, 3, 4 };
+    CK_ATTRIBUTE tmpl[] = { { CKA_VALUE, payload, sizeof(payload) },
+                            { CKA_TOKEN, &g_true, sizeof(g_true) } };
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    EXPECT_CKR(CKR_SESSION_READ_ONLY, p11()->C_CreateObject(ro, tmpl, 2, &obj));
+    // A session object is fine there, as in C_GenerateKey.
+    CK_ATTRIBUTE session_tmpl[] = { { CKA_VALUE, payload, sizeof(payload) },
+                                    { CKA_TOKEN, &g_false, sizeof(g_false) } };
+    EXPECT_CKR_OK(p11()->C_CreateObject(ro, session_tmpl, 2, &obj));
+    EXPECT_CKR_OK(p11()->C_CloseSession(ro));
 }
 
 TEST_F(aes_keygen, destroyed_key_is_gone)

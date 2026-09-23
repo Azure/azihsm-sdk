@@ -12,6 +12,9 @@
 #include "azihsm_pkcs11_digest.h"
 #include "azihsm_pkcs11_hsm.h"
 #include "azihsm_pkcs11_internal.h"
+#include "azihsm_pkcs11_template.h"
+
+#include <stdlib.h>
 
 /* ========================================================================= */
 /* Operation state                                                           */
@@ -36,6 +39,77 @@ CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
     s->op = P11_OP_NONE;
     s->op_mode = P11_OP_MODE_UNSET;
     return CKR_OK;
+}
+
+/* ========================================================================= */
+/* Session objects (destroyed with their session — the C_CloseSession rule)   */
+/* ========================================================================= */
+
+/* First allocation of a session's owned-object list; doubles from there. */
+#define OWNED_OBJECTS_INITIAL_CAP 8
+
+CK_RV azihsm_pkcs11_session_own_object(azihsm_pkcs11_session_t *s, CK_OBJECT_HANDLE h)
+{
+    if (s == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if (s->owned_count == s->owned_cap)
+    {
+        CK_ULONG cap = (s->owned_cap == 0) ? OWNED_OBJECTS_INITIAL_CAP : (s->owned_cap * 2);
+        CK_OBJECT_HANDLE *grown = (CK_OBJECT_HANDLE *)realloc(s->owned, cap * sizeof(*grown));
+        if (grown == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        s->owned = grown;
+        s->owned_cap = cap;
+    }
+    s->owned[s->owned_count++] = h;
+    return CKR_OK;
+}
+
+void azihsm_pkcs11_session_disown_object(CK_SLOT_ID slot, CK_OBJECT_HANDLE h)
+{
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
+    {
+        azihsm_pkcs11_session_t *s = &g_azihsm_pkcs11.sessions[i];
+        if (!s->in_use || (s->slot != slot))
+        {
+            continue;
+        }
+        for (CK_ULONG j = 0; j < s->owned_count; j++)
+        {
+            if (s->owned[j] == h)
+            {
+                s->owned_count--;
+                s->owned[j] = s->owned[s->owned_count]; /* order is irrelevant */
+                return;
+            }
+        }
+    }
+}
+
+void azihsm_pkcs11_session_destroy_owned(azihsm_pkcs11_session_t *s)
+{
+    if (s == NULL)
+    {
+        return;
+    }
+    for (CK_ULONG i = 0; i < s->owned_count; i++)
+    {
+        /* A session reaps its own objects whatever the login state is: a
+         * C_Logout since they were created would hide the private ones from a
+         * logged-out destroy, hence CK_TRUE. An object a sibling session
+         * destroyed meanwhile is simply gone — store handles are never reused,
+         * so nothing else can be hit. */
+        (void)g_azihsm_pkcs11.store.ops
+            ->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, s->owned[i]);
+    }
+    free(s->owned);
+    s->owned = NULL;
+    s->owned_count = 0;
+    s->owned_cap = 0;
 }
 
 /* ========================================================================= */
@@ -128,6 +202,7 @@ CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
     }
     CK_SLOT_ID slot_id = s->slot;
     azihsm_pkcs11_session_reset_op(s);
+    azihsm_pkcs11_session_destroy_owned(s);
     s->in_use = false;
     /* The HSM login is token-wide: close it only when the last session on the
      * slot goes away, not whenever any one session closes. */
@@ -159,6 +234,7 @@ CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
         if (g_azihsm_pkcs11.sessions[i].in_use && g_azihsm_pkcs11.sessions[i].slot == slotID)
         {
             azihsm_pkcs11_session_reset_op(&g_azihsm_pkcs11.sessions[i]);
+            azihsm_pkcs11_session_destroy_owned(&g_azihsm_pkcs11.sessions[i]);
             g_azihsm_pkcs11.sessions[i].in_use = false;
         }
     }
@@ -364,10 +440,46 @@ CK_RV C_CreateObject(
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
+    /*
+     * Settle CKA_TOKEN before anything is created: it decides both where the
+     * store puts the object and whether this session owns it, and the backends
+     * read the raw value more loosely than the spec allows. Same verdicts as
+     * C_GenerateKey — a wrongly sized value is invalid, and a token object
+     * needs a read/write session.
+     */
+    CK_BBOOL token = CK_FALSE;
+    const CK_ATTRIBUTE *t = azihsm_pkcs11_tmpl_find(pTemplate, ulCount, CKA_TOKEN);
+    CK_RV rv = CKR_OK;
+    if ((t != NULL) && (azihsm_pkcs11_tmpl_bool(t, &token) != CKR_OK))
+    {
+        rv = CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    else if (token && ((s->flags & CKF_RW_SESSION) == 0))
+    {
+        rv = CKR_SESSION_READ_ONLY;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+
     CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
-    CK_RV rv =
-        g_azihsm_pkcs11.store.ops
-            ->create(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
+    rv = g_azihsm_pkcs11.store.ops
+             ->create(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
+    if ((rv == CKR_OK) && !token)
+    {
+        /* CKA_TOKEN defaults to FALSE, so this is a session object: it dies
+         * with the session that created it (the C_CloseSession rule). */
+        rv = azihsm_pkcs11_session_own_object(s, *phObject);
+        if (rv != CKR_OK)
+        {
+            /* Untracked objects are not handed out. */
+            (void)g_azihsm_pkcs11.store.ops
+                ->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, *phObject);
+            *phObject = CK_INVALID_HANDLE;
+        }
+    }
     azihsm_pkcs11_unlock();
     return rv;
 }
@@ -388,6 +500,10 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject)
     CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
     CK_RV rv =
         g_azihsm_pkcs11.store.ops->destroy(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject);
+    if (rv == CKR_OK)
+    {
+        azihsm_pkcs11_session_disown_object(s->slot, hObject);
+    }
     azihsm_pkcs11_unlock();
     return rv;
 }

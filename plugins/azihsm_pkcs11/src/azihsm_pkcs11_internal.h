@@ -91,6 +91,16 @@ typedef struct
                                       * (P11_OP_ENCRYPT / P11_OP_DECRYPT, owned by
                                       * azihsm_pkcs11_crypt.c) */
     void *find_cursor;               /* object-store cursor while op == P11_OP_FIND */
+
+    /*
+     * Session objects (CKA_TOKEN = FALSE) this session created. C_CloseSession
+     * destroys them with the session, and the object store knows nothing about
+     * sessions, so the framework keeps the list: grown on demand, drained and
+     * freed when the session closes.
+     */
+    CK_OBJECT_HANDLE *owned;
+    CK_ULONG owned_count;
+    CK_ULONG owned_cap;
 } azihsm_pkcs11_session_t;
 
 /* ------------------------------------------------------------------------- */
@@ -160,6 +170,19 @@ azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h);
 /* Abandon the session's active operation, releasing its digest state, cipher
  * state (including the unmasked device key), or find cursor. */
 CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s);
+
+/* Record `h` as a session object created by `s`. CKR_HOST_MEMORY if the list
+ * cannot grow (CKR_ARGUMENTS_BAD for a NULL session) — the caller then destroys
+ * the object rather than leak it. */
+CK_RV azihsm_pkcs11_session_own_object(azihsm_pkcs11_session_t *s, CK_OBJECT_HANDLE h);
+
+/* Forget `h` on whichever session of `slot` owns it (it has been destroyed
+ * explicitly; any session of the token may do that). No-op if none does. */
+void azihsm_pkcs11_session_disown_object(CK_SLOT_ID slot, CK_OBJECT_HANDLE h);
+
+/* Destroy every session object `s` still owns and release the list. Called on
+ * every path that ends the session (close, close-all, finalize). */
+void azihsm_pkcs11_session_destroy_owned(azihsm_pkcs11_session_t *s);
 
 /* Free a cipher operation context (releases its unmasked device key first).
  * NULL-safe no-op. Defined in azihsm_pkcs11_crypt.c, which owns the type. */

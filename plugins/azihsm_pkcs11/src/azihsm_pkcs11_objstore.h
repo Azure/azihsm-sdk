@@ -44,6 +44,10 @@ typedef struct
  * token isolation and private-object login-gating here. An object in another
  * slot, or a private object while not logged in, is not visible to the caller
  * and yields CKR_OBJECT_HANDLE_INVALID (rather than leaking its existence).
+ *
+ * Handles are unique for the lifetime of the store and are never reused after
+ * a destroy: the framework reaps a closing session's objects by handle, and a
+ * reused handle would let it destroy a stranger's object.
  */
 struct azihsm_pkcs11_objstore_ops
 {

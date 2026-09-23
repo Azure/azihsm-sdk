@@ -153,9 +153,15 @@ CK_RV C_GenerateKey(
     }
     rv = g_azihsm_pkcs11.store.ops
              ->set_key_body(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, h, blob, blob_len);
+    if ((rv == CKR_OK) && !token)
+    {
+        /* A session object dies with this session (the C_CloseSession rule). */
+        rv = azihsm_pkcs11_session_own_object(s, h);
+    }
     if (rv != CKR_OK)
     {
-        /* No half-object: a key object without its masked body is unusable. */
+        /* No half-object: a key object without its masked body, or one the
+         * session cannot track, is not handed out. */
         (void)g_azihsm_pkcs11.store.ops->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, h);
         goto cleanup;
     }
