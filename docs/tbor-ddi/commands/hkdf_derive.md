@@ -48,10 +48,11 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | 8 | `masked_secret` | `buffer` (260..=294 B) | The masked ECDH shared secret IKM; unmasked in place. |
 | — | `salt` | `buffer` (0..=256 B) | Optional HKDF-Extract salt; empty selects the RFC 5869 default salt. |
 | — | `info` | `buffer` (0..=256 B) | Optional HKDF-Expand context/application info; empty means none. |
+| — | `key_label` | `buffer` (0..=128 B) | Caller-supplied key label stamped into the derived key's `MaskedKeyMetadata.key_label`; empty for an unlabeled key. |
 
 ### Data section
 
-Carries the masked secret, followed by the salt, followed by the info.
+Carries the masked secret, followed by the salt, the info, and the key label.
 
 ## Response
 

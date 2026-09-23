@@ -77,7 +77,7 @@ use super::*;
 pub(crate) const DDI_API_REV_MIN: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
 
 /// Maximum DDI API revision accepted by this firmware.
-pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 0 };
+pub(crate) const DDI_API_REV_MAX: DdiApiRev = DdiApiRev { major: 1, minor: 1 };
 
 /// User credential field length (user ID or PIN) — one AES block.
 ///

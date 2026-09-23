@@ -41,7 +41,7 @@ pub const HMAC_HASH_SHA512: u8 = 3;
 
 /// Host-facing TBOR `HmacGenerateKey` request.
 #[tbor(opcode = TBOR_OP_HMAC_GENERATE_KEY, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborHmacGenerateKeyReq {
     /// Session id this request is bound to.  Cross-checked against the
     /// SQE-carried session id by the dispatcher.
@@ -61,6 +61,11 @@ pub struct TborHmacGenerateKeyReq {
     /// SHA-384: 48–128, SHA-512: 64–128), else the device returns
     /// `InvalidKeyLength`.
     pub key_length: u8,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to 128 bytes.  Empty for an unlabeled key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `HmacGenerateKey` response.
@@ -88,6 +93,7 @@ mod tests {
             scope: 0b001,
             hash_algo: HMAC_HASH_SHA384,
             key_length: 96,
+            key_label: b"hmac-key".to_vec(),
         };
 
         let mut buf = [0u8; 256];

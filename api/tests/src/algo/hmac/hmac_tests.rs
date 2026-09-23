@@ -1159,3 +1159,61 @@ fn test_hmac_sign_buffer_too_small_then_success(session: HsmSession) {
         "Tag produced after BufferTooSmall path should verify"
     );
 }
+
+/// TBOR HMAC sign path: a generated (masked, non-resident) HMAC key signs
+/// and verifies via the device `Hmac` command (unmask-on-use). Requires a
+/// V2 (`session_ex`) session, so it is gated out of the mock backend.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_hmac_generated_key_signs_and_verifies() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::sd_provision::finalized_co_session();
+
+    for (kind, bits) in [
+        (HsmKeyKind::HmacSha256, 256u32),
+        (HsmKeyKind::HmacSha384, 384),
+        (HsmKeyKind::HmacSha512, 512),
+    ] {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(kind)
+            .bits(bits)
+            .is_session(true)
+            .can_sign(true)
+            .can_verify(true)
+            .build()
+            .expect("build hmac props");
+
+        let mut gen_algo = HsmHmacKeyGenAlgo::default();
+        let key =
+            HsmKeyManager::generate_key(&session, &mut gen_algo, props).expect("generate HMAC key");
+
+        let data = test_message_bytes(0x00, 32);
+
+        // Sign with the masked key (TBOR `Hmac`, unmask-on-use).
+        let mut sign_algo = HsmHmacAlgo::new();
+        let tag = HsmSigner::sign_vec(&mut sign_algo, &key, &data).expect("HMAC sign failed");
+        assert_eq!(
+            tag.len(),
+            bits as usize / 8,
+            "tag length must match the SHA variant"
+        );
+
+        // The tag verifies over the same data ...
+        let mut verify_algo = HsmHmacAlgo::new();
+        assert!(
+            HsmVerifier::verify(&mut verify_algo, &key, &data, &tag).expect("HMAC verify failed"),
+            "generated HMAC key must verify its own tag"
+        );
+
+        // ... and fails over tampered data.
+        let mut tampered = data.clone();
+        tampered[0] ^= 0x01;
+        let mut verify_algo = HsmHmacAlgo::new();
+        assert!(
+            !HsmVerifier::verify(&mut verify_algo, &key, &tampered, &tag)
+                .expect("HMAC verify failed"),
+            "verification must fail for tampered data"
+        );
+    }
+}

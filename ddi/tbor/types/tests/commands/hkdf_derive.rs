@@ -83,6 +83,7 @@ fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
         scope: SCOPE_LOCAL,
         masked_key: key_a.masked_key,
         peer_pub_key: key_b.pub_key,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret
@@ -110,6 +111,7 @@ fn hkdf(
         masked_secret,
         salt,
         info,
+        key_label: Vec::new(),
     })
     .expect("HkdfDerive")
     .masked_key
@@ -231,6 +233,7 @@ fn hkdf_derive_unknown_hash_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
@@ -253,6 +256,7 @@ fn hkdf_derive_unknown_key_type_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );
@@ -277,6 +281,7 @@ fn hkdf_derive_var_hmac_missing_length_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );
@@ -299,6 +304,7 @@ fn hkdf_derive_var_hmac_out_of_range_length_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyLength,
     );
@@ -331,6 +337,7 @@ fn hkdf_derive_non_secret_ikm_rejected_emu() {
             masked_secret: ecc.masked_key,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );

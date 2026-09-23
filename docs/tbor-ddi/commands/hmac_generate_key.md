@@ -42,8 +42,8 @@ The `Ephemeral` / `Local` / `SecurityDomain` masking keys are provisioned
 by `PartFinal` / `CreateSD`, so a non-`Session` scope before the partition
 is `Initialized` is rejected with `InvalidArg`, and `SecurityDomain`
 before `CreateSD` with `UnsupportedKeyScope`.  The masked key's metadata
-records the key as an HMAC signing key (`sign` + `verify`, `local`) plus
-the requested scope.
+records the key as an HMAC signing key (`sign` + `verify`, `local`), the
+caller-supplied `key_label`, plus the requested scope.
 
 Unlike the security-domain administrative commands, this command is
 available to **both Crypto-Officer and Crypto-User** sessions.
@@ -58,10 +58,12 @@ available to **both Crypto-Officer and Crypto-User** sessions.
 | 8 | `scope` | `uint8` (inline) | Requested key scope (`KeyScope` discriminant): `1` = Session, `2` = Ephemeral, `3` = Local, `4` = SecurityDomain. |
 | 12 | `hash_algo` | `uint8` (inline) | HMAC hash variant (`HashAlgo` discriminant): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
 | 16 | `key_length` | `uint8` (inline) | Requested key length in bytes; must be in the variant's `[min, max]` range (see table above). |
+| 20 | `key_label` | `buffer` (≤ 128 B) | Caller-supplied key label recorded in the masked blob's `MaskedKeyMetadata.key_label`; empty for an unlabeled key. |
 
 ### Data section
 
-_Empty — all fields are carried inline within their TOC entries._
+Carries the caller-supplied `key_label` (≤ 128 B); empty for an unlabeled
+key.
 
 ## Response
 
