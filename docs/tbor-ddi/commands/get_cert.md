@@ -13,8 +13,9 @@ Licensed under the MIT License.
 Out-of-session command — the TBOR analogue of MBOR `GetCertificate`.
 Returns a single DER-encoded X.509 certificate from the caller's
 partition certificate chain at the requested `(slot_id, cert_id)`,
-without first opening a session.  By convention index `0` is the leaf
-and the last index is the root; use
+without first opening a session.  The firmware returns the chain
+root->leaf: index `0` is the root and the last index (`count - 1`) is
+the partition leaf; use
 [`GetCertChainInfo`](./get_cert_chain_info.md) to learn the chain
 length.
 
@@ -30,7 +31,7 @@ Wire layout: 4-byte header, followed by the TOC entries.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `slot_id` | `uint8` (inline) | Certificate chain slot within the caller's partition. |
-| 8 | `cert_id` | `uint8` (inline) | Zero-based certificate index; `0` = leaf, last index = root.  Must satisfy `cert_id < num_certs`. |
+| 8 | `cert_id` | `uint8` (inline) | Zero-based certificate index; `0` = root, last index (`count - 1`) = partition leaf.  Must satisfy `cert_id < num_certs`. |
 
 ## Response
 
