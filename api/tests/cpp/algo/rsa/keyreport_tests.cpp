@@ -502,7 +502,6 @@ TEST_F(azihsm_rsa_keyattest, attest_report_data_patterns_require_max_size)
     });
 }
 
-
 // Verifies that 127-byte report data, one less than the required max, is rejected.
 TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_one_less_than_max)
 {
