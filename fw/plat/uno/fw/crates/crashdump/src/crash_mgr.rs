@@ -221,7 +221,6 @@ impl CrashDump for CrashDumpManager<'_> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

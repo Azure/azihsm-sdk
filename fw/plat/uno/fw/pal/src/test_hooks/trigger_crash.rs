@@ -161,8 +161,14 @@ fn execute(request: CrashRequest) -> HsmResult<Infallible> {
         DdiTestActionCrashType::Panic => {
             panic!("crash injected by TestAction::TriggerCrash");
         }
+        // Distinct from `Panic` on purpose: this records
+        // `FailureCode::ExplicitFailure` rather than `FailureCode::Panic`, so
+        // an injected crash stays distinguishable from a genuine firmware
+        // panic in the shared SP-side crash log.
         DdiTestActionCrashType::ExplicitCrash => {
-            panic!("explicit crash injected by TestAction::TriggerCrash");
+            azihsm_fw_uno_fault::explicit_crash(Some(
+                "Triggered by DDI TestAction::TriggerCrash (Explicit)",
+            ));
         }
         DdiTestActionCrashType::HardFault => {
             // SAFETY: The undefined instruction intentionally faults this

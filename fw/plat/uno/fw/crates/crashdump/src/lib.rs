@@ -6,8 +6,8 @@
 //! On an unrecoverable fault the firmware serialises a compact register
 //! snapshot into a fixed, reserved slot of HSM DTCM
 //! (`0x2003_F400`, `0x400` bytes — see
-//! [`hsm_dtcm`](azihsm_fw_uno_reg_soc::hsm_dtcm)). The SP later reads that slot 
-//! and decodes it with the shared crash-dump format, so a CP crash is diagnosable 
+//! [`hsm_dtcm`](azihsm_fw_uno_reg_soc::hsm_dtcm)). The SP later reads that slot
+//! and decodes it with the shared crash-dump format, so a CP crash is diagnosable
 //! post-mortem even though the CP core is wedged.
 //!
 //! The byte layout ([`crash_format`]) and the dirty→committed magic protocol

@@ -25,8 +25,9 @@
 //! gain it uniformly with the rest of the firmware.
 //!
 //! Each handler logs at error level with an exception-specific `HsmError`
-//! code — [`HsmError::Panic`], [`HsmError::HardFault`], or
-//! [`HsmError::UnexpectedException`] — so fault output is greppable by code
+//! code — [`HsmError::Panic`], [`HsmError::HardFault`],
+//! [`HsmError::UnexpectedException`], or [`HsmError::ExplicitCrash`] — so
+//! fault output is greppable by code
 //! and exception type. The `trace-uart` / `trace-semihosting` features select
 //! `level-info`, which compiles `error!` in.
 //!
@@ -41,12 +42,16 @@
 //! HardFault and Panic are full crash-recovery participants: besides
 //! reporting the fault, they capture a persistent crash dump (into the
 //! reserved HSM DTCM slot via [`azihsm_fw_uno_crashdump`]) and notify the
-//! peer core over TCON wakeup1. This crate also installs the **`tcon_wakeup1`
-//! receiver** — a real NVIC-vectored assembly trampoline (`drivers/pac`
-//! `__INTERRUPTS[89]`) that captures *this* core's dump when a peer core
-//! signals a crash. The remaining exception handlers (`MemManagement` and the
-//! peripheral-error ISRs present in the mcr-hsm `exception-handlers` crate)
-//! are wired in later units of the crash-recovery port.
+//! peer core over TCON wakeup1. The same sequence is exposed deliberately as
+//! [`explicit_crash`], the crate's one public entry point, which the DDI
+//! `TriggerCrash` test hook uses to inject a crash that stays
+//! distinguishable from a real panic in the dump. This crate also installs
+//! the **`tcon_wakeup1` receiver** — a real NVIC-vectored assembly
+//! trampoline (`drivers/pac` `__INTERRUPTS[89]`) that captures *this* core's
+//! dump when a peer core signals a crash. The remaining exception handlers
+//! (`MemManagement` and the peripheral-error ISRs present in the mcr-hsm
+//! `exception-handlers` crate) are wired in later units of the
+//! crash-recovery port.
 
 #![no_std]
 #![allow(unsafe_code)]
@@ -58,7 +63,6 @@ use core::arch::global_asm;
 use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_uno_crashdump::crash_format::CpuRegisterContext;
 use azihsm_fw_uno_crashdump::crashdump_save;
-use azihsm_fw_uno_crashdump::crashdump_save_fmt;
 use azihsm_fw_uno_crashdump::failure_code::FailureCode;
 use azihsm_fw_uno_drivers_nvic::Nvic;
 use azihsm_fw_uno_drivers_tcon::Tcon;
@@ -101,18 +105,105 @@ fn halt() -> ! {
     }
 }
 
+/// Capture the calling core's `sp` and `pc` for a crash dump.
+///
+/// Used by the *software*-initiated crash paths ([`panic`] and
+/// [`explicit_crash`]) which, unlike a hardware exception, have no stacked
+/// [`ExceptionFrame`] to recover the faulting context from.
+///
+/// `MSP` and `PC` are special registers that the compiler cannot allocate,
+/// so reading them is well defined. `lr` is deliberately *not* read: it is
+/// call-clobbered, so once the prologue has spilled it the compiler is free
+/// to reuse it as scratch, and in [`panic`] it does — `lr` holds the
+/// constant `1` for the wakeup-timer write by the time the dump is taken.
+/// It is left zero, like the general purpose registers, which are not
+/// architecturally readable from safe Rust either.
+#[inline(always)]
+fn capture_register_context() -> CpuRegisterContext {
+    CpuRegisterContext {
+        sp: cortex_m::register::msp::read(),
+        pc: cortex_m::register::pc::read(),
+        ..Default::default()
+    }
+}
+
+/// Deliberately crash this core, recording it as an *explicit* crash.
+///
+/// This is the software-initiated crash path: it performs the same peer
+/// notification and dump capture as [`panic`], but records
+/// [`FailureCode::ExplicitFailure`] instead of [`FailureCode::Panic`] so the
+/// shared SP-side parser can distinguish a crash that was *asked for* (the
+/// DDI `TriggerCrash` test action with `CrashType::Explicit`) from a genuine
+/// Rust panic. Conflating the two would make the firmware's own panics
+/// indistinguishable from injected ones in the crash log.
+///
+/// Lives here rather than in `azihsm_fw_uno_crashdump` because this crate
+/// already owns the crash *policy* — the [`Nvic`]/[`Tcon`] peer-notification
+/// sequence and the private [`halt`] — while `crashdump` is a pure
+/// serializer. This is the crate's first public item; it is reached from
+/// `pal`'s `trigger_crash` test hook.
+///
+/// `additional_info` is appended to the dump's free-text tail, truncated to
+/// the region's remaining capacity.
+///
+/// Never returns: the core is halted (or exited, under `semihosting`).
+pub fn explicit_crash(additional_info: Option<&str>) -> ! {
+    // Disable our own wakeup1 receiver before firing it at the peer core, so
+    // the notification we are about to raise cannot recurse back into this
+    // already-crashing core.
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+
+    error!(
+        "explicit_crash",
+        HsmError::ExplicitCrash,
+        "#### EXPLICIT CRASH ####"
+    );
+
+    // Notify the peer core of the crash.
+    Tcon::fire_wakeup_timer1();
+
+    crashdump_save(
+        &capture_register_context(),
+        FailureCode::ExplicitFailure,
+        additional_info,
+    );
+
+    halt();
+}
+
 /// Firmware panic handler.
 ///
 /// Reports the panic through the tracing facade, notifies the peer core of
 /// the crash over TCON wakeup1, and captures a persistent crash dump before
 /// halting.
 ///
-/// The crash-dump register-context fields are overloaded to carry the panic
-/// site to the shared SP parser, exactly as the reference `mcr-hsm` handler
-/// does: `lr` = pointer to the file name, `pc` = line number, and `sp` =
-/// pointer to the message (only when the message is a plain `&str`). All are
-/// offsets within the CP `.text` image.
+/// # Why the dump carries real registers, not the panic site
+///
+/// The reference `mcr-hsm` handler overloads the crash-dump register context
+/// to carry [`core::panic::PanicInfo::location`] (`lr` = file-name pointer,
+/// `pc` = line number). Uno does not: reading any `PanicInfo` field makes
+/// every panic site in the image keep its own `&Location<'static>` alive,
+/// which costs ~61 KiB of `.text` and does not fit the 512 KiB CP1 ITCM
+/// budget (`MANTICORE_SOC_CP_ITCM_SIZE`) that the firmware already nearly
+/// fills.
+///
+/// So the context carries the core's real `sp` and `pc` instead. That is
+/// free, and it is also the better fit for the SP-side packet, which
+/// declares these fields as a plain ARM register set (`struct
+/// crash_dump_arm`). The dump identifies the crash as a panic via
+/// [`FailureCode::Panic`], but it does not locate the panic *site*: `pc`
+/// points into this handler, which the panic site reaches three frames down
+/// through `core::panicking::panic_fmt`. On a `trace-uart` bring-up build
+/// the `error!` below still prints the full panic message and source
+/// location.
+///
+/// TODO: recover the panic site by unwinding the `r7` frame-pointer chain,
+/// and/or capture it from `PanicInfo` once the ITCM budget allows — most
+/// likely by relocating `.rodata` to GSRAM rather than by trimming code.
 #[panic_handler]
+// `info` is consumed only by `error!`, which compiles out when no trace level
+// is enabled (production). It is deliberately not read otherwise; see above.
+#[allow(unused_variables)]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // Disable our own wakeup1 receiver before firing it at the peer core, so
     // the notification we are about to raise cannot recurse back into this
@@ -125,25 +216,7 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // Notify the peer core of the crash.
     Tcon::fire_wakeup_timer1();
 
-    // Overload the register context to describe the panic site (see fn docs).
-    let mut context = CpuRegisterContext::default();
-    if let Some(location) = info.location() {
-        context.lr = location.file().as_ptr() as u32;
-        context.pc = location.line();
-    }
-    if let Some(message) = info.message().as_str() {
-        context.sp = message.as_ptr() as u32;
-    }
-
-    // Capture the panic text directly into the reserved crash-dump tail.
-    // `crashdump_save_fmt` renders `format_args!` through a bounded sink (no
-    // allocator — uno is pure `no_std`), so both literal *and formatted*
-    // panics are recorded, truncated to the region's tail capacity. The
-    // file/line/message pointers packed into the register context above remain
-    // as a complement. (Divergence from reference decision #5, which appended
-    // `info.message().to_string()` via the reference's heap allocator that uno
-    // lacks.)
-    crashdump_save_fmt(&context, FailureCode::Panic, format_args!("{info}"));
+    crashdump_save(&capture_register_context(), FailureCode::Panic, None);
 
     halt();
 }
