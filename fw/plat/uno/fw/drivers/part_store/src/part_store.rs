@@ -510,11 +510,19 @@ impl Partition {
         // Reset the PIN lockout policy to default (matches the reference
         // `state.disable()` and `state.migrate()`).
         self.set_pin_policy(PinPolicy::default());
-        // Per-tenant runtime: nonce, session table, session metadata.
+        // Per-tenant runtime: nonce and the volatile session metadata. The
+        // persistent `session_table` is deliberately *not* touched here,
+        // because the right disposition depends on the caller: a disable
+        // keeps the allocation mask so the host can still close the sessions
+        // it owns, while a migrate (NSSR) or free releases the slots. That
+        // policy needs the session-store layout, so it lives one layer up —
+        // see `SessionTable::mark_all_needs_renego` / `clear_all`, which
+        // every caller of this function invokes. Mirrors the reference, whose
+        // `disable` calls `session_table().restore(backup())` and whose
+        // `clear_partition_info` calls `session_table().restore(0)`.
         {
             let slot = self.slot_mut();
             slot.nonce = [0u8; NONCE_LEN];
-            slot.session_table = [0u8; SESSION_TABLE_LEN];
             slot.session_meta = [0u8; 2];
         }
 

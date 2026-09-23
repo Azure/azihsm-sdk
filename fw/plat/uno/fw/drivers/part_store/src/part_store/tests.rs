@@ -24,6 +24,11 @@ fn buf(bytes: &[u8]) -> &DmaBuf {
 /// `clear_state(Migrate)` must wipe per-tenant runtime state while keeping the
 /// partition's provisioning material intact (mirrors the reference
 /// `state.migrate()`). This is the regression guard for that split.
+///
+/// The persistent session table is explicitly *not* part of the "per-tenant
+/// runtime" set here: the reference's `disable`/`migrate` preserve its
+/// allocation mask (`session_table().restore(backup())`) and only its `free`
+/// path clears it, so the choice belongs to the caller.
 #[test]
 fn preserves_provisioning_and_clears_tenant_state() {
     // A child module may address the parent module's private slot constructor
@@ -135,8 +140,11 @@ fn preserves_provisioning_and_clears_tenant_state() {
     );
     assert_eq!(
         p.session_table(),
-        &[0u8; SESSION_TABLE_LEN],
-        "session table must be cleared"
+        &[0xABu8; SESSION_TABLE_LEN],
+        "session table must be left untouched: its disposition (preserve the \
+         allocation mask and flag for renegotiation on disable/migrate, or \
+         release it on free) needs the session-store layout and so is owned \
+         by the caller, via `SessionTable::mark_all_needs_renego` / `clear_all`"
     );
     assert_eq!(p.session_meta(), &[0u8; 2], "session meta must be cleared");
 

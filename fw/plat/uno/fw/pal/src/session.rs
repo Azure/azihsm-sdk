@@ -88,7 +88,20 @@ impl HsmSessionManager for UnoHsmPal {
 
         // On re-key: tear down the old session-scoped keys and the old
         // session key before creating the replacement.
-        if let Some(reopen_id) = id {
+        //
+        // A slot awaiting renegotiation after a partition disable is the
+        // exception: `mark_all_needs_renego` already dropped its physical-id
+        // indirection (the caller deleted the backing vault keys), so there
+        // is nothing left to tear down. Resolving it anyway would either
+        // fail with `KeyNotFound` or — worse — delete key id 0, which is the
+        // valid id for vault table 0 / entry 0 rather than a "no mapping"
+        // sentinel. `recreate` below simply installs the fresh mapping.
+        // Mirrors the std PAL and the reference firmware's
+        // `recreate_session`.
+        let stale_reopen = id.filter(|reopen_id| {
+            !matches!(table.state(*reopen_id), HsmSessionState::NeedsRenegotiation)
+        });
+        if let Some(reopen_id) = stale_reopen {
             let old_phys = table.physical_id(reopen_id)?;
             crate::vault::delete_session_keys(self, io, reopen_id).await?;
             crate::vault::vault(io).delete(self, io, old_phys).await?;
@@ -148,7 +161,20 @@ impl HsmSessionManager for UnoHsmPal {
 
         let mut table = SessionStore::partition(io.pid())?;
 
-        // Resolve the physical vault key id before the vault awaits (drops the
+        // A renegotiating slot has no live vault state: the partition reset
+        // that flagged it (disable / migrate — e.g. the `CC.EN` clear an NVMe
+        // Level-2 abort or firmware-crash recovery drives) already deleted
+        // every session-blob key and dropped the physical-id indirection, so
+        // resolving it would yield a stale id and the vault deletes below
+        // would fail the close. Free the logical slot directly and report
+        // success, mirroring the reference firmware's `CloseSessionCmd`
+        // short-circuit on `needs_renegotiation`.
+        if matches!(table.state(id), HsmSessionState::NeedsRenegotiation) {
+            table.delete(id)?;
+            return Ok(());
+        }
+
+        // Resolve the physical vault key id before any async work (drops the
         // session-store borrow before the awaits).
         let physical_id = table.physical_id(id)?;
 
