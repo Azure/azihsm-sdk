@@ -101,7 +101,7 @@ fn test_hmac_unknown_key_smoke() {
     );
 }
 
-#[cfg(not(feature = "mock"))]
+#[cfg(feature = "emu")]
 #[test]
 fn test_hmac_requires_sign_permission_smoke() {
     ddi_dev_test(
