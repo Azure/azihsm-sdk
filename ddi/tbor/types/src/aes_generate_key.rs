@@ -24,12 +24,12 @@ use crate::tbor;
 pub const TBOR_OP_AES_GENERATE_KEY: u8 = 0x15;
 
 /// Minimum masked AES-key envelope length (AES-128, 16-byte key): an
-/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖
+/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖
 /// pt(16) ‖ tag(16)`.
-pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 96 + 16 + 16;
+pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 192 + 16 + 16;
 
 /// Maximum masked AES-key envelope length (AES-256, 32-byte key).
-pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// `AesKeySize` discriminant for AES-128 (16-byte key).
 pub const AES_KEY_SIZE_128: u8 = 1;
@@ -40,8 +40,8 @@ pub const AES_KEY_SIZE_256: u8 = 3;
 
 /// Maximum caller-supplied key-label length (bytes) recorded in the masked
 /// blob's metadata (`MaskedKeyMetadata.key_label`). Not AES-specific: every
-/// TBOR key kind shares the same 32-byte label cap.
-pub const TBOR_KEY_LABEL_MAX_LEN: usize = 32;
+/// TBOR key kind shares the same 128-byte label cap.
+pub const TBOR_KEY_LABEL_MAX_LEN: usize = 128;
 
 /// Host-facing TBOR `AesGenerateKey` request.
 #[tbor(opcode = TBOR_OP_AES_GENERATE_KEY, session_ctrl = in_session)]
@@ -64,9 +64,9 @@ pub struct TborAesGenerateKeyReq {
     pub key_usage: u64,
 
     /// Caller-supplied key label recorded in the masked blob's metadata,
-    /// up to [`TBOR_KEY_LABEL_MAX_LEN`] (32) bytes.  Empty for an unlabeled
+    /// up to [`TBOR_KEY_LABEL_MAX_LEN`] (128) bytes.  Empty for an unlabeled
     /// key.
-    #[tbor(max_len = 32)]
+    #[tbor(max_len = 128)]
     pub key_label: Vec<u8>,
 }
 
@@ -75,9 +75,9 @@ pub struct TborAesGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborAesGenerateKeyResp {
     /// The freshly generated AES key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  148 / 156 / 164 B for
+    /// requested scope's masking key.  244 / 252 / 260 B for
     /// AES-128 / 192 / 256; not stored on-device.
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub masked_key: Vec<u8>,
 }
 

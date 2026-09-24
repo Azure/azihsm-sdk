@@ -33,6 +33,7 @@ use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA384;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC256;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
@@ -52,8 +53,8 @@ const HASH_SHA384: u8 = 2;
 const HASH_SHA512: u8 = 3;
 
 /// AEAD-GCM-256 masked-key envelope overhead:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ tag(16)` = 132 B around the plaintext.
-const MASK_OVERHEAD: usize = 8 + 12 + 96 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ tag(16)` = 228 B around the plaintext.
+const MASK_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
 /// Derive a fresh masked ECDH shared secret (the HKDF IKM) on-device:
 /// generate two P-256 keypairs and ECDH one against the other's public
@@ -64,6 +65,8 @@ fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
             session_id,
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey a");
     let key_b = ctx
@@ -71,6 +74,8 @@ fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
             session_id,
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey b");
     ctx.tbor(&TborEcdhDeriveReq {
@@ -78,6 +83,7 @@ fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
         scope: SCOPE_LOCAL,
         masked_key: key_a.masked_key,
         peer_pub_key: key_b.pub_key,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret
@@ -105,6 +111,7 @@ fn hkdf(
         masked_secret,
         salt,
         info,
+        key_label: Vec::new(),
     })
     .expect("HkdfDerive")
     .masked_key
@@ -226,6 +233,7 @@ fn hkdf_derive_unknown_hash_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
@@ -248,6 +256,7 @@ fn hkdf_derive_unknown_key_type_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );
@@ -272,6 +281,7 @@ fn hkdf_derive_var_hmac_missing_length_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );
@@ -294,6 +304,7 @@ fn hkdf_derive_var_hmac_out_of_range_length_rejected_emu() {
             masked_secret: ikm,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyLength,
     );
@@ -311,6 +322,8 @@ fn hkdf_derive_non_secret_ikm_rejected_emu() {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
 
@@ -324,6 +337,7 @@ fn hkdf_derive_non_secret_ikm_rejected_emu() {
             masked_secret: ecc.masked_key,
             salt: Vec::new(),
             info: Vec::new(),
+            key_label: Vec::new(),
         },
         TborStatus::InvalidKeyType,
     );

@@ -40,6 +40,7 @@ use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC256;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC384;
 use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
+use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::harness::TestCtx;
@@ -59,8 +60,8 @@ const HASH_SHA384: u8 = 2;
 const HASH_SHA512: u8 = 3;
 
 /// AEAD-GCM-256 masked-key envelope overhead:
-/// `header(8) ‖ iv(12) ‖ aad(96) ‖ tag(16)` = 132 B around the plaintext.
-const MASK_OVERHEAD: usize = 8 + 12 + 96 + 16;
+/// `header(8) ‖ iv(12) ‖ aad(192) ‖ tag(16)` = 228 B around the plaintext.
+const MASK_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
 /// Derive a fresh masked ECDH shared secret (the KDF IKM) on-device.
 fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> Vec<u8> {
@@ -69,6 +70,8 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
             session_id,
             scope: SCOPE_LOCAL,
             curve,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey a");
 
@@ -77,6 +80,8 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
             session_id,
             scope: SCOPE_LOCAL,
             curve,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey b");
 
@@ -85,6 +90,7 @@ fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> V
         scope: SCOPE_LOCAL,
         masked_key: key_a.masked_key,
         peer_pub_key: key_b.pub_key,
+        key_label: Vec::new(),
     })
     .expect("EcdhDerive")
     .masked_secret
@@ -555,6 +561,8 @@ fn concat_kdf_non_secret_ikm_rejected() {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
             curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
         })
         .expect("EccGenerateKey");
 

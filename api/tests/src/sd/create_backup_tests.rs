@@ -46,7 +46,7 @@ fn sd_create_remote_backup_roundtrip() {
         "pok_remote_backup must not be all-zero",
     );
 
-    // Local backup: BKS3 masked under the partition-local key, 180 B,
+    // Local backup: BKS3 masked under the partition-local key, 276 B,
     // non-zero.
     assert_eq!(result.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
@@ -54,7 +54,7 @@ fn sd_create_remote_backup_roundtrip() {
         "pok_local_backup must not be all-zero",
     );
 
-    // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
+    // Masking-key backup: SDMK masked under the derived SDBMK, 260 B,
     // non-zero.
     assert_eq!(result.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
