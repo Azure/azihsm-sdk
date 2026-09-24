@@ -233,9 +233,8 @@ fn test_get_cert_info_after_lm() {
             result
         );
 
-        let resp = helper_get_cert_chain_info(dev);
-
-        assert!(resp.is_ok(), "resp {:?}", resp);
+        helper_get_cert_chain_info(dev)
+            .unwrap_or_else(|err| panic!("GetCertChainInfo after migration failed: {err:?}"));
     });
 }
 

@@ -272,9 +272,8 @@ pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u
          helper_get_cert_with_retry(dev, 15).unwrap()
      } else {
          tracing::debug!("Device is not in IDfu mode");
-         let result = helper_get_cert_chain_info(dev);
-         assert!(result.is_ok(), "result {:?}", result);
-         let chain_resp = result.unwrap();
+         let chain_resp = helper_get_cert_chain_info(dev)
+             .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
          let num_certs = chain_resp.data.num_certs;
          let cert_id = num_certs - 1;
          helper_get_certificate(dev, cert_id)
@@ -342,9 +341,8 @@ pub fn helper_key_signature_verification(
 
 #[allow(dead_code)]
 pub fn helper_get_cert_chain_info_data(dev: &mut <DdiTest as Ddi>::Dev) -> (u8, [u8; 32]) {
-    let result = helper_get_cert_chain_info(dev);
-    assert!(result.is_ok(), "result {:?}", result);
-    let resp = result.unwrap();
+    let resp = helper_get_cert_chain_info(dev)
+        .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
     let num_certs = resp.data.num_certs;
     let thumbprint = resp.data.thumbprint.data_take();
 
@@ -364,10 +362,8 @@ pub fn helper_verify_leaf_cert(
     // 3. Gets the partition id cert using DDI command GetCertificate which is the last cert in the chain
 
     let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
-    let result = helper_get_cert_chain_info(dev);
-    assert!(result.is_ok(), "result {:?}", result);
-
-    let resp = result.unwrap();
+    let resp = helper_get_cert_chain_info(dev)
+        .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
     let num_certs = resp.data.num_certs;
 
     let mut cert_chain:Vec<Vec<u8>> = if idfu_enabled {

@@ -847,10 +847,8 @@ pub(crate) fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<
      let retry_window = std::time::Duration::from_secs(15);
  
      loop {
-         let result = helper_get_cert_chain_info(dev);
-         assert!(result.is_ok(), "result {:?}", result);
- 
-         let resp = result.unwrap();
+         let resp = helper_get_cert_chain_info(dev)
+             .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
          let num_certs = resp.data.num_certs;
  
          let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);

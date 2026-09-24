@@ -63,7 +63,10 @@ use super::common::*;
  
          let (num_certs_after, thumbprint_after) = helper_get_cert_chain_info_data(dev);
          assert_eq!(num_certs, num_certs_after, "cert count must be stable across the fetch");
-         assert_eq!(thumbprint, thumbprint_after, "thumbprint must be stable across the fetch");
+         assert!(
+             thumbprint == thumbprint_after,
+             "thumbprint must be stable across the fetch"
+         );
  
          return (num_certs, thumbprint);
      }
@@ -111,8 +114,8 @@ fn helper_get_certificate_chain(dev: &mut <DdiTest as Ddi>::Dev) -> (u8, [u8; 32
         num_certs, num_certs_after,
         "cert count must be stable across the fetch"
     );
-    assert_eq!(
-        thumbprint, thumbprint_after,
+    assert!(
+        thumbprint == thumbprint_after,
         "thumbprint must be stable across the fetch"
     );
 
@@ -151,9 +154,8 @@ fn test_get_cert_chain_length_multiple_times() {
             let mut previous_thumbprint = [0u8; 32];
 
             for i in 0..loop_count {
-                let result = helper_get_cert_chain_info(dev);
-                assert!(result.is_ok(), "result {:?}", result);
-                let resp = result.unwrap();
+                let resp = helper_get_cert_chain_info(dev)
+                    .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
                 let num_certs = resp.data.num_certs;
                 let thumbprint = resp.data.thumbprint.data_take();
 
@@ -166,9 +168,9 @@ fn test_get_cert_chain_length_multiple_times() {
                         num_certs, previous_num_certs,
                         "num_certs should be the same",
                     );
-                    assert_eq!(
-                        thumbprint, previous_thumbprint,
-                        "thumbprint should be the same",
+                    assert!(
+                        thumbprint == previous_thumbprint,
+                        "thumbprint should be the same"
                     );
                 }
             }
@@ -219,14 +221,17 @@ fn test_get_cert_chain_multithread() {
             let mut prev_num_cert = None;
             let mut prev_thumbprint = [0u8; 32];
             for thread in threads {
-                let result = thread.join();
-                assert!(result.is_ok(), "result {:?}", result);
-                let (num_cert, thumbprint) = result.unwrap();
+                let (num_cert, thumbprint) = thread
+                    .join()
+                    .unwrap_or_else(|_| panic!("GetCertChain worker thread failed"));
 
                 match prev_num_cert {
                     Some(prev) => {
                         assert_eq!(prev, num_cert);
-                        assert_eq!(prev_thumbprint, thumbprint);
+                        assert!(
+                            prev_thumbprint == thumbprint,
+                            "thumbprint should be the same"
+                        );
                     }
                     None => {
                         prev_num_cert = Some(num_cert);
@@ -264,9 +269,8 @@ fn test_get_cert_chain_info_multithread() {
                     let ddi = DdiTest::default();
                     let dev = ddi.open_dev(device_path.as_str()).unwrap();
 
-                    let result = helper_get_cert_chain_info(&dev);
-                    assert!(result.is_ok(), "result {:?}", result);
-                    let resp = result.unwrap();
+                    let resp = helper_get_cert_chain_info(&dev)
+                        .unwrap_or_else(|err| panic!("GetCertChainInfo failed: {err:?}"));
                     let num_certs = resp.data.num_certs;
                     let thumbprint = resp.data.thumbprint.data_take();
 
@@ -282,9 +286,9 @@ fn test_get_cert_chain_info_multithread() {
             let mut prev_thumbprint = [0u8; 32];
             let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
             for thread in threads {
-                let result = thread.join();
-                assert!(result.is_ok(), "result {:?}", result);
-                let (num_cert, thumbprint) = result.unwrap();
+                let (num_cert, thumbprint) = thread
+                    .join()
+                    .unwrap_or_else(|_| panic!("GetCertChainInfo worker thread failed"));
 
                 match prev_num_cert {
                     Some(prev) => {
@@ -294,12 +298,17 @@ fn test_get_cert_chain_info_multithread() {
                         // Refetch chain info to get the current thumbprint
                         let fresh = helper_get_cert_chain_info(dev).unwrap();
                         let fresh_thumbprint = fresh.data.thumbprint.data_take();
-                        assert_eq!(fresh_thumbprint, thumbprint, 
-                            "Refetched thumbprint should match the latest thread result");
+                        assert!(
+                            fresh_thumbprint == thumbprint,
+                            "Refetched thumbprint should match the latest thread result"
+                        );
                         prev_thumbprint = fresh_thumbprint;
 
              } else {
-                 assert_eq!(prev_thumbprint, thumbprint);
+                 assert!(
+                     prev_thumbprint == thumbprint,
+                     "thumbprint should be the same"
+                 );
              }
             }
                     None => {
