@@ -259,7 +259,7 @@ fn test_get_cert_after_lm() {
              helper_get_certificate(dev, cert_info.data.num_certs - 1)
          };
 
-        assert!(resp.is_ok(), "resp {:?}", resp);
+        resp.unwrap_or_else(|err| panic!("GetCertificate after migration failed: {err:?}"));
     });
 }
 

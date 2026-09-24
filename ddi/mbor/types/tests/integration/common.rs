@@ -276,9 +276,9 @@ pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u
          assert!(result.is_ok(), "result {:?}", result);
          let chain_resp = result.unwrap();
          let num_certs = chain_resp.data.num_certs;
-         let result = helper_get_certificate(dev, num_certs - 1);
-         assert!(result.is_ok(), "result {:?}", result);
-         result.unwrap()
+         let cert_id = num_certs - 1;
+         helper_get_certificate(dev, cert_id)
+             .unwrap_or_else(|err| panic!("GetCertificate({cert_id}) failed: {err:?}"))
      };
     
     let cert_der = resp.data.certificate.as_slice();
@@ -380,12 +380,10 @@ pub fn helper_verify_leaf_cert(
     else{
         let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
         for i in 0..num_certs - 1 {
-            let result = helper_get_certificate(dev, i);
-            assert!(result.is_ok(), "result {:?}", result);
-
-            let resp = result.unwrap();
+            let resp = helper_get_certificate(dev, i)
+                .unwrap_or_else(|err| panic!("GetCertificate({i}) failed: {err:?}"));
             let der = &resp.data.certificate.as_slice();
-            print!("cert DER {:?}", der);
+            tracing::debug!(cert_id = i, cert_len = der.len(), "Fetched certificate");
 
             cert_chain.push(der.to_vec());
         }
