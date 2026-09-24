@@ -37,10 +37,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
-use super::DDI_OP_GET_PRIV_KEY;
 use super::common::ReqHdr;
 use super::common::encode_resp;
-use super::common::success_hdr_sess;
+use super::common::success_hdr;
 use crate::pal::UnoHsmPal;
 
 /// DDI `GetPrivKey` request body.
@@ -71,47 +70,28 @@ struct DdiGetPrivKeyResp<'a> {
 
 /// Handle `DdiGetPrivKeyCmd`.
 ///
-/// The envelope map and header have already been consumed by the
-/// caller; `decoder` is positioned at the request's data section.
-pub(super) fn get_priv_key<'p>(
+/// The envelope map, header, and data field ID have already been consumed
+/// by the caller; `decoder` is positioned at the request data map.
+pub(super) fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
-    decoder: &mut MborDecoder<'_>,
     hdr: &ReqHdr,
-    req_len: usize,
+    decoder: &mut MborDecoder<'_>,
+    request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
-
-    let key = u8::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if key != 1 {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-    let body = DdiGetPrivKeyReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    let request = DdiGetPrivKeyReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
 
     // Reject trailing bytes, matching the "fully consumed" rule the core
     // applies to every command it handles itself.
-    if decoder.position() != req_len {
+    if decoder.position() != request_len {
         return Err(HsmError::DdiDecodeFailed);
     }
 
-    let key_id = HsmKeyId::from(body.key_id);
+    let key_id = HsmKeyId::from(request.key_id);
 
-    // Enforce session-scoped key isolation before any read-back: a
-    // session-bound key may only be exported from the session that
-    // created it. Without this, a second session that learns a
-    // session-scoped id could use this hook to exfiltrate its raw bytes.
-    // A cross-session (or unknown) id is reported as `KeyNotFound` so the
-    // two cases are indistinguishable; partition-scoped keys carry no
-    // binding and stay readable.
-    if pal
-        .vault_key_session_binding(io, key_id)?
-        .is_some_and(|bound| bound != sess_id)
-    {
-        return Err(HsmError::KeyNotFound);
-    }
-
-    // Resolve the stored kind first — an unknown id surfaces as
-    // `KeyNotFound` here.
+    // Shared vault accessors enforce session ownership before exposing
+    // key metadata or material.
     let vault_kind = pal.vault_key_kind(io, key_id)?;
 
     // AES bulk (fast-path) kinds persist a two-byte bulk-key reference,
@@ -144,7 +124,7 @@ pub(super) fn get_priv_key<'p>(
 
     let resp = pal.dma_alloc_var(io, |buf| {
         encode_resp(
-            &success_hdr_sess(hdr, DDI_OP_GET_PRIV_KEY, sess_id),
+            &success_hdr(hdr, Some(sess_id)),
             &DdiGetPrivKeyResp {
                 key_kind,
                 key_data: plaintext,

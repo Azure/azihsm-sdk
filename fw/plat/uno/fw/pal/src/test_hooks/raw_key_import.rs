@@ -14,7 +14,7 @@
 //! tests): ECDH shared secrets (`Secret256/384/521`), fixed-length HMAC
 //! keys (`HmacSha256/384/512`), and variable-length HMAC keys
 //! (`VarHmac256/384/512`) import with the requested app or session
-//! availability; `Rsa2kPrivate` imports (usage = `Unwrap` only) as the
+//! availability. `Rsa2kPrivate` imports (usage = `Unwrap` only) as the
 //! partition unwrapping key via a dedicated internal-vault path. AES,
 //! ECC, and other RSA kinds are rejected with `InvalidKeyType` — those
 //! arrive via their own generate / unwrap handlers.
@@ -43,10 +43,9 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 
-use super::DDI_OP_RAW_KEY_IMPORT;
 use super::common::ReqHdr;
 use super::common::encode_resp;
-use super::common::success_hdr_sess;
+use super::common::success_hdr;
 use super::get_priv_key::vault_kind_ddi;
 use crate::pal::UnoHsmPal;
 
@@ -65,11 +64,7 @@ struct DdiRawKeyImportReq<'a> {
     /// On-wire key kind the raw bytes are imported as.
     #[ddi(id = 2)]
     key_kind: DdiKeyType,
-    /// Host key tag retained for compatibility with the mainline hook.
-    ///
-    /// App-key tags are accepted but are not persisted or used by the
-    /// refactor vault. Session-scoped keys still reject a populated tag,
-    /// matching the mainline validation rule.
+    /// Optional host key tag accepted for legacy compatibility but not persisted.
     #[ddi(id = 3)]
     key_tag: Option<u16>,
     /// Target key properties (usage / availability / label).
@@ -96,73 +91,68 @@ struct DdiRawKeyImportResp<'a> {
 
 /// Handle `DdiRawKeyImportCmd`.
 ///
-/// The envelope map and header have already been consumed by the caller;
-/// `decoder` is positioned at the request's data section.
+/// The envelope map, header, and data field ID have already been consumed
+/// by the caller; `decoder` is positioned at the request data map.
 ///
-/// No `partition_lock` is needed for the session-key path: the only
+/// No `partition_lock` is needed for the generic-key path: the only
 /// partition-state mutation is the single self-contained
 /// `vault_key_create`, with no multi-step read-modify-write held across
 /// an await for an interleaved handler to corrupt. The RSA unwrapping-key
-/// path prepares its response before a final synchronous state commit
-/// (see [`raw_import_unwrapping_key`]).
-pub(super) async fn raw_key_import<'p>(
+/// path prepares its response before a final synchronous state commit.
+pub(super) async fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
-    decoder: &mut MborDecoder<'_>,
     hdr: &ReqHdr,
-    req_len: usize,
+    decoder: &mut MborDecoder<'_>,
+    request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
+    let mut request =
+        DdiRawKeyImportReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
 
-    let key = u8::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if key != 1 {
-        return Err(HsmError::DdiDecodeFailed);
+    if decoder.position() != request_len {
+        Err(HsmError::DdiDecodeFailed)
+    } else {
+        dispatch_request(pal, io, hdr, sess_id, &mut request).await
     }
-    let body = DdiRawKeyImportReq::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+}
 
-    // Reject trailing bytes, matching the "fully consumed" rule the core
-    // applies to every command it handles itself.
-    if decoder.position() != req_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
+async fn dispatch_request<'p>(
+    pal: &'p UnoHsmPal,
+    io: &impl HsmIo,
+    hdr: &ReqHdr,
+    sess_id: u16,
+    request: &mut DdiRawKeyImportReq<'_>,
+) -> HsmResult<&'p DmaBuf> {
     // RSA-2048 raw import is only valid as the partition unwrapping key
-    // (usage = `Unwrap`); it follows a dedicated internal-vault path
-    // rather than the generic session-key import below (parity with the
-    // legacy `import_raw_key` `Rsa2kPrivate` arm).
-    if body.key_kind == DdiKeyType::Rsa2kPrivate {
-        return raw_import_unwrapping_key(pal, io, hdr, sess_id, body).await;
+    // (usage = `Unwrap`); it follows a dedicated internal-vault path.
+    if request.key_kind == DdiKeyType::Rsa2kPrivate {
+        // Match the legacy validation hook: requested availability is
+        // ignored because the partition unwrapping key is always internal
+        // and partition-scoped.
+        return raw_import_unwrapping_key(pal, io, hdr, sess_id, request).await;
     }
 
     // Restrict the accepted kinds and derive the vault attributes for the
     // imported (non-`local`) key.  Rejects AES / ECC / other RSA kinds
     // (`Rsa2kPrivate` is handled by the unwrapping-key path above) and
     // any usage the kind may not carry.
-    let attrs = raw_import_attrs(body.key_kind, &body.key_properties.key_metadata)?;
-    // The refactor vault does not persist app-key tags, but accepts them
-    // for compatibility with the mainline validation hook. Mainline
-    // rejects tags for session-scoped keys because those keys are bound
-    // to a session rather than addressed by tag.
-    if attrs.session() && body.key_tag.is_some() {
+    let attrs = raw_import_attrs(request.key_kind, &request.key_properties.key_metadata)?;
+    let vault_kind = vault_kind_from_ddi(request.key_kind)?;
+
+    // Session-scoped keys are anonymous and cannot carry an application tag.
+    if attrs.session() && request.key_tag.is_some() {
         return Err(HsmError::InvalidArg);
     }
-    let vault_kind = vault_kind_from_ddi(body.key_kind)?;
 
     // Copy the raw plaintext into a vault-import scratch buffer and
-    // commit it, session-scoped iff requested. Scrub the host-supplied
-    // copy on allocation failure to minimize plaintext residency.
-    let key_buf = match pal.dma_alloc(io, body.raw.len()) {
-        Ok(buf) => buf,
-        Err(e) => {
-            body.raw.zeroize();
-            return Err(e);
-        }
-    };
-    key_buf.copy_from_slice(body.raw);
+    // commit it with the requested app or session availability.
+    let key_buf = pal.dma_alloc(io, request.raw.len())?;
+    key_buf.copy_from_slice(request.raw);
     // The plaintext now lives only in `key_buf`; scrub the host-supplied
     // copy from the request DMA so it does not linger there. `DmaBuf::
     // zeroize` is a volatile, un-elidable wipe.
-    body.raw.zeroize();
+    request.raw.zeroize();
 
     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
     let key_handle = pal
@@ -189,7 +179,7 @@ pub(super) async fn raw_key_import<'p>(
             HsmSessId::from(sess_id),
             attrs,
             vault_kind_ddi(vault_kind)?,
-            body.key_properties.key_label,
+            request.key_properties.key_label,
             key_length,
             plaintext,
         )
@@ -197,7 +187,7 @@ pub(super) async fn raw_key_import<'p>(
 
         pal.dma_alloc_var(io, |buf| {
             encode_resp(
-                &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
+                &success_hdr(hdr, Some(sess_id)),
                 &DdiRawKeyImportResp {
                     key_id,
                     bulk_key_id: None,
@@ -225,14 +215,8 @@ pub(super) async fn raw_key_import<'p>(
 /// `import_raw_key` `Rsa2kPrivate` arm + `import_unwrapping_key`).
 ///
 /// Only `Unwrap` usage is accepted — [`for_rsa_unwrap`] rejects anything
-/// else with `InvalidPermissions`. All fallible response preparation
-/// completes before the partition property is assigned to the new key.
-/// If response preparation fails, the unpublished key is deleted.
-///
-/// This validation hook only installs an unwrapping key when the
-/// partition does not already have one. Replacement is rejected because
-/// Uno has no lock or key-borrow retirement mechanism that would make
-/// deleting a concurrently referenced old key safe.
+/// else with `InvalidPermissions`. Replacement is rejected until Uno has
+/// a real key-retirement mechanism.
 ///
 /// The response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`]
 /// — matching how the unwrapping key is masked elsewhere — so the host's
@@ -243,25 +227,19 @@ async fn raw_import_unwrapping_key<'p>(
     io: &impl HsmIo,
     hdr: &ReqHdr,
     sess_id: u16,
-    body: DdiRawKeyImportReq<'_>,
+    request: &mut DdiRawKeyImportReq<'_>,
 ) -> HsmResult<&'p DmaBuf> {
     // Unwrap-only; SignVerify / EncryptDecrypt -> InvalidPermissions.
-    let attrs = for_rsa_unwrap(&body.key_properties.key_metadata)?;
+    let attrs = for_rsa_unwrap(&request.key_properties.key_metadata)?;
+    ensure_unwrapping_key_absent(io)?;
+
     // Copy the raw plaintext into a vault-import scratch buffer and
-    // create an unpublished partition-internal unwrapping key. Scrub the
-    // host-supplied copy on allocation failure to minimize plaintext
-    // residency.
-    let key_buf = match pal.dma_alloc(io, body.raw.len()) {
-        Ok(buf) => buf,
-        Err(e) => {
-            body.raw.zeroize();
-            return Err(e);
-        }
-    };
-    key_buf.copy_from_slice(body.raw);
+    // create an unpublished partition-internal unwrapping key.
+    let key_buf = pal.dma_alloc(io, request.raw.len())?;
+    key_buf.copy_from_slice(request.raw);
     // The plaintext now lives only in `key_buf`; scrub the host-supplied
     // copy from the request DMA so it does not linger there.
-    body.raw.zeroize();
+    request.raw.zeroize();
 
     let key_id = pal
         .vault_key_create(io, key_buf, HsmVaultKeyKind::Rsa2kPrivate, None, attrs)
@@ -284,10 +262,10 @@ async fn raw_import_unwrapping_key<'p>(
         let masked_key = mask_blob(
             pal,
             io,
-            HsmSessId::from(sess_id),
+            sess_id.into(),
             attrs,
             DdiKeyType::RsaUnwrap,
-            body.key_properties.key_label,
+            request.key_properties.key_label,
             key_length,
             plaintext,
         )
@@ -295,7 +273,7 @@ async fn raw_import_unwrapping_key<'p>(
 
         pal.dma_alloc_var(io, |buf| {
             encode_resp(
-                &success_hdr_sess(hdr, DDI_OP_RAW_KEY_IMPORT, sess_id),
+                &success_hdr(hdr, Some(sess_id)),
                 &DdiRawKeyImportResp {
                     key_id: key_id.into(),
                     bulk_key_id: None,
@@ -314,23 +292,45 @@ async fn raw_import_unwrapping_key<'p>(
         }
     };
 
-    // Publish only when no unwrapping key is already installed. The
-    // check-and-set sequence contains no await, so concurrent imports
-    // cannot both commit on the single-threaded executor.
-    let part = match PartStore::partition(io.pid()) {
-        Ok(part) => part,
-        Err(e) => {
-            pal.vault_key_delete(io, key_id).await?;
-            return Err(e);
-        }
-    };
-    if part.unwrapping_key_id().is_some() {
+    // Recheck immediately before publication so two concurrent initial
+    // imports cannot both commit after yielding during response creation.
+    if let Err(err) = publish_initial_unwrapping_key(io, key_id) {
         pal.vault_key_delete(io, key_id).await?;
-        return Err(HsmError::InvalidArg);
+        return Err(err);
     }
-    part.set_unwrapping_key_id(Some(key_id));
 
     Ok(resp)
+}
+
+/// Reject an RSA import when the partition already owns an imported
+/// unwrapping key.
+///
+/// This reads `PartStore` directly so the check does not trigger the PAL's
+/// lazy import of an HSP-staged key.
+fn ensure_unwrapping_key_absent(io: &impl HsmIo) -> HsmResult<()> {
+    let partition = PartStore::partition(io.pid())?;
+    if partition.unwrapping_key_id().is_some() {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(())
+}
+
+/// Synchronously publish the first RSA unwrapping key.
+///
+/// A staged-but-unimported HSP backup is explicitly disarmed and wiped before
+/// publishing the validation key, so the raw key does not silently shadow a
+/// second source of unwrapping-key material.
+fn publish_initial_unwrapping_key(io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+    let partition = PartStore::partition(io.pid())?;
+    if partition.unwrapping_key_id().is_some() {
+        return Err(HsmError::InvalidArg);
+    }
+    partition.clear_unwrapping_key();
+    if partition.unwrapping_key_bk_valid() {
+        return Err(HsmError::InvalidArg);
+    }
+    partition.set_unwrapping_key_id(Some(key_id));
+    Ok(())
 }
 
 /// Build the vault attributes for a raw-imported key, restricting the
@@ -434,7 +434,9 @@ fn for_fixed_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs
         return Err(HsmError::InvalidPermissions);
     }
 
-    let mut attrs = HsmVaultKeyAttrs::new().with_sign(true).with_verify(true);
+    let mut attrs = HsmVaultKeyAttrs::new()
+        .with_sign(true)
+        .with_verify(true);
     if metadata.session() {
         attrs = attrs.with_session(true);
     }
@@ -495,7 +497,7 @@ fn for_var_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> 
 /// The returned attrs are identical to the ones a generated unwrapping
 /// key carries (`internal + local + unwrap`), so a raw-imported key is
 /// indistinguishable from a generated one on read-back.  Unlike the
-/// session-scoped raw imports, this path is *not* run through
+/// generic raw imports, this path is *not* run through
 /// [`raw_import_attrs`]' blanket `with_local(false)` — `local` is
 /// intentionally left set.
 fn for_rsa_unwrap(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
@@ -537,8 +539,8 @@ fn validate_pairs(metadata: &DdiTargetKeyMetadata) -> HsmResult<()> {
 /// Produce a complete masked-key envelope for `plaintext` into a fresh
 /// DMA buffer and return the written slice.
 ///
-/// Resolves the masking key (per-session when the key is session-scoped,
-/// otherwise the partition `MK`), assembles the cleartext metadata,
+/// Resolves the session masking key for session-scoped keys or the
+/// partition `MK` for app-scoped keys, assembles the cleartext metadata,
 /// size-queries the envelope, then fills a zeroed scratch buffer.
 #[allow(clippy::too_many_arguments)]
 async fn mask_blob<'p>(

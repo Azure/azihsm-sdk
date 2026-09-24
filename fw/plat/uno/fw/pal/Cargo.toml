@@ -17,6 +17,7 @@ azihsm_fw_core_crypto_x509_builder = { workspace = true }
 azihsm_fw_ddi_mbor = { optional = true, workspace = true }
 azihsm_fw_ddi_mbor_derive = { optional = true, workspace = true }
 azihsm_fw_ddi_mbor_types = { optional = true, workspace = true }
+azihsm_fw_hsm_io = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }

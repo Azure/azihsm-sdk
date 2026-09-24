@@ -74,6 +74,14 @@ const DDI_OP_GET_PRIV_KEY: u32 = 2005;
 /// `RawKeyImport` — the wire opcode `mcr-hsm` assigns this command.
 const DDI_OP_RAW_KEY_IMPORT: u32 = 2008;
 
+fn handles_opcode(opcode: u32) -> bool {
+    match opcode {
+        #[cfg(feature = "fips_validation_hooks")]
+        DDI_OP_GET_PRIV_KEY | DDI_OP_RAW_KEY_IMPORT => true,
+        _ => false,
+    }
+}
+
 /// Route an MBOR request the core did not claim.
 ///
 /// Re-parses the envelope the core already parsed — telling the core
@@ -86,7 +94,7 @@ pub(crate) async fn mbor_dispatch<'p>(
     io: &impl HsmIo,
     req: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req_len = req.len();
+    let request_len = req.len();
     let mut decoder = MborDecoder::new(req);
 
     let count = MborMap::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
@@ -101,18 +109,31 @@ pub(crate) async fn mbor_dispatch<'p>(
 
     let hdr = ReqHdr::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
 
-    match hdr.op {
-        DDI_OP_GET_PRIV_KEY => get_priv_key::get_priv_key(pal, io, &mut decoder, &hdr, req_len),
-        DDI_OP_RAW_KEY_IMPORT => {
-            let result = raw_key_import::raw_key_import(pal, io, &mut decoder, &hdr, req_len).await;
-
-            // RawKeyImport carries plaintext key material in the request.
-            // Scrub the complete inbound frame after dispatch so every
-            // handler exit path, including validation failures, wipes it.
-            req.zeroize();
-
-            result
-        }
-        _ => Err(HsmError::UnsupportedCmd),
+    if !handles_opcode(hdr.op) {
+        return Err(HsmError::UnsupportedCmd);
     }
+
+    let result = async {
+        let field_id = u8::mbor_decode(&mut decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+        if field_id != 1 {
+            return Err(HsmError::DdiDecodeFailed);
+        }
+
+        match hdr.op {
+            DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),
+            DDI_OP_RAW_KEY_IMPORT => {
+                raw_key_import::dispatch(pal, io, &hdr, &mut decoder, request_len).await
+            }
+            _ => Err(HsmError::UnsupportedCmd),
+        }
+    }
+    .await;
+
+    if hdr.op == DDI_OP_RAW_KEY_IMPORT {
+        // Once the header identifies RawKeyImport, wipe the complete inbound
+        // request on every later exit, including malformed data field IDs.
+        req.zeroize();
+    }
+
+    result
 }

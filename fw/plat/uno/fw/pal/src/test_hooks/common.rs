@@ -69,13 +69,12 @@ pub(super) struct RespHdr {
     pub(super) fips_approved: bool,
 }
 
-/// Build a success response header echoing the request's revision and
-/// carrying the live session id.
-pub(super) fn success_hdr_sess(req: &ReqHdr, op: u32, sess_id: u16) -> RespHdr {
+/// Build a success response header echoing the request revision and opcode.
+pub(super) fn success_hdr(req: &ReqHdr, sess_id: Option<u16>) -> RespHdr {
     RespHdr {
         rev: req.rev,
-        op,
-        sess_id: Some(sess_id),
+        op: req.op,
+        sess_id,
         status: DDI_STATUS_SUCCESS,
         fips_approved: false,
     }

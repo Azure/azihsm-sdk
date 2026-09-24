@@ -345,17 +345,12 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
     }
 
-    /// Returns the session id a key is bound to, or `None` for a
-    /// partition-scoped (persistent) key.
-    ///
-    /// Enforces session-scoped key isolation: a session-bound key may
-    /// only be accessed from the session that created it. For
-    /// session-scoped entries `session_or_tag` holds the owning session
-    /// id; app keys carry no binding (it holds a key tag instead).
-    pub fn key_session_binding(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+    /// Returns the owning session id for a session-scoped key, or `None`
+    /// for a partition-scoped (tag-addressed) key.
+    pub fn key_session(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
-        Ok(entry.session().then_some(entry.session_or_tag()))
+        Ok(entry.session().then(|| entry.session_or_tag()))
     }
 
     /// Returns the canonical byte length for a key `kind` — the fixed size
