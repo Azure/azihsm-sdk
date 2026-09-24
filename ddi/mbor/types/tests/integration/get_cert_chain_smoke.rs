@@ -52,11 +52,10 @@ fn test_get_cert_chain_fetch_and_stability_smoke() {
              tracing::debug!("Device is in iDFU mode, retrying get_certificate for all certs");
              let certs = helper_get_cert_by_id_with_retry(dev, None, 30)
                  .unwrap_or_else(|e| panic!("GetCertificate (all) must succeed: {:?}", e));
-             for (cert_id, resp) in certs.iter().enumerate() {
+             for (_cert_id, resp) in certs.iter().enumerate() {
                  assert!(
                      !resp.data.certificate.as_slice().is_empty(),
-                     "certificate {} must not be empty",
-                     cert_id
+                     "certificate must not be empty"
                  );
              }
          } else {
@@ -66,8 +65,7 @@ fn test_get_cert_chain_fetch_and_stability_smoke() {
                 .unwrap_or_else(|e| panic!("GetCertificate({}) must succeed: {:?}", cert_id, e));
             assert!(
                 !resp.data.certificate.as_slice().is_empty(),
-                "certificate {} must not be empty",
-                cert_id
+                "certificate must not be empty"
             );
         }
     }
