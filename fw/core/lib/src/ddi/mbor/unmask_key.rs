@@ -225,11 +225,9 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     // envelope to stay re-importable.  The envelope is written straight into
     // the reserved `masked_key` response region — no scratch buffer, no copy —
     // keeping the largest RSA-4096 keys within the per-IO DMA budget.
-    // Run the two re-mask passes (size query, then fill) and build the
-    // response inside an inner block so the retained bulk key material is
-    // scrubbed on every exit — success or error — below.  The masking-key
-    // and metadata setup lives inside the block so its `?` failures also
-    // route through the scrub.
+    // Re-mask inside an inner block (masking-key + metadata setup included)
+    // so every exit — success or `?` error — routes through the bulk-key
+    // scrub below.
     let outcome = async {
         let masking_key = super::masking::resolve_masking_key(
             pal,

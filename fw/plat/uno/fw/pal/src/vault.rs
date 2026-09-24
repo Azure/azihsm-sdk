@@ -86,21 +86,19 @@ impl HsmVault for UnoHsmPal {
         }
 
         // Bulk keys are mirrored in the fast-path engine and keep only their
-        // 2-byte handle in the vault.  Read the handle + creating session
-        // while the entry is live, disable it (synchronous: hides the key and
-        // pins its slot across the engine round-trip), delete the engine key,
-        // then drop the vault entry.  Re-enable on engine-delete failure.
+        // 2-byte handle in the vault.  Disable → engine-delete → vault-delete
+        // → free the slot bit (kept reserved until the vault delete completes;
+        // re-enable on engine-delete failure).
         let session = vault(io).key_session(key_id)?;
         let bulk_id = {
             let blob = self.vault_key(io, key_id)?;
             let bytes: &[u8] = blob;
-            // A bulk entry holds exactly the 2-byte handle; any other length
-            // is a corrupt entry.
             if bytes.len() != core::mem::size_of::<u16>() {
                 return Err(HsmError::InternalError);
             }
             u16::from_le_bytes([bytes[0], bytes[1]])
         };
+        let fp_id = AesBulk256KeyId::from_bits(bulk_id);
 
         vault(io).disable(key_id)?;
 
@@ -111,7 +109,9 @@ impl HsmVault for UnoHsmPal {
             return Err(e);
         }
 
-        vault(io).delete(self, io, key_id).await
+        vault(io).delete(self, io, key_id).await?;
+        fp_slot_free(fp_id.vault_id(), fp_id.key_index());
+        Ok(())
     }
 
     fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
@@ -129,20 +129,18 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        // Pre-validate every session-scoped bulk entry's stored handle so a
-        // corrupt one fails before we run DeleteSessionOnly / free the local
-        // bitmap.
+        // DeleteSessionOnly drops the session's bulk keys from the engine in
+        // one message.  Freeing the slot bits is a synchronous pass and
+        // `delete_by_session` never touches `FP_SLOTS`, so the release cannot
+        // race; a corrupt handle fails hard rather than leaking a bit.
         let sess = u16::from(session_id);
-        vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
-            if is_bulk_kind(kind) && blob.as_ref().len() != core::mem::size_of::<u16>() {
-                return Err(HsmError::InternalError);
-            }
-            Ok(())
-        })?;
         fp_delete_session_only(self, io, sess).await?;
         vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
             if is_bulk_kind(kind) {
                 let bytes: &[u8] = blob;
+                if bytes.len() != core::mem::size_of::<u16>() {
+                    return Err(HsmError::InternalError);
+                }
                 let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
                 fp_slot_free(id.vault_id(), id.key_index());
             }
@@ -152,16 +150,14 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
-        // Partition reset: the fast-path engine drops this partition's bulk
-        // keys as part of the accompanying function reset (its resource
-        // groups lose their owner), matching the reference firmware, which
-        // sends no per-key delete here.  Free the HSM-side slot bitmap for
-        // the partition's owned tables so they can be reused, then drop the
-        // vault entries.
+        // Partition reset: the engine drops this partition's bulk keys with
+        // the accompanying function reset (matching the reference firmware, no
+        // per-key delete here).  Clear the vault first, then free the slot
+        // bitmap so the bits stay reserved across the vault await.
         let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
+        vault(io).clear(self, io).await?;
         fp_slots_free_mask(res_mask);
-        let mut v = vault(io);
-        v.clear(self, io).await
+        Ok(())
     }
 
     fn vault_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
@@ -388,17 +384,17 @@ async fn fp_bulk_create(
         Ok(handle) => Ok(handle),
         Err(e) => {
             let _ = fp_bulk_delete(pal, io, bulk_id, fp_session_id, session_only).await;
+            fp_slot_free(vault_id, key_index);
             Err(e)
         }
     }
 }
 
-/// Delete a single bulk key from the fast-path engine and free its
-/// HSM-side slot.
+/// Delete a single bulk key from the fast-path engine.  The caller frees
+/// the HSM-side slot bit after its own vault mutation completes.
 ///
-/// `fp_session_id` / `session_only` must match the values the key was
-/// created with (the engine matches create against delete); callers read
-/// them back from the vault entry.
+/// `fp_session_id` / `session_only` must match the create values (the engine
+/// matches create against delete); callers read them from the vault entry.
 async fn fp_bulk_delete(
     pal: &UnoHsmPal,
     io: &impl HsmIo,
@@ -420,9 +416,7 @@ async fn fp_bulk_delete(
             .into_bits(),
         key_data: [0u8; FP_BULK_KEY_LEN],
     };
-    fp_send_key_update(pal, info).await?;
-    fp_slot_free(id.vault_id(), id.key_index());
-    Ok(())
+    fp_send_key_update(pal, info).await
 }
 
 /// Clear all of session `session_id`'s session-scoped bulk keys from the
