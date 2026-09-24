@@ -1,20 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Shared types and helpers for TBOR encoder fuzz targets.
+//! Shared types and helpers for TBOR fuzz targets.
 
 #![allow(dead_code)]
 
+use azihsm_ddi::*;
+use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
-use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
 use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
+use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
+
+pub type DdiTest = AzihsmDdi;
 
 /// Fuzz operations corresponding to the TOC builder methods on
 /// [`Encoder`].
@@ -44,6 +48,36 @@ pub const FUZZ_REQ_BUF_SIZE: usize =
 /// Buffer size used by response encoder fuzz targets.
 pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
+
+static mut DEVICE_DISPLAY: bool = false;
+
+pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
+    let ddi = DdiTest::default();
+    let dev_infos = ddi.dev_info_list();
+    if dev_infos.is_empty() {
+        panic!("No devices found");
+    }
+
+    let path = match std::env::var("FUZZ_DEVICE") {
+        Ok(path) => path,
+        Err(_) => dev_infos.first().unwrap().path.clone(),
+    };
+
+    // Display all device paths and the selected device path if it hasn't been
+    // displayed yet.
+    unsafe {
+        if !DEVICE_DISPLAY {
+            for dev_info in &dev_infos {
+                println!("Found device: {}", dev_info.path);
+            }
+            println!("Selected device: {}", path);
+            DEVICE_DISPLAY = true;
+        }
+    }
+
+    let mut dev = ddi.open_dev(&path).expect("Failed to open device");
+    test(&mut dev, &path);
+}
 
 /// Apply a sequence of TOC builder operations to an encoder, returning
 /// the encoded bytes on success or `None` if any step (including
