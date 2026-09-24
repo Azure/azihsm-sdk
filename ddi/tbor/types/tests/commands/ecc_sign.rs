@@ -18,42 +18,38 @@
 //! reverses the supplied wire-LE digest to big-endian before signing, so
 //! the host verifies against the reversed digest.
 
+#![cfg(feature = "emu")]
+
 use azihsm_crypto::EccAlgo;
-#[cfg(feature = "emu")]
 use azihsm_crypto::EccCurve;
-#[cfg(feature = "emu")]
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::EccPublicKey;
-#[cfg(feature = "emu")]
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Verifier;
+use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborEccSignReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
-#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
+use crate::commands::common::CO;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SESSION;
 #[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 #[cfg(feature = "emu")]
 use crate::commands::unwrap_key::unwrap;
 use crate::harness::bootstrap_rotated_co;
 use crate::harness::bootstrap_rotated_cu;
+use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
-
-/// `KeyScope::Session` discriminant.
-const SCOPE_SESSION: u8 = 0b001;
-/// `KeyScope::Local` discriminant.
-#[cfg(feature = "emu")]
-const SCOPE_LOCAL: u8 = 0b011;
 
 /// `KeyScope::Unspecified` discriminant.
 #[cfg(feature = "emu")]
@@ -216,6 +212,61 @@ fn ecc_sign_signature_rejects_different_digest() {
     );
 }
 
+/// Confirms distinct digest request values produce signatures bound to each digest.
+#[test]
+fn ecc_sign_distinct_digests_are_independently_verified() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let digest_a = vec![0x11; 32];
+    let digest_b = vec![0x22; 32];
+
+    let signature_a = sign(&ctx, session.session_id, masked_key.clone(), &digest_a);
+
+    let signature_b = sign(&ctx, session.session_id, masked_key, &digest_b);
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature_a, &digest_a),
+        "first signature must verify against its original digest",
+    );
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature_b, &digest_b),
+        "second signature must verify against its original digest",
+    );
+
+    assert!(
+        !verify_wire_ecdsa(&pub_key, &signature_a, &digest_b),
+        "first signature must not verify against the second digest",
+    );
+
+    assert!(
+        !verify_wire_ecdsa(&pub_key, &signature_b, &digest_a),
+        "second signature must not verify against the first digest",
+    );
+}
+
+/// Signs and verifies a digest containing zero-valued bytes.
+#[test]
+fn ecc_sign_digest_with_zero_bytes_roundtrip() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let mut digest = vec![0u8; 32];
+    digest[1] = 0xA5;
+    digest[15] = 0x5A;
+    digest[30] = 0xC3;
+
+    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature, &digest),
+        "digest containing zero bytes must survive the TBOR request unchanged",
+    );
+}
+
 /// Verifies P-521 signatures zero-fill the two wire-padding bytes per component.
 #[test]
 fn ecc_sign_p521_signature_padding_is_zero() {
@@ -283,9 +334,9 @@ fn ecc_sign_with_unwrapped_key_emu() {
     );
 }
 
-/// Rejects a digest whose length does not identify a supported SHA-2 algorithm.
+/// Rejects an empty digest because it does not identify a supported SHA-2 algorithm.
 #[test]
-fn ecc_sign_wrong_digest_len_rejected() {
+fn ecc_sign_empty_digest_rejected() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
@@ -294,10 +345,33 @@ fn ecc_sign_wrong_digest_len_rejected() {
         &TborEccSignReq {
             session_id: session.session_id,
             masked_key,
-            digest: vec![0xAB; 31],
+            digest: Vec::new(),
         },
         TborStatus::InvalidArg,
     );
+}
+
+/// Rejects digest lengths that do not identify a supported SHA-2 algorithm.
+#[test]
+fn ecc_sign_non_sha2_digest_lengths_rejected() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    // Use P-521 so all valid SHA-2 digest lengths fit the curve field.
+    // Any rejection here is therefore caused by the unsupported digest
+    // length rather than by the selected curve.
+    for digest_len in [1usize, 31, 33, 47, 49, 63] {
+        let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P521);
+
+        ctx.expect_fw_reject(
+            &TborEccSignReq {
+                session_id: session.session_id,
+                masked_key,
+                digest: vec![0xAB; digest_len],
+            },
+            TborStatus::InvalidArg,
+        );
+    }
 }
 
 /// Rejects the unsupported SHA-1 digest length.
@@ -452,4 +526,110 @@ fn ecc_sign_signature_rejects_different_public_key() {
         !verify_wire_ecdsa(&other_pub_key, &signature, &digest),
         "signature must not verify against a different public key",
     );
+}
+
+/// Rejects a session-scoped ECC private key from a replacement session.
+#[test]
+fn ecc_sign_session_scoped_key_rejected_in_different_session() {
+    let ctx = TestCtx::new();
+
+    let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let (masked_key, _) = generate(&ctx, session_a.session_id, ECC_CURVE_P256);
+
+    ctx.session_close(session_a.session_id)
+        .expect("close originating CO session");
+
+    let opts =
+        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("open replacement CO session");
+
+    let session_b = ctx
+        .session_open_finish(pending)
+        .expect("finish replacement CO session");
+
+    ctx.expect_fw_reject(
+        &TborEccSignReq {
+            session_id: session_b.session_id,
+            masked_key,
+            digest: vec![0x91; 32],
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+}
+
+/// Confirms changing one bit of the digest invalidates the signature.
+#[test]
+fn ecc_sign_signature_rejects_single_bit_digest_change() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let digest = vec![0xA5; 32];
+    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+
+    let mut modified_digest = digest.clone();
+    modified_digest[17] ^= 0x01;
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature, &digest),
+        "signature must verify against the original digest",
+    );
+
+    assert!(
+        !verify_wire_ecdsa(&pub_key, &signature, &modified_digest),
+        "changing one digest bit must invalidate the signature",
+    );
+}
+/// Signs and verifies an all-zero SHA-256 digest.
+#[test]
+fn ecc_sign_all_zero_digest_roundtrip() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let digest = vec![0u8; 32];
+    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature, &digest),
+        "an all-zero 32-byte digest must be signed and verified correctly",
+    );
+}
+/// Signs and verifies a SHA-256 digest containing all 0xFF bytes.
+#[test]
+fn ecc_sign_all_ones_digest_roundtrip() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    let digest = vec![0xFF; 32];
+    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+
+    assert!(
+        verify_wire_ecdsa(&pub_key, &signature, &digest),
+        "an all-0xFF digest must be signed and verified correctly",
+    );
+}
+
+/// Confirms the same masked ECC key can sign multiple digests.
+#[test]
+fn ecc_sign_masked_key_can_be_reused() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+
+    for value in [0x11u8, 0x22, 0x33] {
+        let digest = vec![value; 32];
+
+        let signature = sign(&ctx, session.session_id, masked_key.clone(), &digest);
+
+        assert!(
+            verify_wire_ecdsa(&pub_key, &signature, &digest),
+            "reused masked key must sign digest value {value:#04x}",
+        );
+    }
 }
