@@ -49,6 +49,8 @@ pub const FUZZ_REQ_BUF_SIZE: usize =
 pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
+static mut DEVICE_DISPLAY: bool = false;
+
 pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
     let ddi = DdiTest::default();
     let dev_infos = ddi.dev_info_list();
@@ -60,6 +62,18 @@ pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
         Ok(path) => path,
         Err(_) => dev_infos.first().unwrap().path.clone(),
     };
+
+    // Display all device paths and the selected device path if it hasn't been displayed yet.
+    unsafe {
+        if !DEVICE_DISPLAY {
+            for dev_info in &dev_infos {
+                println!("Found device: {}", dev_info.path);
+            }
+            println!("Selected device: {}", path);
+            DEVICE_DISPLAY = true;
+        }
+    }
+
     let mut dev = ddi.open_dev(&path).expect("Failed to open device");
     test(&mut dev, &path);
 }
