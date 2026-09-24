@@ -79,8 +79,13 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
             .await?;
     }
 
-    pal.hkdf_expand(io, algo, prk, body.info.as_deref(), out)
-        .await?;
+    if let Err(e) = pal
+        .hkdf_expand(io, algo, prk, body.info.as_deref(), out)
+        .await
+    {
+        out.zeroize();
+        return Err(e);
+    }
 
     // Commit the derived key: AES-GCM bulk keys are handed to the
     // bulk-crypto backend (the vault records only the returned

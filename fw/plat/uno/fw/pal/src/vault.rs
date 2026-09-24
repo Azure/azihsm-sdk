@@ -86,9 +86,9 @@ impl HsmVault for UnoHsmPal {
         }
 
         // Bulk keys are mirrored in the fast-path engine and keep only their
-        // 2-byte handle in the vault.  Disable → engine-delete → vault-delete
-        // → free the slot bit (kept reserved until the vault delete completes;
-        // re-enable on engine-delete failure).
+        // 2-byte handle in the vault.  Disable → engine-delete → free the slot
+        // bit → vault-delete, mirroring mainline which frees the backend slot
+        // before removing the vault entry (re-enable on engine-delete failure).
         let session = vault(io).key_session(key_id)?;
         let bulk_id = {
             let blob = self.vault_key(io, key_id)?;
@@ -109,9 +109,11 @@ impl HsmVault for UnoHsmPal {
             return Err(e);
         }
 
-        vault(io).delete(self, io, key_id).await?;
+        // FP key gone → free the slot, then drop the vault entry.  If the
+        // vault delete then fails, the slot state still matches the backend
+        // (both freed), so a retry can re-create cleanly.
         fp_slot_free(fp_id.vault_id(), fp_id.key_index());
-        Ok(())
+        vault(io).delete(self, io, key_id).await
     }
 
     fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
@@ -383,8 +385,14 @@ async fn fp_bulk_create(
     {
         Ok(handle) => Ok(handle),
         Err(e) => {
-            let _ = fp_bulk_delete(pal, io, bulk_id, fp_session_id, session_only).await;
-            fp_slot_free(vault_id, key_index);
+            // Only release the slot if the backend delete confirms the key is
+            // gone; otherwise keep it reserved so a live handle can't collide.
+            if fp_bulk_delete(pal, io, bulk_id, fp_session_id, session_only)
+                .await
+                .is_ok()
+            {
+                fp_slot_free(vault_id, key_index);
+            }
             Err(e)
         }
     }

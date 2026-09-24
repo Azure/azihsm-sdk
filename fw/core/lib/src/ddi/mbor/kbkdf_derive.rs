@@ -70,15 +70,20 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
 
     {
         let kdk = pal.vault_key(io, input_key_id)?;
-        pal.sp800_108_kdf(
-            io,
-            algo,
-            kdk,
-            body.label.as_deref(),
-            body.context.as_deref(),
-            out,
-        )
-        .await?;
+        if let Err(e) = pal
+            .sp800_108_kdf(
+                io,
+                algo,
+                kdk,
+                body.label.as_deref(),
+                body.context.as_deref(),
+                out,
+            )
+            .await
+        {
+            out.zeroize();
+            return Err(e);
+        }
     }
 
     // Commit the derived key: AES-GCM bulk keys are handed to the
