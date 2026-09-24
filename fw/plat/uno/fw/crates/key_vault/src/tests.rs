@@ -974,6 +974,7 @@ fn for_each_session_key_matches_only_target_session() {
         let mut arr = [0u8; 32];
         arr.copy_from_slice(bytes);
         seen.push((kid, kind, arr));
+        Ok(())
     })
     .unwrap();
 
@@ -996,7 +997,11 @@ fn for_each_session_key_skips_free_slots() {
     block_on(v.delete(&g, &io, sess)).unwrap();
 
     let mut count = 0usize;
-    v.for_each_session_key(5, |_, _, _| count += 1).unwrap();
+    v.for_each_session_key(5, |_, _, _| {
+        count += 1;
+        Ok(())
+    })
+    .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -1023,4 +1028,27 @@ fn key_session_reports_session_binding() {
 
     assert_eq!(v.key_session(app).unwrap(), None);
     assert_eq!(v.key_session(sess).unwrap(), Some(11));
+}
+
+#[test]
+fn for_each_session_key_propagates_visitor_error() {
+    // A visitor error short-circuits the walk and is surfaced to the
+    // caller so teardown paths can pre-validate handles and fail before
+    // dropping the only local record of a corrupt entry.
+    let (mut v, g, io) = vault::<1>();
+    let _s1 = with_key(&[0xC1u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(3), aes_attrs())).unwrap()
+    });
+    let _s2 = with_key(&[0xC2u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(3), aes_attrs())).unwrap()
+    });
+    let mut seen = 0usize;
+    let err = v
+        .for_each_session_key(3, |_, _, _| {
+            seen += 1;
+            Err(HsmError::InternalError)
+        })
+        .unwrap_err();
+    assert_eq!(err, HsmError::InternalError);
+    assert_eq!(seen, 1, "walk short-circuits on the first visitor error");
 }

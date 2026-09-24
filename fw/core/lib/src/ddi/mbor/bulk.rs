@@ -34,8 +34,9 @@ pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
 /// [`bulk_key_id`](HsmVault::bulk_key_id).  For bulk kinds the Uno PAL's
 /// `vault_key_create` performs the backend roundtrip and stores only the
 /// opaque handle, so `bulk_key_id` returns `Some`; ordinary keys store
-/// their material and return `None`.  This keeps all platform-specific
-/// bulk handling below the PAL trait boundary.
+/// their material and return `None`.  A bulk kind that produces no id
+/// (backend-less platform) rolls back the vault entry and returns
+/// `UnsupportedCmd`.
 pub(crate) async fn commit_key<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -54,5 +55,9 @@ pub(crate) async fn commit_key<P: HsmPal>(
         )
         .await?;
     let bulk_key_id = pal.bulk_key_id(io, handle)?;
+    if is_gcm_bulk(kind) && bulk_key_id.is_none() {
+        let _ = pal.vault_key_delete(io, handle).await;
+        return Err(HsmError::UnsupportedCmd);
+    }
     Ok((handle, bulk_key_id))
 }

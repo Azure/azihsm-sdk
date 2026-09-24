@@ -7,7 +7,7 @@
 //! 192 / 256 bits) or an AES-256-GCM bulk key, persist it in the
 //! partition vault — optionally session-scoped so it is torn down by
 //! [`CloseSession`](super::close_session) — and return the assigned
-//! `key_id` plus an masked-key envelope that the host may re-import on
+//! `key_id` plus a masked-key envelope that the host may re-import on
 //! a future session.
 //!
 //! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)

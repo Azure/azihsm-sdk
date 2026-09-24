@@ -129,20 +129,24 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        // Session teardown: a single DeleteSessionOnly clears the session's
-        // bulk keys on the fast-path engine (matched by session id + app id;
-        // a no-op when the session owns none), then reclaim their HSM-side
-        // slot bitmap, then drop the vault entries.
+        // Pre-validate every session-scoped bulk entry's stored handle so a
+        // corrupt one fails before we run DeleteSessionOnly / free the local
+        // bitmap.
         let sess = u16::from(session_id);
+        vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
+            if is_bulk_kind(kind) && blob.as_ref().len() != core::mem::size_of::<u16>() {
+                return Err(HsmError::InternalError);
+            }
+            Ok(())
+        })?;
         fp_delete_session_only(self, io, sess).await?;
         vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
             if is_bulk_kind(kind) {
                 let bytes: &[u8] = blob;
-                if bytes.len() == core::mem::size_of::<u16>() {
-                    let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
-                    fp_slot_free(id.vault_id(), id.key_index());
-                }
+                let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
+                fp_slot_free(id.vault_id(), id.key_index());
             }
+            Ok(())
         })?;
         vault(io).delete_by_session(self, io, sess).await
     }

@@ -297,7 +297,7 @@ impl<S: TableStorage> KeyVault<S> {
     /// mirror of a key (e.g. a bulk-crypto engine slot, addressed by the
     /// stored handle) before the vault entries are dropped by
     /// [`delete_by_session`](Self::delete_by_session).
-    pub fn for_each_session_key<F: FnMut(HsmKeyId, HsmVaultKeyKind, &DmaBuf)>(
+    pub fn for_each_session_key<F: FnMut(HsmKeyId, HsmVaultKeyKind, &DmaBuf) -> HsmResult<()>>(
         &self,
         session: u16,
         mut f: F,
@@ -311,7 +311,7 @@ impl<S: TableStorage> KeyVault<S> {
                 if !entry.is_free() && entry.session() && entry.session_or_tag() == session {
                     let key_id = make_key_id(table, slot);
                     let blob = self.key(key_id)?;
-                    f(key_id, entry.kind(), blob);
+                    f(key_id, entry.kind(), blob)?;
                 }
             }
         }
