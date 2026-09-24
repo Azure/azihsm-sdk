@@ -45,6 +45,43 @@ pub const KEY_CLASS_HMAC_SHA384: u8 = 5;
 /// `KeyClass` discriminant for a variable-length HMAC-SHA-512 key.
 pub const KEY_CLASS_HMAC_SHA512: u8 = 6;
 
+/// `HsmVaultKeyKind::Rsa2kPrivate` response discriminant.
+pub const KEY_KIND_RSA2K_PRIVATE: u8 = 4;
+/// `HsmVaultKeyKind::Rsa3kPrivate` response discriminant.
+pub const KEY_KIND_RSA3K_PRIVATE: u8 = 5;
+/// `HsmVaultKeyKind::Rsa4kPrivate` response discriminant.
+pub const KEY_KIND_RSA4K_PRIVATE: u8 = 6;
+/// `HsmVaultKeyKind::Rsa2kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA2K_PRIVATE_CRT: u8 = 7;
+/// `HsmVaultKeyKind::Rsa3kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA3K_PRIVATE_CRT: u8 = 8;
+/// `HsmVaultKeyKind::Rsa4kPrivateCrt` response discriminant.
+pub const KEY_KIND_RSA4K_PRIVATE_CRT: u8 = 9;
+/// `HsmVaultKeyKind::Ecc256Private` response discriminant.
+pub const KEY_KIND_ECC256_PRIVATE: u8 = 13;
+/// `HsmVaultKeyKind::Ecc384Private` response discriminant.
+pub const KEY_KIND_ECC384_PRIVATE: u8 = 14;
+/// `HsmVaultKeyKind::Ecc521Private` response discriminant.
+pub const KEY_KIND_ECC521_PRIVATE: u8 = 15;
+/// `HsmVaultKeyKind::Aes128` response discriminant.
+pub const KEY_KIND_AES128: u8 = 16;
+/// `HsmVaultKeyKind::Aes192` response discriminant.
+pub const KEY_KIND_AES192: u8 = 17;
+/// `HsmVaultKeyKind::Aes256` response discriminant.
+pub const KEY_KIND_AES256: u8 = 18;
+/// `HsmVaultKeyKind::Secret256` discriminant.
+pub const KEY_KIND_SECRET256: u8 = 22;
+/// `HsmVaultKeyKind::Secret384` discriminant.
+pub const KEY_KIND_SECRET384: u8 = 23;
+/// `HsmVaultKeyKind::Secret521` discriminant.
+pub const KEY_KIND_SECRET521: u8 = 24;
+/// `HsmVaultKeyKind::VarLenHmacSha256` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA256: u8 = 32;
+/// `HsmVaultKeyKind::VarLenHmacSha384` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA384: u8 = 33;
+/// `HsmVaultKeyKind::VarLenHmacSha512` response discriminant.
+pub const KEY_KIND_VAR_LEN_HMAC_SHA512: u8 = 34;
+
 /// `KeyUsage` bit: key may encrypt.
 pub const KEY_USAGE_ENCRYPT: u64 = 1 << 0;
 /// `KeyUsage` bit: key may decrypt.
@@ -85,6 +122,11 @@ pub struct TborUnwrapKeyReq {
     /// The RSA-AES-wrapped key (`RSA-OAEP(KEK) ‖ AES-KWP(key)`).
     #[tbor(max_len = 3072)]
     pub wrapped_blob: Vec<u8>,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to 128 bytes. Empty for an unlabeled key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `UnwrapKey` response.
@@ -119,6 +161,7 @@ mod tests {
             key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
             oaep_hash_algo: 1,
             wrapped_blob: alloc::vec![0x5Au8; 300],
+            key_label: b"imported-key".to_vec(),
         };
         let mut buf = [0u8; 4096];
         let frame = req.encode_request(&mut buf).expect("encode");

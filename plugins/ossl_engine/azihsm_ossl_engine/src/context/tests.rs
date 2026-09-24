@@ -99,12 +99,17 @@ fn evp_digest_sign(pkey: *mut ffi::EVP_PKEY, msg: &[u8], md: *const ffi::EVP_MD)
 mod round_trips {
     use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccKeyGenAlgo;
+    #[cfg(feature = "mock")]
     use azihsm_api::HsmEccPrivateKey;
+    use azihsm_api::HsmGenericSecretKeyUnmaskAlgo;
+    use azihsm_api::HsmHmacAlgo;
+    use azihsm_api::HsmHmacKeyUnmaskAlgo;
     use azihsm_api::HsmKeyClass;
     use azihsm_api::HsmKeyCommonProps;
     use azihsm_api::HsmKeyKind;
     use azihsm_api::HsmKeyManager;
     use azihsm_api::HsmKeyPropsBuilder;
+    use azihsm_api::HsmSigner;
     use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
@@ -117,7 +122,9 @@ mod round_trips {
     use super::*;
 
     /// Generate a persistent EC P-384 signing key pair on the open HSM and
-    /// return the private-key handle.
+    /// return the private-key handle. Only the mock-only deletion tests take a
+    /// live handle; the curve round trips use [`generate_masked`] instead.
+    #[cfg(feature = "mock")]
     pub(super) fn generate_p384_key(data: &EngineData) -> EngineResult<HsmEccPrivateKey> {
         data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
@@ -143,33 +150,91 @@ mod round_trips {
         })
     }
 
-    /// Generate a persistent EC P-384 key pair on the open HSM and return its
-    /// masked blob plus the public-key DER. The generator handle is deleted
-    /// after export (the blob unmasks into a fresh handle later).
-    fn generate_masked_p384(data: &EngineData) -> EngineResult<(Vec<u8>, Vec<u8>)> {
-        let key = generate_p384_key(data)?;
-        let masked = key
-            .masked_key_vec()
-            .map_err(|e| EngineError::wrap("export masked key", e));
-        let der = key
-            .pub_key_der_vec()
-            .map_err(|e| EngineError::wrap("read public key DER", e));
-        crate::context::delete_hsm_key(key, "test generator key");
-        Ok((masked?, der?))
+    /// All curves the SDK supports; the round trips below run once per curve.
+    pub(super) const CURVES: [HsmEccCurve; 3] =
+        [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521];
+
+    /// Short tag for file names and messages.
+    fn curve_tag(curve: HsmEccCurve) -> &'static str {
+        match curve {
+            HsmEccCurve::P256 => "p256",
+            HsmEccCurve::P384 => "p384",
+            HsmEccCurve::P521 => "p521",
+        }
+    }
+
+    /// The conventional digest pairing for `curve`, as the raw `EVP_MD` (for
+    /// `EVP_DigestSign*`) and the `openssl` crate's `MessageDigest` (for the
+    /// software `Verifier`).
+    #[allow(unsafe_code)]
+    fn curve_md(curve: HsmEccCurve) -> (*const ffi::EVP_MD, MessageDigest) {
+        // SAFETY: the EVP_sha* accessors return process-lifetime constants.
+        unsafe {
+            match curve {
+                HsmEccCurve::P256 => (ffi::EVP_sha256(), MessageDigest::sha256()),
+                HsmEccCurve::P384 => (ffi::EVP_sha384(), MessageDigest::sha384()),
+                HsmEccCurve::P521 => (ffi::EVP_sha512(), MessageDigest::sha512()),
+            }
+        }
+    }
+
+    /// Generate a persistent EC key pair on `curve` on the open HSM and return
+    /// its masked blob plus the public-key DER. The generator handle is deleted
+    /// after export (the blob unmasks into a fresh handle later); device-resident
+    /// keys are not deleted on drop, so a leak would accumulate across runs.
+    fn generate_masked(data: &EngineData, curve: HsmEccCurve) -> EngineResult<(Vec<u8>, Vec<u8>)> {
+        data.with_session(|session| {
+            let priv_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Private)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(curve)
+                .is_session(false)
+                .can_sign(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build private key props", e))?;
+            let pub_props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Public)
+                .key_kind(HsmKeyKind::Ecc)
+                .ecc_curve(curve)
+                .is_session(false)
+                .can_verify(true)
+                .build()
+                .map_err(|e| EngineError::wrap("build public key props", e))?;
+            let mut algo = HsmEccKeyGenAlgo::default();
+            let (priv_key, _pub) =
+                HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+                    .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
+            let masked = priv_key
+                .masked_key_vec()
+                .map_err(|e| EngineError::wrap("export masked key", e));
+            let der = priv_key
+                .pub_key_der_vec()
+                .map_err(|e| EngineError::wrap("read public key DER", e));
+            crate::context::delete_hsm_key(priv_key, "test generator key");
+            Ok((masked?, der?))
+        })
     }
 
     /// A transient masked-blob path for a round trip (removed by the caller).
     fn blob_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("engine-roundtrip-{tag}-{}.bin", std::process::id()))
+        // A per-call counter keeps every path unique within the process, so two
+        // concurrent tests reaching the same curve (e.g. the P-384 sign smokes)
+        // cannot clobber each other's blob between writing and loading it.
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "engine-roundtrip-{tag}-{}-{n}.bin",
+            std::process::id()
+        ))
     }
 
-    /// Generate a key on `data`'s HSM, load it back through the engine, and
-    /// verify the returned public key matches. Backend-agnostic: the caller
-    /// opens `data` against the mock or a real device.
+    /// Generate a key on `curve` on `data`'s HSM, load it back through the
+    /// engine, and verify the returned public key matches. Backend-agnostic:
+    /// the caller opens `data` against the mock or a real device.
     #[allow(unsafe_code)]
-    pub(super) fn run_load(data: &EngineData) -> EngineResult<()> {
-        let (masked, expected_pub_der) = generate_masked_p384(data)?;
-        let path = blob_path("load");
+    pub(super) fn run_load(data: &EngineData, curve: HsmEccCurve) -> EngineResult<()> {
+        let (masked, expected_pub_der) = generate_masked(data, curve)?;
+        let path = blob_path(&format!("load-{}", curve_tag(curve)));
         let _ = std::fs::remove_file(&path);
         write_key_material(&path, &masked)
             .map_err(|e| EngineError::wrap(format!("write masked blob {}", path.display()), e))?;
@@ -193,13 +258,26 @@ mod round_trips {
         Ok(())
     }
 
-    /// Generate a key on `data`'s HSM, load it back through the engine, sign a
-    /// digest through it (HSM `sign_sig` via `EVP_DigestSign*`), and verify the
-    /// signature against the public half in software. Backend-agnostic.
+    /// Generate a key on `curve` on `data`'s HSM, load it back through the
+    /// engine, sign a digest through it (HSM `sign_sig` via `EVP_DigestSign*`,
+    /// using the curve's conventional digest), and verify the signature against
+    /// the public half in software. Backend-agnostic.
+    pub(super) fn run_sign(data: &EngineData, curve: HsmEccCurve) -> EngineResult<()> {
+        let (evp_md, verifier_md) = curve_md(curve);
+        run_sign_with_md(data, curve, evp_md, verifier_md)
+    }
+
+    /// [`run_sign`] with an explicit digest, so a digest/curve mismatch (e.g. a
+    /// digest longer than the curve order) can be exercised deliberately.
     #[allow(unsafe_code)]
-    pub(super) fn run_sign(data: &EngineData) -> EngineResult<()> {
-        let (masked, expected_pub_der) = generate_masked_p384(data)?;
-        let path = blob_path("sign");
+    pub(super) fn run_sign_with_md(
+        data: &EngineData,
+        curve: HsmEccCurve,
+        evp_md: *const ffi::EVP_MD,
+        verifier_md: MessageDigest,
+    ) -> EngineResult<()> {
+        let (masked, expected_pub_der) = generate_masked(data, curve)?;
+        let path = blob_path(&format!("sign-{}", curve_tag(curve)));
         let _ = std::fs::remove_file(&path);
         write_key_material(&path, &masked)
             .map_err(|e| EngineError::wrap(format!("write masked blob {}", path.display()), e))?;
@@ -210,15 +288,14 @@ mod round_trips {
         assert!(!raw.is_null(), "load_key returned a NULL EVP_PKEY");
 
         let msg = b"engine ecdsa signing over the EVP/ABI path";
-        // SAFETY: EVP_sha384 returns a process-lifetime constant.
-        let sig = evp_digest_sign(raw, msg, unsafe { ffi::EVP_sha384() });
+        let sig = evp_digest_sign(raw, msg, evp_md);
         assert!(!sig.is_empty(), "engine produced an empty signature");
         // SAFETY: raw is an owning *mut EVP_PKEY returned by load_key.
         let loaded: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
 
         let pubkey = PKey::public_key_from_der(&expected_pub_der)
             .map_err(|e| EngineError::wrap("parse public key", e))?;
-        let mut verifier = Verifier::new(MessageDigest::sha384(), &pubkey)
+        let mut verifier = Verifier::new(verifier_md, &pubkey)
             .map_err(|e| EngineError::wrap("init verifier", e))?;
         verifier
             .update(msg)
@@ -247,7 +324,343 @@ mod round_trips {
             crate::keygen::AzihsmEcKeygen,
             crate::derive::AzihsmEcDerive,
         >(&engine)?;
+        azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
+            &engine,
+        )?;
         Ok((engine, engine_raw))
+    }
+
+    /// Run an HKDF derive on a `NID_hkdf` context against `engine_raw` with
+    /// the given ctrl-string options. Returns the output bytes, or the
+    /// OpenSSL error text if an option or the derive is rejected.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn try_hkdf(
+        engine_raw: *mut ffi::ENGINE,
+        opts: &[(&str, &str)],
+        len_hint: Option<usize>,
+    ) -> Result<Vec<u8>, String> {
+        use std::ffi::CString;
+        use std::ffi::c_int;
+
+        // SAFETY: standard NID_hkdf derive sequence; ctx freed on all paths.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as c_int, engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
+            assert_eq!(ffi::EVP_PKEY_derive_init(ctx), 1, "EVP_PKEY_derive_init");
+            for (k, v) in opts {
+                let key = CString::new(*k).unwrap();
+                let value = CString::new(*v).unwrap();
+                if ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()) != 1 {
+                    let err = openssl::error::ErrorStack::get().to_string();
+                    ffi::EVP_PKEY_CTX_free(ctx);
+                    return Err(format!("option {k} rejected: {err}"));
+                }
+            }
+            // The built-in HKDF has no size query (pkeyutl requires -kdflen),
+            // so software-path callers pass the length; armed callers query.
+            let mut len = match len_hint {
+                Some(n) => n,
+                None => {
+                    let mut len = 0usize;
+                    if ffi::EVP_PKEY_derive(ctx, std::ptr::null_mut(), &mut len) != 1 {
+                        let err = openssl::error::ErrorStack::get().to_string();
+                        ffi::EVP_PKEY_CTX_free(ctx);
+                        return Err(format!("size query failed: {err}"));
+                    }
+                    len
+                }
+            };
+            let mut buf = vec![0u8; len.max(1)];
+            let rc = ffi::EVP_PKEY_derive(ctx, buf.as_mut_ptr(), &mut len);
+            ffi::EVP_PKEY_CTX_free(ctx);
+            if rc != 1 {
+                return Err(openssl::error::ErrorStack::get().to_string());
+            }
+            buf.truncate(len);
+            Ok(buf)
+        }
+    }
+
+    /// Chained ECDH → HKDF round trip: derive a masked shared secret with a
+    /// keyAgreement key, then HKDF it into masked AES and HMAC keys, in
+    /// buffer, file-IKM and output_file modes. Negatives pin the parameter
+    /// validation.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_hkdf(data: EngineData, dir: &Path) -> EngineResult<()> {
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // ECDH: keyAgreement key + software peer → masked shared secret.
+        let agree_blob = dir.join(format!("hkdf-agree-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&agree_blob);
+        let raw = try_armed_keygen(
+            engine_raw,
+            "P-384",
+            &agree_blob,
+            &[("azihsm.key_usage", "keyAgreement")],
+        )
+        .map_err(|e| EngineError::Other(format!("keyAgreement keygen failed: {e}")))?;
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let peer = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let secret_blob = derive_masked(engine_raw, raw, peer.as_ptr().cast(), None);
+        assert!(!secret_blob.is_empty(), "no shared-secret blob");
+        let ikm_path = dir.join(format!("hkdf-ikm-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&ikm_path);
+        write_key_material(&ikm_path, &secret_blob)
+            .map_err(|e| EngineError::wrap(format!("write IKM blob {}", ikm_path.display()), e))?;
+
+        // HMAC-kind derived key, IKM by file, blob to buffer.
+        let ikm = ikm_path.to_str().unwrap();
+        let hmac_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA384"),
+                ("salt", "test-salt"),
+                ("info", "engine-hkdf"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "384"),
+            ],
+            None,
+        )
+        .expect("hmac-kind HKDF failed");
+        assert!(!hmac_blob.is_empty(), "empty hmac-kind blob");
+
+        // AES-kind derived key with defaults (type aes, 256 bits).
+        let aes_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect("aes-kind HKDF failed");
+        assert!(!aes_blob.is_empty(), "empty aes-kind blob");
+
+        // No md: defaults to SHA-256 for provider parity. An hmac derive with
+        // neither md nor derived_key_bits must succeed as HMAC-SHA256/256 — this
+        // only holds if the default digest is SHA-256, since HMAC bits must match
+        // the digest size (a different default would mismatch the 256-bit default).
+        let default_md_blob = try_hkdf(
+            engine_raw,
+            &[("azihsm.ikm_file", ikm), ("derived_key_type", "hmac")],
+            None,
+        )
+        .expect("HKDF with the default md (SHA-256) failed");
+        assert!(!default_md_blob.is_empty(), "empty default-md blob");
+
+        // Armed in-memory IKM: the masked shared secret as hexkey bytes.
+        let hex_ikm: String = secret_blob.iter().map(|b| format!("{b:02x}")).collect();
+        let mem_blob = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("hexkey", hex_ikm.as_str()),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect("hexkey-armed HKDF failed");
+        assert!(!mem_blob.is_empty(), "empty blob from in-memory IKM");
+
+        // key/hexkey and azihsm.ikm_file are mutually exclusive.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("hexkey", hex_ikm.as_str()),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "aes"),
+            ],
+            None,
+        )
+        .expect_err("both IKM sources must fail");
+        assert!(
+            err.contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
+
+        // Only extract-and-expand is supported armed; each other mode is
+        // accepted as a ctrl but rejected at derive time.
+        for bad_mode in ["EXTRACT_ONLY", "EXPAND_ONLY"] {
+            let err = try_hkdf(
+                engine_raw,
+                &[
+                    ("md", "SHA256"),
+                    ("azihsm.ikm_file", ikm),
+                    ("derived_key_type", "aes"),
+                    ("mode", bad_mode),
+                ],
+                None,
+            )
+            .expect_err("non-default HKDF mode must be rejected");
+            assert!(
+                err.contains("extract-and-expand"),
+                "unexpected error for mode {bad_mode}: {err}"
+            );
+        }
+
+        // output_file mode: blob to disk, nothing in the buffer.
+        let out = dir.join(format!("hkdf-derived-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let returned = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "256"),
+                ("output_file", out.to_str().unwrap()),
+            ],
+            None,
+        )
+        .expect("output_file HKDF failed");
+        assert!(returned.is_empty(), "file mode must return no bytes");
+        assert!(
+            std::fs::metadata(&out)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false),
+            "derived blob not written"
+        );
+
+        // Negatives: hmac bits must be a SHA-2 size; md is required; an armed
+        // ctx without any IKM is rejected.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "128"),
+            ],
+            None,
+        )
+        .expect_err("hmac/128 must fail");
+        assert!(
+            err.contains("must match the HKDF digest size"),
+            "unexpected error: {err}"
+        );
+        // Digest/bits mismatch: the HMAC kind follows md, so SHA-256 with
+        // 384-bit keys must be rejected.
+        let err = try_hkdf(
+            engine_raw,
+            &[
+                ("md", "SHA256"),
+                ("azihsm.ikm_file", ikm),
+                ("derived_key_type", "hmac"),
+                ("derived_key_bits", "384"),
+            ],
+            None,
+        )
+        .expect_err("md/bits mismatch must fail");
+        assert!(
+            err.contains("must match the HKDF digest size"),
+            "unexpected error: {err}"
+        );
+        // (Missing md is no longer an error: it defaults to SHA-256 for provider
+        // parity — covered by the default-md derive above.)
+        let err = try_hkdf(
+            engine_raw,
+            &[("md", "SHA256"), ("derived_key_type", "aes")],
+            None,
+        )
+        .expect_err("missing IKM must fail");
+        assert!(err.contains("requires an IKM"), "unexpected error: {err}");
+
+        // The blobs' properties are the observable contract: unmask each and
+        // check kind, size and usage flags; prove the HMAC key signs.
+        let data = slot
+            .get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?;
+        data.with_session(|session| {
+            let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+            let k = HsmKeyManager::unmask_key(session, &mut unmask, &hmac_blob)
+                .map_err(|e| EngineError::wrap("unmask hmac blob", e))?;
+            assert_eq!(k.kind(), HsmKeyKind::HmacSha384, "hmac kind follows md");
+            assert_eq!(k.bits(), 384);
+            assert!(k.can_sign() && k.can_verify(), "hmac usage flags");
+            crate::context::delete_hsm_key(k, "hkdf test hmac props key");
+
+            let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+            let k = HsmKeyManager::unmask_key(session, &mut unmask, &aes_blob)
+                .map_err(|e| EngineError::wrap("unmask aes blob", e))?;
+            assert_eq!(k.kind(), HsmKeyKind::Aes);
+            assert_eq!(k.bits(), 256);
+            assert!(k.can_encrypt() && k.can_decrypt(), "aes usage flags");
+            crate::context::delete_hsm_key(k, "hkdf test aes props key");
+
+            // Usability: the derived key produces an HMAC tag of the digest
+            // size.
+            let mut unmask = HsmHmacKeyUnmaskAlgo::default();
+            let hk = HsmKeyManager::unmask_key(session, &mut unmask, &hmac_blob)
+                .map_err(|e| EngineError::wrap("unmask hmac key", e))?;
+            let mut algo = HsmHmacAlgo::new();
+            let tag = HsmSigner::sign_vec(&mut algo, &hk, b"hkdf playground tag");
+            crate::context::delete_hsm_key(hk, "hkdf test hmac sign key");
+            let tag = tag.map_err(|e| EngineError::wrap("hmac sign", e))?;
+            assert_eq!(tag.len(), 48, "hmac-sha384 tag size");
+            Ok(())
+        })?;
+
+        // Matrix coverage: derive across digests (HMAC kind follows the digest)
+        // and AES key sizes, unmask each and confirm the kind and bit length.
+        // SHA-384/HMAC and AES-256 are already covered above.
+        //
+        // Each derive is driven through the engine (try_hkdf → EVP_PKEY_derive
+        // → the handler's own with_session), so the blobs are collected first
+        // and unmasked afterwards: unmasking inside a with_session that also
+        // drove a derive would re-enter the session lock and deadlock.
+        let matrix = [
+            ("SHA256", "hmac", 256u32, HsmKeyKind::HmacSha256),
+            ("SHA512", "hmac", 512, HsmKeyKind::HmacSha512),
+            ("SHA256", "aes", 128, HsmKeyKind::Aes),
+            ("SHA256", "aes", 192, HsmKeyKind::Aes),
+        ];
+        let mut derived = Vec::new();
+        for (md, ktype, bits, kind) in matrix {
+            let bits_s = bits.to_string();
+            let blob = try_hkdf(
+                engine_raw,
+                &[
+                    ("md", md),
+                    ("azihsm.ikm_file", ikm),
+                    ("derived_key_type", ktype),
+                    ("derived_key_bits", bits_s.as_str()),
+                ],
+                None,
+            )
+            .map_err(|e| EngineError::Other(format!("hkdf {md}/{ktype}/{bits} failed: {e}")))?;
+            assert!(!blob.is_empty(), "empty {ktype}/{bits} blob");
+            derived.push((blob, bits, kind, md, ktype));
+        }
+        data.with_session(|session| {
+            for (blob, bits, kind, md, ktype) in &derived {
+                let mut unmask = HsmGenericSecretKeyUnmaskAlgo::default();
+                let k = HsmKeyManager::unmask_key(session, &mut unmask, blob)
+                    .map_err(|e| EngineError::wrap("unmask matrix blob", e))?;
+                assert_eq!(k.kind(), *kind, "kind for {md}/{ktype}/{bits}");
+                assert_eq!(k.bits(), *bits, "bits for {md}/{ktype}/{bits}");
+                crate::context::delete_hsm_key(k, "hkdf matrix key");
+            }
+            Ok(())
+        })?;
+
+        // Teardown (see run_keygen for the release ordering contract).
+        // SAFETY: raw is the owning key from keygen.
+        let agreed: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        drop(agreed);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        for p in [&agree_blob, &ikm_path, &out] {
+            let _ = std::fs::remove_file(p);
+        }
+        Ok(())
     }
 
     /// Derive through `EVP_PKEY_derive` against our engine: returns the masked
@@ -429,7 +842,7 @@ mod round_trips {
         let _ = slot.take(&mut engine)?;
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         let _ = std::fs::remove_file(&blob_path);
         let _ = std::fs::remove_file(&out);
         Ok(())
@@ -629,7 +1042,7 @@ mod round_trips {
         unsafe { ffi::ENGINE_free(engine_raw) };
         // The framework freed this engine's pkey method during ENGINE_free;
         // drop the stale table entry (address-only, nothing dereferenced).
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         let _ = std::fs::remove_file(&blob_path);
         Ok(())
     }
@@ -644,11 +1057,13 @@ mod mock {
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
+    use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccPrivateKey;
     use azihsm_api::HsmEccSignAlgo;
     use azihsm_api::HsmSigner;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
+    use openssl::hash::MessageDigest;
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
     use serial_test::serial;
@@ -747,7 +1162,9 @@ mod mock {
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        round_trips::run_load(&data).unwrap();
+        for curve in round_trips::CURVES {
+            round_trips::run_load(&data, curve).unwrap();
+        }
     }
 
     /// Whether `key` can still sign on the device — the observation channel
@@ -829,7 +1246,31 @@ mod mock {
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        round_trips::run_sign(&data).unwrap();
+        for curve in round_trips::CURVES {
+            round_trips::run_sign(&data, curve).unwrap();
+        }
+    }
+
+    // A digest longer than the curve order (SHA-512 over P-384, 64 > 48
+    // bytes): software OpenSSL truncates the digest per the ECDSA spec, and the
+    // HSM must agree — the signature it produces must verify in software with
+    // the same digest. Pins the behavior so a firmware change breaking the
+    // truncation convention is caught.
+    #[test]
+    #[serial]
+    #[allow(unsafe_code)]
+    fn sign_with_digest_longer_than_curve_order_verifies() {
+        let scratch = Scratch::new("digestlen");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        // SAFETY: EVP_sha512 returns a process-lifetime constant.
+        let md = unsafe { ffi::EVP_sha512() };
+        round_trips::run_sign_with_md(&data, HsmEccCurve::P384, md, MessageDigest::sha512())
+            .unwrap();
     }
 
     // Generate keys on the HSM through the real EVP_PKEY_keygen path — the
@@ -867,6 +1308,58 @@ mod mock {
             .unwrap();
             round_trips::run_derive(data, &scratch.0, curve).unwrap();
         }
+    }
+
+    // Chained ECDH → HKDF: masked shared secret in, masked AES/HMAC keys
+    // out, in all modes, plus the parameter negatives (see
+    // round_trips::run_hkdf).
+    #[test]
+    #[serial]
+    fn hkdf_via_pkey_method_derives_masked_keys() {
+        let scratch = Scratch::new("hkdf");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_hkdf(data, &scratch.0).unwrap();
+    }
+
+    // An unarmed NID_hkdf context resolved through the engine must match the
+    // built-in software HKDF byte-for-byte.
+    #[test]
+    #[serial]
+    fn software_hkdf_delegates_unchanged() {
+        let scratch = Scratch::new("hkdf-sw");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
+
+        let opts = [
+            ("md", "SHA256"),
+            // Colon-delimited: OpenSSL's hex grammar must be accepted.
+            ("hexkey", "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff"),
+            ("salt", "pepper"),
+            ("info", "context"),
+        ];
+        let via_engine = round_trips::try_hkdf(engine_raw, &opts, Some(42)).unwrap();
+        let builtin = round_trips::try_hkdf(std::ptr::null_mut(), &opts, Some(42)).unwrap();
+        assert_eq!(via_engine.len(), 42);
+        assert_eq!(via_engine, builtin, "software HKDF must be unchanged");
+
+        let slot = crate::engine_impl::engine_data_slot().unwrap();
+        let _ = slot.take(&mut engine).unwrap();
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        #[allow(unsafe_code)]
+        unsafe {
+            ffi::ENGINE_free(engine_raw)
+        };
     }
 
     // With the engine's ASN1 method globally registered, plain software EC
@@ -932,7 +1425,7 @@ mod mock {
 
         let slot = crate::engine_impl::engine_data_slot().unwrap();
         let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
@@ -963,7 +1456,7 @@ mod mock {
 
         let slot = crate::engine_impl::engine_data_slot().unwrap();
         let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_ec_pkey_method(&engine);
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
@@ -1045,6 +1538,9 @@ mod mock {
 /// ```
 #[cfg(all(test, not(feature = "mock")))]
 mod hw_tests {
+    use azihsm_api::HsmEccCurve;
+    use openssl::hash::MessageDigest;
+
     use super::*;
 
     #[test]
@@ -1059,7 +1555,8 @@ mod hw_tests {
         Ok(())
     }
 
-    /// Hardware key-loading round trip against a real device — the same flow
+    /// Hardware key-loading round trips against a real device, one per
+    /// supported curve — the same flow
     /// `mock::load_ec_key_round_trips_through_engine` runs on the mock (see
     /// [`super::round_trips::run_load`]).
     ///
@@ -1073,10 +1570,14 @@ mod hw_tests {
     fn load_ec_key_from_env_smoke() -> EngineResult<()> {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
-        round_trips::run_load(&data)
+        for curve in round_trips::CURVES {
+            round_trips::run_load(&data, curve)?;
+        }
+        Ok(())
     }
 
-    /// Hardware ECDSA signing round trip against a real device — the same flow
+    /// Hardware ECDSA signing round trips against a real device, one per
+    /// supported curve — the same flow
     /// `mock::sign_through_loaded_key_verifies` runs on the mock (see
     /// [`super::round_trips::run_sign`]). Proves the device produces a valid
     /// ECDSA signature.
@@ -1091,7 +1592,33 @@ mod hw_tests {
     fn sign_ec_key_from_env_smoke() -> EngineResult<()> {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
-        round_trips::run_sign(&data)
+        for curve in round_trips::CURVES {
+            round_trips::run_sign(&data, curve)?;
+        }
+        Ok(())
+    }
+
+    /// A digest longer than the curve order (SHA-512 over P-384, 64 > 48 bytes)
+    /// on a real device — the hardware counterpart of
+    /// `mock::sign_with_digest_longer_than_curve_order_verifies`. The device
+    /// must truncate per the ECDSA spec (its signature must verify in software
+    /// with the same digest), so a firmware change breaking the truncation
+    /// convention is caught on hardware, not only on the mock.
+    ///
+    /// Same env setup as `open_from_env_smoke` (configure `AZIHSM_*` first):
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine sign_long_digest_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    #[allow(unsafe_code)]
+    fn sign_long_digest_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        // SAFETY: EVP_sha512 returns a process-lifetime constant.
+        let md = unsafe { ffi::EVP_sha512() };
+        round_trips::run_sign_with_md(&data, HsmEccCurve::P384, md, MessageDigest::sha512())
     }
 
     /// Hardware EC keygen round trips against a real device, one per supported
@@ -1131,5 +1658,19 @@ mod hw_tests {
             round_trips::run_derive(data, &std::env::temp_dir(), curve)?;
         }
         Ok(())
+    }
+
+    /// Hardware ECDH → HKDF chain, same flow as the mock test (see
+    /// [`super::round_trips::run_hkdf`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine hkdf_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn hkdf_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_hkdf(data, &std::env::temp_dir())
     }
 }

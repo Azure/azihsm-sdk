@@ -34,7 +34,7 @@ const PART_STATE_ENABLED: u8 = 2;
 
 /// `PartState::Initializing` discriminant — the state a partition enters
 /// after a successful `PartInit` binds its PTA / policy / POTA thumb.
-const PART_STATE_INITIALIZING: u8 = 4;
+pub(crate) const PART_STATE_INITIALIZING: u8 = 4;
 
 /// Assert the invariant device-level fields PartInfo reports for the
 /// default provisioned partition, plus that the identity public key is

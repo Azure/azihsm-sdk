@@ -9,7 +9,7 @@
 # cell runs a system OpenSSL in the 1.1.x series: Ubuntu 20.04 (1.1.1f) and
 # Debian 11 (1.1.1w) from the debian family, AlmaLinux 8 (1.1.1k) from the
 # rhel family.  `matrix.family` selects the bootstrap.  OpenSSL 1.0.2 distros
-# are intentionally excluded: build.rs rejects anything below 1.1.0 and there
+# are intentionally excluded: build.rs rejects anything below 1.1.1 and there
 # is no 1.0.2 backend.
 
 name: Engine matrix

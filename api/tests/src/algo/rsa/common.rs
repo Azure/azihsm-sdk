@@ -45,6 +45,20 @@ pub(crate) fn try_import_rsa_key_pair(
     usage: ImportedRsaKeyUsage,
     is_session: bool,
 ) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
+    try_import_rsa_key_pair_with_kind(session, der, bits, HsmKeyKind::Rsa, &[], usage, is_session)
+}
+
+/// Imports RSA private-key DER with an explicit private-key representation
+/// and caller-supplied label.
+pub(crate) fn try_import_rsa_key_pair_with_kind(
+    session: &HsmSession,
+    der: &[u8],
+    bits: u32,
+    kind: HsmKeyKind,
+    label: &[u8],
+    usage: ImportedRsaKeyUsage,
+    is_session: bool,
+) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
 
     let (can_sign, can_verify, can_decrypt, can_encrypt) = match usage {
@@ -54,8 +68,9 @@ pub(crate) fn try_import_rsa_key_pair(
 
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
+        .key_kind(kind)
         .bits(bits)
+        .label(label)
         .can_sign(can_sign)
         .can_decrypt(can_decrypt)
         .is_session(is_session)
@@ -66,6 +81,7 @@ pub(crate) fn try_import_rsa_key_pair(
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(bits)
+        .label(label)
         .can_verify(can_verify)
         .can_encrypt(can_encrypt)
         .is_session(is_session)
