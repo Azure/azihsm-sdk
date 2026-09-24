@@ -130,12 +130,13 @@ fn test_get_certificate_chain() {
         |dev, _ddi, _path, session_id| {
             close_app_session(dev, session_id);
 
-             let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
-             if idfu_enabled {
-                 helper_get_certificate_chain_retry(dev);
-             } else {
-                 helper_get_certificate_chain(dev);
-             }        },
+            let idfu_enabled = std::env::var("IDFU").map(|v| v == "1").unwrap_or(false);
+            if idfu_enabled {
+                helper_get_certificate_chain_retry(dev);
+            } else {
+                helper_get_certificate_chain(dev);
+            };
+        },
     );
 }
 
