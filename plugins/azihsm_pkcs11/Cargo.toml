@@ -1,0 +1,29 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Build-orchestration crate for the AZIHSM PKCS#11 module.
+#
+# Like plugins/ossl_prov, this crate carries no Rust code of its own: its
+# build.rs drives CMake, which uses Corrosion to import the azihsm_api_native
+# cdylib, runs cbindgen to generate azihsm.h, and compiles the C PKCS#11 module
+# (src/*.c) into libazihsm_pkcs11.so, linking against azihsm_api_native.
+
+[package]
+edition = "2024"
+name = "azihsm_pkcs11"
+version = "0.0.1"
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+azihsm_api_native.workspace = true
+cmake.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Forwarded to azihsm_api_native so the module can be built against the
+# simulator/mock DDI with no physical HSM present.
+mock = []
