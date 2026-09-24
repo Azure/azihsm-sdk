@@ -42,11 +42,13 @@ use super::common::*;
                  }
              }
  
-             let resp =
-                 result.unwrap_or_else(|err| panic!("GetCertificate failed: {err:?}"));
+             let resp = result.unwrap_or_else(|err| {
+                 panic!("GetCertificate({cert_id}) failed: {err:?}")
+             });
              assert!(
                  !resp.data.certificate.as_slice().is_empty(),
-                 "certificate must not be empty"
+                 "certificate {} must not be empty",
+                 cert_id
              );
          }
  
@@ -96,10 +98,11 @@ fn helper_get_certificate_chain(dev: &mut <DdiTest as Ddi>::Dev) -> (u8, [u8; 32
     // Every advertised certificate must be fetchable and non-empty.
     for cert_id in 0..num_certs {
         let resp = helper_get_certificate(dev, cert_id)
-            .unwrap_or_else(|err| panic!("GetCertificate failed: {err:?}"));
+            .unwrap_or_else(|err| panic!("GetCertificate({cert_id}) failed: {err:?}"));
         assert!(
             !resp.data.certificate.as_slice().is_empty(),
-            "certificate must not be empty"
+            "certificate {} must not be empty",
+            cert_id
         );
     }
 

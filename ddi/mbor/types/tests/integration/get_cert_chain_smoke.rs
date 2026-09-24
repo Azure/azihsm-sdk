@@ -52,20 +52,22 @@ fn test_get_cert_chain_fetch_and_stability_smoke() {
              tracing::debug!("Device is in iDFU mode, retrying get_certificate for all certs");
              let certs = helper_get_cert_by_id_with_retry(dev, None, 30)
                  .unwrap_or_else(|e| panic!("GetCertificate (all) must succeed: {:?}", e));
-             for resp in &certs {
+             for (cert_id, resp) in certs.iter().enumerate() {
                  assert!(
                      !resp.data.certificate.as_slice().is_empty(),
-                     "certificate must not be empty"
+                     "certificate {} must not be empty",
+                     cert_id
                  );
              }
          } else {
         // Every advertised certificate must be fetchable and non-empty.
         for cert_id in 0..num_certs {
             let resp = helper_get_certificate(dev, cert_id)
-                .unwrap_or_else(|e| panic!("GetCertificate must succeed: {:?}", e));
+                .unwrap_or_else(|e| panic!("GetCertificate({}) must succeed: {:?}", cert_id, e));
             assert!(
                 !resp.data.certificate.as_slice().is_empty(),
-                "certificate must not be empty"
+                "certificate {} must not be empty",
+                cert_id
             );
         }
     }
@@ -78,16 +80,10 @@ fn test_get_cert_chain_fetch_and_stability_smoke() {
             if thumbprint != thumbprint_after {
                 tracing::debug!("Thumbprint changed during iDFU, refetching cert chain info");
                 let (_, thumbprint_retry) = helper_get_cert_chain_info_data(dev);
-                assert!(
-                    thumbprint_after == thumbprint_retry,
-                    "thumbprint must stabilize after retry"
-                );
+                assert_eq!(thumbprint_after, thumbprint_retry, "thumbprint must stabilize after retry");
             }
         } else {
-            assert!(
-                thumbprint == thumbprint_after,
-                "thumbprint must be stable"
-            );
+            assert_eq!(thumbprint, thumbprint_after, "thumbprint must be stable");
         }
 
     });
