@@ -63,7 +63,8 @@ pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
         Err(_) => dev_infos.first().unwrap().path.clone(),
     };
 
-    // Display all device paths and the selected device path if it hasn't been displayed yet.
+    // Display all device paths and the selected device path if it hasn't been
+    // displayed yet.
     unsafe {
         if !DEVICE_DISPLAY {
             for dev_info in &dev_infos {
