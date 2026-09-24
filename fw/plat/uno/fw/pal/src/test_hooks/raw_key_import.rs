@@ -234,9 +234,10 @@ async fn dispatch_request<'p>(
 /// entry.
 ///
 /// The response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`]
-/// — matching how the unwrapping key is masked elsewhere — so the host's
-/// unmask path treats it as the partition unwrapping key rather than a
-/// general RSA private key.
+/// — matching how the unwrapping key is masked elsewhere — so the
+/// credential-establishment re-import path recognizes it as the partition
+/// unwrapping key rather than a general application key. The general
+/// `UnmaskKey` command intentionally rejects this key type.
 async fn raw_import_unwrapping_key<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
@@ -373,6 +374,11 @@ fn prepare_initial_unwrapping_key_import(io: &impl HsmIo) -> HsmResult<Unwrappin
 /// another producer changes the vault id, gate, or backup validity while
 /// this import was awaiting, the mismatch is detected here and the caller
 /// deletes the unpublished raw key instead of shadowing the real key.
+///
+/// This function is synchronous. On Uno's single-threaded cooperative
+/// executor, another `handle_io` task cannot run between the final state
+/// checks and `set_unwrapping_key_id`, so concurrent imports cannot both
+/// publish their IDs.
 fn publish_initial_unwrapping_key(
     io: &impl HsmIo,
     key_id: HsmKeyId,
