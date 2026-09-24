@@ -213,6 +213,19 @@ fn test_aes_key_unwrap_common(session: &HsmSession, bits: u32, is_session: bool)
     HsmKeyManager::delete_key(aes_key).expect("Failed to delete unwrapped AES key");
 }
 
+/// Exercises RSA-AES unwrap of a session-scoped AES-256 key in a V2 session.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_aes_key_unwrap_tbor() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    test_aes_key_unwrap_common(&session, 256, true);
+}
+
 fn test_aes_key_unmask_common(session: &HsmSession, bits: u32) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)

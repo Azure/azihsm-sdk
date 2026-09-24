@@ -52,7 +52,7 @@ pub use crate::sd_sealing_key_gen::MASKED_SEALING_KEY_LEN;
 pub const TBOR_OP_SD_CREATE_PEER_BACKUP: u8 = 0x0E;
 
 // `masked_sealing_key` is a masked SD-sealing key; the derive needs an
-// integer literal on the field, so the length is spelled out as `180` and
+// integer literal on the field, so the length is spelled out as `276` and
 // pinned against the canonical `MASKED_SEALING_KEY_LEN` here.
 const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
@@ -62,7 +62,7 @@ const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 const _: () = assert!(PART_POLICY_LEN == 484);
 
 // `pok_local_backup` is a masked BKS3 envelope; the derive needs an integer
-// literal on the field, so the length is spelled out as `180` and pinned
+// literal on the field, so the length is spelled out as `276` and pinned
 // against the canonical value here.
 const _: () = assert!(MASKED_SD_LEN == 276);
 

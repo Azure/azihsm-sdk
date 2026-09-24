@@ -59,7 +59,7 @@ pub const TBOR_OP_SD_RESTORE_REMOTE_BACKUP: u8 = 0x0C;
 const _: () = assert!(PART_POLICY_LEN == 484);
 
 // `masked_sealing_key` is a masked SD-sealing key; the derive needs an
-// integer literal on the field, so the length is spelled out as `180` and
+// integer literal on the field, so the length is spelled out as `276` and
 // pinned against the canonical `MASKED_SEALING_KEY_LEN` here.
 const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
@@ -69,7 +69,7 @@ const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
 
 // `pok_local_backup` is a masked BKS3 envelope; the derive needs an integer
-// literal on the field, so the length is spelled out as `180` and pinned
+// literal on the field, so the length is spelled out as `276` and pinned
 // against the canonical value here.
 const _: () = assert!(MASKED_SD_LEN == 276);
 
