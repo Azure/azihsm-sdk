@@ -47,8 +47,7 @@ use super::common::*;
              });
              assert!(
                  !resp.data.certificate.as_slice().is_empty(),
-                 "certificate {} must not be empty",
-                 cert_id
+                 "certificate must not be empty"
              );
          }
  
