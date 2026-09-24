@@ -246,7 +246,7 @@ async fn raw_import_unwrapping_key<'p>(
 ) -> HsmResult<&'p DmaBuf> {
     // Unwrap-only; SignVerify / EncryptDecrypt -> InvalidPermissions.
     let attrs = for_rsa_unwrap(&request.key_properties.key_metadata)?;
-    ensure_unwrapping_key_absent(io)?;
+    let source_state = prepare_initial_unwrapping_key_import(io)?;
 
     // Copy the raw plaintext into a vault-import scratch buffer and
     // create an unpublished partition-internal unwrapping key.
@@ -306,9 +306,11 @@ async fn raw_import_unwrapping_key<'p>(
         }
     };
 
-    // Recheck after all awaits so two concurrent initial imports cannot
-    // both publish. Only the winner becomes visible to other commands.
-    if let Err(e) = publish_initial_unwrapping_key(io, key_id) {
+    // Recheck after all awaits so the raw key is published only if the
+    // producer state observed at admission is unchanged. A staged backup
+    // that appears (or a competing import that materializes a vault id)
+    // while this import awaited is detected here and blocks publication.
+    if let Err(e) = publish_initial_unwrapping_key(io, key_id, source_state) {
         pal.vault_key_delete(io, key_id).await?;
         return Err(e);
     }
@@ -316,26 +318,75 @@ async fn raw_import_unwrapping_key<'p>(
     Ok(resp)
 }
 
-/// Reject an RSA import when the partition already owns or has a staged
-/// unwrapping key.
+/// Snapshot of the partition's unwrapping-key producer state at the moment
+/// [`prepare_initial_unwrapping_key_import`] admitted a raw import.
 ///
-/// This reads `PartStore` directly so the check does not trigger the PAL's
-/// lazy import of an HSP-staged key.
-fn ensure_unwrapping_key_absent(io: &impl HsmIo) -> HsmResult<()> {
-    let partition = PartStore::partition(io.pid())?;
-    if partition.unwrapping_key_id().is_some() || partition.unwrapping_key_bk_valid() {
-        return Err(HsmError::InvalidArg);
-    }
-    Ok(())
+/// A staged-only HSP backup (`backup_valid == true`, no vault id) that
+/// already existed before `RawKeyImport` started is an expected, dormant
+/// recovery source — NSSR preserves it and later materialization should
+/// still be able to use it once the raw validation key is retired. This
+/// snapshot lets [`publish_initial_unwrapping_key`] distinguish that
+/// pre-existing state from a producer that changes *during* the import (a
+/// race that must block publication), instead of destroying the backup.
+#[derive(Clone, Copy)]
+struct UnwrappingKeySourceState {
+    required: bool,
+    backup_valid: bool,
 }
 
-/// Publish the first RSA unwrapping key if neither a vault ID nor an
-/// HSP-staged backup appeared while the import awaited hardware.
-fn publish_initial_unwrapping_key(io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+/// Admit the partition for a validation-only raw unwrapping-key import.
+///
+/// An already materialized vault key is never replaced because another
+/// command may still be borrowing it. A staged-only HSP backup is left
+/// untouched — clearing it would leave NSSR unable to restore it, since
+/// `Migrate` neither regenerates nor rearms it. Only a producer that is
+/// armed (`required`) but has not yet completed publication
+/// (`!backup_valid`) is rejected, since racing that in-flight
+/// materialization would be unsafe.
+fn prepare_initial_unwrapping_key_import(io: &impl HsmIo) -> HsmResult<UnwrappingKeySourceState> {
     let partition = PartStore::partition(io.pid())?;
-    if partition.unwrapping_key_id().is_some() || partition.unwrapping_key_bk_valid() {
+
+    if partition.unwrapping_key_id().is_some() {
         return Err(HsmError::InvalidArg);
     }
+
+    let state = UnwrappingKeySourceState {
+        required: partition.unwrapping_key_required(),
+        backup_valid: partition.unwrapping_key_bk_valid(),
+    };
+
+    // The SP is armed but has not completed publication. Do not race it.
+    if state.required && !state.backup_valid {
+        return Err(HsmError::PendingKeyGeneration);
+    }
+
+    Ok(state)
+}
+
+/// Publish the first RSA unwrapping key if the slot remains exclusively
+/// owned by this import and the producer state observed at admission is
+/// unchanged.
+///
+/// Comparing against the `expected` snapshot — rather than requiring
+/// `required` and `backup_valid` to both be clear — lets a pre-existing
+/// staged HSP backup survive the raw import. If lazy materialization or
+/// another producer changes the vault id, gate, or backup validity while
+/// this import was awaiting, the mismatch is detected here and the caller
+/// deletes the unpublished raw key instead of shadowing the real key.
+fn publish_initial_unwrapping_key(
+    io: &impl HsmIo,
+    key_id: HsmKeyId,
+    expected: UnwrappingKeySourceState,
+) -> HsmResult<()> {
+    let partition = PartStore::partition(io.pid())?;
+
+    if partition.unwrapping_key_id().is_some()
+        || partition.unwrapping_key_required() != expected.required
+        || partition.unwrapping_key_bk_valid() != expected.backup_valid
+    {
+        return Err(HsmError::InvalidArg);
+    }
+
     partition.set_unwrapping_key_id(Some(key_id));
     Ok(())
 }
